@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 import bettermemory.search as search_module
+import bettermemory.search_lexicon as search_lexicon
 from bettermemory import _caches
 from bettermemory.models import (
     Confidence,
@@ -218,7 +219,7 @@ def tokenize_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         calls.append(text)
         return real(text)
 
-    monkeypatch.setattr(search_module, "tokenize", counting)
+    monkeypatch.setattr(search_lexicon, "tokenize", counting)
     return calls
 
 

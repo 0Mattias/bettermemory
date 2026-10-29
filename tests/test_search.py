@@ -891,6 +891,7 @@ def test_snippet_scan_tokenize_cost_is_bounded(
     fixture bodies are 46 characters and exit at the short-body return
     before the scan."""
     import bettermemory.search as search_module
+    import bettermemory.search_lexicon as search_lexicon
 
     now = datetime(2026, 7, 1, tzinfo=timezone.utc)
     body = (
@@ -910,7 +911,7 @@ def test_snippet_scan_tokenize_cost_is_bounded(
         calls["n"] += 1
         return real_impl(text, stem=stem)
 
-    monkeypatch.setattr(search_module, "_tokenize_impl", counting)
+    monkeypatch.setattr(search_lexicon, "_tokenize_impl", counting)
     # The count is the cold one; an earlier search in this process may
     # have cached the body (`_memory_tokens`) and its scan.
     search_module.clear_token_cache()
@@ -2193,6 +2194,7 @@ def test_search_tokenizes_each_candidate_once(
     count is the cold one: a warm token cache skips the candidates
     entirely (test_token_cache.py)."""
     import bettermemory.search as search_module
+    import bettermemory.search_lexicon as search_lexicon
 
     now = datetime(2026, 7, 1, tzinfo=timezone.utc)
     memories = [
@@ -2207,7 +2209,7 @@ def test_search_tokenizes_each_candidate_once(
         calls["n"] += 1
         return real_impl(text, stem=stem)
 
-    monkeypatch.setattr(search_module, "_tokenize_impl", counting)
+    monkeypatch.setattr(search_lexicon, "_tokenize_impl", counting)
     search_module.clear_token_cache()
     hits = search(memories, "docker redis caches", mode="hybrid", now=now)
     assert hits  # the counted run must be a real, scoring search

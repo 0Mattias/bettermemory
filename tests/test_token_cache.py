@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 import bettermemory.search as search_module
+import bettermemory.search_lexicon as search_lexicon
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
     _expand_kebab,
@@ -123,7 +124,7 @@ def tokenize_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         calls.append(text)
         return real(text)
 
-    monkeypatch.setattr(search_module, "tokenize", counting)
+    monkeypatch.setattr(search_lexicon, "tokenize", counting)
     return calls
 
 
@@ -343,7 +344,7 @@ def test_a_warm_search_tokenizes_only_the_query(
         calls["n"] += 1
         return real_impl(text, stem=stem)
 
-    monkeypatch.setattr(search_module, "_tokenize_impl", counting)
+    monkeypatch.setattr(search_lexicon, "_tokenize_impl", counting)
     reloaded = [_reloaded(m) for m in memories]
     warm = search(reloaded, "docker redis caches", mode="hybrid", now=NOW)
     assert calls["n"] == 1

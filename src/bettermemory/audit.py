@@ -235,7 +235,7 @@ MIN_PROBE_CONTENT_TOKENS = 2
 # good" are two distinct non-stopword tokens, so they clear the
 # MIN_PROBE_CONTENT_TOKENS floor and then score 2/2 = "high" against
 # any ordinary memory body that happens to contain both words. The set
-# lives here (audit-local) rather than in search.py's `_STOPWORDS` on
+# lives here (audit-local) rather than in search_lexicon.py's `_STOPWORDS` on
 # purpose — "good" / "done" / "all" must stay searchable as body and
 # query terms; they're only noise as a COMPLETE probe query. Mixed
 # messages ("looks good, now update the backup docs") still pass the
@@ -287,7 +287,7 @@ _ACK_TOKENS: frozenset[str] = frozenset(
 # UserPromptSubmit hook emits `"prompt_hook"`. `"session_hook"` is the
 # SessionStart hook's stamp on its `session_brief` event
 # (`recall.session_brief`). Pinning the set at the builder boundary mirrors the search-mode runtime guard in
-# `search.py:761` — without this check, a typo elsewhere silently
+# `search.search` — without this check, a typo elsewhere silently
 # produces unsplittable eval rows (downstream consumers `groupby`-split
 # on this field). Mirrors the same Literal-at-types-only situation:
 # Python doesn't enforce it at call time. Any out-of-process value

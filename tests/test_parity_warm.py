@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 import bettermemory.search as search_module
+import bettermemory.search_lexicon as search_lexicon
 from bettermemory.models import Memory
 from bettermemory.store import Store
 
@@ -99,7 +100,7 @@ def test_cold_and_warm_runs_rank_identically(
                 body_calls.append(text)
             return real_tokenize(text)
 
-        monkeypatch.setattr(search_module, "tokenize", counting)
+        monkeypatch.setattr(search_lexicon, "tokenize", counting)
 
         cold_rows, cold_tokenised = _run(store, full, questions, body_calls, cold=True)
         # One uncleared pass fills the cache; the pass after it is served

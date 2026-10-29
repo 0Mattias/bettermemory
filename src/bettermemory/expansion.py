@@ -17,7 +17,7 @@ by ("the code is the model"):
   schema-version ceremony attaches to a table edit.
 
 Consumers: `search.search()` builds stemmed lookup structures once via
-`build_tables` (the stemmer lives in `search.py`; taking it as a
+`build_tables` (the stemmer lives in `search_lexicon.py`; taking it as a
 callable keeps this module import-cycle-free and lets tests drive the
 raw tables with an identity stem). Nothing else may import the raw
 tables for ranking — one build site is what keeps query-side and
@@ -264,7 +264,7 @@ def morph_variants(tok: str, stem: Callable[[str], str]) -> set[str]:
     """Inflectional variants of one query token, by rule.
 
     The shipped stemmer folds PLURALS only (a deliberate precision
-    choice — see `search._stem_segment`); the -ing/-ed family it leaves
+    choice — see `search_lexicon._stem_segment`); the -ing/-ed family it leaves
     alone is exactly what separates "splitting the repos" from a body
     that says "split". Generated per QUERY TOKEN at search time, never
     at index time, so the conservative index-side stemmer contract is
