@@ -892,6 +892,35 @@ the candidates' testing.
   0.03 s (median of 7 on 2026-10-28); the floor of 3 is a judgement, and
   hides no row, only its digest line. No value changed.
   (`src/bettermemory/health_model.py`)
+- **A `.git` file is followed only where git's own pointers say the
+  folder is that git directory's working tree.** Discovery followed any
+  `gitdir:` path a `.git` file named, so a folder of an extracted
+  archive, or of a cloned repository, holding a `.git` file that named
+  another working tree's `.git` was keyed on that checkout's git
+  directory: a session there resolved silently as that checkout, a view
+  of it was recorded at the folder, and the session brief and prompt
+  recall delivered that project's memories into a folder whose other
+  files someone else wrote (ENG-158). A `.git` file is now followed to a
+  linked worktree's git directory whose `gitdir` file names it back, to
+  a git directory whose `core.worktree` names the folder (a submodule's),
+  to a `--separate-git-dir` directory (git writes no pointer back, and
+  design I22 keeps a second tree naming one the same checkout), and to
+  one whose back-pointer names nothing any more (a worktree or submodule
+  moved with a plain `mv`); a pointer at another working tree's `.git`,
+  at a worktree's git directory that names another worktree, at a
+  directory whose `commondir` names a repository it is not registered
+  under, at a git directory whose `core.worktree` names another folder,
+  or at a bare repository reads as a `.git` file that names nothing, and
+  a view whose `.git` file was swapped for one reads `replaced`. Each is
+  told by the filesystem object, not the spelling: a git directory that
+  is the `.git` of the folder above it is that tree's own however it is
+  reached (through a symlink, or spelled in another case on a
+  case-insensitive volume), and a `commondir` is trusted only for a git
+  directory registered at `<common>/worktrees/<name>`, where git keeps a
+  linked worktree's, so a forged worktree directory names no common
+  directory and a folder holding `HEAD` and such a `commondir` is no git
+  directory. (`src/bettermemory/location_git.py`,
+  `src/bettermemory/location.py`, `SECURITY.md`, `docs/internals.md`)
 
 #### Known limitations
 
@@ -948,6 +977,14 @@ the candidates' testing.
 - **The reachable-walk memo is bounded at 128 walks, not in bytes.** A
   walk holds about 141 bytes a commit, so 128 walks of 10,000 commits
   hold about 180 MB in a long-lived daemon. (`src/bettermemory/origin.py`)
+- **A `.git` file naming a `--separate-git-dir` directory is followed.**
+  git writes no pointer back for a git directory kept apart with
+  `--separate-git-dir`, and design I22 keeps a second tree naming one the
+  same checkout, so nothing git keeps tells a planted `.git` file naming
+  one (whose path the planter knows) from the checkout's own: it is
+  followed, and the folder resolves as that checkout (ENG-158). git
+  itself follows every such pointer; the rule bounds what bettermemory
+  delivers, not what git runs there.
 
 ### 9.0.0rc13
 

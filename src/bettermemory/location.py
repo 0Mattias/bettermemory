@@ -117,6 +117,7 @@ from .location_git import (
     _manifest,
     _ref_tips,
     _resolve_head,
+    gitfile_refusal,
 )
 from .location_git import (
     _GIT_TIMEOUT_SECONDS as _GIT_TIMEOUT_SECONDS,
@@ -971,7 +972,12 @@ def _git_dir_at(path: str, kind: str) -> str | None:
     dotgit = os.path.join(path, ".git")
     if os.path.isdir(dotgit):
         return dotgit
-    return _gitfile_target(dotgit)
+    target = _gitfile_target(dotgit)
+    if target is None or gitfile_refusal(path, dotgit, target) is not None:
+        # A pointer discovery would not follow names no git directory here
+        # either (ENG-158).
+        return None
+    return target
 
 
 def continuity(

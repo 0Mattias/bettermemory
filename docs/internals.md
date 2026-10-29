@@ -431,7 +431,17 @@ manifest of a commit-less checkout or folder project. Commits and blobs
 are read from loose objects, pack indexes and packs (`gitobjects.py`),
 with `git cat-file --batch-check` only where that reader reports itself
 incomplete. Nothing reads repository configuration, so git's
-`safe.directory` refusal never applies. Each witness is one observable
+`safe.directory` refusal never applies. A `.git` file is followed only
+where git's own pointers say the folder is its git directory's working
+tree (ENG-158): a linked worktree's git directory registered at
+`<common>/worktrees/<name>` that names the file back, a git directory
+whose `core.worktree` names the folder, a `--separate-git-dir`
+directory, or a pointer back that names nothing any more. A git
+directory that is the `.git` of the folder above it (compared as a
+filesystem object, so a symlink or another case is the same), a
+`commondir` naming a repository the directory is not registered under,
+a `core.worktree` naming another folder and a bare repository read as no
+repository, and the walk goes on upward. Each witness is one observable
 fact:
 
 | Code | The witness | Read from | Alone |

@@ -247,19 +247,141 @@ def _gitfile_target(dotgit: str) -> str | None:
     return os.path.normpath(target)
 
 
+def _small_text(path: str) -> str | None:
+    """A small text file's content, stripped; None when it cannot be read
+    or holds more than `_GITFILE_LIMIT` bytes."""
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(_GITFILE_LIMIT + 1)
+    except OSError:
+        return None
+    if len(data) > _GITFILE_LIMIT:
+        return None
+    return data.decode("utf-8", errors="replace").strip()
+
+
+def _names_here(raw: str, base: str, here: str) -> bool | None:
+    """Whether the path `raw` (taken from `base` when relative) names the
+    entry `here`: True when it is the same file, False when it names
+    another one, None when it names nothing (what it named was moved or
+    deleted since git wrote it)."""
+    path = raw if os.path.isabs(raw) else os.path.join(base, raw)
+    try:
+        theirs = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except (OSError, ValueError):
+        return False
+    try:
+        return os.path.samestat(theirs, os.stat(here))
+    except (OSError, ValueError):
+        return False
+
+
+def gitfile_refusal(directory: str, dotgit: str, target: str) -> str | None:
+    """Why the ``.git`` file `dotgit` in `directory`, which names the git
+    directory `target`, is not followed (ENG-158), or None when it is.
+
+    A ``.git`` file is followed where git's own pointers say the folder
+    is that git directory's working tree: a linked worktree's git
+    directory (``<common>/worktrees/<name>``) whose ``gitdir`` file names
+    this ``.git`` file, a git directory whose ``core.worktree`` names this
+    folder (a submodule's, under the enclosing repository's ``modules/``),
+    and a git directory kept apart by ``--separate-git-dir``, for which
+    git writes no pointer back (design I22: a second tree naming it is the
+    same checkout at a second path). A pointer that names nothing any more
+    (the worktree or submodule moved by a plain ``mv``, which ``git
+    worktree repair`` mends) is followed too. Anything else is refused:
+    another working tree's own ``.git``, a worktree's git directory that
+    names another worktree, a git directory whose ``core.worktree`` names
+    another folder, and a bare repository. Followed, such a file would key
+    the folder on another checkout's git directory, and an extracted
+    archive or a cloned repository that planted one would be delivered
+    that checkout's memories.
+
+    Each is told by the filesystem object, not the spelling: a target
+    that is the ``.git`` of the folder above it, through a symlink or in
+    another case on a case-insensitive volume, is that tree's own; a
+    ``commondir`` is trusted only for a git directory registered under it
+    (``<common>/worktrees/<name>``, where git keeps a linked worktree's),
+    so a forged worktree directory names no common directory."""
+    _common, linked = _common_of(target)
+    named = None if linked else _commondir(target)
+    if named is not None:
+        return f"{target} names the common directory {named} but is not one of its worktrees"
+    if linked:
+        back = _small_text(os.path.join(target, "gitdir"))
+        if not back:
+            return f"{target} is a worktree's git directory that names no worktree"
+        if _names_here(back, target, dotgit) is False:
+            return f"{target} is the git directory of the worktree at {back}"
+        return None
+    values = _config_values(os.path.join(target, "config"))
+    listed = values.get(("core", None, "worktree")) or []
+    configured = listed[-1] if listed else ""
+    if configured:
+        if _names_here(configured, target, directory) is False:
+            return f"{target} is the git directory of the working tree {configured}"
+        return None
+    if _truthy(values.get(("core", None, "bare"))):
+        return f"{target} is a bare repository"
+    tree = _tree_of(target)
+    if tree is not None:
+        return f"{target} is the git directory of the working tree {tree}"
+    return None
+
+
+def _tree_of(git_dir: str) -> str | None:
+    """The folder whose own ``.git`` the git directory `git_dir` is, or
+    None: compared as filesystem objects, so a symlink to it or a spelling
+    in another case on a case-insensitive volume is the same ``.git``."""
+    try:
+        real = os.path.realpath(git_dir)
+        parent = os.path.dirname(real)
+        if os.path.samestat(os.stat(real), os.stat(os.path.join(parent, ".git"))):
+            return parent
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def _common_of(git_dir: str) -> tuple[str, bool]:
-    """(common directory, whether a ``commondir`` file named it)."""
+    """(common directory, whether a ``commondir`` file named it): the one
+    GIT_COMMON_DIR names, else the one `git_dir`'s ``commondir`` file names
+    where `git_dir` is registered under it (`_registered`), else `git_dir`
+    itself. A ``commondir`` elsewhere is a forged worktree directory's
+    (ENG-158): followed, it keyed a folder on another repository's object
+    store."""
     env = os.environ.get("GIT_COMMON_DIR")
     if env:
         return os.path.normpath(os.path.join(git_dir, env)), True
+    common = _commondir(git_dir)
+    if common is None or not _registered(git_dir, common):
+        return git_dir, False
+    return common, True
+
+
+def _commondir(git_dir: str) -> str | None:
+    """The common directory `git_dir`'s ``commondir`` file names, or None."""
     try:
         with open(os.path.join(git_dir, "commondir"), "rb") as fh:
             rel = fh.read(_GITFILE_LIMIT).decode("utf-8", errors="replace").strip()
     except OSError:
-        return git_dir, False
+        return None
     if not rel:
-        return git_dir, False
-    return os.path.normpath(os.path.join(git_dir, rel)), True
+        return None
+    return os.path.normpath(os.path.join(git_dir, rel))
+
+
+def _registered(git_dir: str, common: str) -> bool:
+    """Whether `git_dir` sits at ``<common>/worktrees/<name>``, the only
+    place git keeps a linked worktree's git directory (``git worktree
+    add``), compared as filesystem objects."""
+    try:
+        parent = os.path.dirname(os.path.realpath(git_dir))
+        return os.path.samefile(parent, os.path.join(common, "worktrees"))
+    except (OSError, ValueError):
+        return False
 
 
 def _is_git_directory(path: str) -> bool:
@@ -355,6 +477,10 @@ def _at_dotgit(directory: str, dotgit: str, st: os.stat_result) -> _Git | None:
         return None
     target = _gitfile_target(dotgit)
     if target is None or not os.path.isfile(os.path.join(target, "HEAD")):
+        return None
+    if gitfile_refusal(directory, dotgit, target) is not None:
+        # Not followed (ENG-158): read as a `.git` file that names nothing,
+        # so no other checkout's git directory keys this folder.
         return None
     common, linked = _common_of(target)
     # A ``.git`` file names a linked worktree's git directory (it has a
