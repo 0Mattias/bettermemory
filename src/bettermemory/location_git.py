@@ -47,8 +47,17 @@ BARE = "bare"
 FOLDER = "folder"
 
 #: The most ref tips a capture reads to decide commit-less (design 2.1).
+#: One decides it; with HEAD unborn the tips are where the rewritten-history
+#: walk starts (`walk`), and each rides in the location token. Measured
+#: (ENG-160, macOS APFS): 64 of 1,000 loose branch refs read in 1.6 ms, all
+#: 1,000 in 20 ms (0.1 and 0.7 ms packed); 64 tips are about 2.8 KB of the
+#: token.
 REF_TIPS_MAX = 64
-#: The most (path, size) entries of a content manifest (design 2.2, C).
+#: The most (path, size) entries of a content manifest (design 2.2, C),
+#: read only for a commit-less repository and compared on the same sorted
+#: walk on both sides. Measured (ENG-160) on a tree of 6,000 files: 4,096
+#: entries listed in 27.5 ms and 89 KiB as JSON, 1,024 in 6 ms and 22 KiB;
+#: the whole tree took 50 ms and 131 KiB.
 MANIFEST_LIMIT = 4096
 #: How long a fetch of an evicted HEAD or config may take before the
 #: capture defers (design 3.1, decision D19; 300 ms in the prototype).
@@ -65,16 +74,32 @@ PROBE_BUDGET = 0.5
 #: How long a capture answers for its directory, as `origin.capture`'s
 #: cache (`origin.ORIGIN_CACHE_SECONDS`), on both clocks.
 CACHE_SECONDS = 600.0
-#: Captures kept, oldest evicted first.
+#: Captures kept, oldest evicted first; the project files above a
+#: directory and the per-location locks are bounded from it. A capture is
+#: about 3 KB as JSON (this repository's 3,094 bytes, a folder's 646;
+#: ENG-160), so 256 are under 1 MB as JSON, and a miss costs one capture
+#: (0.8 ms for this repository uncached, 0.12 ms cached, measured on
+#: macOS).
 CACHE_CAP = 256
 #: Commits a rewritten-history walk reads from HEAD; the model's
 #: `membership.WALK_LIMIT`, so a client's walk covers exactly the model's.
+#: Measured (ENG-160) on this repository's history of 2,011 commits from a
+#: fresh reader: 512 commits in 55 ms, 128 in 14 ms, all 2,011 in 268 ms.
+#: A witness older than the newest 512 commits is not reached by the walk,
+#: and the other witnesses decide. `reachable_among` (ENG-151) reads the
+#: same 512 commits in all, shared among the commits it starts from, about
+#: 512/n below each of n: on a 20,000-commit line, 128 tied witnesses five
+#: or more commits apart find no relation (review M G2), so the most
+#: specific line is not decided and the ladder asks.
 WALK_LIMIT = 512
 #: Blob ids sampled per witness commit, and their floor in bytes: small
 #: files (an empty ``__init__.py``) are shared by unrelated repositories.
 BLOBS_PER_WITNESS = 8
 BLOB_MIN_SIZE = 64
 #: Tree entries looked at for the blob sample (the root and its first level).
+#: Measured (ENG-160) on this repository's HEAD: 16 entries already gave the
+#: 8 blobs in 2.6 ms, 64 in 5.6 ms, 256 in 18.5 ms; 64 keeps 8 where the
+#: root holds folders and files under `BLOB_MIN_SIZE`.
 BLOB_LOOK = 64
 # TOKEN_VERSION, the location token's format version, is `_location_probe`'s.
 #: The cwd of a caller that has none (its working directory was removed
@@ -87,12 +112,23 @@ NO_CWD = "<no working directory>"
 #: location is indeterminate and its writes are homed under this id at
 #: the cwd it gave (decision B6).
 NO_MACHINE = "<no machine>"
-#: Rounds of the witness exchange a client answers before it stops.
+#: Rounds of the witness exchange a client answers before it stops (a
+#: prompt's hook then goes on without its resolution). Each round answers
+#: one kind of question (held, walk, ancestry, blobs, views, remint) and the
+#: answers accumulate; measured over the exchanges the suite runs
+#: (tests/test_hook.py, test_membership_remint, test_membership_security,
+#: test_membership_resolution, test_location_reachable; ENG-160): 16
+#: exchanges took 1 round in 4, 2 in 10 and 3 in 2. Eight bounds a prompt
+#: at eight posts.
 EXCHANGE_ROUNDS = 8
 
 _FULL_HASH = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _HEAD_LIMIT = 1 << 16
+# A repository's config: git reads any size; the eight on the development
+# machine measured 349 B at the median and 608 B at most (ENG-160). One
+# over the bound is read to its last whole line within it.
 _CONFIG_LIMIT = 1 << 20
+# git refuses a .git file over 1 MiB (read_gitfile_gently in setup.c).
 _GITFILE_LIMIT = 1 << 20
 # SF_DATALESS (macOS <sys/stat.h>) and the Windows recall attributes
 # (winnt.h): the file's data is held by a provider and a read would wait
@@ -1378,6 +1414,12 @@ def _clear_above() -> None:
 # History
 # ---------------------------------------------------------------------------
 
+# The git call a history read falls back to where the object reader is
+# incomplete. Measured (ENG-160): a `git cat-file --batch-check` of 64
+# ids took 12 ms here; the bound is for a git that hangs (a lock, a
+# network disk), and the daemon's stop waits as long for one
+# (`daemon.GRACEFUL_SHUTDOWN_SECONDS`,
+# `_daemon_client.UNINTERRUPTED_STEP_SECONDS`; tests pin both).
 _GIT_TIMEOUT_SECONDS = 20.0
 
 

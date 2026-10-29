@@ -111,17 +111,33 @@ WITNESS_BOUND = 64
 _FULL_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 KEEP_OLDEST = 16
 BLOBS_PER_WITNESS = 8
-#: Commits read from HEAD for the rewritten-history witness (Hf).
+#: Commits read from HEAD for the rewritten-history witness (Hf); the
+#: measurement is at `location.WALK_LIMIT` (512 commits in 55 ms).
 WALK_LIMIT = 512
 #: The content witness: relative paths and sizes at this Jaccard or more.
+#: Measured (ENG-160) on this repository's tree of 977 files against itself
+#: k commits back: 0.993 at 1, 0.979 at 5, 0.939 at 20, 0.800 at 50. So
+#: 0.9 holds a copy and the folder some twenty commits' work later. Two
+#: folders of one template can score 1.0, so C only asks (design 2.2).
 CONTENT_MATCH = 0.9
 #: A content question names at most this many candidates; with more, NEW.
+#: A template's scaffold matches every project made from it, and a
+#: question listing them all tells nothing (`line_content_crowded` gives
+#: the count instead; ENG-160). The value is design scenario I07a's: a
+#: commit-less repository matching three empty projects asks naming them,
+#: one matching four is new and names the count.
 CONTENT_MAX = 3
-#: A checkout unseen this long leaves health (D15); no rule reads the flag.
+#: A checkout unseen this long leaves health (decision D15); no rule reads
+#: the flag, and a sighting undoes it (`_touch_view`), so an early
+#: retirement costs one health line and a late one keeps a dead checkout
+#: listed: not load-bearing (ENG-160).
 RETIRE_AFTER = timedelta(days=180)
 #: How stale a view's last sighting may get before a sighting writes it
 #: again: only health's retirement reads it, so a sighting at a known
-#: path writes nothing more often.
+#: path writes nothing more often. A day is 1/180 of `RETIRE_AFTER`, and a
+#: prompt at a known path writes its view once a day, not each prompt
+#: (ENG-160). Measured (macOS): a steady resolution at a known path took
+#: 0.24 ms writing nothing and 0.66 ms writing its view (medians of 40).
 VIEW_REFRESH = timedelta(days=1)
 
 # Proposal kinds and states (design 2.1, 3.4).
@@ -156,6 +172,11 @@ def legacy_asks(*, rule: str, same_name: bool, compatible: bool) -> bool:
 # identity carries (the oldest half and the newest half of the bounded
 # set), the reasons an ``import`` question is opened for, and the format
 # name of `bettermemory membership export`.
+#: An import matches them against the importing store's own witness rows:
+#: the 8 oldest are among the `KEEP_OLDEST` every store that saw the
+#: project from its first commits keeps, the 8 newest what a store that saw
+#: it lately holds, and one shared commit is the H witness. Sixteen full
+#: ids are about 0.7 KB of the export (ENG-160).
 EXPORT_WITNESSES = 16
 IMPORT_ONE_WITNESS = "import_one_witness"
 IMPORT_CONTRADICTION = "import_contradiction"

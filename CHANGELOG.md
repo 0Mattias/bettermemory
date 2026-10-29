@@ -1125,6 +1125,21 @@ the candidates' testing.
   alone reads it about 1.4 million times (38 s).
   (`src/bettermemory/location_git.py`, `docs/internals.md`,
   `src/bettermemory/location.py`)
+- **The location and membership bounds state their evidence.** Sixteen
+  bounds (the ref tips, manifest, capture cache, stands, walk, blob
+  sample, exchange rounds, git timeout, config and `.git` file sizes,
+  content match and crowding, retirement, view refresh and export
+  witnesses) gave no reason for their values (ENG-160). Each now names the
+  measurement that sets it or the source it follows: for example 64 of
+  1,000 loose refs read in 1.6 ms against 20 ms for all of them; 512
+  commits walked in 55 ms on a history of 2,011; the content witness at
+  0.94 twenty commits back and 0.80 fifty back; at most 3 exchange rounds
+  over the suite's exchanges against a bound of 8; git's own 1 MiB bound
+  on a `.git` file. A test pins that each states a number with its unit
+  or a named source (git's own, a decision, a design scenario), not the
+  issue id alone, and the relations the comments assert. No value
+  changed. (`src/bettermemory/location_git.py`,
+  `src/bettermemory/location.py`, `src/bettermemory/membership_records.py`)
 
 #### Known limitations
 

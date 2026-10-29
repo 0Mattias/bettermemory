@@ -1586,6 +1586,10 @@ class _Stand:
 _STANDS_LOCK = threading.Lock()
 _STANDS: dict[tuple[str, str], _Stand] = {}
 #: The most sessions whose stand the process keeps; the oldest goes first.
+#: A stand is one resolution; several sessions stand in one checkout, so
+#: four per cached capture (ENG-160). Measured (macOS): 1,024 stands of
+#: this repository's resolution, each its own copy, hold 864 KiB, and
+#: keeping one at the cap (evicting the oldest) takes 0.9 µs.
 STANDS_CAP = CACHE_CAP * 4
 
 
