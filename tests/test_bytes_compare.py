@@ -13,12 +13,22 @@ would.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
 import pytest
 
-from bettermemory import _daemon_client, backup
+import bettermemory
+from bettermemory import (
+    _daemon_client,
+    anchor,
+    audit_export,
+    backup,
+    history,
+    log,
+    store_provenance,
+)
 from bettermemory.anchor import (
     REASON_DIGEST,
     STATUS_MISMATCH,
@@ -134,3 +144,24 @@ def test_a_state_file_token_utf8_cannot_encode_is_not_ours() -> None:
     # daemon that really holds such a token still proves itself.
     proof = _daemon_client.health_proof(raw["token"], nonce)
     assert _daemon_client.proves(raw, {"proof": proof}, nonce)
+
+
+def test_the_package_has_one_mac_comparison() -> None:
+    """`audit_export` kept a copy of `log.same_mac` (ENG-93 item 12). One
+    definition is left, in log.py, and every module that names
+    `same_mac` holds that one, `audit_export` and `anchor` included."""
+    src = Path(bettermemory.__file__).parent
+    defined = [
+        str(path.relative_to(src))
+        for path in sorted(src.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.name == "same_mac"
+    ]
+    assert defined == ["log.py"]
+    for module in (anchor, audit_export, backup, history, store_provenance):
+        assert module.same_mac is log.same_mac, module.__name__
+    # The kept comparison is the one the export and the anchor check need:
+    # a non-ASCII column reads as a mismatch, not a TypeError.
+    assert log.same_mac(_NOT_ASCII, "0" * 64) is False
+    assert log.same_mac("ab" * 32, "ab" * 32) is True

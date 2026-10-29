@@ -879,7 +879,9 @@ def same_mac(a: str, b: str) -> bool:
     `hmac.compare_digest` raises TypeError on a str that is not ASCII, and
     a MAC column, a record's pointer or a head checkpoint holds whatever
     an editor wrote into it, which must read as a mismatch, not end the
-    open, the read or `log verify` in a traceback."""
+    open, the read, `log verify`, the export or the anchor check in a
+    traceback. The package's one MAC comparison: `audit_export`, `anchor`,
+    `backup`, `history` and `store_provenance` all call this one."""
     return hmac.compare_digest(
         a.encode("utf-8", errors="surrogatepass"),
         b.encode("utf-8", errors="surrogatepass"),

@@ -60,8 +60,8 @@ from pathlib import Path
 from typing import Any
 
 from ._fsutil import bounded_read
-from .audit_export import MAX_SEQ, read_snapshot, same_mac
-from .log import last_row
+from .audit_export import MAX_SEQ, read_snapshot
+from .log import last_row, same_mac
 from .store import Store
 from .time_utils import isoformat_utc
 

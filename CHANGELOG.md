@@ -322,6 +322,15 @@ the candidates' testing.
   `src/bettermemory/cli/rollback.py`, `src/bettermemory/handlers/health.py`,
   `src/bettermemory/handlers/search.py`,
   `src/bettermemory/handlers/acknowledge_miss.py`, `docs/api.md`)
+- **One MAC comparison.** `audit_export` kept its own copy of
+  `log.same_mac`, the constant-time comparison that encodes both sides
+  as UTF-8 first. The copy is gone: `audit_export` and `anchor`, which
+  read it through `audit_export`, import the one in `log`, as `backup`,
+  `history` and `store_provenance` already did. A test pins one
+  definition in the package and every module's name bound to it. The
+  rc13 review raised this (ENG-93 item 12), and it is closed.
+  (`src/bettermemory/audit_export.py`, `src/bettermemory/anchor.py`,
+  `src/bettermemory/log.py`, `tests/test_bytes_compare.py`)
 
 #### Fixed
 

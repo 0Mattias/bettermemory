@@ -83,7 +83,6 @@ from __future__ import annotations
 import bisect
 import contextlib
 import hashlib
-import hmac
 import json
 import sqlite3
 from collections.abc import Callable, Collection, Iterator, Mapping
@@ -92,7 +91,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 
-from .log import CONTROL_KINDS, REKEY, KeyRing, compute_mac
+from .log import CONTROL_KINDS, REKEY, KeyRing, compute_mac, same_mac
 from .store import MEMBERSHIP_EVENT_KINDS, MUTATION_KINDS, Store
 from .time_utils import isoformat_utc, parse_event_ts
 
@@ -336,17 +335,6 @@ def _rekey_names(payload: str) -> tuple[str, str] | None:
     if not isinstance(old, str) or not isinstance(new, str):
         return None
     return old, new
-
-
-def same_mac(expected: str, found: str) -> bool:
-    """Whether a MAC column holds ``expected``, in constant time. Compared
-    as UTF-8 bytes: `hmac.compare_digest` refuses a str with a non-ASCII
-    character, and a hand-edited column can hold one, which must read as
-    a mismatch, not stop the export or the anchor check at that row."""
-    return hmac.compare_digest(
-        expected.encode("utf-8", errors="surrogatepass"),
-        found.encode("utf-8", errors="surrogatepass"),
-    )
 
 
 @dataclass(frozen=True)
@@ -723,7 +711,6 @@ __all__ = [
     "redact_text",
     "row_actor",
     "row_class",
-    "same_mac",
     "segment_map",
     "utc_ts",
 ]
