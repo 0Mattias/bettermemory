@@ -773,6 +773,152 @@ def _write_config(path: Path, data: bytes, *, named: Path | None = None) -> None
         ) from exc
 
 
+def _read_existing_config(
+    real_path: Path, target_path: Path
+) -> tuple[dict[str, Any], str | None]:
+    """Read and parse the config at real_path; returns its JSON object (empty when absent) and the hash of the bytes read, or None."""
+    baseline_sig: str | None = None
+    read = _read_config(real_path) if real_path.exists() else None
+    if read is not None:
+        # The baseline is the hash of the exact bytes parsed here
+        # (`_read_config`), so a client write landing at any point after
+        # the read moves the pre-write re-check and aborts loudly.
+        text, baseline_sig = read
+        try:
+            existing = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"existing config at {target_path} is not valid JSON: {exc.msg} "
+                f"(line {exc.lineno}, col {exc.colno}). Fix the file by hand "
+                f"or remove it before re-running init."
+            ) from exc
+        if not isinstance(existing, dict):
+            raise ValueError(
+                f"existing config at {target_path} has a non-object root; "
+                f"expected `{{...}}`."
+            )
+    else:
+        existing = {}
+    return existing, baseline_sig
+
+
+def _merged_server_entry(
+    mcp_servers: dict[str, Any], name: str, binary: str, client: str | None
+) -> tuple[dict[str, Any], bool]:
+    """Build the server's stdio entry from its existing and legacy entries; returns it and whether a legacy entry is migrated."""
+    # Legacy-name migration: only when writing under the new default
+    # name. A user who explicitly passes `--name memory` (or some other
+    # string) has opinions; don't second-guess. Recognition uses the
+    # shared `command_launches_bettermemory` helper (NOT byte-exact
+    # `command == binary`) so the blessed shapes this project's own docs
+    # ship — bare `command: bettermemory`, the `uvx`+args plugin shape, a
+    # `~/.local/bin` symlink — are migrated instead of silently no-op'd.
+    # A legacy entry pointing at a different binary stays put.
+    legacy_raw = mcp_servers.get(LEGACY_SERVER_NAME)
+    legacy_present = (
+        name == DEFAULT_SERVER_NAME
+        and isinstance(legacy_raw, dict)
+        and command_launches_bettermemory(
+            legacy_raw.get("command"), legacy_raw.get("args"), binary
+        )
+    )
+
+    # Build the new-name entry as a UNION that preserves legacy-only keys
+    # while letting an existing new-name entry win on conflicts. A user
+    # may have added keys — notably `env` (BETTERMEMORY_DIR relocates the
+    # whole store), but also `cwd`, `timeout`, transport `headers`, or
+    # `disabled`. On the RENAME path those keys live ONLY under
+    # LEGACY_SERVER_NAME; on a re-run after an upgrade under `name`; in
+    # the both-exist case, under either. The pre-fix code seeded from the
+    # legacy entry ONLY when no new-name entry existed yet deleted the
+    # legacy entry UNCONDITIONALLY — so in the both-exist case legacy-only
+    # keys were silently dropped and a relocated store looked gone from
+    # that client. We own only type/command/args; everything else is kept.
+    legacy_entry: dict[str, Any] = (
+        legacy_raw if legacy_present and isinstance(legacy_raw, dict) else {}
+    )
+    existing_raw = mcp_servers.get(name)
+    existing_entry: dict[str, Any] = (
+        existing_raw if isinstance(existing_raw, dict) else {}
+    )
+
+    new_entry: dict[str, Any] = {**legacy_entry, **existing_entry}
+    # Deep-merge `env` so a BETTERMEMORY_DIR set on EITHER side survives;
+    # the new-name entry wins on a per-variable conflict.
+    merged_env: dict[str, Any] = {}
+    if isinstance(legacy_entry.get("env"), dict):
+        merged_env.update(legacy_entry["env"])
+    if isinstance(existing_entry.get("env"), dict):
+        merged_env.update(existing_entry["env"])
+    # Declare the client to the server (`identity.SOURCE_ENV`); a value
+    # the user already set wins, declared is declared.
+    if client is not None:
+        merged_env.setdefault(ENV_CLIENT, client)
+
+    new_entry["type"] = "stdio"
+    new_entry["command"] = binary
+    new_entry["args"] = []
+    new_entry["env"] = merged_env
+
+    # Drop remote-transport-only keys so the forced stdio entry can't
+    # become a hybrid (`url`/`headers` alongside `command` — a strict
+    # client schema can reject the whole file, taking down every OTHER
+    # MCP server in it). This is a DENYLIST, not an allowlist: every
+    # legitimate stdio key the user set (`cwd`, `timeout`, `disabled`,
+    # client-specific `autoApprove`/`alwaysAllow`, …) is preserved by the
+    # union above; only the keys meaningless for a stdio launch are shed.
+    for _remote_only_key in ("url", "headers"):
+        new_entry.pop(_remote_only_key, None)
+
+    # Born ENABLED: `disabled` survives only when the user set it on the
+    # SURVIVING (new-name) entry. A stale `disabled: true` inherited from
+    # the legacy entry on the rename path would leave the migrated server
+    # disabled while _print_patch_summary reports unqualified success.
+    if "disabled" in new_entry and "disabled" not in existing_entry:
+        del new_entry["disabled"]
+    return new_entry, legacy_present
+
+
+def _write_patched_config(
+    real_path: Path,
+    target_path: Path,
+    baseline_sig: str | None,
+    config_lock: _ConfigLock | None,
+    existing: dict[str, Any],
+) -> None:
+    """Re-check the config and Claude Code's lock, then write the patched JSON atomically; returns nothing."""
+    # Concurrency guard: a writer that takes no lock (another client, a
+    # Claude Code that predates its lock, an editor) may have rewritten
+    # the file after we read it. Re-check immediately before the atomic
+    # replace; abort rather than clobber the client's update. Raised as
+    # ValueError so the CLI renders a clean "re-run" message (exit 2)
+    # instead of a traceback. Two shapes:
+    #
+    # 1. The file did not exist at read time but does now — a writer
+    #    CREATED it under us. Without this arm the skeleton doc below
+    #    would silently replace the client's brand-new config: the same
+    #    clobber class the signature guard closes, on the create path.
+    # 2. The file existed and the hash of its bytes moved.
+    # Both arms live in `_refuse_if_moved`, shared with the YAML path.
+    _refuse_if_moved(real_path, baseline_sig)
+    # Claude Code's lock is still init's own (no holder took it over as
+    # stale), and is refreshed for the write.
+    _confirm_config_lock(config_lock)
+
+    # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
+    # `target_path.write_text(...)` here would truncate the file before
+    # writing the new content, so power loss / process kill mid-write
+    # could leave the user with an empty `~/.claude.json` — every MCP
+    # server they had registered (not just bettermemory) gone. The
+    # helper writes to a tmp sibling, fsyncs, atomic-renames into place,
+    # and fsyncs the parent directory; `_write_config` keeps the mode.
+    _write_config(
+        real_path,
+        (json.dumps(existing, indent=2) + "\n").encode("utf-8"),
+        named=target_path,
+    )
+
+
 def patch_client_config(
     target_path: Path,
     *,
@@ -866,28 +1012,7 @@ def patch_client_config(
         _fsutil.flock_excl(target_path, lock_suffix=".bettermemory.lock"),
         _claude_code_config_lock(target_path) as config_lock,
     ):
-        baseline_sig: str | None = None
-        read = _read_config(real_path) if real_path.exists() else None
-        if read is not None:
-            # The baseline is the hash of the exact bytes parsed here
-            # (`_read_config`), so a client write landing at any point after
-            # the read moves the pre-write re-check and aborts loudly.
-            text, baseline_sig = read
-            try:
-                existing = json.loads(text) if text.strip() else {}
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"existing config at {target_path} is not valid JSON: {exc.msg} "
-                    f"(line {exc.lineno}, col {exc.colno}). Fix the file by hand "
-                    f"or remove it before re-running init."
-                ) from exc
-            if not isinstance(existing, dict):
-                raise ValueError(
-                    f"existing config at {target_path} has a non-object root; "
-                    f"expected `{{...}}`."
-                )
-        else:
-            existing = {}
+        existing, baseline_sig = _read_existing_config(real_path, target_path)
 
         mcp_servers = existing.setdefault("mcpServers", {})
         if not isinstance(mcp_servers, dict):
@@ -896,76 +1021,9 @@ def patch_client_config(
                 f"expected `{{...}}`."
             )
 
-        # Legacy-name migration: only when writing under the new default
-        # name. A user who explicitly passes `--name memory` (or some other
-        # string) has opinions; don't second-guess. Recognition uses the
-        # shared `command_launches_bettermemory` helper (NOT byte-exact
-        # `command == binary`) so the blessed shapes this project's own docs
-        # ship — bare `command: bettermemory`, the `uvx`+args plugin shape, a
-        # `~/.local/bin` symlink — are migrated instead of silently no-op'd.
-        # A legacy entry pointing at a different binary stays put.
-        legacy_raw = mcp_servers.get(LEGACY_SERVER_NAME)
-        legacy_present = (
-            name == DEFAULT_SERVER_NAME
-            and isinstance(legacy_raw, dict)
-            and command_launches_bettermemory(
-                legacy_raw.get("command"), legacy_raw.get("args"), binary
-            )
+        new_entry, legacy_present = _merged_server_entry(
+            mcp_servers, name, binary, client
         )
-
-        # Build the new-name entry as a UNION that preserves legacy-only keys
-        # while letting an existing new-name entry win on conflicts. A user
-        # may have added keys — notably `env` (BETTERMEMORY_DIR relocates the
-        # whole store), but also `cwd`, `timeout`, transport `headers`, or
-        # `disabled`. On the RENAME path those keys live ONLY under
-        # LEGACY_SERVER_NAME; on a re-run after an upgrade under `name`; in
-        # the both-exist case, under either. The pre-fix code seeded from the
-        # legacy entry ONLY when no new-name entry existed yet deleted the
-        # legacy entry UNCONDITIONALLY — so in the both-exist case legacy-only
-        # keys were silently dropped and a relocated store looked gone from
-        # that client. We own only type/command/args; everything else is kept.
-        legacy_entry: dict[str, Any] = (
-            legacy_raw if legacy_present and isinstance(legacy_raw, dict) else {}
-        )
-        existing_raw = mcp_servers.get(name)
-        existing_entry: dict[str, Any] = (
-            existing_raw if isinstance(existing_raw, dict) else {}
-        )
-
-        new_entry: dict[str, Any] = {**legacy_entry, **existing_entry}
-        # Deep-merge `env` so a BETTERMEMORY_DIR set on EITHER side survives;
-        # the new-name entry wins on a per-variable conflict.
-        merged_env: dict[str, Any] = {}
-        if isinstance(legacy_entry.get("env"), dict):
-            merged_env.update(legacy_entry["env"])
-        if isinstance(existing_entry.get("env"), dict):
-            merged_env.update(existing_entry["env"])
-        # Declare the client to the server (`identity.SOURCE_ENV`); a value
-        # the user already set wins, declared is declared.
-        if client is not None:
-            merged_env.setdefault(ENV_CLIENT, client)
-
-        new_entry["type"] = "stdio"
-        new_entry["command"] = binary
-        new_entry["args"] = []
-        new_entry["env"] = merged_env
-
-        # Drop remote-transport-only keys so the forced stdio entry can't
-        # become a hybrid (`url`/`headers` alongside `command` — a strict
-        # client schema can reject the whole file, taking down every OTHER
-        # MCP server in it). This is a DENYLIST, not an allowlist: every
-        # legitimate stdio key the user set (`cwd`, `timeout`, `disabled`,
-        # client-specific `autoApprove`/`alwaysAllow`, …) is preserved by the
-        # union above; only the keys meaningless for a stdio launch are shed.
-        for _remote_only_key in ("url", "headers"):
-            new_entry.pop(_remote_only_key, None)
-
-        # Born ENABLED: `disabled` survives only when the user set it on the
-        # SURVIVING (new-name) entry. A stale `disabled: true` inherited from
-        # the legacy entry on the rename path would leave the migrated server
-        # disabled while _print_patch_summary reports unqualified success.
-        if "disabled" in new_entry and "disabled" not in existing_entry:
-            del new_entry["disabled"]
 
         # Idempotency check: same name, same shape, no legacy to migrate →
         # no rewrite needed.
@@ -986,35 +1044,8 @@ def patch_client_config(
         if legacy_present:
             del mcp_servers[LEGACY_SERVER_NAME]
 
-        # Concurrency guard: a writer that takes no lock (another client, a
-        # Claude Code that predates its lock, an editor) may have rewritten
-        # the file after we read it. Re-check immediately before the atomic
-        # replace; abort rather than clobber the client's update. Raised as
-        # ValueError so the CLI renders a clean "re-run" message (exit 2)
-        # instead of a traceback. Two shapes:
-        #
-        # 1. The file did not exist at read time but does now — a writer
-        #    CREATED it under us. Without this arm the skeleton doc below
-        #    would silently replace the client's brand-new config: the same
-        #    clobber class the signature guard closes, on the create path.
-        # 2. The file existed and the hash of its bytes moved.
-        # Both arms live in `_refuse_if_moved`, shared with the YAML path.
-        _refuse_if_moved(real_path, baseline_sig)
-        # Claude Code's lock is still init's own (no holder took it over as
-        # stale), and is refreshed for the write.
-        _confirm_config_lock(config_lock)
-
-        # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
-        # `target_path.write_text(...)` here would truncate the file before
-        # writing the new content, so power loss / process kill mid-write
-        # could leave the user with an empty `~/.claude.json` — every MCP
-        # server they had registered (not just bettermemory) gone. The
-        # helper writes to a tmp sibling, fsyncs, atomic-renames into place,
-        # and fsyncs the parent directory; `_write_config` keeps the mode.
-        _write_config(
-            real_path,
-            (json.dumps(existing, indent=2) + "\n").encode("utf-8"),
-            named=target_path,
+        _write_patched_config(
+            real_path, target_path, baseline_sig, config_lock, existing
         )
         result: dict[str, Any] = {
             "action": action,
