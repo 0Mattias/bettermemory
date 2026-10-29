@@ -155,6 +155,9 @@ from .store_schema import (
     SCHEMA_VERSION,
     SYNCED,
     UNACCOUNTED,
+    StoreRefusedError as StoreRefusedError,
+    admit_store as admit_store,
+    read_store_meta as read_store_meta,
     _MEMBERSHIP_SPECS as _MEMBERSHIP_SPECS,
     _STORE_ID_PATTERN,
     ConcurrentUpdateError,
@@ -346,15 +349,19 @@ def retryable_code(exc: BaseException) -> str | None:
 
 
 def _connect(path: Path) -> sqlite3.Connection:
-    """The one way a store file is opened: the page size for a new file,
-    WAL, synchronous NORMAL, the CLI's busy timeout (a connection opened
-    for another role sets its own, `Store.set_busy_timeout`), foreign keys
-    on, autocommit off so every write is an explicit transaction, and
-    owner-only modes on the file and its WAL siblings."""
+    """The one way a store file is opened for writing: admitted first
+    (`store_schema.admit_store`, which refuses a file whose schema this
+    build did not write before anything is written to it), then the page
+    size for a new file, WAL, synchronous NORMAL, the CLI's busy timeout (a
+    connection opened for another role sets its own,
+    `Store.set_busy_timeout`), foreign keys on, autocommit off so every
+    write is an explicit transaction, and owner-only modes on the file and
+    its WAL siblings."""
     conn = sqlite3.connect(
         str(path), timeout=CLI_BUSY_TIMEOUT_SECONDS, isolation_level=None
     )
     try:
+        admit_store(conn, path)
         # A no-op on an existing store: the page size is fixed once the
         # file holds a table, and WAL mode fixes it for good.
         conn.execute(f"PRAGMA page_size = {PAGE_SIZE}")
@@ -644,10 +651,7 @@ class Store:
             raise FileNotFoundError(f"no store at {path}")
         conn = _connect(path)
         try:
-            meta = {
-                str(r["key"]): str(r["value"])
-                for r in conn.execute("SELECT key, value FROM meta")
-            }
+            meta = read_store_meta(conn, path)
             store_id = meta.get("store_id")
             expected = meta.get("key_fingerprint")
             if not store_id or not expected:

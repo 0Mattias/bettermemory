@@ -1570,6 +1570,67 @@ follows the candidates' testing.
   `docs/operations.md`, `tests/test_daemon_wire.py`,
   `tests/test_daemon_identity.py`, `tests/test_hook_client.py`,
   `tests/test_daemon_lifecycle.py`, `tests/test_shim.py`)
+- **A store file this build did not write is refused before it is read.**
+  A repository can ship `.claude-memory/memory.sqlite`, and `[storage]
+  cwd_store`, on by default, makes it the store in that checkout; one
+  whose `meta` is a view over an endless recursive query made `security
+  audit`, `doctor`, the daemon's open and every hook run for good, and a
+  trigger of its own on `log` did the same to the first write, the
+  session-start hook's brief among them. Every opener of an existing store
+  file (`Store.open` for the owner and for a reader, the audit's meta
+  read, the key ring's read of a bound file, and the daemon's read of a
+  store put in place of its own) now admits it first. Admission sets
+  `trusted_schema` off and then reads, each statement held to a 2 s
+  deadline (a progress handler that looks at the clock every 100
+  virtual-machine steps) and to strings and blobs of at most 16 KiB, the
+  file's `sqlite_master`, compared with the objects this build's schema
+  creates, and the columns and foreign keys of each plain table this build
+  creates (`PRAGMA table_xinfo`, `foreign_key_list`). `meta` is read after
+  that under the deadline alone: an admitted `meta` computes nothing, and
+  its values can be longer. It refuses a view; a table, index or trigger
+  this build does not create; one of its own indexes or triggers with
+  another text, or one of its tables made virtual; a `sqlite_stat1` or
+  `sqlite_stat4` with any text but the one SQLite gives it; a table of
+  this build's name with a generated column, a check, a foreign key or a
+  default that is not a literal; a schema SQLite cannot read (`up
+  --foreground` ended in a traceback on one); a longer string or blob made
+  while the file is admitted; and a statement that runs past the deadline.
+  Each is one `StoreRefusedError`: `doctor` fails its `store` check, the
+  audit gives one high `key.match` finding (a schema SQLite cannot read
+  stays its warning that the meta cannot be read), the daemon (`up
+  --foreground`) and the CLI's writing commands end in one line with exit
+  1, and the hooks print nothing. This build writes nothing to a refused
+  file (no WAL switch, no chmod, no added table); SQLite, opening it as it
+  opens any database, replays a `-wal` or rolls back a hot `-journal` that
+  came with it, and makes and removes a WAL-mode file's `-wal` and `-shm`
+  while it reads the schema. Plain tables are matched by name, since an
+  older store's have fewer columns; every index, trigger, the full-text
+  table and the two statistics tables have had one text since the store
+  became one file, and none of this build's tables has a generated column,
+  check, foreign key or default other than a literal, so every store a 9.x
+  build wrote is admitted. A cold review built three stores the first cut
+  of this change admitted and that still hung every surface: a `meta`
+  whose `value` is a generated column over one costly `instr` call, a
+  `sqlite_stat1` rewritten the same way (SQLite reads it while the schema
+  loads, before any check), and a check on `log` that every insert runs;
+  each is refused now. "A store this build did not create" is decided by
+  the connection, not the path: every existing file is checked, the state
+  directory's own store included, because a path says nothing of the bytes
+  now at it (a `git pull` can replace a store this build wrote, and the
+  state directory's file can be a restored or synced copy) and the key
+  ring's binding names a path, not bytes; only a file `Store.create`
+  writes on its own connection goes unchecked. Measured on this tree:
+  admitting a store this build wrote costs 0.71 ms an open, meta read
+  included (median of 200, on a fresh store and on one of 2,000 memories;
+  1.0 ms at most); `Store.open` refuses each of the seven poisoned stores
+  the tests build in 0.55 to 0.72 ms at the median, and every surface well
+  inside a quarter of the deadline; a meta of 8 million rows is refused at
+  2.09 s. (`src/bettermemory/store_schema.py`,
+  `src/bettermemory/store.py`, `src/bettermemory/store_keys.py`,
+  `src/bettermemory/posture.py`, `src/bettermemory/doctor.py`,
+  `src/bettermemory/daemon.py`, `src/bettermemory/cli/_common.py`,
+  `SECURITY.md`, `docs/api.md`, `docs/operations.md`,
+  `tests/test_store_admission.py`)
 
 #### Known limitations
 
@@ -1798,6 +1859,28 @@ follows the candidates' testing.
   another port or under another token, the old pool takes no request and
   is closed only when the shim exits, its kept connections closed by
   the old daemon's keep-alive timeout or exit. (`src/bettermemory/shim.py`)
+- **A store file is admitted by its schema, not by its pages.** A table
+  this build creates is admitted by its name and by what it could make
+  SQLite run, so one redefined with other plain columns passes, and a
+  column's declared type and collation are not compared. The deadline
+  and the 16 KiB length limit hold only until a file is admitted, so the
+  later reads of a large or crafted file that passes (a full-text index
+  with crafted pages, rows of long values) are bounded by its size, not
+  by time.
+- **A refused file's journal is replayed before it is refused.** SQLite
+  replays a `-wal`, or rolls back a hot `-journal`, that came with a
+  store file when the first statement opens it, before the deadline
+  starts, and gives a WAL-mode file a `-wal` and `-shm` while its schema
+  is read; a refused file is left with what that wrote. Admitting
+  through a read-only connection before the writing open would leave it
+  as it was; the openers do not do that yet.
+- **`backup` still reads a store through connections of its own.** The
+  restore plan's read of the store id and of the log's last seq, and the
+  online-backup copy `backup create` takes, do not admit the file first;
+  `src/bettermemory/backup.py` was outside this change.
+- **A lock wait comes before the deadline.** The deadline counts from a
+  statement's first progress callback, so a wait for another
+  connection's lock is bounded by the 5 s busy timeout, not by it.
 
 ### 9.0.0rc13
 

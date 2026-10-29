@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from ..config import Config, load_config
 from ..log import KeyUnreadableError
-from ..store import STORE_FILENAME, Store
+from ..store import STORE_FILENAME, Store, StoreRefusedError
 
 if TYPE_CHECKING:
     from ..events import Recorder
@@ -169,10 +169,18 @@ def exit_if_key_unreadable(
 def open_owner_store(path: Path) -> Store:
     """`Store.open_or_create` at `path`, as the owner's process opens it
     for writing, with a key file it cannot read ending the command in one
-    line and exit 1 (`exit_if_key_unreadable`) rather than a traceback.
-    The opener `cli_context` and `serve` share."""
+    line and exit 1 (`exit_if_key_unreadable`) rather than a traceback,
+    and so does a store file every opener refuses
+    (`store.StoreRefusedError`: one this build did not write, such as a
+    repository's ``.claude-memory`` store whose ``meta`` is a view). The
+    opener `cli_context` and `serve` share, and so the daemon's own: its
+    line is the last of its log, which `up` and the hooks quote."""
     with exit_if_key_unreadable():
-        return Store.open_or_create(path)
+        try:
+            return Store.open_or_create(path)
+        except StoreRefusedError as exc:
+            sys.stderr.write(f"bettermemory: {exc}\n")
+            raise SystemExit(1) from None
 
 
 def exit_if_bundle_store(*, prefix: str, exit_code: int = 0) -> None:

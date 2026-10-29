@@ -679,9 +679,35 @@ def _open_remedy(path: Path, exc: Exception) -> str:
     a file SQLite cannot read as a database, or one without its identity,
     is damaged; a lock held past the busy timeout, a file or directory
     this user cannot open, and an I/O error are not, and restoring a copy
-    over a sound store would lose every write since the copy."""
+    over a sound store would lose every write since the copy. A file
+    every opener refuses (`store.StoreRefusedError`) is not damaged
+    either: it is not a store this build wrote, and nothing reads it."""
+    from .store import StoreRefusedError
     from .store_schema import StoreVersionError
 
+    cause = getattr(exc, "__cause__", None)
+    if (
+        isinstance(exc, StoreRefusedError)
+        and isinstance(cause, sqlite3.DatabaseError)
+        and getattr(cause, "sqlite_errorcode", 0) & 0xFF in (11, 26)
+    ):
+        # A schema SQLite cannot read (SQLITE_CORRUPT, SQLITE_NOTADB;
+        # `admit_store`): damaged, or not a database at all, as before the
+        # check, and restoring a copy is the fix.
+        exc = cause
+    if isinstance(exc, StoreRefusedError):
+        if exc.timed_out:
+            return (
+                f"check the disk under {path} and run doctor again; a store this "
+                "build wrote answers its first reads at once, and doctor leaves "
+                "the file as it is"
+            )
+        return (
+            f"move {path} aside and find out what wrote it: a store this build "
+            "writes holds only its own schema's tables, indexes and triggers, and "
+            "one a repository shipped is not yours to serve; doctor leaves the "
+            "file as it is"
+        )
     if "this build reads up to" in str(exc):
         return "upgrade bettermemory: a newer release wrote this store"
     if isinstance(exc, StoreVersionError) and exc.needed is not None:

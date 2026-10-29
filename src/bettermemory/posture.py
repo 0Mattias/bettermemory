@@ -76,7 +76,7 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import _daemon_client, claude_paths, githead, sandbox_settings
 from ._fsutil import sqlite_file_uri
@@ -89,6 +89,9 @@ from .config import (
     Config,
 )
 from .log import STORE_ID_PATTERN, KeyRing, KeyUnreadableError, fingerprint
+
+if TYPE_CHECKING:
+    from .store_schema import StoreRefusedError
 
 #: Every status a finding can carry, mildest first.
 STATUSES: tuple[str, ...] = ("ok", "info", "skip", "warn", "high")
@@ -217,7 +220,7 @@ def audit(*, cwd: Path | None = None, platform: str | None = None) -> Audit:
     findings.append(_selection(store_dir, rule))
     findings.extend(_overrides())
 
-    meta, meta_error = _meta_or_error(store_file)
+    meta, meta_error, refused = _meta_or_error(store_file)
     store_id = (meta or {}).get("store_id")
     # The meta is whatever the store file says, and a ring is built for a
     # well-formed id only (`log.KeyRing`): an id holding a path would have
@@ -239,7 +242,9 @@ def audit(*, cwd: Path | None = None, platform: str | None = None) -> Audit:
             state_dir=state_dir,
         )
     )
-    findings.append(_key(store_file, keys_dir, meta, meta_error, keyring))
+    findings.append(
+        _key(store_file, keys_dir, meta, meta_error, keyring, refused=refused)
+    )
     findings.append(_placement(store_dir, keys_dir))
     findings.extend(_where(store_dir, store_file, keys_dir))
     findings.extend(_daemon(state_dir, store_file))
@@ -504,8 +509,15 @@ def read_meta(store_file: Path) -> dict[str, str]:
     new fingerprint among them. Raises ``sqlite3.Error`` on a file that is
     not a store, and on that refusal. A lock held over the read is waited
     for as any CLI command waits (`store.CLI_BUSY_TIMEOUT_SECONDS`, whose
-    evidence is stated there): the audit is one."""
-    from .store import CLI_BUSY_TIMEOUT_SECONDS
+    evidence is stated there): the audit is one.
+
+    The file is admitted first, as every opener admits it
+    (`store_schema.admit_store`): a store this build did not write (a
+    view or a trigger of its own choosing, the shape that made a
+    repository's store hang this read for good) raises
+    `store.StoreRefusedError` before meta is read, and meta is read under
+    the admission deadline (`store_schema.read_store_meta`)."""
+    from .store import CLI_BUSY_TIMEOUT_SECONDS, admit_store, read_store_meta
 
     resolved = store_file.resolve()
     wal, shm = _sibling(resolved, "-wal"), _sibling(resolved, "-shm")
@@ -524,22 +536,38 @@ def read_meta(store_file: Path) -> dict[str, str]:
         timeout=CLI_BUSY_TIMEOUT_SECONDS,
     )
     try:
-        rows = conn.execute("SELECT key, value FROM meta").fetchall()
+        admit_store(conn, resolved)
+        return read_store_meta(conn, resolved)
     finally:
         conn.close()
-    return {str(row[0]): str(row[1]) for row in rows}
 
 
-def _meta_or_error(store_file: Path) -> tuple[dict[str, str] | None, str | None]:
+def _meta_or_error(
+    store_file: Path,
+) -> tuple[dict[str, str] | None, str | None, StoreRefusedError | None]:
+    """The store's meta, or why it could not be read, and the refusal
+    every opener makes of the file when that is why (`read_meta`)."""
+    from .store_schema import StoreRefusedError
+
     present, unreachable = _presence(store_file)
     if unreachable is not None:
-        return None, f"{store_file} cannot be reached: {unreachable}"
+        return None, f"{store_file} cannot be reached: {unreachable}", None
     if not present:
-        return None, None
+        return None, None, None
     try:
-        return read_meta(store_file), None
+        return read_meta(store_file), None, None
+    except StoreRefusedError as exc:
+        cause = exc.__cause__
+        if isinstance(cause, sqlite3.DatabaseError) and (
+            getattr(cause, "sqlite_errorcode", 0) & 0xFF in (11, 26)
+        ):
+            # A schema SQLite cannot read (SQLITE_CORRUPT, SQLITE_NOTADB):
+            # damaged or not a database, a meta that cannot be read, as
+            # before the check (`admit_store`).
+            return None, str(cause), None
+        return None, str(exc), exc
     except sqlite3.Error as exc:
-        return None, str(exc)
+        return None, str(exc), None
 
 
 def _key(
@@ -548,9 +576,13 @@ def _key(
     meta: dict[str, str] | None,
     meta_error: str | None,
     keyring: KeyRing | None,
+    *,
+    refused: StoreRefusedError | None = None,
 ) -> Finding:
     """The key is present under the keys directory and its fingerprint is
-    the one the store records."""
+    the one the store records. A store file every opener refuses
+    (`refused`, `read_meta`) is this check's one finding instead: its meta
+    was not read, so there is no key to look for."""
     present, unreachable = _presence(store_file)
     if not present and unreachable is None:
         return Finding(
@@ -558,6 +590,23 @@ def _key(
             "info",
             f"no store at {store_file} yet: nothing to check",
             path=str(store_file),
+        )
+    if refused is not None:
+        return Finding(
+            "key.match",
+            "warn" if refused.timed_out else "high",
+            f"{refused}: every opener (the daemon, a hook, the CLI) refuses it "
+            "the same way, and none reads a value from it or writes to it",
+            path=str(store_file),
+            fix=(
+                "run the audit again once the disk answers; a store whose meta "
+                "takes that long to read is not one this build wrote"
+                if refused.timed_out
+                else "move the file aside and find out what wrote it: a store this "
+                "build writes holds only its own schema's tables, indexes and "
+                "triggers, and one a repository shipped is not yours to serve"
+            ),
+            details={"refused": refused.why},
         )
     store_id = (meta or {}).get("store_id")
     if meta is not None and keyring is None and store_id:

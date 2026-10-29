@@ -112,6 +112,8 @@ from .store import (
     HOOK_BUSY_TIMEOUT_SECONDS,
     TOOL_BUSY_TIMEOUT_SECONDS,
     Store,
+    StoreRefusedError,
+    admit_store,
     note_residue,
     orphan_names,
     orphan_order,
@@ -1253,6 +1255,11 @@ def _tell_successor(
         return
     told = False
     try:
+        # Admitted first, as every opener admits a store file it did not
+        # write on its own connection (`store_schema.admit_store`): this
+        # runs on the event loop, and a `meta` that is an endless view
+        # would hold it, and every request, for good.
+        admit_store(conn, store_path)
         # The write lock is taken first, so the busy timeout covers
         # waiting on a writer in another process: a read upgraded to a
         # write fails at once on a busy store, its busy handler never
@@ -1285,7 +1292,7 @@ def _tell_successor(
         )
         conn.execute("COMMIT")
         told = True
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, StoreRefusedError) as exc:
         with contextlib.suppress(sqlite3.Error):
             conn.rollback()
         log.warning(

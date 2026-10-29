@@ -7,25 +7,28 @@ membership rows are checked against, the row types the reads return
 `StandingAnswer`), the `SCHEMA`, `MEMBERSHIP_SCHEMA` and `ADDITIVE_SCHEMA`
 texts with the additive step that brings an older store up to them, the
 store's errors, the compatibility contract's versions and the check every
-open makes of them (`check_versions`, ENG-107), and the paths a store
-opens by (`store_path`, the saved orphans, the v8 directory check,
-`resolve_keys_dir`). `store` re-exports
-every name a caller reads. It lives apart from `store.py` to keep each
-module under the package's 2,000-line bound (ENG-96), at the bottom of
-the store family: it imports no other store module.
+open makes of them (`check_versions`, ENG-107), the paths a store opens
+by (`store_path`, the saved orphans, the v8 directory check,
+`resolve_keys_dir`), and the check every opener of an existing store
+file runs before it reads a value from it (`admit_store`,
+`read_store_meta`, `StoreRefusedError`). `store` re-exports every name a
+caller reads. It lives apart from `store.py` to keep each module under
+the package's 2,000-line bound (ENG-96), at the bottom of the store
+family: it imports no other store module.
 """
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import re
 import json
 import logging
 import os
-import contextlib
 import secrets
 import sqlite3
-from collections.abc import Iterator, Mapping
+import time
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1418,3 +1421,334 @@ def writes_rolled_back(store: Store) -> Iterator[bool]:
             raise _RolledBack
     finally:
         conn.execute("PRAGMA query_only = ON")
+
+
+# Admitting a store file (ENG-172)
+# ---------------------------------------------------------------------------
+
+#: How long one statement may run on a store file while it is admitted
+#: (`admit_store`, `read_store_meta`), in seconds, counted from the
+#: statement's first progress callback: a wait for another connection's
+#: lock comes before it and is the busy timeout's to bound. The statements
+#: it bounds read ``sqlite_master`` (about 70 rows in every store this
+#: build writes), each plain table's columns, and ``meta`` (under ten),
+#: whatever the store's size: measured on this tree (scratch run, Apple
+#: silicon, 200 opens each) all of it took 0.71 ms at the median and
+#: 1.0 ms at most, on a fresh store and on one of 2,000 memories alike,
+#: so 2 s cuts nothing this build wrote and stays well inside the 15 s a
+#: hook's client waits (`_daemon_client.HOOK_TIMEOUT_SECONDS`). A meta of
+#: 8 million rows, read whole, took 2.15 s; under this deadline its open
+#: was refused at 2.09 s.
+ADMISSION_DEADLINE_SECONDS = 2.0
+
+#: SQLite virtual-machine steps between two looks at the clock while a
+#: file is admitted (`sqlite3.Connection.set_progress_handler`). Small, so
+#: a statement of few steps, each made costly, is still looked at.
+_PROGRESS_STEPS = 100
+
+#: The longest string or blob a statement may make while a file is
+#: admitted (SQLITE_LIMIT_LENGTH, `admit_store`). One built-in call is one
+#: virtual-machine step a progress handler cannot interrupt, and its work
+#: can grow with its arguments' length (``instr`` is O(n*m)); SQLite runs a
+#: schema's expressions (``sqlite_stat1`` is read while the schema loads)
+#: before any check can look at them. Under 16 KiB one such call costs
+#: about a millisecond; the longest text this build's schema holds is
+#: 1,015 characters, and a statistics row is a few numbers.
+_ADMISSION_MAX_LENGTH = 1 << 14
+
+#: The tables SQLite itself writes into a database it is asked to analyse
+#: (`ANALYZE`, ``PRAGMA optimize``), which a user or a tool may have run on
+#: a store, with the text SQLite gives each: statistics the query planner
+#: reads while the schema loads. Any other text (a generated column, say)
+#: is refused.
+_SQLITE_STATISTICS = {
+    "sqlite_stat1": "CREATE TABLE sqlite_stat1(tbl,idx,stat)",
+    "sqlite_stat4": "CREATE TABLE sqlite_stat4(tbl,idx,neq,nlt,ndlt,sample)",
+}
+
+#: A column default that is a literal: NULL, a number, a string or a blob,
+#: in parentheses or not. Every default this build's tables give is one.
+_LITERAL = re.compile(
+    r"\(*\s*(NULL|[-+]?\d+(\.\d+)?|'(?:[^']|'')*'|X'[0-9A-Fa-f]*')\s*\)*", re.I
+)
+#: What a table's text quotes or comments out, so a word in it is not read
+#: as a keyword (`table_refusal`).
+_QUOTED = re.compile(
+    r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`(?:[^`]|``)*`|\[[^\]]*\]|--[^\n]*|/\*.*?\*/",
+    re.S,
+)
+
+#: SQLite's primary result codes for a file whose schema cannot be read:
+#: SQLITE_CORRUPT (a schema text SQLite cannot parse among them) and
+#: SQLITE_NOTADB.
+_UNREADABLE_SCHEMA_CODES = frozenset({11, 26})
+
+
+class StoreRefusedError(ValueError):
+    """A store file every opener refuses before it reads a value from it
+    (`admit_store`): its schema holds an object this build does not
+    create, or a read of its schema or its meta ran past
+    `ADMISSION_DEADLINE_SECONDS`. A ValueError, as every other refusal of
+    `Store.open` for a file this build does not read is, so each caller's
+    handling of those reports this one too, in its own single line.
+    ``timed_out`` tells the deadline from the schema: a file whose read
+    ran long may be a store this build wrote, on a disk that stalled.
+    ``holds_meta`` says whether the refused file has a ``meta`` table,
+    None when its schema was not read to tell: one that has may still
+    hold a store's id (another build's store with one more index), which
+    the key ring's binding check reads as a file it cannot read to tell
+    (`store_keys._store_id_at`), not as no store."""
+
+    def __init__(
+        self,
+        path: Path,
+        why: str,
+        *,
+        timed_out: bool = False,
+        holds_meta: bool | None = None,
+    ) -> None:
+        self.path = path
+        self.why = why
+        self.timed_out = timed_out
+        self.holds_meta = holds_meta
+        super().__init__(f"{path} is not opened: {why}")
+
+
+_BUILT_OBJECTS: dict[tuple[str, str], tuple[str, str | None, bool]] = {}
+
+
+def _built_objects() -> dict[tuple[str, str], tuple[str, str | None, bool]]:
+    """Every object this build's schema creates, by (type, name): the table
+    it is on, its text as ``sqlite_master`` keeps it, and whether that text
+    must match. Read once from an in-memory database built from the three
+    schema texts, so the list is the schema itself and cannot drift from
+    it. Indexes, triggers and the full-text table must match their text:
+    each is the same text in every build since the store was one file
+    (checked over the history of `store.py` and this module when the check
+    was written). A plain table is matched by name, since
+    `_add_membership_tables` adds columns to an older store's tables and
+    SQLite rewrites their text when it does; what such a table can make
+    SQLite run is checked on the file itself (`table_refusal`)."""
+    if not _BUILT_OBJECTS:
+        conn = sqlite3.connect(":memory:")
+        try:
+            for script in (SCHEMA, MEMBERSHIP_SCHEMA, ADDITIVE_SCHEMA):
+                conn.executescript(script)
+            built = {
+                (str(kind), str(name)): (
+                    str(table),
+                    sql,
+                    kind != "table" or str(sql or "").startswith("CREATE VIRTUAL"),
+                )
+                for kind, name, table, sql in conn.execute(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master"
+                )
+            }
+        finally:
+            conn.close()
+        _BUILT_OBJECTS.update(built)
+    return _BUILT_OBJECTS
+
+
+def schema_refusal(rows: Iterable[Sequence[Any]]) -> str | None:
+    """Why a store file whose ``sqlite_master`` holds `rows` (type, name,
+    table, text) is not one this build wrote, or None when it is. Every
+    object must be one this build creates (`_built_objects`), on the same
+    table, an index, a trigger or the full-text table with the same text,
+    and a plain table must not be a virtual one. SQLite's own statistics
+    tables pass with SQLite's own text. So a view of any name fails, a trigger this build did not
+    write, and one of its own triggers with another body: the objects that
+    run SQL of the file's choosing when this build reads or writes it. A
+    store an earlier build created holds a subset of these objects, and
+    passes."""
+    built = _built_objects()
+    for kind, name, table, sql in rows:
+        kind, name, table = str(kind), str(name), str(table)
+        if kind == "table" and name in _SQLITE_STATISTICS:
+            if sql != _SQLITE_STATISTICS[name]:
+                return f"its table {name!r} is not the one SQLite writes"
+            continue
+        expected = built.get((kind, name))
+        if expected is None:
+            return f"it holds a {kind} named {name!r}, which this build never creates"
+        on, text, exact = expected
+        if table != on:
+            return f"its {kind} {name!r} is on {table!r}, not on {on!r}"
+        if exact and sql != text:
+            return f"its {kind} {name!r} is not the one this build creates"
+        if not exact and str(sql or "").lstrip().upper().startswith("CREATE VIRTUAL"):
+            return f"its table {name!r} is a virtual table, which this build never makes it"
+    return None
+
+
+def table_refusal(conn: sqlite3.Connection, name: str, sql: str | None) -> str | None:
+    """Why the plain table ``name`` this build creates, as the file on
+    `conn` defines it (``sql``), could make SQLite run an expression of the
+    file's choosing when this build reads or writes it, or None: a
+    generated column, a default that is not a literal, a CHECK, or a
+    foreign key. A table is admitted by its name, since an older store's
+    has fewer columns (`schema_refusal`); this reads its columns, so a
+    ``meta`` whose ``value`` is computed, or a ``log`` whose every insert
+    runs a check, is refused. None of this build's own tables has any of
+    them: their defaults are all ``''``, ``'[]'``, ``'{}'`` or ``0``."""
+    quoted = '"' + name.replace('"', '""') + '"'
+    for row in conn.execute(f"PRAGMA table_xinfo({quoted})"):
+        column, default, hidden = row[1], row[4], row[6]
+        if hidden:
+            return f"its table {name!r} has a generated column {column!r}"
+        if default is not None and not _LITERAL.fullmatch(str(default)):
+            return (
+                f"its table {name!r} gives {column!r} a default that is not a literal"
+            )
+    if conn.execute(f"PRAGMA foreign_key_list({quoted})").fetchone() is not None:
+        return f"its table {name!r} has a foreign key"
+    if re.search(r"\bCHECK\b", _QUOTED.sub(" ", sql or ""), re.I):
+        return f"its table {name!r} has a check"
+    return None
+
+
+@contextlib.contextmanager
+def _deadline(
+    conn: sqlite3.Connection, path: Path, what: str, *, length: int | None = None
+) -> Iterator[None]:
+    """Run the statements inside the block with `ADMISSION_DEADLINE_SECONDS`
+    on each one's virtual-machine time: a progress handler that starts its
+    clock at its first call and interrupts the statement once the deadline
+    has passed, which SQLite reports as SQLITE_INTERRUPT and this raises as
+    `StoreRefusedError` (``timed_out``). With ``length``, no string or blob
+    longer than that is made inside the block (SQLITE_LIMIT_LENGTH), and
+    one that would be is a refusal too. The handler is removed, and the
+    limit put back, on the way out. Read at call time, so a test can
+    shorten it."""
+    seconds = ADMISSION_DEADLINE_SECONDS
+    started: list[float] = []
+    fired: list[bool] = []
+
+    def over() -> int:
+        now = time.monotonic()
+        if not started:
+            started.append(now)
+            return 0
+        if now - started[0] > seconds:
+            fired.append(True)
+            return 1
+        return 0
+
+    conn.set_progress_handler(over, _PROGRESS_STEPS)
+    longest = None
+    if length is not None:
+        longest = conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, length)
+    try:
+        yield
+    except sqlite3.DataError as exc:
+        raise StoreRefusedError(
+            path, f"it is not a store this build wrote ({exc} in its {what})"
+        ) from exc
+    except sqlite3.OperationalError as exc:
+        if not fired:
+            raise
+        raise StoreRefusedError(
+            path,
+            f"reading its {what} ran past the {seconds:g} s a store file is given "
+            "before it is admitted",
+            timed_out=True,
+        ) from exc
+    finally:
+        conn.set_progress_handler(None, 0)
+        if longest is not None:
+            conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, longest)
+
+
+def admit_store(conn: sqlite3.Connection, path: Path) -> None:
+    """Admit the store file `conn` was just opened on, before any other
+    statement this build makes reads it or writes to it: ``trusted_schema``
+    off for the connection's life, then, under the deadline and with no
+    string longer than `_ADMISSION_MAX_LENGTH` (`_deadline`), its
+    ``sqlite_master`` read and checked against this build's schema
+    (`schema_refusal`), and each plain table this build creates read for
+    what it could make SQLite run (`table_refusal`). A file that fails is
+    refused with one `StoreRefusedError`, as is one whose schema SQLite
+    cannot read (SQLITE_CORRUPT, SQLITE_NOTADB), and the caller closes the
+    connection. `read_store_meta` then reads its meta under the deadline.
+
+    What a refusal leaves: this build writes nothing to the file
+    (`store._connect` switches it to WAL, sets the file modes and runs
+    the additive step only after this). SQLite itself does what it does
+    on opening any database: on a WAL-mode file it makes the ``-wal`` and
+    ``-shm`` while it reads the schema and removes them at the close, and
+    a ``-wal`` or a hot ``-journal`` that came with the file is replayed
+    into it or rolled back, before the first statement's first step and
+    so outside the deadline.
+
+    Which files are checked: every existing file any opener reads, the
+    state directory's own store included, and only a file `Store.create`
+    has just written on the same connection goes unchecked. "A store this
+    build did not create" cannot be told before the file is read: the path
+    says nothing of the bytes now at it (a repository's
+    ``.claude-memory/memory.sqlite``, reached through ``[storage]
+    cwd_store``, is whatever the clone holds, and a ``git pull`` can
+    replace one the user's own build wrote; the state directory's file can
+    be a restored or synced copy), the key ring's binding
+    (`log.KeyRing.bind_store`) names a path, not bytes, and the store id
+    that finds the ring is read from the file itself. So the boundary is
+    the connection: what this build wrote on it, and nothing else. The
+    check costs one read of a table of about 70 rows per open.
+
+    Why these three: a view, or a trigger of the file's choosing, runs
+    SQL the file chose whenever this build reads the table it stands for
+    or writes beside it, and a recursive one never ends (a ``meta`` that
+    is a view over an endless recursive CTE hung `security audit`,
+    `doctor`, the daemon and every hook); ``trusted_schema`` off keeps a
+    table's defaults, checks and generated columns to functions SQLite
+    marks harmless; the length limit bounds what one of those functions
+    can cost while the schema loads (``sqlite_stat1`` is read then);
+    the table check refuses a table of this build's name that computes a
+    column, checks a row, defaults to an expression or refers to another
+    table; and the deadline bounds the reads made before the file is
+    known, a schema too large to parse or a meta too large to read among
+    them. Once a file is admitted, its objects are this build's own
+    and run nothing of the file's choosing, so each later statement's
+    work is bounded by the rows it holds, as on any store this build
+    created, and the deadline is lifted."""
+    with _deadline(conn, path, "schema", length=_ADMISSION_MAX_LENGTH):
+        try:
+            conn.execute("PRAGMA trusted_schema = OFF")
+            rows = conn.execute(
+                "SELECT type, name, tbl_name, sql FROM sqlite_master"
+            ).fetchall()
+        except sqlite3.DatabaseError as exc:
+            code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
+            if code not in _UNREADABLE_SCHEMA_CODES:
+                raise
+            raise StoreRefusedError(
+                path,
+                "it is not a store this build wrote, or it is damaged: its "
+                f"schema cannot be read ({exc})",
+            ) from exc
+        why = schema_refusal(rows)
+        built = _built_objects()
+        for kind, name, _table, sql in rows if why is None else ():
+            expected = built.get((str(kind), str(name)))
+            if expected is not None and str(kind) == "table" and not expected[2]:
+                why = table_refusal(conn, str(name), sql)
+                if why is not None:
+                    break
+    if why is not None:
+        raise StoreRefusedError(
+            path,
+            f"it is not a store this build wrote ({why})",
+            holds_meta=any(
+                str(kind) == "table" and str(name) == "meta"
+                for kind, name, _table, _sql in rows
+            ),
+        )
+
+
+def read_store_meta(conn: sqlite3.Connection, path: Path) -> dict[str, str]:
+    """The meta table of a store file `admit_store` admitted, read under
+    the same deadline: its rows are the file's to choose, as many as it
+    likes. A file with no meta table raises `sqlite3.OperationalError`, as
+    the read always did."""
+    with _deadline(conn, path, "meta table"):
+        rows = conn.execute("SELECT key, value FROM meta").fetchall()
+    return {str(row[0]): str(row[1]) for row in rows}

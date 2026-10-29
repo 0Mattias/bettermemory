@@ -10,7 +10,8 @@ it as a store (`_store_id_at`), warned about once per pair of files
 `bettermemory.store`. `store` re-exports every name a caller reads; a test
 that patches `_BOUND_ELSEWHERE_WARNED` patches this module. It lives apart
 from `store.py` to keep each module under the package's 2,000-line bound
-(ENG-96), and imports no other store module.
+(ENG-96), and of the store modules imports only `store_schema`, for the
+check a bound file is admitted by (`store_schema.admit_store`).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from pathlib import Path
 
 from ._fsutil import sqlite_file_uri
 from .log import KeyRing, KeyUnreadableError, Segment, fingerprint, row_verifies
+from .store_schema import StoreRefusedError, admit_store, read_store_meta
 
 log = logging.getLogger("bettermemory.store")
 
@@ -83,10 +85,14 @@ def _store_id_at(path: Path) -> str | None:
     still only in its WAL, as a store a running daemon just created is.
 
     None when there is no file there or it does not read as a store (no
-    database, or one with no store id). OSError when it cannot be read to
+    database, one with no store id, or one every opener refuses that has
+    no meta table: `store_schema.admit_store` checks it before its meta
+    is read, under the same deadline). OSError when it cannot be read to
     tell (a directory on the way that cannot be searched, a file that
     cannot be opened, by any SQLite error, an I/O error, a store whose
-    meta is only in its WAL and whose lock is held): a failure that may
+    meta is only in its WAL and whose lock is held, a read that ran past
+    the admission deadline, a refused file with a meta table, such as
+    another build's store with one more index): a failure that may
     pass in a moment, or that SQLite meets before it reads a byte, says
     nothing about whether the file still holds a store, and the caller
     keeps the key ring bound to it (`_claim_key_ring`). A symbolic link
@@ -126,17 +132,30 @@ def _store_id_at(path: Path) -> str | None:
             failed = exc
             continue
         try:
-            row = conn.execute(
-                "SELECT value FROM meta WHERE key = 'store_id'"
-            ).fetchone()
+            admit_store(conn, resolved)
+            store_id = read_store_meta(conn, resolved).get("store_id")
+        except StoreRefusedError as exc:
+            # A schema SQLite cannot read, or a file this build refuses
+            # with no meta table (a view put in its place), holds no
+            # store. One with a meta table (another build's store with one
+            # more index) may still hold this store's id, and one whose
+            # read ran past the deadline or whose schema was not read
+            # cannot be read to tell: the ring stays bound to it.
+            cause = getattr(exc.__cause__, "sqlite_errorcode", 0) & 0xFF
+            if not exc.timed_out and (
+                exc.holds_meta is False or cause in _NOT_A_STORE_CODES
+            ):
+                return None
+            failed = sqlite3.OperationalError(str(exc))
+            continue
         except sqlite3.Error as exc:
             if getattr(exc, "sqlite_errorcode", 0) & 0xFF not in _NOT_A_STORE_CODES:
                 failed = exc
             continue
         finally:
             conn.close()
-        if row is not None:
-            return str(row[0])
+        if store_id is not None:
+            return store_id
     if failed is not None:
         raise OSError(f"{path} could not be read ({failed})")
     return None
