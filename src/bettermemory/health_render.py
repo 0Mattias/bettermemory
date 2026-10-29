@@ -33,11 +33,8 @@ def _scopes(scopes: Iterable[str]) -> str:
     return printable(",".join(scopes))
 
 
-def render_text(report: HealthReport) -> str:
-    """Pretty-print the report for the CLI subcommand. Plain text — no
-    colour codes — so it pipes cleanly to a file. Store- and log-sourced
-    strings are escaped (`history.printable`); `render_json` is not, since
-    JSON escapes them itself."""
+def _header_lines(report: HealthReport) -> list[str]:
+    """Render the report's title, totals and episode volume; returns their lines."""
     lines: list[str] = []
     lines.append(
         f"Memory health — generated {_iso(report.generated_at)}, "
@@ -65,7 +62,12 @@ def render_text(report: HealthReport) -> str:
             f"{'' if vol.sessions == 1 else 's'}, "
             f"{vol.bytes:,} bytes{prunable}"
         )
+    return lines
 
+
+def _bucket_lines(report: HealthReport) -> list[str]:
+    """Render the dead-weight, cold, heavily used and contradicted buckets; returns their lines."""
+    lines: list[str] = []
     lines.append("")
     lines.append(
         f"Dead weight ({len(report.dead_weight)}) — retrieved but never "
@@ -124,7 +126,12 @@ def render_text(report: HealthReport) -> str:
             f"  {printable(s.id)} [contradicted={s.contradicted_count}] "
             f"{_scopes(s.scopes)}: {printable(s.summary)}"
         )
+    return lines
 
+
+def _marker_and_scope_lines(report: HealthReport) -> list[str]:
+    """Render the marker stats and the per-scope health; returns their lines."""
+    lines: list[str] = []
     lines.append("")
     lines.append(f"Marker stats ({len(report.marker_stats)}):")
     if not report.marker_stats:
@@ -153,7 +160,12 @@ def render_text(report: HealthReport) -> str:
             f"cold={sh.cold:<3} contradicted={sh.contradicted:<3} "
             f"applied={sh.applied_total}"
         )
+    return lines
 
+
+def _actor_lines(report: HealthReport) -> list[str]:
+    """Render the actor census, declared and undeclared; returns its lines."""
+    lines: list[str] = []
     lines.append("")
     slices = report.actor_slices
     lines.append(f"Actors ({len(slices.declared)} declared):")
@@ -180,26 +192,12 @@ def render_text(report: HealthReport) -> str:
         f"in-window={und.memories_in_window:<5} events={und.events:<6} "
         f"searches={und.searches:<5} applies={und.applies}"
     )
+    return lines
 
-    lines.append("")
-    lines.append(
-        f"Rare scopes ({len(report.rare_scopes)}) — singletons within "
-        "2 edits of another scope, likely typos:"
-    )
-    if not report.rare_scopes:
-        lines.append("  (none)")
-    for scope in report.rare_scopes:
-        lines.append(f"  {printable(scope)}")
 
-    if report.orphan_use_events:
-        lines.append("")
-        lines.append(
-            f"Orphan use events: {report.orphan_use_events} — "
-            "memory_record_use events whose ids resolved to neither active "
-            "nor tombstoned memories. A growing count is the smoke test for "
-            "fabricated ULIDs."
-        )
-
+def _verification_debt_lines(report: HealthReport) -> list[str]:
+    """Render the verification-debt section; returns its lines."""
+    lines: list[str] = []
     debt = report.verification_debt
     lines.append("")
     lines.append(
@@ -238,25 +236,12 @@ def render_text(report: HealthReport) -> str:
             )
         if debt.stale_total > len(debt.stale):
             lines.append(f"    ... and {debt.stale_total - len(debt.stale)} more")
+    return lines
 
-    ce = report.cold_endorsement_memories
-    if ce.total > 0:
-        lines.append("")
-        lines.append(
-            f"Cold-endorsement memories ({ce.total}) — retrieved >= "
-            f"{ce.min_retrievals} times, never explicitly applied "
-            "(model never deliberately endorsed the memory; every "
-            "applied event came from the auto-commit pass):"
-        )
-        for s in ce.rows:
-            lines.append(
-                f"  {printable(s.id)} [retrievals={s.retrieval_count} "
-                f"auto_applied={s.auto_applied_count}] "
-                f"{_scopes(s.scopes)}: {printable(s.summary)}"
-            )
-        if ce.total > len(ce.rows):
-            lines.append(f"  ... and {ce.total - len(ce.rows)} more")
 
+def _silent_miss_lines(report: HealthReport) -> list[str]:
+    """Render the silent-miss section when the audit counted anything; returns its lines."""
+    lines: list[str] = []
     sm = report.silent_misses
     if sm.audited_total > 0 or sm.miss_total > 0 or sm.no_signal_total > 0:
         lines.append("")
@@ -292,7 +277,12 @@ def render_text(report: HealthReport) -> str:
                 f"across {sm.unique_miss_memories} distinct memor"
                 f"{'y' if sm.unique_miss_memories == 1 else 'ies'}"
             )
+    return lines
 
+
+def _drift_lines(report: HealthReport) -> list[str]:
+    """Render the commit drift and the cross-repo drift sections; returns their lines."""
+    lines: list[str] = []
     cd = report.commit_drift_debt
     if cd is not None:
         lines.append("")
@@ -349,6 +339,61 @@ def render_text(report: HealthReport) -> str:
                 f"[{printable(str(skip['worktree_root']))}]: "
                 f"{printable(str(skip['reason']))})"
             )
+    return lines
+
+
+def render_text(report: HealthReport) -> str:
+    """Pretty-print the report for the CLI subcommand. Plain text — no
+    colour codes — so it pipes cleanly to a file. Store- and log-sourced
+    strings are escaped (`history.printable`); `render_json` is not, since
+    JSON escapes them itself."""
+    lines: list[str] = []
+    lines.extend(_header_lines(report))
+    lines.extend(_bucket_lines(report))
+    lines.extend(_marker_and_scope_lines(report))
+    lines.extend(_actor_lines(report))
+
+    lines.append("")
+    lines.append(
+        f"Rare scopes ({len(report.rare_scopes)}) — singletons within "
+        "2 edits of another scope, likely typos:"
+    )
+    if not report.rare_scopes:
+        lines.append("  (none)")
+    for scope in report.rare_scopes:
+        lines.append(f"  {printable(scope)}")
+
+    if report.orphan_use_events:
+        lines.append("")
+        lines.append(
+            f"Orphan use events: {report.orphan_use_events} — "
+            "memory_record_use events whose ids resolved to neither active "
+            "nor tombstoned memories. A growing count is the smoke test for "
+            "fabricated ULIDs."
+        )
+
+    lines.extend(_verification_debt_lines(report))
+
+    ce = report.cold_endorsement_memories
+    if ce.total > 0:
+        lines.append("")
+        lines.append(
+            f"Cold-endorsement memories ({ce.total}) — retrieved >= "
+            f"{ce.min_retrievals} times, never explicitly applied "
+            "(model never deliberately endorsed the memory; every "
+            "applied event came from the auto-commit pass):"
+        )
+        for s in ce.rows:
+            lines.append(
+                f"  {printable(s.id)} [retrievals={s.retrieval_count} "
+                f"auto_applied={s.auto_applied_count}] "
+                f"{_scopes(s.scopes)}: {printable(s.summary)}"
+            )
+        if ce.total > len(ce.rows):
+            lines.append(f"  ... and {ce.total - len(ce.rows)} more")
+
+    lines.extend(_silent_miss_lines(report))
+    lines.extend(_drift_lines(report))
 
     # Every line through `printable` once more, as doctor ends its report:
     # a field above that was not escaped still cannot reach the terminal
