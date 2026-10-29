@@ -443,7 +443,7 @@ def _refuse_inside_repo(path: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--store", type=Path, default=DEFAULT_STORE)
     parser.add_argument("--transcripts", type=Path, default=TRANSCRIPTS)
     parser.add_argument(
