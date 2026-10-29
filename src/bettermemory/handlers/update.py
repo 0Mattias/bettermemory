@@ -29,7 +29,7 @@ Description-edit history:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from .. import policy as _policy
 from .. import review as _review
@@ -159,6 +159,115 @@ async def memory_update(
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
+    _check_update_policy(
+        deps,
+        id,
+        acknowledge_credential=acknowledge_credential,
+        acknowledge_transient=acknowledge_transient,
+        acknowledge_user_claim=acknowledge_user_claim,
+        acknowledge_truncation=acknowledge_truncation,
+    )
+    metadata_only, standing_answer = _check_update_request(
+        deps,
+        content=content,
+        scopes=scopes,
+        confidence=confidence,
+        category=category,
+        links=links,
+        standing=standing,
+    )
+
+    try:
+        existing = deps.store.load_one(id)
+    except TombstonedError as exc:
+        raise ValueError(str(exc)) from exc
+    except MemoryNotFoundError as exc:
+        raise ValueError(str(exc)) from exc
+
+    if metadata_only and standing_answer is not None:
+        return _answer_standing_only(deps, id, existing, standing_answer, said)
+
+    new_scopes = _new_scopes(deps, existing, scopes)
+    new_confidence = _new_confidence(existing, confidence)
+    new_category = _new_category(existing, category)
+    body_edit = _gate_body_edit(
+        deps,
+        id,
+        existing,
+        content,
+        new_category,
+        acknowledge_credential=acknowledge_credential,
+        acknowledge_transient=acknowledge_transient,
+        acknowledge_user_claim=acknowledge_user_claim,
+        acknowledge_truncation=acknowledge_truncation,
+    )
+    if body_edit.refusal is not None:
+        return body_edit.refusal
+    new_body = body_edit.body
+    new_links = _new_links(id, existing, links)
+
+    refusal = _guard_or_ask_standing(
+        deps,
+        id,
+        existing,
+        new_body=new_body,
+        new_scopes=new_scopes,
+        new_category=new_category,
+        new_links=new_links,
+        standing_answer=standing_answer,
+        said=said,
+    )
+    if refusal is not None:
+        return refusal
+
+    update_fields = _update_fields(
+        content,
+        new_body=new_body,
+        new_scopes=new_scopes,
+        new_confidence=new_confidence,
+        new_category=new_category,
+        new_links=new_links,
+    )
+    merged = existing.model_copy(update=update_fields)
+    updated = _commit_update(deps, id, merged, content, standing_answer)
+    if isinstance(updated, dict):
+        return updated
+    _record_update(
+        deps,
+        updated,
+        body_edit,
+        content=content,
+        scopes=scopes,
+        confidence=confidence,
+        category=category,
+        links=links,
+        standing=standing,
+        standing_answer=standing_answer,
+    )
+    return deps.responses.committed(updated)
+
+
+class _BodyEdit(NamedTuple):
+    """The body an edit leaves and the gates' override evidence, or a refusal."""
+
+    body: str
+    refusal: dict[str, Any] | None
+    credentials_acknowledged: list[str]
+    user_claims_acknowledged: list[str]
+    truncation_acknowledged: bool
+    markers_acknowledged: list[str]
+
+
+def _check_update_policy(
+    deps: ToolHandlers,
+    id: str,
+    *,
+    acknowledge_credential: bool,
+    acknowledge_transient: bool,
+    acknowledge_user_claim: bool,
+    acknowledge_truncation: bool,
+) -> None:
+    """Take the call's acknowledge flags; raise, after its row, if policy forbids one."""
     # `[policy]` (policy.py): a flag the install forbids refuses the whole
     # call before anything is read or changed. memory_update has no
     # `force`, so only `forbid_acknowledge` reaches it. A no-op with both
@@ -178,6 +287,19 @@ async def memory_update(
     except _policy.PolicyRefusal as refused:
         deps.recorder.record("update", id=id, **refused.event_fields())
         raise
+
+
+def _check_update_request(
+    deps: ToolHandlers,
+    *,
+    content: str | None,
+    scopes: list[str] | None,
+    confidence: str | None,
+    category: str | None,
+    links: list[dict[str, Any]] | None,
+    standing: float | None,
+) -> tuple[bool, StandingAnswer | None]:
+    """Take the call's arguments; return whether it is metadata-only and its answer."""
     metadata_only = (
         content is None
         and scopes is None
@@ -203,36 +325,43 @@ async def memory_update(
         raise ValueError("content must be non-empty if provided")
     if content is not None:
         _validate_content_size(content, deps.config.behavior.max_content_bytes)
+    return metadata_only, standing_answer
 
-    try:
-        existing = deps.store.load_one(id)
-    except TombstonedError as exc:
-        raise ValueError(str(exc)) from exc
-    except MemoryNotFoundError as exc:
-        raise ValueError(str(exc)) from exc
 
-    if metadata_only and standing_answer is not None:
-        # Only the answer: its row, for the current body, and no edit. A
-        # lower answer for a guarded record rests on the user's words.
-        records = _guarded_change(
-            deps,
-            existing,
-            new_body=existing.body,
-            new_scopes=list(existing.scopes),
-            new_category=existing.category,
-            new_links=list(existing.links),
-            standing_answer=standing_answer,
-        )
-        refusal = _guard.guard(deps, "memory_update", records, said)
-        if refusal is not None:
-            deps.recorder.record("update", id=id, status="refused_standing")
-            return refusal
-        deps.store.put_standing(id, standing_answer)
-        deps.recorder.record(
-            "update", id=id, fields=["standing"], standing=standing_answer.probability
-        )
-        return deps.responses.committed(existing)
+def _answer_standing_only(
+    deps: ToolHandlers,
+    id: str,
+    existing: Memory,
+    standing_answer: StandingAnswer,
+    said: str | None,
+) -> dict[str, Any]:
+    """Take an answer-only call; store the answer and return the response."""
+    # Only the answer: its row, for the current body, and no edit. A
+    # lower answer for a guarded record rests on the user's words.
+    records = _guarded_change(
+        deps,
+        existing,
+        new_body=existing.body,
+        new_scopes=list(existing.scopes),
+        new_category=existing.category,
+        new_links=list(existing.links),
+        standing_answer=standing_answer,
+    )
+    refusal = _guard.guard(deps, "memory_update", records, said)
+    if refusal is not None:
+        deps.recorder.record("update", id=id, status="refused_standing")
+        return refusal
+    deps.store.put_standing(id, standing_answer)
+    deps.recorder.record(
+        "update", id=id, fields=["standing"], standing=standing_answer.probability
+    )
+    return deps.responses.committed(existing)
 
+
+def _new_scopes(
+    deps: ToolHandlers, existing: Memory, scopes: list[str] | None
+) -> list[str]:
+    """Take the record and the call's scopes; return the scopes the edit leaves."""
     new_scopes = existing.scopes
     if scopes is not None:
         if not scopes:
@@ -277,7 +406,11 @@ async def memory_update(
                     f"scope(s) not in allowed list: {unknown}. "
                     f"Allowed: {sorted(deps.config.scopes.allowed)}"
                 )
+    return new_scopes
 
+
+def _new_confidence(existing: Memory, confidence: str | None) -> Confidence:
+    """Take the record and the call's confidence; return the confidence it leaves."""
     new_confidence = existing.confidence
     if confidence is not None:
         try:
@@ -286,7 +419,11 @@ async def memory_update(
             raise ValueError(
                 f"confidence must be one of {[c.value for c in Confidence]}"
             ) from exc
+    return new_confidence
 
+
+def _new_category(existing: Memory, category: str | None) -> Category | None:
+    """Take the record and the call's category; return the category it leaves."""
     new_category = existing.category
     if category is not None:
         # A retag *into* `user-inference` stays refused: that label is
@@ -309,7 +446,22 @@ async def memory_update(
                 "about the user with memory_write)"
             )
         new_category = Category(category)
+    return new_category
 
+
+def _gate_body_edit(
+    deps: ToolHandlers,
+    id: str,
+    existing: Memory,
+    content: str | None,
+    new_category: Category | None,
+    *,
+    acknowledge_credential: bool,
+    acknowledge_transient: bool,
+    acknowledge_user_claim: bool,
+    acknowledge_truncation: bool,
+) -> _BodyEdit:
+    """Take the call's content; return the body it leaves after the write gates."""
     new_body = existing.body
     # Default for the metadata-only / clean-body paths; a body edit that
     # overrides the credential gate below replaces this. Recorded on the
@@ -333,261 +485,327 @@ async def memory_update(
     # that is the field the write path already records and health.py already
     # consumes — one grep covers both surfaces.
     markers_acknowledged: list[str] = []
+    refusal: dict[str, Any] | None = None
     if content is not None:
         new_body = content.strip() + "\n"
-        # Credential gate — mirror CredentialGate on the write path so a
-        # secret can't be smuggled into the store by EDITING a memory rather
-        # than creating one. Only fires on a body edit (content provided);
-        # scope/confidence/category/links edits leave the body untouched.
-        # The value is redacted from both the response and the event log
-        # (kind only), exactly as on the write path.
-        credential_hits = find_credential_markers(new_body)
-        if credential_hits and not acknowledge_credential:
-            deps.recorder.record(
-                "update",
-                id=id,
-                status="credential_warning",
-                credential_kinds=[h.kind for h in credential_hits],
-            )
-            return {
-                "status": "credential_warning",
-                "markers": [
-                    deps.responses.credential_to_dict(h) for h in credential_hits
-                ],
-                "hint": (
-                    "The updated body contains a secret-shaped token (API "
-                    "key, private-key PEM, JWT, or a `password=…`-style "
-                    "assignment). Describe the secret without "
-                    "embedding it, or pass acknowledge_credential=True if the "
-                    "value is a documented public/example credential. The "
-                    "value is redacted from this warning and the event log "
-                    "regardless."
-                ),
-            }
-        # Passed the gate on a body edit → the body is clean OR the caller
-        # overrode with acknowledge_credential. Capture which detector KINDS
-        # the override waved through (empty otherwise) so the success event
-        # feeds the same override-rate signal as `memory_write`'s
-        # `credentials_acknowledged`.
-        # Kind only, never the value — same redaction contract as the warning.
-        credentials_acknowledged = (
-            [h.kind for h in credential_hits]
-            if credential_hits and acknowledge_credential
-            else []
+        refusal, credentials_acknowledged = _credential_gate(
+            deps, id, new_body, acknowledge_credential
         )
-        # Control-token gate — mirror `ControlTokenGate`
-        # (handlers/write_gates.py) so a chat-template control token can't
-        # reach the store by EDITING a memory rather than creating one
-        # (ENG-105). Like the gate it mirrors it takes no flag: none of the
-        # acknowledge_* parameters passes it, since a writer steered into
-        # writing the token would pass a flag as readily. After the
-        # credential gate, so a body carrying both hears about the secret
-        # first and an acknowledged secret carries no token past here; before
-        # every gate that records body-derived data in the event log. Its own
-        # event names the template families only.
-        token_hits = find_control_tokens(new_body)
-        if token_hits:
-            deps.recorder.record(
-                "update",
-                id=id,
-                status="control_token_warning",
-                control_token_kinds=list(dict.fromkeys(h.kind for h in token_hits)),
+        if refusal is None:
+            refusal = _control_token_gate(deps, id, new_body)
+        if refusal is None:
+            refusal, markers_acknowledged = _transient_gate(
+                deps, id, new_body, acknowledge_transient
             )
-            return {
-                "status": "control_token_warning",
-                "markers": [h.to_dict() for h in token_hits],
-                "hint": _CONTROL_TOKEN_HINT,
-            }
-        # Transient-marker gate — mirror `TransientGate`: a body the write
-        # path hard-refuses as transient state ("currently", "as of
-        # <date>") could otherwise be committed by EDITING an existing
-        # record. Sits after the credential and control-token gates for the
-        # reason the user-claim gate does — a secret or a control token is
-        # refused before any other gate records body-derived data (here,
-        # marker phrases) in the event log. Same markers, same escape, same
-        # hint as the write side, so the two surfaces refuse and release
-        # identically.
-        transient_hits = find_transient_markers(new_body)
-        if transient_hits and not acknowledge_transient:
-            deps.recorder.record(
-                "update",
-                id=id,
-                status="transient_warning",
-                markers=[h.marker for h in transient_hits],
+        if refusal is None:
+            refusal, user_claims_acknowledged = _user_claim_gate(
+                deps, id, new_body, new_category, acknowledge_user_claim
             )
-            return {
-                "status": "transient_warning",
-                "markers": [
-                    deps.responses.transient_to_dict(h) for h in transient_hits
-                ],
-                "hint": (
-                    "The updated body contains transient-state markers that "
-                    "won't be true in a week. Either rephrase to the durable "
-                    "level-up version (extract the architectural decision, "
-                    "the why, what-was-built — discard the timestamp/state) "
-                    "or pass acknowledge_transient=True if the marker is "
-                    "genuinely durable in context."
-                ),
-            }
-        markers_acknowledged = (
-            [h.marker for h in transient_hits]
-            if transient_hits and acknowledge_transient
-            else []
-        )
-        # User-claim gate — mirror `UserClaimGate` (handlers/write_gates.py) so a
-        # claim ABOUT THE USER can't reach a `fact` / `ambient` record by
-        # EDITING one. Same laundering shape the credential gate above closes
-        # for secrets: `memory_write` hard-refuses this body, so without the
-        # mirror a caller writes an innocuous body, updates it to the claim,
-        # and the claim reads back as an established fact under a label that
-        # hides it from anyone correcting inferences. Runs AFTER the
-        # credential gate for the reason the write chain orders them that
-        # way — a secret is refused before any other gate records
-        # body-derived data (here, `claim_phrases`) in the event log.
-        #
-        # Judged against the category the record will HAVE after this edit,
-        # which is what `UserClaimGate` reads off the write payload. That can
-        # only be `user-inference` when the record already was one, since the
-        # retag INTO that category is refused above — and that is exactly the
-        # structural escape this gate wants: a claim about the user belongs in
-        # a `user-inference` memory, and on this surface only `memory_write`
-        # can create one. A legacy `category=None` record is gated,
-        # matching the runtime's fact-default reading of that field.
-        #
-        # `acknowledge_user_claim` mirrors the write path's escape for a body
-        # whose subject is someone or something else ("Black prefers double
-        # quotes"). It landed one commit late, and the gap was not cosmetic:
-        # `_find_user_claims` ORs in `_PREFERENCE_RE`, whose `we (?:use|prefer|
-        # avoid|always|never)` branch is case-insensitive, so an ordinary
-        # project memory ("We use ruff for linting in this repo.") tripped the
-        # refusal. That body is writable — `memory_write(...,
-        # acknowledge_user_claim=True)` commits it — so without this parameter
-        # there was a body you could CREATE and then could not EDIT into an
-        # existing record by any route, while `acknowledge_user_claim=True`
-        # passed to this tool was dropped as an unknown argument and the
-        # refusal came back anyway, with nothing saying the flag did nothing.
-        # The parameter has to reach the `ToolHandlers.memory_update` facade in
-        # `_handlers.py` to be on the wire at all — the served schema is built
-        # from THAT signature, so a handler-only parameter is silently dropped
-        # at call time. That is the same failure mode
-        # `tests/test_resident_footprint.py`'s landed-parameter check guards
-        # for the three parameters IT names; this one is guarded by
-        # `test_the_override_is_served_on_the_wire_defaulting_to_off` in
-        # `tests/test_update_user_claim_gate.py`, which asserts against the
-        # served schema rather than this signature.
-        #
-        # Scanned only when the record will NOT be `user-inference` — the
-        # empty list on that branch is what makes the rest of this block
-        # read the same either way, rather than leaving `claim_hits`
-        # conditionally undefined for the override accounting below.
-        claim_hits = (
-            _find_user_claims(new_body)
-            if new_category != Category.USER_INFERENCE
-            else []
-        )
-        if claim_hits and not acknowledge_user_claim:
-            deps.recorder.record(
-                "update",
-                id=id,
-                status="user_claim_warning",
-                category=(new_category.value if new_category is not None else None),
-                claim_phrases=[h.phrase for h in claim_hits],
+        if refusal is None:
+            refusal, truncation_acknowledged = _truncation_gate(
+                deps, id, existing, new_body, acknowledge_truncation
             )
-            return {
-                "status": "user_claim_warning",
-                "markers": [
-                    {"phrase": h.phrase, "sentence": h.sentence} for h in claim_hits
-                ],
-                "hint": (
-                    "The updated body reads as a claim ABOUT THE USER, "
-                    "but this memory is filed as "
-                    f"`{(new_category or Category.FACT).value}`, so the "
-                    "edit would store it as an established fact. File "
-                    "the claim with memory_write and "
-                    "category='user-inference', which commits it "
-                    "labelled as an inference about the user. Retagging "
-                    "this record into `user-inference` is not available "
-                    "on memory_update. When the subject is someone or "
-                    "something else (a teammate, a tool that 'prefers' "
-                    "a setting), re-issue this same memory_update with "
-                    "acknowledge_user_claim=True."
-                ),
-            }
-        # Passed the gate on a body edit → the body reads clean OR the caller
-        # overrode. Which phrases the override waved through, on the same
-        # override-rate axis `credentials_acknowledged` rides above and under
-        # the field name the write path already uses for it
-        # (`user_claims_acknowledged`, handlers/write.py) — one grep has to
-        # find both surfaces or the telemetry is per-surface trivia.
-        user_claims_acknowledged = (
-            [h.phrase for h in claim_hits]
-            if claim_hits and acknowledge_user_claim
-            else []
-        )
-        # Truncation gate. `looks_truncated` has shipped as DETECTION since
-        # 3.x — `doctor`'s `memory_body_completeness` reports bodies that end
-        # mid-sentence — but detection runs after the tail is already gone and
-        # the store has no older copy, so the report names a loss it cannot
-        # undo. This is the same predicate moved to the one moment both bodies
-        # are in hand.
-        #
-        # The SHRINK conjunct is what makes it a gate rather than a nuisance.
-        # `looks_truncated` alone is 0.4% false positive on the maintainer's
-        # 234-record store — cheap for a report, but it would fire on every
-        # edit to a body that legitimately ends on a bare identifier or list
-        # item, forever, including edits that only GREW it. Requiring the edit
-        # to also make the record shorter narrows it to the shape the incident
-        # actually had: a rewrite that arrived cut off. A deliberate condensing
-        # edit that lands on a terminal character never sees this.
-        #
-        # Rejected alternative, recorded so it is not re-derived: "new body is
-        # a strict prefix of the old" is 0% false positive but misses the
-        # motivating incident (a rewrite that got cut, not a prefix), and
-        # ">30% shorter" false-positives on condensing edits, the single most
-        # common update shape on the dogfood store.
-        if (
-            len(new_body.strip()) < len(existing.body.strip())
-            and looks_truncated(new_body)
-            and not acknowledge_truncation
-        ):
-            # Lengths only, never body text — same redaction discipline the
-            # credential gate above keeps, since a truncated body is exactly
-            # as likely to carry a secret as any other.
-            deps.recorder.record(
-                "update",
-                id=id,
-                status="truncation_warning",
-                previous_length=len(existing.body.strip()),
-                new_length=len(new_body.strip()),
-            )
-            return {
-                "status": "truncation_warning",
-                "previous_length": len(existing.body.strip()),
-                "new_length": len(new_body.strip()),
-                "ends_with": new_body.strip()[-60:],
-                "hint": (
-                    "This edit makes the body shorter AND leaves it ending "
-                    "mid-sentence, which is what a body truncated in transit "
-                    "looks like. The store keeps no older copy, so if the tail "
-                    "was lost it is unrecoverable once this commits. Re-send "
-                    "the complete body, or pass acknowledge_truncation=True if "
-                    "the record genuinely ends there (a list item or a bare "
-                    "identifier is a legitimate ending)."
-                ),
-            }
-        # Past the gate → the edit is benign OR the caller overrode. True
-        # only when the gate WOULD have fired but for the flag — all three
-        # conjuncts, the exact complement of the refusal above, the same
-        # relationship the two acknowledged lists keep with their gates. A
-        # flag re-passed defensively on an edit the gate could not refuse
-        # (grew, or ends terminal) is not an override and must not inflate
-        # the rate this predicate's reopening decision reads.
-        truncation_acknowledged = (
-            len(new_body.strip()) < len(existing.body.strip())
-            and looks_truncated(new_body)
-            and bool(acknowledge_truncation)
-        )
+    return _BodyEdit(
+        body=new_body,
+        refusal=refusal,
+        credentials_acknowledged=credentials_acknowledged,
+        user_claims_acknowledged=user_claims_acknowledged,
+        truncation_acknowledged=truncation_acknowledged,
+        markers_acknowledged=markers_acknowledged,
+    )
 
+
+def _credential_gate(
+    deps: ToolHandlers, id: str, new_body: str, acknowledge_credential: bool
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Take the edited body; return the gate's refusal, or None, and the kinds waved through."""
+    # Credential gate — mirror CredentialGate on the write path so a
+    # secret can't be smuggled into the store by EDITING a memory rather
+    # than creating one. Only fires on a body edit (content provided);
+    # scope/confidence/category/links edits leave the body untouched.
+    # The value is redacted from both the response and the event log
+    # (kind only), exactly as on the write path.
+    credential_hits = find_credential_markers(new_body)
+    if credential_hits and not acknowledge_credential:
+        deps.recorder.record(
+            "update",
+            id=id,
+            status="credential_warning",
+            credential_kinds=[h.kind for h in credential_hits],
+        )
+        return {
+            "status": "credential_warning",
+            "markers": [deps.responses.credential_to_dict(h) for h in credential_hits],
+            "hint": (
+                "The updated body contains a secret-shaped token (API "
+                "key, private-key PEM, JWT, or a `password=…`-style "
+                "assignment). Describe the secret without "
+                "embedding it, or pass acknowledge_credential=True if the "
+                "value is a documented public/example credential. The "
+                "value is redacted from this warning and the event log "
+                "regardless."
+            ),
+        }, []
+    # Passed the gate on a body edit → the body is clean OR the caller
+    # overrode with acknowledge_credential. Capture which detector KINDS
+    # the override waved through (empty otherwise) so the success event
+    # feeds the same override-rate signal as `memory_write`'s
+    # `credentials_acknowledged`.
+    # Kind only, never the value — same redaction contract as the warning.
+    credentials_acknowledged = (
+        [h.kind for h in credential_hits]
+        if credential_hits and acknowledge_credential
+        else []
+    )
+    return None, credentials_acknowledged
+
+
+def _control_token_gate(
+    deps: ToolHandlers, id: str, new_body: str
+) -> dict[str, Any] | None:
+    """Take the edited body; return the control-token refusal, or None."""
+    # Control-token gate — mirror `ControlTokenGate`
+    # (handlers/write_gates.py) so a chat-template control token can't
+    # reach the store by EDITING a memory rather than creating one
+    # (ENG-105). Like the gate it mirrors it takes no flag: none of the
+    # acknowledge_* parameters passes it, since a writer steered into
+    # writing the token would pass a flag as readily. After the
+    # credential gate, so a body carrying both hears about the secret
+    # first and an acknowledged secret carries no token past here; before
+    # every gate that records body-derived data in the event log. Its own
+    # event names the template families only.
+    token_hits = find_control_tokens(new_body)
+    if token_hits:
+        deps.recorder.record(
+            "update",
+            id=id,
+            status="control_token_warning",
+            control_token_kinds=list(dict.fromkeys(h.kind for h in token_hits)),
+        )
+        return {
+            "status": "control_token_warning",
+            "markers": [h.to_dict() for h in token_hits],
+            "hint": _CONTROL_TOKEN_HINT,
+        }
+    return None
+
+
+def _transient_gate(
+    deps: ToolHandlers, id: str, new_body: str, acknowledge_transient: bool
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Take the edited body; return the gate's refusal, or None, and the markers waved through."""
+    # Transient-marker gate — mirror `TransientGate`: a body the write
+    # path hard-refuses as transient state ("currently", "as of
+    # <date>") could otherwise be committed by EDITING an existing
+    # record. Sits after the credential and control-token gates for the
+    # reason the user-claim gate does — a secret or a control token is
+    # refused before any other gate records body-derived data (here,
+    # marker phrases) in the event log. Same markers, same escape, same
+    # hint as the write side, so the two surfaces refuse and release
+    # identically.
+    transient_hits = find_transient_markers(new_body)
+    if transient_hits and not acknowledge_transient:
+        deps.recorder.record(
+            "update",
+            id=id,
+            status="transient_warning",
+            markers=[h.marker for h in transient_hits],
+        )
+        return {
+            "status": "transient_warning",
+            "markers": [deps.responses.transient_to_dict(h) for h in transient_hits],
+            "hint": (
+                "The updated body contains transient-state markers that "
+                "won't be true in a week. Either rephrase to the durable "
+                "level-up version (extract the architectural decision, "
+                "the why, what-was-built — discard the timestamp/state) "
+                "or pass acknowledge_transient=True if the marker is "
+                "genuinely durable in context."
+            ),
+        }, []
+    markers_acknowledged = (
+        [h.marker for h in transient_hits]
+        if transient_hits and acknowledge_transient
+        else []
+    )
+    return None, markers_acknowledged
+
+
+def _user_claim_gate(
+    deps: ToolHandlers,
+    id: str,
+    new_body: str,
+    new_category: Category | None,
+    acknowledge_user_claim: bool,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Take the edited body; return the gate's refusal, or None, and the phrases waved through."""
+    # User-claim gate — mirror `UserClaimGate` (handlers/write_gates.py) so a
+    # claim ABOUT THE USER can't reach a `fact` / `ambient` record by
+    # EDITING one. Same laundering shape the credential gate above closes
+    # for secrets: `memory_write` hard-refuses this body, so without the
+    # mirror a caller writes an innocuous body, updates it to the claim,
+    # and the claim reads back as an established fact under a label that
+    # hides it from anyone correcting inferences. Runs AFTER the
+    # credential gate for the reason the write chain orders them that
+    # way — a secret is refused before any other gate records
+    # body-derived data (here, `claim_phrases`) in the event log.
+    #
+    # Judged against the category the record will HAVE after this edit,
+    # which is what `UserClaimGate` reads off the write payload. That can
+    # only be `user-inference` when the record already was one, since the
+    # retag INTO that category is refused above — and that is exactly the
+    # structural escape this gate wants: a claim about the user belongs in
+    # a `user-inference` memory, and on this surface only `memory_write`
+    # can create one. A legacy `category=None` record is gated,
+    # matching the runtime's fact-default reading of that field.
+    #
+    # `acknowledge_user_claim` mirrors the write path's escape for a body
+    # whose subject is someone or something else ("Black prefers double
+    # quotes"). It landed one commit late, and the gap was not cosmetic:
+    # `_find_user_claims` ORs in `_PREFERENCE_RE`, whose `we (?:use|prefer|
+    # avoid|always|never)` branch is case-insensitive, so an ordinary
+    # project memory ("We use ruff for linting in this repo.") tripped the
+    # refusal. That body is writable — `memory_write(...,
+    # acknowledge_user_claim=True)` commits it — so without this parameter
+    # there was a body you could CREATE and then could not EDIT into an
+    # existing record by any route, while `acknowledge_user_claim=True`
+    # passed to this tool was dropped as an unknown argument and the
+    # refusal came back anyway, with nothing saying the flag did nothing.
+    # The parameter has to reach the `ToolHandlers.memory_update` facade in
+    # `_handlers.py` to be on the wire at all — the served schema is built
+    # from THAT signature, so a handler-only parameter is silently dropped
+    # at call time. That is the same failure mode
+    # `tests/test_resident_footprint.py`'s landed-parameter check guards
+    # for the three parameters IT names; this one is guarded by
+    # `test_the_override_is_served_on_the_wire_defaulting_to_off` in
+    # `tests/test_update_user_claim_gate.py`, which asserts against the
+    # served schema rather than this signature.
+    #
+    # Scanned only when the record will NOT be `user-inference` — the
+    # empty list on that branch is what makes the rest of this block
+    # read the same either way, rather than leaving `claim_hits`
+    # conditionally undefined for the override accounting below.
+    claim_hits = (
+        _find_user_claims(new_body) if new_category != Category.USER_INFERENCE else []
+    )
+    if claim_hits and not acknowledge_user_claim:
+        deps.recorder.record(
+            "update",
+            id=id,
+            status="user_claim_warning",
+            category=(new_category.value if new_category is not None else None),
+            claim_phrases=[h.phrase for h in claim_hits],
+        )
+        return {
+            "status": "user_claim_warning",
+            "markers": [
+                {"phrase": h.phrase, "sentence": h.sentence} for h in claim_hits
+            ],
+            "hint": (
+                "The updated body reads as a claim ABOUT THE USER, "
+                "but this memory is filed as "
+                f"`{(new_category or Category.FACT).value}`, so the "
+                "edit would store it as an established fact. File "
+                "the claim with memory_write and "
+                "category='user-inference', which commits it "
+                "labelled as an inference about the user. Retagging "
+                "this record into `user-inference` is not available "
+                "on memory_update. When the subject is someone or "
+                "something else (a teammate, a tool that 'prefers' "
+                "a setting), re-issue this same memory_update with "
+                "acknowledge_user_claim=True."
+            ),
+        }, []
+    # Passed the gate on a body edit → the body reads clean OR the caller
+    # overrode. Which phrases the override waved through, on the same
+    # override-rate axis `credentials_acknowledged` rides above and under
+    # the field name the write path already uses for it
+    # (`user_claims_acknowledged`, handlers/write.py) — one grep has to
+    # find both surfaces or the telemetry is per-surface trivia.
+    user_claims_acknowledged = (
+        [h.phrase for h in claim_hits] if claim_hits and acknowledge_user_claim else []
+    )
+    return None, user_claims_acknowledged
+
+
+def _truncation_gate(
+    deps: ToolHandlers,
+    id: str,
+    existing: Memory,
+    new_body: str,
+    acknowledge_truncation: bool,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Take the edited body; return the gate's refusal, or None, and whether it was overridden."""
+    # Truncation gate. `looks_truncated` has shipped as DETECTION since
+    # 3.x — `doctor`'s `memory_body_completeness` reports bodies that end
+    # mid-sentence — but detection runs after the tail is already gone and
+    # the store has no older copy, so the report names a loss it cannot
+    # undo. This is the same predicate moved to the one moment both bodies
+    # are in hand.
+    #
+    # The SHRINK conjunct is what makes it a gate rather than a nuisance.
+    # `looks_truncated` alone is 0.4% false positive on the maintainer's
+    # 234-record store — cheap for a report, but it would fire on every
+    # edit to a body that legitimately ends on a bare identifier or list
+    # item, forever, including edits that only GREW it. Requiring the edit
+    # to also make the record shorter narrows it to the shape the incident
+    # actually had: a rewrite that arrived cut off. A deliberate condensing
+    # edit that lands on a terminal character never sees this.
+    #
+    # Rejected alternative, recorded so it is not re-derived: "new body is
+    # a strict prefix of the old" is 0% false positive but misses the
+    # motivating incident (a rewrite that got cut, not a prefix), and
+    # ">30% shorter" false-positives on condensing edits, the single most
+    # common update shape on the dogfood store.
+    if (
+        len(new_body.strip()) < len(existing.body.strip())
+        and looks_truncated(new_body)
+        and not acknowledge_truncation
+    ):
+        # Lengths only, never body text — same redaction discipline the
+        # credential gate above keeps, since a truncated body is exactly
+        # as likely to carry a secret as any other.
+        deps.recorder.record(
+            "update",
+            id=id,
+            status="truncation_warning",
+            previous_length=len(existing.body.strip()),
+            new_length=len(new_body.strip()),
+        )
+        return {
+            "status": "truncation_warning",
+            "previous_length": len(existing.body.strip()),
+            "new_length": len(new_body.strip()),
+            "ends_with": new_body.strip()[-60:],
+            "hint": (
+                "This edit makes the body shorter AND leaves it ending "
+                "mid-sentence, which is what a body truncated in transit "
+                "looks like. The store keeps no older copy, so if the tail "
+                "was lost it is unrecoverable once this commits. Re-send "
+                "the complete body, or pass acknowledge_truncation=True if "
+                "the record genuinely ends there (a list item or a bare "
+                "identifier is a legitimate ending)."
+            ),
+        }, False
+    # Past the gate → the edit is benign OR the caller overrode. True
+    # only when the gate WOULD have fired but for the flag — all three
+    # conjuncts, the exact complement of the refusal above, the same
+    # relationship the two acknowledged lists keep with their gates. A
+    # flag re-passed defensively on an edit the gate could not refuse
+    # (grew, or ends terminal) is not an override and must not inflate
+    # the rate this predicate's reopening decision reads.
+    truncation_acknowledged = (
+        len(new_body.strip()) < len(existing.body.strip())
+        and looks_truncated(new_body)
+        and bool(acknowledge_truncation)
+    )
+    return None, truncation_acknowledged
+
+
+def _new_links(
+    id: str, existing: Memory, links: list[dict[str, Any]] | None
+) -> list[MemoryLink]:
+    """Take the record and the call's links; return the links the edit leaves."""
     # `links` is REPLACE semantics — the caller passes the full new
     # list. Same shape as the `scopes` parameter: simpler than
     # diffing add/remove, and lets the caller atomically clear all
@@ -625,7 +843,22 @@ async def memory_update(
                 f"links list capped at 64 entries (got {len(parsed_links)})"
             )
         new_links = parsed_links
+    return new_links
 
+
+def _guard_or_ask_standing(
+    deps: ToolHandlers,
+    id: str,
+    existing: Memory,
+    *,
+    new_body: str,
+    new_scopes: list[str],
+    new_category: Category | None,
+    new_links: list[MemoryLink],
+    standing_answer: StandingAnswer | None,
+    said: str | None,
+) -> dict[str, Any] | None:
+    """Take the resolved edit; return the guard's refusal or the standing question, or None."""
     # A change that takes a guarded record out of force or out of standing,
     # or edits it, rests on the user's words (unit RS-F7 part 5).
     records = _guarded_change(
@@ -658,7 +891,19 @@ async def memory_update(
             },
             "hint": _STANDING_HINT,
         }
+    return None
 
+
+def _update_fields(
+    content: str | None,
+    *,
+    new_body: str,
+    new_scopes: list[str],
+    new_confidence: Confidence,
+    new_category: Category | None,
+    new_links: list[MemoryLink],
+) -> dict[str, Any]:
+    """Take the resolved edit; return the fields the merged record takes."""
     # When `content` changes, the prior verification was for prose
     # that no longer exists — reset `last_verified_at` to None so the
     # caller has to re-confirm against the new body. The structured
@@ -694,8 +939,17 @@ async def memory_update(
         # the prose that existed then; re-declare via memory_verify
         # (claims=[...]) once the new body's assertions are known.
         update_fields["claims"] = []
+    return update_fields
 
-    merged = existing.model_copy(update=update_fields)
+
+def _commit_update(
+    deps: ToolHandlers,
+    id: str,
+    merged: Memory,
+    content: str | None,
+    standing_answer: StandingAnswer | None,
+) -> Memory | dict[str, Any]:
+    """Take the merged record; return it as committed, or the stale response."""
     try:
         # Metadata-only edits (content is None) must not clobber a verify
         # that landed concurrently: `merged` carries this handler's pre-read
@@ -746,6 +1000,23 @@ async def memory_update(
         # what handlers/remove.py and handlers/restore.py do, and what
         # Store.update's docstring promises the handler boundary does.
         raise ValueError(f"failed to update memory {id}: {exc}") from exc
+    return updated
+
+
+def _record_update(
+    deps: ToolHandlers,
+    updated: Memory,
+    body_edit: _BodyEdit,
+    *,
+    content: str | None,
+    scopes: list[str] | None,
+    confidence: str | None,
+    category: str | None,
+    links: list[dict[str, Any]] | None,
+    standing: float | None,
+    standing_answer: StandingAnswer | None,
+) -> None:
+    """Take the committed record and the call; record the `update` success row."""
     fields_changed = [
         name
         for name, value in (
@@ -765,17 +1036,16 @@ async def memory_update(
         scopes=updated.scopes,
         confidence=updated.confidence.value,
         category=updated.category.value if updated.category is not None else None,
-        credentials_acknowledged=credentials_acknowledged,
-        user_claims_acknowledged=user_claims_acknowledged,
-        truncation_acknowledged=truncation_acknowledged,
-        markers_acknowledged=markers_acknowledged,
+        credentials_acknowledged=body_edit.credentials_acknowledged,
+        user_claims_acknowledged=body_edit.user_claims_acknowledged,
+        truncation_acknowledged=body_edit.truncation_acknowledged,
+        markers_acknowledged=body_edit.markers_acknowledged,
         **(
             {"standing": standing_answer.probability}
             if standing_answer is not None
             else {}
         ),
     )
-    return deps.responses.committed(updated)
 
 
 __all__ = ["DESC_MEMORY_UPDATE", "memory_update"]
