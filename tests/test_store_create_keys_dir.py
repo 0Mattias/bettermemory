@@ -39,6 +39,32 @@ def _link(link: Path, target: Path) -> None:
 
 Opener = Callable[[Path, Path | None], object]
 
+
+@pytest.mark.parametrize(
+    ("read", "said"),
+    [
+        ("\\\\?\\C:\\volume-not-mounted\\keys", "C:\\volume-not-mounted\\keys"),
+        ("\\\\?\\UNC\\server\\share\\keys", "\\\\server\\share\\keys"),
+        ("/volume-not-mounted/keys", "/volume-not-mounted/keys"),
+    ],
+)
+def test_a_links_target_is_spelled_without_the_verbatim_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, read: str, said: str
+) -> None:
+    """Windows's `os.readlink` gives an absolute target with the verbatim
+    prefix (`\\\\?\\`); the refusal spells the target as the user did (the
+    Windows leg on f66b6044 read `a symbolic link to \\\\?\\C:...`)."""
+    from bettermemory import log as _log
+
+    link = tmp_path / "keys"
+    _link(link, tmp_path / "volume-not-mounted" / "keys")
+    monkeypatch.setattr(os, "readlink", lambda path, *a, **k: read)
+    assert (
+        _log._dangling_link(link)
+        == f"it is a symbolic link to {said}, which is not there"
+    )
+
+
 _OPENERS: dict[str, Opener] = {
     "create": lambda path, keys: Store.create(path, keys_dir=keys),
     "open_or_create": lambda path, keys: Store.open_or_create(path, keys_dir=keys),

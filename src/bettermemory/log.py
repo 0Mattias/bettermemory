@@ -426,6 +426,17 @@ class StoreBinding(NamedTuple):
     written: bool
 
 
+def _link_target(path: Path) -> str:
+    """What the symbolic link ``path`` names, as the user spelled it: on
+    Windows `os.readlink` gives an absolute target with the verbatim
+    prefix (``\\\\?\\C:\\keys``, ``\\\\?\\UNC\\server\\share``), which no
+    message should carry."""
+    target = os.readlink(path)
+    if target.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + target[8:]
+    return target.removeprefix("\\\\?\\")
+
+
 def _dangling_link(path: Path) -> str | None:
     """Why ``path`` is there and cannot be read when it is a symbolic link
     to nothing (a key or a key directory kept on a volume that is not
@@ -433,7 +444,7 @@ def _dangling_link(path: Path) -> str | None:
     try:
         if not os.path.islink(path) or os.path.exists(path):
             return None
-        target = os.readlink(path)
+        target = _link_target(path)
     except (OSError, ValueError):
         return None
     return f"it is a symbolic link to {target}, which is not there"
