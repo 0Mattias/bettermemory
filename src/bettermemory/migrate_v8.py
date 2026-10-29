@@ -425,6 +425,93 @@ def _has_query_text(event: dict[str, Any]) -> bool:
     return any(isinstance(event.get(name), str) for name in _REDACTED_FIELDS)
 
 
+def _open_migration_store(
+    store_path: Path, keys_dir: Path | str | None, dry_run: bool
+) -> Store | None:
+    """Open the store a migration writes to, or for a dry run reads; returns it, or None for a dry run with no store yet."""
+    store: Store | None
+    if dry_run:
+        store = (
+            Store.open(store_path, keys_dir=keys_dir, allow_rekey=False)
+            if store_path.is_file()
+            else None
+        )
+    else:
+        # The migration is the one path that creates a store beside 8.x
+        # files; `open_or_create` refuses that and names this command. It
+        # writes, from the owner's process, so a store whose key moved is
+        # rekeyed here as `open_or_create` would.
+        store = (
+            Store.open(store_path, keys_dir=keys_dir, allow_rekey=True)
+            if store_path.is_file()
+            else Store.create(store_path, keys_dir=keys_dir)
+        )
+    return store
+
+
+def _scan_new_events(
+    inv: Inventory, stamp: str, present: _Present
+) -> tuple[list[dict[str, Any]], Counter[str], dict[str, int]]:
+    """Read every v8 event and keep those the store lacks; returns them, the count of each kind read, and the events tally."""
+    kinds: Counter[str] = Counter()
+    new_events: list[dict[str, Any]] = []
+    found = present_events = redacted = unstamped = malformed = 0
+    for event in iter_all_events(inv.root):
+        found += 1
+        kinds[str(event.get("kind"))] += 1
+        try:
+            ts, session_id, kind, payload = event_import_payload(
+                event, imported_from=IMPORTED_FROM_V8
+            )
+        except ValueError:
+            malformed += 1
+            continue
+        if ts is None:
+            unstamped += 1
+            ts = stamp
+            event = {**event, "ts": ts}
+        key = (ts, session_id, kind, canonical_payload(payload))
+        if key in present.events:
+            present_events += 1
+            continue
+        if _has_query_text(event):
+            redacted += 1
+        new_events.append(event)
+    events = {
+        "found": found,
+        "imported": len(new_events),
+        "present": present_events,
+        "redacted": redacted,
+        "unstamped": unstamped,
+        "malformed": malformed,
+    }
+    return new_events, kinds, events
+
+
+def _put_imports(
+    store: Store,
+    new_imports: list[dict[str, Any]],
+    present: _Present,
+    imported_now: str,
+    session: str | None,
+) -> None:
+    """Write the imports the store lacks, each stamped with its memory's creation where the store holds it; returns nothing."""
+    for entry in new_imports:
+        memory_id = entry["memory_id"]
+        imported_at = imported_now
+        if memory_id is not None and store.has_memory(memory_id):
+            imported_at = store.get_memory(memory_id).created.isoformat()
+        elif memory_id is not None and memory_id in present.records:
+            imported_at = store.get_tombstone(memory_id).created.isoformat()
+        store.put_import(
+            entry["source"],
+            content_hash=entry["content_hash"],
+            imported_at=imported_at,
+            memory_id=memory_id,
+            session=session,
+        )
+
+
 def migrate(
     root: Path | str,
     store_path: Path | str,
@@ -458,23 +545,7 @@ def migrate(
         unknown=list(inv.unknown),
     )
 
-    store: Store | None
-    if dry_run:
-        store = (
-            Store.open(store_path, keys_dir=keys_dir, allow_rekey=False)
-            if store_path.is_file()
-            else None
-        )
-    else:
-        # The migration is the one path that creates a store beside 8.x
-        # files; `open_or_create` refuses that and names this command. It
-        # writes, from the owner's process, so a store whose key moved is
-        # rekeyed here as `open_or_create` would.
-        store = (
-            Store.open(store_path, keys_dir=keys_dir, allow_rekey=True)
-            if store_path.is_file()
-            else Store.create(store_path, keys_dir=keys_dir)
-        )
+    store = _open_migration_store(store_path, keys_dir, dry_run)
     try:
         present = _Present.read(store)
 
@@ -490,30 +561,7 @@ def migrate(
         new_conflicts = [c for c in inv.conflicts if c["id"] not in present.conflicts]
         new_imports = [i for i in inv.imports if i["source"] not in present.imports]
 
-        kinds: Counter[str] = Counter()
-        new_events: list[dict[str, Any]] = []
-        found = present_events = redacted = unstamped = malformed = 0
-        for event in iter_all_events(inv.root):
-            found += 1
-            kinds[str(event.get("kind"))] += 1
-            try:
-                ts, session_id, kind, payload = event_import_payload(
-                    event, imported_from=IMPORTED_FROM_V8
-                )
-            except ValueError:
-                malformed += 1
-                continue
-            if ts is None:
-                unstamped += 1
-                ts = stamp
-                event = {**event, "ts": ts}
-            key = (ts, session_id, kind, canonical_payload(payload))
-            if key in present.events:
-                present_events += 1
-                continue
-            if _has_query_text(event):
-                redacted += 1
-            new_events.append(event)
+        new_events, kinds, events = _scan_new_events(inv, stamp, present)
 
         report.memories = {
             "found": len(inv.memories),
@@ -534,14 +582,7 @@ def migrate(
             "imported": len(new_episodes),
             "present": len(inv.episodes) - len(new_episodes),
         }
-        report.events = {
-            "found": found,
-            "imported": len(new_events),
-            "present": present_events,
-            "redacted": redacted,
-            "unstamped": unstamped,
-            "malformed": malformed,
-        }
+        report.events = events
         report.event_kinds = dict(sorted(kinds.items()))
         report.conflicts = {
             "found": len(inv.conflicts),
@@ -593,20 +634,7 @@ def migrate(
                     store.put_episode(episode, session=session)
                 for conflict in new_conflicts:
                     store.put_conflict(conflict, session=session)
-                for entry in new_imports:
-                    memory_id = entry["memory_id"]
-                    imported_at = imported_now
-                    if memory_id is not None and store.has_memory(memory_id):
-                        imported_at = store.get_memory(memory_id).created.isoformat()
-                    elif memory_id is not None and memory_id in present.records:
-                        imported_at = store.get_tombstone(memory_id).created.isoformat()
-                    store.put_import(
-                        entry["source"],
-                        content_hash=entry["content_hash"],
-                        imported_at=imported_at,
-                        memory_id=memory_id,
-                        session=session,
-                    )
+                _put_imports(store, new_imports, present, imported_now, session)
                 for event in new_events:
                     store.import_event(event, imported_from=IMPORTED_FROM_V8)
         rows_after = int(store.conn.execute("SELECT COUNT(*) FROM log").fetchone()[0])
