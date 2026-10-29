@@ -1163,7 +1163,8 @@ health, and `membership_portable.py` export and import. `location.py`
 captures where a caller stands, from files, and resolves it under a
 per-location lock, and `location_git.py` holds its readers: git's
 discovery and config, the `Capture` model and its token codec, the
-HEAD, ref, stamp and manifest readers and the history reader;
+HEAD, ref, stamp and manifest readers and the history reader, and
+`location_witness.py` the witness exchange's messages (design 8.7);
 `_git.py` is the one way the package runs git (`run_git`), for
 `location.py` and `origin.py` alike;
 `gitobjects.py` reads commits and blobs from the repository's object

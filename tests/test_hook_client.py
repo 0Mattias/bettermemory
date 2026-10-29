@@ -216,6 +216,7 @@ _HOOK_MODULES = frozenset(
 _CAPTURE_MODULES = (
     "bettermemory.location",
     "bettermemory.location_git",
+    "bettermemory.location_witness",
     "bettermemory.gitobjects",
     "bettermemory.checkout_token",
     "bettermemory.project_file",

@@ -625,6 +625,7 @@ print(json.dumps(sorted(sys.modules)))
         "bettermemory.gitobjects",
         "bettermemory.location",
         "bettermemory.location_git",
+        "bettermemory.location_witness",
         "bettermemory.machine",
         "bettermemory.project_file",
         "bettermemory.time_utils",
