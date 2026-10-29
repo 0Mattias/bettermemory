@@ -444,8 +444,13 @@ out of the bundle to a directory of its own first and point the command
 at the copy. A store file with other names (hard links) is refused the
 same way, since one of them may be a bundle's snapshot: one named on
 the command line, and one that `BETTERMEMORY_DIR` or `[storage]
-directory` reaches, where the message says to point the directory at a
-copy. A `manifest.json` counts when it names the format
+directory` reaches. For that one the message names the two ways to a
+store that writes: restore it in place from a bundle (`bettermemory
+backup restore BUNDLE --yes`, which gives the store a file of its own),
+or copy it to a directory of its own, point the directory at the copy
+and run `bettermemory key adopt --yes` there, since the key ring stays
+bound to the old path and the copy opens for reading only until then.
+A `manifest.json` counts when it names the format
 `bettermemory.backup` or does not parse, so another tool's file of that
 name beside a store changes nothing. `backup create` refuses a bundle's
 store too (`BETTERMEMORY_DIR` naming a bundle), with or without `--out`,

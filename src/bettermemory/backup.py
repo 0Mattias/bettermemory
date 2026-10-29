@@ -821,10 +821,16 @@ def bundle_refusal(path: Path, *, named: bool = False) -> str | None:
     manifest sits beside (`has_other_names`): a file the user named on
     the command line (`named`) and the store file the configuration
     resolves (`BETTERMEMORY_DIR` or ``[storage] directory`` naming a
-    directory that holds such a link) alike; `named` only chooses which
-    to point at the copy. Each message says to copy the file out first: a
-    copy has one name and no manifest beside it, and opening it changes
-    nothing in the bundle."""
+    directory that holds such a link) alike; `named` only chooses the
+    remedy. Each message says how to get a file of one name: a copy has
+    one name and no manifest beside it, and opening it changes nothing
+    in the bundle. For the store the configuration resolves, a copy in
+    another directory opens for reading only while the key ring is
+    bound to this path, so the message names the two ways that end in
+    a store that writes: a restore in place from a bundle (it moves the
+    linked name aside, the bundle keeping its inode, and puts a file of
+    its own there), or the copy with `bettermemory key adopt --yes` run
+    on it, which binds the ring to it."""
     manifest = bundle_manifest_beside(path)
     if manifest is not None:
         return (
@@ -835,16 +841,21 @@ def bundle_refusal(path: Path, *, named: bool = False) -> str | None:
             "a bundle where it is)"
         )
     if has_other_names(path):
-        target = (
-            "the command at the copy"
+        fix = (
+            f"copy {path.name} to a directory of its own first and point the "
+            "command at the copy"
             if named
-            else "BETTERMEMORY_DIR or `[storage] directory` at that directory"
+            else "restore it in place from a bundle (`bettermemory backup restore "
+            f"BUNDLE --yes`, which gives {path.name} a file of its own), or copy "
+            f"{path.name} to a directory of its own first, point "
+            "BETTERMEMORY_DIR or `[storage] directory` at that directory and run "
+            "`bettermemory key adopt --yes` there (until then the key ring stays "
+            "bound to this path, and the copy opens for reading only)"
         )
         return (
             f"{path} has other names (hard links), and opening it would change "
             "the file under each of them, a backup bundle's snapshot among "
-            f"them: copy {path.name} to a directory of its own first and point "
-            f"{target}"
+            f"them: {fix}"
         )
     return None
 

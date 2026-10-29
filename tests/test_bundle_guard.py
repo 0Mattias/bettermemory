@@ -371,6 +371,8 @@ def test_a_configured_store_that_is_a_hard_link_to_a_bundle_is_refused(
     err = capsys.readouterr().err
     assert f"{linked_dir / STORE_FILENAME} has other names (hard links)" in err
     assert "point BETTERMEMORY_DIR or `[storage] directory` at that directory" in err
+    assert "`bettermemory key adopt --yes`" in err
+    assert "`bettermemory backup restore BUNDLE --yes`" in err
     _assert_untouched(bundle, before)
 
 
@@ -386,6 +388,33 @@ def test_the_refusal_names_a_hard_linked_store_file_resolved_from_the_config(
     link.unlink()
     link.write_bytes((bundle / STORE_FILENAME).read_bytes())
     assert bundle_refusal(link) is None
+
+
+def test_the_restore_the_refusal_names_gives_a_store_that_writes(
+    bundle: Path,
+    linked_dir: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The configured store's remedy, followed: `backup restore BUNDLE
+    --yes` on the hard-linked store moves the linked name aside (the bundle
+    keeps its inode and verifies) and puts a file of its own there, which
+    opens for writing. A copy alone, the remedy before, opened for reading
+    only: the key ring stays bound to the original path (cold review M3)."""
+    link = linked_dir / STORE_FILENAME
+    refusal = bundle_refusal(link)
+    assert refusal is not None
+    assert "restore it in place from a bundle (`bettermemory backup restore" in refusal
+    before = _tree(bundle)
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(linked_dir))
+    argv = ["backup", "restore", str(bundle), "--yes"]
+    assert _run_cli(argv, monkeypatch) == 0, capsys.readouterr()
+    capsys.readouterr()
+    assert bundle_refusal(link) is None
+    with Store.open(link, keys_dir=keys_dir) as opened:
+        opened.put_memory(_memory("written once the link was broken"))
+    _assert_untouched(bundle, before)
 
 
 def test_migrate_v8_refuses_a_bundle_as_its_target(

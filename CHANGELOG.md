@@ -2293,7 +2293,13 @@ follows the candidates' testing.
   them, a backup bundle's snapshot among them: copy memory.sqlite to a
   directory of its own first and point BETTERMEMORY_DIR or `[storage]
   directory` at that directory`. A store file the user hard-linked on
-  purpose is refused the same way. This closes what was left of the
+  purpose is refused the same way. For the configured store the
+  refusal names the two ways to a store that writes: a restore in
+  place from a bundle, which moves the linked name aside (the bundle
+  keeps its inode) and puts a file of its own there, or a copy in a
+  directory of its own with `bettermemory key adopt --yes` run on it; a
+  copy alone opens for reading only, since the key ring stays bound to
+  the old path. This closes what was left of the
   9.0.0rc12 Known limitation "Only some readers refuse a backup bundle's
   file": that nothing checked a hard link named through
   `BETTERMEMORY_DIR`. (`src/bettermemory/backup.py`,
