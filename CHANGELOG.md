@@ -78,6 +78,36 @@ follows the candidates' testing.
   writing is skipped, not waited on. (`src/bettermemory/daemon.py`,
   `src/bettermemory/store_index.py`, `docs/operations.md`,
   `tests/test_daemon_optimize.py`)
+- **`bettermemory key`: the key ring's lifecycle from the command line
+  (ENG-106).** Recovering from a lost key, or from a store copied with
+  its keys directory, meant placing or deleting `<store_id>.<prefix>.key`
+  and `<store_id>.path` files by hand. `key show` prints the key's state
+  in the words the open, `doctor` and the audit say it in, the keys the
+  ring holds by fingerprint (never a key), the head checkpoint and the
+  origin anchor against the log (`store_keys.ring_fit`) and the binding.
+  `key export --out FILE` writes every key the ring holds, current and
+  retired, as JSON owner-only; `key import FILE` files back keys from
+  such an export, or from a key file as a keys directory holds it, each
+  only when it signs a segment of the store's log: the store's own key as
+  the current key when the ring has none or another (that one retired),
+  every other key as a retired key. `key adopt [--yes]` binds the ring to
+  this store file; `key rotate [--yes]` retires the key, writes a new one
+  and appends the `rekey` row that opens its segment, under the write
+  lock, so a running daemon signs its next row with the new key. Each
+  change is a row in the log, signed with the store's key: two new control
+  kinds, `key_imported` and `key_adopted`, and for a rotation a `rekey`
+  row with `cause: "rotate"` (a new kind would not split the chain's
+  segments). The refusals change nothing: another store's key, a key that
+  signs no segment here, a ring whose key is not the store's, a file
+  whose log does not carry the ring's origin anchor or reach its head
+  (`adopt`), a ring bound to another file (`export`, `import`, `rotate`),
+  a file this user cannot read, an import that would leave the ring
+  without the store's own key, and a daemon serving or starting for the
+  store or the bound file (`adopt`). None of the commands opens the store
+  as its owner, so none replaces a missing key.
+  (`src/bettermemory/key_lifecycle.py`, `src/bettermemory/cli/key_cmd.py`,
+  `src/bettermemory/cli/__init__.py`, `src/bettermemory/store_keys.py`,
+  `src/bettermemory/log.py`, `docs/api.md`, `tests/test_key_lifecycle.py`)
 
 #### Changed
 

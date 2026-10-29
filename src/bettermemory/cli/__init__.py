@@ -43,6 +43,7 @@ from . import (
     health_cmd,
     index_cmd,
     init as init_cmd,
+    key_cmd,
     log_cmd,
     membership_cmd,
     memory_move_cmd,
@@ -125,6 +126,7 @@ def _build_parser() -> tuple[
         "episodes": episodes.add_subparser(sub),
         "log": log_cmd.add_subparser(sub),
         "index": index_cmd.add_subparser(sub),
+        "key": key_cmd.add_subparser(sub),
         "project": project_cmd.add_subparser(sub),
         "memory": memory_move_cmd.add_subparser(sub),
         "membership": membership_cmd.add_subparser(sub),
@@ -306,6 +308,9 @@ def main() -> None:
         return
     if cmd == "config":
         config_cmd.run(args, sub_parser=subparsers["config"])
+        return
+    if cmd == "key":
+        key_cmd.run(args, sub_parser=subparsers["key"])
         return
 
     # argparse already rejects unknown subcommands; this is belt-and-

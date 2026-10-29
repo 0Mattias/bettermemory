@@ -34,7 +34,20 @@ from pathlib import Path
 from typing import Any
 
 from ._fsutil import sqlite_file_uri
-from .log import KeyRing, KeyUnreadableError, Segment, fingerprint, row_verifies
+from .log import (
+    Head,
+    KeyRing,
+    KeyUnreadableError,
+    LogRow,
+    OriginCheck,
+    Segment,
+    check_origin,
+    fingerprint,
+    iter_rows,
+    last_row,
+    row_verifies,
+    same_mac,
+)
 from .store_schema import StoreRefusedError, admit_store, read_store_meta
 
 log = logging.getLogger("bettermemory.store")
@@ -524,6 +537,127 @@ def key_state(
     return KeyState(
         state, keyring, store_file, expected, key=key, bound_to=other, unread=unread
     )
+
+
+# ---------------------------------------------------------------------------
+# How a store file's log meets its key ring (ENG-106, ENG-93 item 6)
+# ---------------------------------------------------------------------------
+
+#: How the key ring's head checkpoint meets a store file's log, in the
+#: words of `log.verify_chain`'s ``head`` status: no head, the last row,
+#: an earlier row of the log (behind it, which writes catch up), a seq
+#: past the log's end, or a row that carries another MAC.
+HEAD_ABSENT = "absent"
+HEAD_OK = "ok"
+HEAD_STALE = "stale"
+HEAD_PAST = "tail_deleted"
+HEAD_MISMATCH = "mismatch"
+
+
+@dataclass(frozen=True)
+class RingFit:
+    """How the log of one store file meets the key ring's origin anchor and
+    head checkpoint (`ring_fit`): whether the file carries the history the
+    ring records. ``origin`` is the anchor check (`log.check_origin`),
+    ``head`` the checkpoint, ``head_status`` one of the ``HEAD_*`` names
+    and ``log_end`` the file's last row.
+
+    It fits when the row at the anchor's seq carries the anchor's MAC
+    (and verifies under the anchor's key while that key is held: a broken
+    anchor does not fit, an ``unverifiable`` one does, since a lost key
+    tells nothing about the file) and its log reaches the head (the row at
+    the head's seq is there with the head's MAC). A ring with neither
+    anchor nor head records no history, and every file fits it."""
+
+    origin: OriginCheck
+    head: Head | None
+    head_status: str
+    log_end: LogRow | None
+
+    @property
+    def carries_origin(self) -> bool:
+        return not self.origin.broken
+
+    @property
+    def reaches_head(self) -> bool:
+        return self.head_status in (HEAD_ABSENT, HEAD_OK, HEAD_STALE)
+
+    @property
+    def fits(self) -> bool:
+        return self.carries_origin and self.reaches_head
+
+    def reason(self) -> str | None:
+        """Why the file does not fit, in one clause, or None when it does."""
+        if not self.carries_origin:
+            seq = self.origin.seq
+            if self.origin.reason == "missing":
+                return (
+                    f"its log holds no row at seq {seq}, where the key ring's "
+                    "origin anchor says this host's history of the store begins"
+                )
+            if self.origin.reason == "mac":
+                return (
+                    f"its row at seq {seq} carries another MAC than the key "
+                    "ring's origin anchor names"
+                )
+            return (
+                f"its row at seq {seq} carries the origin anchor's MAC and does "
+                "not verify under the key the anchor names, which this host holds"
+            )
+        if self.head is None or self.reaches_head:
+            return None
+        if self.head_status == HEAD_PAST:
+            end = 0 if self.log_end is None else self.log_end.seq
+            return (
+                f"its log ends at seq {end}, before the key ring's head "
+                f"checkpoint at seq {self.head.seq}"
+            )
+        return (
+            f"its row at seq {self.head.seq} carries another MAC than the key "
+            "ring's head checkpoint"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "origin": self.origin.to_dict(),
+            "head": {"status": self.head_status},
+            "log_end": None if self.log_end is None else self.log_end.seq,
+            "fits": self.fits,
+        }
+        if self.head is not None:
+            out["head"]["seq"] = self.head.seq
+        reason = self.reason()
+        if reason is not None:
+            out["reason"] = reason
+        return out
+
+
+def head_status(head: Head | None, conn: sqlite3.Connection) -> str:
+    """How ``head`` meets the log on ``conn`` (the ``HEAD_*`` names), read
+    as `log.verify_chain` reads it: two lookups by primary key."""
+    if head is None:
+        return HEAD_ABSENT
+    last = last_row(conn)
+    if last is None or head.seq > last.seq:
+        return HEAD_PAST
+    if head.seq == last.seq:
+        return HEAD_OK if same_mac(head.mac, last.mac) else HEAD_MISMATCH
+    named = next(iter_rows(conn, since_seq=head.seq - 1), None)
+    if named is not None and named.seq == head.seq and same_mac(head.mac, named.mac):
+        return HEAD_STALE
+    return HEAD_MISMATCH
+
+
+def ring_fit(
+    conn: sqlite3.Connection, keyring: KeyRing, *, current_key: bytes | None = None
+) -> RingFit:
+    """How the store file open on ``conn`` meets ``keyring``'s origin anchor
+    and head (`RingFit`): `key adopt` binds the ring only to a file that
+    fits. ``current_key``, a key the caller already holds, is tried first
+    against the anchored row."""
+    origin = check_origin(conn, keyring=keyring, current_key=current_key)
+    head = keyring.read_head()
+    return RingFit(origin, head, head_status(head, conn), last_row(conn))
 
 
 def _signing_key(

@@ -198,6 +198,16 @@ HISTORY_REPLACED: Mapping[str, tuple[str, str]] = MappingProxyType(
 )
 CONTROL_KINDS = CONTROL_KINDS | frozenset(HISTORY_REPLACED)
 
+# The key ring's own rows (ENG-106), control rows too, signed with the
+# store's key like every row: `key_imported` when `bettermemory key import`
+# files keys back into the ring, `key_adopted` when `bettermemory key
+# adopt` binds the ring to the store file it runs on. Each names what the
+# ring held before and after. `key rotate` writes a `rekey` row, the one
+# kind the chain's segments split at.
+KEY_IMPORTED = "key_imported"
+KEY_ADOPTED = "key_adopted"
+CONTROL_KINDS = CONTROL_KINDS | frozenset({KEY_IMPORTED, KEY_ADOPTED})
+
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
 
@@ -1471,7 +1481,9 @@ __all__ = [
     "GENESIS_MAC",
     "INDEX_REBUILT",
     "HISTORY_REPLACED",
+    "KEY_ADOPTED",
     "KEY_BYTES",
+    "KEY_IMPORTED",
     "MIGRATE_V8",
     "ORIGIN_ABSENT",
     "ORIGIN_KIND",
