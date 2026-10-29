@@ -601,6 +601,62 @@ backup made since. Then fix the live record (`memory_update`, or
 page images in the store file and its WAL, the full-text index's pages,
 saved orphans, backups or exports: a clean scan is not a clean file.
 
+## Telemetry and product state
+
+Every event is a row of the store's signed log, and each row is one of
+two classes (since 9.0.0rc14; `events.RowClass` is the one list the
+writer, `health` and a pruning read).
+
+**State** is what the product reads back to decide what it does next,
+and the audit trail:
+
+- the shows (`show`, `session_brief`, `prompt_recall`), which keep a
+  memory already shown out of the next recall and the next brief;
+- `use` with its outcome: a `contradicted` one holds the memory out of
+  both recall surfaces until it is updated or verified, and the rest
+  settle what the brief and the recall showed;
+- `turn_audited`, the Stop's row, which opens the next turn's window and
+  carries `settled_count`; `segment_opened` and `review_unanswered`,
+  which with the others rebuild a session's recall state after a restart;
+- `review_issued` and the `write` that answers it (its `review_id`),
+  which make a review chain;
+- `scope_disable` and `scope_enable`, the scopes a session turned off;
+- the audit rows: `standing_guard`; a `write` or `update` that used an
+  escape hatch (`force`, or an `acknowledge_*` flag that waved a hit
+  through, `acknowledge_scope_mismatch` included); a refusal such a
+  hatch passes (`credential_warning`, `transient_warning`,
+  `user_claim_warning`, `scope_mismatch`, `duplicate`,
+  `previously_removed`, an update's `truncation_warning`); and a call
+  `[policy]` refused (`status = "policy_refused"`).
+
+A state row is recorded whatever `[telemetry] enabled` says. With
+telemetry off it keeps a query's hash and length and drops the
+32-character preview, so no prompt text lands. It is not best-effort: a
+write that meets another process's lock is tried once more, each try
+waiting up to the connection's busy timeout (5 seconds), and a failure
+that remains fails the call. A tool answers `store_busy (retryable)`; a
+hook fails with one line on its stderr and a WARNING in the daemon's
+log, and shows nothing, so nothing is shown that the log does not hold.
+No state row is pruned (`events.prunable`).
+
+**Measurement** is everything else: `search`, a plain `write`,
+`update`, `verify`, `remove` or `restore`, `search_miss` and the miss
+acknowledgements, `recall_held`, the grades, the episode rows, the
+conflict scans. `[telemetry] enabled = false` records none of them. A
+measurement row is best-effort (a failed write is logged at WARNING and
+the call goes on) and prunable at any age.
+
+So telemetry off empties the usage figures `health` and `eval` report
+(searches, misses, held recalls, grades), refuses a bulk miss
+acknowledgement and the grade commands, and leaves a memory's history
+without its tool-call events. It does not turn off the session brief,
+the prompt recall, the Stop's settlement, the contradiction hold-back,
+review chains, scope toggles or the audit trail, and `health`'s
+override rate reads the same either way, since a refusal and the
+override that answers it are both audit rows. A store open for reading
+only (its key is not held here, or a later build's writer revision)
+records no row of either class, with one warning per row.
+
 ## The managed config
 
 An organisation pins settings with a managed config, which takes
@@ -746,9 +802,12 @@ store ahead of a pinned `[storage] directory`. SECURITY.md has the rest.
    strict_provenance = true`, plus the `[policy]`
    switches your rules call for. Under Cygwin's or MSYS2's Python, deploy
    it under a `/` only administrators can write, on a mount with access
-   lists, or it is refused ([The managed config](#the-managed-config)). Decide telemetry on purpose: with
-   `[telemetry] enabled = false` the session brief and the prompt recall
-   deliver nothing, while the audit rows are kept either way.
+   lists, or it is refused ([The managed config](#the-managed-config)). Decide telemetry on purpose:
+   `[telemetry] enabled = false` turns off the measurement rows only
+   (searches, misses, held recalls, grades: the usage figures in
+   `health` and `eval`). The session brief, the prompt recall and the
+   audit rows work either way
+   ([Telemetry and product state](#telemetry-and-product-state)).
 3. **Deploy Claude Code's sandbox as managed settings.** `bettermemory
    security sandbox --format managed` prints the block for a host's
    paths ([installation.md](installation.md#5-optional-managed-deployment));

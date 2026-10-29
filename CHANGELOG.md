@@ -2061,6 +2061,26 @@ follows the candidates' testing.
   `src/bettermemory/recall_settle.py`, `docs/internals.md`,
   `tests/test_settled_count.py`, and `tests/test_hook.py`, whose
   `turn_audited` key set gains the field)
+- **The docs say what telemetry off turns off (ENG-108).** operations.md
+  gains "Telemetry and product state": the two row classes, what each
+  promises, how a state row that meets a lock is retried and then fails
+  the call, and what `[telemetry] enabled = false` still empties (the
+  usage figures in `health` and `eval`, the bulk miss acknowledgement,
+  the grades). Step 2 of the enterprise checklist no longer says the
+  brief and the prompt recall deliver nothing with telemetry off: the
+  switch turns off the measurement rows only. config.toml's
+  `[telemetry]` prose and the `[behavior]` comments, the plugin's
+  prompt-recall hook note, internals.md and SECURITY.md say the same.
+  No entry under this release's Known limitations described what the
+  ENG-108 bullets above close, so none is removed: they close rc12's
+  "nothing is shown with telemetry off", the 1.000 override rate with
+  telemetry off, the refusal no row recorded and the acknowledged
+  scope mismatch no row named. What they leave is under Known
+  limitations.
+  (`docs/operations.md`, `docs/internals.md`, `SECURITY.md`,
+  `src/bettermemory/config.py`, `plugin/hooks/hooks.json`,
+  `tests/test_telemetry_docs.py`; the Known limitations below gain the
+  ENG-108 residuals)
 
 #### Known limitations
 
@@ -2372,6 +2392,37 @@ follows the candidates' testing.
   its first owner's open of this build, since the fingerprint's inputs
   changed, and again at each later change of the tokenizer.
   (`src/bettermemory/store_index.py`)
+- **With telemetry off the recall's seen gate reads only the state
+  rows.** The prompt recall leaves out what the session already saw:
+  the shows, which are state, and the `search`, `list`, `write` and
+  `update` rows, which stay measurement (ENG-108). With `[telemetry]
+  enabled = false` a memory the model found through `memory_search` or
+  wrote in the segment can still be delivered as a pointer; one it
+  opened with `memory_show` cannot. The episode handoff's quiet-session
+  check reads the episode rows, which are measurement too.
+- **A state row is never prunable, and a log from before 9.0.0rc14 is
+  not filled in.** `events.prunable` keeps every state row, a closed
+  session's included; a pruning (ENG-82) that wants to drop the state
+  only a live reader needs has to add that rule per reader. A log written
+  before this release with telemetry off holds none of the rows it
+  skipped, so its brief and recall state and its marker fires start at
+  the upgrade.
+- **A state row that fails part-way through a settlement leaves the
+  rest unsettled.** The rows are written one by one, each in its own
+  transaction, and the first that cannot land fails the call: a segment
+  close that wrote some of its `unused` rows has taken the segment off
+  the held state, so the pointers after the failure are not settled
+  `unused`; the in-process auto settlement has already consumed the
+  tokens of a retrieval whose row failed; and a `memory_record_use`
+  whose automatic row landed before its explicit row failed answers that
+  a write was kept, which names the automatic row only. A brief or a
+  recall whose row fails drops the session's held state, which the next
+  hook rebuilds from the log, so a claim another prompt of the same
+  session made in that window is rebuilt from its row once that lands.
+- **Health counts the marker fires and overrides of `memory_write`
+  only.** `memory_update`'s `transient_warning` and its
+  `markers_acknowledged` are audit rows now, but the override rate does
+  not read update rows, as before.
 
 ### 9.0.0rc13
 

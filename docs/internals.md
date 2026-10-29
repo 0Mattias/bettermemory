@@ -113,8 +113,11 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   cause, and the Stop settles a shown pointer as an applied `use` naming
   its surface when the reply used it, never by the auto fallback; what a
   closing segment never settled is written `unused`, and a turn the
-  owner interrupted is audited by the next Stop. Nothing is shown with
-  telemetry off.
+  owner interrupted is audited by the next Stop. These rows are product
+  state, recorded with telemetry off too (since 9.0.0rc14; the row
+  classes are in operations.md), so the brief and the recall show with
+  telemetry off; a row that cannot land fails the hook, and nothing it
+  would have recorded is shown.
   `[behavior] prompt_recall` takes `project` (default), `everywhere` or
   `off`; `session_brief = false` turns the brief off.
 - Claims about the user commit like any fact but carry the
@@ -1383,9 +1386,10 @@ the knobs (`default_max_results`, `recency_boost_half_life_days`,
 `max_takeaway_bytes` and `max_scopes_per_write`, and the floor
 `min_content_tokens`),
 `[scopes]` the allowed list and typo exceptions, `[telemetry]` the one
-switch, `enabled` (false switches telemetry off; the audit rows, a
-`standing_guard` row and a write or update that used `force` or an
-acknowledge flag, are still recorded), `[daemon]` the port (7397 by
+switch, `enabled` (false switches off the measurement rows; the state
+rows the product reads back and the audit rows are recorded either way,
+`events.RowClass`, operations.md's "Telemetry and product state"),
+`[daemon]` the port (7397 by
 default), and
 `[capture]` session capture's switch and bounds (`stop_checkpoint`,
 `checkpoint_tokens`, `daily_cap`), and `[membership]` the token's

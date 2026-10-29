@@ -148,9 +148,9 @@ DEFAULT_CONFIG = """\
 # outside any project, inside a project or outside one, never a memory
 # across a boundary (`boundary = true`) and never one whose location
 # could not be read; "off" returns to purely opt-in retrieval. Each delivery is recorded as
-# a `prompt_recall` event, so it needs telemetry.enabled (off-the-books
-# injections are refused). true / false in an older config read as
-# "project" / "off".
+# a `prompt_recall` event, product state kept whatever [telemetry] says,
+# so nothing is injected off the books. true / false in an older config
+# read as "project" / "off".
 # prompt_recall = "project"
 
 # The session brief: on SessionStart inside a project, two lists of
@@ -159,8 +159,8 @@ DEFAULT_CONFIG = """\
 # bears on, ranked by the owner's words in the session's transcript, eight
 # of each at most; a superseded record is never shown, and an open
 # contradiction holds a record out of the second list. Pointers, not
-# instructions; recorded as a `session_brief` event, so it needs
-# telemetry.enabled. Set false to open sessions with nothing.
+# instructions; recorded as a `session_brief` event, with telemetry off
+# too. Set false to open sessions with nothing.
 # session_brief = true
 
 # Floor on `applied_count` for inclusion in `memory_health.heavily_used`.
@@ -285,11 +285,12 @@ DEFAULT_CONFIG = """\
 [telemetry]
 # Telemetry events are rows of the store's own signed log: one per tool
 # call (search queries redacted to a hash and a short preview, returned
-# ids, write, update and remove events) and one per hook show. The health
-# report, `bettermemory eval` and the use-recording feedback read them.
-# Same file, same trust boundary, no new permissions story. Set
-# `enabled = false` to opt out; the recall surface then shows nothing,
-# since an off-the-books delivery is refused.
+# ids, write, update and remove events). The health report and
+# `bettermemory eval` read them. Same file, same trust boundary, no new
+# permissions story. Set `enabled = false` to opt out of these
+# measurement rows. The rows the product reads back (the shows, the uses,
+# the Stop's audit, the review's) and the audit trail are kept either way,
+# without the query preview, so the brief and the recall still work.
 # enabled = true
 
 [security]
@@ -400,16 +401,16 @@ class BehaviorConfig:
     # project's and the global ones, never across a boundary, decision
     # B21), "off" nothing. The loader reads a
     # legacy boolean as "project" / "off" (`_coerce_prompt_recall`).
-    # Requires `telemetry.enabled` at the call site: an unlogged injection
-    # is invisible to the Stop-hook shield and unmeasurable, so the recall
-    # path refuses to fire rather than fire off the books. See
+    # Each delivery's `prompt_recall` row is product state, recorded with
+    # telemetry off too (`events.STATE_KINDS`, ENG-108), so no injection is
+    # invisible to the Stop-hook shield or goes off the books. See
     # DEFAULT_CONFIG for prose.
     prompt_recall: str = "project"
     # The session brief (`recall.session_brief`): on SessionStart inside a
     # project, two lists of pointers, the caller's standing records in
     # force and the records the conversation so far bears on, eight of
-    # each at most. Default ON; needs `telemetry.enabled` like the prompt
-    # recall.
+    # each at most. Default ON; its `session_brief` row is product state,
+    # like the prompt recall's.
     session_brief: bool = True
     # Floor on `applied_count` for inclusion in the heavily_used report.
     # Default is 3 — at 1 the bucket is mostly noise (one acknowledgement
