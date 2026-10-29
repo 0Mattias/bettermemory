@@ -908,25 +908,11 @@ def _rule_split_markdown_lines(
     return lines
 
 
-def render_report_markdown(doc: ReportDocument) -> str:
-    """Render the composed document as publishable markdown.
-
-    Content contract (the canary test pins it): rates, counts, CIs,
-    model names, and static registry names only. Sections, top to
-    bottom: header, rate trio (window vs all-time), reading guide,
-    per-model table, the recall surfaces (only when the log holds the
-    surface's rows), threshold sweep, tool-usage top 10, methodology
-    footer.
-    """
-    single_window = doc.window_seconds is None
-    window_label = (
-        "all time"
-        if doc.window_seconds is None
-        else f"last {_humanize_seconds(doc.window_seconds)}"
-    )
+def _md_header_lines(
+    doc: ReportDocument, single_window: bool, window_label: str
+) -> list[str]:
+    """Render the title and the store-shape header from the document; returns its lines."""
     lines: list[str] = []
-
-    # 1. Title + header — aggregate store shape, counts only.
     lines.append("# bettermemory eval report")
     lines.append("")
     if single_window:
@@ -950,8 +936,14 @@ def render_report_markdown(doc: ReportDocument) -> str:
         "ids never appear in this report."
     )
     lines.append("")
+    return lines
 
-    # 2. Rate trio, window vs all-time columns.
+
+def _md_rate_lines(
+    doc: ReportDocument, single_window: bool, window_label: str
+) -> list[str]:
+    """Render the rate trio and its notes from the document; returns the section's lines."""
+    lines: list[str] = []
     lines.append("## Rates")
     lines.append("")
     if single_window:
@@ -1010,8 +1002,12 @@ def render_report_markdown(doc: ReportDocument) -> str:
             "less often, a log read mid-rotation."
         )
     lines.append("")
+    return lines
 
-    # 3. Reading guide — static prose adapted from docs/eval-results.md.
+
+def _md_reading_guide_lines(single_window: bool) -> list[str]:
+    """Render the reading guide for one or two columns; returns the section's lines."""
+    lines: list[str] = []
     lines.append("## Reading these numbers honestly")
     lines.append("")
     lines.append(
@@ -1039,8 +1035,12 @@ def render_report_markdown(doc: ReportDocument) -> str:
         "retrieval discipline. Treat it as telemetry, not a benchmark."
     )
     lines.append("")
+    return lines
 
-    # 4. Per-model audit telemetry.
+
+def _md_per_model_lines(doc: ReportDocument) -> list[str]:
+    """Render the per-model audit table from the document; returns the section's lines."""
+    lines: list[str] = []
     lines.append("## Per-model audit telemetry (all time)")
     lines.append("")
     by_model = doc.alltime_eval.by_model
@@ -1059,21 +1059,12 @@ def render_report_markdown(doc: ReportDocument) -> str:
             "stamp arrived with 3.14 events)."
         )
     lines.append("")
+    return lines
 
-    # 4b. The recall surfaces, when either column holds the surface's
-    # rows. Counts and rates only, like every section here.
-    lines.extend(
-        _surface_markdown_lines(
-            doc.window_eval.surfaces,
-            doc.alltime_eval.surfaces,
-            window_label=window_label,
-            single_window=single_window,
-        )
-    )
 
-    # 5. Threshold-sweep counterfactual. Rule names/descriptions come
-    # from the rows compute_threshold_sweep built off the static
-    # registry — never from log-derived strings.
+def _md_sweep_lines(doc: ReportDocument) -> list[str]:
+    """Render the threshold-sweep table from the document; returns the section's lines."""
+    lines: list[str] = []
     lines.append("## Threshold sweep (counterfactual, all time)")
     lines.append("")
     if doc.sweep.replayable_misses == 0:
@@ -1103,8 +1094,12 @@ def render_report_markdown(doc: ReportDocument) -> str:
             )
             lines.append(f"Skipped {skipped} carrying no replayable relevance label.")
     lines.append("")
+    return lines
 
-    # 6. Tool-usage top 10.
+
+def _md_tool_usage_lines(doc: ReportDocument) -> list[str]:
+    """Render the tool-usage top 10 from the document; returns the section's lines."""
+    lines: list[str] = []
     lines.append("## Tool usage (top 10, all time)")
     lines.append("")
     lines.append("| tool | calls | share |")
@@ -1132,6 +1127,57 @@ def render_report_markdown(doc: ReportDocument) -> str:
         f"total across {len(doc.tool_usage.rows)} known tools."
     )
     lines.append("")
+    return lines
+
+
+def render_report_markdown(doc: ReportDocument) -> str:
+    """Render the composed document as publishable markdown.
+
+    Content contract (the canary test pins it): rates, counts, CIs,
+    model names, and static registry names only. Sections, top to
+    bottom: header, rate trio (window vs all-time), reading guide,
+    per-model table, the recall surfaces (only when the log holds the
+    surface's rows), threshold sweep, tool-usage top 10, methodology
+    footer.
+    """
+    single_window = doc.window_seconds is None
+    window_label = (
+        "all time"
+        if doc.window_seconds is None
+        else f"last {_humanize_seconds(doc.window_seconds)}"
+    )
+    lines: list[str] = []
+
+    # 1. Title + header — aggregate store shape, counts only.
+    lines.extend(_md_header_lines(doc, single_window, window_label))
+
+    # 2. Rate trio, window vs all-time columns.
+    lines.extend(_md_rate_lines(doc, single_window, window_label))
+
+    # 3. Reading guide — static prose adapted from docs/eval-results.md.
+    lines.extend(_md_reading_guide_lines(single_window))
+
+    # 4. Per-model audit telemetry.
+    lines.extend(_md_per_model_lines(doc))
+
+    # 4b. The recall surfaces, when either column holds the surface's
+    # rows. Counts and rates only, like every section here.
+    lines.extend(
+        _surface_markdown_lines(
+            doc.window_eval.surfaces,
+            doc.alltime_eval.surfaces,
+            window_label=window_label,
+            single_window=single_window,
+        )
+    )
+
+    # 5. Threshold-sweep counterfactual. Rule names/descriptions come
+    # from the rows compute_threshold_sweep built off the static
+    # registry — never from log-derived strings.
+    lines.extend(_md_sweep_lines(doc))
+
+    # 6. Tool-usage top 10.
+    lines.extend(_md_tool_usage_lines(doc))
 
     # 7. Methodology footer.
     lines.append("---")
