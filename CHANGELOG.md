@@ -1915,8 +1915,10 @@ follows the candidates' testing.
   and FTS5's integrity-check in the form that compares an
   external-content index with its rows (`'integrity-check'`, rank 1),
   run on a copy in memory of the indexed columns and the index's shadow
-  tables, since the command is an insert that a read-only connection
-  refuses. In `doctor` a damaged page fails and names the restore of the
+  tables, made with the store's own FTS5 table definition, since the
+  command is an insert that a read-only connection refuses. `doctor`
+  runs both on the store check's read-only open, so a store no daemon
+  holds is copied once. In `doctor` a damaged page fails and names the restore of the
   newest bundle that verifies; an index drift warns and names
   `bettermemory index rebuild`, and so does an index spelled by an older
   tokenizer. In `backup verify` a damaged page is `snapshot_unreadable`
@@ -1929,7 +1931,10 @@ follows the candidates' testing.
   warning names the bundle's store rather than the private copy the
   verification opens.
   Measured on 5,000 memories (15 MB): quick_check 0.014 s, the index
-  check 0.026 s. (`src/bettermemory/store_index.py`,
+  check 0.026 s; on synthetic stores of 50,000 and 250,000 memories (193
+  MB and 963 MB) the whole check took 0.69 s and 3.41 s, with no
+  deadline, and the copy in memory raised doctor's peak resident size to
+  117 MB and 362 MB. (`src/bettermemory/store_index.py`,
   `src/bettermemory/doctor.py`, `src/bettermemory/backup.py`,
   `docs/operations.md`, `docs/api.md`, `tests/test_index_integrity.py`)
 

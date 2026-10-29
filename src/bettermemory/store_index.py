@@ -44,7 +44,7 @@ from . import _caches
 from .identity import Actor
 from .log import INDEX_REBUILT, STORE_CREATED
 from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
-from .store_schema import _PROVENANCE_BATCH, SCHEMA
+from .store_schema import _PROVENANCE_BATCH
 from .store_rows import _dt, _load_json
 
 if TYPE_CHECKING:
@@ -736,21 +736,22 @@ def rebuild_index(store: Store, *, reason: str) -> IndexRebuild | None:
 # command is an INSERT, which every read-only connection refuses
 # (``mode=ro``, ``immutable``, ``query_only``: probed), and `doctor` and
 # `backup verify` read through one; so it runs on a copy in memory of the
-# indexed columns and the index's four shadow tables, made with this
-# build's own table definition, and writes nothing beside the store.
+# indexed columns and the index's four shadow tables, made with the
+# store's own table definition (its ``sqlite_master`` text, so a store
+# whose FTS5 table an older schema defined is checked as it was built),
+# and writes nothing beside the store.
 
 #: How many problems `PRAGMA quick_check` is asked to list at most.
 QUICK_CHECK_MESSAGES = 20
 
-#: The FTS5 table this build creates, as `store_schema.SCHEMA` creates it:
-#: the copy the integrity check runs on is made with it.
-_FTS_TABLE_MATCH = re.search(
-    r"CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5\(.*?\);",
-    SCHEMA,
-    re.S,
+#: The start of an FTS5 table named ``memories_fts`` as ``sqlite_master``
+#: keeps its definition: what the integrity check's copy is made with, and
+#: the only statement from the file it runs.
+_FTS_DEFINITION = re.compile(
+    r"\s*CREATE\s+VIRTUAL\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"[\"`\[]?memories_fts[\"`\]]?\s+USING\s+fts5\s*\(",
+    re.I,
 )
-assert _FTS_TABLE_MATCH is not None
-_FTS_TABLE = _FTS_TABLE_MATCH.group(0)
 
 #: The shadow tables FTS5 keeps an external-content table's index in.
 _FTS_SHADOWS = ("data", "idx", "docsize", "config")
@@ -807,9 +808,23 @@ def fts_integrity(conn: sqlite3.Connection) -> tuple[str | None, int]:
     ('integrity-check', 1)``), run on a copy in memory of the memories'
     `rowid`, `body_fts` and `scopes_fts` and the four shadow tables, so it
     runs on a read-only connection and writes nothing beside the store.
-    Returns what the check said (None when the index matches the rows, or
-    the error a shadow table gave when it was read) and how many memory
-    rows were copied."""
+    The copy's FTS5 table is made with the store's own definition, read
+    from ``sqlite_master``: the tokenizer arguments it was built with are
+    the ones its terms were split by, whatever this build's schema says,
+    and `bettermemory index rebuild` keeps them too. A definition that is
+    not an FTS5 table named ``memories_fts`` is not run. Returns what the
+    check said (None when the index matches the rows, or why it could not
+    be checked) and how many memory rows were copied."""
+    try:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("memories_fts",),
+        ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        return f"the index could not be read: {exc}", 0
+    definition = None if row is None or row[0] is None else str(row[0])
+    if definition is None or _FTS_DEFINITION.match(definition) is None:
+        return "the store has no FTS5 table memories_fts to check", 0
     scratch = sqlite3.connect(":memory:", isolation_level=None)
     copied = 0
     try:
@@ -817,7 +832,10 @@ def fts_integrity(conn: sqlite3.Connection) -> tuple[str | None, int]:
             "CREATE TABLE memories("
             "rowid INTEGER PRIMARY KEY, body_fts TEXT, scopes_fts TEXT)"
         )
-        scratch.execute(_FTS_TABLE)
+        try:
+            scratch.execute(definition)
+        except sqlite3.Error as exc:
+            return f"the index's definition could not be made again: {exc}", copied
         scratch.execute("BEGIN")
         try:
             for row in conn.execute("SELECT rowid, body_fts, scopes_fts FROM memories"):
@@ -872,10 +890,12 @@ def _more(items: Sequence[str]) -> str:
     return f" (and {len(items) - 1} more)" if len(items) > 1 else ""
 
 
-def doctor_check(directory: Path | None) -> Check:
-    """`doctor`'s `index` check: the store at `directory` opened read-only
-    once more (`check_store` has closed its open), `index_report` run on
-    it, and each problem a finding naming its repair. A damaged page
+def doctor_check(directory: Path | None, report: IndexReport | None = None) -> Check:
+    """`doctor`'s `index` check: `report`, the `index_report` the store
+    check ran on its own read-only open (`doctor.check_store`, so a closed
+    store is copied once, not twice), or else one run on a read-only open
+    of the store at `directory` made here, and each problem a finding
+    naming its repair. A damaged page
     fails (records are at stake); an index that does not match its rows
     and an index spelled by another tokenizer warn (the records are whole,
     and one command or the next writing open repairs it). A store that
@@ -900,12 +920,15 @@ def doctor_check(directory: Path | None) -> Check:
         return _not_checked(
             "index", "the store is a backup bundle's file", "copy it out first"
         )
-    try:
-        store = Store.open(path, read_only=True)
-    except (ValueError, sqlite3.Error, OSError):
-        return _not_checked("index", "the store does not open", "fix the store first")
-    with store:
-        report = index_report(store)
+    if report is None:
+        try:
+            store = Store.open(path, read_only=True)
+        except (ValueError, sqlite3.Error, OSError):
+            return _not_checked(
+                "index", "the store does not open", "fix the store first"
+            )
+        with store:
+            report = index_report(store)
     live = tokenizer_fingerprint()
     details: dict[str, Any] = {
         "path": str(path),

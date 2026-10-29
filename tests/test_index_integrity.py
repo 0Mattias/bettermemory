@@ -334,6 +334,55 @@ def test_doctor_warns_an_index_another_tokenizer_spelled(
     assert check.details["stored_tokenizer_fingerprint"] == OLD_FINGERPRINT
 
 
+def test_doctor_opens_the_store_once_for_the_store_and_index_checks(
+    store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The index check reads what the store check's read-only open found,
+    so a closed store is opened, and copied privately, once."""
+    from bettermemory import store as store_module
+
+    real = store_module.Store.__dict__["open"].__func__
+    opened: list[Path] = []
+
+    def counting(cls: type, path: Path, *args: object, **kwargs: object) -> object:
+        opened.append(Path(path).resolve())
+        return real(cls, path, *args, **kwargs)
+
+    monkeypatch.setattr(store_module.Store, "open", classmethod(counting))
+    checks = {check.id: check for check in doctor.run_checks(cwd=store_file.parent)}
+    assert checks["store"].status == "ok", checks["store"]
+    assert checks["index"].status == "ok", checks["index"]
+    assert checks["index"].details["memories"] == len(BODIES)
+    assert opened.count(store_file.resolve()) == 1, opened
+
+
+def test_the_integrity_check_reads_the_index_by_the_stores_own_definition(
+    store_file: Path,
+) -> None:
+    """An FTS5 table a schema defined with other tokenizer arguments (here
+    ``porter``, which splits 'controller' into 'control') indexes other
+    terms than this build's definition would; the check copies the index
+    with the store's own definition, so a whole index reads as one."""
+    from bettermemory import store_index
+
+    conn = sqlite3.connect(store_file)
+    try:
+        conn.executescript(
+            "DROP TABLE memories_fts;"
+            "CREATE VIRTUAL TABLE memories_fts USING fts5("
+            "body_fts, scopes_fts, content='memories', content_rowid='rowid', "
+            "tokenize='porter unicode61');"
+            "INSERT INTO memories_fts(memories_fts) VALUES ('rebuild');"
+        )
+    finally:
+        conn.close()
+    reader = sqlite3.connect(f"file:{store_file}?mode=ro", uri=True)
+    try:
+        assert store_index.fts_integrity(reader) == (None, len(BODIES))
+    finally:
+        reader.close()
+
+
 def test_backup_verify_reports_an_index_drift_and_its_repair(
     store_file: Path,
     keys_dir: Path,

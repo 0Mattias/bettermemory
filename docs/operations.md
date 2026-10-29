@@ -218,15 +218,21 @@ as `[behaviour]`, `enabeld` or `"flase"`, is a warning there. `log verify`
 is the one that reads every row; it costs a pass over the whole log.
 Exit 2 is also argparse's code for a usage error, for each of them.
 
-`doctor`'s `index` check (ENG-100) opens the store read-only once more
-and runs SQLite's `PRAGMA quick_check`, which reads every page of every
-table and index, and FTS5's integrity-check in the form that compares an
+`doctor`'s `index` check (ENG-100) runs on the store check's read-only
+open, so a store no daemon holds is copied privately once, and runs
+SQLite's `PRAGMA quick_check`, which reads every page of every table and
+index, and FTS5's integrity-check in the form that compares an
 external-content index with the rows it indexes (`'integrity-check'`
 with rank 1). That command is an insert, which a read-only connection
 refuses, so it runs on a copy in memory of the indexed columns and the
-index's shadow tables, and nothing is written beside the store; on a
-store of 5,000 memories (15 MB) quick_check took 0.014 s and the index
-check 0.026 s. A damaged page fails the check (exit 1) and names the
+index's shadow tables, made with the store's own FTS5 table definition,
+and nothing is written beside the store. Both are linear in the file's
+size and neither has a deadline: measured on synthetic stores, the check
+took 0.10 s for 5,000 memories (a 20 MB file), 0.69 s for 50,000 (193 MB)
+and 3.41 s for 250,000 (963 MB), quick_check 1.17 s and the index copy
+and check 1.91 s of the last; the copy is held in memory, and doctor's
+peak resident size went from 47 MB to 362 MB on the largest store (56 MB
+and 117 MB at the smaller two). A damaged page fails the check (exit 1) and names the
 repair: restore the newest bundle that `backup verify` reads ok, which
 keeps the damaged file aside. An index that does not match its rows (a
 memory it lost, which no search finds, or an entry for text no row

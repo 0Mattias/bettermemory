@@ -65,6 +65,7 @@ from . import _install_hints, claude_paths
 
 if TYPE_CHECKING:
     from .config import Config
+    from .store_index import IndexReport
 
 OK = "ok"
 WARN = "warn"
@@ -204,14 +205,16 @@ class Check:
 @dataclass
 class _Context:
     """What an earlier check established that a later one reads: the
-    working directory the store rule looks in, the loaded config, and the
-    store directory it resolved. None where the earlier check could not
-    establish it."""
+    working directory the store rule looks in, the loaded config, the
+    store directory it resolved, and what the index checks found on the
+    store check's open. None where the earlier check could not establish
+    it."""
 
     cwd: Path | None
     config: Config | None = None
     config_failed: bool = False
     directory: Path | None = None
+    index: IndexReport | None = None
 
 
 def _not_checked(check_id: str, why: str, remedy: str) -> Check:
@@ -807,6 +810,7 @@ def check_store(ctx: _Context) -> list[Check]:
         Store,
         holds_v8_files,
     )
+    from .store_index import index_report
 
     if ctx.directory is None:
         why = "the store's directory is not known"
@@ -873,6 +877,7 @@ def check_store(ctx: _Context) -> list[Check]:
         tail = store.conn.execute(
             "SELECT seq, mac FROM log ORDER BY seq DESC LIMIT 1"
         ).fetchone()
+        ctx.index = index_report(store)
     details.update(
         {
             "store_id": status["store_id"],
@@ -945,10 +950,11 @@ def check_store(ctx: _Context) -> list[Check]:
 
 def check_index(ctx: _Context) -> Check:
     """The store file's pages and its search index (`index`):
-    `store_index.doctor_check`, from a read-only open of its own."""
+    `store_index.doctor_check`, on what the store check's open found, or
+    a read-only open of its own when that check reached none."""
     from .store_index import doctor_check
 
-    return doctor_check(ctx.directory)
+    return doctor_check(ctx.directory, ctx.index)
 
 
 # ---------------------------------------------------------------------------
