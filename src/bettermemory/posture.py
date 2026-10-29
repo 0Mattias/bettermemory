@@ -73,7 +73,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1537,33 +1537,44 @@ def _loopback_entries(domains: list[str], ports: tuple[int, ...]) -> list[str]:
     return flagged
 
 
-def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Finding]:
-    """Claude Code's sandbox settings in the managed and user files against
-    the block `bettermemory security sandbox` prints for this host. Scalar
-    keys take the managed value where one is set (managed settings sit
-    above every other level), and among the managed files the last one
-    merged: Claude Code merges managed-settings.json first and the drop-ins
-    after it in name order, a later file's value replacing an earlier one's.
-    List keys merge, as Claude Code merges them, except where a managed
-    lock (``allowManagedReadPathsOnly``, ``allowManagedDomainsOnly``, on
-    when any managed file sets it) leaves the managed entries alone.
-    Beyond the keys the block sets, the audit reads the two that undo it:
-    ``sandbox.filesystem.disabled``, and ``allowRead`` entries that open a
-    denied directory again. No sandbox at all is information: the
-    shell-holding agent is outside the guard by design (SECURITY.md), and
-    docs/installation.md section 5 is opt-in. A sandbox that is on with a
-    gap in it is a warning."""
-    if platform == "win32":
-        yield Finding(
-            "claude.sandbox",
-            "skip",
-            "the Claude Code sandbox does not run on native Windows; not checked",
+@dataclass(frozen=True)
+class _ClaudeSettings:
+    """The Claude Code settings files the audit read, as (level, path,
+    document) in merge order and highest precedence first, with the
+    lookups it makes in them."""
+
+    documents: list[tuple[str, Path, dict[str, Any]]]
+    ranked: list[tuple[str, Path, dict[str, Any]]]
+
+    def scalar(self, *keys: str) -> tuple[Any, str | None]:
+        """Take a key path; returns the value of highest precedence set there and its level, or (None, None)."""
+        for level, _, document in self.ranked:
+            value = _dig(document, *keys)
+            if value is not None:
+                return value, level
+        return None, None
+
+    def locked(self, *keys: str) -> bool:
+        """Take a key path; returns whether a managed file sets it to true."""
+        return any(
+            _dig(document, *keys) is True
+            for level, _, document in self.documents
+            if level == "managed"
         )
-        return
-    plan = sandbox_settings.build_plan(
-        config, fmt="managed", platform=platform, cwd=cwd
-    )
-    home = sandbox_settings.home_dir()
+
+    def merged(self, *keys: str, managed_only: bool = False) -> list[str]:
+        """Take a key path; returns the strings each file lists there, the managed files' alone when managed_only."""
+        out: list[str] = []
+        for level, _, document in self.documents:
+            if level == "managed" or not managed_only:
+                out.extend(_strings(_dig(document, *keys)))
+        return out
+
+
+def _read_claude_documents(
+    platform: str,
+) -> Generator[Finding, None, list[tuple[str, Path, dict[str, Any]]]]:
+    """Read the managed and user settings files, yielding a warning for each unreadable one; returns the documents read, as (level, path, document)."""
     documents: list[tuple[str, Path, dict[str, Any]]] = []
     for level, path in _settings_paths(platform):
         document, error = read_settings(path)
@@ -1577,51 +1588,15 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             )
         elif document is not None:
             documents.append((level, path, document))
-    read = [str(path) for _, path, _ in documents]
-    # Highest precedence first: the managed files, the last merged first,
-    # then the user's.
-    ranked = [doc for doc in reversed(documents) if doc[0] == "managed"] + [
-        doc for doc in documents if doc[0] == "user"
-    ]
+    return documents
 
-    def scalar(*keys: str) -> tuple[Any, str | None]:
-        for level, _, document in ranked:
-            value = _dig(document, *keys)
-            if value is not None:
-                return value, level
-        return None, None
 
-    def locked(*keys: str) -> bool:
-        return any(
-            _dig(document, *keys) is True
-            for level, _, document in documents
-            if level == "managed"
-        )
-
-    def merged(*keys: str, managed_only: bool = False) -> list[str]:
-        out: list[str] = []
-        for level, _, document in documents:
-            if level == "managed" or not managed_only:
-                out.extend(_strings(_dig(document, *keys)))
-        return out
-
-    enabled, enabled_level = scalar("sandbox", "enabled")
-    if enabled is not True:
-        yield Finding(
-            "claude.sandbox",
-            "info",
-            "Claude Code's sandbox is not enabled in the managed or user settings: "
-            "an agent with a shell can read the store, the key and the daemon's "
-            "token, as SECURITY.md describes",
-            fix=(
-                "`bettermemory security sandbox --format managed` prints the "
-                "settings for this host"
-            ),
-            details={"read": read},
-        )
-        return
+def _sandbox_switch_gaps(
+    settings: _ClaudeSettings,
+) -> Generator[Finding, None, int]:
+    """Check the sandbox's failIfUnavailable, allowUnsandboxedCommands and filesystem switches; yields a warning per gap and returns how many."""
     gaps = 0
-    fail_if_unavailable, _ = scalar("sandbox", "failIfUnavailable")
+    fail_if_unavailable, _ = settings.scalar("sandbox", "failIfUnavailable")
     if fail_if_unavailable is not True:
         gaps += 1
         yield Finding(
@@ -1631,7 +1606,7 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             "start, commands run without it",
             fix='set "failIfUnavailable": true under "sandbox"',
         )
-    unsandboxed, _ = scalar("sandbox", "allowUnsandboxedCommands")
+    unsandboxed, _ = settings.scalar("sandbox", "allowUnsandboxedCommands")
     if unsandboxed is not False:
         gaps += 1
         yield Finding(
@@ -1641,7 +1616,7 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             "sandbox stops can be retried outside it",
             fix='set "allowUnsandboxedCommands": false under "sandbox"',
         )
-    filesystem_off, _ = scalar("sandbox", "filesystem", "disabled")
+    filesystem_off, _ = settings.scalar("sandbox", "filesystem", "disabled")
     if filesystem_off is True:
         gaps += 1
         yield Finding(
@@ -1651,7 +1626,15 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             "filesystem isolation, so denyRead holds nothing back",
             fix='remove "disabled" from "sandbox.filesystem"',
         )
-    deny_read = merged("sandbox", "filesystem", "denyRead")
+    return gaps
+
+
+def _filesystem_gaps(
+    settings: _ClaudeSettings, plan: sandbox_settings.SandboxPlan, home: Path | None
+) -> Generator[Finding, None, int]:
+    """Check denyRead, allowRead and the deny rules against the plan's denied paths; yields its findings and returns how many are gaps."""
+    gaps = 0
+    deny_read = settings.merged("sandbox", "filesystem", "denyRead")
     open_dirs = [
         loc
         for loc in plan.denied
@@ -1668,11 +1651,13 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             fix="add them to denyRead; `bettermemory security sandbox` prints the list",
             details={"missing": missing},
         )
-    allow_read = merged(
+    allow_read = settings.merged(
         "sandbox",
         "filesystem",
         "allowRead",
-        managed_only=locked("sandbox", "filesystem", "allowManagedReadPathsOnly"),
+        managed_only=settings.locked(
+            "sandbox", "filesystem", "allowManagedReadPathsOnly"
+        ),
     )
     reopened: dict[str, list[str]] = {}
     for loc in plan.denied:
@@ -1692,7 +1677,7 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             fix="drop those allowRead entries, or narrow them to paths outside these",
             details={"reopened": reopened},
         )
-    rules = merged("permissions", "deny")
+    rules = settings.merged("permissions", "deny")
     missing_rules = [
         f"{tool}({sandbox_settings.rule_path(loc.path, home)}/**)"
         for loc in plan.denied
@@ -1722,11 +1707,19 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             f"{', '.join(project_missing)} would keep Claude Code's tools off one",
             details={"missing": project_missing},
         )
-    domains = merged(
+    return gaps
+
+
+def _network_gaps(
+    settings: _ClaudeSettings, plan: sandbox_settings.SandboxPlan, platform: str
+) -> Generator[Finding, None, int]:
+    """Check the allowed domains, local binding and excluded commands; yields its findings and returns how many are gaps."""
+    gaps = 0
+    domains = settings.merged(
         "sandbox",
         "network",
         "allowedDomains",
-        managed_only=locked("sandbox", "network", "allowManagedDomainsOnly"),
+        managed_only=settings.locked("sandbox", "network", "allowManagedDomainsOnly"),
     )
     flagged = _loopback_entries(domains, plan.ports)
     if flagged:
@@ -1743,7 +1736,7 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             ),
             details={"entries": flagged, "ports": list(plan.ports)},
         )
-    local_binding, _ = scalar("sandbox", "network", "allowLocalBinding")
+    local_binding, _ = settings.scalar("sandbox", "network", "allowLocalBinding")
     if local_binding is True and platform == "darwin":
         gaps += 1
         yield Finding(
@@ -1764,7 +1757,7 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             "sandbox.network.allowLocalBinding is true, which has no effect on "
             "Linux: a sandboxed command's localhost is its own",
         )
-    excluded = merged("sandbox", "excludedCommands")
+    excluded = settings.merged("sandbox", "excludedCommands")
     if excluded:
         gaps += 1
         yield Finding(
@@ -1775,6 +1768,64 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             fix="remove them, or accept that each can reach the store, the key and the token",
             details={"commands": excluded},
         )
+    return gaps
+
+
+def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Finding]:
+    """Claude Code's sandbox settings in the managed and user files against
+    the block `bettermemory security sandbox` prints for this host. Scalar
+    keys take the managed value where one is set (managed settings sit
+    above every other level), and among the managed files the last one
+    merged: Claude Code merges managed-settings.json first and the drop-ins
+    after it in name order, a later file's value replacing an earlier one's.
+    List keys merge, as Claude Code merges them, except where a managed
+    lock (``allowManagedReadPathsOnly``, ``allowManagedDomainsOnly``, on
+    when any managed file sets it) leaves the managed entries alone.
+    Beyond the keys the block sets, the audit reads the two that undo it:
+    ``sandbox.filesystem.disabled``, and ``allowRead`` entries that open a
+    denied directory again. No sandbox at all is information: the
+    shell-holding agent is outside the guard by design (SECURITY.md), and
+    docs/installation.md section 5 is opt-in. A sandbox that is on with a
+    gap in it is a warning."""
+    if platform == "win32":
+        yield Finding(
+            "claude.sandbox",
+            "skip",
+            "the Claude Code sandbox does not run on native Windows; not checked",
+        )
+        return
+    plan = sandbox_settings.build_plan(
+        config, fmt="managed", platform=platform, cwd=cwd
+    )
+    home = sandbox_settings.home_dir()
+    documents = yield from _read_claude_documents(platform)
+    read = [str(path) for _, path, _ in documents]
+    # Highest precedence first: the managed files, the last merged first,
+    # then the user's.
+    ranked = [doc for doc in reversed(documents) if doc[0] == "managed"] + [
+        doc for doc in documents if doc[0] == "user"
+    ]
+    settings = _ClaudeSettings(documents, ranked)
+
+    enabled, enabled_level = settings.scalar("sandbox", "enabled")
+    if enabled is not True:
+        yield Finding(
+            "claude.sandbox",
+            "info",
+            "Claude Code's sandbox is not enabled in the managed or user settings: "
+            "an agent with a shell can read the store, the key and the daemon's "
+            "token, as SECURITY.md describes",
+            fix=(
+                "`bettermemory security sandbox --format managed` prints the "
+                "settings for this host"
+            ),
+            details={"read": read},
+        )
+        return
+    gaps = 0
+    gaps += yield from _sandbox_switch_gaps(settings)
+    gaps += yield from _filesystem_gaps(settings, plan, home)
+    gaps += yield from _network_gaps(settings, plan, platform)
     if enabled_level == "user":
         yield Finding(
             "claude.sandbox.scope",
