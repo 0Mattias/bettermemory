@@ -227,6 +227,25 @@ What the daemon's log and the clients say when something is wrong:
   names" is a state file of this version whose pid holds the lock while
   its port answers without the proof: find what holds the port with
   `lsof -iTCP:<port>` and stop it.
+- **"bettermemory hook <event>: NotProven: ... the listener at
+  127.0.0.1:<port> did not prove it holds the daemon's token (<why>);
+  nothing was sent to it"**, or from the shim, **"the listener at
+  127.0.0.1:<port> did not prove it is the bettermemory daemon its state
+  file names (<why>); nothing was sent to it"**. A listener took the
+  daemon's port between the lookup and the call (the daemon crashed or
+  was killed). The call is lost: the hook exits 0 with this line, and
+  the shim finds the daemon again and resends once, or answers the call
+  with an error. The next lookup starts a daemon beside the listener;
+  find the listener with `lsof -iTCP:<port>`.
+- **"bettermemory: httpx2 <version> keeps its connection pool where the
+  shim cannot prove its connections to the daemon; the shim does not
+  start"**. The installed httpx2 keeps its transport's pool elsewhere
+  than the httpx2 this release was built with, and the shim, whose proof
+  of the daemon rides on that pool, refuses to run on it rather than
+  send the token down an unproven connection. Install bettermemory with
+  the httpx2 its release locks (`uv.lock`; 2.16 for 9.0.0rc14), for
+  example `uv tool install bettermemory --with 'httpx2==2.16.*'`, or a
+  bettermemory release that supports the installed httpx2.
 - **"a process holds the store's lock (a daemon starting, busy or hung)
   and none answered within 8 s".** A shim found no daemon answering, and
   started none, since another process holds the store's lock: no second

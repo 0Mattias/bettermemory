@@ -1528,6 +1528,48 @@ follows the candidates' testing.
   `tests/test_hook_client.py`, `tests/test_doctor.py`,
   `tests/test_daemon_lifecycle.py`, `tests/test_shim.py`,
   `tests/test_membership_open.py`, `tests/test_service_units.py`)
+- **The token goes only down a connection whose listener has just proven
+  it holds it.** A client proved the daemon at its lookup and then sent
+  the token down a connection of its own: a hook posted after
+  `ensure_daemon`'s proof, and a long-running shim kept posting to the
+  port it knew until a 401 or a connection error, so a listener that
+  took a crashed daemon's port in between received the next call, the
+  bearer token and the call's payload included. The proof now runs on
+  the connection that will carry the token, before the token:
+  `_daemon_client.post` asks `/health?nonce=` on its own connection and
+  posts down it only when the proof holds, and the shim proves every
+  connection its pool opens, one pool per port and token, so a
+  connection carries only the token its listener proved. A TCP
+  connection cannot change peers, so a connection lost to a reset, a
+  timeout, a refusal or a close is replaced by one proven again before
+  it carries anything, and no moment passes between the proof and the
+  token. This was chosen over a per-request MAC, which would keep the
+  token off the wire but still hand the listener the payload, put its
+  reply in front of the model, and need replay state in the daemon. A
+  listener that does not prove itself gets the proof's request alone: no
+  token, no payload, and no MAC to replay, since the proof goes from the
+  daemon to the client. Both paths judge the proof's reply by one rule
+  (`_daemon_client.proof_failure`). The shim's proof rides on the pool it
+  gives httpx2's transport in place of httpx2's own private `_pool`; an
+  httpx2 that kept its pool elsewhere would have sent the token down an
+  unproven pool, so the shim now refuses to start there, in one line
+  naming httpx2's version, and httpx2, httpcore2 and h11, which it
+  imports directly, are declared in `pyproject.toml` within mcp's own
+  ranges. `tests/test_daemon_wire.py` binds a listener to a crashed
+  daemon's port, a real daemon's after SIGKILL among them, and runs the
+  shim on an httpx2 that keeps its pool elsewhere. A hook pays one more
+  loopback round trip per post, under its 15 s per-read timeout
+  (`HOOK_TIMEOUT_SECONDS`), which the proof's reads and the post's each
+  get: 0.24 ms at the median of 30 paired posts of the prompt bench's
+  workload on the v8 fixture store, 3 s apart (1.31 ms to 1.54 ms p50).
+  `docs/operations.md` lists the two new refusals. The tests' stand-ins
+  for the daemon speak HTTP/1.1, since the proof and the request now
+  share a keep-alive connection.
+  (`src/bettermemory/_daemon_client.py`, `src/bettermemory/shim.py`,
+  `pyproject.toml`, `uv.lock`, `SECURITY.md`, `docs/internals.md`,
+  `docs/operations.md`, `tests/test_daemon_wire.py`,
+  `tests/test_daemon_identity.py`, `tests/test_hook_client.py`,
+  `tests/test_daemon_lifecycle.py`, `tests/test_shim.py`)
 
 #### Known limitations
 
@@ -1745,6 +1787,17 @@ follows the candidates' testing.
   stdlib reading of (and where a signal is a hard kill) and macOS only
   through `ps` or a sysctl. (`src/bettermemory/_daemon_client.py`,
   `docs/operations.md`)
+- **A hook proves the daemon at least twice.** The lookup's proof
+  decides whether a daemon must be started, and every post asks again on
+  the connection that carries the token: one more `/health` round trip
+  per post, 0.24 ms at the median as measured above, and a hook whose
+  membership answer takes more rounds posts, and proves, once a round.
+  (`src/bettermemory/_daemon_client.py`)
+- **The shim keeps one connection pool per daemon it has followed.** A
+  pool is bound to one port and token; once the shim finds a daemon at
+  another port or under another token, the old pool takes no request and
+  is closed only when the shim exits, its kept connections closed by
+  the old daemon's keep-alive timeout or exit. (`src/bettermemory/shim.py`)
 
 ### 9.0.0rc13
 

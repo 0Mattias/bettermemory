@@ -27,12 +27,16 @@ more. Both failures happen before the daemon runs anything, so the
 resend cannot apply a call twice. The daemon found again must prove
 itself the one its state file names (`_daemon_client.identify`, through
 `_answering` and `wait_for_daemon`), at start as at a reconnect: a
-listener another account left on a crashed daemon's port, which refuses
-the token, is not taken for the daemon, and the resend goes to a daemon
-started beside it on another port. The proof is checked where the shim
-finds its daemon, not on every call; a call sent to the remembered port
-in the moment between a crash and that port's capture still reaches
-whatever answers there. Any other failure between the shim
+listener another account left on a crashed daemon's port is not taken
+for the daemon, and the resend goes to a daemon started beside it on
+another port. Every connection the shim opens to the daemon is proven
+on itself before a request goes down it (`_ProvingBackend`): a listener
+that took a crashed daemon's port gets the proof's ``/health`` request
+and nothing else, no token and no call, and the call that met it is
+resent to the daemon found again, since nothing of it was sent. Before
+9.0.0rc14 the proof was checked only where the shim found its daemon,
+and a call sent to the remembered port after a crash reached whatever
+answered there, token included. Any other failure between the shim
 and the daemon answers the call that met it and leaves the shim up: the
 SDK's transport would otherwise let the exception end its task group
 and the process with it.
@@ -45,11 +49,13 @@ import logging
 import os
 import secrets
 import sys
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import Any, cast
 
 import anyio
 import anyio.to_thread
+import h11
+import httpcore2
 import httpx2
 
 log = logging.getLogger("bettermemory.shim")
@@ -176,12 +182,237 @@ class _Upstream:
             return None
 
 
+async def _prove(
+    stream: httpcore2.AsyncNetworkStream,
+    *,
+    host: str,
+    port: int,
+    token: str,
+    timeout: float | None,
+) -> str | None:
+    """None when the listener at the other end of `stream`, a connection
+    just opened, proves on it that it holds `token`; else what it did
+    instead.
+
+    The exchange `_daemon_client._proven_connection` makes for a hook,
+    spoken over the pool's own stream with `h11`, the HTTP/1.1 machine
+    httpcore2 then runs on it: ``GET /health`` with a fresh nonce, the
+    whole reply read, and judged by the rule a hook's proof is judged by
+    (`_daemon_client.proof_failure`). A reply that leaves the connection
+    closing (``Connection: close``, HTTP/1.0) fails it, since the request
+    after it could not go down this connection."""
+    from ._daemon_client import (
+        HEALTH_NONCE_PARAM,
+        HEALTH_PATH,
+        PROOF_REPLY_CAP,
+        proof_failure,
+    )
+
+    nonce = secrets.token_hex(16)
+    machine = h11.Connection(h11.CLIENT)
+    request = h11.Request(
+        method="GET",
+        target=f"{HEALTH_PATH}?{HEALTH_NONCE_PARAM}={nonce}",
+        headers=[("Host", f"{host}:{port}"), ("Accept", "application/json")],
+    )
+    sent = (machine.send(request), machine.send(h11.EndOfMessage()))
+    await stream.write(b"".join(part for part in sent if part), timeout=timeout)
+    status = 0
+    body = b""
+    while True:
+        event = machine.next_event()
+        if event is h11.NEED_DATA:
+            machine.receive_data(await stream.read(PROOF_REPLY_CAP, timeout=timeout))
+        elif isinstance(event, h11.Response):
+            status = event.status_code
+        elif isinstance(event, h11.Data):
+            body += bytes(event.data)
+            if len(body) > PROOF_REPLY_CAP:
+                break
+        elif isinstance(event, h11.EndOfMessage):
+            break
+        else:
+            return "no complete reply"
+    closes = machine.their_state is not h11.DONE
+    return proof_failure(status, closes, body, token, nonce)
+
+
+class _ProvingBackend(httpcore2.AsyncNetworkBackend):
+    """The network under one of the shim's connection pools
+    (`_ProvenTransport`), bound to the one `port` and `token` that pool's
+    requests carry. A TCP connection it opens goes to the pool only once
+    the listener has proven on it that it holds `token` (`_prove`), so the
+    token never goes down a connection to anything else, nor down one
+    whose listener proved another token. A connection the pool keeps is
+    the proven listener's for as long as it stays open; once it is lost
+    (reset, timed out, closed by either side) the pool opens another,
+    which is proven before its first request. A listener that does not
+    prove itself fails the connect (`httpcore2.ConnectError`, nothing sent
+    to it but the proof's request), which `_ForwardingTransport` reads as
+    no daemon at the port: it finds the daemon again and resends."""
+
+    def __init__(self, port: int | None, token: str) -> None:
+        self._port = port
+        self._token = token
+        # httpcore2 declares a stand-in `AnyIOBackend` for when anyio is
+        # missing, which the type checkers read; anyio comes with mcp.
+        self._network = cast(httpcore2.AsyncNetworkBackend, httpcore2.AnyIOBackend())
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[Any] | None = None,
+    ) -> httpcore2.AsyncNetworkStream:
+        if port != self._port:
+            raise httpcore2.ConnectError(
+                f"the shim holds no token for {host}:{port}; nothing was sent to it"
+            )
+        stream = await self._network.connect_tcp(
+            host,
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+        try:
+            why = await _prove(
+                stream, host=host, port=port, token=self._token, timeout=timeout
+            )
+        except Exception as exc:  # noqa: BLE001 - every failure fails the connect
+            why = f"the proof's exchange failed: {exc.__class__.__name__}"
+        except BaseException:
+            with anyio.CancelScope(shield=True):
+                await stream.aclose()
+            raise
+        if why is not None:
+            with anyio.CancelScope(shield=True):
+                await stream.aclose()
+            raise httpcore2.ConnectError(
+                f"the listener at {host}:{port} did not prove it is the "
+                f"bettermemory daemon its state file names ({why}); nothing "
+                "was sent to it"
+            )
+        return stream
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Iterable[Any] | None = None,
+    ) -> httpcore2.AsyncNetworkStream:
+        raise httpcore2.ConnectError("the shim reaches its daemon over TCP only")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._network.sleep(seconds)
+
+
+def _unprovable_httpx2(
+    transport: httpx2.AsyncHTTPTransport | None = None,
+) -> str | None:
+    """Why this httpx2 cannot carry the shim's proving pool; None when it
+    can. `_ProvenTransport` puts its pool, the one whose every connection
+    is proven (`_ProvingBackend`), where httpx2's `AsyncHTTPTransport`
+    keeps its own: the private `_pool`, which `__init__` sets and
+    `handle_async_request` reads (httpx2 2.16). An httpx2 that kept it
+    under another name would send each request, token and all, down a
+    pool the shim never made, its connections unproven, with nothing
+    raised; mcp, which brings httpx2, sets it no upper bound. So both
+    methods are read for the name, and a `transport` just made is read
+    for the pool itself: any doubt is a refusal, never a fallback to an
+    unproven pool."""
+    cls = httpx2.AsyncHTTPTransport
+    names = [
+        getattr(getattr(method, "__code__", None), "co_names", ())
+        for method in (cls.__init__, cls.handle_async_request)
+    ]
+    kept = transport is None or isinstance(
+        vars(transport).get("_pool"), httpcore2.AsyncConnectionPool
+    )
+    if kept and all("_pool" in found for found in names):
+        return None
+    version = getattr(httpx2, "__version__", "of an unknown version")
+    return (
+        f"httpx2 {version} keeps its connection pool where the shim cannot prove "
+        "its connections to the daemon"
+    )
+
+
+def refuse_unprovable_httpx2() -> None:
+    """End the shim before it starts when this httpx2 cannot carry the
+    proving pool (`_unprovable_httpx2`): one line naming httpx2's version,
+    and nothing sent to any daemon. `run_shim` asks first, before it looks
+    for a daemon, so the shim never runs on a pool it cannot prove."""
+    why = _unprovable_httpx2()
+    if why is not None:
+        raise SystemExit(
+            f"bettermemory: {why}; the shim does not start, and nothing was sent "
+            "to the daemon. Install bettermemory with the httpx2 its release "
+            "locks (docs/operations.md) and start it again."
+        )
+
+
+class _ProvenTransport(httpx2.AsyncHTTPTransport):
+    """httpx2's own transport, its connection pool opening connections
+    through a `_ProvingBackend` bound to `port` and `token`, with the
+    limits httpx2 gives a transport by default. Made only where httpx2
+    keeps its pool as 2.16 does (`_unprovable_httpx2`): elsewhere it
+    raises, and no request is sent."""
+
+    def __init__(self, port: int | None, token: str) -> None:
+        super().__init__()
+        why = _unprovable_httpx2(self)
+        if why is not None:
+            raise RuntimeError(f"{why}; nothing was sent")
+        self._pool = httpcore2.AsyncConnectionPool(
+            max_connections=100,
+            max_keepalive_connections=20,
+            keepalive_expiry=5.0,
+            network_backend=_ProvingBackend(port, token),
+        )
+
+
+class _DaemonTransport(httpx2.AsyncBaseTransport):
+    """The transport under `_ForwardingTransport` (the `inner` the shim
+    gives it): each request goes to the `_ProvenTransport` of the port
+    and the token it carries, its URL's port and its bearer token, made
+    the first time a request carries them. So a connection only ever
+    carries the token its listener proved on it, whatever `_Upstream`
+    holds by the time the connection is opened. The pool of a port and
+    token the requests no longer carry (a refresh found the daemon again)
+    takes no new request and is closed with the shim; there is one per
+    daemon the shim has followed."""
+
+    def __init__(self) -> None:
+        why = _unprovable_httpx2()
+        if why is not None:
+            raise RuntimeError(f"{why}; nothing was sent")
+        self._proven: dict[tuple[int | None, str], _ProvenTransport] = {}
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        _, _, token = request.headers.get("Authorization", "").partition(" ")
+        key = (request.url.port, token)
+        transport = self._proven.get(key)
+        if transport is None:
+            transport = self._proven[key] = _ProvenTransport(*key)
+        return await transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        for transport in self._proven.values():
+            await transport.aclose()
+
+
 class _ForwardingTransport(httpx2.AsyncBaseTransport):
     """The shim's transport to the daemon. Every request goes to the
-    port and with the token `upstream` holds. A request refused before
-    the daemon ran it (no connection, or 401) refreshes `upstream` and
-    goes once more; every other failure comes back as an error reply to
-    the request that met it, never as an exception."""
+    port and with the token `upstream` holds, down a connection whose
+    listener proved it holds that token when the connection was opened
+    (`_DaemonTransport`, the `inner` the shim gives it). A request refused
+    before the daemon ran it (no connection, a listener that does not
+    prove itself, or 401) refreshes `upstream` and goes once more; every
+    other failure comes back as an error reply to the request that met
+    it, never as an exception."""
 
     def __init__(self, inner: httpx2.AsyncBaseTransport, upstream: _Upstream) -> None:
         self._inner = inner
@@ -247,9 +478,7 @@ async def _serve_through_daemon(
 
     session_id = "sess_" + secrets.token_hex(8)
     url = f"http://127.0.0.1:{state['port']}/mcp"
-    transport = _ForwardingTransport(
-        httpx2.AsyncHTTPTransport(), _Upstream(state, find)
-    )
+    transport = _ForwardingTransport(_DaemonTransport(), _Upstream(state, find))
     async with httpx2.AsyncClient(
         headers={HEADER_SESSION: session_id},
         timeout=httpx2.Timeout(60.0, connect=5.0),
@@ -306,6 +535,7 @@ def run_shim() -> None:
     )
     from .config import load_config
 
+    refuse_unprovable_httpx2()
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,

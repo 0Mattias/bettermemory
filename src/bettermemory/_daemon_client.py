@@ -39,6 +39,15 @@ the daemon's, whatever pid and store it repeats (`proves`). Anything
 else answering there is someone else's:
 nothing is posted to it, its pid is never signalled, and a daemon is
 started beside it, which binds another port when that one is held.
+
+The token itself goes only down a connection whose listener has just
+proven, on that same connection, that it holds it (`post`, through
+`_proven_connection`): a daemon that crashed after `identify` and a
+listener that took its port before the post get the post's health
+request and nothing else. A TCP connection cannot change peers, so the
+proof, made per connection, leaves no moment in which the token could
+reach another process; the shim's connection pool proves each
+connection it opens the same way (`shim._ProvingBackend`).
 """
 
 from __future__ import annotations
@@ -46,6 +55,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import http.client
+import io
 import json
 import os
 import re
@@ -79,8 +89,9 @@ HOOK_PATH = "/api/v1/hook/"
 # The daemon is on 127.0.0.1, and nothing between this client and it may
 # see a request: `post` carries the bearer token and the hook payloads.
 # `urllib.request.urlopen` consults http_proxy (and its kin) even for a
-# loopback address unless no_proxy names it, so every request here goes
-# through an opener with no proxy handler at all.
+# loopback address unless no_proxy names it, so `health` goes through an
+# opener with no proxy handler at all, and `post` speaks `http.client` to
+# the port itself, which consults none.
 _LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 #: The query parameter ``GET /health`` reads a client's nonce from, and the
@@ -100,6 +111,11 @@ _PROOF_CONTEXT = b"bettermemory-health-v1:"
 #: rc13, which take a reply without a proof for a daemon from before the
 #: proof at the port of a state file that lacks it.
 PROOF_STATE_KEY = "health_proof"
+#: The most of a ``/health`` reply a connection's proof reads
+#: (`proof_failure`), for a hook's post and the shim's pool alike: a
+#: daemon's is a few hundred bytes, a few more per saved orphan store it
+#: lists.
+PROOF_REPLY_CAP = 1 << 16
 
 #: The hook words `_entry.main` routes here. The three 8.x names are
 #: aliases of the events the daemon serves, so an installed hooks.json
@@ -438,7 +454,9 @@ def identify(state: Mapping[str, Any], *, timeout: float = 0.5) -> Identified:
     """GET ``/health`` at the port `state` names with a fresh nonce
     (`secrets.token_hex(16)`), and whether what answers is the daemon that
     wrote `state`. One request, the one a client's discovery made before
-    the proof existed, so the hook's fast path grows no round trip."""
+    the proof existed. Its connection carries nothing else: the token goes
+    out only on a connection `post` proves for itself
+    (`_proven_connection`)."""
     nonce = secrets.token_hex(16)
     answer = health(int(state["port"]), timeout=timeout, nonce=nonce)
     if answer is None:
@@ -500,22 +518,145 @@ def _warn_foreign(state: Mapping[str, Any]) -> None:
     )
 
 
+class NotProven(urllib.error.URLError):
+    """The listener at a daemon's port did not prove, on the connection
+    `post` opened to it, that it holds the token (`_proven_connection`).
+    Only the proof's ``/health`` request went to it: no token, no payload.
+    `port` is the port, `why` what the listener did instead."""
+
+    def __init__(self, port: int, why: str) -> None:
+        super().__init__(
+            f"the listener at {HOST}:{port} did not prove it holds the "
+            f"daemon's token ({why}); nothing was sent to it"
+        )
+        self.port = port
+        self.why = why
+
+
+def proof_failure(
+    status: int, closes: bool, raw: bytes, token: str, nonce: str
+) -> str | None:
+    """Why a ``/health`` reply, asked with `nonce` on a connection that is
+    to carry `token` next, does not prove that connection's listener holds
+    `token`; None when it does. The one judgement of a connection's proof,
+    for a hook's post (`_proven_connection`, over `http.client`) and for
+    each connection the shim's pool opens (`shim._prove`, over `h11`):
+    HTTP 200, at most `PROOF_REPLY_CAP` bytes (`raw` read to one byte
+    past it), a reply that leaves the connection open (`closes` false: a
+    ``Connection: close`` or HTTP/1.0 reply cannot carry the request
+    after it), a JSON object with ``"status": "ok"``, and its proof of
+    `token` (`proves`). The reasons name only what the reply lacked;
+    nothing the listener sent is quoted."""
+    if status != 200:
+        return f"HTTP {status}"
+    if len(raw) > PROOF_REPLY_CAP:
+        return "a reply longer than a daemon's /health"
+    if closes:
+        return "a reply that closes the connection"
+    try:
+        answer = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return "a reply that is not JSON"
+    if not isinstance(answer, dict) or answer.get("status") != "ok":
+        return "a reply that is not a daemon's /health"
+    if not proves({"token": token}, answer, nonce):
+        return "a wrong proof" if "proof" in answer else "no proof of the token"
+    return None
+
+
+def _proven_connection(
+    port: int, token: str, *, timeout: float
+) -> http.client.HTTPConnection:
+    """A connection to `port` whose listener has just proven on it that it
+    holds `token`: ``GET /health`` with a fresh nonce, the reply's proof
+    checked (`proves`), and the connection kept open for the request that
+    carries the token. Before 9.0.0rc14 the token went down a connection of
+    its own, opened after the proof `identify` had asked for on another,
+    so a daemon that crashed in between and a listener that took its port
+    received the token; a long-running shim met that moment on every call
+    after a crash. Proven here, on the connection that then carries the
+    token, nothing can stand between the proof and the token: a TCP
+    connection cannot change peers, and a daemon that dies drops it.
+
+    The connection is HTTP/1.1 keep-alive, as uvicorn serves it. A reply
+    that closes it (``Connection: close``, an HTTP/1.0 server) cannot
+    carry the request after it, and `auto_open` is turned off so that
+    `http.client` never opens another, unproven one in its place.
+
+    Raises `NotProven` when the listener answers anything but a proof of
+    `token` (no proof, a wrong one, a reply that is not HTTP, a reply that
+    closes the connection), and `urllib.error.URLError` around the
+    `OSError` when nothing answers (refused, reset, timed out)."""
+    nonce = secrets.token_hex(16)
+    connection = http.client.HTTPConnection(HOST, port, timeout=timeout)
+    try:
+        connection.request(
+            "GET",
+            f"{HEALTH_PATH}?{HEALTH_NONCE_PARAM}={nonce}",
+            headers={"Accept": "application/json"},
+        )
+        response = connection.getresponse()
+        raw = response.read(PROOF_REPLY_CAP + 1)
+        status, closes = response.status, response.will_close
+    except OSError as exc:
+        connection.close()
+        raise urllib.error.URLError(exc) from exc
+    except http.client.HTTPException as exc:
+        connection.close()
+        raise NotProven(
+            port, f"a reply that is not HTTP: {type(exc).__name__}"
+        ) from exc
+    why = proof_failure(status, closes or connection.sock is None, raw, token, nonce)
+    if why is not None:
+        connection.close()
+        raise NotProven(port, why)
+    connection.auto_open = 0
+    return connection
+
+
 def post(
     port: int, token: str, path: str, payload: dict[str, Any], *, timeout: float
 ) -> dict[str, Any]:
     """POST `payload` as JSON with the bearer token; the reply as a dict.
-    Raises `urllib.error.URLError` (or `HTTPError`) on any failure."""
-    request = urllib.request.Request(
-        f"http://{HOST}:{port}{path}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
-        method="POST",
-    )
-    with _LOOPBACK.open(request, timeout=timeout) as response:
-        body = json.loads(response.read().decode("utf-8"))
+
+    The request goes down a connection whose listener has just proven on
+    it that it holds `token` (`_proven_connection`), so every call pays one
+    ``/health`` round trip on an open loopback connection before its
+    request, and a listener that is not the daemon gets neither the token
+    nor `payload`, whenever it took the port. Each call opens, proves and
+    closes its own connection: after any failure the next call proves
+    again before it sends the token.
+
+    Raises `urllib.error.URLError` (or `HTTPError`) on any failure:
+    `NotProven`, a `URLError`, when the listener does not prove itself;
+    `HTTPError` for a reply that is not 2xx; `URLError` around the
+    `OSError` or `http.client.HTTPException` that ended the exchange."""
+    connection = _proven_connection(port, token, timeout=timeout)
+    try:
+        connection.request(
+            "POST",
+            path,
+            body=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+        )
+        response = connection.getresponse()
+        raw = response.read()
+    except (OSError, http.client.HTTPException) as exc:
+        raise urllib.error.URLError(exc) from exc
+    finally:
+        connection.close()
+    if not 200 <= response.status < 300:
+        raise urllib.error.HTTPError(
+            f"http://{HOST}:{port}{path}",
+            response.status,
+            response.reason,
+            response.headers,
+            io.BytesIO(raw),
+        )
+    body = json.loads(raw.decode("utf-8"))
     return body if isinstance(body, dict) else {}
 
 
@@ -1465,10 +1606,12 @@ __all__ = [
     "DaemonExited",
     "HEALTH_NONCE_PARAM",
     "LOCK_WAIT_SECONDS",
+    "NotProven",
     "HOOK_EVENTS",
     "HOOK_WORDS",
     "HOST",
     "Identified",
+    "PROOF_REPLY_CAP",
     "PROOF_STATE_KEY",
     "STATE_DIR_ENV",
     "STORE_FILENAME",
@@ -1488,6 +1631,7 @@ __all__ = [
     "package_version",
     "pid_alive",
     "post",
+    "proof_failure",
     "proves",
     "read_state",
     "read_state_file",

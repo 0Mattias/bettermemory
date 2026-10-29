@@ -398,6 +398,10 @@ class _StaleDaemon(http.server.ThreadingHTTPServer):
 
 
 class _StaleHandler(http.server.BaseHTTPRequestHandler):
+    # Keep-alive, as uvicorn serves the daemon: a post asks for the proof
+    # on the connection its request then goes down.
+    protocol_version = "HTTP/1.1"
+
     @property
     def fake(self) -> _StaleDaemon:
         return cast(_StaleDaemon, self.server)
@@ -419,6 +423,7 @@ class _StaleHandler(http.server.BaseHTTPRequestHandler):
         body = json.dumps(answer).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
@@ -435,6 +440,7 @@ class _StaleHandler(http.server.BaseHTTPRequestHandler):
             self.fake.hook_calls += 1
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "2")
         self.end_headers()
         self.wfile.write(b"{}")
 

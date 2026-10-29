@@ -173,6 +173,10 @@ class _Listener(http.server.ThreadingHTTPServer):
 
 
 class _ListenerHandler(http.server.BaseHTTPRequestHandler):
+    # Keep-alive, as uvicorn serves the daemon: `post` asks for the proof
+    # on the connection its request then goes down.
+    protocol_version = "HTTP/1.1"
+
     @property
     def listener(self) -> _Listener:
         return cast(_Listener, self.server)
@@ -618,14 +622,16 @@ def test_a_hook_posts_nothing_to_a_pre_rc12_daemon_of_its_store(
     assert listener.posts == []
 
 
-def test_a_hook_to_its_own_daemon_makes_one_health_request_and_one_post(
+def test_a_hook_to_its_own_daemon_asks_for_the_proof_again_on_its_post(
     tmp_path: Path,
     listeners: list[_Listener],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The proof rides on the health request discovery already made: the
-    hook's fast path is still one GET and one POST."""
+    """Discovery's health request carries the first proof; the post asks
+    again, on the connection its request then goes down
+    (`_daemon_client._proven_connection`, 9.0.0rc14): two health requests,
+    each with its own nonce, and one post."""
     store = tmp_path / "memory.sqlite"
     listener = _listen(listeners, _proving(TOKEN, store))
     write_state(tmp_path / "state", _state(listener.port, store))
@@ -637,7 +643,11 @@ def test_a_hook_to_its_own_daemon_makes_one_health_request_and_one_post(
     )
     assert code == 0, err
     assert out == "INJECTED CONTEXT\n"
-    assert len(listener.gets) == 1 and HEALTH_NONCE_PARAM in listener.gets[0]
+    nonces = [
+        urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)[HEALTH_NONCE_PARAM][0]
+        for path in listener.gets
+    ]
+    assert len(nonces) == 2 and nonces[0] != nonces[1]
     assert len(listener.posts) == 1
     sent = json.loads(listener.posts[0][1])
     assert sent["prompt"] == "hello"
@@ -1031,14 +1041,15 @@ def test_a_configured_proxy_never_sees_a_request(
     # urllib sends a request for 127.0.0.1 through http_proxy unless
     # no_proxy names it; the token and the hook payloads must not go there.
     proxy = _listen(listeners, _another_store())
-    daemon = _listen(listeners, _another_store())
+    daemon = _listen(listeners, _proving(TOKEN, Path("/x/memory.sqlite")))
     for name in ("no_proxy", "NO_PROXY"):
         monkeypatch.delenv(name, raising=False)
     for name in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
         monkeypatch.setenv(name, f"http://127.0.0.1:{proxy.port}")
     assert health(daemon.port) is not None
-    post(daemon.port, "token", "/api/v1/hook/stop", {"session_id": "s"}, timeout=2.0)
-    assert daemon.gets == ["/health"]
+    post(daemon.port, TOKEN, "/api/v1/hook/stop", {"session_id": "s"}, timeout=2.0)
+    assert daemon.gets[0] == "/health" and len(daemon.gets) == 2
+    assert daemon.gets[1].startswith(f"/health?{HEALTH_NONCE_PARAM}=")
     assert [path for path, _ in daemon.posts] == ["/api/v1/hook/stop"]
     assert proxy.gets == [] and proxy.posts == []
 

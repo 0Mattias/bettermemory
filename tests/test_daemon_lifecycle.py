@@ -498,6 +498,10 @@ stop = threading.Event()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    # Keep-alive, as uvicorn serves the daemon: the shutdown's post asks
+    # for the proof on the connection its request then goes down.
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, *args):
         pass
 

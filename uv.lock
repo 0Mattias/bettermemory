@@ -108,6 +108,9 @@ name = "bettermemory"
 version = "9.0.0rc13"
 source = { editable = "." }
 dependencies = [
+    { name = "h11" },
+    { name = "httpcore2" },
+    { name = "httpx2" },
     { name = "mcp" },
     { name = "platformdirs" },
     { name = "pydantic" },
@@ -129,7 +132,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "h11", specifier = ">=0.16" },
+    { name = "httpcore2", specifier = ">=2.16,<3" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "httpx2", specifier = ">=2.16,<3" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "mcp", specifier = ">=2.0.0,<3.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },

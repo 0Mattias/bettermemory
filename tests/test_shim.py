@@ -419,7 +419,12 @@ class _FakeMcpDaemon(http.server.ThreadingHTTPServer):
         self.store = ""
         self.calls = 0
         self.shutdown_calls = 0
+        self.held: list[socket.socket] = []
         threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        self.held.append(request)
+        super().process_request(request, client_address)
 
     @property
     def port(self) -> int:
@@ -437,11 +442,23 @@ class _FakeMcpDaemon(http.server.ThreadingHTTPServer):
         }
 
     def stop(self) -> None:
+        """Stop as a daemon dies: the port and every connection closed,
+        so the shim's kept connections end with it."""
         self.shutdown()
         self.server_close()
+        for sock in self.held:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            sock.close()
 
 
 class _FakeMcpHandler(http.server.BaseHTTPRequestHandler):
+    # Keep-alive, as uvicorn serves the daemon: the shim asks for the
+    # proof on each connection it then sends its calls down.
+    protocol_version = "HTTP/1.1"
+
     @property
     def fake(self) -> _FakeMcpDaemon:
         return cast(_FakeMcpDaemon, self.server)

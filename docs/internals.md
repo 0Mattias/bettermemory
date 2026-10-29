@@ -908,7 +908,33 @@ and store it repeats (since 9.0.0rc14; a daemon from before rc12 offers
 none and reads as another listener). Discovery runs it at every lookup
 (`identify`, through `_answering`, `wait_for_daemon` and
 `ensure_daemon`), and so do `status`, `down`, `doctor` and the service
-install.
+install. Since 9.0.0rc14 it is run again on every connection that will
+carry the token, on that connection, before the token is sent: `post`
+opens its own connection, asks the proof on it and sends its request
+down the same connection only when the proof holds
+(`_proven_connection`; `http.client` with `auto_open` off, so a lost
+connection is never silently reopened, and a reply that closes the
+connection fails the proof), so a hook pays one more `/health` round
+trip per post; the shim's connection pool opens each connection through
+`shim._ProvingBackend`, which proves it before the pool's first request
+on it, one pool per port and token (`shim._DaemonTransport`), so a
+connection only carries the token its listener proved. A connection the
+pool keeps is not proven again while it stays open, since its peer
+cannot change; after a reset, a timeout, a refused connection or a
+close, the next connection is proven before it carries anything. A
+listener that does not prove itself fails the connection
+(`_daemon_client.NotProven`, `httpcore2.ConnectError` in the shim) with
+nothing sent to it but the proof's request: the hook reports it and
+exits 0, and the shim finds the daemon again and resends once, or
+answers the call with an error when no daemon proves itself. Both
+judge the proof's reply by one rule, `_daemon_client.proof_failure`
+(status 200, at most `PROOF_REPLY_CAP` bytes, a connection left open, a
+JSON `/health` with the proof). The shim's pool replaces httpx2's own
+private `_pool` on its transport (`shim._ProvenTransport`); the shim
+checks that httpx2 keeps its pool there (`shim._unprovable_httpx2`) and
+refuses to start where it does not (`shim.refuse_unprovable_httpx2`),
+so a later httpx2 can make the shim fail closed, never send the token
+down a pool it did not prove.
 
 **Request.** Every tool handler lives in `handlers/<tool>.py` beside its
 `DESC_` description constant; `handlers/admin.py` and
