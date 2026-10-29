@@ -2360,7 +2360,8 @@ follows the candidates' testing.
   directory that was already a backup bundle wrote the new bundle inside
   it, so the old bundle held files its manifest does not list; the store
   side of the same mistake (`BETTERMEMORY_DIR` naming a bundle) was
-  refused already. A `DIR` that is a bundle, or is directly inside one,
+  refused already. A `DIR` that is a bundle, or is inside one at any
+  depth,
   read as spelled and resolved (a symbolic link to a bundle too) with the
   manifest test the openers' refusal uses, is now refused before anything
   is created: `<DIR> is a backup bundle or is in one (<manifest>), and a
@@ -2768,9 +2769,6 @@ follows the candidates' testing.
   on it opens for reading only and writes nothing, so the restore
   appends no row; the record beside the head keeps the entry, and the
   writing open that later runs the step does not add one.
-- **`backup create --out` checks the named directory and its parent
-  only.** A directory two levels or more inside a bundle is not
-  refused.
 
 ### 9.0.0rc13
 

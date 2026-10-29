@@ -406,7 +406,7 @@ with a warning, when it lies past the snapshot's last row), row counts
 and every file's SHA-256, and is signed with the store's key. The
 default `DIR` is `backups/` inside the store directory, on the same disk;
 pass `--out` to put bundles somewhere else, outside every bundle (a
-`DIR` that is a bundle, or is directly inside one, is refused). `create`
+`DIR` that is a bundle, or is inside one at any depth, is refused). `create`
 does not verify the
 bundle, and it takes the bundle's head from the snapshot's own last row,
 so a store whose tail was already deleted backs up as a bundle that

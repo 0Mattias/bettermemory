@@ -710,16 +710,16 @@ def _hex_digest(value: object) -> bool:
 
 
 def _bundle_at(directory: Path) -> Path | None:
-    """The manifest of the backup bundle `directory` is, or is directly
-    in, or None: a directory `create_backup` must not write a bundle under,
-    since the bundle there would then hold files its manifest does not
-    list. Checked as spelled and resolved, with the manifest test the
-    openers' refusal uses (`_may_be_bundle_manifest`)."""
+    """The manifest of the backup bundle `directory` is, or is in at any
+    depth, or None: a directory `create_backup` must not write a bundle
+    under, since the bundle there would then hold files its manifest does
+    not list. Checked as spelled and resolved, up every ancestor, with the
+    manifest test the openers' refusal uses (`_may_be_bundle_manifest`)."""
     candidates = [directory]
     with contextlib.suppress(OSError, RuntimeError):
         candidates.append(directory.resolve())
     for candidate in candidates:
-        for place in (candidate, candidate.parent):
+        for place in (candidate, *candidate.parents):
             manifest = place / MANIFEST_NAME
             try:
                 if manifest.is_file() and _may_be_bundle_manifest(manifest):

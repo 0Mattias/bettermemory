@@ -79,7 +79,6 @@ def test_the_residuals_are_rc14_known_limitations() -> None:
         "A restore that fails between its record and its row leaves an entry "
         "with no row.",
         "A restored store this build reads only gets no `store_restored` row.",
-        "`backup create --out` checks the named directory and its parent only.",
     ):
         assert residual in known, residual
 
@@ -92,6 +91,7 @@ def test_the_limitations_the_fold_closed_are_gone() -> None:
         "A `backup create` with an unreadable key still writes a bundle.",
         "The probe does not see an idle connection to a rollback-journal store.",
         "`backup create` still reads a store through a connection of its own.",
+        "`backup create --out` checks the named directory and its parent only.",
     ):
         assert closed not in known, closed
 

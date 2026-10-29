@@ -71,7 +71,7 @@ def bundle(store_file: Path, tmp_path: Path) -> Path:
     return Path(create_backup(store_file, out_dir=tmp_path / "bundles")["bundle"])
 
 
-@pytest.mark.parametrize("where", ["bundle", "inside", "link"])
+@pytest.mark.parametrize("where", ["bundle", "inside", "deeper", "link"])
 def test_create_refuses_an_out_that_is_a_bundle_or_in_one(
     where: str,
     store_file: Path,
@@ -87,7 +87,11 @@ def test_create_refuses_an_out_that_is_a_bundle_or_in_one(
         except OSError as exc:
             pytest.skip(f"no symbolic links here: {exc}")
     else:
-        out = bundle if where == "bundle" else bundle / "more"
+        out = {
+            "bundle": bundle,
+            "inside": bundle / "more",
+            "deeper": bundle / "more" / "and" / "more",
+        }[where]
     before = _listing(bundle)
 
     with pytest.raises(BackupError, match="is a backup bundle or is in one"):
