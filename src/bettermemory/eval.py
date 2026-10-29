@@ -68,7 +68,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .eval_model import (
     DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
@@ -95,15 +95,20 @@ from .eval_model import (
     parse_window_bound as parse_window_bound,
     resolve_window as resolve_window,
     surface_rule_split,
-    _canonical_top_hit_id,
     _collect_replayable_audits,
     _package_version,
     _parse_ts as _parse_ts,
     _probe_query_display,
     _rule_v1_top1_high,
-    _silent_miss_from_event,
     _wilson_interval as _wilson_interval,
     _with_rule_split,
+)
+from .eval_rates import (
+    _AuditTally,
+    _EvalWalk,
+    _cold_endorsement_rows,
+    _resolve_audit_telemetry,
+    _walk_eval_events,
 )
 from .eval_render import (
     render_report_markdown,
@@ -114,8 +119,6 @@ from .eval_render import (
     render_widening_preview_text,
 )
 from .health import _HOOKLESS_REASON  # one sentence, shared — see its comment
-from .health import endorsement_tier as _endorsement_tier
-from .health import is_hook_telemetry_event
 from .models import Memory, first_summary_line
 from .time_utils import isoformat_utc_optional
 
@@ -309,6 +312,74 @@ class EvalReport:
 # ---------------------------------------------------------------------------
 
 
+def _eval_report(
+    *,
+    now: datetime,
+    cutoff: datetime | None,
+    window_end: datetime | None,
+    scope: str | None,
+    floor: int,
+    walk: _EvalWalk,
+    tally: _AuditTally,
+    cold_rows: list[ColdEndorsementMemoriesRow],
+    cold_total: int,
+    cold_suppressed: bool,
+) -> EvalReport:
+    """Build the ``EvalReport`` from the walk, the audit tally and the cold rows."""
+    from .recall_counters import compute_surface_report
+    from .review_counters import compute_review_report
+
+    if cutoff is None:
+        window_seconds = None
+    else:
+        window_seconds = int(((window_end or now) - cutoff).total_seconds())
+    report = EvalReport(
+        generated_at=now,
+        window_seconds=window_seconds,
+        window_start=cutoff,
+        window_end=window_end,
+        review=compute_review_report(
+            walk.review_rows, start=cutoff, end=window_end, now=now
+        ).to_dict(),
+        surfaces=_with_rule_split(
+            compute_surface_report(walk.surface_rows, start=cutoff, end=window_end),
+            walk.surface_rows,
+            start=cutoff,
+            end=window_end,
+        ),
+        scope_filter=scope,
+        threshold_rule=tally.threshold_rule,
+        total_events_scanned=walk.total_events_scanned,
+        events_in_window=walk.events_in_window,
+        retrieval_occurrences=walk.retrieval_occurrences,
+        explicit_endorsements_with_excerpt=walk.explicit_endorsements_with_excerpt,
+        applied_total=walk.applied_total,
+        applied_explicit=walk.applied_explicit,
+        applied_model=walk.applied_model,
+        applied_hook=walk.applied_hook,
+        turns_audited=tally.turns_audited,
+        turns_no_signal=tally.turns_no_signal,
+        silent_misses=tally.silent_misses,
+        cold_endorsement_memories_rows=cold_rows,
+        cold_endorsement_memories_total=cold_total,
+        endorsement_min_retrievals=floor,
+        cold_endorsement_suppressed=cold_suppressed,
+        silent_miss_recent=tally.silent_miss_buffer,
+        repeat_audits=tally.repeat_audits,
+        by_model=tally.by_model,
+    )
+    report.memory_helped_rate = RateCI.from_counts(
+        walk.explicit_endorsements_with_excerpt, walk.retrieval_occurrences
+    )
+    report.endorsement_rate = RateCI.from_counts(
+        walk.applied_explicit, walk.applied_total
+    )
+    report.silent_miss_rate = RateCI.from_counts(
+        tally.silent_misses, tally.turns_audited
+    )
+    return report
+
+
 def compute_eval(
     memories: Iterable[Memory],
     events: Iterable[dict[str, Any]],
@@ -387,20 +458,9 @@ def compute_eval(
     ``explicit_applied_count == 0`` is uninformative when nothing was
     ever in a position to attribute an apply.
     """
-    from .recall import is_settlement
-    from .recall_counters import compute_surface_report, is_surface_row
-    from .review_counters import compute_review_report, is_review_row
-
     now = now or datetime.now(timezone.utc)
     cutoff, window_end = resolve_window(since, until, now=now)
     tombstoned_ids = tombstoned_ids or set()
-    # The review counters' rows, kept from the same walk. They are read
-    # past the window's end (a chain is judged from rows up to 30
-    # minutes after it), so they are collected before the window filter.
-    review_rows: list[dict[str, Any]] = []
-    # The recall surface's rows, kept the same way: what a conversation
-    # did after a show is read from rows outside the window's start.
-    surface_rows: list[dict[str, Any]] = []
 
     # Live store: id → memory, for cold-endorsement rows + scope filter.
     by_id: dict[str, Memory] = {m.id: m for m in memories}
@@ -418,432 +478,22 @@ def compute_eval(
             return False
         return scope in mem.scopes
 
-    # Counters.
-    retrieval_occurrences = 0
-    explicit_endorsements_with_excerpt = 0
-    applied_total = 0
-    applied_explicit = 0
-    # `applied_explicit` split by producer (hook containment match vs
-    # real `memory_record_use` call) — see the EvalReport fields.
-    applied_model = 0
-    applied_hook = 0
-    turns_audited = 0
-    turns_no_signal = 0
-    silent_misses = 0
-    total_events_scanned = 0
-    events_in_window = 0
-
-    # Per-memory counts for cold-endorsement rollup. The floor basis is
-    # SEARCH deliveries only — `list` and `show` occurrences do NOT
-    # count — mirroring health's `MemoryStats.retrieval_count`, which
-    # only `_handle_search` bumps (`show` feeds a separate `show_count`;
-    # there is no `list` handler at all). Two reasons the bases must
-    # match: the recalibrated floor is DERIVED per search delivery
-    # ((1-p)^N over search-delivered explicit-endorse odds), and one
-    # `memory_list` call over an N-memory store would otherwise bump
-    # every memory's floor count at once, so the two surfaces would
-    # bucket different memories under the same nominal floor. The
-    # `retrieval_occurrences` scalar deliberately keeps its wider
-    # search+list+show basis — it is the helped-rate denominator with a
-    # recorded baseline, not a floor input.
-    search_delivery_count: dict[str, int] = {}
-    auto_applied_count: dict[str, int] = {}
-    explicit_applied_count: dict[str, int] = {}
-    # Stop-hook settlement coverage for the cold-endorsement honesty
-    # gate — counted over the WHOLE log (before the window filter),
-    # matching `health.compute_health`, whose accumulator measures "did
-    # settlement telemetry EVER reach this event log", not "recently".
-    # Costs nothing: the walk below already visits every event.
-    hook_telemetry_events = 0
-
-    # Rolling buffer of recent silent-miss events (last K, since
-    # events come in chronological order — we just keep the tail).
-    silent_miss_buffer: list[SilentMissCandidate] = []
-
-    # Track the most recent threshold rule we've seen on any miss
-    # event so the renderer can name the regime the numbers came
-    # from. Empty string means no audits in the window.
-    threshold_rule = ""
-
-    # In-window ``turn_audited`` / ``search_miss`` events, buffered for
-    # post-pass resolution against the invalidation markers below —
-    # counting them inline would let a marker later in the log arrive
-    # too late to retract an already-counted event. Same
-    # buffer-then-resolve shape as ``health._StatsAccumulator``.
-    audit_telemetry: list[dict[str, Any]] = []
-    # The two escape hatches health.py's rollups honor, mirrored here
-    # so the eval CLI and memory_health agree
-    # over the same event stream: `silent_miss_cutoff` wipes all miss
-    # telemetry before its `cutoff_ts`; `miss_ack` retracts one
-    # `search_miss` by `event_id`.
-    latest_miss_cutoff: datetime | None = None
-    acknowledged_miss_event_ids: set[str] = set()
-    # Repeat audits (the same session+message re-probed by a
-    # multi-stop turn; `repeat=True` since 3.14) are excluded from
-    # every denominator — their companion `search_miss` is never
-    # emitted, so counting them would dilute the rate. Tallied
-    # separately so the report can show how much re-audit noise the
-    # dedup absorbed.
-    repeat_audits = 0
-    # Per-model slices of the audit telemetry, keyed by the
-    # `client_model` the Stop hook stamps off the transcript (absent
-    # on pre-3.14 events and on the MCP producer — those events simply
-    # don't bucket; no "unknown" row is manufactured).
-    by_model: dict[str, dict[str, int]] = {}
-
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        total_events_scanned += 1
-        # Window membership is decided up front — BEFORE the marker
-        # short-circuits below, which deliberately bypass the window
-        # filter — so `events_in_window` covers exactly the population
-        # `total_events_scanned` does, only window-scoped. An event with
-        # a missing or unparseable `ts` counts as out-of-window, the
-        # same predicate the filter further down applies.
-        in_window = True
-        if cutoff is not None or window_end is not None:
-            event_ts = _parse_ts(ev.get("ts"))
-            in_window = (
-                event_ts is not None
-                and (cutoff is None or event_ts >= cutoff)
-                and (window_end is None or event_ts < window_end)
-            )
-        if in_window:
-            events_in_window += 1
-        if is_review_row(ev):
-            review_rows.append(ev)
-        if is_surface_row(ev):
-            surface_rows.append(ev)
-
-        kind = ev.get("kind")
-        # Coverage tally — like the markers below, deliberately ahead
-        # of the window skip: the honesty gate asks about the whole log.
-        if is_hook_telemetry_event(ev):
-            hook_telemetry_events += 1
-        # Invalidation markers — resolved BEFORE the `since` window
-        # filter: both are global markers, so a cutoff/ack whose own ts falls
-        # outside the window still applies to in-window telemetry.
-        # Without the exemption a windowed run would silently drop the
-        # marker and over-count events health.py's rollups (which walk
-        # the whole log) have already invalidated.
-        if kind == "silent_miss_cutoff":
-            # Latest `cutoff_ts` wins; an earlier cutoff seen later in
-            # the log cannot shrink the invalidated window — same
-            # max-semantics as `health._handle_silent_miss_cutoff`. A
-            # malformed `cutoff_ts` parses to None and is ignored.
-            parsed_cutoff = _parse_ts(ev.get("cutoff_ts"))
-            if parsed_cutoff is not None and (
-                latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
-            ):
-                latest_miss_cutoff = parsed_cutoff
-            continue
-        if kind == "miss_ack":
-            # A missing / non-string / empty `event_id` is a malformed
-            # admin event; ignore it rather than poisoning the set.
-            target = ev.get("event_id")
-            if isinstance(target, str) and target:
-                acknowledged_miss_event_ids.add(target)
-            continue
-
-        if not in_window:
-            continue
-
-        if kind in ("search", "list"):
-            # `list` is bundled with `search` because `audit.py` and the
-            # tool-usage map both treat memory_list as a retrieval
-            # surface (the model uses it to browse, the same way it
-            # uses memory_search to query). Keeping these aligned
-            # keeps the eval denominator consistent with audit cadence.
-            # Legacy-name fallback (`memory_ids` / `hit_ids`) — same
-            # discipline as the other event consumers (hook /
-            # _handlers). `list` events only ever wrote
-            # `returned`, but reading through the same fallback chain
-            # is harmless.
-            returned = (
-                ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
-            )
-            if not isinstance(returned, list):
-                continue
-            for mid in returned:
-                if not isinstance(mid, str):
-                    continue
-                if not passes_scope(mid):
-                    continue
-                retrieval_occurrences += 1
-                # Floor basis: search deliveries only (see the
-                # `search_delivery_count` comment above), so a `list`
-                # browse widens the rate denominator without pushing
-                # every browsed memory toward the cold bucket.
-                if kind == "search":
-                    search_delivery_count[mid] = search_delivery_count.get(mid, 0) + 1
-        elif kind == "show":
-            mid = ev.get("id")
-            if not isinstance(mid, str):
-                continue
-            if not passes_scope(mid):
-                continue
-            # A pinpoint read counts as a retrieval occurrence but not
-            # toward the cold-endorsement floor — health keys `show`
-            # into `show_count`, never `retrieval_count`.
-            retrieval_occurrences += 1
-        elif kind == "use":
-            # Tiering via the shared `health.endorsement_tier`: None for
-            # an outcome other than applied, else `applied_tier`'s auto /
-            # hook / model, with the strict `auto is True` identity
-            # comparison (a stray truthy `auto=1` / `auto="true"` reads
-            # as NON-auto, same as missing/None, so we never silently
-            # relabel borderline data as the server closing the loop).
-            # Shared rather than re-derived here: this module and
-            # `health._StatsAccumulator._handle_use` publish the same
-            # split under different names, and the per-memory tallies
-            # below are the cold-endorsement bucket health lists too.
-            tier = _endorsement_tier(ev)
-            if tier is None:
-                continue
-            # A pointer's settlement (`recall.settle_shown`) feeds the
-            # per-memory tallies, as health's do (`endorsement_tier`),
-            # and not the trio: the surfaces section counts it, so the
-            # published series keeps one definition across the recall
-            # surface's arrival.
-            settlement = is_settlement(ev)
-            ids = ev.get("ids") or ev.get("memory_ids") or []
-            if not isinstance(ids, list):
-                continue
-            is_auto = tier == "auto"
-            raw_excerpts = ev.get("claim_excerpts")
-            # claim_excerpts is parallel to ids; entries may be None.
-            # An entry counts toward the helped-rate numerator only
-            # when the corresponding excerpt is a non-empty string.
-            excerpts: list[Any]
-            if isinstance(raw_excerpts, list):
-                excerpts = list(raw_excerpts)
-            else:
-                excerpts = [None] * len(ids)
-            # Dedupe `ids` within a single use event before counting.
-            # A model that sends `record_use(memory_ids=["A", "A"], ...)`
-            # would otherwise inflate `applied_total` and the helped-rate
-            # numerator. Since eval.py is the citable reference for the
-            # published metric, the dedup must happen here — we can't
-            # fix upstream without changing recorder semantics. Preserve
-            # the first non-empty excerpt per id so the helped-rate
-            # numerator stays accurate when "A" appears twice with
-            # excerpts `["foo", "bar"]`.
-            seen_ids: dict[str, Any] = {}
-            for i, mid in enumerate(ids):
-                if not isinstance(mid, str):
-                    continue
-                excerpt = excerpts[i] if i < len(excerpts) else None
-                if mid in seen_ids:
-                    existing = seen_ids[mid]
-                    # Upgrade to a non-empty excerpt if we don't have one yet.
-                    if not (isinstance(existing, str) and existing.strip()) and (
-                        isinstance(excerpt, str) and excerpt.strip()
-                    ):
-                        seen_ids[mid] = excerpt
-                else:
-                    seen_ids[mid] = excerpt
-            for mid, excerpt in seen_ids.items():
-                if not passes_scope(mid):
-                    continue
-                if is_auto:
-                    auto_applied_count[mid] = auto_applied_count.get(mid, 0) + 1
-                else:
-                    explicit_applied_count[mid] = explicit_applied_count.get(mid, 0) + 1
-                if settlement:
-                    continue
-                applied_total += 1
-                if not is_auto:
-                    applied_explicit += 1
-                    if tier == "hook":
-                        applied_hook += 1
-                    else:
-                        applied_model += 1
-                    if isinstance(excerpt, str) and excerpt.strip():
-                        explicit_endorsements_with_excerpt += 1
-        elif kind in ("turn_audited", "search_miss"):
-            # Buffered rather than counted inline so a cutoff/ack
-            # marker later in the log can retroactively invalidate
-            # earlier telemetry. Resolution happens after the pass,
-            # below — chronological order is preserved, so the
-            # counting is identical to the pre-buffer inline loop
-            # whenever no marker exists.
-            audit_telemetry.append(ev)
-
-    # Resolve the buffered audit telemetry. An event invalidated by the
-    # latest cutoff (ts strictly before `cutoff_ts`; an unparseable ts
-    # drops too once a cutoff exists — `health._count_post_cutoff`'s
-    # conservative read) is dropped from EVERYTHING: the miss-capable
-    # and no_signal denominators, the numerator, the threshold-rule
-    # tracking, and the inline triage buffer — as if it were never
-    # logged. A tombstoned-top-hit miss and an acked miss drop the
-    # same way but from the numerator side only: audits carry neither
-    # a per-memory payload nor an `event_id`, and the audit itself
-    # wasn't the false positive (the audit ran, the probe found
-    # something, the model acknowledged the verdict — or the memory
-    # was later removed), so the denominator keeps its turn — filters
-    # #2 and #3 of `health._silent_miss_stats`.
-    for ev in audit_telemetry:
-        if latest_miss_cutoff is not None:
-            ts = _parse_ts(ev.get("ts"))
-            if ts is None or ts < latest_miss_cutoff:
-                continue
-        if ev.get("kind") == "turn_audited":
-            if ev.get("repeat"):
-                repeat_audits += 1
-                continue
-            # `no_signal` audits (empty store, gated probe, semantic model
-            # unavailable) are not miss-capable turns; counting them dilutes
-            # silent_miss_rate's denominator. Mirrors health.py's
-            # `no_signal_total` split (round 88) so a config stuck at
-            # permanent no_signal reads as "probe declined", not "healthy".
-            if ev.get("verdict") == "no_signal":
-                turns_no_signal += 1
-            else:
-                turns_audited += 1
-            model = ev.get("client_model")
-            if isinstance(model, str) and model:
-                bucket = by_model.setdefault(
-                    model, {"audited": 0, "no_signal": 0, "misses": 0}
-                )
-                if ev.get("verdict") == "no_signal":
-                    bucket["no_signal"] += 1
-                else:
-                    bucket["audited"] += 1
-            rule = ev.get("threshold_rule")
-            if isinstance(rule, str) and rule:
-                threshold_rule = rule
-        else:  # search_miss
-            # Tombstone filter — health's filter #2, applied BEFORE the
-            # ack filter to mirror `_silent_miss_stats`' documented
-            # order (both `continue`, so the order is cosmetic). The
-            # extraction is canonical-only on purpose: reading the
-            # legacy `top_hit_ids` fallback here would drop events
-            # health still counts (its parser degrades that shape to
-            # None), splitting the two surfaces on old archives.
-            if tombstoned_ids:
-                top_hit_id = _canonical_top_hit_id(ev)
-                if top_hit_id is not None and top_hit_id in tombstoned_ids:
-                    continue
-            event_id = ev.get("event_id")
-            if isinstance(event_id, str) and event_id in acknowledged_miss_event_ids:
-                continue
-            silent_misses += 1
-            model = ev.get("client_model")
-            if isinstance(model, str) and model:
-                by_model.setdefault(model, {"audited": 0, "no_signal": 0, "misses": 0})[
-                    "misses"
-                ] += 1
-            rule = ev.get("threshold_rule")
-            if isinstance(rule, str) and rule:
-                threshold_rule = rule
-            candidate = _silent_miss_from_event(ev)
-            if candidate is not None:
-                silent_miss_buffer.append(candidate)
-                if silent_miss_limit <= 0:
-                    silent_miss_buffer = []
-                elif len(silent_miss_buffer) > silent_miss_limit:
-                    silent_miss_buffer = silent_miss_buffer[-silent_miss_limit:]
-
-    # Cold-endorsement rows: search deliveries >= floor AND at least
-    # one apply happened AND explicit_applied_count == 0. Ambient
-    # memories are excluded — same rationale as health's
-    # cold_endorsement_memories bucket (their value is implicit; an
-    # explicit use event is structurally rare).
-    #
-    # The "at least one apply" gate (auto + explicit > 0) keeps the
-    # bucket as the COMPLEMENT of dead_weight, matching health's
-    # `_is_weakly_endorsed`: cold-endorsement means "applies happened,
-    # but every one was the auto fallback." A memory retrieved over the
-    # floor with zero applies is dead_weight, not cold-endorsement, and
-    # must not surface here.
-    #
-    # Honesty gate, mirroring health's `telemetry_coverage` (widened to
-    # the endorsement leg 2026-08-30): with zero Stop-hook settlement
-    # telemetry anywhere in the log, the loop is SKIPPED, not run and
-    # filtered — the input signal (`explicit_applied_count`, produced
-    # by the hook's containment matcher plus deliberate model calls) is
-    # missing for every row at once, so listing rows would report an
-    # unwired hook as acknowledge-debt. The report's
-    # `cold_endorsement_suppressed` flag explains the empty bucket.
+    walk = _walk_eval_events(events, cutoff, window_end, passes_scope)
+    tally = _resolve_audit_telemetry(walk, tombstoned_ids, silent_miss_limit)
     floor = max(1, int(endorsement_min_retrievals))
-    cold_rows: list[ColdEndorsementMemoriesRow] = []
-    cold_total = 0
-    cold_suppressed = hook_telemetry_events == 0
-    if not cold_suppressed:
-        for mid, rcount in search_delivery_count.items():
-            if rcount < floor:
-                continue
-            if auto_applied_count.get(mid, 0) + explicit_applied_count.get(mid, 0) == 0:
-                continue
-            if explicit_applied_count.get(mid, 0) > 0:
-                continue
-            mem = by_id.get(mid)
-            if mem is None:
-                continue
-            if mem.category == "ambient":
-                continue
-            cold_total += 1
-            cold_rows.append(
-                ColdEndorsementMemoriesRow(
-                    id=mem.id,
-                    scopes=list(mem.scopes),
-                    summary=first_summary_line(mem.body),
-                    retrieval_count=rcount,
-                    auto_applied_count=auto_applied_count.get(mid, 0),
-                    explicit_applied_count=0,
-                )
-            )
-        # Sort by retrieval_count descending so the chattiest
-        # dead-letter rows surface first; tie-break by id for
-        # determinism.
-        cold_rows.sort(key=lambda r: (-r.retrieval_count, r.id))
-
-    if cutoff is None:
-        window_seconds = None
-    else:
-        window_seconds = int(((window_end or now) - cutoff).total_seconds())
-    report = EvalReport(
-        generated_at=now,
-        window_seconds=window_seconds,
-        window_start=cutoff,
+    cold_rows, cold_total, cold_suppressed = _cold_endorsement_rows(walk, by_id, floor)
+    return _eval_report(
+        now=now,
+        cutoff=cutoff,
         window_end=window_end,
-        review=compute_review_report(
-            review_rows, start=cutoff, end=window_end, now=now
-        ).to_dict(),
-        surfaces=_with_rule_split(
-            compute_surface_report(surface_rows, start=cutoff, end=window_end),
-            surface_rows,
-            start=cutoff,
-            end=window_end,
-        ),
-        scope_filter=scope,
-        threshold_rule=threshold_rule,
-        total_events_scanned=total_events_scanned,
-        events_in_window=events_in_window,
-        retrieval_occurrences=retrieval_occurrences,
-        explicit_endorsements_with_excerpt=explicit_endorsements_with_excerpt,
-        applied_total=applied_total,
-        applied_explicit=applied_explicit,
-        applied_model=applied_model,
-        applied_hook=applied_hook,
-        turns_audited=turns_audited,
-        turns_no_signal=turns_no_signal,
-        silent_misses=silent_misses,
-        cold_endorsement_memories_rows=cold_rows,
-        cold_endorsement_memories_total=cold_total,
-        endorsement_min_retrievals=floor,
-        cold_endorsement_suppressed=cold_suppressed,
-        silent_miss_recent=silent_miss_buffer,
-        repeat_audits=repeat_audits,
-        by_model=by_model,
+        scope=scope,
+        floor=floor,
+        walk=walk,
+        tally=tally,
+        cold_rows=cold_rows,
+        cold_total=cold_total,
+        cold_suppressed=cold_suppressed,
     )
-    report.memory_helped_rate = RateCI.from_counts(
-        explicit_endorsements_with_excerpt, retrieval_occurrences
-    )
-    report.endorsement_rate = RateCI.from_counts(applied_explicit, applied_total)
-    report.silent_miss_rate = RateCI.from_counts(silent_misses, turns_audited)
-    return report
 
 
 # ---------------------------------------------------------------------------
@@ -901,56 +551,15 @@ class ThresholdSweepReport:
         }
 
 
-def compute_threshold_sweep(
-    events: Iterable[dict[str, Any]],
-    *,
-    rules: dict[str, ThresholdRule] | None = None,
-    since: timedelta | None = None,
-    now: datetime | None = None,
-) -> ThresholdSweepReport:
-    """Replay logged search_miss events against each named rule.
-
-    Only `search_miss` events with a `top_hits` list participate;
-    legacy `top_hit_ids` (pre-2.6.4 hook shape) lack the relevance
-    label every rule needs and are counted in
-    `skipped_legacy_event_count` so the denominator stays explicit.
-    The sweep is a *relative* comparison among rules at least as
-    strict as v1; a strictly looser rule would also flag turns
-    where v1 didn't, which we can't replay from the log alone
-    because the companion `turn_audited` event doesn't carry
-    `top_hits`. That limitation is the calibration question
-    `audit.py`'s docstring flags as open.
-
-    The two invalidation markers the rate surfaces
-    (`compute_eval` / `health.compute_health`) honor apply
-    ASYMMETRICALLY here, and the asymmetry is deliberate:
-
-    - `silent_miss_cutoff` (bulk, written by
-      `memory_admin(action="acknowledge_miss", before=...)`; 8.x wrote
-      it with `consolidate --acknowledge-misses-before`) IS honored: events
-      earlier than the latest `cutoff_ts` drop from the replay set
-      and the legacy footnote alike, as if never logged. The cutoff
-      exists to retract batches flagged by a since-fixed code bug
-      (e.g. the v2.7.3 cwd-suppression batch) — those events were
-      never genuine rule decisions, so replaying them pollutes the
-      "is v1 over-firing" calibration with noise no rule change can
-      address. Resolution is global, like `compute_eval`'s: a cutoff
-      whose own ts falls outside `since` still applies, and the
-      latest `cutoff_ts` wins.
-    - `miss_ack` (per-event, written by `memory_acknowledge_miss`)
-      is deliberately NOT honored: an acked miss is a *confirmed
-      false positive of the current rule* — exactly the calibration
-      signal a stricter candidate is judged against ("would v2/v3/v4
-      have declined to flag the miss a human had to retract?").
-      Dropping acks would blind the sweep to precisely the events it
-      exists to learn from. The rate surfaces drop them because they
-      report *outstanding actionable misses*; the sweep replays
-      *rule decisions*.
-    """
-    now = now or datetime.now(timezone.utc)
-    cutoff: datetime | None = (now - since) if since is not None else None
-    rules_in_use = rules or THRESHOLD_RULES
-
+def _buffer_sweep_misses(
+    events: Iterable[dict[str, Any]], cutoff: datetime | None
+) -> tuple[
+    list[tuple[datetime | None, list[dict[str, Any]] | None, int]],
+    int,
+    int,
+    datetime | None,
+]:
+    """Walk the log for in-window search_miss rows; returns them, the two event counts and the latest cutoff."""
     # In-window `search_miss` rows buffered as (ts, top_hits-or-None,
     # recent) for post-pass resolution against the invalidation cutoff —
     # same buffer-then-resolve shape as `compute_eval`, because a
@@ -1030,7 +639,14 @@ def compute_threshold_sweep(
         if not isinstance(recent, int) or isinstance(recent, bool):
             recent = 0
         buffered.append((ts, top_hits, recent))
+    return buffered, total_events_scanned, events_in_window, latest_miss_cutoff
 
+
+def _resolve_sweep_buffer(
+    buffered: list[tuple[datetime | None, list[dict[str, Any]] | None, int]],
+    latest_miss_cutoff: datetime | None,
+) -> tuple[list[tuple[list[dict[str, Any]], int]], int]:
+    """Drop the rows the latest cutoff retracts; returns the replayable rows and the legacy count."""
     # Resolve against the cutoff: an invalidated event (ts strictly
     # before `cutoff_ts`; an unparseable ts drops too once a cutoff
     # exists — `health._count_post_cutoff`'s conservative read)
@@ -1046,7 +662,14 @@ def compute_threshold_sweep(
             legacy_skipped += 1
         else:
             replayable.append((top_hits, recent))
+    return replayable, legacy_skipped
 
+
+def _sweep_rows(
+    rules_in_use: dict[str, ThresholdRule],
+    replayable: list[tuple[list[dict[str, Any]], int]],
+) -> tuple[int, list[ThresholdSweepRow]]:
+    """Replay each rule over the replayable misses; returns v1's count and the sorted rows."""
     # Compute v1's flag count first — it acts as the reference for
     # `delta_from_v1` on every other row.
     v1_rule = rules_in_use.get("v1_top1_high")
@@ -1084,6 +707,66 @@ def compute_threshold_sweep(
         return (v1_first, -row.would_flag, row.rule)
 
     rows.sort(key=sort_key)
+    return v1_count, rows
+
+
+def compute_threshold_sweep(
+    events: Iterable[dict[str, Any]],
+    *,
+    rules: dict[str, ThresholdRule] | None = None,
+    since: timedelta | None = None,
+    now: datetime | None = None,
+) -> ThresholdSweepReport:
+    """Replay logged search_miss events against each named rule.
+
+    Only `search_miss` events with a `top_hits` list participate;
+    legacy `top_hit_ids` (pre-2.6.4 hook shape) lack the relevance
+    label every rule needs and are counted in
+    `skipped_legacy_event_count` so the denominator stays explicit.
+    The sweep is a *relative* comparison among rules at least as
+    strict as v1; a strictly looser rule would also flag turns
+    where v1 didn't, which we can't replay from the log alone
+    because the companion `turn_audited` event doesn't carry
+    `top_hits`. That limitation is the calibration question
+    `audit.py`'s docstring flags as open.
+
+    The two invalidation markers the rate surfaces
+    (`compute_eval` / `health.compute_health`) honor apply
+    ASYMMETRICALLY here, and the asymmetry is deliberate:
+
+    - `silent_miss_cutoff` (bulk, written by
+      `memory_admin(action="acknowledge_miss", before=...)`; 8.x wrote
+      it with `consolidate --acknowledge-misses-before`) IS honored: events
+      earlier than the latest `cutoff_ts` drop from the replay set
+      and the legacy footnote alike, as if never logged. The cutoff
+      exists to retract batches flagged by a since-fixed code bug
+      (e.g. the v2.7.3 cwd-suppression batch) — those events were
+      never genuine rule decisions, so replaying them pollutes the
+      "is v1 over-firing" calibration with noise no rule change can
+      address. Resolution is global, like `compute_eval`'s: a cutoff
+      whose own ts falls outside `since` still applies, and the
+      latest `cutoff_ts` wins.
+    - `miss_ack` (per-event, written by `memory_acknowledge_miss`)
+      is deliberately NOT honored: an acked miss is a *confirmed
+      false positive of the current rule* — exactly the calibration
+      signal a stricter candidate is judged against ("would v2/v3/v4
+      have declined to flag the miss a human had to retract?").
+      Dropping acks would blind the sweep to precisely the events it
+      exists to learn from. The rate surfaces drop them because they
+      report *outstanding actionable misses*; the sweep replays
+      *rule decisions*.
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff: datetime | None = (now - since) if since is not None else None
+    rules_in_use = rules or THRESHOLD_RULES
+
+    buffered, total_events_scanned, events_in_window, latest_miss_cutoff = (
+        _buffer_sweep_misses(events, cutoff)
+    )
+
+    replayable, legacy_skipped = _resolve_sweep_buffer(buffered, latest_miss_cutoff)
+
+    v1_count, rows = _sweep_rows(rules_in_use, replayable)
 
     return ThresholdSweepReport(
         generated_at=now,
@@ -1299,6 +982,111 @@ class WideningDetailReport:
         }
 
 
+def _flagged_turn(
+    ev: dict[str, Any],
+    top_hits: list[dict[str, Any]],
+    v1_flags: bool,
+    _resolve: Callable[[str], tuple[str, str | None, list[str] | None]],
+) -> tuple[str, WideningFlaggedTurn]:
+    """Build one flagged turn's evidence from its audit event; returns its top hit's id and the turn."""
+    top = top_hits[0] if isinstance(top_hits[0], dict) else {}
+    preview, length, digest = _probe_query_display(ev.get("probe_query"))
+    raw_score = top.get("score")
+    score = (
+        float(raw_score)
+        if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool)
+        else None
+    )
+    matched = top.get("matched_unique")
+    q_unique = top.get("query_unique")
+    memory_id = str(top.get("id") or "?")
+    status, summary, scopes = _resolve(memory_id)
+    session = ev.get("session_id") or ev.get("session")
+    turn = WideningFlaggedTurn(
+        ts=ev.get("ts") if isinstance(ev.get("ts"), str) else None,
+        session_id=session if isinstance(session, str) else None,
+        client_model=(
+            ev.get("client_model") if isinstance(ev.get("client_model"), str) else None
+        ),
+        probe_query_preview=preview,
+        probe_query_len=length,
+        probe_query_hash=digest,
+        top_hit_id=memory_id,
+        top_hit_score=score,
+        relevance_v1=(
+            top.get("relevance") if isinstance(top.get("relevance"), str) else None
+        ),
+        relevance_v2=(
+            top.get("relevance_v2")
+            if isinstance(top.get("relevance_v2"), str)
+            else None
+        ),
+        matched_unique=(
+            matched
+            if isinstance(matched, int) and not isinstance(matched, bool)
+            else None
+        ),
+        query_unique=(
+            q_unique
+            if isinstance(q_unique, int) and not isinstance(q_unique, bool)
+            else None
+        ),
+        v1_also_flagged=v1_flags,
+        memory_status=status,
+        memory_summary=summary,
+        memory_scopes=scopes,
+    )
+    return memory_id, turn
+
+
+def _rule_turns_and_rollup(
+    turns: list[WideningFlaggedTurn],
+    sessions_by_rule_memory: dict[str, dict[str, set[str | None]]],
+    name: str,
+) -> tuple[list[WideningFlaggedTurn], list[WideningMemoryRollup]]:
+    """Order one rule's flagged turns and roll them up by memory; returns both lists."""
+    # Newest first; undated rows sink to the end in stream order.
+    # Under reverse=True the LOWEST key lands last, so undated rows
+    # take rank 0 and dated ones rank 1 — the (0, ...) spelling put
+    # undated rows at the TOP of a "newest first" list.
+    turns_sorted = sorted(
+        turns,
+        key=lambda t: (1, t.ts) if t.ts is not None else (0, ""),
+        reverse=True,
+    )
+    rollup: dict[str, WideningMemoryRollup] = {}
+    for t in turns:
+        row = rollup.get(t.top_hit_id)
+        if row is None:
+            rollup[t.top_hit_id] = WideningMemoryRollup(
+                memory_id=t.top_hit_id,
+                count=1,
+                distinct_sessions=0,  # filled after the loop
+                status=t.memory_status,
+                summary=t.memory_summary,
+                scopes=t.memory_scopes,
+                score_min=t.top_hit_score,
+                score_max=t.top_hit_score,
+            )
+            continue
+        row.count += 1
+        if t.top_hit_score is not None:
+            row.score_min = (
+                t.top_hit_score
+                if row.score_min is None
+                else min(row.score_min, t.top_hit_score)
+            )
+            row.score_max = (
+                t.top_hit_score
+                if row.score_max is None
+                else max(row.score_max, t.top_hit_score)
+            )
+    for memory_id, row in rollup.items():
+        row.distinct_sessions = len(sessions_by_rule_memory[name].get(memory_id, set()))
+    by_memory = sorted(rollup.values(), key=lambda r: (-r.count, r.memory_id))
+    return turns_sorted, by_memory
+
+
 def compute_widening_detail(
     events: Iterable[dict[str, Any]],
     *,
@@ -1348,55 +1136,7 @@ def compute_widening_detail(
         ]
         if not firing:
             continue
-        top = top_hits[0] if isinstance(top_hits[0], dict) else {}
-        preview, length, digest = _probe_query_display(ev.get("probe_query"))
-        raw_score = top.get("score")
-        score = (
-            float(raw_score)
-            if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool)
-            else None
-        )
-        matched = top.get("matched_unique")
-        q_unique = top.get("query_unique")
-        memory_id = str(top.get("id") or "?")
-        status, summary, scopes = _resolve(memory_id)
-        session = ev.get("session_id") or ev.get("session")
-        turn = WideningFlaggedTurn(
-            ts=ev.get("ts") if isinstance(ev.get("ts"), str) else None,
-            session_id=session if isinstance(session, str) else None,
-            client_model=(
-                ev.get("client_model")
-                if isinstance(ev.get("client_model"), str)
-                else None
-            ),
-            probe_query_preview=preview,
-            probe_query_len=length,
-            probe_query_hash=digest,
-            top_hit_id=memory_id,
-            top_hit_score=score,
-            relevance_v1=(
-                top.get("relevance") if isinstance(top.get("relevance"), str) else None
-            ),
-            relevance_v2=(
-                top.get("relevance_v2")
-                if isinstance(top.get("relevance_v2"), str)
-                else None
-            ),
-            matched_unique=(
-                matched
-                if isinstance(matched, int) and not isinstance(matched, bool)
-                else None
-            ),
-            query_unique=(
-                q_unique
-                if isinstance(q_unique, int) and not isinstance(q_unique, bool)
-                else None
-            ),
-            v1_also_flagged=v1_flags,
-            memory_status=status,
-            memory_summary=summary,
-            memory_scopes=scopes,
-        )
+        memory_id, turn = _flagged_turn(ev, top_hits, v1_flags, _resolve)
         for name in firing:
             flagged_by_rule[name].append(turn)
             sessions_by_rule_memory[name].setdefault(memory_id, set()).add(
@@ -1406,47 +1146,9 @@ def compute_widening_detail(
     rule_details: list[WideningRuleDetail] = []
     for name, rule in rules_in_use.items():
         turns = flagged_by_rule[name]
-        # Newest first; undated rows sink to the end in stream order.
-        # Under reverse=True the LOWEST key lands last, so undated rows
-        # take rank 0 and dated ones rank 1 — the (0, ...) spelling put
-        # undated rows at the TOP of a "newest first" list.
-        turns_sorted = sorted(
-            turns,
-            key=lambda t: (1, t.ts) if t.ts is not None else (0, ""),
-            reverse=True,
+        turns_sorted, by_memory = _rule_turns_and_rollup(
+            turns, sessions_by_rule_memory, name
         )
-        rollup: dict[str, WideningMemoryRollup] = {}
-        for t in turns:
-            row = rollup.get(t.top_hit_id)
-            if row is None:
-                rollup[t.top_hit_id] = WideningMemoryRollup(
-                    memory_id=t.top_hit_id,
-                    count=1,
-                    distinct_sessions=0,  # filled after the loop
-                    status=t.memory_status,
-                    summary=t.memory_summary,
-                    scopes=t.memory_scopes,
-                    score_min=t.top_hit_score,
-                    score_max=t.top_hit_score,
-                )
-                continue
-            row.count += 1
-            if t.top_hit_score is not None:
-                row.score_min = (
-                    t.top_hit_score
-                    if row.score_min is None
-                    else min(row.score_min, t.top_hit_score)
-                )
-                row.score_max = (
-                    t.top_hit_score
-                    if row.score_max is None
-                    else max(row.score_max, t.top_hit_score)
-                )
-        for memory_id, row in rollup.items():
-            row.distinct_sessions = len(
-                sessions_by_rule_memory[name].get(memory_id, set())
-            )
-        by_memory = sorted(rollup.values(), key=lambda r: (-r.count, r.memory_id))
         rule_details.append(
             WideningRuleDetail(
                 rule=name,
