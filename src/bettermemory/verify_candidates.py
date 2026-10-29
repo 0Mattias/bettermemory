@@ -597,6 +597,12 @@ def _normalize_candidate(raw: str) -> str | None:
     if not s or len(s) > _MAX_PATH_LENGTH:
         return None
 
+    # The path gate (`_refused_spelling`), before any branch below can hand
+    # the spelling on to a stat: a network or device spelling is not a
+    # citation, whatever follows it.
+    if _refused_spelling(s):
+        return None
+
     if "://" in s:
         return None
 
@@ -691,11 +697,6 @@ def _normalize_candidate(raw: str) -> str | None:
         if len(s) <= 2:
             return None
         return None if _is_placeholder_path(s) else s
-    if s.startswith("//"):
-        # `//host/share` is SMB/CIFS mount-source notation (mount_smbfs,
-        # fstab smbfs/cifs entries, smbclient) — a network-share spec,
-        # never a local filesystem claim. Mirrors the `://` URL exclusion.
-        return None
     if s.startswith("/"):
         # `/x` is too short to be a meaningful claim; `/` alone is the root.
         if len(s) < 3:
@@ -721,6 +722,71 @@ def _normalize_candidate(raw: str) -> str | None:
     if len(s) >= 3 and s[0].isalpha() and s[1] == ":" and s[2] in "/\\":
         return s
     return None
+
+
+def _refused_spelling(s: str) -> bool:
+    """True when `s` opens with two separators, either slash in either
+    place (``//``, ``/\\``, ``\\/``, ``\\\\``): a spelling no read may stat.
+
+    The path gate (ENG-164). On Windows each of these is a UNC path
+    (``\\\\host\\share``) or a device-namespace one (``\\\\.\\pipe``,
+    ``\\\\?\\UNC``), whatever the slashes: a stat of one opens an SMB
+    connection to the host it names, which hands the host the user's NTLM
+    hash and holds the worker while an unreachable host times out. A
+    memory body is written by whatever the model was shown, so a cited
+    ``/\\evil.example\\share\\x.txt`` would be stat'd on every retrieval
+    that rendered the hit. On POSIX ``//host/share`` is SMB/CIFS
+    mount-source notation (mount_smbfs, fstab, smbclient), a network-share
+    spec and never a local claim, which this module refused before the
+    gate. A spelling that holds a NUL byte (no read can stat it) or a
+    URL's ``://`` (a scheme, never a path on this disk: ``file://host/x``
+    joined onto a root names nothing the claim meant) is refused the same
+    way. Checked on the spelling, before ``~`` is expanded and before any
+    join, so a refused spelling never becomes a candidate, an attestation
+    or a pathspec: it is not a citation, and the verdict reads as if the
+    body never named it. A home on a network share is the user's own and
+    is not refused, since ``~/`` is expanded only after this check.
+    """
+    return (len(s) >= 2 and s[0] in "/\\" and s[1] in "/\\") or "\0" in s or "://" in s
+
+
+_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
+
+
+def _escapes_root(rel: str) -> bool:
+    """True when the relative spelling `rel`, joined onto a root, would
+    name a path outside it, read lexically: rooted (a leading separator,
+    which on Windows keeps only the root's drive), drive-qualified
+    (``C:x``, which on Windows leaves the root's drive), or a ``..`` that
+    climbs above the root at any point of the walk (``src/../../x``, even
+    when a later segment comes back in by name).
+
+    The other half of the path gate (ENG-164): every relative citation and
+    attestation is joined onto a root and stat'd there, and a join is a
+    claim about that one tree only while it stays inside it. Either slash
+    separates, on every platform: a relative claim recorded on Windows is
+    read on POSIX, and a ``\\`` that POSIX keeps in a file name refuses
+    nothing a citation needs. Lexical, so no stat runs to decide it; a
+    symbolic link inside the tree that points out of it is the reads'
+    own concern (`_resolves_under` reads it resolved). A spelling the gate
+    refuses outright (`_refused_spelling`: a NUL byte, a URL) is never
+    joined either."""
+    if _refused_spelling(rel):
+        return True
+    folded = rel.replace("\\", "/")
+    if folded.startswith("/") or _DRIVE_PREFIX_RE.match(folded):
+        return True
+    depth = 0
+    for part in folded.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            depth -= 1
+            if depth < 0:
+                return True
+        else:
+            depth += 1
+    return False
 
 
 def _is_single_segment_routelike(s: str) -> bool:

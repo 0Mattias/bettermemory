@@ -76,6 +76,11 @@ Excluded by design:
   routes, not filesystem citations — suppressed (``_DOMAIN_ROUTE_RE``).
 - SSH remotes (``user@host:path``) — colon-prefixed paths would otherwise
   parse as bare paths; filtered via an ``@`` check on the leading run.
+- Network and device spellings (``//host/share``, ``/\\host\\share``,
+  ``/\\.\\UNC\\...``) and relative claims that climb out of their root
+  (``src/../../x``) — the path gate (``_refused_spelling``,
+  ``_escapes_root``) refuses them before any stat, since on Windows a
+  stat of a UNC path opens an SMB connection to the host it names.
 - Paths shorter than 3 characters (``/x``) — the false-positive rate at
   that length is too high (``/`` alone, ``/n`` from prose, etc.).
 - CLI / slash-command invocations (``/plugin install foo``,
@@ -154,8 +159,10 @@ from .verify_anchoring import (
 )
 from .verify_candidates import (
     _bounded_scan_text,
+    _escapes_root,
     _keep_parse,
     _recall_parse,
+    _refused_spelling,
 )
 from .verify_candidates import (
     _ANCHORS as _ANCHORS,
@@ -572,6 +579,16 @@ def _anchor_paths(body: str, attested: tuple[str, ...]) -> tuple[str, ...]:
         anchors.append(candidate)
 
     for raw in attested:
+        # The path gate (ENG-164): an anchor is resolved into a pathspec
+        # (`resolve_repo_pathspecs`), which resolves it on the disk, so a
+        # network or device spelling, or a relative one that climbs out of
+        # the repository, is no anchor. The body's candidates passed the
+        # gate in the scan.
+        spelled = raw.strip()
+        if _refused_spelling(spelled) or (
+            not _is_absolute_attestation(spelled) and _escapes_root(spelled)
+        ):
+            continue
         _add(raw)
     if body:
         for path, _, _ in _extract_candidates(body):
@@ -580,8 +597,11 @@ def _anchor_paths(body: str, attested: tuple[str, ...]) -> tuple[str, ...]:
         for match in _RELATIVE_CITATION_RE.finditer(_bounded_scan_text(body)):
             if relative_added >= _MAX_ANCHOR_CITATIONS:
                 break
+            cited = match.group(1)
+            if _escapes_root(cited):
+                continue
             before = len(seen)
-            _add(match.group(1))
+            _add(cited)
             if len(seen) > before:
                 relative_added += 1
     return tuple(anchors)

@@ -1160,6 +1160,30 @@ the candidates' testing.
   refusal of a git directory whose config cannot be read whole.
   (`src/bettermemory/location_git.py`, `src/bettermemory/posture.py`,
   `SECURITY.md`, `.github/workflows/ci.yml`)
+- **A path claim spelled as a network share, a device or an escape from
+  the root is no longer stat'd.** A memory body citing
+  `/\host\share\x.txt` (or `/\.\UNC\...`) passed the candidate scan, and
+  on Windows that spelling is a UNC path: every retrieval that read the
+  body stat'd it, which opens an SMB connection to the named host, hands
+  it the user's NTLM hash, and holds the worker while an unreachable host
+  times out. A body or attestation is written by whatever the model was
+  shown, so a prompt-injected `memory_write` or `memory_verify` could
+  plant one. A relative citation or attestation such as
+  `src/../../../../x` was joined onto the root and stat'd outside the
+  tree it is a claim about. One path gate now runs before any stat: a
+  spelling that opens with two separators of either slash (UNC, the
+  device namespace, `//host`), holds a NUL byte or carries a URL's `://`
+  is not a candidate, and a relative claim that is rooted,
+  drive-qualified or climbs above the root is not joined. The body scan,
+  the attestation reads at a recorded root and at a claim anchor (a
+  record whose project has no live checkout here included), the claimed
+  paths handed to git, the write gate's attestation check and the
+  commit-drift anchors all take it. A refused spelling is not a
+  citation, so a record's report and verdict read as if the body never
+  named it; a stat spy pins that no such spelling reaches the disk on
+  any of those reads.
+  (`src/bettermemory/verify_candidates.py`,
+  `src/bettermemory/verify_anchoring.py`, `src/bettermemory/verify.py`)
 
 #### Known limitations
 

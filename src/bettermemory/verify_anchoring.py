@@ -30,6 +30,7 @@ from .verify_candidates import (
     _MAX_ANCHORED_CITATION_STATS,
     _RELATIVE_CITATION_RE,
     _bounded_scan_text,
+    _escapes_root,
     _extract_candidates,
     _is_multi_segment_routelike,
     _is_placeholder_path,
@@ -1024,11 +1025,16 @@ def _read_attestations(
                 continue
             convicting = rule in CONVICTING_ANCHORS
         else:
+            if _escapes_root(spelled):
+                # Refused before the root is read: with no root, an
+                # unrefused relative attestation is still reported, and a
+                # refused one is not a citation on any reader (ENG-164).
+                continue
             if root is None:
                 if out.first(spelled):
                     out.unconfirm(spelled, anchor.rule)
                 continue
-            joined = _normalize_candidate(str(root / spelled))
+            joined = _join_under(root, spelled)
             if joined is None:
                 continue
             target, rule, convicting = joined, anchor.rule, anchor.convicting
@@ -1064,7 +1070,7 @@ def _read_citations(anchor: ClaimAnchor, body: str, out: _AnchoredRead) -> None:
         cited = match.group(1)
         if not _is_checkable_citation(cited):
             continue
-        resolved = _normalize_candidate(str(root / cited))
+        resolved = _join_under(root, cited)
         if resolved is None or not out.first(resolved):
             continue
         stats += 1
@@ -1159,7 +1165,7 @@ def _check_anchored_attestations(
             if normalized is None or not _resolves_under(normalized, root):
                 return None
             return normalized
-        return _normalize_candidate(str(root / rel))
+        return _join_under(root, rel)
 
     # Built from the ANCHORED form, not from `_normalize_attestations`:
     # that helper runs the bare relative path through `_normalize_candidate`,
@@ -1195,6 +1201,24 @@ def _check_anchored_attestations(
         else:
             missing.append(resolved)
             claim_anchored.append(resolved)
+
+
+def _join_under(root: str | Path, rel: str) -> str | None:
+    """The relative claim `rel` joined onto `root` and validated, or None
+    when it names nothing in that tree: a spelling that climbs out of the
+    root or is rooted elsewhere (`_escapes_root`), or one the validator
+    refuses once joined (`_normalize_candidate`, the path gate included).
+
+    The one join every relative citation and attestation takes, on the
+    read side and the write side alike (ENG-164): `src/../../../../x`
+    joined and stat'd as it was spelled named a file outside the tree
+    the claim is about, and nothing stopped a relative attestation from
+    climbing to a network or device path. Joined BEFORE validating, for
+    the reason `_check_anchored_attestations` gives: the validator is
+    itself the relative-path gate."""
+    if _escapes_root(rel):
+        return None
+    return _normalize_candidate(str(Path(root) / rel))
 
 
 def _resolves_under(path: str, root: Path) -> bool:
@@ -1370,7 +1394,7 @@ def _check_anchored_citations(
         cited = match.group(1)
         if not _is_checkable_citation(cited):
             continue
-        resolved = _normalize_candidate(str(root / cited))
+        resolved = _join_under(root, cited)
         if resolved is None:
             continue
         norm = _normalize_for_compare(resolved)
@@ -1499,7 +1523,7 @@ def unverifiable_attestations(
         elif root is not None:
             # Anchor before validating, for the reason `_anchored` gives:
             # `_normalize_candidate` is itself the relative-path gate.
-            resolved = _normalize_candidate(str(root / stripped))
+            resolved = _join_under(root, stripped)
         else:
             continue
         if resolved is None:
@@ -1557,7 +1581,7 @@ def _unverifiable_at(
         else:
             if anchor.root is None:
                 continue
-            joined = _normalize_candidate(str(Path(anchor.root) / spelled))
+            joined = _join_under(anchor.root, spelled)
             if joined is None:
                 continue
             target = joined
