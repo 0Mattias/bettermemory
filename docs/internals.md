@@ -444,6 +444,12 @@ and any project file. The home row is written in the record's own
 transaction and never rewritten; a later decision (a merge, a
 declaration) moves a project, not a record.
 
+`design N.N`, `decision Dn`, `decision Bn`, a witness code (O, T+H), a
+case row (I34, T6, X2) and an experiment (E10) in a comment or
+docstring cite [the membership design](membership-design.md), the
+round 2 design this family was built from, with its decisions D1 to D19
+and build decisions B1 to B24 in two appendices.
+
 ### The witnesses
 
 The caller's location is read from files in the caller's own namespace
