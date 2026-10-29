@@ -106,7 +106,13 @@ def test_optimize_apart_runs_on_a_connection_of_its_own(
         assert ran_on[0] is not store
         assert store.busy_timeout == 5.0
         assert _stat1(path) == 1
-        path.rename(path.with_name("moved.sqlite"))
+
+        def gone(*args: Any, **kwargs: Any) -> Store:
+            raise sqlite3.OperationalError("unable to open database file")
+
+        # The store that does not open again is made so at the reopen:
+        # Windows refuses to rename a file a connection holds open.
+        monkeypatch.setattr(Store, "reopen", gone)
         assert store_index.optimize_apart(store, "schedule") is False
     assert len(ran_on) == 1
     assert "PRAGMA optimize (schedule) skipped" in caplog.text
