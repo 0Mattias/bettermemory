@@ -545,7 +545,9 @@ async def test_capture_rows_exist_with_telemetry_off(
         watermark=5,
         transcript_bytes=5,
     )
-    assert list(world.store.iter_events()) == []
+    # The committed write's row is product state (ENG-108), kept with
+    # telemetry off; nothing else of the batch is an event row.
+    assert [e["kind"] for e in world.store.iter_events()] == ["write"]
     assert [k for k in world.kinds() if k in CAPTURE_KINDS] == [
         CAPTURE_OPEN,
         CAPTURE_MEMBER,

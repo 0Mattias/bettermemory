@@ -114,10 +114,10 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   its surface when the reply used it, never by the auto fallback; what a
   closing segment never settled is written `unused`, and a turn the
   owner interrupted is audited by the next Stop. These rows are product
-  state, recorded with telemetry off too (since 9.0.0rc14; the row
-  classes are in operations.md), so the brief and the recall show with
-  telemetry off; a row that cannot land fails the hook, and nothing it
-  would have recorded is shown.
+  state, recorded with telemetry off too, then with only the fields
+  their readers read (since 9.0.0rc14; operations.md lists them), so the
+  brief and the recall show with telemetry off; a row that cannot land
+  fails the hook, and nothing it would have recorded is shown.
   `[behavior] prompt_recall` takes `project` (default), `everywhere` or
   `off`; `session_brief = false` turns the brief off.
 - Claims about the user commit like any fact but carry the
@@ -1388,7 +1388,8 @@ the knobs (`default_max_results`, `recency_boost_half_life_days`,
 `[scopes]` the allowed list and typo exceptions, `[telemetry]` the one
 switch, `enabled` (false switches off the measurement rows; the state
 rows the product reads back and the audit rows are recorded either way,
-`events.RowClass`, operations.md's "Telemetry and product state"),
+with only the fields their readers read, `events.STATE_FIELDS`,
+operations.md's "Telemetry and product state"),
 `[daemon]` the port (7397 by
 default), and
 `[capture]` session capture's switch and bounds (`stop_checkpoint`,

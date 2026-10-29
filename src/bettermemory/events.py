@@ -7,13 +7,16 @@ and the worktree an event belongs to (the request's own when the caller
 declared them, else the process's), and the admin attribution a CLI
 command stamps on its writes. `enabled=False` (`[telemetry] enabled =
 false`) makes every measurement call a no-op, so handlers call
-unconditionally. A row is one of two classes (`RowClass`, the one list
-the writer, health and a pruning read): measurement, opt-out and
-prunable; or state, recorded whatever the switch says and never pruned.
-State is what the product reads back (`STATE_KINDS`: the shows, the
-uses, the Stop's audit, the recall's and the review's rows) and the
-audit trail SECURITY.md promises (`is_audit_row`: the standing guard's
-row and the override evidence on a write or an update).
+unconditionally. A row is one of two classes by its kind (`RowClass`,
+read off the one table `STATE_FIELDS` by the writer and a pruning):
+measurement, opt-out and prunable; or state, recorded whatever the switch
+says and never pruned. State is every kind a product module reads back
+(the shows, searches, writes, updates and verifies, the uses, the Stop's
+audit and its misses, the recall's, the review's and the journal's rows)
+and the audit trail SECURITY.md promises (`is_audit_row`: the standing
+guard's row and the override evidence on a write or an update). With
+telemetry off a state row keeps only the fields its readers read
+(`state_fields`), so no free text lands.
 
 A measurement row that fails to land is swallowed at WARNING:
 measurement never fails the tool call it describes. A state or audit row
@@ -23,8 +26,8 @@ raised, so a tool call answers ``store_busy`` and a hook fails with its
 one stderr line rather than the row going missing in silence. Query
 text is never stored verbatim: `query` and `probe_query` are redacted to
 a hash, a short preview and a length, with known secret shapes stripped
-first, before the row is signed; with telemetry off a state row keeps
-the hash and the length and no preview.
+first, before the row is signed; with telemetry off the one query a
+state row keeps (the Stop's `probe_query`) is its hash and its length.
 """
 
 from __future__ import annotations
@@ -106,15 +109,17 @@ HARNESS_STAMPED_KINDS: frozenset[str] = frozenset(
 HARNESS_SESSION_FIELD = "harness_session"
 
 
-# Audit rows: the rows `[telemetry] enabled = false` does not switch off.
-# Telemetry measures how the tools are used, and a user may decline to
-# be measured. An audit row records that a guard was passed on the
-# user's say-so or by an escape hatch, and SECURITY.md promises it is on
-# the log ("Every such change is one signed `standing_guard` row … so a
-# wrong one is found and reverted"). Before 9.0.0rc12 the recorder's
-# switch dropped both kinds with the rest, so a store with telemetry off
-# changed standing memories and committed forced or acknowledged writes
-# with no trail at all, while the guard itself still ran.
+# Audit rows: the trail SECURITY.md promises. An audit row records that a
+# guard was passed on the user's say-so or by an escape hatch ("Every such
+# change is one signed `standing_guard` row … so a wrong one is found and
+# reverted"), or that a gate refused what a hatch passes. Before 9.0.0rc12
+# the recorder's switch dropped them with the rest of telemetry, so a store
+# with telemetry off changed standing memories and committed forced or
+# acknowledged writes with no trail at all, while the guard itself still
+# ran. Their kinds are state kinds (`STATE_FIELDS`), recorded whatever
+# `[telemetry] enabled` says; `is_audit_row` names the rows among them that
+# are the trail, which health's override rate counts and whose evidence
+# telemetry off keeps.
 #
 #: The kinds that are audit rows whatever their fields: the standing
 #: guard's row (`handlers._guard.record`), one per change the user's
@@ -123,10 +128,13 @@ AUDIT_KINDS: frozenset[str] = frozenset({"standing_guard"})
 
 #: The kinds whose rows are audit rows when they carry override evidence:
 #: memory_write's and memory_update's events, which name the escape
-#: hatches a committed change used (`forced`, `credentials_acknowledged`,
+#: hatches a committed change used (`forced`, and every field ending in
+#: `_ACKNOWLEDGED_SUFFIX`: `credentials_acknowledged`,
 #: `markers_acknowledged`, `user_claims_acknowledged`,
-#: `truncation_acknowledged`). A row of these kinds with no hatch used
-#: (`forced=False`, every `*_acknowledged` empty or false) is telemetry.
+#: `scope_mismatches_acknowledged`, `truncation_acknowledged`), a refusal
+#: such a hatch passes (`OVERRIDABLE_REFUSALS`) or one `[policy]` refused
+#: (`AUDIT_STATUSES`). Every row of the two kinds is state; one with none
+#: of these is no audit row.
 OVERRIDE_EVIDENCE_KINDS: frozenset[str] = frozenset({"write", "update"})
 
 #: The suffix every override-evidence field but `forced` carries. The
@@ -145,14 +153,16 @@ AUDIT_STATUSES: frozenset[str] = frozenset({"policy_refused"})
 #: hatch that passes it: the fire side of an override, as `forced` and the
 #: `*_acknowledged` fields on a committed row are its other side. A row of
 #: `OVERRIDE_EVIDENCE_KINDS` with one of these statuses is an audit row
-#: (ENG-108), so both sides travel the same path: recorded whatever
-#: `[telemetry] enabled` says and tried again against a busy store. Before
-#: 9.0.0rc14 the refusals were measurement and the overrides audit rows, so
-#: health's override rate (`health_model.MarkerStats`: overrides over fires
-#: plus overrides) read 1.0 with telemetry off, every fire dropped and every
-#: override kept, and above its true value whenever a busy store dropped a
-#: fire. A refusal no flag passes (`control_token_warning`, an update's
-#: `stale`) is no fire and stays measurement.
+#: (ENG-108), so health's override rate (`health_model.MarkerStats`:
+#: overrides over fires plus overrides) counts both sides off rows the
+#: writer records under one rule. Before 9.0.0rc14 the refusals were
+#: measurement and the overrides audit rows, so the rate read 1.0 with
+#: telemetry off, every fire dropped and every override kept, and above
+#: its true value whenever a busy store dropped a fire. A refusal no flag
+#: passes (`control_token_warning`, an update's `stale`) is no fire. The
+#: gates spell their statuses as literals; tests/test_override_rate.py
+#: ties this table to the write handler's refusal statuses and to
+#: memory_update's.
 OVERRIDABLE_REFUSALS: Mapping[str, str] = MappingProxyType(
     {
         "credential_warning": "acknowledge_credential",
@@ -167,15 +177,15 @@ OVERRIDABLE_REFUSALS: Mapping[str, str] = MappingProxyType(
 
 
 def is_audit_row(kind: str, fields: Mapping[str, Any]) -> bool:
-    """Whether a `kind` row with `fields` is an audit row, recorded with
-    telemetry off: a standing guard row, a write or update that used
-    an escape hatch (`force=True`, or an acknowledge flag that waved a
-    gate's hit through), a refusal such a hatch passes
-    (`OVERRIDABLE_REFUSALS`), or one `[policy]` refused
-    (`AUDIT_STATUSES`). Read on the fields as the handler passes them,
-    so a new `*_acknowledged` field on either kind is covered without a
-    second list to keep in step, and safe on a row read back from a
-    hand-edited log (a status that is not a string is no status)."""
+    """Whether a `kind` row with `fields` is an audit row: a standing
+    guard row, a write or update that used an escape hatch (`force=True`,
+    or an acknowledge flag that waved a gate's hit through), a refusal
+    such a hatch passes (`OVERRIDABLE_REFUSALS`), or one `[policy]`
+    refused (`AUDIT_STATUSES`). Read on the fields as the handler passes
+    them, so a new `*_acknowledged` field on either kind is covered
+    without a second list to keep in step, and safe on a row read back
+    from a hand-edited log (a status that is not a string is no
+    status)."""
     if kind in AUDIT_KINDS:
         return True
     if kind not in OVERRIDE_EVIDENCE_KINDS:
@@ -194,167 +204,311 @@ def is_audit_row(kind: str, fields: Mapping[str, Any]) -> bool:
     )
 
 
-# Product state: the rows the product reads back to decide what it does
-# next (ENG-108). Before 9.0.0rc14 they were telemetry like the rest, so
-# `[telemetry] enabled = false`, which an organisation may pin, left the
-# session brief and the prompt recall showing nothing, a contradicted
-# memory surfacing again and a review chain impossible to find; and with
-# telemetry on, a write that met another writer's lock dropped the row
-# with one log line.
+# Product state (ENG-108): every row a product module reads back to decide
+# what it does next, the audit trail above among them. Before 9.0.0rc14
+# these rows were telemetry like the rest, so `[telemetry] enabled =
+# false`, which an organisation may pin, left the session brief and the
+# prompt recall showing nothing, a contradicted memory surfacing again, a
+# searched memory never settled at the Stop and a review chain impossible
+# to find; and with telemetry on, a write that met another writer's lock
+# dropped the row with one log line. A state row is recorded whatever the
+# switch says, written with a retry and raised when it cannot land
+# (`Recorder.record`), and never pruned (`prunable`). With telemetry off it
+# keeps only the fields its readers read (`state_fields`), so no free text
+# lands: no query or prompt text, no body snippet or claim excerpt, no
+# note, reason or quoted words, no transcript path.
+# tests/test_row_classes.py fails when a product module reads a kind the
+# table below does not name, and tests/test_state_rows.py when a row
+# recorded with telemetry off keeps a field it does not list.
 #
-#: The kinds whose every row is product state: recorded whatever
-#: `[telemetry] enabled` says, written with a retry and raised when it
-#: cannot land (`Recorder.record`), and never pruned while a reader below
-#: can still read it. A pruning (ENG-82) skips every row `is_state_row`
-#: answers true for. The readers, by kind:
-#:
-#: - ``show``: the prompt recall's seen gate (`recall._seen_in_log`) and
-#:   the close of a segment, which leaves an opened pointer unsettled
-#:   (`recall_settle.settle_unused`).
-#: - ``use``, every outcome: a ``contradicted`` one holds the record back
-#:   from both recall surfaces until it is updated or verified
-#:   (`Store.contradicted_at`); a shown pointer's settlement, the auto
-#:   settlement's dedup and the session's rebuild read the rest.
-#: - ``turn_audited``: the Stop's row, which opens the next turn's window
-#:   (`recall_settle.previous_audit_at`), names the turns already audited
-#:   (`settle_interrupted`) and is a session's first sight in the rebuild.
-#: - ``session_brief``, ``prompt_recall``, ``segment_opened`` and
-#:   ``review_unanswered``: the rows a session's recall state is rebuilt
-#:   from (`recall_state._STATE_KINDS`, with ``turn_audited`` and ``use``).
-#: - ``review_issued``: a review chain (`review.find_chain`).
-#: - ``scope_disable`` and ``scope_enable``: the scopes a session turned
-#:   off, which the hooks' probe and the prompt recall leave out
-#:   (`sessions._disabled_scopes_from_events`).
-STATE_KINDS: frozenset[str] = frozenset(
+#: The fields every state row keeps with telemetry off, whatever its kind
+#: (the store writes its session column and the actor block beside them):
+#: the session a hook row names (``session_id``) and the recorder's
+#: stamps, which the session joins read (`sessions`): the admin
+#: ``attribution``, the hook that wrote the row (``triggered_from``), the
+#: checkout's ``worktree_root`` and the conversation's
+#: ``harness_session``.
+STATE_STAMP_FIELDS: frozenset[str] = frozenset(
     {
-        "prompt_recall",
-        "review_issued",
-        "review_unanswered",
-        "scope_disable",
-        "scope_enable",
-        "segment_opened",
-        "session_brief",
-        "show",
-        "turn_audited",
-        "use",
+        "attribution",
+        HARNESS_SESSION_FIELD,
+        "session_id",
+        "triggered_from",
+        "worktree_root",
     }
 )
 
-#: The kinds whose row is state when it answers a review: a memory_write
-#: row carrying the ``review_id`` it answered, which closes the chain
-#: (`review.find_chain`'s ``decided``).
-REVIEW_ANSWER_KINDS: frozenset[str] = frozenset({"write"})
+#: One state kind's kept fields: each field its readers read, mapped to
+#: None when the field is kept as it is, or to the keys kept inside it (a
+#: dict, or each dict of a list) when its readers read only those.
+KeptFields = Mapping[str, frozenset[str] | None]
 
-#: The field a review answer's row names its review under.
-REVIEW_ID_FIELD = "review_id"
 
-#: How many times a state or audit row is tried against a store another
-#: writer holds (SQLITE_BUSY or SQLITE_LOCKED) before the failure is
-#: raised: the first try and one more. Each try waits for the lock up to
-#: the connection's busy timeout (`Store.set_busy_timeout`, 5 s for each
-#: role), so a row costs its call at most twice that, which stays under
-#: the hook client's 15 s wait (`_daemon_client.HOOK_TIMEOUT_SECONDS`).
-#: A row recorded inside another call's transaction is tried once: that
+def _kept(*names: str, **inside: tuple[str, ...]) -> KeptFields:
+    fields: dict[str, frozenset[str] | None] = dict.fromkeys(names)
+    fields.update({name: frozenset(keys) for name, keys in inside.items()})
+    return MappingProxyType(fields)
+
+
+#: Every state kind, with the fields a row of it keeps with telemetry off
+#: beside `STATE_STAMP_FIELDS` (and, on a write or an update, the override
+#: evidence by its suffix). The one table of the state class: the writer
+#: (`Recorder.record`) and a pruning (`prunable`) read it through
+#: `row_class`, and health reads the audit rows among its rows through
+#: `is_audit_row`. The readers, by kind:
+#:
+#: - ``show`` (``id``) and ``search`` (``returned``, the ids): the prompt
+#:   recall's seen gate (`recall._seen_in_log`), the Stop's settlement of
+#:   the turn's retrievals (`hook._pending_retrievals`), the probe's shield
+#:   (`audit._RETRIEVAL_EVENT_KINDS`) and health's retrieval counts; a
+#:   show also closes a segment's opened pointer
+#:   (`recall_settle.settle_unused`).
+#: - ``write`` and ``update``: ``id`` and ``status`` (the seen gate reads
+#:   a committed one's id), a write's ``review_id`` (`review.find_chain`),
+#:   the gates' detector kinds and markers (health's override rate,
+#:   `secret_scan`'s acknowledged credentials), ``forced`` and the policy
+#:   refusal's flags (the audit trail).
+#: - ``verify``: ``id``, ``status``, ``verified_head`` and
+#:   ``verified_commits`` (`membership_migrate`'s evidence).
+#: - ``use``, every outcome: ``ids``, ``outcome`` and ``auto``
+#:   (`Store.contradicted_at`, which holds a contradicted record back from
+#:   both recall surfaces; the search response's recent outcomes; health;
+#:   the auto settlement's dedup), and a shown pointer's ``surface``,
+#:   ``shown_event_id``, ``segment``, ``harness`` and ``agent_id`` (the
+#:   session's rebuild, `recall_state`).
+#: - ``turn_audited``, the Stop's row: its stamp opens the next turn's
+#:   window (`recall_settle.previous_audit_at`); ``prompt_id`` names the
+#:   turns already audited (`settle_interrupted`); ``probe_query``'s hash
+#:   is the re-audit dedup's key (`audit.is_duplicate_audit`), kept with
+#:   its length and never its preview; ``verdict``, ``repeat`` and
+#:   ``no_signal_reason`` are health's miss rate; ``settled_count`` says
+#:   what the Stop settled.
+#: - ``search_miss`` (``event_id`` and each top hit's ``id``), ``miss_ack``
+#:   (``event_id``) and ``silent_miss_cutoff`` (``cutoff_ts``): health's
+#:   silent misses and `memory_acknowledge_miss`.
+#: - ``session_brief``, ``prompt_recall``, ``segment_opened`` and
+#:   ``review_unanswered``: the rows a session's recall state is rebuilt
+#:   from (`recall_state._STATE_KINDS`, with ``turn_audited`` and
+#:   ``use``); the brief's and the recall's ``checkout`` also places a
+#:   session in a checkout for the episode handoff's quiet-session check.
+#: - ``episode_handoff`` and ``episode_write``: their ``harness_session``
+#:   stamp alone, which tells that check a session journaled.
+#: - ``review_issued``: ``review_id``, ``parent_review_id`` and the
+#:   ``related`` ids, a review chain (`review.find_chain`).
+#: - ``scope_disable`` and ``scope_enable``: ``scope``, what a session
+#:   turned off (`sessions._disabled_scopes_from_events`).
+#: - ``standing_guard``, the audit row of a standing change: ``door``,
+#:   ``standing`` (the record ids) and ``said_checked``; the user's quoted
+#:   words (``said``) only with telemetry on.
+STATE_FIELDS: Mapping[str, KeptFields] = MappingProxyType(
+    {
+        "episode_handoff": _kept(),
+        "episode_write": _kept(),
+        "miss_ack": _kept("event_id"),
+        "prompt_recall": _kept(
+            "agent_id", "checkout", "event_id", "harness", "segment", "shown_ids"
+        ),
+        "review_issued": _kept("parent_review_id", "related", "review_id"),
+        "review_unanswered": _kept("harness", "root_ids"),
+        "scope_disable": _kept("scope"),
+        "scope_enable": _kept("scope"),
+        "search": _kept("returned"),
+        "search_miss": _kept("event_id", top_hits=("id",)),
+        "segment_opened": _kept(
+            "agent_id",
+            "brief_event_id",
+            "harness",
+            "marker",
+            "marker_absent",
+            "opened_at",
+            "segment",
+            "withdrawn",
+        ),
+        "session_brief": _kept(
+            "agent_id",
+            "checkout",
+            "event_id",
+            "harness",
+            "ids",
+            "marker",
+            "marker_absent",
+            "segment",
+        ),
+        "show": _kept("id"),
+        "silent_miss_cutoff": _kept("cutoff_ts"),
+        "standing_guard": _kept("door", "said_checked", "standing"),
+        "turn_audited": _kept(
+            "no_signal_reason",
+            "prompt_id",
+            "repeat",
+            "settled_count",
+            "verdict",
+            probe_query=("hash", "len"),
+        ),
+        "update": _kept(
+            "control_token_kinds",
+            "credential_kinds",
+            "forced",
+            "id",
+            "markers",
+            "policy_flags",
+            "policy_keys",
+            "policy_managed",
+            "status",
+        ),
+        "use": _kept(
+            "agent_id",
+            "auto",
+            "harness",
+            "ids",
+            "outcome",
+            "segment",
+            "shown_event_id",
+            "surface",
+        ),
+        "verify": _kept("id", "status", "verified_commits", "verified_head"),
+        "write": _kept(
+            "control_token_kinds",
+            "credential_kinds",
+            "forced",
+            "id",
+            "markers",
+            "mismatch_kinds",
+            "policy_flags",
+            "policy_keys",
+            "policy_managed",
+            "review_id",
+            "status",
+        ),
+    }
+)
+
+#: The state kinds: `STATE_FIELDS`' keys.
+STATE_KINDS: frozenset[str] = frozenset(STATE_FIELDS)
+
+#: How many times a state row is tried against a store another writer
+#: holds (SQLITE_BUSY or SQLITE_LOCKED) before the failure is raised: the
+#: first try and one more. Each try waits for the lock up to the
+#: connection's busy timeout (`Store.set_busy_timeout`, 5 s for each
+#: role). A row recorded inside another call's transaction is tried once: that
 #: transaction already holds the lock.
 STATE_WRITE_ATTEMPTS = 2
 
 
-def is_state_row(kind: str, fields: Mapping[str, Any]) -> bool:
-    """Whether a `kind` row with `fields` is product state or an audit
-    row: recorded whatever `[telemetry] enabled` says, not best-effort,
-    and never pruned while live (`STATE_KINDS`)."""
-    if kind in STATE_KINDS or is_audit_row(kind, fields):
-        return True
-    return kind in REVIEW_ANSWER_KINDS and isinstance(fields.get(REVIEW_ID_FIELD), str)
-
-
 class RowClass(enum.Enum):
     """The two classes of row the event log holds (ENG-108), and what
-    each promises. `row_class` puts every row in one of them; the writer
-    (`Recorder.record`), health's override rate (`health_stats`) and a
-    pruning of the log (`prunable`) read that answer and nothing else, so
-    the three cannot disagree about a row.
+    each promises. `row_class` puts every row in one of them by its kind;
+    the writer (`Recorder.record`) and a pruning of the log (`prunable`)
+    read that answer, and the answer reads one table (`STATE_FIELDS`), so
+    the two cannot disagree about a row.
 
-    ``STATE``: a row the product reads back to decide what it does next
-    (`STATE_KINDS`, each with its reader), a review's answer
-    (`REVIEW_ANSWER_KINDS` with a ``review_id``), and the audit trail
-    SECURITY.md promises (`is_audit_row`: the standing guard's row, a
-    write or an update that used an escape hatch). Recorded whatever
-    `[telemetry] enabled` says, with no query preview when it is off;
-    written with `STATE_WRITE_ATTEMPTS` against a busy store and raised
-    when it cannot land, so the call that needed it fails rather than
-    the row going missing; never prunable.
+    ``STATE``: a row of a kind a product module reads back to decide what
+    it does next, the audit trail SECURITY.md promises among them
+    (`STATE_FIELDS`, each kind with its readers). Recorded whatever
+    `[telemetry] enabled` says; with it off, only the fields its readers
+    read (`state_fields`). Written with `STATE_WRITE_ATTEMPTS` against a
+    busy store and raised when it cannot land, so the call that needed it
+    fails rather than the row going missing; never prunable.
 
-    ``MEASUREMENT``: a row that measures how the tools are used
-    (`MEASUREMENT_KINDS`): searches, plain writes and updates, the miss
-    telemetry, the grades, the held recalls. Opt-out: with telemetry off
-    none is recorded. Best-effort: a write that fails is logged at
-    WARNING and the call it describes goes on. Prunable at any age:
-    nothing the product does reads one back, and a reader of one (health,
-    eval, a memory's history) reports on what is there.
+    ``MEASUREMENT``: a row of a kind no product module reads
+    (`MEASUREMENT_KINDS`): the grades, the held recalls, the conflict
+    scans and verdicts, the removals, restores and renames, the tombstone
+    listings, the standing answers and the expired use tokens. Only the
+    reports read one (eval, the recall and review reports, a memory's
+    history), and they report on what is there. Opt-out: with telemetry
+    off none is recorded. Best-effort: a write that fails is logged at
+    WARNING and the call it describes goes on. Prunable at any age.
     """
 
     STATE = "state"
     MEASUREMENT = "measurement"
 
 
-#: The kinds whose row is measurement unless its fields make it state
-#: (`row_class`): a ``write`` or an ``update`` that used an escape hatch
-#: is an audit row, and a ``write`` that answers a review is state.
+#: The kinds whose rows are measurement (`RowClass.MEASUREMENT`).
 MEASUREMENT_KINDS: frozenset[str] = frozenset(
     {
         "answer_standing",
         "capture_grade",
         "conflict_scan",
         "conflict_verdict",
-        "episode_handoff",
-        "episode_write",
         "list_tombstones",
-        "miss_ack",
         "recall_grade",
         "recall_held",
         "remove",
         "rename_scope",
         "restore",
         "review_grade",
-        "search",
-        "search_miss",
-        "silent_miss_cutoff",
-        "update",
         "use_token_expired",
-        "verify",
-        "write",
     }
 )
 
-#: Every kind the product records, under the class its row has when its
-#: fields promote it to nothing. A kind no list names is measurement
-#: (`row_class`), the safe default for a row nothing reads back; the
-#: test that scans the recording sites (tests/test_row_classes.py)
-#: fails until a new kind is listed under one class.
+#: Every kind the product records, by class, for the docs and the tests:
+#: `STATE_KINDS` and `MEASUREMENT_KINDS`. The writer and a pruning read
+#: `row_class`, which reads `STATE_FIELDS` alone: a kind neither list names
+#: is measurement, the safe default for a row nothing reads back, and the
+#: test that scans the recording sites (tests/test_row_classes.py) fails
+#: until a new kind is listed under one class.
 ROW_KINDS: Mapping[RowClass, frozenset[str]] = MappingProxyType(
     {
-        RowClass.STATE: STATE_KINDS | AUDIT_KINDS,
+        RowClass.STATE: STATE_KINDS,
         RowClass.MEASUREMENT: MEASUREMENT_KINDS,
     }
 )
 
 
-def row_class(kind: str, fields: Mapping[str, Any]) -> RowClass:
-    """The class of a `kind` row with `fields` (`RowClass`): state when
-    `is_state_row` says so, as a measurement kind's row is when it
-    carries override evidence or answers a review; measurement
-    otherwise."""
-    return RowClass.STATE if is_state_row(kind, fields) else RowClass.MEASUREMENT
+def row_class(kind: str) -> RowClass:
+    """The class of a `kind` row (`RowClass`): state for a kind
+    `STATE_FIELDS` names, measurement for every other."""
+    return RowClass.STATE if kind in STATE_FIELDS else RowClass.MEASUREMENT
 
 
-def prunable(kind: str, fields: Mapping[str, Any]) -> bool:
-    """Whether a pruning of the event log may drop a `kind` row with
-    `fields`: a measurement row may, at any age; a state row may not.
+def prunable(kind: str) -> bool:
+    """Whether a pruning of the event log may drop a `kind` row: a
+    measurement row may, at any age; a state row may not, at any age.
     The pruning (ENG-82) is not on this branch; this is the rule it
-    reads, so a row the brief, the recall, the contradiction, a review
-    chain or the audit trail reads back is never the one it drops."""
-    return row_class(kind, fields) is RowClass.MEASUREMENT
+    reads, so no row a product module reads back is the one it drops."""
+    return row_class(kind) is RowClass.MEASUREMENT
+
+
+def state_fields(kind: str, fields: Mapping[str, Any]) -> dict[str, Any]:
+    """The fields of a `kind` state row that telemetry off keeps: its
+    kind's (`STATE_FIELDS`), the stamps (`STATE_STAMP_FIELDS`) and, on a
+    write or an update, the override evidence. A field kept by its keys
+    keeps only those, and a query among them still in text is redacted
+    first (`redact_query`), so its hash and length are kept and never
+    its text. Everything else is measurement and is dropped."""
+    kept = STATE_FIELDS.get(kind, {})
+    evidence = kind in OVERRIDE_EVIDENCE_KINDS
+    out: dict[str, Any] = {}
+    for name, value in fields.items():
+        if name in kept:
+            keys = kept[name]
+            if keys is None:
+                out[name] = value
+                continue
+            if name in _REDACTED_TEXT_FIELDS and isinstance(value, str):
+                value = redact_query(value)
+            out[name] = _keys_of(value, keys)
+        elif name in STATE_STAMP_FIELDS or (
+            evidence and name.endswith(_ACKNOWLEDGED_SUFFIX)
+        ):
+            out[name] = value
+    return out
+
+
+def _keys_of(value: Any, keys: frozenset[str]) -> Any:
+    """`value` with only `keys` kept: inside a dict, or inside each dict of
+    a list (an item that is not a dict is dropped); None for anything
+    else."""
+    if isinstance(value, Mapping):
+        return {k: v for k, v in value.items() if k in keys}
+    if isinstance(value, list):
+        return [
+            {k: v for k, v in item.items() if k in keys}
+            for item in value
+            if isinstance(item, Mapping)
+        ]
+    return None
 
 
 # A dry run (`hook.run_audit(dry_run=True)`, `bettermemory audit-turn
@@ -375,19 +529,6 @@ def suppressed() -> Iterator[None]:
         yield
     finally:
         _SUPPRESSED.reset(token)
-
-
-def _without_previews(fields: dict[str, Any]) -> None:
-    """Drop the preview from each redacted text field of `fields`, in
-    place, keeping its hash and length: a state row recorded with
-    telemetry off carries no prompt text. The hash is what its readers
-    join on (the re-audit dedup, the recall review)."""
-    for key in _REDACTED_TEXT_FIELDS:
-        value = fields.get(key)
-        if isinstance(value, str):
-            value = redact_query(value)
-        if isinstance(value, Mapping) and "preview" in value:
-            fields[key] = {k: v for k, v in value.items() if k != "preview"}
 
 
 #: The marker the second pass splices in for a span the five patterns
@@ -523,29 +664,30 @@ class Recorder:
 
         return _h.capture_origin().worktree_root
 
-    def records(self, kind: str, fields: Mapping[str, Any] | None = None) -> bool:
-        """Whether `record(kind, **fields)` writes a row (`RowClass`): a
-        state row always, a measurement row with telemetry on, nothing
-        inside `suppressed`. A caller whose row costs work to build asks
-        first rather than reading the switch itself."""
+    def records(self, kind: str) -> bool:
+        """Whether `record(kind, ...)` writes a row (`RowClass`): a state
+        row always, a measurement row with telemetry on, nothing inside
+        `suppressed`. A caller whose row costs work to build asks first
+        rather than reading the switch itself."""
         if _SUPPRESSED.get():
             return False
-        return self.enabled or row_class(kind, fields or {}) is RowClass.STATE
+        return self.enabled or row_class(kind) is RowClass.STATE
 
     def record(self, kind: str, **fields: Any) -> None:
         """Record one `kind` row, by its class (`row_class`). A
         measurement row is a no-op with telemetry off and swallowed at
-        WARNING when it fails. A state or audit row passes the switch, is stamped and
-        signed exactly as it would be with telemetry on (less the query
-        preview when it is off), is tried `STATE_WRITE_ATTEMPTS` times
-        against a busy store, and a failure that remains is logged and
-        raised; a store open for reading only records nothing, with one
-        warning, as before (`Store.record_event`). Inside `suppressed`
-        nothing is recorded."""
+        WARNING when it fails. A state row passes the switch and is
+        stamped and signed as it would be with telemetry on; with it off
+        the row keeps only the fields its readers read (`state_fields`).
+        It is tried `STATE_WRITE_ATTEMPTS` times against a busy store, and
+        a failure that remains is logged and raised; a store open for
+        reading only records nothing, with one warning, as before
+        (`Store.record_event`). Inside `suppressed` nothing is
+        recorded."""
         if _SUPPRESSED.get():
             return
         # Off means no measurement, not no state and no trail.
-        state = row_class(kind, fields) is RowClass.STATE
+        state = row_class(kind) is RowClass.STATE
         if not self.enabled and not state:
             return
         if self.attribution:
@@ -578,7 +720,7 @@ class Recorder:
                 log.warning("event %s not recorded: %s", kind, exc)
             return
         if not self.enabled:
-            _without_previews(fields)
+            fields = state_fields(kind, fields)
         try:
             self.store.record_event(
                 kind,
@@ -643,17 +785,18 @@ __all__ = [
     "MEASUREMENT_KINDS",
     "OVERRIDABLE_REFUSALS",
     "OVERRIDE_EVIDENCE_KINDS",
-    "REVIEW_ANSWER_KINDS",
-    "REVIEW_ID_FIELD",
     "ROW_KINDS",
     "Recorder",
     "RowClass",
+    "STATE_FIELDS",
     "STATE_KINDS",
+    "STATE_STAMP_FIELDS",
     "STATE_WRITE_ATTEMPTS",
+    "KeptFields",
     "is_audit_row",
-    "is_state_row",
     "prunable",
     "redact_query",
     "row_class",
+    "state_fields",
     "suppressed",
 ]

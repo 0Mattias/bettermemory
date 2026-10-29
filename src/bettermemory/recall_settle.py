@@ -277,6 +277,7 @@ def settle_unused(
     now: datetime,
     worktree_root: str | None,
     triggered_from: str,
+    telemetry: bool,
 ) -> list[str]:
     """Settle the segment the session just left (`RecallState.take_closed`):
     every pointer it showed that no Stop settled (`settle_shown`), no
@@ -286,7 +287,9 @@ def settle_unused(
     segment, the harness and the hook that closed it (`triggered_from`);
     the ids recorded. The caller writes these before the row that opens
     the next segment, so a state rebuilt from the log reads them in the
-    segment they settle. Nothing when no segment waits."""
+    segment they settle. Nothing when no segment waits. `telemetry` is
+    `[telemetry] enabled`: with it off the rows keep only what their
+    readers read (`events.state_fields`)."""
     closed = state.take_closed(key)
     if closed is None:
         return []
@@ -319,7 +322,7 @@ def settle_unused(
     recorder = Recorder(
         store=store,
         session_id=key[1],
-        enabled=True,
+        enabled=telemetry,
         worktree_root=worktree_root,
         triggered_from=triggered_from,
     )
@@ -413,7 +416,10 @@ def settle_interrupted(
         if isinstance(named, str):
             audited.add(named)
     recorder = Recorder(
-        store=store, session_id=session_id, enabled=True, worktree_root=worktree_root
+        store=store,
+        session_id=session_id,
+        enabled=cfg.telemetry.enabled,
+        worktree_root=worktree_root,
     )
     probe_mode = cfg.behavior.search_mode or "hybrid"
     settled: list[str] = []

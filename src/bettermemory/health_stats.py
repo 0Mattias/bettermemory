@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .durability import canonical_marker
-from .events import RowClass, _event_id_list, row_class
+from .events import _event_id_list, is_audit_row
 from .models import Memory, first_summary_line
 from .origin import ReachableWalk, commits_since_anchor
 from .claims import load_claims
@@ -463,12 +463,13 @@ class _StatsAccumulator:
         # Both sides are counted off the one path (ENG-108): a fire is a
         # refusal an escape hatch passes (`events.OVERRIDABLE_REFUSALS`), an
         # override a commit carrying the hatch's evidence, and both are
-        # state rows (`events.row_class`), recorded whatever `[telemetry]
-        # enabled` says and retried against a busy store. A row of another
-        # class is neither side, so a pair the writer recorded under two
+        # audit rows (`events.is_audit_row`): state, recorded whatever
+        # `[telemetry] enabled` says and retried against a busy store, and
+        # with telemetry off they keep their markers. A write that is no
+        # audit row is neither side, so a pair the writer recorded under two
         # rules can never be divided here again: that is how telemetry off
         # read 1.0, every fire dropped and every override kept.
-        if row_class("write", ev) is not RowClass.STATE:
+        if not is_audit_row("write", ev):
             return
         for marker in _event_id_list(ev.get("markers")):
             self._marker_fires[canonical_marker(marker)] += 1

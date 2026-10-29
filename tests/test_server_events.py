@@ -212,7 +212,7 @@ async def test_scope_disable_enable_record_events(
 # ---------------------------------------------------------------------------
 
 
-async def test_disabled_telemetry_writes_nothing(memory_dir: Path) -> None:
+async def test_disabled_telemetry_writes_no_text(memory_dir: Path) -> None:
     from bettermemory.config import TelemetryConfig
 
     cfg = Config(
@@ -226,8 +226,12 @@ async def test_disabled_telemetry_writes_nothing(memory_dir: Path) -> None:
     await _call(server, "memory_write", content="x", scopes=["tools"])
     await _call(server, "memory_search", query="x")
 
-    # No event row at all.
-    assert list(store.iter_events()) == []
+    # Both rows are product state (ENG-108): kept with telemetry off,
+    # with the ids and no query or content.
+    rows = list(store.iter_events())
+    assert [e["kind"] for e in rows] == ["write", "search"]
+    assert "query" not in rows[1]
+    assert "content" not in rows[0]
 
 
 # ---------------------------------------------------------------------------

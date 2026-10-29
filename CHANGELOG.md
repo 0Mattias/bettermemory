@@ -1953,8 +1953,9 @@ follows the candidates' testing.
   `segment_opened`, `review_issued`, `review_unanswered`, `scope_disable`
   and `scope_enable`, and a `write` row carrying the `review_id` it
   answers) are now recorded whatever the switch says, as the audit rows
-  already were; with telemetry off they keep a query's hash and length
-  and no preview, and the measurement rows stay off. A state or audit row
+  already were (with telemetry off, only the fields their readers read:
+  see the bullet on that below), and the measurement rows stay off. A
+  state or audit row
   that meets a lock is tried once more (`events.STATE_WRITE_ATTEMPTS`,
   `Store.record_event`'s `attempts`), and a failure that remains is
   raised: a tool call answers `store_busy` (retryable when it kept
@@ -1966,7 +1967,7 @@ follows the candidates' testing.
   (`audit-turn --dry-run`) no longer rides on the telemetry switch: it
   records no row of any class (`events.suppressed`) and reads the
   session's recall state into a throwaway copy. A pruning (ENG-82) skips
-  every row `events.is_state_row` names.
+  every state row (`events.prunable`).
   (`src/bettermemory/events.py`, `src/bettermemory/store_events.py`,
   `src/bettermemory/recall.py`, `src/bettermemory/recall_state.py`,
   `src/bettermemory/recall_settle.py`, `src/bettermemory/hook.py`,
@@ -1983,10 +1984,9 @@ follows the candidates' testing.
   promises: state (recorded whatever the switch says, not best-effort,
   never prunable) and measurement (opt-out, best-effort, prunable at any
   age). `events.ROW_KINDS` lists every kind the src records under one
-  of them (`MEASUREMENT_KINDS` beside `STATE_KINDS` and the audit kinds),
-  and `events.row_class` reads a row's kind and its fields, so a `write`
-  or an `update` that used an escape hatch, or a `write` that answers a
-  review, is state. The writer (`Recorder.record`, and `Recorder.records`
+  of them (`MEASUREMENT_KINDS` beside `STATE_KINDS`), and
+  `events.row_class` reads a row's kind (`events.STATE_FIELDS`, below).
+  The writer (`Recorder.record`, and `Recorder.records`
   for a caller whose row costs work to build, as the recall's
   `recall_held` row does), health's override rate and the pruning rule
   (`events.prunable`, which ENG-82 reads when it lands) read that answer.
@@ -2034,8 +2034,8 @@ follows the candidates' testing.
   `duplicate`, `previously_removed` and an update's
   `truncation_warning`, each with its hatch) is now an audit row,
   recorded with telemetry off and retried against a busy store, and
-  health counts both sides only off rows of the state class
-  (`events.row_class`). A refusal no flag passes
+  health counts both sides only off audit rows
+  (`events.is_audit_row`). A refusal no flag passes
   (`control_token_warning`, an update's `stale`) stays measurement. A
   log written before this release with telemetry off still holds no
   fires. `events.is_audit_row` reads a status that is not a string as no
@@ -2065,10 +2065,9 @@ follows the candidates' testing.
   gains "Telemetry and product state": the two row classes, what each
   promises, how a state row that meets a lock is retried and then fails
   the call, and what `[telemetry] enabled = false` still empties (the
-  usage figures in `health` and `eval`, the bulk miss acknowledgement,
-  the grades). Step 2 of the enterprise checklist no longer says the
-  brief and the prompt recall deliver nothing with telemetry off: the
-  switch turns off the measurement rows only. config.toml's
+  usage figures in `health` and `eval`, the grades). Step 2 of the
+  enterprise checklist no longer says the brief and the prompt recall
+  deliver nothing with telemetry off. config.toml's
   `[telemetry]` prose and the `[behavior]` comments, the plugin's
   prompt-recall hook note, internals.md and SECURITY.md say the same.
   No entry under this release's Known limitations described what the
@@ -2081,6 +2080,60 @@ follows the candidates' testing.
   `src/bettermemory/config.py`, `plugin/hooks/hooks.json`,
   `tests/test_telemetry_docs.py`; the Known limitations below gain the
   ENG-108 residuals)
+- **With telemetry off a state row keeps only the fields its readers
+  read, and every kind a product module reads is state (ENG-108).** The
+  cold review of the bullets above found the state rows written whole
+  with telemetry off: a reviewed write's `review_answers.said` (the
+  user's typed words; every committed write under the sealed review
+  carries a `review_id`), the prompt recall's hit snippets and
+  transcript path, the uses' claim excerpts, and an interrupted turn's
+  `turn_audited` row with the first 32 characters of the prompt, since
+  its recorder, like the segment close's, was built with `enabled=True`.
+  It also found product readers reading measurement kinds: the Stop
+  settled what a turn searched from `search` rows, the recall's seen gate
+  read `search`, `write` and `update`, the episode handoff's
+  quiet-session check read the journal's stamps, `memory_acknowledge_miss`
+  and health read the miss rows, and the membership migration read
+  `verify`; with telemetry off a searched memory was never settled and
+  could be recalled again, a session that journaled read as quiet, and
+  `events.prunable` called all of them prunable at any age.
+  `events.STATE_FIELDS` is now the one table of the state class: every
+  kind a product module reads (`search`, `write`, `update`, `verify`,
+  `search_miss`, `miss_ack`, `silent_miss_cutoff`, `episode_handoff`,
+  `episode_write` and `standing_guard` join the ten), each with the
+  fields its readers read. With telemetry off `Recorder.record` keeps
+  those and the stamps (`events.state_fields`), so no query or prompt
+  text, snippet, claim excerpt, note, reason, quoted word or transcript
+  path lands, and the Stop's probe keeps its hash and its length;
+  operations.md lists each kind's fields. Both settlement recorders read
+  the switch. A row's class is its kind's (`events.row_class(kind)`),
+  health counts an override's fire and override off the audit rows
+  (`events.is_audit_row`), and the bulk miss acknowledgement no longer
+  refuses with telemetry off. `events.is_state_row`,
+  `REVIEW_ANSWER_KINDS` and `REVIEW_ID_FIELD` are gone. operations.md
+  also says a write kept before its row failed answers `store_busy (not
+  retryable)`, and that a turn advance's own `use` row can fail an
+  unrelated call. Tests: every kind the recall, review, audit, health,
+  membership, session, conflicts and episode modules and the other log
+  readers read is state (an AST scan); every recorder the src builds
+  reads the switch; every state kind recorded with telemetry off keeps
+  only its fields, and none of them is a field the audit export redacts
+  as free text; the brief, the recall, the Stop, an interrupted turn, a
+  review's answer and `memory_record_use` keep no text; the Stop settles
+  a searched memory and the recall does not deliver a searched or written
+  one; the handoff names no session that journaled; the overridable
+  refusals are the gates' own statuses; operations.md's table is the
+  table.
+  (`src/bettermemory/events.py`, `src/bettermemory/recall_settle.py`,
+  `src/bettermemory/recall.py`, `src/bettermemory/health_stats.py`,
+  `src/bettermemory/handlers/acknowledge_miss.py`,
+  `src/bettermemory/config.py`, `docs/operations.md`, `docs/api.md`,
+  `docs/internals.md`, `SECURITY.md`, `tests/test_state_rows.py`,
+  `tests/test_row_classes.py`, `tests/test_telemetry_docs.py`,
+  `tests/test_episode_handoff_guard.py`, `tests/test_override_rate.py`,
+  `tests/test_audit_rows.py`, `tests/test_hygiene_log.py`,
+  `tests/test_server_events.py`, `tests/test_capture_batch.py`,
+  `tests/test_recall_prompt.py`, `tests/test_recall_state.py`)
 
 #### Known limitations
 
@@ -2392,14 +2445,6 @@ follows the candidates' testing.
   its first owner's open of this build, since the fingerprint's inputs
   changed, and again at each later change of the tokenizer.
   (`src/bettermemory/store_index.py`)
-- **With telemetry off the recall's seen gate reads only the state
-  rows.** The prompt recall leaves out what the session already saw:
-  the shows, which are state, and the `search`, `list`, `write` and
-  `update` rows, which stay measurement (ENG-108). With `[telemetry]
-  enabled = false` a memory the model found through `memory_search` or
-  wrote in the segment can still be delivered as a pointer; one it
-  opened with `memory_show` cannot. The episode handoff's quiet-session
-  check reads the episode rows, which are measurement too.
 - **A state row is never prunable, and a log from before 9.0.0rc14 is
   not filled in.** `events.prunable` keeps every state row, a closed
   session's included; a pruning (ENG-82) that wants to drop the state
@@ -2419,6 +2464,17 @@ follows the candidates' testing.
   recall whose row fails drops the session's held state, which the next
   hook rebuilds from the log, so a claim another prompt of the same
   session made in that window is rebuilt from its row once that lands.
+  The Stop's settlement rows and its `turn_audited` row are separate
+  transactions too: a settlement row that fails leaves the turn with no
+  audit row, and the retrievals it did not settle are counted in the
+  next turn's `settled_count`. One transaction around them would hold the
+  store's lock through the reply's matching and leave the held state
+  settled when it rolled back.
+- **With telemetry off the text the product showed beside a row is
+  gone.** The search response's recent negative outcomes carry no note
+  or claim excerpt, `health`'s silent misses no query preview and its
+  resolution timeline no notes, and a standing change's row no quoted
+  words, since no state row keeps free text with telemetry off.
 - **Health counts the marker fires and overrides of `memory_write`
   only.** `memory_update`'s `transient_warning` and its
   `markers_acknowledged` are audit rows now, but the override rate does

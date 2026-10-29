@@ -600,6 +600,7 @@ def confirm_compaction(
             now=now,
             worktree_root=caller.worktree_root,
             triggered_from=triggered_from,
+            telemetry=cfg.telemetry.enabled,
         )
     Recorder(
         store=store,
@@ -834,6 +835,7 @@ def session_brief(
                 origin if origin is not None else _origin.capture_caller(cwd)
             ).worktree_root,
             triggered_from="session_hook",
+            telemetry=cfg.telemetry.enabled,
         )
     compaction: dict[str, Any] = {}
     if opened_by == "compact":

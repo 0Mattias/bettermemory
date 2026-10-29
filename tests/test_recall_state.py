@@ -406,7 +406,8 @@ def test_a_segment_row_with_telemetry_off_and_none_on_startup(
     world: PromptWorld,
 ) -> None:
     """The compact's row is product state (ENG-108), recorded with
-    telemetry off; a startup opens no segment and records none."""
+    telemetry off, keeping its readers' fields (not its source); a startup
+    opens no segment and records none."""
     from bettermemory.config import Config, StorageConfig, TelemetryConfig
     from bettermemory.recall import session_brief
 
@@ -423,9 +424,8 @@ def test_a_segment_row_with_telemetry_off_and_none_on_startup(
         store=world.store,
     )
     rows = [e for e in world.store.iter_events() if e["kind"] == "segment_opened"]
-    assert [(row["source"], row.get("marker_absent")) for row in rows] == [
-        ("compact", True)
-    ]
+    assert [row.get("marker_absent") for row in rows] == [True]
+    assert "source" not in rows[0]
 
 
 # ---------------------------------------------------------------------------

@@ -216,17 +216,13 @@ async def acknowledge_misses_before(
     Writes one additive `silent_miss_cutoff` event; the health and eval
     rollups honour the latest cutoff seen and drop `turn_audited` and
     `search_miss` events stamped earlier than it. Nothing is removed from
-    the log. Refused when telemetry is off, because the cutoff is itself
-    a telemetry event and a disabled recorder would drop it silently.
+    the log. The cutoff is product state (`events.STATE_FIELDS`), so it
+    is recorded with telemetry off as well, less its reason; until
+    9.0.0rc14 it was telemetry, and this form refused with telemetry off.
     """
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
     cutoff = canonical_cutoff(before)
-    if not deps.recorder.enabled:
-        raise ValueError(
-            "telemetry is disabled, so the cutoff event would be dropped; "
-            "enable [telemetry] before acknowledging misses in bulk"
-        )
     note = (reason or "").strip() or None
     if note is not None and len(note) > _MAX_REASON_LENGTH:
         raise ValueError(f"reason is over the {_MAX_REASON_LENGTH}-char cap")

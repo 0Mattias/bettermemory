@@ -14,6 +14,7 @@ counts both sides off the state class (`events.row_class`).
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -170,8 +171,26 @@ async def test_with_telemetry_off_every_overridable_refusal_lands(
     if status is not None:
         assert refused["status"] == status
     rows = [e for e in world.store.iter_events() if e["kind"] == "write"]
-    assert [e["status"] for e in rows] == [refused["status"]]
+    # The setup's own commit is a write row too (every write row is state);
+    # the refusal's is the last, and the one audit row.
+    assert rows[-1]["status"] == refused["status"]
+    assert [e for e in rows if events.is_audit_row("write", e)] == [rows[-1]]
     assert _AWS not in str(rows)
+
+
+def test_the_overridable_refusals_are_the_gates_own() -> None:
+    """The gates spell their statuses as literals; the table is tied to
+    them here: the write handler's refusals (`_CAPTURE_REFUSAL_HINTS`, one
+    answer per status a gate refuses with) and memory_update's warnings,
+    but the control-token refusal no flag passes."""
+    from bettermemory.handlers import update as update_handler
+    from bettermemory.handlers import write as write_handler
+
+    source = Path(update_handler.__file__).read_text(encoding="utf-8")
+    update_warnings = set(re.findall(r'"status": "([a-z_]+_warning)"', source))
+    assert "truncation_warning" in update_warnings
+    gates = set(write_handler._CAPTURE_REFUSAL_HINTS) | update_warnings
+    assert set(events.OVERRIDABLE_REFUSALS) == gates - {"control_token_warning"}
 
 
 def test_each_refusal_names_a_hatch_the_tools_take() -> None:

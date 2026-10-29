@@ -200,7 +200,8 @@ async def test_the_flag_on_a_write_with_no_mismatch_is_no_override(
     tmp_path: Path, telemetry: bool
 ) -> None:
     """A flag that waved nothing through is no override, as with the other
-    acknowledge flags: the row is a plain write, measurement."""
+    acknowledge flags: the row is a plain write, state but no audit row,
+    whatever telemetry says."""
     world = World(tmp_path / "store", telemetry=telemetry)
     committed = await world.call(
         "memory_write",
@@ -209,10 +210,6 @@ async def test_the_flag_on_a_write_with_no_mismatch_is_no_override(
         acknowledge_scope_mismatch=True,
     )
     assert committed["status"] == "committed", committed
-    rows = world.rows("write")
-    if telemetry:
-        [row] = rows
-        assert row["scope_mismatches_acknowledged"] == []
-        assert not events.is_audit_row("write", row)
-    else:
-        assert rows == []
+    [row] = world.rows("write")
+    assert row["scope_mismatches_acknowledged"] == []
+    assert not events.is_audit_row("write", row)

@@ -405,6 +405,8 @@ def test_is_audit_row_names_the_guard_and_the_escape_hatches() -> None:
 
 
 def test_a_disabled_recorder_still_writes_audit_rows(store: Store) -> None:
+    """Every row here is state (ENG-108): with telemetry off each lands,
+    keeping its readers' fields, and no query or quoted word."""
     recorder = Recorder(store=store, session_id="sess_off", enabled=False)
     recorder.record("search", query="anything", returned=[])
     recorder.record("write", status="committed", forced=False, markers_acknowledged=[])
@@ -418,9 +420,21 @@ def test_a_disabled_recorder_still_writes_audit_rows(store: Store) -> None:
     recorder.record("write", status="committed", forced=True)
     recorder.record("update", id="x", truncation_acknowledged=True)
     kinds = [(e["kind"], e.get("forced")) for e in store.iter_events()]
-    assert kinds == [("standing_guard", None), ("write", True), ("update", None)]
+    assert kinds == [
+        ("search", None),
+        ("write", False),
+        ("standing_guard", None),
+        ("write", True),
+        ("update", None),
+    ]
+    (search,) = _rows(store, "search")
+    assert "query" not in search
     (guard,) = _rows(store, "standing_guard")
     assert guard["session"] == "sess_off"
+    assert "said" not in guard
+    assert guard["said_checked"] is False
+    (update,) = _rows(store, "update")
+    assert update["truncation_acknowledged"] is True
     assert store.log_verify()["status"] == "ok"
 
 
@@ -444,7 +458,10 @@ async def test_telemetry_off_keeps_the_override_evidence_and_nothing_else(
 
     assert (await write(FACTS[1]))["status"] == "committed"
     await call_tool(server, "memory_search", {"query": "dashboards"})
-    assert list(store.iter_events()) == [], "telemetry proper stays off"
+    # Both are state (ENG-108): kept with telemetry off, without the query.
+    assert [e["kind"] for e in store.iter_events()] == ["write", "search"]
+    (search,) = _rows(store, "search")
+    assert "query" not in search
 
     forced = await write(FACTS[2], force=True)
     assert forced["status"] == "committed"
@@ -453,13 +470,18 @@ async def test_telemetry_off_keeps_the_override_evidence_and_nothing_else(
     )
     assert acknowledged["status"] == "committed"
 
-    rows = _rows(store, "write")
+    rows = _rows(store, "write")[1:]
     assert [(r["id"], r["forced"]) for r in rows] == [
         (forced["id"], True),
         (acknowledged["id"], False),
     ]
     assert rows[1]["credentials_acknowledged"] == ["aws-access-key-id"]
-    assert [e["kind"] for e in store.iter_events()] == ["write", "write"]
+    assert [e["kind"] for e in store.iter_events()] == [
+        "write",
+        "search",
+        "write",
+        "write",
+    ]
 
 
 @pytest.fixture
@@ -495,6 +517,11 @@ async def test_telemetry_off_a_guarded_change_still_writes_its_standing_guard_ro
     assert done["status"] == "committed", done
     (row,) = h.events("standing_guard")
     assert (row["door"], row["standing"]) == ("memory_update", [old])
-    assert (row["said"], row["said_checked"]) == (QUOTE, False)
-    # The update itself used no escape hatch: its row is telemetry, off.
-    assert h.events("update") == []
+    # With telemetry off the row keeps whether the words were checked,
+    # not the words (ENG-108).
+    assert "said" not in row
+    assert row["said_checked"] is False
+    # The update's own row is state too, kept without the words.
+    (update,) = h.events("update")
+    assert update["id"] == old
+    assert "said" not in update

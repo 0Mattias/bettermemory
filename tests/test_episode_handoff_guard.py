@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory.config import Config, StorageConfig
+from bettermemory.config import Config, StorageConfig, TelemetryConfig
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -667,8 +667,18 @@ async def test_b22_a_session_that_journaled_nothing_with_nothing_older(
     assert "journaled no takeaway and left no handoff floor" in res["note"]
 
 
+# The journal's stamps are product state (ENG-108): with telemetry off the
+# brief's and the recall's rows place a session in the checkout, so the
+# rows that say it journaled must land too, or it reads as quiet.
+_TELEMETRY = pytest.mark.parametrize("telemetry", [True, False], ids=["on", "off"])
+
+
+@_TELEMETRY
 async def test_b22_a_floor_only_session_with_rows_here_keeps_the_floor_note(
-    memory_dir: Path, in_checkout: Path, monkeypatch: pytest.MonkeyPatch
+    memory_dir: Path,
+    in_checkout: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    telemetry: bool,
 ) -> None:
     """S2's conversation stands in the checkout (a brief row after its
     handoff) and journaled a floor: its handoff row names the conversation,
@@ -676,7 +686,10 @@ async def test_b22_a_floor_only_session_with_rows_here_keeps_the_floor_note(
     the floor-only one."""
     from bettermemory.identity import ENV_HARNESS_SESSION
 
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        telemetry=TelemetryConfig(enabled=telemetry),
+    )
     server_s1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     ep_s1 = await _call(
         server_s1, "episode", action="write", body="S1 body", takeaway="from S1"
@@ -696,8 +709,12 @@ async def test_b22_a_floor_only_session_with_rows_here_keeps_the_floor_note(
     assert "left no handoff floor" not in res["note"]
 
 
+@_TELEMETRY
 async def test_b22_a_session_journaling_by_episode_write_alone_is_not_quiet(
-    memory_dir: Path, in_checkout: Path, monkeypatch: pytest.MonkeyPatch
+    memory_dir: Path,
+    in_checkout: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    telemetry: bool,
 ) -> None:
     """A conversation journals by `episode_write` alone, never calling the
     handoff, and its first row in the checkout (a brief) comes after the
@@ -705,7 +722,10 @@ async def test_b22_a_session_journaling_by_episode_write_alone_is_not_quiet(
     handoff surfaces its takeaway with no zero-episode note."""
     from bettermemory.identity import ENV_HARNESS_SESSION
 
-    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        telemetry=TelemetryConfig(enabled=telemetry),
+    )
     monkeypatch.setenv(ENV_HARNESS_SESSION, "conv-writer")
     writer = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     ep_w = await _call(

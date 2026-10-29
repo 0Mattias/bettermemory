@@ -287,10 +287,14 @@ DEFAULT_CONFIG = """\
 # call (search queries redacted to a hash and a short preview, returned
 # ids, write, update and remove events). The health report and
 # `bettermemory eval` read them. Same file, same trust boundary, no new
-# permissions story. Set `enabled = false` to opt out of these
-# measurement rows. The rows the product reads back (the shows, the uses,
-# the Stop's audit, the review's) and the audit trail are kept either way,
-# without the query preview, so the brief and the recall still work.
+# permissions story. Set `enabled = false` to opt out of measurement:
+# the held recalls, grades and conflict scans are not recorded. The rows
+# the product reads back (the shows and searches, the writes, the uses,
+# the Stop's audit, the recall's and the review's rows) and the audit
+# trail are kept either way, with only the ids, statuses, counts and
+# stamps their readers read: no query, prompt or body text, note or
+# quoted word (docs/operations.md lists each kind's). The brief and the
+# recall still work.
 # enabled = true
 
 [security]
@@ -402,7 +406,7 @@ class BehaviorConfig:
     # B21), "off" nothing. The loader reads a
     # legacy boolean as "project" / "off" (`_coerce_prompt_recall`).
     # Each delivery's `prompt_recall` row is product state, recorded with
-    # telemetry off too (`events.STATE_KINDS`, ENG-108), so no injection is
+    # telemetry off too (`events.STATE_FIELDS`, ENG-108), so no injection is
     # invisible to the Stop-hook shield or goes off the books. See
     # DEFAULT_CONFIG for prose.
     prompt_recall: str = "project"
