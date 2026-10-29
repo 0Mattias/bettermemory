@@ -19,6 +19,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
@@ -132,6 +133,28 @@ def _clear_event_windows() -> None:
 # -- telemetry ----------------------------------------------------------
 
 
+#: How long a retried event write sleeps before its next try, in seconds
+#: (`record_event`'s ``attempts``): long enough for a long write run's
+#: chunk boundary to come round (`store.CHUNK_YIELD_SECONDS`), short
+#: beside the busy wait the try that failed has already spent.
+EVENT_RETRY_PAUSE_SECONDS = 0.05
+
+
+def _primary_code(exc: BaseException) -> int | None:
+    """The SQLite primary result code `exc` carries, None for none."""
+    code = getattr(exc, "sqlite_errorcode", None)
+    if not isinstance(exc, sqlite3.OperationalError) or not isinstance(code, int):
+        return None
+    return code & 0xFF
+
+
+def _busy(exc: BaseException) -> bool:
+    """Another writer held the store (SQLITE_BUSY or SQLITE_LOCKED): the
+    failure a later try of the same write can get past
+    (`store.retryable_code`'s ``store_busy``)."""
+    return _primary_code(exc) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+
+
 def record_event(
     self: Store,
     kind: str,
@@ -139,29 +162,55 @@ def record_event(
     session: str | None = None,
     actor: Actor | Mapping[str, Any] | None = None,
     best_effort: bool = True,
+    attempts: int = 1,
     **fields: Any,
 ) -> LogRow | None:
     """One telemetry row. ``query`` and ``probe_query`` are redacted to
     a hash, a short preview and a length before the row is signed, as
     the v8 recorder redacted them. With ``best_effort`` a storage
-    failure is logged and swallowed, so telemetry never fails the tool
-    call it describes; a kind that names a mutation or a control row
-    is a programming error and always raises."""
+    failure is logged and swallowed, so a measurement never fails the
+    tool call it describes; without it the failure is raised. A write
+    another writer's lock refused (`_busy`) is tried up to ``attempts``
+    times in all, `EVENT_RETRY_PAUSE_SECONDS` apart, and once only inside
+    another call's transaction, which already holds the lock (a busy
+    there is not the lock's to give). A store open for reading only (its
+    key not held here, `Store.key_state`, or opened read-only by its
+    versions, SQLITE_READONLY) records no row of any class, with one
+    warning, and its reads go on. A kind that names a mutation or a
+    control row is a programming error and always raises."""
     if kind in _NOT_TELEMETRY:
         raise ValueError(f"{kind!r} is a mutation or control kind, not an event")
+    if self._key is None:
+        log.warning(
+            "event %s not recorded: %s", kind, self.key_state.refusal(self._path)
+        )
+        return None
     payload: dict[str, Any] = _redact_event_fields(dict(fields))
     if actor is not None:
         record = actor.to_record() if isinstance(actor, Actor) else dict(actor)
         if record:
             payload.setdefault("actor", record)
-    try:
-        with self._transaction() as tx:
-            return self._append(tx, kind, payload, session=session)
-    except (sqlite3.Error, OSError, RuntimeError) as exc:
-        if not best_effort:
-            raise
-        log.warning("event %s not recorded: %s", kind, exc)
-        return None
+    tries = 1 if self._tx_depth else max(1, attempts)
+    for attempt in range(1, tries + 1):
+        try:
+            with self._transaction() as tx:
+                return self._append(tx, kind, payload, session=session)
+        except (sqlite3.Error, OSError, RuntimeError) as exc:
+            if attempt < tries and _busy(exc):
+                log.info(
+                    "event %s: the store was busy (%s); try %d of %d",
+                    kind,
+                    exc,
+                    attempt + 1,
+                    tries,
+                )
+                time.sleep(EVENT_RETRY_PAUSE_SECONDS)
+                continue
+            if not best_effort and _primary_code(exc) != sqlite3.SQLITE_READONLY:
+                raise
+            log.warning("event %s not recorded: %s", kind, exc)
+            return None
+    return None  # pragma: no cover - the loop returns or raises
 
 
 def import_event(

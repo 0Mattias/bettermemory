@@ -719,11 +719,16 @@ def test_off_delivers_nothing(world: PromptWorld) -> None:
     assert world.recalls() == []
 
 
-def test_telemetry_off_delivers_nothing(world: PromptWorld) -> None:
+def test_telemetry_off_still_delivers(world: PromptWorld) -> None:
+    """The delivery's row is product state (ENG-108): recorded with
+    telemetry off, its probe kept as a hash and a length, no preview."""
     world.write()
     result = world.recall(config=config(world.store_dir, telemetry=False))
-    assert result.stdout == ""
-    assert list(world.store.iter_events()) == []
+    assert result.stdout != ""
+    (row,) = list(world.store.iter_events())
+    assert row["kind"] == "prompt_recall"
+    assert row["event_id"] == result.event_id
+    assert set(row["probe_query"]) == {"hash", "len"}
 
 
 def test_git_indeterminate_delivers_nothing(world: PromptWorld) -> None:

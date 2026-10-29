@@ -584,7 +584,7 @@ def test_nothing_outside_a_repository(world: _World, tmp_path: Path) -> None:
 def test_off_switches(world: _World) -> None:
     world.fresh("prefer short release notes in this project")
     assert world.brief(config=_config(world.store_dir, brief=False)).stdout == ""
-    assert world.brief(config=_config(world.store_dir, telemetry=False)).stdout == ""
+    # Telemetry off is not one (ENG-108): tests/test_state_rows.py.
     assert world.brief(session_id=None).stdout == ""
     assert world.briefs() == []
 

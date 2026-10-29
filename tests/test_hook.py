@@ -701,7 +701,9 @@ def test_main_respects_telemetry_disabled(
 
     Fixture writes a config.toml with `[telemetry] enabled = false`
     and points BETTERMEMORY_CONFIG_PATH at it; the hook should run
-    cleanly but record no event."""
+    cleanly and record no measurement row. Its own `turn_audited` is
+    product state since ENG-108 (the next turn's window opens at it), so
+    that row alone is written."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
@@ -743,8 +745,9 @@ def test_main_respects_telemetry_disabled(
         session_id="sess",
         config=cfg,
     )
-    assert _events(mem_dir) == [], (
-        "telemetry-disabled config must suppress the Stop-hook events; got some anyway"
+    assert [e["kind"] for e in _events(mem_dir)] == ["turn_audited"], (
+        "telemetry-disabled config must suppress the Stop-hook's measurement "
+        "rows and keep its state row"
     )
 
 
@@ -2518,12 +2521,15 @@ def test_the_window_opens_at_the_previous_turn(review_world: Any) -> None:
     assert [r["root_ids"] for r in _unanswered(review_world.store)] == [[root]]
 
 
-def test_nothing_is_counted_with_telemetry_off(review_world: Any) -> None:
+def test_counted_with_telemetry_off_too(review_world: Any) -> None:
+    """The count's row is product state (ENG-108), recorded with
+    telemetry off."""
     from .test_recall_prompt import config
 
-    _review_row(review_world.store)
+    root = _review_row(review_world.store)
     _stop(review_world, config=config(review_world.store_dir, telemetry=False))
-    assert _unanswered(review_world.store) == []
+    [row] = _unanswered(review_world.store)
+    assert row["root_ids"] == [root]
 
 
 def test_the_harness_join_reads_this_conversations_server(review_world: Any) -> None:

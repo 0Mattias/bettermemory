@@ -229,9 +229,12 @@ async def test_record_use_accepts_valid_ulid_against_unknown_memory(
 # ---------------------------------------------------------------------------
 
 
-async def test_record_use_with_telemetry_disabled_is_noop(
+async def test_record_use_with_telemetry_disabled_still_records(
     memory_dir: Path,
 ) -> None:
+    """A `use` row is product state (ENG-108): a contradiction recorded
+    with telemetry off must still hold the record back, so the row lands
+    whatever the switch says."""
     from bettermemory.config import TelemetryConfig
 
     cfg = Config(
@@ -251,11 +254,9 @@ async def test_record_use_with_telemetry_disabled_is_noop(
         memory_ids=[written["id"]],
         outcome="applied",
     )
-    # The tool returns success: disabled telemetry means the side effect
-    # is a no-op, not that the tool errors.
     assert res["outcome"] == "applied"
-    # And no use event lands in the log.
-    assert not [e for e in store.iter_events() if e["kind"] == "use"]
+    uses = [e for e in store.iter_events() if e["kind"] == "use"]
+    assert [(e["ids"], e["outcome"]) for e in uses] == [([written["id"]], "applied")]
 
 
 # ---------------------------------------------------------------------------

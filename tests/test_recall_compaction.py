@@ -473,11 +473,12 @@ def test_a_clear_drops_a_pending_signal(session: Session, clock: Clock) -> None:
     assert (view.segment, view.marker) == (1, None)
 
 
-def test_with_telemetry_off_nothing_is_confirmed(
+def test_with_telemetry_off_the_compaction_is_confirmed(
     world: PromptWorld, clock: Clock, tmp_path: Path
 ) -> None:
-    """Nothing is shown with telemetry off, so no segment is opened for
-    it and no row is written."""
+    """The confirmation's row is product state (ENG-108): with telemetry
+    off the segment opens on the marker and its row is written, as with
+    telemetry on, so the state rebuilt from the log agrees."""
     session = Session(world, clock, tmp_path / "t.jsonl", held=True)
     signal = clock.now
     session.start("compact")
@@ -488,18 +489,18 @@ def test_with_telemetry_off_nothing_is_confirmed(
         telemetry=TelemetryConfig(enabled=False),
     )
     state = session.state()
-    assert (
-        confirm_compaction(
-            store=world.store,
-            state=state,
-            key=KEY,
-            transcript_path=str(session.transcript),
-            cfg=off,
-            triggered_from="prompt_hook",
-            now=clock.now,
-            origin=world.caller,
-        )
-        is None
+    opened = confirm_compaction(
+        store=world.store,
+        state=state,
+        key=KEY,
+        transcript_path=str(session.transcript),
+        cfg=off,
+        triggered_from="prompt_hook",
+        now=clock.now,
+        origin=world.caller,
     )
-    assert session.segment().segment == 0
-    assert len(session.rows("segment_opened")) == 1
+    assert opened is not None and opened.segment == 1
+    assert session.segment().segment == 1
+    rows = session.rows("segment_opened")
+    assert len(rows) == 2
+    assert rows[-1]["opened_at"] is not None

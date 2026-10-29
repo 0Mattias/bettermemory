@@ -102,7 +102,6 @@ narrowing.
 
 from __future__ import annotations
 
-import dataclasses
 from datetime import datetime, timedelta, timezone
 import json
 import logging
@@ -125,6 +124,7 @@ from .events import (
     HARNESS_STAMPED_KINDS,
     Recorder,
     redact_query,
+    suppressed,
 )
 from .models import utcnow
 from . import identity
@@ -415,22 +415,30 @@ def run_audit(
         settle_shown,
     )
 
-    cfg = config or load_config(None)
     if dry_run:
-        # Expressed as a telemetry override rather than a flag on the
-        # Recorder call, for two reasons. It IS the same thing a user
-        # who set `[telemetry] enabled = false` gets, scoped to one
-        # invocation — so every `record` short-circuits at one switch
-        # instead of a conditional at each emit site, where a missed
-        # branch would hide. And it keeps `enabled=cfg.telemetry.enabled`
-        # a literal attribute chain, which `test_events` AST-walks every
-        # Recorder construction to require: that guard exists so
-        # `[telemetry] enabled = false` cannot be bypassed anywhere, and
-        # a computed expression here would have had to be allowlisted,
-        # weakening it for the module's other Recorder too.
-        cfg = dataclasses.replace(
-            cfg, telemetry=dataclasses.replace(cfg.telemetry, enabled=False)
-        )
+        # Nothing of any class is recorded (`events.suppressed`), at one
+        # switch rather than a conditional at each emit site, where a
+        # missed branch would hide. Telemetry off is no longer that switch:
+        # state rows pass it (ENG-108). The session's recall state is a
+        # throwaway read back from the log, never the daemon's held one,
+        # so nothing a dry run settles or confirms moves it without a row.
+        with suppressed():
+            return run_audit(
+                user_message=user_message,
+                assistant_response=assistant_response,
+                session_id=session_id,
+                client_model=client_model,
+                config=config,
+                store=store,
+                cwd=cwd,
+                harness=harness,
+                prompt_id=prompt_id,
+                reply_source=reply_source,
+                transcript_path=transcript_path,
+                state=None,
+                posted=posted,
+            )
+    cfg = config or load_config(None)
     if store is None:
         root = cfg.resolved_directory()
         store = Store.open_or_create(root / STORE_FILENAME)
@@ -519,9 +527,10 @@ def run_audit(
     # Emit the audit event so cadence is visible even when there's
     # nothing to flag — matches the MCP handler's discipline. Honour
     # the same `telemetry.enabled` config the server-side recorder
-    # reads, so a user who opted out of
-    # event logging doesn't see the hook silently override that
-    # choice on every Stop event.
+    # reads: with it off the measurement rows (`search_miss`) are not
+    # written, while the state rows (`turn_audited`, the settlements'
+    # `use`, `review_unanswered`) are, since the next hooks read them
+    # (`events.STATE_KINDS`).
     recorder = Recorder(
         store=store,
         session_id=session_id,
@@ -648,32 +657,31 @@ def run_audit(
             now=now,
         )
 
-    if cfg.telemetry.enabled:
-        # The window opens at the previous turn; a session's first turn
-        # reads from when the recall state first saw it, at most the
-        # re-audit window back.
-        if previous_audit is not None:
-            since = previous_audit
-        else:
-            since = now - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS)
-            first_seen = recall_state.segment(
-                store, (harness or "claude-code", session_id), now=now
-            ).started_at
-            if since < first_seen < now:
-                since = first_seen
-        review_sessions = harness_joined_sessions(
-            store.events_of_kinds(HARNESS_STAMPED_KINDS, since=since), session_id
-        ) or ({server_session} if server_session is not None else set())
-        review_unanswered(
-            store=store,
-            recorder=recorder,
-            state=recall_state,
-            session_id=session_id,
-            harness=harness,
-            sessions=review_sessions,
-            since=since,
-            now=now,
-        )
+    # The window opens at the previous turn; a session's first turn reads
+    # from when the recall state first saw it, at most the re-audit window
+    # back. Counted with telemetry off too: the row is product state.
+    if previous_audit is not None:
+        since = previous_audit
+    else:
+        since = now - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS)
+        first_seen = recall_state.segment(
+            store, (harness or "claude-code", session_id), now=now
+        ).started_at
+        if since < first_seen < now:
+            since = first_seen
+    review_sessions = harness_joined_sessions(
+        store.events_of_kinds(HARNESS_STAMPED_KINDS, since=since), session_id
+    ) or ({server_session} if server_session is not None else set())
+    review_unanswered(
+        store=store,
+        recorder=recorder,
+        state=recall_state,
+        session_id=session_id,
+        harness=harness,
+        sessions=review_sessions,
+        since=since,
+        now=now,
+    )
 
     # Best effort, as every settlement is, and last: a past turn's audit
     # never costs the Stop its own rows, and a slow walk delays only the

@@ -499,11 +499,10 @@ def _drain_expired_use_tokens(
     expired = state.pop_expired_use_tokens()
     if override_ids:
         expired = [tok for tok in expired if tok.memory_id not in override_ids]
-    if not recorder.enabled:
-        # The pop above already happened — that is the point. Telemetry
-        # being off must not let the stash grow without bound, and
-        # there is nothing to dedup against when no events are written.
-        return expired
+    # The pop above happens whatever the switch says: the stash must not
+    # grow without bound. The dedup below runs with telemetry off too,
+    # since `use` rows are product state and are written either way
+    # (`events.STATE_KINDS`).
     if not state.pending_use_tokens and not expired:
         return expired
     already_recorded = _already_recorded_pending_ids(
@@ -579,8 +578,9 @@ def _advance_turn(
     Called at the entry of every memory_* tool handler so the
     auto-`record_use` flow has a stable monotonic clock and the
     bookkeeping fires even on calls that don't issue new tokens
-    (e.g. `memory_write`, `memory_health`). Telemetry-disabled
-    recorders no-op, so this is safe to call unconditionally.
+    (e.g. `memory_write`, `memory_health`). The auto-commit's `use` row
+    is product state, recorded with telemetry off as well; a disabled
+    recorder skips only the expiry's measurement row.
 
     `override_ids` is used by the `memory_record_use` path: ids the
     caller is explicitly recording for shouldn't be auto-committed

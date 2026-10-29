@@ -1940,6 +1940,42 @@ follows the candidates' testing.
   117 MB and 362 MB. (`src/bettermemory/store_index.py`,
   `src/bettermemory/doctor.py`, `src/bettermemory/backup.py`,
   `docs/operations.md`, `docs/api.md`, `tests/test_index_integrity.py`)
+- **The rows the product reads back are recorded with telemetry off, and
+  a busy store no longer drops them (ENG-108).** `[telemetry] enabled =
+  false`, which an organisation may pin, switched off every row the
+  product decides from: the session brief and the prompt recall refused
+  to show anything, a `contradicted` outcome left no row so the memory
+  kept surfacing, and a review's `review_issued` row and its answer's
+  `review_id` never landed, so the chain was never found. With telemetry
+  on, such a row that met another writer's lock was dropped with one log
+  line. The state rows (`events.STATE_KINDS`: `show`, `use` with its
+  outcome, `turn_audited`, `prompt_recall`, `session_brief`,
+  `segment_opened`, `review_issued`, `review_unanswered`, `scope_disable`
+  and `scope_enable`, and a `write` row carrying the `review_id` it
+  answers) are now recorded whatever the switch says, as the audit rows
+  already were; with telemetry off they keep a query's hash and length
+  and no preview, and the measurement rows stay off. A state or audit row
+  that meets a lock is tried once more (`events.STATE_WRITE_ATTEMPTS`,
+  `Store.record_event`'s `attempts`), and a failure that remains is
+  raised: a tool call answers `store_busy` (retryable when it kept
+  nothing), a hook fails with its one stderr line and shows nothing, and
+  a brief or a recall that had claimed its pointers drops the claim with
+  the session's held state, which is read back from the log. A store open
+  for reading only (its key not held here, or a later build's writer
+  revision) still records nothing, with one warning. A dry run
+  (`audit-turn --dry-run`) no longer rides on the telemetry switch: it
+  records no row of any class (`events.suppressed`) and reads the
+  session's recall state into a throwaway copy. A pruning (ENG-82) skips
+  every row `events.is_state_row` names.
+  (`src/bettermemory/events.py`, `src/bettermemory/store_events.py`,
+  `src/bettermemory/recall.py`, `src/bettermemory/recall_state.py`,
+  `src/bettermemory/recall_settle.py`, `src/bettermemory/hook.py`,
+  `src/bettermemory/handlers/_shared.py`, `tests/test_state_rows.py`,
+  and the tests that pinned the old switch: `tests/test_recall_prompt.py`,
+  `tests/test_recall_brief.py`, `tests/test_recall_state.py`,
+  `tests/test_recall_compaction.py`, `tests/test_recall_attribution.py`,
+  `tests/test_hook.py`, `tests/test_server_record_use.py`,
+  `tests/test_capture_relations.py`)
 
 #### Known limitations
 

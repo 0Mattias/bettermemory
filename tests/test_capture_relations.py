@@ -210,7 +210,9 @@ async def test_the_deferred_review_is_on_the_log_with_telemetry_off(
     batch = world.open()
     res = await world.scored(batch, BACKUP_NEW)
     assert res["status"] == "committed"
-    assert world.events(review.REVIEW_ISSUED) == []
+    # The review_issued row is product state since ENG-108, recorded with
+    # telemetry off too; the member row carries the review either way.
+    assert len(world.events(review.REVIEW_ISSUED)) == 1
     (member,) = capture.members(world.store, batch.batch)
     assert member.review is not None
     assert member.review["related"] == [[old, True]]

@@ -52,10 +52,13 @@ the log on every call. The Stop audit keeps its own shield unchanged: a
 delivered `prompt_recall` is still a retrieval kind there, so the turn
 it served is not a silent miss.
 
-Telemetry is the gate for both: each show is recorded (`session_brief`,
-`prompt_recall`) at show time, and with `telemetry.enabled = false`
-nothing is shown, since an unlogged injection could be neither measured
-nor seen by the audit.
+Each show is recorded (`session_brief`, `prompt_recall`) at show time as
+product state (`events.STATE_KINDS`), whatever `[telemetry] enabled`
+says: the cooldown, the Stop's settlement and the audit's shield read
+these rows back, so nothing is shown off the books and nothing is shown
+twice. Telemetry off no longer blanks either surface (ENG-108); a show
+whose row cannot be recorded is not shown, and the hook fails with its
+one stderr line (`events.Recorder.record`).
 
 The brief reads no verdict and runs no git process: a pointer's
 staleness is `memory_show`'s to report when the pointer is opened. The
@@ -557,10 +560,8 @@ def confirm_compaction(
     reads back to the newest marker (64 MiB at most), and then stats
     every subagent transcript, reads the first row of each written since
     the window opened and searches up to `SUBAGENT_TRANSCRIPTS_READ` of
-    them (64 MiB each). With telemetry off
-    nothing is resolved and nothing recorded, as nothing is shown."""
-    if not cfg.telemetry.enabled:
-        return None
+    them (64 MiB each). The rows are product state, recorded with
+    telemetry off as well (`events.STATE_KINDS`)."""
     at = state.pending_compaction(store, key, now=now)
     if at is None:
         return None
@@ -702,8 +703,8 @@ def session_brief(
     project, return the brief.
 
     Nothing is shown without a session id (the show has no session to be
-    recorded under or to count against), with `session_brief` or
-    telemetry off, outside a project, for a caller nothing could be read
+    recorded under or to count against), with `session_brief` off,
+    outside a project, for a caller nothing could be read
     for (its row says so, `_brief_in_segment`), on an empty store, or
     when no row passes (`_select_brief`). A shown brief is recorded as a
     `session_brief` event under the session id, stamped
@@ -726,8 +727,8 @@ def session_brief(
     runs first here too). A SessionStart without a transcript path reads
     no marker, so its compact is a resume.
 
-    A ``compact`` or ``clear`` that shows no brief, with telemetry on,
-    records a `segment_opened` row instead (the session id, harness,
+    A ``compact`` or ``clear`` that shows no brief records a
+    `segment_opened` row instead (the session id, harness,
     source, the segment's number and the compact's ``marker`` or
     ``marker_absent``), so the segment, or the pending signal, is read
     back after a restart and on the in-process path, which rebuilds the
@@ -748,8 +749,8 @@ def session_brief(
     One line leads whatever is shown, or stands alone, while the store
     was created fresh after a daemon saved the one it lost
     (`orphan_notice`): it is a data-loss alarm, so it shows with
-    `session_brief` or telemetry off, outside a project and on an
-    empty store as well, given a session id.
+    `session_brief` off, outside a project and on an empty store as
+    well, given a session id.
 
     The caller's membership is resolved first (`location.resolve_hook`
     over what the hook `posted`, or `resolution` when the caller already
@@ -823,7 +824,7 @@ def session_brief(
         marker=marker,
         event_id=brief_event_id,
     )
-    if opened and cfg.telemetry.enabled and agent is None:
+    if opened and agent is None:
         settle_unused(
             store=store,
             state=state,
@@ -854,11 +855,7 @@ def session_brief(
         resolution=caller_resolution,
         event_id=brief_event_id,
     )
-    if (
-        result.event_id is None
-        and opened_by in _NEW_SEGMENT_SOURCES
-        and cfg.telemetry.enabled
-    ):
+    if result.event_id is None and opened_by in _NEW_SEGMENT_SOURCES:
         # No brief carried the segment's number, or the compact's marker
         # or its absence, to the log: record them alone, or a restarted
         # daemon and the in-process path (which rebuilds on every call)
@@ -956,7 +953,7 @@ def _brief_in_segment(
     as `redact_query` renders it (``probe_query``) and ``ranked_by``
     ("probe", or "recency" when there were no words)."""
     empty = HookResult.empty("session_brief")
-    if not cfg.behavior.session_brief or not cfg.telemetry.enabled:
+    if not cfg.behavior.session_brief:
         return empty
     caller = origin if origin is not None else _origin.capture_caller(cwd)
     if store.count_memories() == 0:
@@ -1041,9 +1038,11 @@ def _brief_in_segment(
             )
         return empty
     # The one store read before the print comes first, so that between
-    # the claim and the row only pure functions and the recorder run (the
-    # recorder never raises): ids the claim noted as shown are never left
-    # without their row by a read that fails.
+    # the claim and the row only pure functions and the recorder run: ids
+    # the claim noted as shown are never left without their row by a read
+    # that fails. The recorder raises when the row itself cannot land (a
+    # state row, `events.Recorder.record`); the claim is then dropped
+    # with the session's held state, which is read back from the log.
     marks = disputed_marks(store.pending_conflict_pairs())
     for memory_id, note in selection.notes.items():
         marks[memory_id] = f"{marks[memory_id]} {note}" if memory_id in marks else note
@@ -1069,22 +1068,26 @@ def _brief_in_segment(
     text, ids = render_brief(standing, work, marks)
     if not ids and not omitted:
         return empty
-    record(
-        ids,
-        chars=len(text),
-        extra={
-            "standing": [memory.id for memory in standing],
-            "work": [memory.id for memory in work],
-            "omitted": omitted,
-            "probe_query": redact_query(probe),
-            "ranked_by": selection.ranked_by,
-            "rc3_admitted": _rc3_admitted(
-                [*standing, *work], caller, project_only=True
-            ),
-        },
-        event_id=event_id,
-        segment=segment,
-    )
+    try:
+        record(
+            ids,
+            chars=len(text),
+            extra={
+                "standing": [memory.id for memory in standing],
+                "work": [memory.id for memory in work],
+                "omitted": omitted,
+                "probe_query": redact_query(probe),
+                "ranked_by": selection.ranked_by,
+                "rc3_admitted": _rc3_admitted(
+                    [*standing, *work], caller, project_only=True
+                ),
+            },
+            event_id=event_id,
+            segment=segment,
+        )
+    except BaseException:
+        state.forget(key)
+        raise
     return HookResult(
         stdout=text,
         surface="session_brief",
@@ -1343,7 +1346,7 @@ def prompt_recall(
     a project or outside one, never across a boundary and never an
     unresolved home, with the pool drawn under the same admission. The
     row names it (``admission``). Nothing for a caller whose resolution
-    read nothing, is deferred or raised; nothing with telemetry off. A delivery is recorded as a `prompt_recall`
+    read nothing, is deferred or raised. A delivery is recorded as a `prompt_recall`
     event BEFORE the block is returned: it is a member of the audit's
     retrieval kinds, so the Stop audit of the same turn sees the
     delivery and reports ``ok`` rather than a silent miss.
@@ -1367,7 +1370,7 @@ def prompt_recall(
     empty = HookResult.empty("prompt_recall")
     cfg = config or load_config(None)
     mode = cfg.behavior.prompt_recall
-    if mode not in ("project", "everywhere") or not cfg.telemetry.enabled:
+    if mode not in ("project", "everywhere"):
         return empty
     if store is None:
         store = _open_store(cfg)
@@ -1705,7 +1708,14 @@ def prompt_recall(
         )
         if memory_id not in dropped
     ]
-    recorder.record("prompt_recall", **fields)
+    try:
+        recorder.record("prompt_recall", **fields)
+    except BaseException:
+        # The delivery's row could not land, so nothing is delivered and
+        # the claim goes with the session's held state (`RecallState.
+        # forget`), read back from the log, which never saw it.
+        state.forget(key)
+        raise
     return HookResult(
         stdout=block,
         surface="prompt_recall",

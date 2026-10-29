@@ -227,8 +227,7 @@ class _SessionRecall:
     #: within one hook call: `open_segment` or `resolve_compaction` sets it
     #: under the lock and `settle_unused`, in the same call, takes it
     #: (`RecallState.take_closed`) to settle its unused pointers. A Stop
-    #: never reads it; with telemetry off it holds an empty view until the
-    #: next open replaces it.
+    #: never reads it.
     closed: SegmentView | None = None
 
 
@@ -763,6 +762,15 @@ class RecallState:
                 entry.shown.add(memory_id)
                 entry.shown_by.setdefault(memory_id, (SURFACE_BRIEF, event_id))
             return kept_standing, kept_work, entry.segment
+
+    def forget(self, key: tuple[str, str]) -> None:
+        """Drop the session's held state, so its next read rebuilds it
+        from the log (`rebuild_session`): what a surface does when the
+        row of a show it claimed (`claim_brief`, `claim_delivery`) could
+        not be recorded. The show is not made, the log never saw it, and
+        the held state is what agrees with the log."""
+        with self._lock:
+            self._sessions.pop(key, None)
 
     def note_settled(
         self, key: tuple[str, str], ids: Iterable[str], *, now: datetime

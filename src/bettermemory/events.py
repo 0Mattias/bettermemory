@@ -6,24 +6,33 @@ what the store's `record_event` does not know on its own: the session
 and the worktree an event belongs to (the request's own when the caller
 declared them, else the process's), and the admin attribution a CLI
 command stamps on its writes. `enabled=False` (`[telemetry] enabled =
-false`) makes every telemetry call a no-op, so handlers call
-unconditionally; an audit row (`is_audit_row`: the standing guard's row
-and the override evidence on a write or an update) is recorded whatever
-the switch says, because it is the trail SECURITY.md promises, not a
-measurement.
+false`) makes every measurement call a no-op, so handlers call
+unconditionally. Two kinds of row are recorded whatever the switch says:
+a state row (`is_state_row`: what the product reads back, the shows,
+the uses, the Stop's audit, the recall's and the review's rows), and an
+audit row (`is_audit_row`: the standing guard's row and the override
+evidence on a write or an update), the trail SECURITY.md promises.
 
-A failure to record is swallowed at WARNING: telemetry never fails the
-tool call it describes. Query text is never stored verbatim: `query` and
-`probe_query` are redacted to a hash, a short preview and a length, with
-known secret shapes stripped first, before the row is signed.
+A measurement row that fails to land is swallowed at WARNING:
+measurement never fails the tool call it describes. A state or audit row
+is not best-effort: a write that meets another writer's lock is tried
+again (`STATE_WRITE_ATTEMPTS`), and a failure that remains is logged and
+raised, so a tool call answers ``store_busy`` and a hook fails with its
+one stderr line rather than the row going missing in silence. Query
+text is never stored verbatim: `query` and `probe_query` are redacted to
+a hash, a short preview and a length, with known secret shapes stripped
+first, before the row is signed; with telemetry off a state row keeps
+the hash and the length and no preview.
 """
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -138,6 +147,113 @@ def is_audit_row(kind: str, fields: Mapping[str, Any]) -> bool:
         for key, value in fields.items()
         if key.endswith(_ACKNOWLEDGED_SUFFIX)
     )
+
+
+# Product state: the rows the product reads back to decide what it does
+# next (ENG-108). Before 9.0.0rc14 they were telemetry like the rest, so
+# `[telemetry] enabled = false`, which an organisation may pin, left the
+# session brief and the prompt recall showing nothing, a contradicted
+# memory surfacing again and a review chain impossible to find; and with
+# telemetry on, a write that met another writer's lock dropped the row
+# with one log line.
+#
+#: The kinds whose every row is product state: recorded whatever
+#: `[telemetry] enabled` says, written with a retry and raised when it
+#: cannot land (`Recorder.record`), and never pruned while a reader below
+#: can still read it. A pruning (ENG-82) skips every row `is_state_row`
+#: answers true for. The readers, by kind:
+#:
+#: - ``show``: the prompt recall's seen gate (`recall._seen_in_log`) and
+#:   the close of a segment, which leaves an opened pointer unsettled
+#:   (`recall_settle.settle_unused`).
+#: - ``use``, every outcome: a ``contradicted`` one holds the record back
+#:   from both recall surfaces until it is updated or verified
+#:   (`Store.contradicted_at`); a shown pointer's settlement, the auto
+#:   settlement's dedup and the session's rebuild read the rest.
+#: - ``turn_audited``: the Stop's row, which opens the next turn's window
+#:   (`recall_settle.previous_audit_at`), names the turns already audited
+#:   (`settle_interrupted`) and is a session's first sight in the rebuild.
+#: - ``session_brief``, ``prompt_recall``, ``segment_opened`` and
+#:   ``review_unanswered``: the rows a session's recall state is rebuilt
+#:   from (`recall_state._STATE_KINDS`, with ``turn_audited`` and ``use``).
+#: - ``review_issued``: a review chain (`review.find_chain`).
+#: - ``scope_disable`` and ``scope_enable``: the scopes a session turned
+#:   off, which the hooks' probe and the prompt recall leave out
+#:   (`sessions._disabled_scopes_from_events`).
+STATE_KINDS: frozenset[str] = frozenset(
+    {
+        "prompt_recall",
+        "review_issued",
+        "review_unanswered",
+        "scope_disable",
+        "scope_enable",
+        "segment_opened",
+        "session_brief",
+        "show",
+        "turn_audited",
+        "use",
+    }
+)
+
+#: The kinds whose row is state when it answers a review: a memory_write
+#: row carrying the ``review_id`` it answered, which closes the chain
+#: (`review.find_chain`'s ``decided``).
+REVIEW_ANSWER_KINDS: frozenset[str] = frozenset({"write"})
+
+#: The field a review answer's row names its review under.
+REVIEW_ID_FIELD = "review_id"
+
+#: How many times a state or audit row is tried against a store another
+#: writer holds (SQLITE_BUSY or SQLITE_LOCKED) before the failure is
+#: raised: the first try and one more. Each try waits for the lock up to
+#: the connection's busy timeout (`Store.set_busy_timeout`, 5 s for each
+#: role), so a row costs its call at most twice that, which stays under
+#: the hook client's 15 s wait (`_daemon_client.HOOK_TIMEOUT_SECONDS`).
+#: A row recorded inside another call's transaction is tried once: that
+#: transaction already holds the lock.
+STATE_WRITE_ATTEMPTS = 2
+
+
+def is_state_row(kind: str, fields: Mapping[str, Any]) -> bool:
+    """Whether a `kind` row with `fields` is product state or an audit
+    row: recorded whatever `[telemetry] enabled` says, not best-effort,
+    and never pruned while live (`STATE_KINDS`)."""
+    if kind in STATE_KINDS or is_audit_row(kind, fields):
+        return True
+    return kind in REVIEW_ANSWER_KINDS and isinstance(fields.get(REVIEW_ID_FIELD), str)
+
+
+# A dry run (`hook.run_audit(dry_run=True)`, `bettermemory audit-turn
+# --dry-run`) computes everything and records nothing, of any class.
+# Telemetry off no longer does that, since state rows pass the switch.
+_SUPPRESSED: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "bettermemory_events_suppressed", default=False
+)
+
+
+@contextlib.contextmanager
+def suppressed() -> Iterator[None]:
+    """Record no row at all inside the block, state and audit rows
+    included: what a dry run is. Scoped to the calling context, so a
+    daemon's other workers keep recording."""
+    token = _SUPPRESSED.set(True)
+    try:
+        yield
+    finally:
+        _SUPPRESSED.reset(token)
+
+
+def _without_previews(fields: dict[str, Any]) -> None:
+    """Drop the preview from each redacted text field of `fields`, in
+    place, keeping its hash and length: a state row recorded with
+    telemetry off carries no prompt text. The hash is what its readers
+    join on (the re-audit dedup, the recall review)."""
+    for key in _REDACTED_TEXT_FIELDS:
+        value = fields.get(key)
+        if isinstance(value, str):
+            value = redact_query(value)
+        if isinstance(value, Mapping) and "preview" in value:
+            fields[key] = {k: v for k, v in value.items() if k != "preview"}
 
 
 #: The marker the second pass splices in for a span the five patterns
@@ -274,10 +390,20 @@ class Recorder:
         return _h.capture_origin().worktree_root
 
     def record(self, kind: str, **fields: Any) -> None:
-        # Off means no telemetry, not no trail: an audit row passes the
-        # switch (`is_audit_row`) and is stamped and signed exactly as it
-        # would be with telemetry on.
-        if not self.enabled and not is_audit_row(kind, fields):
+        """Record one `kind` row. A measurement row is a no-op with
+        telemetry off and swallowed at WARNING when it fails. A state or
+        audit row (`is_state_row`) passes the switch, is stamped and
+        signed exactly as it would be with telemetry on (less the query
+        preview when it is off), is tried `STATE_WRITE_ATTEMPTS` times
+        against a busy store, and a failure that remains is logged and
+        raised; a store open for reading only records nothing, with one
+        warning, as before (`Store.record_event`). Inside `suppressed`
+        nothing is recorded."""
+        if _SUPPRESSED.get():
+            return
+        # Off means no measurement, not no state and no trail.
+        state = is_state_row(kind, fields)
+        if not self.enabled and not state:
             return
         if self.attribution:
             fields.setdefault("attribution", self.attribution)
@@ -302,10 +428,31 @@ class Recorder:
         session = (
             fields.pop("session") if "session" in fields else self.session_for_request()
         )
+        if not state:
+            try:
+                self.store.record_event(kind, session=session, actor=actor, **fields)
+            except Exception as exc:  # noqa: BLE001 - measurement never fails the call
+                log.warning("event %s not recorded: %s", kind, exc)
+            return
+        if not self.enabled:
+            _without_previews(fields)
         try:
-            self.store.record_event(kind, session=session, actor=actor, **fields)
-        except Exception as exc:  # noqa: BLE001 - telemetry never fails the call
-            log.warning("event %s not recorded: %s", kind, exc)
+            self.store.record_event(
+                kind,
+                session=session,
+                actor=actor,
+                best_effort=False,
+                attempts=STATE_WRITE_ATTEMPTS,
+                **fields,
+            )
+        except Exception as exc:
+            log.warning(
+                "state row %s not recorded, the call fails: %s: %s",
+                kind,
+                exc.__class__.__name__,
+                exc,
+            )
+            raise
 
 
 def _event_id_items(value: Any) -> list[tuple[int, str]]:
@@ -350,7 +497,13 @@ __all__ = [
     "HARNESS_SESSION_FIELD",
     "HARNESS_STAMPED_KINDS",
     "OVERRIDE_EVIDENCE_KINDS",
+    "REVIEW_ANSWER_KINDS",
+    "REVIEW_ID_FIELD",
     "Recorder",
+    "STATE_KINDS",
+    "STATE_WRITE_ATTEMPTS",
     "is_audit_row",
+    "is_state_row",
     "redact_query",
+    "suppressed",
 ]

@@ -214,8 +214,8 @@ def settle_shown(
     through `hook._emit_hook_attributions`), and ids any `use` of this
     conversation already named in the segment, joined by harness stamp
     first and by `sessions` otherwise (`_used_in_segment`), so one reply
-    never credits a memory twice. With telemetry off the recorder writes
-    nothing and the state is left as it was."""
+    never credits a memory twice. The `use` rows are product state,
+    recorded with telemetry off as well (`events.STATE_KINDS`)."""
     from .attribution import attribute_uses
     from .store import MemoryNotFoundError, TombstonedError
 
@@ -264,7 +264,7 @@ def settle_shown(
             fields["client_model"] = client_model
         recorder.record("use", **fields)
         settled.append(match.memory_id)
-    if settled and recorder.enabled:
+    if settled:
         state.note_settled(key, settled, now=now)
     return settled
 
@@ -394,9 +394,10 @@ def settle_interrupted(
     model, stamped `triggered_from` the hook that settled it. No
     `search_miss`: the turn did not finish, so a miss is not the reply's;
     the pointers it showed stay pending for the segment's later Stops or
-    its close. Nothing with telemetry off or without a transcript file.
+    its close. Nothing without a transcript file; the rows are product
+    state, recorded with telemetry off as well (`events.STATE_KINDS`).
     The prompt ids settled."""
-    if not cfg.telemetry.enabled or not transcript_path:
+    if not transcript_path:
         return []
     path = Path(transcript_path).expanduser()
     if not path.is_file():
@@ -481,12 +482,13 @@ def review_unanswered(
 
     A non-zero count records one `review_unanswered` event: ``count``,
     ``root_ids``, the hook's ``session_id``, the ``review_sessions`` read,
-    the ``segment`` and the ``harness``. Nothing is recorded for zero,
-    and nothing at all with telemetry off. No text is shown."""
+    the ``segment`` and the ``harness``. Nothing is recorded for zero;
+    the row is product state, recorded with telemetry off as well
+    (`events.STATE_KINDS`). No text is shown."""
     from .review import REVIEW_ISSUED, find_chain
     from .models import is_valid_ulid
 
-    if not recorder.enabled or not sessions:
+    if not sessions:
         return []
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))

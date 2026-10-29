@@ -275,17 +275,19 @@ def test_an_unmatched_pointer_records_nothing(world: PromptWorld) -> None:
     assert len(_uses(world.store)) == 1
 
 
-def test_nothing_with_telemetry_off(world: PromptWorld) -> None:
+def test_settled_with_telemetry_off_too(world: PromptWorld) -> None:
+    """The settlement's `use` row is product state (ENG-108): recorded
+    with telemetry off, and the state notes it settled."""
     memory = _memory(world)
     _brief(world.store, [memory.id])
     state = RecallState()
     off: Config = config(world.store_dir, telemetry=False)
     _audit(world, f"Done. {SENTENCE}", config=off, state=state)
-    assert _uses(world.store) == []
+    assert [use["ids"] for use in _uses(world.store)] == [[memory.id]]
     view = state.segment(
         world.store, ("claude-code", SESSION), now=datetime.now(timezone.utc)
     )
-    assert view.settled == frozenset()
+    assert view.settled == frozenset({memory.id})
 
 
 def test_an_id_the_conversation_already_used_is_not_settled_again(
