@@ -331,11 +331,12 @@ def _key_ring_elsewhere(
     this store id, for a reader's open (`key_state`), else None, and why
     that file could not be read to tell when it could not; reads the
     binding and writes nothing. A reader's open with the key can write
-    (the session-start hook records the brief it shows, and a worker
-    connection writes as its owner does), so on a second file with the
-    bound store's id it would sign rows with that store's key and move its
-    head past that store's log; a reader without the key is told the same,
-    so every reader of the file says one state. A binding that cannot be
+    (a worker connection, `Store.reopen`, writes as its owner does: the
+    daemon's hook workers record the brief they show), so on a second
+    file with the bound store's id it would sign rows with that store's
+    key and move its head past that store's log; a reader without the key
+    is told the same, so every reader of the file says one state. A
+    binding that cannot be
     read is none, as it was before rings were bound."""
     holds, unread = _bound_store_check(store_id)
     try:

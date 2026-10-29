@@ -511,8 +511,9 @@ def test_prompt_recall_with_a_daemon_opens_no_store_before_it_posts(
 def prompt_recall_in_process(
     monkeypatch: pytest.MonkeyPatch, repo: Path, session: str
 ) -> None:
-    """`hook.prompt_main`, the path with no daemon, on a prompt in `repo`:
-    the recall opens the store itself (`recall._open_store`)."""
+    """`hook.prompt_main`, the prompt recall in process, which no command
+    reaches, on a prompt in `repo`: the recall opens the store itself
+    (`recall._open_store`)."""
     _prompt_payload(monkeypatch, repo, session)
     assert hook.prompt_main([]) == 0
 

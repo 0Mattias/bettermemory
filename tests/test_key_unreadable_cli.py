@@ -11,7 +11,8 @@ traceback. These tests pin what each entry path does now: one line on
 stderr that names the key file, what reading it said and that nothing was
 rekeyed, and the command's own code for a store it cannot open (1 where
 it has none); the daemon writes the same line as the last of its log and
-exits 1, which `up` quotes; the in-process hook commands still exit 0.
+exits 1, which `up` and a hook quote; the hook exits 0 with that line on
+stderr and nothing on stdout.
 Each case checks that the key ring and the log are as they were.
 
 The key is made unreadable three ways: a mode of 0 (POSIX, not as root),

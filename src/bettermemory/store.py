@@ -259,7 +259,7 @@ RECORD_MUTATION_KINDS = MUTATION_KINDS - MEMBERSHIP_MUTATION_KINDS
 # up on a healthy writer.
 #
 # The CLI's: every opener that names no other role (`_connect`), the CLI's
-# commands, the in-process hook path and the daemon's own connection.
+# commands and the daemon's own connection.
 CLI_BUSY_TIMEOUT_SECONDS = 5.0
 # A hook body's, on the daemon's hook workers. A hook's reply is waited for
 # under `_daemon_client.HOOK_TIMEOUT_SECONDS` (15 s), so beside the hold

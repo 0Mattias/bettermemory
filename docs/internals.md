@@ -365,8 +365,9 @@ or when the bound file no longer holds this store id; and
   does not fold (a case variant on macOS, where `resolve` keeps the case
   it is given; on Windows it reads the case on disk) is a new pair. A
   reader whose key matches asks the same (`KeyRing.bound_elsewhere`),
-  since a reader with the key can write (the session-start hook records
-  the brief it shows), and opens the same way.
+  since a reader with the key can write (the daemon's workers connect
+  through `Store.reopen`, which opens without a rekey, and its hook
+  workers record the brief they show), and opens the same way.
 - A binding file that cannot be read raises, and the owner's open logs
   a warning and goes on as before rings were bound, the file kept. One
   that does not parse, or holds a relative path, is no binding and is
