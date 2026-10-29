@@ -110,8 +110,8 @@ _RECORD_KINDS = (
 # abbreviation and up.
 _SHA = re.compile(r"[0-9a-f]{4,64}")
 #: How long `_Run._probe` waits for a recorded path: a liveness read's
-#: bound (`location.PROBE_BUDGET`) and the fetch of an evicted HEAD or
-#: config the capture may make within it (`location.FETCH_BUDGET`).
+#: bound (`location_git.PROBE_BUDGET`) and the fetch of an evicted HEAD or
+#: config the capture may make within it (`location_git.FETCH_BUDGET`).
 _PROBE_BUDGET = location.PROBE_BUDGET + location.FETCH_BUDGET
 #: Probes `_Run.prefetch` runs at once, as `Membership.prefetch_liveness`.
 _PROBE_WORKERS = 8
@@ -841,7 +841,7 @@ class _Run:
 
     def _probe(self, path: str, *, at_root: bool) -> _Probe:
         """What `path` holds now (`_read_probe`), read once per run and
-        bounded by `_PROBE_BUDGET` (`location.bounded_read`, ENG-156): a
+        bounded by `_PROBE_BUDGET` (`location_git.bounded_read`, ENG-156): a
         path that does not answer in time (a hung network mount) is
         UNREACHABLE, unknown and never gone, and a path whose read is still
         in flight past the bound answers so at once."""

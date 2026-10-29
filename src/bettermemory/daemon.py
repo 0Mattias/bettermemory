@@ -407,7 +407,7 @@ TOOL_WORKERS = 4
 
 #: How long a stopping daemon gives the requests in flight before uvicorn
 #: cancels them: the longest bound a handler runs under, the git runner's
-#: `location._GIT_TIMEOUT_SECONDS` (20 s), so a request that would have
+#: `location_git._GIT_TIMEOUT_SECONDS` (20 s), so a request that would have
 #: finished on its own does, and one that would not is cut where its own
 #: timeout would have cut it. `_daemon_client.SHUTDOWN_TIMEOUT_SECONDS`
 #: waits this plus `WORKERS_CLOSE_SECONDS` before its signal fallback;
@@ -418,7 +418,7 @@ GRACEFUL_SHUTDOWN_SECONDS = 20
 #: jobs still running (`_finish_pools`). The interrupt ends a statement
 #: inside SQLite; it does not reach a job waiting for another writer's lock
 #: (that wait ends at the pool's busy timeout) or one outside SQLite (a git
-#: call ends at `location._GIT_TIMEOUT_SECONDS`), and the stop waits for
+#: call ends at `location_git._GIT_TIMEOUT_SECONDS`), and the stop waits for
 #: those however long they take, since the store's lock is never given back
 #: while a worker's connection is open. A stop's own length is therefore
 #: `GRACEFUL_SHUTDOWN_SECONDS` plus this plus the step a job is in that the

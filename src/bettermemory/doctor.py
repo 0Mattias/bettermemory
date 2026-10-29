@@ -1692,7 +1692,7 @@ def check_orphan_keys(
     reads what is left. A ring whose store is not shown gone, or that names
     no store file, is kept and counted; the ring of the store this run
     checks is in use. Each bound path is read within
-    `location.PROBE_BUDGET`, so a share that hangs does not hold doctor."""
+    `location_git.PROBE_BUDGET`, so a share that hangs does not hold doctor."""
     from .key_lifecycle import clear_orphan_rings, survey_rings
     from .store import STORE_FILENAME
 

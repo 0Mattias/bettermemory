@@ -1457,7 +1457,7 @@ class Membership:
         it, None when that view does not hold `directory` or the checkout
         was never seen here. `bettermemory project init` asks it, and a
         declaration's ``directory`` is read by it. `directory` is read as a
-        view records it (`location.view_path`, ENG-152): a cwd reached
+        view records it (`_location_probe.view_path`, ENG-152): a cwd reached
         through a symlink or a Windows junction is the view's folder.
         `canonical` when the caller read it so already (`declare`, before
         its transaction), so it is not read again under the store's write

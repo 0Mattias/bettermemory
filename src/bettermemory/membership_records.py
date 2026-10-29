@@ -114,7 +114,7 @@ _FULL_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 KEEP_OLDEST = 16
 BLOBS_PER_WITNESS = 8
 #: Commits read from HEAD for the rewritten-history witness (Hf); the
-#: measurement is at `location.WALK_LIMIT` (512 commits in 55 ms).
+#: measurement is at `location_git.WALK_LIMIT` (512 commits in 55 ms).
 WALK_LIMIT = 512
 #: The content witness: relative paths and sizes at this Jaccard or more.
 #: Measured (ENG-160) on this repository's tree of 977 files against itself
@@ -1062,7 +1062,7 @@ def _common_by_pointer(kind: str | None, git_dir: str | None) -> str | None:
 
 
 #: The path module `_dir_key` folds with: a test swaps in ``ntpath`` to
-#: read Windows spellings on any host (`location.view_path` likewise).
+#: read Windows spellings on any host (`_location_probe.view_path` likewise).
 _DIR_PATHS: Any = os.path
 
 
@@ -1070,7 +1070,7 @@ def _dir_key(path: str) -> str:
     """A directory as a declaration's folder is compared with a view or
     a question's folder: normalised, case folded where the platform folds
     case. A folder from outside the capture is read as a view records it
-    first (`location.view_path`, ENG-152)."""
+    first (`_location_probe.view_path`, ENG-152)."""
     return str(_DIR_PATHS.normcase(_DIR_PATHS.normpath(path)))
 
 

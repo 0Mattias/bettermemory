@@ -184,7 +184,7 @@ def hook_budget_seconds(event: str) -> float:
 SHUTDOWN_TIMEOUT_SECONDS = 30.0
 #: The longest step a daemon worker's job can be in, once the stop
 #: interrupts it, that the interrupt does not reach: a git call, which ends
-#: at `location._GIT_TIMEOUT_SECONDS` (20 s), longer than a wait for
+#: at `location_git._GIT_TIMEOUT_SECONDS` (20 s), longer than a wait for
 #: another writer's lock, which ends at the pool's busy timeout
 #: (`store.HOOK_BUSY_TIMEOUT_SECONDS`, `store.TOOL_BUSY_TIMEOUT_SECONDS`,
 #: 5 s). A job that goes on to another such step after it holds the stop
@@ -1622,7 +1622,7 @@ def _membership_rounds(
     checkout token under the policy the daemon names, decision D11),
     opens its own machine (`machine.open_machine`) and answers each
     question about its repository from its own files (`location.answer`),
-    and posts again; at most `location.EXCHANGE_ROUNDS` rounds. A final
+    and posts again; at most `location_git.EXCHANGE_ROUNDS` rounds. A final
     reply asking for a re-mint (``membership.remint``) re-mints the token
     of the checkout captured here (design 3.3). The daemon never reads
     the client's paths.

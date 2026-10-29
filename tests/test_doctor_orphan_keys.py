@@ -12,7 +12,7 @@ reason), from which `key import` takes a key back. Nothing is deleted.
 Kept, whatever is asked, each named: a ring whose bound directory is not
 there (a store moved or deleted with its directory, a link on the way to
 nothing), is empty (a mount point), cannot be read or does not answer in
-`location.PROBE_BUDGET`; one whose bound file is there but is damaged or
+`location_git.PROBE_BUDGET`; one whose bound file is there but is damaged or
 holds another store; one that names no store file; one a daemon still
 serves; the ring of the store doctor checks; a ring an owner's open binds
 again between the survey and the clear. A name the quarantine holds

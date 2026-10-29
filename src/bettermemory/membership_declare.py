@@ -80,7 +80,7 @@ def declare(self: Membership, decl: Declaration) -> Declared:
     undoes the merge of the project named. Each is logged with the
     principal, and a join with the user's words it rests on. The
     declaration's ``directory`` is read as a view records it
-    (`location.view_path`, ENG-152), before the transaction: the folder
+    (`_location_probe.view_path`, ENG-152), before the transaction: the folder
     compared with the checkout's root and its questions' folders, and
     kept in the binding's evidence, is the one the capture sees."""
     if decl.directory is not None:
@@ -747,7 +747,7 @@ def _settle_unresolved(self: Membership, loc: Location, res: Resolution) -> Reso
     checkout is replaced; any other session, or no session, meets a
     ``legacy`` question in K while the writes stay apart (decision B6).
     A write by a process with no machine identity registered its path
-    under `location.NO_MACHINE`; a resolution on any machine finds it
+    under `location_git.NO_MACHINE`; a resolution on any machine finds it
     there too (decision B16). One the resolving session wrote is found
     under any machine, the session proving the namespace (a container
     client's path, written at through the daemon's machine; decision

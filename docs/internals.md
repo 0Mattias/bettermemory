@@ -672,7 +672,7 @@ without the flag.
 A write at a location nothing could be read for, or deferred, is never
 refused and never global. It is homed in a provisional project of its
 own, keyed on the machine and the cwd path as a view records it
-(`location.view_path`: each symbolic link and junction resolved,
+(`_location_probe.view_path`: each symbolic link and junction resolved,
 ENG-155), with a checkout of kind `unresolved` whose `unresolved_json`
 records the writing sessions and the project that replaced it. When the same harness session later resolves
 that path to a checkout, the provisional project merges into that

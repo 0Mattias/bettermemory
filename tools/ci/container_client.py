@@ -10,7 +10,7 @@ socket.
 A command reads its input as one JSON object on stdin where it takes any,
 and prints one JSON object on stdout:
 
-- ``probe CWD``: the namespace probe (`location.probe`).
+- ``probe CWD``: the namespace probe (`_location_probe.probe`).
 - ``capture CWD POLICY``: the location token of CWD (`location.capture`,
   writing the checkout token where POLICY is 1, decision D11) and this
   container's machine (`machine.open_machine`).

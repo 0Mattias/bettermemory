@@ -1274,7 +1274,7 @@ def _accept(
 #: daemon serves that file, or it is the ring of the store doctor checks.
 #: ``kept``: the store is not shown gone (the nearest directory there is
 #: empty, the nearest entry there is not a directory, or it cannot be read
-#: or did not answer in `location.PROBE_BUDGET`; a file by its name is
+#: or did not answer in `location_git.PROBE_BUDGET`; a file by its name is
 #: there, holding another store, none, or one that cannot be read; the
 #: binding cannot be read). ``unbound``: it names no store file. Only
 #: ``orphaned`` rings are ever moved, and no ring file is ever deleted.
@@ -1405,8 +1405,8 @@ def _shown_gone(bound: Path, store_id: str) -> tuple[str, str]:
 
 
 def _probe(bound: Path, store_id: str) -> tuple[str, str]:
-    """`_shown_gone` of ``bound``, bounded by `location.PROBE_BUDGET`
-    (`location.bounded_read`, ENG-156): a hard-mounted share that does not
+    """`_shown_gone` of ``bound``, bounded by `location_git.PROBE_BUDGET`
+    (`location_git.bounded_read`, ENG-156): a hard-mounted share that does not
     answer keeps the ring rather than holding doctor."""
     from . import location
 
@@ -1452,7 +1452,7 @@ def ring_standing(
     """How the key ring ``store_id`` under ``root`` stands with its store
     (`RING_ORPHANED` and the others), read without writing: the binding,
     the bound file and its directory (`_shown_gone`, bounded by
-    `location.PROBE_BUDGET`) and the daemon lock of that file. ``keep``
+    `location_git.PROBE_BUDGET`) and the daemon lock of that file. ``keep``
     names store ids that are in use whatever the binding says."""
     ring = KeyRing(root, store_id)
     files = tuple(p.name for p in _ring_paths(root, store_id))

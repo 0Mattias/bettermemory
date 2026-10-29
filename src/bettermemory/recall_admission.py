@@ -235,7 +235,8 @@ def membership_model(store: Store) -> Membership:
     try:
         machine = process_machine().id
     except OSError:
-        # The caller was resolved without a machine (`location.NO_MACHINE`).
+        # The caller was resolved without a machine
+        # (`location_git.NO_MACHINE`).
         machine = NO_MACHINE
     return Membership(store, machine)
 

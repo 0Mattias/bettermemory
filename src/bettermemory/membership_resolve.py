@@ -358,7 +358,7 @@ def prefetch_liveness(self: Membership, pairs: Sequence[tuple[Checkout, View]]) 
     each value for the span `liveness_held` opened (ENG-156): the
     resolution or the migration reads them as values inside its
     transaction. The default liveness reads them in turn on one thread,
-    each bounded by `location.PROBE_BUDGET` (`location.path_liveness_many`:
+    each bounded by `location_git.PROBE_BUDGET` (`location.path_liveness_many`:
     a thread per read cost more than the read); one given to the model is
     read in a pool. A read that raises (a client's view question not yet
     answered) is left to the transaction, where it raises as before."""
@@ -1410,7 +1410,7 @@ def _declared_folder(
     there was bound by a declaration made in this folder, and the
     project it names has no checkout yet. The declaration's folder is
     compared as stored (from 9.0.0rc14 on, `declare` stores it as a view
-    records it: `location.view_path`, ENG-152), else in the spelling
+    records it: `_location_probe.view_path`, ENG-152), else in the spelling
     `_prefetch_declared` read for it before the transaction: one a release
     before 9.0.0rc14 kept as its cwd was spelled, maybe through a symlink
     or a junction. Nothing here reads the filesystem, so a stored folder
@@ -1457,7 +1457,7 @@ def _declared_dirs(self: Membership, file_id: str) -> list[str]:
 def _prefetch_declared(self: Membership, loc: Location) -> None:
     """Read, before the resolution's transaction, each folder a
     declaration bound `loc`'s project file in whose stored spelling is not
-    `loc`'s, as a view records it (`location.view_path`): in turn on one
+    `loc`'s, as a view records it (`_location_probe.view_path`): in turn on one
     thread, each bounded by `PROBE_BUDGET` (`bounded_reads`, ENG-156), and
     kept for the span `liveness_held` opened, where `_declared_folder`
     reads it as a value (review M D2). A folder that does not answer in

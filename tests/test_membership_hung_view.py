@@ -5,8 +5,8 @@ filesystem at paths recorded earlier. Read inside the resolution's (or the
 migration's) one ``BEGIN IMMEDIATE`` and without a bound, a hard-mounted
 NFS export or a dropped SMB share under one recorded path stalled every
 writer of the store for as long as the mount hung. The reads now run
-before the transaction, each bounded by `location.PROBE_BUDGET`
-(`location.bounded_read`), and enter it as values; a path that does not
+before the transaction, each bounded by `location_git.PROBE_BUDGET`
+(`location_git.bounded_read`), and enter it as values; a path that does not
 answer in time reads ``unreachable``, unknown and never gone.
 
 Each test hangs `os.stat` of one recorded path on an event (the fixture's
@@ -61,7 +61,7 @@ from .test_membership_security import _git, checkout, neutral_git
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
 _NOW = datetime.fromtimestamp(1_800_000_000, tz=timezone.utc)
-#: The bound a read of a recorded path waits (`location.PROBE_BUDGET`),
+#: The bound a read of a recorded path waits (`location_git.PROBE_BUDGET`),
 #: read so the module loads where it is not defined (the fail-before run).
 PROBE_BUDGET: float = getattr(location, "PROBE_BUDGET", 0.5)
 #: What a bounded read may take past its budget on a loaded machine.

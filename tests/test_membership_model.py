@@ -2522,7 +2522,7 @@ def test_b6_another_machine_settles_the_writes_only_by_their_session(
 
 def _write_without_machine(world: World, cwd: str, session: str) -> str:
     """A write by a process that could not open this machine's state
-    directory (decision B16): its location keyed on `location.NO_MACHINE`,
+    directory (decision B16): its location keyed on `location_git.NO_MACHINE`,
     nothing readable there, homed by `unresolved_home`."""
     blind = Location(
         machine=NO_MACHINE,

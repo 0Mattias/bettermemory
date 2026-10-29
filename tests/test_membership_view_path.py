@@ -8,7 +8,7 @@ nothing could be read (decision B6) were kept as the caller spelled them:
 a declaration made through a symlinked cwd or a junction read as standing
 nowhere in its checkout and was refused, and a write through a symlinked
 cwd was keyed at a path no resolution looks at, so it was never settled.
-`location.view_path` is the one spelling both are now read in.
+`_location_probe.view_path` is the one spelling both are now read in.
 
 The POSIX tests build real repositories and symbolic links under
 ``tmp_path``; the Windows-shaped test reads Windows spellings on any host
