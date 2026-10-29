@@ -252,7 +252,7 @@ def test_accept_history_refuses_a_key_it_cannot_read(
     assert _ring_state(ring) == before
 
 
-def test_a_failed_owners_open_puts_the_anchor_and_head_back(
+def test_a_failed_owners_open_changes_nothing(
     tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     here, store_id = _copied_over_again(tmp_path, keys_dir)
@@ -269,6 +269,138 @@ def test_a_failed_owners_open_puts_the_anchor_and_head_back(
     monkeypatch.setattr(store_module.Store, "open", classmethod(failing))
     report = lifecycle.accept_history(here, apply=True)
     assert report["status"] == "failed"
-    assert "put back" in report["detail"]
+    assert "the owner's open failed (the disk went away)" in report["detail"]
+    assert "the anchor and head were not touched" in report["detail"]
     assert _ring_state(ring) == before
     assert _rows(here, HISTORY_ACCEPTED) == []
+
+
+def _older_copy_put_back(tmp_path: Path) -> tuple[Path, str]:
+    """A store whose older copy was put back by hand: the head checkpoint
+    is past the log's end (tail_deleted)."""
+    path = (tmp_path / "home").resolve() / STORE_FILENAME
+    with Store.create(path) as created:
+        _write(created, 2)
+        store_id = created.store_id
+    kept = tmp_path / "kept.sqlite"
+    shutil.copyfile(path, kept)
+    with Store.open_or_create(path) as store:
+        _write(store, 5)
+    for suffix in ("-wal", "-shm"):
+        Path(str(path) + suffix).unlink(missing_ok=True)
+    shutil.copyfile(kept, path)
+    return path, store_id
+
+
+def test_a_failure_at_the_first_step_changes_nothing(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """A ring bound to no file (from before rc13) is bound to this one
+    first; when that fails, the anchor, the head and the binding are as
+    they were and the report names the step (cold review H3)."""
+    path, store_id = _older_copy_put_back(tmp_path)
+    ring = KeyRing(keys_dir, store_id)
+    ring.binding_path().unlink()
+    before = _ring_state(ring)
+    assert before[1] is not None
+    with pytest.MonkeyPatch.context() as mp:
+
+        def refuses(self: KeyRing, store_file: Path) -> Path | None:
+            raise OSError("the keys directory is read-only")
+
+        mp.setattr(KeyRing, "rebind_store", refuses)
+        report = lifecycle.accept_history(path, apply=True)
+    assert report["status"] == "failed", report
+    assert report["detail"].startswith("binding the key ring to this file failed")
+    assert "the anchor and head were not touched" in report["detail"]
+    assert _ring_state(ring) == before
+    assert _rows(path, HISTORY_ACCEPTED) == []
+
+
+def test_a_failure_setting_the_anchor_keeps_the_head_and_the_record(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """The head checkpoint is the evidence of the rollback: a failure in
+    the step after the record leaves it byte for byte, puts the anchor
+    back, and says the acceptance is recorded; running the command again
+    applies it (cold review H3)."""
+    path, store_id = _older_copy_put_back(tmp_path)
+    ring = KeyRing(keys_dir, store_id)
+    before = _ring_state(ring)
+    with pytest.MonkeyPatch.context() as mp:
+
+        def refuses(
+            self: KeyRing, origin: HistoryOrigin | None
+        ) -> HistoryOrigin | None:
+            raise OSError("the anchor's lock cannot be written")
+
+        mp.setattr(KeyRing, "replace_origin", refuses)
+        report = lifecycle.accept_history(path, apply=True)
+    assert report["status"] == "failed", report
+    assert "setting the origin anchor failed" in report["detail"]
+    assert f"recorded at seq {report['seq']}" in report["detail"]
+    assert _ring_state(ring) == before
+    assert len(_rows(path, HISTORY_ACCEPTED)) == 1
+    again = lifecycle.accept_history(path, apply=True)
+    assert again["status"] == "done", again
+    assert _verify(path, keys_dir)["status"] == "ok"
+
+
+class _Crash(BaseException):
+    """The process dying at a step: nothing after it runs."""
+
+
+def _crashes(*args: Any, **kwargs: Any) -> Any:
+    raise _Crash()
+
+
+@pytest.mark.parametrize("step", ["row", "anchor", "head", "record"])
+def test_a_crash_at_any_step_leaves_a_recorded_acceptance_or_none(
+    step: str, tmp_path: Path, keys_dir: Path
+) -> None:
+    """Without a row, the anchor and head are as they were; with one, the
+    acceptance is on the record. Either way the command run again ends
+    with a log that verifies (cold review L2)."""
+    from bettermemory import backup
+
+    path, store_id = _older_copy_put_back(tmp_path)
+    ring = KeyRing(keys_dir, store_id)
+    origin_before, head_before, _ = _ring_state(ring)
+    with pytest.MonkeyPatch.context() as mp:
+        if step == "row":
+            real_append = Store._append
+
+            def append(self: Store, conn: Any, kind: str, *a: Any, **k: Any) -> Any:
+                if kind == HISTORY_ACCEPTED:
+                    raise _Crash()
+                return real_append(self, conn, kind, *a, **k)
+
+            mp.setattr(Store, "_append", append)
+        elif step == "anchor":
+            mp.setattr(
+                KeyRing,
+                "replace_origin",
+                _crashes,
+            )
+        elif step == "head":
+            mp.setattr(
+                lifecycle,
+                "_set_head",
+                _crashes,
+            )
+        else:
+            mp.setattr(
+                backup,
+                "_append_record",
+                _crashes,
+            )
+        with pytest.raises(_Crash):
+            lifecycle.accept_history(path, apply=True)
+    recorded = _rows(path, HISTORY_ACCEPTED)
+    origin_now, head_now, _ = _ring_state(ring)
+    if not recorded:
+        assert (origin_now, head_now) == (origin_before, head_before)
+    assert bool(recorded) == (step != "row")
+    again = lifecycle.accept_history(path, apply=True)
+    assert again["status"] in ("done", "unchanged"), again
+    assert _verify(path, keys_dir)["status"] == "ok"

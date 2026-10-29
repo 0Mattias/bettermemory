@@ -119,16 +119,19 @@ follows the candidates' testing.
   copy again, an origin anchor from before rc13 whose key was lost, or an
   older copy put back by hand reads `tampered` for good, and the recovery
   was deleting `<store_id>.origin` and `<store_id>.head` by hand. The
-  command does what that did, under the store's daemon and spawn locks:
-  the anchor and the head are set aside, the key ring is bound to this
-  file, and the store is opened as its owner opens it, which settles a
-  missing or foreign key and anchors this host's history at the first row
-  of the earliest segment a held key signs. A new control kind,
-  `history_accepted`, records the anchor, head and binding before and
-  after and the log's end before, signed with the store's key, and the
-  same entry goes into the rewind record beside the head, so `log export`
-  warns a cursor past the old end as after a restore. A failure before
-  the row puts the anchor, head and binding back. Refused while a daemon
+  command does what that did, under the store's daemon and spawn locks,
+  in an order that leaves a recorded acceptance or none after a crash at
+  any step: the key ring is bound to this file, the store is opened as
+  its owner opens it (which settles a missing or foreign key), a new
+  control kind, `history_accepted`, signed with the store's key, records
+  the anchor, head and binding before and after and the log's end
+  before, then the anchor moves to the first row of the earliest segment
+  a held key signs and the head to the row, and last the same entry goes
+  into the rewind record beside the head, so `log export` warns a cursor
+  past the old end as after a restore. A failure before the row puts the
+  binding back and touches neither the anchor nor the head; one after it
+  keeps the head, puts the anchor back and says the acceptance is
+  recorded, and running the command again applies it. Refused while a daemon
   holds the store or for a key file this user cannot read; nothing to
   accept changes nothing; without `--yes`, the plan (exit 3).
   (`src/bettermemory/key_lifecycle.py`, `src/bettermemory/cli/log_cmd.py`,

@@ -190,13 +190,14 @@ def add_subparser(
         "checkpoint names a row the log does not hold: a store file copied "
         "over this host's copy again, an anchor from before 9.0.0rc13 whose "
         "key was lost, an older copy put back by hand. With the daemon "
-        "stopped, the anchor and the head are set aside, the key ring is "
-        "bound to this file, and the store is opened as its owner opens it: "
-        "a missing or foreign key is settled as any writing command settles "
-        "it, and this host's history is anchored at the first row of the "
-        "earliest segment a key it holds signs. A history_accepted row, "
-        "signed with the store's key, names the anchor, head and binding "
-        "before and after; the rewind record beside the head "
+        "stopped, the key ring is bound to this file and the store opened "
+        "as its owner opens it (a missing or foreign key is settled as any "
+        "writing command settles it); a history_accepted row, signed with "
+        "the store's key, names the anchor, head and binding before and "
+        "after; then this host's history is anchored at the first row of "
+        "the earliest segment a key it holds signs and the head moved to "
+        "the row, so a crash leaves the acceptance recorded or none; last "
+        "the rewind record beside the head "
         "(<store_id>.backup_restore.json) gets the same entry. Refused "
         "while a daemon serves or starts for the store, or when the key "
         "file cannot be read. Without --yes prints the plan. Exit 0 "
@@ -298,8 +299,8 @@ def render_accept(report: dict[str, Any]) -> str:
     if status == "planned":
         anchor_at = report.get("anchor_at")
         lines.append(
-            "  the anchor and the head are set aside and the store opened as its "
-            "owner opens it; "
+            "  the store is opened as its owner opens it and the acceptance "
+            "recorded, then the anchor and the head move; "
             + (
                 f"this host's history is anchored at seq {anchor_at['seq']}"
                 if anchor_at
