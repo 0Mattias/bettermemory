@@ -117,7 +117,7 @@ from .recall_admission import (
     admission_for,
     caller_admission,
     disputed_marks,
-    membership_lines,
+    first_output_lines,
     membership_model,
     standing_line,
     summarize,
@@ -721,7 +721,7 @@ def session_brief(
 
     The caller's membership is resolved first (`location.resolve_hook`
     over what the hook `posted`, or `resolution` when the caller already
-    holds it), and the lines of its first output (`membership_lines`:
+    holds it), and the lines of its first output (`first_output_lines`:
     L1 to L10 and every open proposal of the checkout, design 5.4), then
     the line naming the records that wait for a standing answer
     (`standing_line`), come right after that notice and before the brief,
@@ -794,7 +794,7 @@ def session_brief(
 
 def _brief_lead_lines(store: Store, resolution: Resolution | None) -> list[str]:
     """Take the caller's resolution; return its membership and standing lines."""
-    lines = membership_lines(store, resolution)
+    lines = first_output_lines(store, resolution)
     waiting = standing_line(store, resolution)
     if waiting:
         lines.append(waiting)

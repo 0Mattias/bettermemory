@@ -2,7 +2,7 @@
 
 `caller_admission` resolves a hook's caller (`_resolve_caller`, over
 `location.resolve_hook`) and builds a surface's admission from it
-(`admission_for`, over `membership_model`); `membership_lines` and
+(`admission_for`, over `membership_model`); `first_output_lines` and
 `standing_line` are the lines a session's first output carries. Both
 surfaces' rows and pointers read the helpers here: `summarize`,
 `disputed_marks`, the open-contradiction gate, the row's membership
@@ -276,7 +276,7 @@ def caller_admission(
     return admission_for(surface, store, resolution), resolved
 
 
-def membership_lines(store: Store, caller: Resolution | None) -> list[str]:
+def first_output_lines(store: Store, caller: Resolution | None) -> list[str]:
     """The lines a session's first output carries for its caller
     (`Membership.first_output`: L1 to L10, every open proposal of the
     checkout), or none."""
