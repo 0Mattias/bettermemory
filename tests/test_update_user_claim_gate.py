@@ -1,6 +1,6 @@
 """Integration tests for the user-claim gate on memory_update.
 
-`UserClaimGate` (handlers/write.py) exists so a claim ABOUT THE USER is
+`UserClaimGate` (handlers/write_gates.py) exists so a claim ABOUT THE USER is
 not stored as an established `fact`: the `user-inference` label is what
 keeps an inference distinguishable and correctable. It hung off
 `memory_write` alone, and `memory_update` replaces a body without

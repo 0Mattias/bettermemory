@@ -866,7 +866,8 @@ on the wire. `_decorators.py` and `time_utils.py` are cross-cutting.
 **Write path.** `handlers/write.py` first lets `policy.py` refuse a
 call that passes an escape hatch `[policy]` forbids, then checks
 declared claims against the worktree (`claims.py`) and any declared
-`supersedes` list. It then runs the gate chain: `credentials.py`
+`supersedes` list. It then runs the gate chain, the gates of
+`handlers/write_gates.py`: `credentials.py`
 (secret-shaped strings; its `secret_spans` is what the log's query
 redaction shares), the capture gates on a capture write (the rules in
 `durability.py`, and a body an undo reverted before), `durability.py`

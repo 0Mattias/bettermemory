@@ -2865,7 +2865,7 @@ async def test_update_tombstoned_id_errors(server: Any) -> None:
 # `Store.update` raises `ConcurrentUpdateError` when the on-disk
 # `updated` differs from the caller's snapshot. The handler converts
 # that to a structured `status="stale"` payload (mirroring the
-# soft-refusal shapes in handlers/write.py) rather than a stringified
+# soft-refusal shapes in handlers/write_gates.py) rather than a stringified
 # ValueError, so a programmatic caller can branch on the status and
 # fast-path the rebase via the carried `current_updated` timestamp.
 # Direct deterministic store-level coverage lives in
@@ -3382,8 +3382,8 @@ async def test_dedup_match_carries_metadata(server: Any) -> None:
 
 # ---------------------------------------------------------------------------
 # Ordered-tuple pin for `_WRITE_GATES` — the WriteGate strategy chain
-# orchestrated by `handlers/write.py:545`. ORDER IS LOAD-BEARING and the
-# comment at `handlers/write.py:474-481` explicitly documents the
+# `memory_write` (handlers/write.py) runs. ORDER IS LOAD-BEARING and the
+# comment above `_WRITE_GATES` in handlers/write_gates.py documents the
 # rationale: transient before dedup so a transient parent doesn't route
 # the writer to `memory_update`; scope-mismatch before dedup so a write
 # tagged for a different scope doesn't get a duplicate hit; the two
@@ -3409,14 +3409,14 @@ async def test_dedup_match_carries_metadata(server: Any) -> None:
 # uses *tuple* equality on the per-instance type sequence because
 # precedence between gates IS load-bearing — a silent reorder would
 # pass a set-equality assertion while corrupting the precedence the
-# write.py:474-481 comment documents. Tuple equality catches
+# `_WRITE_GATES` comment documents. Tuple equality catches
 # additions, deletions, AND reorders in one assertion.
 #
 # A future contributor reordering for performance (or adding a new
 # gate, or deleting one) must update both the source tuple AND this
 # expected tuple in the same commit. Treat any drift as a deliberate
 # security/correctness decision that requires re-reading the
-# write.py:474-481 rationale: would the new ordering still refuse a
+# `_WRITE_GATES` rationale: would the new ordering still refuse a
 # secret before any other gate records the body? Still bounce a
 # transient-parent write before routing the writer to update? If
 # yes, update both. If unsure, don't reorder.
@@ -3428,11 +3428,11 @@ async def test_dedup_match_carries_metadata(server: Any) -> None:
 # — sequences differ at index 3 / 4). Revert restores green.
 def test_write_gates_match_expected_types_in_order() -> None:
     """Guard so additions, deletions, AND reorders of ``_WRITE_GATES``
-    (the ordered WriteGate strategy chain orchestrated by
-    ``handlers/write.py:545``) are caught — uses *tuple* equality
+    (the ordered WriteGate strategy chain ``memory_write`` runs, in
+    ``handlers/write_gates.py``) are caught — uses *tuple* equality
     rather than set equality because gate precedence is load-bearing.
 
-    The comment at ``handlers/write.py:474-481`` documents the
+    The comment above ``_WRITE_GATES`` in ``write_gates.py`` documents the
     invariant: ``CredentialGate`` fires FIRST so a secret is refused
     before any later gate records body-derived data alongside it in
     the event log; transient/user-claim/scope-mismatch gates fire
@@ -3446,7 +3446,7 @@ def test_write_gates_match_expected_types_in_order() -> None:
 
     A future contributor reordering this tuple for performance must
     update both the source AND this expected tuple in the same
-    commit, AND re-read the write.py:474-481 rationale to confirm
+    commit, AND re-read the ``_WRITE_GATES`` rationale to confirm
     the new ordering still preserves: credential-first,
     transient-before-dedup, user-claim-before-dedup,
     scope-before-dedup, and dedup-last."""
@@ -3477,7 +3477,8 @@ def test_write_gates_match_expected_types_in_order() -> None:
     actual = tuple(type(g) for g in _WRITE_GATES)
     assert actual == expected, (
         f"_WRITE_GATES drifted from documented order at "
-        f"handlers/write.py:474-481. Got {[t.__name__ for t in actual]}, "
+        f"the comment above _WRITE_GATES in handlers/write_gates.py. "
+        f"Got {[t.__name__ for t in actual]}, "
         f"expected {[t.__name__ for t in expected]}. Re-read the source "
         f"comment before reordering — this guards a security/correctness "
         f"invariant, not a stylistic choice."

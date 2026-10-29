@@ -182,6 +182,21 @@ the candidates' testing.
   `src/bettermemory/hook.py`, `tests/test_import_graph.py`,
   `tests/test_hook.py`, `tests/test_membership_guard.py`,
   `docs/internals.md`)
+- **The write gates move to `handlers/write_gates.py`.** `handlers/write.py`
+  was 2,132 lines, over the 2,000-line bound for a module. The gate chain
+  `memory_write` runs before the review (`GateContext`, the eight gates and
+  `_WRITE_GATES` in their order, the user-claim detector `memory_update`
+  shares, and `GateBundle` with `apply_write_gates`) now lives in
+  `handlers/write_gates.py` (732 lines), unchanged. `handlers/write.py`
+  (1,446 lines) keeps `memory_write`, the capture admission, the write
+  review and the commit, and re-exports every moved name a caller reads, so
+  no import path changes and `memory_write` answers as before. The
+  gate-order pin in `tests/test_server.py` cites the order's rationale by
+  name, above `_WRITE_GATES`, instead of by line.
+  (`src/bettermemory/handlers/write.py`,
+  `src/bettermemory/handlers/write_gates.py`,
+  `src/bettermemory/handlers/update.py`, `tests/test_server.py`,
+  `tests/test_update_user_claim_gate.py`, `docs/internals.md`)
 
 #### Fixed
 

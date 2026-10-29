@@ -341,7 +341,8 @@ async def memory_update(
         # Passed the gate on a body edit → the body is clean OR the caller
         # overrode with acknowledge_credential. Capture which detector KINDS
         # the override waved through (empty otherwise) so the success event
-        # feeds the same override-rate signal as write.py:638 / proposals.py:164.
+        # feeds the same override-rate signal as `memory_write`'s
+        # `credentials_acknowledged`.
         # Kind only, never the value — same redaction contract as the warning.
         credentials_acknowledged = (
             [h.kind for h in credential_hits]
@@ -383,7 +384,7 @@ async def memory_update(
             if transient_hits and acknowledge_transient
             else []
         )
-        # User-claim gate — mirror `UserClaimGate` (handlers/write.py) so a
+        # User-claim gate — mirror `UserClaimGate` (handlers/write_gates.py) so a
         # claim ABOUT THE USER can't reach a `fact` / `ambient` record by
         # EDITING one. Same laundering shape the credential gate above closes
         # for secrets: `memory_write` hard-refuses this body, so without the
@@ -665,7 +666,7 @@ async def memory_update(
         # disjoint edit may now conflict with the winner's change in a
         # way only the caller can reconcile (e.g. both edited the same
         # sentence). Surface as a structured `status="stale"` payload
-        # mirroring the other soft-refusal shapes in `write.py`
+        # mirroring the other soft-refusal shapes in `write_gates.py`
         # (`scope_mismatch`, `transient_warning`, …) so a programmatic
         # caller can branch on the status and retry without parsing
         # a stringified exception. The current on-disk `updated` is
