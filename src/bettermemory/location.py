@@ -1581,11 +1581,22 @@ def _caller(
             if where is not None:
                 forget(where)
             res = dataclasses.replace(res, remint_token=False)
-    if errors:
-        res = dataclasses.replace(
-            res, lines=(*res.lines, *(e for e in errors if e not in res.lines))
-        )
-    return Caller(loc, res, model)
+    return Caller(loc, _with_file_errors(res, errors), model)
+
+
+def _with_file_errors(res: Resolution, errors: Sequence[str]) -> Resolution:
+    """`res` with the lines of the project files that name no project
+    (decision B1) after its own, each written through `history.printable`
+    as the model's lines quote their values (ENG-154): a file's path, or a
+    client's token, may carry a line break."""
+    if not errors:
+        return res
+    from .history import printable
+
+    shown = [printable(e) for e in errors]
+    return dataclasses.replace(
+        res, lines=(*res.lines, *(e for e in shown if e not in res.lines))
+    )
 
 
 def _resolved(
@@ -1772,11 +1783,7 @@ def resolve_hook(
             res = model.resolve(loc, strict=config.membership.strict)
     except NeedWitnesses as need:
         return Exchange({**need.question, "write_token": policy})
-    if cap.file_errors:
-        res = dataclasses.replace(
-            res,
-            lines=(*res.lines, *(e for e in cap.file_errors if e not in res.lines)),
-        )
+    res = _with_file_errors(res, cap.file_errors)
     _keep_stand(store, session, loc, res)
     return res
 

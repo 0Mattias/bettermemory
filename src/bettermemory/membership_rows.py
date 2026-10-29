@@ -9,8 +9,9 @@ and `_Tally` is what the ladder's tally collects.
 
 `membership.py` imports back what the model reads. This module lives
 apart from `membership.py` to keep each module under the package's
-2,000-line bound (ENG-96); it imports the standard library and
-`membership_records`, and `membership.py` imports it.
+2,000-line bound (ENG-96); it imports the standard library,
+`membership_records` and `history` (whose `printable` a stored line is
+read through), and `membership.py` imports it.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .history import printable
 from .membership_records import (
     UNRESOLVED,
     Checkout,
@@ -169,7 +171,9 @@ def _proposal_from(row: Mapping[str, Any]) -> Proposal:
         candidates=tuple(str(c) for c in row["candidates_json"] or ()),
         evidence=dict(row["evidence_json"] or {}),
         reason=str(row["reason"]),
-        line=str(row["line"]),
+        # A line stored before its values were escaped (ENG-154) is read
+        # through the same function, so no stored line forges another.
+        line=printable(str(row["line"])),
         state=str(row["state"]),
         answer=row["answer"],
         answered_by=row["answered_by"],

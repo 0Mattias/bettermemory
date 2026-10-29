@@ -84,6 +84,8 @@ from . import (
 )
 from .location import continuity, path_liveness
 from .membership_lines import (
+    line_boundary_added,
+    line_boundary_dropped,
     line_deferred,
     line_file_contradiction,
     line_first_sight,
@@ -674,16 +676,9 @@ class Membership:
         p = self.project(pid)
         if f.boundary and not p.boundary:
             self._make_boundary(pid)
-            return [
-                f"bettermemory: {f.path} now declares a boundary: "
-                f"{_named(p.name, pid)} is a tenant from now on; nothing crosses it"
-            ]
+            return [line_boundary_added(f.path, p.name, pid)]
         if p.boundary and not f.boundary:
-            return [
-                f"bettermemory: {f.path} no longer declares a boundary; "
-                f"{_named(p.name, pid)} stays one until it is lifted: bettermemory "
-                f"project init --rebind (in {f.dir}) binds a fresh file without it"
-            ]
+            return [line_boundary_dropped(f.path, p.name, pid, f.dir)]
         return []
 
     def _lift_boundary(self, project_id: str, outer: str | None) -> None:

@@ -23,15 +23,18 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from .membership_lines import (
+    line_across_boundary,
+    line_content_crowded,
     line_deferred,
     line_file_contradiction,
     line_first_sight,
+    line_folder_project,
     line_joined,
     line_new,
+    line_new_folder,
     line_remote_diverged,
     line_subproject,
     line_unreadable,
-    _named,
 )
 from .membership_records import (
     ANSWERED,
@@ -372,10 +375,7 @@ def _enclosing(
                     files=(f, *reversed(outer[:depth])),
                 )
                 self._register(folder, p.id, "folder_file_first_sight")
-            lines.append(
-                f'bettermemory: {f.dir} is a project of its own ("{p.name}", its '
-                "file)" + ("; a boundary: nothing crosses it" if f.boundary else "")
-            )
+            lines.append(line_folder_project(f.dir, p.name, boundary=f.boundary))
         else:
             lines.extend(self._file_flag(f, pid))
         pid = self._canon(pid)
@@ -570,9 +570,9 @@ def _first_sight(
     superseded = bool(t.superseded) and loc.token is not None
     if t.dropped:
         lines.append(
-            f"bettermemory: {loc.root} matches "
-            + ", ".join(self._name(p) for p in t.dropped)
-            + " across a boundary; kept apart"
+            line_across_boundary(
+                loc.root or loc.cwd, [self._name(p) for p in t.dropped]
+            )
         )
     witnesses = {p: sorted(c) for p, c in cands.items()}
     if t.contradictions:
@@ -627,11 +627,7 @@ def _first_sight(
     content = [] if weak else self._content_candidates(loc, tenant)
     if len(content) > CONTENT_MAX:
         lines.append(
-            f"bettermemory: {loc.root} has the folder name and files of "
-            f"{len(content)} commit-less projects with no live checkout, more "
-            f"than the {CONTENT_MAX} a question names, so none is offered; "
-            "`bettermemory project list` shows them, `bettermemory project "
-            "join <id>` joins one"
+            line_content_crowded(loc.root or loc.cwd, len(content), CONTENT_MAX)
         )
         content = []
     if weak or content:
@@ -1181,10 +1177,7 @@ def _resolve_folder(
             NEW,
             enclosing,
             tenant,
-            [
-                f"bettermemory: {loc.root} is a new project {_named(p.name, p.id)}, "
-                "its file"
-            ],
+            [line_new_folder(loc.root or loc.cwd, p.name, p.id)],
         )
     if self._declared_folder(f.id, bound, loc):
         # Rung 1: `project init` below a folder project's root made this

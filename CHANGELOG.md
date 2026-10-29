@@ -921,6 +921,29 @@ the candidates' testing.
   directory and a folder holding `HEAD` and such a `commondir` is no git
   directory. (`src/bettermemory/location_git.py`,
   `src/bettermemory/location.py`, `SECURITY.md`, `docs/internals.md`)
+- **A directory name can no longer write a line of its own into the
+  session's first output.** The membership lines a session's first
+  output carries quoted paths, directory names (a folder's name becomes
+  its project's name), remote keys and OS error details as they were
+  read; only a project file's own name was refused with control
+  characters. A repository, a workspace folder or a plain folder with a
+  project file whose name held a newline or U+2028, an extracted
+  archive's top folder for one, wrote a second line into the agent's
+  context starting with whatever text the name carried, a forged
+  `answer_question` call included (ENG-154). Every value a line quotes is
+  now written through `history.printable`, the function the text reports
+  and `bettermemory security audit` print through, which now escapes the
+  line and paragraph separators (U+2028, U+2029) beside the control and
+  format characters; the lines without a number (a workspace's first
+  sight, a boundary flag, a match across a boundary, a crowd of content
+  matches) moved to `membership_lines` beside L1 to L10, a project file's
+  error line is escaped where it joins a resolution, and a question's line
+  stored before this release is read through the same function. A name
+  is kept as written in the store and escaped where a line shows it.
+  (`src/bettermemory/membership_lines.py`,
+  `src/bettermemory/membership_rows.py`, `src/bettermemory/membership.py`,
+  `src/bettermemory/membership_resolve.py`, `src/bettermemory/location.py`,
+  `src/bettermemory/history.py`)
 
 #### Known limitations
 
