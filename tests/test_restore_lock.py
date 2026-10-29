@@ -652,3 +652,88 @@ def test_doctor_warns_while_a_restore_runs(
     assert check.status == "warn"
     assert check.summary == "writes are refused while a restore runs"
     assert result["status"] == "restored", result["detail"]
+
+
+def test_a_read_only_command_is_refused_while_a_restore_runs(
+    bundle: Path,
+    store_file: Path,
+    keys_dir: Path,
+    child_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`log verify` run while a restore held the store read a file, keys and
+    head that did not yet agree and said `tampered`, exit 1, which a cron or
+    SIEM gate reads as an attack. A read-only command now reads nothing
+    while a restore runs: one line, exit 75; after it, the log verifies
+    (cold review H3)."""
+    _put(store_file, keys_dir, "gamma, after the backup")
+    thread, go, result = _restore_paused_after_the_swap(bundle, store_file, monkeypatch)
+    try:
+        verified = subprocess.run(
+            _bettermemory("log", "verify", "--json"),
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=_CHILD_SECONDS,
+        )
+        counted = subprocess.run(
+            _bettermemory("stats"),
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=_CHILD_SECONDS,
+        )
+    finally:
+        go.set()
+        thread.join(_CHILD_SECONDS)
+    said = (
+        f"{store_file} is not opened: a restore is running; try again when it "
+        "has finished"
+    )
+    assert verified.returncode == 75, verified.stdout + verified.stderr
+    assert verified.stdout == ""
+    assert said in verified.stderr
+    assert "tampered" not in verified.stderr and "Traceback" not in verified.stderr
+    assert counted.returncode == 75, counted.stdout + counted.stderr
+    assert said in counted.stderr
+    assert result["status"] == "restored", result["detail"]
+
+    after = subprocess.run(
+        _bettermemory("log", "verify", "--json"),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=_CHILD_SECONDS,
+    )
+    assert after.returncode == 0, after.stdout + after.stderr
+
+
+def test_a_hook_ends_with_the_refusal_before_it_starts_a_daemon(
+    bundle: Path,
+    store_file: Path,
+    child_env: dict[str, str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A prompt hook started a daemon on every prompt while a restore's
+    record refused its open, each daemon exiting 1 with the line only in
+    its log. The hooks' first check now reads the record and ends the hook,
+    exit 0 as a hook must, with the refusal (cold review L11)."""
+    from bettermemory.cli._common import exit_if_bundle_store
+
+    exit_if_bundle_store(prefix="[bettermemory] prompt-recall")
+    assert capsys.readouterr().err == ""
+    crashed = subprocess.run(
+        [sys.executable, "-c", _CRASHED_RESTORE, str(store_file), str(bundle)],
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=_CHILD_SECONDS,
+    )
+    assert crashed.returncode == 0, crashed.stderr
+    with pytest.raises(SystemExit) as ended:
+        exit_if_bundle_store(prefix="[bettermemory] prompt-recall")
+    assert ended.value.code == 0
+    err = capsys.readouterr().err
+    assert err.startswith(f"[bettermemory] prompt-recall: {store_file} is not opened: ")
+    assert "a restore of it did not finish" in err
+    assert "bettermemory backup unlock --yes" in err

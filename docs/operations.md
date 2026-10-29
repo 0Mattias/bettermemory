@@ -211,6 +211,12 @@ job, an MDM script or a CI step can run it as is.
 | `bettermemory config check` | nothing above a note | an error | warnings only | |
 | `bettermemory log verify` | the log verifies | tampered, or cannot be verified | no store, or an `--anchor` file cannot be read | |
 
+While a restore of the store runs, `log verify`, `log export`, `log
+anchor`, `stats` and `memory history` read nothing and exit 75
+(EX_TEMPFAIL): `<store> is not opened: a restore is running; try again
+when it has finished`. A gate on `log verify` should try again on 75,
+not alert.
+
 `doctor` checks the install, that the config loads, which rule chose
 the store, whether a restore of it runs or did not finish, the store
 and its key, the store file's pages and its search index, the daemon,

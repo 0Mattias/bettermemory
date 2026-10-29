@@ -2263,6 +2263,22 @@ follows the candidates' testing.
   `src/bettermemory/store.py`, `src/bettermemory/backup.py`,
   `src/bettermemory/cli/backup_cmd.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_lock.py`)
+- **A read-only command reads no store a restore holds.** `log verify`
+  run while a restore held the store read a file, keys and head that
+  did not yet agree and said `tampered`, exit 1, so a cron or SIEM gate
+  on it alerted on a healthy restore. The read-only commands (`log
+  verify`, `log export`, `log anchor`, `stats`, `memory history`) now
+  check the restore lock before they open the store and, while a
+  restore holds it, end in one line, `<store> is not opened: a restore
+  is running; try again when it has finished`, exit 75 (EX_TEMPFAIL),
+  apart from `log verify`'s 1. A record a restore that did not finish
+  left refuses no read: the store is read as it stands, which is what
+  to check before `backup unlock --yes`. The prompt and turn hooks read
+  the record too, and end, exit 0, with the refusal their store's open
+  would get instead of starting a daemon on every prompt that exits on
+  it. (`src/bettermemory/restore_lock.py`,
+  `src/bettermemory/cli/_common.py`, `docs/api.md`,
+  `docs/operations.md`, `tests/test_restore_lock.py`)
 - **A store reached through a hard link to a bundle's snapshot is
   refused.** `backup.bundle_refusal` checked a file's link count only for
   a file named on the command line, so `BETTERMEMORY_DIR` or `[storage]
@@ -2710,12 +2726,14 @@ follows the candidates' testing.
   `markers_acknowledged` are audit rows now, but the override rate does
   not read update rows, as before.
 - **A restore holds off only the writers that open through
-  `store._connect`.** Every writing opener in this package does; a
-  process that writes the file with its own SQLite connection is not
-  held off. The read-only commands (`log verify`, `log export`, `stats`,
-  `memory history`, `doctor`) are not held off either: one that runs
-  while a restore does may read the store between its steps and report
-  what it saw then.
+  `store._connect`, and readers only as they start.** Every writing
+  opener in this package does (the daemon's handover row aside, which
+  only a live daemon writes, and the daemon locks keep it out of a
+  restore); a process that writes the file with its own SQLite
+  connection is not held off. A read-only command refuses to start
+  while a restore runs, but one that started before it may read the
+  store between its steps and report what it saw then; `doctor`'s store
+  check and `security audit` read the store without that check.
 - **On Windows a writing open holds the restore lock only for its
   check.** Windows cannot lock a directory and `msvcrt` has no shared
   lock, so the lock there is the record file a restore makes (as on a

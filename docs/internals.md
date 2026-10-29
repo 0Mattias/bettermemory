@@ -1512,9 +1512,12 @@ records the pinned `section.key` names, which `config show` labels
   file it opens, which may be a second file that borrowed the store's
   id (Provenance, above).
 - A restore holds off every writing open through `store._connect`
-  (`restore_lock.py`); on Windows an opener holds the lock only for its
-  check, and a process writing the file through a connection of its own
-  is not held off.
+  (`restore_lock.py`); on Windows, and on a mount where `flock` cannot
+  lock a directory, an opener holds the lock only for its check, and a
+  process writing the file through a connection of its own is not held
+  off. A read-only command refuses to start while a restore runs, exit
+  75, but one that started before it can read the store between the
+  restore's steps.
 - The store's version keys are only what the file says. `meta` is not
   covered by the log's MACs, so an editor of the file can raise a minimum
   to keep builds out, or lower one. Builds from before the contract

@@ -95,8 +95,20 @@ def open_read_only(
     is refused the same way (`backup.bundle_refusal`, which says to copy
     the file out first), as every command refuses it: this open leaves
     the snapshot as it is, but a bundle is checked with `backup verify`,
-    and a writing command's open would rewrite the snapshot's header."""
+    and a writing command's open would rewrite the snapshot's header.
+
+    A store a restore holds is not read (`restore_lock.check_reader`): the
+    command ends with ``<store> is not opened: a restore is running; try
+    again when it has finished`` and exit 75
+    (`restore_lock.RESTORE_RUNNING_STATUS`), whatever `exit_code` is, so
+    `log verify` does not call a healthy restore tampered, and a gate on it
+    tells the two apart."""
     from ..backup import bundle_refusal
+    from ..restore_lock import (
+        RESTORE_RUNNING_STATUS,
+        RestoreRunningError,
+        check_reader,
+    )
 
     try:
         mode = path.stat().st_mode
@@ -109,6 +121,10 @@ def open_read_only(
     refusal = bundle_refusal(path)
     if refusal is not None:
         _refuse(parser, refusal, exit_code)
+    try:
+        check_reader(path)
+    except RestoreRunningError as exc:
+        _refuse(parser, str(exc), RESTORE_RUNNING_STATUS)
     try:
         return Store.open(path, read_only=True)
     except (ValueError, sqlite3.DatabaseError, OSError) as exc:
@@ -193,12 +209,21 @@ def exit_if_bundle_store(*, prefix: str, exit_code: int = 0) -> None:
     in-process hook commands (`session-start`, `prompt-recall`,
     `audit-turn`), which must never raise: exit 0 by default, and a
     config that does not load is left to the command, which reports it
-    its own way."""
+    its own way. A store a restore holds, or one a restore did not
+    finish, ends the hook the same way with the refusal its open would
+    get (`restore_lock.writes_refused`), before it starts a daemon whose
+    open would end in that refusal on every prompt."""
+    from ..restore_lock import writes_refused
+
     try:
         path = load_config().resolved_directory() / STORE_FILENAME
     except Exception:  # noqa: BLE001 - the hook command reports its own config
         return
     exit_if_bundle_file(path, exit_code=exit_code, prefix=prefix)
+    refusal = writes_refused(path)
+    if refusal is not None:
+        sys.stderr.write(f"{prefix}: {refusal}\n")
+        raise SystemExit(exit_code)
 
 
 @dataclass(frozen=True)

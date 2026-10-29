@@ -71,7 +71,8 @@ def test_the_docs_no_longer_state_the_closed_limitations() -> None:
 def test_the_residuals_are_rc14_known_limitations() -> None:
     known = _section("9.0.0rc14").split("#### Known limitations", 1)[1]
     for residual in (
-        "A restore holds off only the writers that open through `store._connect`.",
+        "A restore holds off only the writers that open through `store._connect`, "
+        "and readers only as they start.",
         "On Windows a writing open holds the restore lock only for its check.",
         "After a restore onto a host with no copy of the store, `log export` "
         "warns every cursor past the restored head.",

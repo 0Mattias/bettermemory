@@ -431,6 +431,24 @@ class RestoreLockedError(StoreRefusedError):
         super().__init__(Path(store_file), why)
 
 
+#: The exit status of a command that reads the store and found a restore
+#: running: EX_TEMPFAIL, as for a daemon that found its store served
+#: (`_daemon_client.DAEMON_HELD_STATUS`), apart from the 1 `log verify`
+#: gives a log that does not verify.
+RESTORE_RUNNING_STATUS = 75
+
+
+class RestoreRunningError(StoreRefusedError):
+    """A read of a store a restore holds (`check_reader`): refused, not read
+    part way, where its file, keys and head may not yet agree and `log
+    verify` would call a healthy restore tampered."""
+
+    def __init__(self, store_file: Path) -> None:
+        super().__init__(
+            Path(store_file), "a restore is running; try again when it has finished"
+        )
+
+
 class _SharedHold:
     """An opener's shared hold on a restore lock, given back when the
     object goes: `store._connect` keeps it in a local until it returns."""
@@ -740,6 +758,31 @@ def restore_state(
     return (CLEAR, None) if record is None else (UNFINISHED, record)
 
 
+def check_reader(store_file: Path) -> None:
+    """Refuse a read of the store while a restore holds its lock
+    (`restore_state`, waiting `OPEN_WAIT_SECONDS` for a lock taken only for
+    an instant): `RestoreRunningError`. The read-only commands call it
+    first (`cli._common.open_read_only`). A record left by a restore that
+    did not finish refuses no read: the store is read as it stands, which
+    is what an operator checks before `backup unlock --yes`."""
+    if restore_state(store_file, wait=OPEN_WAIT_SECONDS)[0] == RUNNING:
+        raise RestoreRunningError(store_file)
+
+
+def writes_refused(store_file: Path) -> str | None:
+    """The refusal a writing open of the store would get now, read without
+    opening it or waiting (`restore_state`), or None: what a hook says
+    before it starts a daemon whose open would end in it."""
+    state, record = restore_state(store_file)
+    if state == CLEAR:
+        return None
+    return str(
+        RestoreLockedError(
+            Path(store_file), lock_path(store_file), record, running=state == RUNNING
+        )
+    )
+
+
 def state_finding(store_file: Path) -> tuple[str, str, str | None, dict[str, Any]]:
     """`restore_state` in `doctor`'s terms: ``(state, summary, remedy,
     details)``, the summary and remedy naming both ways out of a restore
@@ -782,14 +825,17 @@ __all__ = [
     "MARKER_FORMAT",
     "OPEN_WAIT_SECONDS",
     "PLANNED",
+    "RESTORE_RUNNING_STATUS",
     "RESTORE_WAIT_SECONDS",
     "RUNNING",
     "UNFINISHED",
     "UNLOCK_EXIT",
     "RestoreLock",
     "RestoreLockedError",
+    "RestoreRunningError",
     "acquire",
     "admit",
+    "check_reader",
     "describe",
     "lock_path",
     "probe",
@@ -797,4 +843,5 @@ __all__ = [
     "restore_state",
     "state_finding",
     "unlock",
+    "writes_refused",
 ]
