@@ -1427,6 +1427,15 @@ the candidates' testing.
   (`src/bettermemory/managed.py`, `SECURITY.md`, `docs/operations.md`,
   `docs/internals.md`, `tests/test_managed_gp_refresh.py`,
   `tests/test_managed_windows.py`)
+- **A column a later build adds no longer reads as tampering to an older
+  `log verify`.** The fold compared each live row with its replay over
+  every column the live table holds, so one nullable column a later 9.x
+  added to a folded table made every row of it differ, and an older
+  build's `log verify` reported the store tampered. It now compares the
+  columns this build's schema gives the table, by name and in the
+  schema's order, which also keeps a table rebuilt with its columns in
+  another order comparable. An edit to a column this build knows is still
+  caught. (`src/bettermemory/store_rows.py`, `tests/test_fold_columns.py`)
 
 #### Known limitations
 

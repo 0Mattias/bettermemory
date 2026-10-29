@@ -16,6 +16,7 @@ from `store.py` to keep each module under the package's 2,000-line bound
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
@@ -31,6 +32,8 @@ from .origin import Origin, is_full_commit_sha
 from .search import fts_index_text
 from .store_schema import (
     IMPORTED_FROM_V8,
+    MEMBERSHIP_SCHEMA,
+    SCHEMA,
     _CONFLICT_COLUMNS,
     _IMPORT_COLUMNS,
     _MEMBERSHIP_SPECS,
@@ -645,17 +648,43 @@ def _membership_key(
     return tuple(key)
 
 
+@functools.cache
+def _known_columns() -> dict[str, tuple[str, ...]]:
+    """The columns this build's schema gives each table, in the schema's
+    order: read once from an in-memory database built from `SCHEMA` and
+    `MEMBERSHIP_SCHEMA`, the statements the fold replays into."""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(SCHEMA)
+        conn.executescript(MEMBERSHIP_SCHEMA)
+        tables = [
+            str(r[0])
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        ]
+        return {
+            table: tuple(str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})"))
+            for table in tables
+        }
+    finally:
+        conn.close()
+
+
 def _table_rows(
     conn: sqlite3.Connection, table: str
 ) -> dict[tuple[Any, ...], tuple[Any, ...]]:
-    """Every row of a folded table keyed by its key columns, rowid left
-    out: the fold compares records, and rowids are the tie order the
-    candidate query is graded on elsewhere."""
-    columns = [
-        str(r[1])
-        for r in conn.execute(f"PRAGMA table_info({table})")
-        if r[1] != "rowid"
-    ]
+    """Every row of a folded table keyed by its key columns, over the
+    columns this build's schema gives the table (`_known_columns`), named
+    and in the schema's order, rowid left out: the fold compares records,
+    and rowids are the tie order the candidate query is graded on
+    elsewhere. A column a later build added to the live table is not read
+    (ENG-107): this build's fold cannot produce it, so reading it made
+    every row of the table differ and an older `log verify` report the
+    store tampered. Reading by name also keeps the two sides aligned when
+    a table holds its columns in another order than the schema's."""
+    have = [str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")]
+    known = _known_columns().get(table)
+    order = have if known is None else [c for c in known if c in have]
+    columns = [c for c in order if c != "rowid"]
     keys = _TABLE_KEYS[table]
     out: dict[tuple[Any, ...], tuple[Any, ...]] = {}
     for row in conn.execute(f"SELECT {', '.join(columns)} FROM {table}"):
