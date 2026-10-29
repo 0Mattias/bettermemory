@@ -69,6 +69,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import location
 from . import membership as mb
+from .membership_records import _FULL_SHA
 from .models import utcnow
 from .store import Store
 from .time_utils import isoformat_utc
@@ -113,8 +114,6 @@ _SHA = re.compile(r"[0-9a-f]{4,64}")
 _PROBE_BUDGET = location.PROBE_BUDGET + location.FETCH_BUDGET
 #: Probes `_Run.prefetch` runs at once, as `Membership.prefetch_liveness`.
 _PROBE_WORKERS = 8
-# A full object id (SHA-1 or SHA-256): what a witness row carries.
-_FULL_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
 # ---------------------------------------------------------------------------

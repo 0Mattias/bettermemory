@@ -104,6 +104,11 @@ WORDS: Mapping[str, str] = {
 
 # The bounds of decision D15 and design 2.2.
 WITNESS_BOUND = 64
+#: A full object id (SHA-1 or SHA-256): what a witness row carries (B19).
+#: The migration and an import read a recorded commit through it; an
+#: abbreviation names whichever object a repository holds with that
+#: prefix, so it witnesses nothing (ENG-157).
+_FULL_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 KEEP_OLDEST = 16
 BLOBS_PER_WITNESS = 8
 #: Commits read from HEAD for the rewritten-history witness (Hf).
@@ -797,8 +802,10 @@ class PortableIdentity:
     @classmethod
     def from_json(cls, raw: Any) -> PortableIdentity:
         """The identity an export document carries; ValueError names what
-        is malformed. Remote keys naming a path are dropped, and at most
-        `WITNESS_BOUND` witnesses are read."""
+        is malformed, a witness that is not a full commit id included
+        (`_FULL_SHA`, ENG-157): an abbreviation would be held by whichever
+        repository has an object with that prefix. Remote keys naming a
+        path are dropped, and at most `WITNESS_BOUND` witnesses are read."""
         if not isinstance(raw, Mapping):
             raise ValueError("a project identity is an object")
         name = raw.get("name")
@@ -810,10 +817,17 @@ class PortableIdentity:
         ):
             raise ValueError("a project identity's parent is a position or null")
         remotes = {k for k in _strings(raw, "remotes") if not k.startswith("local:")}
+        witnesses = tuple(w.strip().lower() for w in _strings(raw, "witnesses"))
+        for commit in witnesses:
+            if not _FULL_SHA.fullmatch(commit):
+                raise ValueError(
+                    f"a project identity's witness {commit[:72]!r} is not a full "
+                    "commit id"
+                )
         return cls(
             name=name,
             file_ids=tuple(sorted(set(_strings(raw, "file_ids")))),
-            witnesses=tuple(dict.fromkeys(_strings(raw, "witnesses")))[:WITNESS_BOUND],
+            witnesses=tuple(dict.fromkeys(witnesses))[:WITNESS_BOUND],
             remotes=tuple(sorted(remotes)),
             folder=_flag(raw, "folder"),
             boundary=_flag(raw, "boundary"),

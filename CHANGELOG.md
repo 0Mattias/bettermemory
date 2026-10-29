@@ -1034,6 +1034,20 @@ the candidates' testing.
   `src/bettermemory/membership_declare.py`,
   `src/bettermemory/membership_records.py`,
   `src/bettermemory/membership_resolve.py`)
+- **An import takes a witness commit only as a full id.** A project
+  identity in a membership export names its witness commits, and an
+  import mints the imported project with them as witness rows. A witness
+  row is read by expanding an abbreviation to whichever object a
+  repository holds with that prefix, so a document naming a short
+  prefix (four hex digits and up) as a witness made every repository
+  holding an object with that prefix hold the imported project's
+  history: it joined that project, or tied with it and asked, though it
+  shared nothing with it (ENG-157). `PortableIdentity.from_json` now
+  reads each witness through the migration's own check (`_FULL_SHA`, a
+  full SHA-1 or SHA-256 id, decision B19), in lowercase, and refuses the
+  document naming the witness; `bettermemory membership import` exits 2
+  and writes nothing. (`src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_migrate.py`)
 
 #### Known limitations
 
