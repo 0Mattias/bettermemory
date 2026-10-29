@@ -476,6 +476,23 @@ the candidates' testing.
   (`src/bettermemory/claude_paths.py`, `src/bettermemory/init.py`,
   `src/bettermemory/doctor.py`, `src/bettermemory/posture.py`,
   `src/bettermemory/sandbox_settings.py`, `docs/clients.md`)
+- **The security audit asks the filesystem whether the store is synced,
+  not only the folder's name.** `store.synced` and `keys.synced` matched
+  path names (`Dropbox`, `~/Library/CloudStorage`, ...) on the path as
+  given. With macOS's iCloud "Desktop & Documents Folders" on, which
+  macOS offers when an account signs in to iCloud, `~/Documents` is
+  synced in place, so a
+  store under `~/Documents/<repo>/.claude-memory` (the working-directory
+  rule) or a `BETTERMEMORY_DIR` there read `ok` while iCloud uploaded the
+  live SQLite file and its `-wal`, and a `BETTERMEMORY_DIR` that was a
+  symbolic link into a Dropbox folder was missed because the path was
+  never resolved. The audit now resolves the path and reads the sync
+  markers on it and every ancestor: on macOS the File Provider domain
+  attribute (iCloud Drive and the File Provider clients) through libc,
+  and the links iCloud Drive keeps to the folders it syncs in place; on
+  Windows a cloud files placeholder's reparse tag or its recall, pinned
+  or unpinned attribute. The folder-name match stays as the fallback.
+  (`src/bettermemory/posture.py`)
 
 #### Known limitations
 

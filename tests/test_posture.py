@@ -619,6 +619,158 @@ def test_store_and_keys_in_a_synced_folder(
     assert _by_id(audit(), "keys.synced").status == "ok"
 
 
+def _symlink(link: Path, target: Path) -> None:
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"this account cannot create a symbolic link here: {exc}")
+
+
+def _set_xattr(path: Path, name: str, value: bytes) -> None:
+    """Set an extended attribute through libc (Python's `os` has no xattr
+    calls on macOS), or skip where the filesystem refuses it."""
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    setxattr = libc.setxattr
+    setxattr.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int,
+    ]
+    setxattr.restype = ctypes.c_int
+    if setxattr(os.fsencode(path), name.encode(), value, len(value), 0, 0) != 0:
+        pytest.skip(
+            f"this filesystem refuses extended attributes ({ctypes.get_errno()})"
+        )
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="the File Provider attribute is macOS's"
+)
+def test_a_folder_the_file_provider_marks_reads_synced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-177. With iCloud "Desktop & Documents Folders" on, ~/Documents
+    is synced in place and carries the File Provider attribute, and a store
+    under ~/Documents/<repo>/.claude-memory read `store.synced ok`, since
+    only folder names were matched. The audit now reads the attribute on
+    the path and every ancestor, through libc. The system refuses to let an
+    account set the real attribute, so the test names a settable one; the
+    read is the real one."""
+    name = "com.bettermemory.test-file-provider-domain"
+    monkeypatch.setattr(posture, "_FILE_PROVIDER_XATTR", name)
+    documents = tmp_path / "Documents"
+    store_dir = documents / "repo" / ".claude-memory"
+    store_dir.mkdir(parents=True)
+    _set_xattr(documents, name, b"com.apple.CloudDocs.iCloudDriveFileProvider/T")
+    assert synced_root(store_dir) == "iCloud Drive"
+    assert synced_root(documents / "repo" / "not-yet") == "iCloud Drive"
+    other = tmp_path / "Shared"
+    other.mkdir()
+    _set_xattr(other, name, b"com.example.sync.fileprovider/1")
+    assert (
+        synced_root(other / "keys") == "File Provider (com.example.sync.fileprovider)"
+    )
+    assert synced_root(tmp_path / "plain") is None
+
+
+def test_a_marked_folder_makes_the_store_and_its_keys_synced(
+    tmp_path: Path, layout: Layout, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same, through the audit, on every platform: the reader of the
+    File Provider attribute is replaced by one that marks a folder named
+    like none of the sync clients' folders. The store there is a warning,
+    its keys there with it high."""
+    marked = (tmp_path / "Documents").resolve()
+    store_dir, keys = marked / "repo" / ".claude-memory", marked / "keys"
+
+    def reader(path: Path) -> str | None:
+        return (
+            "com.apple.CloudDocs.iCloudDriveFileProvider/T" if path == marked else None
+        )
+
+    monkeypatch.setattr(posture, "_file_provider_domain", reader)
+    monkeypatch.setenv(_config.ENV_DIR_OVERRIDE, str(store_dir))
+    monkeypatch.setenv(_config.KEYS_DIR_ENV, str(keys))
+    Store.create(store_dir, keys_dir=keys).close()
+    report = audit()
+    store = _by_id(report, "store.synced")
+    assert store.status == "warn"
+    assert store.details == {"service": "iCloud Drive"}
+    assert _by_id(report, "keys.synced").status == "high"
+
+
+def test_a_link_into_a_synced_folder_reads_synced(tmp_path: Path) -> None:
+    """ENG-177. A BETTERMEMORY_DIR that is a symbolic link into a Dropbox
+    folder was missed: the path was matched as given, never resolved."""
+    real = tmp_path / "Dropbox" / "stores"
+    real.mkdir(parents=True)
+    link = tmp_path / "elsewhere" / "stores"
+    _symlink(link, real)
+    assert synced_root(link / ".claude-memory") == "Dropbox"
+    assert synced_root(link) == "Dropbox"
+
+
+def test_icloud_desktop_and_documents_is_read_off_its_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second macOS witness: iCloud Drive links the folders it syncs in
+    place from ``~/Library/Mobile Documents/com~apple~CloudDocs``, so a path
+    under a link's target is synced even where the attribute cannot be
+    read."""
+    home = tmp_path / "home"
+    documents = home / "Documents"
+    (documents / "repo").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setattr(posture, "_file_provider_domain", lambda path: None)
+    clouddocs = home / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+    _symlink(clouddocs / "Documents", documents)
+    found = synced_root(documents / "repo" / ".claude-memory")
+    assert found == "iCloud Drive (Desktop & Documents)"
+    assert synced_root(home / "Projects" / "repo") is None
+
+
+def test_windows_cloud_files_placeholders_read_synced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Windows a cloud files placeholder (OneDrive, iCloud for Windows,
+    Dropbox) carries a reparse tag of the IO_REPARSE_TAG_CLOUD family or a
+    recall, pinned or unpinned attribute. The stat fields exist on Windows
+    only, so the stat result is faked here, on every platform."""
+    root = (tmp_path / "Work Files").resolve()
+    root.mkdir()
+    real_lstat = posture._lstat
+
+    def faked(fields: dict[str, int]) -> Any:
+        def lstat(path: Path) -> Any:
+            if path == root:
+                return SimpleNamespace(**fields)
+            return real_lstat(path)
+
+        return lstat
+
+    for fields in (
+        {"st_reparse_tag": 0x9000001A, "st_file_attributes": 0x400},
+        {"st_reparse_tag": 0x9000701A, "st_file_attributes": 0x400},
+        {"st_reparse_tag": 0, "st_file_attributes": 0x00400000},
+        {"st_reparse_tag": 0, "st_file_attributes": 0x00080000},
+    ):
+        monkeypatch.setattr(posture, "_lstat", faked(fields))
+        assert synced_root(root / "store") == "Windows cloud files", fields
+    for fields in (
+        {"st_reparse_tag": 0xA000000C, "st_file_attributes": 0x400},
+        {"st_reparse_tag": 0xA0000003, "st_file_attributes": 0x10},
+    ):
+        monkeypatch.setattr(posture, "_lstat", faked(fields))
+        assert synced_root(root / "store") is None, fields
+
+
 # ---------------------------------------------------------------------------
 # The daemon
 # ---------------------------------------------------------------------------

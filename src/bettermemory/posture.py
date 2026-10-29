@@ -817,13 +817,172 @@ def git_finding(
     )
 
 
+#: The extended attribute macOS's File Provider framework sets on the root
+#: of every domain it syncs: iCloud Drive's, and with "Desktop & Documents
+#: Folders" on, ``~/Desktop`` and ``~/Documents`` themselves, and those of
+#: the clients built on it (Dropbox, OneDrive, Google Drive and others,
+#: under ``~/Library/CloudStorage``). Its value names the domain
+#: (``com.apple.CloudDocs.iCloudDriveFileProvider/<id>`` for iCloud). The
+#: system refuses to let an account set it, so its presence is the
+#: provider's word. Read at call time, so a test can name a settable one.
+_FILE_PROVIDER_XATTR = "com.apple.file-provider-domain-id"
+#: The most of an attribute's value read: a domain id is a reverse-DNS
+#: name and an identifier, well under this.
+_XATTR_VALUE_CAP = 1024
+
+#: Windows cloud files (the Cloud Filter API OneDrive, iCloud for Windows
+#: and Dropbox's current client sync through): a placeholder carries a
+#: reparse tag of the ``IO_REPARSE_TAG_CLOUD`` family (``0x9000001A``,
+#: with a variant in bits 12 to 15), and the provider's hydration state in
+#: its attributes: recall on data access or on open, pinned, unpinned.
+_IO_REPARSE_TAG_CLOUD = 0x9000001A
+_IO_REPARSE_TAG_CLOUD_MASK = 0xFFFF0FFF
+_CLOUD_FILE_ATTRIBUTES = (
+    0x00040000  # FILE_ATTRIBUTE_RECALL_ON_OPEN
+    | 0x00080000  # FILE_ATTRIBUTE_PINNED
+    | 0x00100000  # FILE_ATTRIBUTE_UNPINNED
+    | 0x00400000  # FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+)
+
+#: The links iCloud Drive keeps to the folders "Desktop & Documents
+#: Folders" syncs in place, under ``~/Library/Mobile Documents``.
+_CLOUDDOCS_LINKED = ("Desktop", "Documents")
+
+
 def synced_root(path: Path) -> str | None:
-    """The sync service whose folder holds `path`, by the path patterns the
-    clients use, or None. iCloud Drive keeps ``~/Library/Mobile Documents``;
-    macOS File Provider clients (Dropbox, OneDrive, Google Drive and others
-    since macOS 12.3) keep ``~/Library/CloudStorage/<provider>``; the older
-    clients and the Windows ones keep a folder named for the service. A
-    synced folder under another name is not seen."""
+    """The sync service whose folder holds `path`, or None.
+
+    The filesystem is asked first, on the path with its links resolved, so
+    a store reached through a link into a synced folder is seen: on macOS
+    the File Provider attribute on the path or an ancestor (iCloud Drive,
+    with "Desktop & Documents Folders" on ``~/Documents`` and
+    ``~/Desktop`` themselves, and the File Provider clients), and the
+    links iCloud Drive keeps to the folders it syncs in place; on Windows
+    a cloud files placeholder's reparse tag or attributes on the path or an
+    ancestor. The folder names the clients use stay as the fallback, on
+    the resolved path and then on the path as given: iCloud Drive's
+    ``~/Library/Mobile Documents``, the File Provider clients'
+    ``~/Library/CloudStorage/<provider>``, and the folders the older
+    clients and the Linux ones name for the service. A sync client that
+    marks nothing and keeps a folder under another name is still not
+    seen."""
+    resolved = _resolved(path)
+    for candidate in (resolved, *resolved.parents):
+        marked = _sync_marker(candidate)
+        if marked is not None:
+            return marked
+    linked = _icloud_linked_root(resolved)
+    if linked is not None:
+        return linked
+    named = _synced_by_name(resolved)
+    if named is None and resolved != path:
+        named = _synced_by_name(path)
+    return named
+
+
+def _resolved(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path
+
+
+def _lstat(path: Path) -> Any:
+    """`os.lstat`, or None where `path` cannot be read: a module function so
+    the Windows attributes can be faked on any platform in a test."""
+    try:
+        return os.lstat(path)
+    except (OSError, ValueError):
+        return None
+
+
+def _sync_marker(path: Path) -> str | None:
+    """The service the filesystem marks `path` itself as synced by: the
+    Windows cloud files tag or attributes, or the macOS File Provider
+    attribute. None for a path that does not exist or carries neither."""
+    st = _lstat(path)
+    if st is None:
+        return None
+    if _cloud_files(st):
+        return "Windows cloud files"
+    domain = _file_provider_domain(path)
+    if domain is None:
+        return None
+    if domain.startswith("com.apple.CloudDocs"):
+        return "iCloud Drive"
+    return f"File Provider ({domain.split('/', 1)[0][:80]})"
+
+
+def _cloud_files(st: Any) -> bool:
+    """Whether a stat result is a Windows cloud files placeholder: the
+    ``IO_REPARSE_TAG_CLOUD`` family, or a recall, pinned or unpinned
+    attribute. Both fields exist on Windows only, and read as 0 elsewhere."""
+    tag = int(getattr(st, "st_reparse_tag", 0) or 0)
+    attributes = int(getattr(st, "st_file_attributes", 0) or 0)
+    if tag and tag & _IO_REPARSE_TAG_CLOUD_MASK == _IO_REPARSE_TAG_CLOUD:
+        return True
+    return bool(attributes & _CLOUD_FILE_ATTRIBUTES)
+
+
+def _file_provider_domain(path: Path) -> str | None:
+    """The value of `_FILE_PROVIDER_XATTR` on `path`, or None when it is
+    absent or cannot be read, and always None off macOS, where no sync
+    client sets it. Python's `os` has no extended attribute calls on
+    macOS, so libc's ``getxattr`` is called directly."""
+    if sys.platform != "darwin":
+        return None
+    import ctypes
+
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        getxattr = libc.getxattr
+    except (OSError, AttributeError):
+        return None
+    getxattr.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int,
+    ]
+    getxattr.restype = ctypes.c_ssize_t
+    name = _FILE_PROVIDER_XATTR.encode()
+    target = os.fsencode(path)
+    size = getxattr(target, name, None, 0, 0, 0)
+    if size < 0:
+        return None
+    buffer = ctypes.create_string_buffer(max(1, min(size, _XATTR_VALUE_CAP)))
+    read = getxattr(target, name, buffer, len(buffer), 0, 0)
+    value = buffer.raw[:read].rstrip(b"\0") if read > 0 else b""
+    return value.decode("utf-8", errors="replace") or "unnamed domain"
+
+
+def _icloud_linked_root(path: Path) -> str | None:
+    """The iCloud Drive service when `path` is in a folder iCloud
+    Drive syncs in place: the target of its ``Desktop`` or
+    ``Documents`` link under ``~/Library/Mobile Documents/com~apple~CloudDocs``.
+    A second witness beside the File Provider attribute, for a folder whose
+    attribute this account cannot read."""
+    try:
+        base = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+    except (RuntimeError, OSError):
+        return None
+    for name in _CLOUDDOCS_LINKED:
+        link = base / name
+        try:
+            if not link.is_symlink():
+                continue
+            root = Path(os.path.realpath(link))
+        except (OSError, ValueError):
+            continue
+        if path == root or root in path.parents:
+            return "iCloud Drive (Desktop & Documents)"
+    return None
+
+
+def _synced_by_name(path: Path) -> str | None:
+    """The service a folder name on `path` belongs to, or None."""
     parts = [part.lower() for part in path.parts]
     for index in range(len(parts) - 1):
         if parts[index] == "library" and parts[index + 1] == "mobile documents":
