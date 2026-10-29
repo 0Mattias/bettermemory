@@ -2240,6 +2240,28 @@ follows the candidates' testing.
   `src/bettermemory/cli/log_cmd.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_rewind.py`,
   `tests/test_log_export.py`)
+- **A restore's plan counts the rows a crash left in the store's WAL.**
+  `backup._log_end` and `backup._current_store_id` read the store at the
+  restore's path with `immutable=1`, the main file alone: rows written
+  since the last checkpoint and still only in the `-wal` a killed process
+  left were not seen, so the plan's and the record's `log_end_before`
+  stopped at the last checkpoint, and a store whose first rows were only
+  in its `-wal` read as no store, so the restore recorded no end for it at
+  all. Both now read in one connection through the read-only commands'
+  open (`store_schema.connect_read_only`): in place where that creates
+  nothing (a store with its `-wal` and `-shm`, a rollback-journal file),
+  else from a private copy of the file and its `-wal`, removed after the
+  read; nothing is created beside the store, no lock is taken on it, and
+  the file is admitted first, so one every opener refuses reads as no
+  store. `immutable=1` is no longer used on the live store by `backup`
+  (`_read_only_uri` loses the flag). A restore reads its store this way
+  once for the plan and once after taking the restore lock, and the bound
+  store, when it reads one, as often: a closed WAL-mode store is copied
+  for each read, as the read-only commands copy it. This closes the
+  `backup` half of this release's note that the key ring's binding check
+  and `backup` still read the live file `immutable=1`.
+  (`src/bettermemory/backup.py`, `SECURITY.md`,
+  `tests/test_restore_crash_wal.py`, `tests/test_sqlite_uri.py`)
 
 #### Known limitations
 
@@ -2506,15 +2528,15 @@ follows the candidates' testing.
   membership tables; their modules were outside this change. The
   read-only commands still refuse a backup bundle's snapshot, which their
   open would leave as it is, as every other command does.
-- **The key ring's binding check and `backup` still read the live file
+- **The key ring's binding check still reads the live file
   `immutable=1`.** `store_keys._store_id_at` reads a bound store file
   that has no `-wal` and `-shm` with `immutable=1`, and falls back to it
-  after `mode=ro`; `backup._current_store_id` and `backup._log_end` read
-  the store that way too. A daemon that opens and checkpoints the file
-  during such a read can hand it a torn page: for the binding check that
-  reads as SQLITE_CORRUPT, so as no store, and releases the ring. Moving
-  them onto the read-only open reaches into `backup.py` and the binding
-  check's refusal rules, outside this change.
+  after `mode=ro`. A daemon that opens and checkpoints the file during
+  such a read can hand it a torn page: that reads as SQLITE_CORRUPT, so
+  as no store, and releases the ring. Moving it onto the read-only open
+  reaches into the binding check's refusal rules, outside this change.
+  (`backup`'s reads of the store id and the log's end moved onto the
+  read-only open in this release.)
 - **A rollback-journal store with a hot journal is not read.** A crash in
   the middle of a write leaves a `-journal` that only a writing open can
   roll back, so the read-only commands report the store unreadable until

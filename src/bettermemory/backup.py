@@ -331,9 +331,8 @@ def _tighten_wal_siblings(path: Path) -> None:
                 os.chmod(sibling, 0o600)
 
 
-def _read_only_uri(path: Path, *, immutable: bool = False) -> str:
-    uri = sqlite_file_uri(path.resolve()) + "?mode=ro"
-    return uri + "&immutable=1" if immutable else uri
+def _read_only_uri(path: Path) -> str:
+    return sqlite_file_uri(path.resolve()) + "?mode=ro"
 
 
 @contextlib.contextmanager
@@ -1079,12 +1078,55 @@ def _aside_base(store_file: Path, stamp: str) -> Path:
         counter += 1
 
 
+def _store_facts(store_file: Path) -> tuple[str | None, int | None]:
+    """The store id and the last seq of the log in the store file at
+    `store_file`, each None when there is no store file, no such row, or
+    the file does not read.
+
+    Read in one connection through `store_schema.connect_read_only`, the
+    read-only commands' open: in place with ``mode=ro`` where that creates
+    nothing (a rollback-journal file without a ``-wal``, a store with its
+    ``-wal`` and ``-shm`` beside it), else from a private copy of the file
+    and of its ``-wal``, removed here. Rows a crash left only in the
+    ``-wal`` count, no ``-wal`` or ``-shm`` is created beside the store, no
+    lock is taken on it, and the file is admitted first as every opener
+    admits it: one every opener refuses reads as neither. ``immutable=1``
+    on the live file, which these reads used, saw none of a ``-wal``'s
+    rows (the log's end stopped at the last checkpoint, and a store whose
+    first rows were only in its ``-wal`` had no id) and could read a page
+    a checkpoint was writing."""
+    from .store import CLI_BUSY_TIMEOUT_SECONDS
+    from .store_schema import connect_read_only
+
+    if not store_file.is_file():
+        return None, None
+    try:
+        conn, scratch = connect_read_only(store_file, timeout=CLI_BUSY_TIMEOUT_SECONDS)
+    except (sqlite3.Error, ValueError, OSError):
+        return None, None
+    store_id: str | None = None
+    end: int | None = None
+    try:
+        with contextlib.suppress(sqlite3.Error):
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'store_id'"
+            ).fetchone()
+            store_id = None if row is None else str(row[0])
+        with contextlib.suppress(sqlite3.Error):
+            row = conn.execute("SELECT MAX(seq) FROM log").fetchone()
+            if row is not None and type(row[0]) is int:
+                end = row[0]
+    finally:
+        conn.close()
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
+    return store_id, end
+
+
 def _log_end(store_file: Path) -> int | None:
-    """The last seq of the log in the store file at `store_file`, read as
-    `_current_store_id` reads its id (``immutable=1``: no ``-wal`` or
-    ``-shm`` is created and no lock taken, and rows still only in a WAL a
-    crash left behind are not seen); None when there is no store, its log
-    is empty or it cannot be read that way.
+    """The last seq of the log in the store file at `store_file`, rows
+    still only in a ``-wal`` a crash left behind included (`_store_facts`);
+    None when there is no store, its log is empty or it does not read.
 
     Recorded beside the head checkpoint the restore replaced. A head that
     was missing (deleted in the `origin_mismatch` recovery, or a keys
@@ -1092,52 +1134,25 @@ def _log_end(store_file: Path) -> int | None:
     log left the range the restore rewound unknown to
     `audit_export.rewinds_across`, and an export cursor inside it was not
     warned about."""
-    if not store_file.is_file():
-        return None
-    try:
-        conn = sqlite3.connect(
-            _read_only_uri(store_file, immutable=True), uri=True, isolation_level=None
-        )
-    except sqlite3.Error:
-        return None
-    try:
-        row = conn.execute("SELECT MAX(seq) FROM log").fetchone()
-    except sqlite3.Error:
-        return None
-    finally:
-        conn.close()
-    value = None if row is None else row[0]
-    return value if type(value) is int else None
+    return _store_facts(store_file)[1]
 
 
 def _current_store_id(store_file: Path) -> str | None:
-    """The id of the store at `store_file`, read with ``immutable=1`` so the
-    read creates no ``-wal`` or ``-shm`` and takes no lock; None when there
-    is no store or its meta cannot be read that way (a store whose first
-    rows are still only in its WAL). Shown in the plan, never acted on."""
-    if not store_file.is_file():
-        return None
-    try:
-        conn = sqlite3.connect(
-            _read_only_uri(store_file, immutable=True), uri=True, isolation_level=None
-        )
-    except sqlite3.Error:
-        return None
-    try:
-        row = conn.execute("SELECT value FROM meta WHERE key = 'store_id'").fetchone()
-    except sqlite3.Error:
-        return None
-    finally:
-        conn.close()
-    return None if row is None else str(row[0])
+    """The id of the store at `store_file`, a ``-wal`` a crash left behind
+    included (`_store_facts`); None when there is no store or its meta does
+    not read."""
+    return _store_facts(store_file)[0]
 
 
 def _replaced_log_end(
-    store_file: Path, store_id: str, current_store_id: str | None, bound: Path | None
+    store_file: Path,
+    store_id: str,
+    facts: tuple[str | None, int | None],
+    bound: Path | None,
 ) -> dict[str, Any] | None:
     """Where the log this restore replaces ended, as ``{seq, path}`` (the
     file it was read from), or None when no copy of the store on this host
-    says.
+    says. `facts` is `_store_facts(store_file)`, read by the caller.
 
     The store at `store_file` when it holds `store_id`; else the file the
     key ring is bound to (`bound`) when that is another file that holds
@@ -1150,19 +1165,18 @@ def _replaced_log_end(
     is another store's log and says nothing of this one's. With neither,
     and no head checkpoint, the host held no copy of the store, and the
     record says so by naming neither end."""
-    sources = [store_file] if current_store_id == store_id else []
-    if bound is not None and current_store_id != store_id:
-        with contextlib.suppress(OSError):
-            elsewhere = not (
-                store_file.exists() and os.path.samefile(bound, store_file)
-            )
-            if elsewhere and _current_store_id(bound) == store_id:
-                sources.append(bound)
-    for source in sources:
-        end = _log_end(source)
-        if end is not None:
-            return {"seq": end, "path": str(source)}
-    return None
+    found, end = facts
+    if found == store_id:
+        return None if end is None else {"seq": end, "path": str(store_file)}
+    if bound is None:
+        return None
+    with contextlib.suppress(OSError):
+        if store_file.exists() and os.path.samefile(bound, store_file):
+            return None
+    found, end = _store_facts(bound)
+    if found != store_id or end is None:
+        return None
+    return {"seq": end, "path": str(bound)}
 
 
 def _key_actions(
@@ -1554,7 +1568,8 @@ def restore_bundle(
             return report
         aside = _aside_base(store_file, stamp)
         before = live.read_head()
-        current_store_id = _current_store_id(store_file)
+        facts = _store_facts(store_file)
+        current_store_id = facts[0]
         origin = parse_origin(verification["origin"])
         origin_before = live.read_origin()
         try:
@@ -1563,7 +1578,7 @@ def restore_bundle(
             bound = None
         binding_before = _path_str(bound)
         binding_after = str(store_file.resolve())
-        log_end = _replaced_log_end(store_file, store_id, current_store_id, bound)
+        log_end = _replaced_log_end(store_file, store_id, facts, bound)
         record = restore_record_path(keys_root, store_id)
         report["plan"] = {
             "current_store_id": current_store_id,
@@ -1600,7 +1615,9 @@ def restore_bundle(
         stack.callback(_release_restore_lock, held, report, swapped)
         # Read again now that no process has the store open: a writer that
         # closed after the plan was read may have moved the log on.
-        log_end = _replaced_log_end(store_file, store_id, current_store_id, bound)
+        log_end = _replaced_log_end(
+            store_file, store_id, _store_facts(store_file), bound
+        )
         report["status"] = FAILED
         moved: list[dict[str, str]] = report["moved_aside"]
         try:

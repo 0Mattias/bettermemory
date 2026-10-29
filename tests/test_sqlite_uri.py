@@ -287,7 +287,7 @@ def _run_site(site: str, path: Path, store_id: str) -> None:
 SITES: dict[str, ModuleType] = {
     "store": store_keys,
     "posture": store_schema,
-    "backup": backup,
+    "backup": store_schema,
     "daemon": daemon_module,
 }
 
@@ -319,7 +319,8 @@ def test_every_query_opener_names_its_file_through_the_helper(
     the file they were given. Each runs after a read through the helper,
     as the Windows tests below run it. The audit reads through the
     read-only commands' open (`store_schema.connect_read_only`), which
-    names the private copy it reads a closed store from."""
+    names the private copy it reads a closed store from, and so do the
+    backup's reads of the store id and the log's end."""
     path, store_id = _created_store((tmp_path / "store").resolve())
     seen: list[PurePath] = []
 
@@ -331,7 +332,7 @@ def test_every_query_opener_names_its_file_through_the_helper(
     _read_then_run_site(site, path, path, store_id)
     assert seen
     for target in seen:
-        copied = site == "posture" and target.parent.name.startswith(
+        copied = site in ("posture", "backup") and target.parent.name.startswith(
             "bettermemory-read-"
         )
         assert target == path or (copied and target.name == STORE_FILENAME), target
