@@ -36,8 +36,8 @@ from urllib.parse import urlparse
 # (GitLab installed under a relative URL root, smart-HTTP behind Apache's
 # '/git/') are DELIBERATELY not stripped: an arbitrary prefix is
 # syntactically indistinguishable from an owner or subgroup, and stripping
-# it would merge distinct projects — the cross-project leakage this module
-# fails closed against. Those remotes mismatch their SSH form (a false
+# it would merge distinct projects — the cross-project leakage the origin
+# match fails closed against. Those remotes mismatch their SSH form (a false
 # negative, the tolerated direction) rather than risk a false positive.
 
 # Host charset excludes '/' (so slash-before-colon local paths like

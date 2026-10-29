@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _caches, _response, githead, origin, verify
+from bettermemory import _caches, _response, githead, origin, origin_gitfiles, verify
 from bettermemory._response import ResponseBuilder
 from bettermemory.admission import CountedRecords
 from bettermemory.config import Config, StorageConfig
@@ -2065,7 +2065,7 @@ def test_the_repository_config_is_parsed_once_per_stamp(
         parsed.append(len(data))
         return real(data)
 
-    monkeypatch.setattr(origin, "_config_variable_names", counted)
+    monkeypatch.setattr(origin_gitfiles, "_config_variable_names", counted)
     for _ in range(3):
         out, _ = _attach(memories, caller, monkeypatch)
     assert _counts(out, ids) == [0, 0]
@@ -2981,7 +2981,15 @@ def test_the_index_reader_reads_on_past_its_first_read(
     an index whose entries before .gitmodules outrun the first read is read
     as git lists it. The first read is shrunk to 64 bytes here, and 3,000
     dotted names sort before .gitmodules."""
-    monkeypatch.setattr(origin, "_INDEX_FIRST_READ", 64)
+    monkeypatch.setattr(origin_gitfiles, "_INDEX_FIRST_READ", 64)
+    reads: list[int] = []
+    read_prefix = origin_gitfiles._read_prefix
+
+    def recorded(fd: int, length: int) -> bytes:
+        reads.append(length)
+        return read_prefix(fd, length)
+
+    monkeypatch.setattr(origin_gitfiles, "_read_prefix", recorded)
     repo = _repo(tmp_path)
     _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
     blob = _git(repo, "rev-parse", "HEAD:a.txt")
@@ -3002,6 +3010,7 @@ def test_the_index_reader_reads_on_past_its_first_read(
     assert (repo / ".git" / "index").stat().st_size > 64 * 4**3
     listed = _git(repo, "ls-files", "-s", "--", ".gitmodules").split()
     assert origin._index_gitmodules(gd) == (int(listed[0], 8), listed[1])
+    assert reads[:2] == [64, 64 * 4], "premise: the first read was shrunk"
 
 
 @files_only

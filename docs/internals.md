@@ -891,9 +891,11 @@ the store's `trust_rows` supplies the provenance label and this host's
 stamp. The warm daemon's caches sit on this path and keep every answer
 bit-identical: `origin.py` keeps the captured origin per directory for
 ten minutes under a signature of the repository's HEAD bytes, config
-and environment, validated on every lookup; `_response.py` and
-`origin.py` memoise the commit-drift work per repository root and
-commit HEAD names, which `githead.py`
+and environment, validated on every lookup (`origin_gitfiles.py` reads
+the config, the index's `.gitmodules` entry and the file signatures
+those memos key on, and `origin_remote.py` parses the remote URL);
+`_response.py` and `origin.py` memoise the commit-drift work per
+repository root and commit HEAD names, which `githead.py`
 reads from the repository files without a git process; `search.py`
 memoises the token streams per body and scopes. Every cache registers
 its clearer with `_caches.py`, and `_caches.clear_all` empties them.

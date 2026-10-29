@@ -122,6 +122,23 @@ the candidates' testing.
   reads it. (`src/bettermemory/search.py`,
   `src/bettermemory/search_lexicon.py`, `src/bettermemory/search_bm25.py`,
   `src/bettermemory/search_lane.py`, `src/bettermemory/search_dedup.py`)
+- **`origin.py` is split into three modules, with no import path changed.**
+  `origin.py` was 2,964 lines, over the 2,000-line bound for a module.
+  The repository files it reads without a git process (git's config
+  parser with its per-file memo, the root as git spells it, the index's
+  `.gitmodules` entry with its memo, the decoder of git's C-quoted patch
+  headers, and the file signatures the commit-drift memos key on) move to
+  `origin_gitfiles.py` (1,022 lines), and the remote URL parser behind
+  `repos_match` to `origin_remote.py` (198 lines), each unchanged.
+  `origin.py` (1,821 lines) keeps the capture and its cache,
+  `capture_caller`, every git call with the walk and timestamp memos, and
+  the origin tests the membership guard pins to it, and re-exports every
+  moved name a caller reads, so `from bettermemory.origin import ...`
+  resolves as before. A test that patches `_config_variable_names` or
+  `_INDEX_FIRST_READ` patches `origin_gitfiles`, where their readers are.
+  (`src/bettermemory/origin.py`, `src/bettermemory/origin_gitfiles.py`,
+  `src/bettermemory/origin_remote.py`, `tests/test_commit_drift_cache.py`,
+  `docs/internals.md`, `SECURITY.md`)
 
 #### Fixed
 
