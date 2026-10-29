@@ -90,20 +90,20 @@ def admit_recall(
     suppression. Every hit is a candidate since rs-v6 (RS-F7 part 0);
     until then only the medium and high ones were."""
     with self._call():
-        homes = self.homes(hits)
+        hit_homes = self.homes(hits)
         delivered: list[str] = []
         suppressed: list[tuple[str, str]] = []
         for rid in hits:
-            home = homes.get(rid)
-            if home is None:
+            hit_home = hit_homes.get(rid)
+            if hit_home is None:
                 suppressed.append((rid, "no_home"))
                 continue
-            if admitted(admission, home, caller):
+            if admitted(admission, hit_home, caller):
                 delivered.append(rid)
-            elif home.unresolved:
+            elif hit_home.unresolved:
                 suppressed.append((rid, UNRESOLVED))
             else:
-                suppressed.append((rid, relation(home, caller)))
+                suppressed.append((rid, relation(hit_home, caller)))
         if suppressed and not delivered:
             self._event(
                 "recall_suppressed",
@@ -141,9 +141,11 @@ def handoff(
     self._projects = None
     if caller.checkout is None:
         return Handoff(None, "no_checkout")
-    homes = self.homes([e.id for e in episodes])
+    episode_homes = self.homes([e.id for e in episodes])
     own = [
-        e for e in episodes if (h := homes.get(e.id)) and h.checkout == caller.checkout
+        e
+        for e in episodes
+        if (h := episode_homes.get(e.id)) and h.checkout == caller.checkout
     ]
     if own:
         session_id = max(own, key=lambda e: e.created).session_id
@@ -159,7 +161,7 @@ def handoff(
     pool: list[tuple[EpisodeRef, Checkout, str]] = []
     cache: dict[str, Checkout] = {}
     for e in episodes:
-        h = homes.get(e.id)
+        h = episode_homes.get(e.id)
         if h is None or h.checkout is None or h.project != project:
             continue
         k = cache.get(h.checkout) or self.checkout(h.checkout)
@@ -200,24 +202,24 @@ def anchor(
     checkout of the same project, else any live checkout of the project
     (stand-ins, which confirm by presence and never convict); else
     nowhere, said so."""
-    home = self.home(record_id)
-    if home is None or home.project == GLOBAL:
+    record_home = self.home(record_id)
+    if record_home is None or record_home.project == GLOBAL:
         return None, "global_record"
-    if home.checkout is not None:
-        live = self.live_view(self.checkout(home.checkout))
+    if record_home.checkout is not None:
+        live = self.live_view(self.checkout(record_home.checkout))
         if live is not None:
             return live, "home_checkout"
     if (
         caller is not None
         and caller.checkout is not None
         and caller.project is not None
-        and self.canonical(caller.project) == home.project
+        and self.canonical(caller.project) == record_home.project
     ):
         live = self.live_view(self.checkout(caller.checkout))
         if live is not None:
             return live, "caller_checkout_same_project"
     for k in sorted(
-        self._checkouts_of(home.project), key=lambda k: (k.kind != PRIMARY, k.id)
+        self._checkouts_of(record_home.project), key=lambda k: (k.kind != PRIMARY, k.id)
     ):
         live = self.live_view(k)
         if live is not None:

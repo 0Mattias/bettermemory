@@ -10,7 +10,9 @@ named by the design section 7 row they decide where one applies.
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import inspect
 import itertools
 import json
 import os
@@ -2677,3 +2679,33 @@ def test_b17_the_model_decides_where_an_init_was_made(world: World) -> None:
         root.checkout,
     )
     assert part.chain == (done.project, root.project)
+
+
+def test_the_queries_bind_no_local_named_after_a_query() -> None:
+    """`membership_queries` defines methods the family binds by name
+    (`home`, `homes`, `anchor` ...). A local or parameter of the same name
+    inside one of them hides the module's function from its reader, and
+    reads as a use of it to the scan `tests/test_patch_targets.py` makes of
+    what a module reads."""
+    from bettermemory import membership_queries
+
+    tree = ast.parse(inspect.getsource(membership_queries))
+    defined = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    shadowed: list[tuple[str, str]] = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                name = node.id
+            elif isinstance(node, ast.arg):
+                name = node.arg
+            else:
+                continue
+            if name in defined:
+                shadowed.append((fn.name, name))
+    assert shadowed == []
