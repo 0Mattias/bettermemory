@@ -540,6 +540,14 @@ class MarkerStats:
         the blocks-overridden fraction, compare `override_count` with
         `fire_count` directly.
 
+        Both counts come off the same path since 9.0.0rc14 (ENG-108): the
+        fire and the override are each an audit row
+        (`events.OVERRIDABLE_REFUSALS`, `events.is_audit_row`), recorded
+        with telemetry off and retried against a busy store. Before, the
+        fires were telemetry and the overrides were not, so a store with
+        telemetry off read 1.000 for every marker it had seen overridden.
+        A log written before then with telemetry off still holds no fires.
+
         High value = caller routinely rubber-stamps `acknowledge_transient`,
         which is the signal that the marker is producing too many false
         positives. Trim it — `durability.SHA_MARKER` is the worked example

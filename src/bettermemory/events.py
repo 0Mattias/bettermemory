@@ -141,20 +141,51 @@ _ACKNOWLEDGED_SUFFIX = "_acknowledged"
 #: the user or the organisation took away.
 AUDIT_STATUSES: frozenset[str] = frozenset({"policy_refused"})
 
+#: The gate refusals an escape hatch passes, by status, each with the
+#: hatch that passes it: the fire side of an override, as `forced` and the
+#: `*_acknowledged` fields on a committed row are its other side. A row of
+#: `OVERRIDE_EVIDENCE_KINDS` with one of these statuses is an audit row
+#: (ENG-108), so both sides travel the same path: recorded whatever
+#: `[telemetry] enabled` says and tried again against a busy store. Before
+#: 9.0.0rc14 the refusals were measurement and the overrides audit rows, so
+#: health's override rate (`health_model.MarkerStats`: overrides over fires
+#: plus overrides) read 1.0 with telemetry off, every fire dropped and every
+#: override kept, and above its true value whenever a busy store dropped a
+#: fire. A refusal no flag passes (`control_token_warning`, an update's
+#: `stale`) is no fire and stays measurement.
+OVERRIDABLE_REFUSALS: Mapping[str, str] = MappingProxyType(
+    {
+        "credential_warning": "acknowledge_credential",
+        "duplicate": "force",
+        "previously_removed": "force",
+        "scope_mismatch": "acknowledge_scope_mismatch",
+        "transient_warning": "acknowledge_transient",
+        "truncation_warning": "acknowledge_truncation",
+        "user_claim_warning": "acknowledge_user_claim",
+    }
+)
+
 
 def is_audit_row(kind: str, fields: Mapping[str, Any]) -> bool:
     """Whether a `kind` row with `fields` is an audit row, recorded with
     telemetry off: a standing guard row, a write or update that used
     an escape hatch (`force=True`, or an acknowledge flag that waved a
-    gate's hit through), or one `[policy]` refused (`AUDIT_STATUSES`).
-    Read on the fields as the handler passes them, so a new
-    `*_acknowledged` field on either kind is covered without a second
-    list to keep in step."""
+    gate's hit through), a refusal such a hatch passes
+    (`OVERRIDABLE_REFUSALS`), or one `[policy]` refused
+    (`AUDIT_STATUSES`). Read on the fields as the handler passes them,
+    so a new `*_acknowledged` field on either kind is covered without a
+    second list to keep in step, and safe on a row read back from a
+    hand-edited log (a status that is not a string is no status)."""
     if kind in AUDIT_KINDS:
         return True
     if kind not in OVERRIDE_EVIDENCE_KINDS:
         return False
-    if fields.get("forced") is True or fields.get("status") in AUDIT_STATUSES:
+    status = fields.get("status")
+    if isinstance(status, str) and (
+        status in AUDIT_STATUSES or status in OVERRIDABLE_REFUSALS
+    ):
+        return True
+    if fields.get("forced") is True:
         return True
     return any(
         bool(value)
@@ -610,6 +641,7 @@ __all__ = [
     "HARNESS_SESSION_FIELD",
     "HARNESS_STAMPED_KINDS",
     "MEASUREMENT_KINDS",
+    "OVERRIDABLE_REFUSALS",
     "OVERRIDE_EVIDENCE_KINDS",
     "REVIEW_ANSWER_KINDS",
     "REVIEW_ID_FIELD",

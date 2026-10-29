@@ -75,6 +75,9 @@ def _report(text: str) -> str:
                 "ts": "2026-04-01T00:00:00Z",
                 "session": "s",
                 "kind": "write",
+                # A fire as the transient gate records it (ENG-108: health
+                # counts a fire off a refusal row, `events.row_class`).
+                "status": "transient_warning",
                 "markers": [f"marker{text}"],
             }
         ],

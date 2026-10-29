@@ -2019,6 +2019,31 @@ follows the candidates' testing.
   `src/bettermemory/handlers/write_gates.py`, `SECURITY.md`,
   `docs/internals.md`, `tests/test_audit_rows.py`, and
   `tests/test_policy.py`, whose two refusal tests pinned the empty log)
+- **Health's override rate counts both sides on the same path
+  (ENG-108).** A marker's rate is its overrides (a commit carrying
+  `markers_acknowledged`) over its fires (a `transient_warning` refusal
+  carrying `markers`) plus its overrides. The overrides were audit rows
+  since 9.0.0rc12 and the fires were telemetry, so with `[telemetry]
+  enabled = false` a marker blocked once and overridden once read 1.000,
+  every fire dropped and every override kept, where the true reading is
+  0.500; with telemetry on, a fire that met another writer's lock was
+  dropped and the rate read high. Reproduced on this branch's base and
+  fixed: every gate refusal an escape hatch passes
+  (`events.OVERRIDABLE_REFUSALS`: `credential_warning`,
+  `transient_warning`, `user_claim_warning`, `scope_mismatch`,
+  `duplicate`, `previously_removed` and an update's
+  `truncation_warning`, each with its hatch) is now an audit row,
+  recorded with telemetry off and retried against a busy store, and
+  health counts both sides only off rows of the state class
+  (`events.row_class`). A refusal no flag passes
+  (`control_token_warning`, an update's `stale`) stays measurement. A
+  log written before this release with telemetry off still holds no
+  fires. `events.is_audit_row` reads a status that is not a string as no
+  status, so a hand-edited row cannot take health down.
+  (`src/bettermemory/events.py`, `src/bettermemory/health_stats.py`,
+  `src/bettermemory/health_model.py`, `tests/test_override_rate.py`,
+  and `tests/test_health_render.py`, whose fire row now carries the
+  status every fire has carried since the gate was written)
 
 #### Known limitations
 

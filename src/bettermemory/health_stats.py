@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .durability import canonical_marker
-from .events import _event_id_list
+from .events import RowClass, _event_id_list, row_class
 from .models import Memory, first_summary_line
 from .origin import ReachableWalk, commits_since_anchor
 from .claims import load_claims
@@ -459,6 +459,17 @@ class _StatsAccumulator:
         # onto the canonical one. Without it the fires and overrides this
         # rollup exists to compare stay split across a row per commit, and
         # the highest-volume marker class in the store reads as noise.
+        #
+        # Both sides are counted off the one path (ENG-108): a fire is a
+        # refusal an escape hatch passes (`events.OVERRIDABLE_REFUSALS`), an
+        # override a commit carrying the hatch's evidence, and both are
+        # state rows (`events.row_class`), recorded whatever `[telemetry]
+        # enabled` says and retried against a busy store. A row of another
+        # class is neither side, so a pair the writer recorded under two
+        # rules can never be divided here again: that is how telemetry off
+        # read 1.0, every fire dropped and every override kept.
+        if row_class("write", ev) is not RowClass.STATE:
+            return
         for marker in _event_id_list(ev.get("markers")):
             self._marker_fires[canonical_marker(marker)] += 1
         for marker in _event_id_list(ev.get("markers_acknowledged")):
