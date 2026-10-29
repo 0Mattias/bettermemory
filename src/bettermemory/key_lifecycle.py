@@ -323,6 +323,36 @@ def describe(store_file: Path, *, keys_dir: Path | None = None) -> dict[str, Any
 # ---------------------------------------------------------------------------
 
 
+def export_exposure(out: Path) -> list[str]:
+    """Why the export at ``out`` sits where keys should not, as warnings
+    (cold review L6): in a git working tree, found from the repository's
+    files (`githead.locate`, which runs no git), ignored or not, since one
+    `git add` puts every key of the store in the repository's history and
+    keys belong in no working tree; in a synced folder
+    (`posture.synced_root`), from which the keys leave this host. Empty
+    when neither; the export is written either way."""
+    from . import githead
+    from .posture import synced_root
+
+    directory = out.parent
+    warnings: list[str] = []
+    held = githead.locate(directory)
+    if held is not None:
+        warnings.append(
+            f"{out} is inside the git working tree at {held.worktree_root}: "
+            "one `git add` puts every key of the store in the repository's "
+            "history; keep the export outside any working tree"
+        )
+    service = synced_root(directory)
+    if service is not None:
+        warnings.append(
+            f"{out} is in a {service} folder: the keys leave this host with "
+            "whatever the provider sees; keep the export where only you can "
+            "read it"
+        )
+    return warnings
+
+
 def export_keys(
     store_file: Path,
     out: Path,
@@ -337,9 +367,11 @@ def export_keys(
     the store's rows. Refused for a store whose ring is bound to another
     file, a key file this user cannot read, and a ring that holds no key.
     The caller has checked that ``out`` is not the store's own file or in
-    the keys directory. Changes nothing in the ring or the store."""
+    the keys directory. ``warnings`` names a git working tree or a synced
+    folder ``out`` is in (`export_exposure`); the export is written all
+    the same. Changes nothing in the ring or the store."""
     root = keys_root(keys_dir)
-    report = _report("export", store_file, out=str(out), keys=[])
+    report = _report("export", store_file, out=str(out), keys=[], warnings=[])
     refusal = _bundle_refusal(store_file)
     if refusal is not None:
         return _refused(report, refusal)
@@ -384,6 +416,7 @@ def export_keys(
     report["status"] = DONE
     report["store_id"] = store_id
     report["keys"] = [{"fingerprint": fp, "current": c} for fp, _, c in keys]
+    report["warnings"] = export_exposure(out)
     return report
 
 
@@ -1649,6 +1682,7 @@ __all__ = [
     "clear_orphan_rings",
     "daemon_locks",
     "describe",
+    "export_exposure",
     "export_keys",
     "import_keys",
     "keys_root",

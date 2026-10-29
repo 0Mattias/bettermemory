@@ -53,8 +53,10 @@ def add_subparser(
         "the keys directory is not: `key import FILE` files them back. "
         "Whoever holds the file can sign the store's rows. Refused when the "
         "ring is bound to another store file, a key file cannot be read, or "
-        "FILE is the store's own file or in the keys directory. Writes no "
-        "row. Exit 0 written, 1 refused, 2 no store or a bad --out."
+        "FILE is the store's own file or in the keys directory. Warns when "
+        "FILE is in a git working tree or a synced folder, and writes it "
+        "all the same. Writes no row. Exit 0 written, 1 refused, 2 no "
+        "store or a bad --out."
     )
     export = key_sub.add_parser("export", help=export_text, description=export_text)
     export.add_argument(
@@ -257,6 +259,8 @@ def render_change(report: dict[str, Any]) -> str:
             f"to {report['out']} (owner-only); whoever holds it can sign the "
             "store's rows"
         )
+        for warning in report.get("warnings", []):
+            lines.append(f"  warning: {warning}")
     if command == "import":
         for key in report["keys"]:
             lines.append(f"  key {key['fingerprint'][:16]}: {key['action']}")

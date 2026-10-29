@@ -17,6 +17,7 @@ import os
 import shutil
 import sqlite3
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -187,6 +188,56 @@ def test_export_refuses_a_path_in_the_keys_directory(
     assert "keys directory" in err
     assert not target.exists()
     assert _ring_files(keys_dir, store_id) == before
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_export_into_a_git_working_tree_warns_and_writes(
+    tmp_path: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An export in a working tree is one `git add` from the repository's
+    history: written, as asked, with a warning that names the tree (cold
+    review L6)."""
+    empty = tmp_path / "gitconfig"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    path, _ = _store(tmp_path / "home")
+    repo = tmp_path / "repo"
+    (repo / "notes").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True)
+    target = repo / "notes" / "keys.json"
+    code, out, _ = _cli(
+        ["key", "export", "--out", str(target)], path.parent, monkeypatch, capsys
+    )
+    assert code == 0
+    assert target.exists()
+    assert "warning:" in out
+    assert "git working tree at" in out
+    report = lifecycle.export_keys(path, target)
+    assert report["status"] == "done"
+    [warning] = report["warnings"]
+    assert f"git working tree at {repo.resolve()}" in warning
+
+
+def test_export_into_a_synced_folder_warns_and_a_plain_one_does_not(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    path, _ = _store(tmp_path / "home")
+    synced = tmp_path / "Dropbox" / "keys.json"
+    synced.parent.mkdir()
+    report = lifecycle.export_keys(path, synced)
+    assert report["status"] == "done"
+    [warning] = report["warnings"]
+    assert "in a Dropbox folder" in warning
+    assert "leave this host" in warning
+    plain = tmp_path / "kept" / "keys.json"
+    plain.parent.mkdir()
+    report = lifecycle.export_keys(path, plain)
+    assert report["status"] == "done"
+    assert report["warnings"] == []
 
 
 def test_a_lost_key_imports_back_as_the_current_key_without_a_rekey(

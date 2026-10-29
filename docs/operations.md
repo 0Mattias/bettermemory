@@ -492,8 +492,9 @@ it is.
 bundle holds no key, and verifies and restores only where the keys
 directory holds it. Back the keys directory up separately, to a place
 the bundles' readers cannot reach; `bettermemory key export --out FILE` writes
-one store's keys to one owner-only file for that, and `bettermemory key
-import FILE` files them back. A bundle made with `--include-key`
+one store's keys to one owner-only file for that (it warns when FILE
+is in a git working tree or a synced folder, from which the keys would
+travel), and `bettermemory key import FILE` files them back. A bundle made with `--include-key`
 carries the store's key and any retired keys its log names, and anyone
 holding it can sign rows as the store. On a machine whose keys directory
 does not hold that key it verifies `unverifiable` (`self_signed`) and

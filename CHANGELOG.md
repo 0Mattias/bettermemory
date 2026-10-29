@@ -86,7 +86,8 @@ follows the candidates' testing.
   ring holds by fingerprint (never a key), the head checkpoint and the
   origin anchor against the log (`store_keys.ring_fit`) and the binding.
   `key export --out FILE` writes every key the ring holds, current and
-  retired, as JSON owner-only; `key import FILE` files back keys from
+  retired, as JSON owner-only, warning when FILE is in a git working
+  tree or a synced folder; `key import FILE` files back keys from
   such an export, or from a key file as a keys directory holds it, each
   only when it signs a segment of the store's log: the store's own key as
   the current key when the ring has none or another (that one retired),
