@@ -465,7 +465,13 @@ def _audit_turn(
     state: RecallState | None,
     posted: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """Take `run_audit`'s arguments past its dry-run switch; return its report dict."""
+    """Take `run_audit`'s arguments past its dry-run switch; return its report dict.
+
+    The steps import their `recall` names at call time, so a name missing
+    from `recall` would raise in `_count_stop_reviews` or
+    `_settle_stop_interrupted` after the `turn_audited` and `search_miss`
+    rows have landed; every name exists in the shipped package.
+    """
     from .recall import RecallState as _RecallState
     from .recall import confirm_compaction, previous_audit_at
 
