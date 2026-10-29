@@ -741,8 +741,8 @@ def test_placeholder_paths_list_matches_frozenset() -> None:
 
 
 # Sibling pin for the prefix-form placeholder whitelist consumed by
-# the same `_is_placeholder` filter (`verify.py:473` and `:481`). The
-# `_PLACEHOLDER_PREFIXES` tuple (`verify.py:153`, `("/path/to/",
+# the same `_is_placeholder_path` filter (`verify_candidates.py`). The
+# `_PLACEHOLDER_PREFIXES` tuple (`verify_candidates.py`, `("/path/to/",
 # "~/path/to/")` — note: a tuple, not a frozenset, because the
 # `str.startswith` API accepts a tuple-of-prefixes directly) carries
 # the same hazard surface as `_PLACEHOLDER_PATHS`: a deletion turns
@@ -1039,16 +1039,21 @@ def test_oserror_during_exists_treated_as_missing(tmp_path: Path) -> None:
     """
     target = tmp_path / "some-real-looking-path"
     body = f"See `{target}` for the thing."
+    raised: list[bool] = []
 
     class _Boom:
         def expanduser(self) -> _Boom:
             return self
 
         def exists(self) -> bool:
+            raised.append(True)
             raise PermissionError("nope")
 
-    with patch("bettermemory.verify.Path", lambda _x: _Boom()):
+    with patch("bettermemory.verify_candidates.Path", lambda _x: _Boom()):
         report = detect_path_drift(body)
+    # The patch reached the existence check: `_path_exists` reads
+    # `verify_candidates.Path`, and the target is absent unpatched too.
+    assert raised, "the patched Path never reached _path_exists"
     # The candidate was checked; PermissionError -> missing bucket.
     assert str(target) in report.checked
     assert str(target) in report.missing

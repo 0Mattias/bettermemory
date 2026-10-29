@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _caches, verify
+from bettermemory import _caches, verify, verify_candidates
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.origin import Origin
 from bettermemory.verdict import memory_verdict
@@ -60,7 +60,7 @@ def counted(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         counts["anchors"] += 1
         return anchor(body, attested)
 
-    monkeypatch.setattr(verify, "_scan_candidates", scan_spy)
+    monkeypatch.setattr(verify_candidates, "_scan_candidates", scan_spy)
     monkeypatch.setattr(verify, "_anchor_paths", anchor_spy)
     return counts
 
@@ -69,7 +69,7 @@ def test_a_hit_equals_the_parse_and_runs_none(counted: dict[str, int]) -> None:
     body = "Cites `/etc/hosts` and src/pkg/mod.py beside /var/log/app.log."
     first = verify._extract_candidates(body)
     second = verify._extract_candidates(body)
-    assert first == second == verify._scan_candidates(body)
+    assert first == second == verify_candidates._scan_candidates(body)
     assert counted["candidates"] == 2  # the first call and the direct one
     anchors = commit_drift_anchor_paths(body, ["/etc/hosts"])
     assert commit_drift_anchor_paths(body, ["/etc/hosts"]) == anchors
@@ -162,10 +162,10 @@ def test_the_outputs_are_the_same_with_the_memo_on_and_off(
             for body in bodies
         ]
 
-    monkeypatch.setattr(verify, "BODY_PARSE_ENTRIES", 0)
+    monkeypatch.setattr(verify_candidates, "BODY_PARSE_ENTRIES", 0)
     off = outputs()
     assert not verify._CANDIDATES and not verify._ANCHORS
-    monkeypatch.setattr(verify, "BODY_PARSE_ENTRIES", 4096)
+    monkeypatch.setattr(verify_candidates, "BODY_PARSE_ENTRIES", 4096)
     cold = outputs()
     assert verify._CANDIDATES and verify._ANCHORS
     warm = outputs()
@@ -175,7 +175,7 @@ def test_the_outputs_are_the_same_with_the_memo_on_and_off(
 def test_the_memo_is_bounded_to_the_most_recently_used(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(verify, "BODY_PARSE_ENTRIES", 3)
+    monkeypatch.setattr(verify_candidates, "BODY_PARSE_ENTRIES", 3)
     bodies = [f"Cites `/srv/app{i}/config.toml` here." for i in range(5)]
     for body in bodies:
         verify._extract_candidates(body)

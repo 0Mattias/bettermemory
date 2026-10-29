@@ -668,8 +668,8 @@ def _declared_root_covers(
     lost both suppressions, the same noise direction as the separator
     gap above. The probe fails closed: a declared root absent from the
     local filesystem cannot be probed and keeps byte semantics
-    (verify.py's probe anchor — home — always exists locally; this
-    module's root anchors may be foreign, the disclosed residue).
+    (verify_candidates.py's probe anchor — home — always exists locally;
+    this module's root anchors may be foreign, the disclosed residue).
     Prefix slices are cut at raw lengths before lowering, so no offset
     arithmetic ever runs on case-transformed text.
     """

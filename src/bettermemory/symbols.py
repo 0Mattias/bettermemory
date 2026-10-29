@@ -300,7 +300,7 @@ def check_symbol_citations(
 
     **The fail-open on an unconfirmable root is a decision, not an
     oversight.** `origin._worktree_root_is_gone` records the opposite
-    bias for the auto-scope filter, and `verify._path_exists` records it
+    bias for the auto-scope filter, and `verify_candidates._path_exists`
     again for the path leg: there, an indeterminate stat folds toward
     MORE signal, because over-reporting drift is that surface's safe
     direction. It is not this one's. A store synced from another machine
