@@ -2,10 +2,16 @@
 
 `capture` answers a second call for the same resolved directory from the
 first while the first is younger than `ORIGIN_CACHE_SECONDS` and the
-directory's `githead.signature` reads as it did when the first call began.
-The contract is exactness: what the cache answers is what the uncached
-capture returns for the same directory, field for field, and only the time
-changes.
+directory's signature (`origin._capture_signature`) reads as it did when the
+first call began. The contract is exactness: what the cache answers is what
+the uncached capture returns for the same directory, field for field, and
+only the time changes.
+
+Every test runs on two legs (`discovery`): githead's discovery as POSIX
+reads it, and declining as it does off POSIX (`githead._POSIX`), where the
+signature reads the files `githead.locate` reads (ENG-180: on Windows every
+capture ran its four git processes and none was kept). On a Windows host
+the second leg is the platform's own, and the first is skipped.
 
 Every test builds real repositories with git under ``tmp_path``. The clock
 the cache reads (`time.monotonic`) stands still for each test and moves only
@@ -36,9 +42,8 @@ _GIT_AVAILABLE = shutil.which("git") is not None
 
 pytestmark = pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 
-posix_only = pytest.mark.skipif(
-    os.name != "posix",
-    reason="the signature settles only on POSIX; elsewhere nothing is cached",
+posix_fixture = pytest.mark.skipif(
+    os.name != "posix", reason="the fixture builds its repository the POSIX way"
 )
 
 _REMOTE = "git@github.com:example/repo.git"
@@ -83,6 +88,18 @@ def git_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(f"GIT_{role}_EMAIL", "test@example.com")
     monkeypatch.delenv(identity.ENV_WORKSPACE, raising=False)
     identity._CURRENT.set(None)
+
+
+@pytest.fixture(autouse=True, params=["posix", "off-posix"])
+def discovery(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """The leg a test runs on: githead's discovery as POSIX reads it, or
+    declining as it does off POSIX, the way tests/test_verify_windows_paths.py
+    takes that branch. A host that is not POSIX has only the second."""
+    if request.param == "off-posix":
+        monkeypatch.setattr(githead, "_POSIX", False)
+    elif os.name != "posix":
+        pytest.skip("off POSIX the host's own leg is the off-posix one")
+    return str(request.param)
 
 
 @pytest.fixture(autouse=True)
@@ -166,7 +183,6 @@ def test_the_lifetime_is_ten_minutes() -> None:
     assert origin.ORIGIN_CACHE_SECONDS == 600.0
 
 
-@posix_only
 def test_a_capture_after_a_lone_hooks_idle_gap_runs_no_git(
     tmp_path: Path, probes: list[tuple[str, ...]], clock: _Clock
 ) -> None:
@@ -191,7 +207,6 @@ def test_a_capture_after_a_lone_hooks_idle_gap_runs_no_git(
     assert probes == _PROBES
 
 
-@posix_only
 def test_a_lone_session_start_block_after_idle_reuses_the_capture(
     tmp_path: Path, probes: list[tuple[str, ...]], clock: _Clock
 ) -> None:
@@ -233,7 +248,6 @@ def test_a_lone_session_start_block_after_idle_reuses_the_capture(
         assert probes == []
 
 
-@posix_only
 def test_a_second_capture_inside_the_lifetime_runs_no_git(
     tmp_path: Path, probes: list[tuple[str, ...]], clock: _Clock
 ) -> None:
@@ -251,7 +265,6 @@ def test_a_second_capture_inside_the_lifetime_runs_no_git(
     _same(second, _uncached(repo))
 
 
-@posix_only
 def test_after_the_lifetime_the_four_probes_run_again(
     tmp_path: Path, probes: list[tuple[str, ...]], clock: _Clock
 ) -> None:
@@ -269,7 +282,6 @@ def test_after_the_lifetime_the_four_probes_run_again(
     assert probes == []
 
 
-@posix_only
 def test_a_hit_carries_the_callers_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probes: list[tuple[str, ...]]
 ) -> None:
@@ -302,7 +314,6 @@ def test_a_hit_carries_the_callers_source(
 # ---------------------------------------------------------------------------
 
 
-@posix_only
 def test_a_new_branch_inside_the_lifetime_is_seen_by_the_next_capture(
     tmp_path: Path, probes: list[tuple[str, ...]]
 ) -> None:
@@ -316,7 +327,6 @@ def test_a_new_branch_inside_the_lifetime_is_seen_by_the_next_capture(
     _same(after, _uncached(repo))
 
 
-@posix_only
 def test_a_detached_head_inside_the_lifetime_is_seen_by_the_next_capture(
     tmp_path: Path,
 ) -> None:
@@ -330,7 +340,6 @@ def test_a_detached_head_inside_the_lifetime_is_seen_by_the_next_capture(
     _same(after, _uncached(repo))
 
 
-@posix_only
 def test_a_remote_set_url_inside_the_lifetime_is_seen_by_the_next_capture(
     tmp_path: Path, probes: list[tuple[str, ...]]
 ) -> None:
@@ -345,7 +354,6 @@ def test_a_remote_set_url_inside_the_lifetime_is_seen_by_the_next_capture(
     _same(after, _uncached(repo))
 
 
-@posix_only
 def test_a_repository_created_or_removed_inside_the_lifetime_is_seen(
     tmp_path: Path,
 ) -> None:
@@ -367,7 +375,6 @@ def test_a_repository_created_or_removed_inside_the_lifetime_is_seen(
     _same(removed, plain)
 
 
-@posix_only
 def test_a_changed_ceiling_inside_the_lifetime_is_a_miss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probes: list[tuple[str, ...]]
 ) -> None:
@@ -384,7 +391,7 @@ def test_a_changed_ceiling_inside_the_lifetime_is_a_miss(
     assert probes == _PROBES
 
 
-@posix_only
+@posix_fixture
 def test_core_worktree_in_config_worktree_inside_the_lifetime_is_seen(
     tmp_path: Path,
 ) -> None:
@@ -416,17 +423,18 @@ def _ambiguous(repo: Path, change: str) -> None:
     elif change == "tag":
         _run(repo, "tag", "main")
     elif change == "<gitdir>/<b>":
-        (repo / ".git" / "main").write_text(head + "\n", encoding="utf-8")
+        # Bytes, as git writes a ref: a text-mode write ends the line in
+        # CRLF on Windows.
+        (repo / ".git" / "main").write_bytes(f"{head}\n".encode())
     elif change == "heads/<b> behind refs/<b>":
         _run(repo, "update-ref", "refs/main", head)
         assert _uncached(repo).branch == "heads/main"
         (repo / ".git" / "heads").mkdir()
-        (repo / ".git" / "heads" / "main").write_text(head + "\n", encoding="utf-8")
+        (repo / ".git" / "heads" / "main").write_bytes(f"{head}\n".encode())
     else:
         raise AssertionError(change)
 
 
-@posix_only
 @pytest.mark.parametrize(
     "change", ["refs/<b>", "tag", "<gitdir>/<b>", "heads/<b> behind refs/<b>"]
 )
@@ -450,7 +458,6 @@ def test_a_ref_that_changes_the_branchs_short_name_is_seen(
     _same(after, uncached)
 
 
-@posix_only
 def test_a_stash_on_a_branch_named_stash_is_seen(tmp_path: Path) -> None:
     """On a branch named stash, `git stash` writes refs/stash, and the
     branch's short name turns to heads/stash."""
@@ -529,7 +536,6 @@ def test_a_rename_that_changes_only_the_spelling_is_seen(
     _same(after, uncached)
 
 
-@posix_only
 def test_the_signature_carries_the_kernels_spelling_of_the_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -552,7 +558,6 @@ def test_the_signature_carries_the_kernels_spelling_of_the_root(
     assert _key(repo) not in origin._ORIGIN_CACHE
 
 
-@posix_only
 @pytest.mark.parametrize("moved", [600.0, -1.0], ids=["forward", "back"])
 def test_the_lifetime_runs_on_the_wall_clock_too(
     moved: float,
@@ -576,14 +581,17 @@ def test_the_lifetime_runs_on_the_wall_clock_too(
     assert probes == _PROBES
 
 
-@posix_only
+@posix_fixture
 def test_the_latency_benchs_cold_call_makes_the_capture_stale_and_only_that(
-    tmp_path: Path, probes: list[tuple[str, ...]]
+    tmp_path: Path, probes: list[tuple[str, ...]], discovery: str
 ) -> None:
     """bench/daemon/latency.py's hook_service_cold moves the ctime of the
     repository's HEAD before each call: HEAD's bytes and mtime are as they
     were, so git reads the repository as before, and the next capture runs
-    the four probes and answers as the uncached one."""
+    the four probes and answers as the uncached one. The bench finds HEAD
+    through githead's discovery, and moves a ctime the POSIX way."""
+    if discovery != "posix":
+        pytest.skip("the bench reads the repository through githead's discovery")
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
@@ -610,22 +618,102 @@ def test_the_latency_benchs_cold_call_makes_the_capture_stale_and_only_that(
     assert probes == _PROBES
 
 
-def test_where_the_signature_cannot_settle_every_capture_runs_git(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probes: list[tuple[str, ...]]
+@pytest.mark.parametrize("discovery", ["off-posix"], indirect=True)
+def test_off_posix_a_second_capture_runs_no_git(
+    tmp_path: Path, probes: list[tuple[str, ...]]
 ) -> None:
-    """Off POSIX, and wherever the files do not settle what git would find,
-    the signature is a marker equal to no other, so nothing is kept and
-    each capture asks git."""
-    monkeypatch.setattr(githead, "_POSIX", False)
+    """ENG-180: githead's discovery declines off POSIX, where git's ownership
+    check reads security descriptors, and the signature it gave equalled no
+    other, so on Windows every capture ran the four probes and none was
+    kept. The signature now reads the files `githead.locate` reads there:
+    the first capture runs the four probes, the next ones none."""
     repo = _repo(tmp_path / "repo")
+    _commit(repo)
     first = capture(repo)
-    second = capture(repo)
+    assert probes == _PROBES
+    for _ in range(3):
+        probes.clear()
+        _same(capture(repo), first)
+        assert probes == []
+    _same(first, _uncached(repo))
+
+
+@pytest.mark.parametrize("unsettled", ["environment", "skipped-entry"])
+def test_where_the_files_do_not_settle_every_capture_runs_git(
+    unsettled: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probes: list[tuple[str, ...]],
+) -> None:
+    """Where the files do not settle what git would find, the signature is a
+    marker equal to no other, so nothing is kept and each capture asks git:
+    under a variable that moves git's discovery, and below a ``.git`` that
+    is no repository, which git skips to judge what lies above."""
+    repo = _repo(tmp_path / "repo")
+    where = repo
+    if unsettled == "environment":
+        monkeypatch.setenv("GIT_DISCOVERY_ACROSS_FILESYSTEM", "1")
+    else:
+        where = repo / "pkg"
+        (where / ".git").mkdir(parents=True)
+    first = capture(where)
+    second = capture(where)
     assert probes == _PROBES + _PROBES
     assert not origin._ORIGIN_CACHE
     _same(second, first)
 
 
-@posix_only
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX ownership")
+@pytest.mark.parametrize("discovery", ["posix"], indirect=True)
+def test_another_accounts_repository_git_answered_for_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probes: list[tuple[str, ...]]
+) -> None:
+    """githead's discovery declines a repository another account owns (git
+    then reads ``safe.directory`` from the user's configuration). Where git
+    answers for it, the capture is kept against the files `githead.locate`
+    reads, as off POSIX."""
+    repo = _repo(tmp_path / "repo")
+    owner = getattr(os, "geteuid")()
+    monkeypatch.setattr(os, "geteuid", lambda: owner + 1)
+    assert githead.find_gitdir(repo) is None, "premise: discovery declines"
+    first = capture(repo)
+    assert first.repo == _REMOTE and first.git_indeterminate is False
+    probes.clear()
+    _same(capture(repo), first)
+    assert probes == []
+
+
+def test_a_reftable_repositorys_branch_switch_is_seen_at_once(
+    tmp_path: Path, probes: list[tuple[str, ...]]
+) -> None:
+    """A reftable repository keeps its refs in ``reftable/``, which the
+    signature does not read, and its HEAD file names
+    ``refs/heads/.invalid``, which githead's parser refuses: the files
+    settle nothing and no capture is kept, on either leg, so a branch
+    switched is seen by the next capture. A signature that accepted that
+    HEAD settled on files git never rewrites there and answered "main" for
+    up to ten minutes after ``checkout -b feature`` (review Ob, D1)."""
+    repo = tmp_path / "repo"
+    made = subprocess.run(
+        ["git", "init", "--quiet", "-b", "main", "--ref-format=reftable", str(repo)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if made.returncode != 0:
+        pytest.skip("this git cannot make a reftable repository")
+    _run(repo, "remote", "add", "origin", _REMOTE)
+    _commit(repo)
+    assert capture(repo).branch == "main"
+    assert _key(repo) not in origin._ORIGIN_CACHE
+    _run(repo, "checkout", "--quiet", "-b", "feature")
+    probes.clear()
+    after = capture(repo)
+    assert after.branch == "feature"
+    assert probes == _PROBES
+    _same(after, _uncached(repo))
+
+
 def test_a_change_while_the_probes_run_is_not_cached(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -657,7 +745,6 @@ def test_a_change_while_the_probes_run_is_not_cached(
     _same(after, _uncached(repo))
 
 
-@posix_only
 @pytest.mark.parametrize("move", ["symbolic-ref", "checkout"])
 def test_a_head_that_leaves_and_returns_while_the_probes_run_is_not_cached(
     move: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -727,7 +814,6 @@ def test_a_capture_git_could_not_run_for_is_not_cached(
     assert answered.repo == _REMOTE and answered.worktree_root == _key(repo)
 
 
-@posix_only
 def test_a_capture_whose_later_probe_could_not_run_is_not_cached(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -759,7 +845,6 @@ def test_a_capture_whose_later_probe_could_not_run_is_not_cached(
 # ---------------------------------------------------------------------------
 
 
-@posix_only
 def test_two_directories_are_two_entries(
     tmp_path: Path, probes: list[tuple[str, ...]]
 ) -> None:
@@ -780,7 +865,6 @@ def test_two_directories_are_two_entries(
     assert probes == []
 
 
-@posix_only
 def test_alternates_are_registered_on_a_hit_as_on_a_miss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probes: list[tuple[str, ...]]
 ) -> None:
@@ -814,7 +898,6 @@ def test_alternates_are_registered_on_a_hit_as_on_a_miss(
     assert list(registry.items()) == after_hit
 
 
-@posix_only
 def test_a_hit_returns_a_fresh_origin_the_caller_cannot_poison(
     tmp_path: Path,
 ) -> None:
@@ -841,7 +924,6 @@ def test_a_hit_returns_a_fresh_origin_the_caller_cannot_poison(
     _same(third, _uncached(repo))
 
 
-@posix_only
 def test_the_bound_evicts_the_oldest_capture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probes: list[tuple[str, ...]]
 ) -> None:
@@ -859,7 +941,6 @@ def test_the_bound_evicts_the_oldest_capture(
     assert list(origin._ORIGIN_CACHE) == [_key(c), _key(a)]
 
 
-@posix_only
 def test_the_cache_holds_at_most_256_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -878,7 +959,6 @@ def test_the_cache_holds_at_most_256_directories(
     assert list(origin._ORIGIN_CACHE) == [_key(d) for d in directories[1:]]
 
 
-@posix_only
 def test_clear_all_empties_the_origin_cache(tmp_path: Path) -> None:
     capture(_repo(tmp_path / "repo"))
     assert origin._ORIGIN_CACHE
@@ -891,7 +971,6 @@ def test_clear_all_empties_the_origin_cache(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@posix_only
 def test_seeded_sequence_matches_the_uncached_capture(
     tmp_path: Path, probes: list[tuple[str, ...]]
 ) -> None:

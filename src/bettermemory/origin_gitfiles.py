@@ -272,6 +272,34 @@ def refused_worktree_root(cwd: Path) -> tuple[str | None, bool]:
         return str(spelled), True
 
 
+# ---------------------------------------------------------------------------
+# The origin cache's signature
+# ---------------------------------------------------------------------------
+
+
+def capture_files(start: Path) -> tuple[githead.Signature, githead.GitDir | None]:
+    """The repository files the origin cache keys a capture of `start` on:
+    `githead.signature` and `githead.find_gitdir` where `githead`'s
+    discovery settles the repository (its git directory, or None outside
+    any), and where it declines, for the platform (off POSIX, where git's
+    ownership check reads security descriptors) or for another account's
+    ownership, `githead.signature(owner=False)` and the repository
+    `githead.locate` finds, so the cache holds on every platform. The
+    repository is None where the signature is not settled; where the walk
+    found another git directory than the signature read (the tree changed
+    between the two), the signature is made to equal no other."""
+    base = githead.signature(start)
+    if base[0] is None or isinstance(base[0], str):
+        return base, githead.find_gitdir(start)
+    located = githead.signature(start, owner=False)
+    if not isinstance(located[0], str):
+        return located, None
+    gd = githead.locate(start)
+    if gd is None or str(gd.gitdir) != located[0]:
+        return (object(), *located[1:]), None
+    return located, gd
+
+
 # The single-character escapes git's `quote_c_style` emits inside a
 # quoted path header, mapped to their byte values. Everything else it
 # deems unprintable comes out as 3-digit octal. Both decode to BYTES —

@@ -539,6 +539,40 @@ def locate(start: Path, *, walk: bool = True) -> GitDir | None:
         return None
 
 
+def _entry_above(start: Path) -> bool:
+    """Whether `start` or a directory above it holds a ``.git`` or a
+    ``HEAD`` entry, up to the filesystem's root. A stat that fails for any
+    reason but absence raises."""
+    here = os.path.realpath(start)
+    while True:
+        for name in (".git", "HEAD"):
+            try:
+                os.lstat(os.path.join(here, name))
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            return True
+        parent = os.path.dirname(here)
+        if parent == here:
+            return False
+        here = parent
+
+
+def _located(start: Path) -> GitDir | None:
+    """The discovery `signature` makes with `owner` False: the repository
+    `locate` finds, for where `_discover` declines for the platform or for
+    another account's ownership alone. Declines under a variable that moves
+    git's discovery, and where `locate` finds none while a ``.git`` or
+    ``HEAD`` entry sits in `start` or above it (`_entry_above`), since git
+    may find a repository there that `locate` does not read: above a
+    ``.git`` it skips, or in a directory that is itself a git directory."""
+    if any(name in os.environ for name in _DISCOVERY_ENV):
+        raise _Unsettled
+    found = locate(start)
+    if found is None and _entry_above(start):
+        raise _Unsettled
+    return found
+
+
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------
@@ -771,7 +805,7 @@ def _ref_stamps(gd: GitDir, head: bytes) -> tuple[Stamp | None, ...]:
     return tuple(stamps)
 
 
-def signature(start: Path) -> Signature:
+def signature(start: Path, *, owner: bool = True) -> Signature:
     """A cheap change detector for the origin cache and for the commit-drift
     memo's check at the end of a search: equal across calls while nothing it
     covers has changed, different once something has.
@@ -815,6 +849,20 @@ def signature(start: Path) -> Signature:
     HEAD`` from ``main`` into ``heads/main`` and leaves the signature as it
     was), or a rewrite of ``config`` in place at the same size within one
     tick of the filesystem's clock.
+
+    With `owner` False the repository is the one `locate` finds
+    (`_located`), on every platform and whoever owns it, for a cache kept
+    on git's own answer where discovery here declines for the platform or
+    the owner alone (the origin capture, ENG-180); the slots, the parser
+    and every other decline are the same. The stamps hold on Windows as on
+    POSIX: git writes HEAD, a ref, ``packed-refs`` and its config through a
+    lock file and a rename, which there gives the file a new file index and
+    mtime (NTFS may carry the replaced file's creation time over, so the
+    index and the mtime are what move). What it does not see beyond the
+    above is git's ownership check: a value kept on git's answer in another
+    account's repository (``safe.directory`` names it) stands after
+    ``safe.directory`` stops naming it, as it does after any other change
+    to the global configuration.
     """
     env = (
         os.environ.get("GIT_DIR"),
@@ -822,7 +870,7 @@ def signature(start: Path) -> Signature:
         os.environ.get("GIT_CEILING_DIRECTORIES"),
     )
     try:
-        gd = _discover(start)
+        gd = _discover(start) if owner else _located(start)
         if gd is None:
             return (None, None, None, None, None, None, *env)
         head = head_bytes(gd)

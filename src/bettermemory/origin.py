@@ -71,6 +71,7 @@ from .origin_gitfiles import (
     _config_moves_worktree,
     _unquote_c_path,
     attribute_files_signature,
+    capture_files,
     directories_held,
     gitattributes_signature,
     refused_worktree_root,
@@ -450,7 +451,9 @@ def _capture_signature(start: Path) -> githead.Signature:
     """The change detector a capture of `start` is kept against: the
     directory's `githead.signature` (the git directory, HEAD, the loose refs
     HEAD's chain reads, packed-refs, config and the variables that move
-    discovery), with the stamp of config.worktree, where git reads
+    discovery), from the repository `githead.locate` finds where githead's
+    discovery declines (`origin_gitfiles.capture_files`: off POSIX, and in
+    another account's repository), with the stamp of config.worktree, where git reads
     core.worktree under extensions.worktreeConfig; the root spelled as git
     prints it (`_spelled_as_git`: the kernel's path on macOS, so a rename
     of the root or a directory above it that changes only the case or the
@@ -458,12 +461,11 @@ def _capture_signature(start: Path) -> githead.Signature:
     still resolves, is seen; the resolved path elsewhere, which keeps the
     caller's spelling); and the stamp of each ref file that decides the
     branch's short name (`_shortening_refs`), in the git directory and in
-    the common directory. Where `githead` does not settle the repository,
-    the githead signature already equals no other; where a stamp or the
+    the common directory. Where the files do not settle the repository,
+    the base signature already equals no other; where a stamp or the
     spelling cannot be read, a new object makes this one equal no other
     either."""
-    base = githead.signature(start)
-    gd = githead.find_gitdir(start)
+    base, gd = capture_files(start)
     if gd is None:
         return base
     try:

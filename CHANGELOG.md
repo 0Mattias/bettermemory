@@ -599,6 +599,28 @@ the candidates' testing.
   `safe.directory` means. (`src/bettermemory/origin.py`,
   `src/bettermemory/origin_gitfiles.py`,
   `src/bettermemory/handlers/_shared.py`)
+- **The origin cache holds on Windows.** The capture's signature came from
+  githead's discovery, which declines off POSIX (git's ownership check
+  there reads security descriptors) and in a repository another account
+  owns, and a declined signature equals no other, so on Windows nothing
+  was kept: every capture, and so every `memory_write` and every hook,
+  ran its four git processes. Where githead's discovery declines for the
+  platform or the owner, `githead.signature(owner=False)` now reads the
+  same slots from the repository `githead.locate` finds, with githead's
+  own ref parser (the git directory, HEAD, its ref chain, packed-refs and
+  config), and the capture adds config.worktree, the root as git spells
+  it and the refs that decide the branch's short name; outside any
+  repository it is settled only where no `.git` or `HEAD` entry sits in
+  the directory or above it. A reftable repository, whose HEAD names
+  `refs/heads/.invalid`, is never kept, on any platform. Five
+  captures of one repository with discovery declining ran 4, 4, 4, 4 and 4
+  git processes, and run 4, 0, 0, 0 and 0. A capture git answered in
+  another account's repository is now kept too, so a `safe.directory`
+  withdrawn in the global configuration is seen when the ten minutes
+  run out, as any other global setting is. The cache tests run on a
+  second leg with discovery declining, and the real Windows leg runs
+  them. (`src/bettermemory/githead.py`, `src/bettermemory/origin.py`,
+  `src/bettermemory/origin_gitfiles.py`)
 
 #### Known limitations
 

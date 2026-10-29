@@ -69,9 +69,10 @@ _STALE_AFTER_DAYS = Config().behavior.verification_stale_days
 _ANCIENT = datetime(2020, 1, 1, tzinfo=timezone.utc)
 _FUTURE = datetime(2099, 1, 1, tzinfo=timezone.utc)
 
-# The drift memo and the origin cache key on `githead.signature`, which
-# declines file discovery off POSIX: on Windows every signature is
-# undetermined, nothing is memoised and git runs on every call.
+# The drift memo keys on `githead.signature`, which declines file discovery
+# off POSIX: on Windows every signature is undetermined, nothing is memoised
+# and git runs on every call. (The origin cache reads the files through
+# `githead.locate` there, `origin_gitfiles.capture_files`.)
 _MEMO_IS_POSIX = pytest.mark.skipif(
     sys.platform == "win32", reason="githead declines file discovery off POSIX"
 )
