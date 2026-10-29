@@ -16,6 +16,7 @@ from __future__ import annotations
 import bisect
 import re
 from collections import Counter, defaultdict
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1199,15 +1200,137 @@ def _scope_typo_neighbor(scope: str, other: str) -> bool:
     return _edit_distance_within(tail_a, tail_b, 1)
 
 
+#: The longest scope the deletion index takes. A scope's 1- and
+#: 2-deletion variants number about L²/2 strings of about L characters, so
+#: the index costs the cube of a scope's length: one 1,009-character scope,
+#: which `memory_write` accepts, took the report from 0.07 s and 3 MB to
+#: 2.63 s and 567 MB (review D4). A longer scope is compared with every
+#: scope whose length is within 2 of its own instead (`_rare_scopes`).
+#: The value is a choice, not a measurement: it covers the namespaced
+#: scopes stores hold (``projects:bettermemory`` is 21) and keeps a
+#: scope's variants near 500.
+_DELETION_INDEX_MAX_LEN = 32
+
+
+def _deletion_variants(text: str) -> set[str]:
+    """`text` and every string one or two deleted characters leave of it:
+    the keys of the symmetric-deletion index (`_rare_scopes`). Two strings
+    within edit distance 2 share a key, since the edits of an alignment
+    undone by deletions on each side leave one string."""
+    out = {text}
+    size = len(text)
+    for i in range(size):
+        once = text[:i] + text[i + 1 :]
+        out.add(once)
+        for j in range(i, size - 1):
+            out.add(once[:j] + once[j + 1 :])
+    return out
+
+
+def _rare_scopes(
+    scope_counts: Mapping[str, int], exempt: Collection[str] = ()
+) -> list[str]:
+    """The singleton scopes (count 1, not in `exempt`) that have a typo
+    neighbour among all the scopes (`_scope_typo_neighbor`), sorted: the
+    `rare_scopes` bucket.
+
+    One pass over the scopes, not a pass per singleton: every scope the
+    predicate can call a neighbour of another is within edit distance 2
+    of it as a whole string, or shares its name part (rule 1). Rule 4
+    compares the tails left after the leading segments the two share,
+    and a shared prefix adds no distance, so a tail pair within 2 is a
+    whole-string pair within 2; where one scope is all shared segments
+    its tail is empty, and the rule then holds only for a one-character
+    tail on the other, two edits away (``a:b`` and ``a:b:c``). So the
+    candidates are the scopes sharing a deletion variant
+    (`_deletion_variants`, keyed by hash: a collision only adds a
+    candidate) or a name part, and the predicate decides each, so the
+    bucket is the pairwise check's to the scope. Measured on synthetic
+    stores of 500, 1,000 and 2,000 scopes (70% namespaced, 5% planted
+    one-edit typos): the pairwise check took 2.1 s, 8.1 s and 32.2 s
+    (42 s on the review's shapes), this pass 0.013 s, 0.027 s and
+    0.056 s, with a 22 MB peak at 2,000.
+
+    A scope longer than `_DELETION_INDEX_MAX_LEN` stays out of the
+    deletion index, whose cost grows with the cube of a scope's length.
+    The lengths of a pair the predicate accepts by distance differ by 2
+    at most, so a long singleton's candidates are every scope whose
+    length is within 2 of its own, and a short singleton's include the
+    long scopes within 2 of its length; the name-part index still holds
+    every scope. The bucket stays exact.
+
+    The worst case is still near the square of the scope count: short
+    names that share most of their deletion variants (2,000 scopes of
+    three letters out of thirteen behind one namespace) make the
+    candidates approach all pairs.
+    """
+    scopes = list(scope_counts)
+    wanted = {
+        n
+        for n, scope in enumerate(scopes)
+        if scope_counts[scope] == 1 and scope not in exempt
+    }
+    if not wanted:
+        return []
+    first: dict[int, int] = {}
+    shared: dict[int, list[int]] = {}
+    by_name: dict[str, list[int]] = {}
+    long_by_length: dict[int, list[int]] = {}
+    for n, scope in enumerate(scopes):
+        by_name.setdefault(scope.split(":", 1)[-1], []).append(n)
+        if len(scope) > _DELETION_INDEX_MAX_LEN:
+            long_by_length.setdefault(len(scope), []).append(n)
+            continue
+        for key in map(hash, _deletion_variants(scope)):
+            seen = first.setdefault(key, n)
+            if seen != n:
+                group = shared.get(key)
+                if group is None:
+                    shared[key] = [seen, n]
+                else:
+                    group.append(n)
+    del first
+    candidates: dict[int, set[int]] = {}
+    for group in (*shared.values(), *by_name.values()):
+        if len(group) < 2:
+            continue
+        for n in group:
+            if n in wanted:
+                candidates.setdefault(n, set()).update(group)
+    if long_by_length:
+        by_length: dict[int, list[int]] = {}
+        for n, scope in enumerate(scopes):
+            by_length.setdefault(len(scope), []).append(n)
+        for n in wanted:
+            size = len(scopes[n])
+            # A long singleton against every scope of a near length; a
+            # short one against the long scopes of a near length, which
+            # the deletion index does not hold.
+            near = by_length if size > _DELETION_INDEX_MAX_LEN else long_by_length
+            for length in range(size - 2, size + 3):
+                group = near.get(length)
+                if group:
+                    candidates.setdefault(n, set()).update(group)
+    return sorted(
+        scopes[n]
+        for n, others in candidates.items()
+        if any(m != n and _scope_typo_neighbor(scopes[n], scopes[m]) for m in others)
+    )
+
+
 def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
     """True iff Levenshtein(a, b) <= max_dist.
 
-    Standard Wagner-Fischer DP, two-row variant. We don't need the
-    actual distance — only whether it falls within the threshold —
-    but scope names are short enough (typically <30 chars) that the
-    full table is cheap and the early-exit machinery isn't worth its
-    complexity. The length-difference shortcut catches the obviously
-    far cases without running the table at all.
+    Wagner-Fischer, banded: a cell more than `max_dist` off the diagonal
+    holds a distance above `max_dist`, so each row keeps only the
+    ``2 * max_dist + 1`` cells within `max_dist` of it and the rest read
+    as `max_dist + 1`, which keeps every answer to "within `max_dist`?"
+    exact. The work is the longer string's length times that band, not
+    the product of the two lengths: a 4,000-character scope and its
+    one-edit typo took the full table about 16 million cells (review D4).
+    The length-difference shortcut catches the obviously far cases
+    without running the table at all, and a row whose every cell is past
+    the threshold ends it, since no later row falls below it.
 
     Used by the `rare_scopes` neighbor check (via
     `_scope_typo_neighbor`, which owns the scope-shape rules); lifted
@@ -1218,21 +1341,37 @@ def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
         return False
     if a == b:
         return True
-    # Ensure |a| <= |b| so the inner row stays small.
+    # Ensure |a| <= |b|: the columns are `a`'s.
     if len(a) > len(b):
         a, b = b, a
-    prev = list(range(len(a) + 1))
+    columns = len(a)
+    width = 2 * max_dist + 1
+    over = max_dist + 1
+    # Row i keeps column j at index j - i + max_dist; row 0 holds j itself.
+    prev = [over] * width
+    for d in range(max_dist, min(width, columns + max_dist + 1)):
+        prev[d] = d - max_dist
     for i, cb in enumerate(b, 1):
-        curr = [i] + [0] * len(a)
-        for j, ca in enumerate(a, 1):
-            cost = 0 if ca == cb else 1
-            curr[j] = min(
-                curr[j - 1] + 1,
-                prev[j] + 1,
-                prev[j - 1] + cost,
-            )
+        curr = [over] * width
+        best = over
+        for d in range(width):
+            j = i - max_dist + d
+            if j < 0 or j > columns:
+                continue
+            if j == 0:
+                value = i if i <= max_dist else over
+            else:
+                value = prev[d] + (0 if a[j - 1] == cb else 1)
+                if d + 1 < width:
+                    value = min(value, prev[d + 1] + 1)
+                if d >= 1:
+                    value = min(value, curr[d - 1] + 1)
+            curr[d] = value
+            best = min(best, value)
+        if best > max_dist:
+            return False
         prev = curr
-    return prev[-1] <= max_dist
+    return prev[columns - len(b) + max_dist] <= max_dist
 
 
 def find_prior_session_boundary(

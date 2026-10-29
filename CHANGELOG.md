@@ -801,6 +801,25 @@ the candidates' testing.
   `.git/info`, a provisional project and their log rows), and the CLI
   report writes nothing. (`src/bettermemory/health.py`,
   `src/bettermemory/handlers/health.py`)
+- **The health report's rare-scopes check takes one pass over the
+  scopes.** The bucket of singleton scopes that look like a typo of
+  another compared every singleton with every scope, so the time grew
+  with the square of the scope count: a store of 2,000 scopes stalled
+  `memory_admin(health)` and `bettermemory health` for about 42 s. Each
+  singleton's candidates now come from an index of the strings one or
+  two deleted characters leave of every scope, and of the name part
+  after the namespace, and the same rule decides each candidate, so the
+  bucket is unchanged. On synthetic stores of 500, 1,000 and 2,000
+  scopes the check took 2.1 s, 8.1 s and 32.2 s before and 0.013 s,
+  0.027 s and 0.056 s after, and the whole report at 2,000 scopes went
+  from 33.4 s to 0.06 s. A scope longer than 32 characters stays out of
+  that index, whose cost grows with the cube of a scope's length (one
+  1,009-character scope, which `memory_write` accepts, would take the
+  report to 2.6 s and 567 MB), and is compared with the scopes within 2
+  of its length instead; the distance check now computes only the cells
+  within the threshold of the diagonal. A 4,000-character scope and its
+  one-edit typo took the report 3.95 s before and take 0.011 s.
+  (`src/bettermemory/health_stats.py`, `src/bettermemory/health.py`)
 
 #### Known limitations
 

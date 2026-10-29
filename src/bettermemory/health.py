@@ -116,7 +116,7 @@ from .health_stats import (
     _drift_rows_for_candidates,
     _edit_distance_within as _edit_distance_within,
     _parse_silent_miss_event,
-    _scope_typo_neighbor,
+    _rare_scopes,
     _silent_miss_stats,
     find_prior_session_boundary as find_prior_session_boundary,
     provenance_debt as provenance_debt,
@@ -497,17 +497,10 @@ def compute_health(
     # asymmetric, because acting on it wrongly fuses two scopes and
     # acting on it rightly saves a tag. Its siblings already gate this
     # way (`dead_weight_suppressed`, `cold_endorsement_suppressed`).
-    all_scopes = list(scope_distribution.keys())
-    exempt_scopes = set(typo_scope_exceptions or ())
-    rare_scopes = sorted(
-        scope
-        for scope, count in scope_distribution.items()
-        if count == 1
-        and scope not in exempt_scopes
-        and any(
-            other != scope and _scope_typo_neighbor(scope, other)
-            for other in all_scopes
-        )
+    # One pass over the scopes (`_rare_scopes`), not one per singleton:
+    # the pairwise form took 42 s on a store of 2,000 scopes.
+    rare_scopes = _rare_scopes(
+        scope_distribution, exempt=set(typo_scope_exceptions or ())
     )
 
     # Verification debt — partition active memories into never_verified /
