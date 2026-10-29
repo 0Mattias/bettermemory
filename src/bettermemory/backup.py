@@ -129,7 +129,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ._fsutil import (
     atomic_write_bytes,
@@ -151,6 +151,7 @@ from .log import (
     HistoryOrigin,
     KeyRing,
     KeyUnreadableError,
+    append_history_replaced,
     canonical_payload,
     fingerprint,
     last_row,
@@ -158,9 +159,6 @@ from .log import (
     same_mac,
 )
 from .time_utils import isoformat_utc
-
-if TYPE_CHECKING:
-    from .store import Store
 
 #: The manifest's ``format`` and the highest ``format_version`` this build
 #: reads. A change a reader of version 1 would misread bumps the version.
@@ -1415,36 +1413,33 @@ def _later_writer_refusal(verification: Mapping[str, Any]) -> str | None:
     )
 
 
-def _append_restore_row(
-    store: Store, entry: Mapping[str, Any]
-) -> dict[str, Any] | None:
-    """Append the ``store_restored`` control row to the restored store's
-    log and return it as ``{seq, mac}``: the restore record's `entry` and
-    this build's version, signed under the key the restore made current.
-    None, and nothing written, when this build opens the restored store
-    for reading only (``PRAGMA query_only``: a store waiting on a schema
-    step this build runs, `store_steps.run_steps`, or one whose versions
-    keep this build to reading): such a store writes nothing until it is
-    opened for writing, and the record keeps the entry.
-
-    The record beside the head says what a restore did only on the host
-    that ran it, and only while the keys directory keeps it; the row puts
-    it on the log itself, chained after the bundle's head, so `log
-    export` ships it to a SIEM as a ``control`` row, `memory history`
-    shows it in the history of every record older than it, and `log
-    verify` checks its MAC as any row's. It is written through the
-    store's own transaction, so the head checkpoint moves to it as after
-    any write (the record's ``head_after`` stays the bundle's head, where
-    the rewound range ends). A store that cannot append (its key is not
-    held) raises, and the restore reports itself failed."""
-    from . import __version__
-
-    if store.conn.execute("PRAGMA query_only").fetchone()[0]:
-        return None
-    payload = {**entry, "engine_version": __version__}
-    with store._transaction() as tx:
-        row = store._append(tx, STORE_RESTORED, payload, session=None)
-    return {"seq": row.seq, "mac": row.mac}
+def _record_row(path: Path, entry: Mapping[str, Any], row: Mapping[str, Any]) -> None:
+    """Name `row`, the log row appended for `entry`, in `entry`'s place in
+    the record at `path`: the last entry of its kind, store id and time
+    with no row yet. The record is written before the row, so an entry
+    whose row never came stays ``row: null``. A record that no longer
+    reads, holds no such entry or cannot be written is left as it is: the
+    row is on the log either way (`log.history_replaced_row`)."""
+    keys = ("kind", "store_id", "restored_at")
+    with flock_excl(path):
+        try:
+            document = json.loads(bounded_read(path, _MANIFEST_CAP_BYTES))
+            restores = document["restores"]
+            found = [
+                item
+                for item in restores
+                if isinstance(item, dict)
+                and item.get("row") is None
+                and all(item.get(name) == entry.get(name) for name in keys)
+            ]
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        if not found:
+            return
+        found[-1]["row"] = dict(row)
+        encoded = json.dumps(document, indent=2, sort_keys=True) + "\n"
+        with contextlib.suppress(OSError):
+            _write_private(path, encoded.encode())
 
 
 def _append_record(path: Path, entry: Mapping[str, Any], stamp: str) -> None:
@@ -1871,6 +1866,8 @@ def restore_bundle(
                 "after": binding_after,
             }
             entry: dict[str, Any] = {
+                "kind": STORE_RESTORED,
+                "row": None,
                 "restored_at": head.ts,
                 "bundle": str(bundle),
                 "bundle_created_at": verification["created_at"],
@@ -1895,7 +1892,9 @@ def restore_bundle(
                 store_file, keys_dir=keys_root, allow_rekey=False
             )
             try:
-                report["row"] = _append_restore_row(restored, entry)
+                report["row"] = append_history_replaced(restored, STORE_RESTORED, entry)
+                if report["row"] is not None:
+                    _record_row(record, entry, report["row"])
                 report["log"] = restored.log_verify()
             finally:
                 restored.close()

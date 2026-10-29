@@ -119,7 +119,8 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NamedTuple
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import platformdirs
 
@@ -130,6 +131,9 @@ from ._fsutil import (
     replace_atomic,
 )
 from .time_utils import isoformat_utc
+
+if TYPE_CHECKING:
+    from .store import Store
 
 log = logging.getLogger("bettermemory.log")
 
@@ -176,7 +180,23 @@ CONTROL_KINDS = CONTROL_KINDS | {INDEX_REBUILT}
 # snapshot. The restore appends it to the restored log, under the key it
 # made current, with what its record keeps (`backup.restore_bundle`).
 STORE_RESTORED = "store_restored"
-CONTROL_KINDS = CONTROL_KINDS | {STORE_RESTORED}
+
+# The rows that say a store's history was replaced, one contract for
+# both: `store_restored`, and `history_accepted` (`bettermemory log
+# accept-history --yes`, ENG-106: the store file's history accepted as
+# it stands). Each is appended by `append_history_replaced` and carries
+# its entry in the record beside the head (`backup.restore_record_path`),
+# whose entries name their kind and row (`history_replaced_kind`,
+# `history_replaced_row`). `log export`, `log verify` and `memory
+# history` read both: the noun each says it with, and the action
+# `memory history` shows.
+HISTORY_REPLACED: Mapping[str, tuple[str, str]] = MappingProxyType(
+    {
+        STORE_RESTORED: ("a restore", "rewound"),
+        "history_accepted": ("an accepted history", "accepted"),
+    }
+)
+CONTROL_KINDS = CONTROL_KINDS | frozenset(HISTORY_REPLACED)
 
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
@@ -1373,6 +1393,72 @@ def verify_chain(
     return report
 
 
+# ---------------------------------------------------------------------------
+# History replaced: `store_restored` and `history_accepted`
+# ---------------------------------------------------------------------------
+
+
+def history_replaced_kind(entry: Mapping[str, Any]) -> str:
+    """The kind of a restore record entry (`backup.restore_record_path`):
+    its own ``kind`` when that is one of `HISTORY_REPLACED`, else
+    ``history_accepted`` for an entry marked ``accepted_history`` (as `log
+    accept-history` writes it), else ``store_restored`` (a restore's entry
+    from before entries named their kind)."""
+    kind = entry.get("kind")
+    if isinstance(kind, str) and kind in HISTORY_REPLACED:
+        return kind
+    if entry.get("accepted_history") is True:
+        return "history_accepted"
+    return STORE_RESTORED
+
+
+def history_replaced_row(entry: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The log row a restore record entry names, as ``{seq}`` or ``{seq,
+    mac}``: its ``row``, else its ``seq`` (as `log accept-history` writes
+    it). None when it names none: the row was not appended (the store
+    opened for reading only, or the run failed between the entry and the
+    row), or the entry is from before entries named it."""
+    row = entry.get("row")
+    if isinstance(row, Mapping) and type(row.get("seq")) is int:
+        mac = row.get("mac")
+        return {"seq": row["seq"], **({"mac": mac} if isinstance(mac, str) else {})}
+    seq = entry.get("seq")
+    return {"seq": seq} if type(seq) is int else None
+
+
+def append_history_replaced(
+    store: Store, kind: str, entry: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Append the control row of `kind` (one of `HISTORY_REPLACED`) to
+    `store`'s log and return it as ``{seq, mac}``: the restore record's
+    `entry` (less ``row``, which names this row) and this build's version,
+    signed under the store's current key in a write transaction of its own
+    (`Store._transaction`), so the head checkpoint moves to it as after
+    any write. None, and nothing written, when the store opened for
+    reading only (``PRAGMA query_only``: a store waiting on a schema step
+    this build runs, or one whose versions keep this build to reading);
+    such a store writes nothing until it is opened for writing, and the
+    record keeps the entry with ``row`` null.
+
+    The record beside the head says what replaced the history only on the
+    host that ran it, and only while the keys directory keeps it; the row
+    puts it on the log itself, so `log export` ships it as a ``control``
+    row, `memory history` shows it in the history of every record older
+    than it, and `log verify` lists it and checks its MAC as any row's. A
+    store that cannot append (its key is not held) raises."""
+    from . import __version__
+
+    if kind not in HISTORY_REPLACED:
+        raise ValueError(f"{kind!r} is not a kind that replaces a store's history")
+    if store.conn.execute("PRAGMA query_only").fetchone()[0]:
+        return None
+    payload = {name: value for name, value in entry.items() if name != "row"}
+    payload.update(kind=kind, engine_version=__version__)
+    with store._transaction() as tx:
+        row = store._append(tx, kind, payload, session=None)
+    return {"seq": row.seq, "mac": row.mac}
+
+
 __all__ = [
     "CAPTURE_CLOSE",
     "CAPTURE_KINDS",
@@ -1384,6 +1470,7 @@ __all__ = [
     "FOREIGN_SEGMENT",
     "GENESIS_MAC",
     "INDEX_REBUILT",
+    "HISTORY_REPLACED",
     "KEY_BYTES",
     "MIGRATE_V8",
     "ORIGIN_ABSENT",
@@ -1407,6 +1494,7 @@ __all__ = [
     "OriginCheck",
     "Segment",
     "StoreBinding",
+    "append_history_replaced",
     "append_row",
     "canonical_payload",
     "chain_segments",
@@ -1415,6 +1503,8 @@ __all__ = [
     "compute_mac",
     "default_keys_dir",
     "fingerprint",
+    "history_replaced_kind",
+    "history_replaced_row",
     "iter_rows",
     "last_rekey_name",
     "last_row",

@@ -26,12 +26,16 @@ Four roles a row can play:
   link, ``linked_from`` otherwise, ``unlinked`` when it goes) and a
   conflict filed against it. A link is reported when it appears and
   when it goes, not on every later put of the record that carries it.
-* ``store``: a ``store_restored`` row after the record's first row: a
-  `backup restore` put the whole store back to a bundle's snapshot, so
-  what the record became in the log the restore replaced, past the
-  bundle's head, is not on this log. Its detail names the bundle's
-  creation, the seq the log was put back to and, when the restore knew
-  it, the seq the replaced log reached.
+* ``store``: a row that says the store's history was replaced
+  (`log.HISTORY_REPLACED`) after the record's first row: a
+  ``store_restored`` row, action ``rewound``, where `backup restore`
+  put the whole store back to a bundle's snapshot, so what the record
+  became in the log the restore replaced, past the bundle's head, is
+  not on this log; or a ``history_accepted`` row, action ``accepted``,
+  where `log accept-history` took the file's history as it stood. Its
+  detail names the bundle's creation (a restore), the seq the log was
+  put back to or accepted at and, when known, the seq the replaced log
+  or head checkpoint reached.
 
 Reads, such as a search that returned the record or a `memory_show` of
 it, are not history and are left out, as is any row whose payload names
@@ -77,7 +81,14 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .log import CAPTURE_MEMBER, REKEY, STORE_RESTORED, LogRow, compute_mac, same_mac
+from .log import (
+    CAPTURE_MEMBER,
+    HISTORY_REPLACED,
+    REKEY,
+    LogRow,
+    compute_mac,
+    same_mac,
+)
 from .store import IMPORTED, LOCAL, UNACCOUNTED, Store
 
 FORMAT = "bettermemory-history"
@@ -393,19 +404,29 @@ def _with_linking_versions(
 def _with_restores(
     store: Store, found: list[tuple[LogRow, dict[str, Any] | None]]
 ) -> list[tuple[LogRow, dict[str, Any] | None]]:
-    """`found` with every ``store_restored`` row after its first row merged
-    in, in log order (the ``log_by_kind`` index finds them). A restore
-    before the record's first row put back a store the record was not
-    yet in, and is not its history."""
+    """`found` with every row that says the store's history was replaced
+    (`log.HISTORY_REPLACED`) after its first row merged in, in log order.
+    One that came before the record's first row replaced a history the
+    record was not yet in, and is not its history."""
     if not found:
         return found
     rows = {row.seq: (row, payload) for row, payload in found}
+    for row in _replaced_rows(store, found[0][0].seq):
+        rows.setdefault(row.seq, (row, _payload(row)))
+    return [rows[seq] for seq in sorted(rows)]
+
+
+def _replaced_rows(store: Store, after: int) -> Iterator[LogRow]:
+    """The rows of the `log.HISTORY_REPLACED` kinds past seq `after`, in
+    log order (the ``log_by_kind`` index finds them)."""
+    kinds = sorted(HISTORY_REPLACED)
+    marks = ", ".join("?" for _ in kinds)
     for raw in store.conn.execute(
         "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
-        "WHERE kind = ? AND seq > ? ORDER BY seq",
-        (STORE_RESTORED, found[0][0].seq),
+        f"WHERE kind IN ({marks}) AND seq > ? ORDER BY seq",
+        (*kinds, after),
     ):
-        row = LogRow(
+        yield LogRow(
             int(raw[0]),
             str(raw[1]),
             None if raw[2] is None else str(raw[2]),
@@ -414,16 +435,38 @@ def _with_restores(
             str(raw[5]),
             str(raw[6]),
         )
-        rows.setdefault(row.seq, (row, _payload(row)))
-    return [rows[seq] for seq in sorted(rows)]
 
 
-def _restore_detail(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """A ``store_restored`` row's detail: when the bundle was made, the seq
-    the restore put the log back to, and the seq the replaced log reached
-    (the later of the head it replaced and the replaced store's last row,
-    as `audit_export.rewinds_across` reads them), when it knew one."""
-    after = _mapping(payload.get("head_after")) or {}
+def history_replaced(store: Store) -> list[dict[str, Any]]:
+    """Every row of `store`'s log that says its history was replaced
+    (`log.HISTORY_REPLACED`), in log order, as ``{seq, ts, kind, action,
+    ...detail}`` (`replaced_detail`): what `log verify` lists. A row
+    whose payload does not parse is listed with no detail."""
+    return [
+        {
+            "seq": row.seq,
+            "ts": row.ts,
+            "kind": row.kind,
+            "action": HISTORY_REPLACED[row.kind][1],
+            **replaced_detail(row.kind, _payload(row) or {}),
+        }
+        for row in _replaced_rows(store, 0)
+    ]
+
+
+def replaced_detail(kind: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """The detail of a row of `kind` that says the history was replaced
+    (`log.HISTORY_REPLACED`): when the bundle was made (a restore), the
+    seq the log was put back to or accepted at (``head_after``; a
+    ``history_accepted`` row written without one, as `log
+    accept-history` writes it, was accepted at its ``log_end_before``),
+    and the seq the replaced log or head checkpoint reached (the later of
+    ``head_before`` and ``log_end_before``, as
+    `audit_export.rewinds_across` reads them), when known."""
+    after = _mapping(payload.get("head_after"))
+    if after is None and kind != "store_restored":
+        after = _mapping(payload.get("log_end_before"))
+    after = after or {}
     ends = [
         end.get("seq")
         for end in (
@@ -599,14 +642,14 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
             "session": row.session,
             "kind": row.kind,
         }
-        if row.kind == STORE_RESTORED:
+        if row.kind in HISTORY_REPLACED:
             rows.append(
                 HistoryRow(
                     **base,
                     role=STORE,
-                    action="rewound",
+                    action=HISTORY_REPLACED[row.kind][1],
                     verified=verifier.verified(row),
-                    detail=_restore_detail(payload),
+                    detail=replaced_detail(row.kind, payload),
                 )
             )
             continue
@@ -945,9 +988,11 @@ __all__ = [
     "STORE",
     "HistoryRow",
     "RecordHistory",
+    "history_replaced",
     "printable",
     "read_snapshot",
     "record_history",
     "render_json",
     "render_text",
+    "replaced_detail",
 ]

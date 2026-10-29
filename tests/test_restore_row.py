@@ -96,7 +96,14 @@ def test_the_restore_appends_a_signed_row_after_the_bundles_head(
         assert payload["store_id"] == opened.store_id
         assert "engine_version" in payload
         record = json.loads(Path(str(report["record"])).read_text())["restores"][-1]
-        assert {k: v for k, v in payload.items() if k != "engine_version"} == record
+        # One entry shape for the rows that replace a history: the record
+        # names the row's kind and, once appended, the row; the row carries
+        # the rest of the entry.
+        assert record["kind"] == payload["kind"] == STORE_RESTORED
+        assert record["row"] == report["row"]
+        assert {k: v for k, v in payload.items() if k != "engine_version"} == {
+            k: v for k, v in record.items() if k != "row"
+        }
         # The head checkpoint moved on to it, as after any write; the
         # record's head_after stays the bundle's head.
         head = opened.keyring.read_head()
@@ -141,7 +148,8 @@ def test_a_restored_store_this_build_reads_only_gets_no_row(
     with Store.open(store_file, read_only=True) as opened:
         assert opened.log_rows()[-1].kind != STORE_RESTORED
         record = restore_record_path(keys_dir, opened.store_id)
-    assert len(json.loads(record.read_text())["restores"]) == 1
+    (entry,) = json.loads(record.read_text())["restores"]
+    assert entry["kind"] == STORE_RESTORED and entry["row"] is None
 
 
 def test_a_bundle_whose_store_needs_a_later_writer_is_refused(

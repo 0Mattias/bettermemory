@@ -91,7 +91,15 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 
-from .log import CONTROL_KINDS, REKEY, KeyRing, compute_mac, same_mac
+from .log import (
+    CONTROL_KINDS,
+    REKEY,
+    KeyRing,
+    compute_mac,
+    history_replaced_kind,
+    history_replaced_row,
+    same_mac,
+)
 from .store import MEMBERSHIP_EVENT_KINDS, MUTATION_KINDS, Store
 from .time_utils import isoformat_utc, parse_event_ts
 
@@ -616,7 +624,11 @@ def rewinds_across(
 ) -> list[dict[str, Any]]:
     """The restores recorded for `store_id` (`backup.restore_record_path`)
     that rewound the log across `since_seq`: from a head at or past it to
-    one below it, ``{restored_at, from_seq, to_seq}`` each.
+    one below it, ``{kind, restored_at, from_seq, to_seq, seq}`` each,
+    `kind` the row that says so (`log.HISTORY_REPLACED`: a restore, or a
+    history `log accept-history` accepted, whose entry rewinds the same
+    way from the head it replaced to the log's end) and `seq` that row's
+    seq when the entry names it (`log.history_replaced_row`).
 
     A restore to an older bundle hands the seqs after the bundle's head to
     new rows. An export cursor taken before it, past that head, names a
@@ -667,11 +679,14 @@ def rewinds_across(
             # An end that is there and does not read as a seq.
             continue
         if to_seq < since_seq and (from_seq is None or since_seq <= from_seq):
+            row = history_replaced_row(entry)
             found.append(
                 {
+                    "kind": history_replaced_kind(entry),
                     "restored_at": str(entry.get("restored_at")),
                     "from_seq": from_seq,
                     "to_seq": to_seq,
+                    "seq": None if row is None else row["seq"],
                 }
             )
     return found

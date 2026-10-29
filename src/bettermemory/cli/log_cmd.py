@@ -17,7 +17,7 @@ import json
 import os
 import sys
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO
 
@@ -232,6 +232,7 @@ def _cli_log_verify(
         load_anchors,
         merge_into_report,
     )
+    from ..history import history_replaced
 
     # Read every anchor before the store: a file that is not one is a
     # usage error, reported before any work and never as a verdict.
@@ -246,6 +247,13 @@ def _cli_log_verify(
     store = _open_read_only(parser, exit_code=1)
     try:
         report = store.log_verify()
+        # The rows that say the history was replaced, each kind in its
+        # words (`log.HISTORY_REPLACED`): what a head or anchor that moved
+        # back, or a range of seqs used twice, comes from. Present only
+        # when there is one, so any other report is as before.
+        replaced = history_replaced(store)
+        if replaced:
+            report["history_replaced"] = replaced
         if anchor_files:
             merge_into_report(
                 report, check_anchors(store.conn, store.store_id, anchors)
@@ -453,40 +461,17 @@ def _cli_log_export(
             f"removed since the last export, or this is another store; "
             f"run `bettermemory log verify`\n"
         )
-    # A cursor inside the range a restore rewound: once the log grows past
-    # it again, the rows the restore handed its seqs to are skipped, and
-    # nothing above would say so.
-    for rewind in rewinds_across(store.keys_dir, store.store_id, since):
-        if rewind["from_seq"] is None:
-            # A restore onto a host that held no copy of the store: where
-            # the replaced log ended is not known here.
-            said = (
-                f"bettermemory log export: a restore at {rewind['restored_at']} "
-                f"put the log back to seq {rewind['to_seq']} on a host that held "
-                "no copy of the store, so where the log it replaced ended is not "
-                f"known here, and --since-seq {since} is past seq "
-                f"{rewind['to_seq']}: a cursor taken before that restore skips "
-                f"the new rows after seq {rewind['to_seq']} up to seq {since}; "
-                f"export them with --since-seq {rewind['to_seq']} (if they were "
-                "exported after the restore, this repeats for every cursor past "
-                "that seq; the batches' prev_mac link tells the two apart)"
-            )
-        else:
-            said = (
-                f"bettermemory log export: a restore at {rewind['restored_at']} "
-                f"rewound the log from seq {rewind['from_seq']} to seq "
-                f"{rewind['to_seq']}, and --since-seq {since} lies between: a "
-                "cursor taken before that restore skips the new rows after seq "
-                f"{rewind['to_seq']} up to seq {since}; export them with "
-                f"--since-seq {rewind['to_seq']} (if they were exported after "
-                f"the restore, this repeats until the cursor passes seq "
-                f"{rewind['from_seq']})"
-            )
-        sys.stderr.write(printable(said) + "\n")
+    # A cursor inside a range a restore rewound, or a history accepted
+    # behind its head checkpoint: once the log grows past it again, the
+    # rows that took those seqs are skipped, and nothing above would say so.
+    rewinds = rewinds_across(store.keys_dir, store.store_id, since)
+    for rewind in rewinds:
+        sys.stderr.write(printable(_rewind_warning(rewind, since)) + "\n")
     if out is None:
         raise SystemExit(0)
     if args.json:
-        sys.stdout.write(json.dumps({**summary.to_dict(), "out": str(out)}) + "\n")
+        document = {**summary.to_dict(), "out": str(out), "rewinds": rewinds}
+        sys.stdout.write(json.dumps(document) + "\n")
     elif summary.rows:
         sys.stdout.write(
             f"bettermemory log export: {summary.rows} row(s), seq "
@@ -499,6 +484,44 @@ def _cli_log_export(
             f"written to {out}; next --since-seq {summary.through_seq}\n"
         )
     raise SystemExit(0)
+
+
+def _rewind_warning(rewind: Mapping[str, Any], since: int) -> str:
+    """`log export`'s warning for a cursor inside a range that a row of a
+    `log.HISTORY_REPLACED` kind replaced (`audit_export.rewinds_across`), in
+    that kind's words: a restore rewound the log; an accepted history (`log
+    accept-history`) took the log as it stood, behind its head checkpoint."""
+    from ..log import HISTORY_REPLACED, STORE_RESTORED
+
+    at, to, start = rewind["restored_at"], rewind["to_seq"], rewind["from_seq"]
+    restore = rewind["kind"] == STORE_RESTORED
+    event = "restore" if restore else "acceptance"
+    lead = f"bettermemory log export: {HISTORY_REPLACED[rewind['kind']][0]} at {at} "
+    skipped = (
+        f"a cursor taken before that {event} skips the new rows after seq {to} "
+        f"up to seq {since}; export them with --since-seq {to} (if they were "
+        f"exported after the {event}, "
+    )
+    if start is None:
+        # A restore onto a host that held no copy of the store: where the
+        # replaced log ended is not known here.
+        return (
+            f"{lead}put the log back to seq {to} on a host that held no copy of "
+            "the store, so where the log it replaced ended is not known here, "
+            f"and --since-seq {since} is past seq {to}: {skipped}this repeats "
+            "for every cursor past that seq; the batches' prev_mac link tells "
+            "the two apart)"
+        )
+    did = (
+        f"rewound the log from seq {start} to seq {to}"
+        if restore
+        else f"accepted the log as it stood at seq {to}, where the head "
+        f"checkpoint had said seq {start}"
+    )
+    return (
+        f"{lead}{did}, and --since-seq {since} lies between: {skipped}this "
+        f"repeats until the cursor passes seq {start})"
+    )
 
 
 def _cli_log_anchor(
@@ -607,6 +630,12 @@ def render_report(report: dict[str, Any]) -> str:
             if "reason" in entry:
                 status += f" ({entry['reason']})"
             lines.append(f"    seq {entry['seq']}: {status} ({entry['file']})")
+    # Present only in `log verify`'s report, and only when a row replaced
+    # the history, so any other report renders as before.
+    replaced = report.get("history_replaced") or []
+    if replaced:
+        lines.append(f"  history replaced {len(replaced)} time(s)")
+        lines.extend(f"    {_replaced_text(entry)}" for entry in replaced)
     if report["problems"]:
         lines.append("  problems")
         for problem in report["problems"]:
@@ -614,3 +643,22 @@ def render_report(report: dict[str, Any]) -> str:
                 f"    seq {problem['seq']} ({problem['kind']}): {problem['problem']}"
             )
     return "\n".join(printable(line) for line in lines) + "\n"
+
+
+def _replaced_text(entry: Mapping[str, Any]) -> str:
+    """One line of `log verify`'s list of the rows that replaced the
+    history (`history.history_replaced`), in its kind's words."""
+    from ..log import HISTORY_REPLACED, STORE_RESTORED
+
+    to, start = entry.get("to_seq"), entry.get("from_seq")
+    said = f"seq {entry['seq']} {entry['kind']}: {HISTORY_REPLACED[entry['kind']][0]}"
+    said += f" at {entry['ts']}"
+    if entry["kind"] == STORE_RESTORED:
+        said += f" put the log back to seq {to}"
+        if start is not None:
+            said += f" from seq {start}"
+    else:
+        said += f" accepted the log as it stood at seq {to}"
+        if start is not None and start != to:
+            said += f", where the head checkpoint had said seq {start}"
+    return said

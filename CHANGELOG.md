@@ -2263,6 +2263,23 @@ follows the candidates' testing.
   `src/bettermemory/store.py`, `src/bettermemory/backup.py`,
   `src/bettermemory/cli/backup_cmd.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_lock.py`)
+- **A restore and an accepted history read as one contract.** Both
+  rows that say a store's history was replaced, `store_restored`
+  (`backup restore`) and `history_accepted` (`log accept-history
+  --yes`), are appended by one helper (`log.append_history_replaced`),
+  and the record beside the head names each entry's kind and row
+  (`row` is null until the row is appended, and stays null for a
+  store opened for reading only). `log export` warned "a restore" for
+  an accepted history and only on stderr; it now words each kind as
+  its own and lists the ranges in its `--json` summary's `rewinds`.
+  `log verify` lists both rows under `history replaced`, and `memory
+  history` shows an accepted history as `accepted` beside a restore's
+  `rewound`. docs/operations.md has the table of which command follows
+  a restore, a `key import`, a backup from another machine and a file
+  copied by hand. (`src/bettermemory/log.py`,
+  `src/bettermemory/backup.py`, `src/bettermemory/audit_export.py`,
+  `src/bettermemory/history.py`, `src/bettermemory/cli/log_cmd.py`,
+  `tests/test_history_replaced.py`)
 - **A restore refuses a bundle this build could only read.** A bundle
   whose store needs a writer at a later schema revision than the
   restoring build's (ENG-107's `min_writer_revision`) was restored and

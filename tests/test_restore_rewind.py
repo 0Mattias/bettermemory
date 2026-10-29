@@ -165,6 +165,12 @@ def test_an_entry_with_neither_end_rewinds_from_an_unknown_seq(tmp_path: Path) -
         encoding="utf-8",
     )
     assert audit_export.rewinds_across(tmp_path, "s" * 32, 3) == [
-        {"restored_at": "t", "from_seq": None, "to_seq": 2}
+        {
+            "kind": "store_restored",
+            "restored_at": "t",
+            "from_seq": None,
+            "to_seq": 2,
+            "seq": None,
+        }
     ]
     assert audit_export.rewinds_across(tmp_path, "s" * 32, 2) == []

@@ -887,11 +887,29 @@ def test_a_rewind_is_read_off_the_later_of_its_two_ends(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert audit_export.rewinds_across(tmp_path, "s" * 32, 6) == [
-        {"restored_at": "t", "from_seq": 7, "to_seq": 2},
-        {"restored_at": "u", "from_seq": 9, "to_seq": 2},
+        {
+            "kind": "store_restored",
+            "restored_at": "t",
+            "from_seq": 7,
+            "to_seq": 2,
+            "seq": None,
+        },
+        {
+            "kind": "store_restored",
+            "restored_at": "u",
+            "from_seq": 9,
+            "to_seq": 2,
+            "seq": None,
+        },
     ]
     assert audit_export.rewinds_across(tmp_path, "s" * 32, 8) == [
-        {"restored_at": "u", "from_seq": 9, "to_seq": 2},
+        {
+            "kind": "store_restored",
+            "restored_at": "u",
+            "from_seq": 9,
+            "to_seq": 2,
+            "seq": None,
+        },
     ]
     assert audit_export.rewinds_across(tmp_path, "s" * 32, 2) == []
 

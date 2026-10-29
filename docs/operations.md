@@ -525,6 +525,28 @@ use. The plan and the result print the origin anchor and the key ring's
 binding, before and after, as `--json` and the restore record carry
 them, and where the log the restore replaces ended.
 
+### When a store's history was replaced
+
+Two signed control rows say a store's history was replaced, and
+each keeps an entry in the record beside the head
+(`<store_id>.backup_restore.json`) naming its kind and its row:
+`store_restored`, appended by `backup restore` when a verified
+bundle's snapshot replaces the store file, and `history_accepted`,
+appended by `log accept-history --yes` when the file's history is
+accepted as it stands. `log verify` lists both under `history
+replaced`, `log export` warns a cursor inside the range either left
+behind (and names it in its `--json` summary's `rewinds`), and
+`memory history` shows each in the history of every record older
+than it, as `rewound` and `accepted`. Which command follows which
+event:
+
+| What happened | What to run |
+|---|---|
+| A `backup restore` finished | Nothing more: the restore ran `log verify` on its result, and `log accept-history` would find nothing to accept. |
+| `key import` put keys back in the ring | `log verify` only: its `key_imported` row replaces no history. |
+| The store comes from a backup taken on another machine | `backup restore BUNDLE --yes` (with `--trust-bundle-key` when only the bundle carries its key), never a copy of the file and `log accept-history`. |
+| A store file was put back or copied by hand, with no bundle | `log accept-history --yes`, once `log verify` has shown why its anchor or head no longer fits. |
+
 A schedule that holds up: `log verify && backup create --out <another
 disk>` daily from cron or the service manager, `backup verify` on the
 new bundle, and old bundles pruned by date. A bundle verifies against
