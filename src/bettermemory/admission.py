@@ -2,15 +2,15 @@
 through, the caller's resolution, and the membership model that reads the
 records' homes.
 
-`membership.admitted` decides every home; an `Admission` only caches its
-answers for the request, keyed on what `membership.relation` reads (the
-home's project, chain and tenant, whether it is unresolved, and for a
+`membership_records.admitted` decides every home; an `Admission` only caches
+its answers for the request, keyed on what `membership_records.relation` reads
+(the home's project, chain and tenant, whether it is unresolved, and for a
 global record the projects its scopes name), so the readers that walk
 every record (`Store.brief_rows`, `scope_counts`, `category_rows`,
 `document_frequencies`) and the ranked set decide by one predicate
 (`admits_row`). They decide on the project a record's ``homes`` row names,
-which the model reads into a `membership.Home` once per project, and for a
-record written outside any project on the projects its scopes name
+which the model reads into a `membership_records.Home` once per project, and
+for a record written outside any project on the projects its scopes name
 (`membership.Membership.named`, RS-F7 part 2). A record with no home row
 is admitted nowhere. A caller
 whose resolution raised, or whose location nothing could be read for
@@ -282,8 +282,8 @@ class Admission:
     # -- decisions ------------------------------------------------------------
 
     def admits(self, home: Home | None) -> bool:
-        """`membership.admitted` for this surface and caller; False for a
-        record with no home and for a caller admitted nothing."""
+        """`membership_records.admitted` for this surface and caller; False for
+        a record with no home and for a caller admitted nothing."""
         if home is None or self.caller is None or self.model is None:
             return False
         key: _Key = (home.project, home.chain, home.tenant, home.unresolved, home.named)
@@ -308,7 +308,7 @@ class Admission:
         """Whether a record with `scopes` whose ``homes`` row names
         `recorded` is admitted: `admits_project`, except that a record
         written outside any project is decided with the projects its
-        scopes name (`membership.relation`'s ``global_named``)."""
+        scopes name (`membership_records.relation`'s ``global_named``)."""
         if recorded != GLOBAL or self.model is None:
             return self.admits_project(recorded)
         key = tuple(scopes)
@@ -335,8 +335,8 @@ class Admission:
         return [rid for rid in record_ids if self.admits_id(rid)]
 
     def relation(self, home: Home | None) -> str:
-        """`membership.relation` of the home to the caller; ``unknown`` for
-        a record with no home and for a caller nothing was read for."""
+        """`membership_records.relation` of the home to the caller; ``unknown``
+        for a record with no home and for a caller nothing was read for."""
         if home is None or self.caller is None:
             return UNKNOWN
         return relation(home, self.caller)
@@ -372,8 +372,8 @@ class Admission:
     def admitted_projects(self) -> frozenset[str] | None:
         """The projects (merges followed) whose records this surface admits
         for the caller, read once from the project table through
-        `membership.admitted`; None when the caller is admitted nothing.
-        Whether ``global`` records are admitted is `admits_global`."""
+        `membership_records.admitted`; None when the caller is admitted
+        nothing. Whether ``global`` records are admitted is `admits_global`."""
         if self.nothing is not None or self.model is None:
             return None
         return frozenset(

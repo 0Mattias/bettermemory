@@ -10,7 +10,7 @@ sight under the policy switch, decision D11), the init stamps, the project
 files from the cwd up, the content manifest of a commit-less checkout or a
 folder project, and the evicted-file state (decision D19). No git process
 runs for any of it. `capture` returns that as a `Capture`; `to_location`
-turns a capture into `membership.Location` with a history reader.
+turns a capture into `membership_records.Location` with a history reader.
 
 The history reader (`RepositoryHistory`) reads objects through
 `gitobjects.ObjectReader` and asks ``git cat-file`` only where the reader
@@ -869,7 +869,7 @@ class NeedWitnesses(Exception):
 
 
 class AnsweredHistory:
-    """A `membership.HistoryReader` over the client's answers: each
+    """A `membership_records.HistoryReader` over the client's answers: each
     question it holds an answer for is answered, any other raises
     `NeedWitnesses` naming it, so the daemon reads none of the client's
     paths. The first question for held commits names every witness id the
@@ -945,7 +945,7 @@ class AnsweredHistory:
 
 
 class AnsweredToken:
-    """The `membership.TokenWriter` of a caller the daemon cannot write
+    """The `membership_records.TokenWriter` of a caller the daemon cannot write
     for (ENG-153): the checkout token the client re-minted in its own
     namespace when asked (`answer`, ``remint``), which the resolution
     records in its one transaction and reply. A client not yet asked is
@@ -973,8 +973,8 @@ class AnsweredToken:
 
 
 class AnsweredLiveness:
-    """The `membership.Liveness` of a caller the daemon cannot read: each
-    view's state as the client answered it (`view_state` in its own
+    """The `membership_records.Liveness` of a caller the daemon cannot read:
+    each view's state as the client answered it (`view_state` in its own
     namespace); a view not answered raises `NeedWitnesses`."""
 
     def __init__(self, answers: Mapping[str, Any]) -> None:
@@ -1152,7 +1152,7 @@ def _same_number(a: Key | None, b: Key | None) -> bool:
 
 
 def path_liveness(checkout: Checkout, view: View) -> str:
-    """The `membership.Liveness` of this process's namespace, which the
+    """The `membership_records.Liveness` of this process's namespace, which the
     model reads by default: what the view's path holds now (`view_state`)
     against the checkout's recorded object, token, last HEAD and init
     stamps, so a view is live by the same witness O that keeps the
@@ -1340,7 +1340,7 @@ def to_location(
     session: str | None = None,
     history: Any = None,
 ) -> Location:
-    """The `membership.Location` of a capture, for `machine`, with
+    """The `membership_records.Location` of a capture, for `machine`, with
     `history` as its reader."""
     from . import membership as mb
 
@@ -1404,7 +1404,7 @@ def capture_location(
     config: Config,
     budget: float = FETCH_BUDGET,
 ) -> Location:
-    """The caller's `membership.Location` at `cwd` (design 3.1): the
+    """The caller's `membership_records.Location` at `cwd` (design 3.1): the
     capture, under the token policy of `config`, for `machine`, with a
     history reader over the repository's files."""
     cap = capture(cwd, write_token=config.membership.write_token, budget=budget)

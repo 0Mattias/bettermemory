@@ -889,7 +889,7 @@ user names into the caller's checkout's project; `unjoin_project` undoes
 a merge. The CLI declarations (`project join`, `project new`, `project
 init`, `memory move`) run from any stdin, an agent's shell included,
 and log the OS user. A migration's legacy question is opened only when
-its evidence decides something (`membership.legacy_asks`: the records'
+its evidence decides something (`membership_records.legacy_asks`: the records'
 commits held by more than one compatible live project, or by citation
 under the same name); held by citation only under another name, or
 through a remote the holder does not carry, the records stay a project

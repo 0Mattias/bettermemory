@@ -677,8 +677,8 @@ def test_d5_legacy_question_only_where_the_evidence_decides_something(
 
 
 def test_legacy_asks_names_the_shapes_that_decide_something() -> None:
-    """`membership.legacy_asks`: ambiguous always; none only under the same
-    name through compatible holders."""
+    """`membership_records.legacy_asks`: ambiguous always; none only under the
+    same name through compatible holders."""
     assert legacy_asks(rule="ambiguous", same_name=False, compatible=False)
     assert legacy_asks(rule="none", same_name=True, compatible=True)
     assert not legacy_asks(rule="none", same_name=False, compatible=True)

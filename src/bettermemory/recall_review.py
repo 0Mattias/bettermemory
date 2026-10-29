@@ -7,8 +7,8 @@
 - briefs: `session_brief` rows (4), each with its pointers;
 - silent prompts (4): Stop turns the recall delivered nothing on, in
   which the conversation then retrieved (a search hit or a show) a
-  memory of the caller's project (its home, `membership.relation`), with
-  those memories.
+  memory of the caller's project (its home, `membership_records.relation`),
+  with those memories.
 
 The prompt each sample answers is read from the session's transcript at
 review time and never stored: a delivery's as the user row, the human's

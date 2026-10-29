@@ -72,7 +72,8 @@ _counter = itertools.count(1)
 
 
 class History:
-    """A repository's commits as `membership.HistoryReader` asks for them."""
+    """A repository's commits as `membership_records.HistoryReader` asks for
+    them."""
 
     def __init__(self, commits: dict[str, tuple[str, ...]] | None = None) -> None:
         self.commits: dict[str, tuple[str, ...]] = dict(commits or {})

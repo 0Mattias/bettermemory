@@ -732,7 +732,7 @@ def candidate_admitted(
     `memory_home` is the project the record's ``homes`` row names (None
     for a record with none) and `admission` the request's
     (`admission.Admission`, built once per request from the caller's
-    resolution): `membership.admitted` on the search's surface decides
+    resolution): `membership_records.admitted` on the search's surface decides
     (design 3.5; a global record with the projects `memory_scopes` name,
     `Admission.admits_row`), and a record with no home is admitted nowhere. None
     admits every record: offline callers (the benches, an eval replay)

@@ -521,7 +521,8 @@ class _Decision:
     rule: str
     recorded: int = 0
     held: dict[str, int] = field(default_factory=dict)
-    #: Whether the overlap is worth a question (`membership.legacy_asks`).
+    #: Whether the overlap is worth a question
+    #: (`membership_records.legacy_asks`).
     asks: bool = False
 
 
@@ -1163,11 +1164,12 @@ class _Run:
         asks = False
         if chosen is None:
             rule = "ambiguous" if len(comp_s) > 1 else "none"
-            # Whether the overlap decides anything (`membership.legacy_asks`):
-            # more than one compatible holder of the records' own commits,
-            # or compatible holders by citation under the same name. Cited
-            # only under another name, or held through a remote the holder
-            # does not carry, is no question: the project stands apart.
+            # Whether the overlap decides anything
+            # (`membership_records.legacy_asks`): more than one compatible
+            # holder of the records' own commits, or compatible holders by
+            # citation under the same name. Cited only under another name, or
+            # held through a remote the holder does not carry, is no question:
+            # the project stands apart.
             asks = mb.legacy_asks(
                 rule=rule,
                 same_name=bool(same_name & set(comp_w)),

@@ -780,7 +780,7 @@ def should_include_for_caller(
 ) -> bool:
     """rc3's membership test over the origin columns, kept to compute
     the rc3_admitted shadow column (design 8.11); every delivery decides
-    through `membership.admitted` instead (design 3.5)."""
+    through `membership_records.admitted` instead (design 3.5)."""
     memory_repo = memory_origin.repo if memory_origin else None
     if not repos_match(
         memory_repo, caller_repo, caller_alternates=caller_repo_alternates

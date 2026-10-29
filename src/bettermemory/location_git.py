@@ -82,10 +82,10 @@ CACHE_SECONDS = 600.0
 #: macOS).
 CACHE_CAP = 256
 #: Commits a rewritten-history walk reads from HEAD; the model's
-#: `membership.WALK_LIMIT`, so a client's walk covers exactly the model's.
-#: Measured (ENG-160) on this repository's history of 2,011 commits from a
-#: fresh reader: 512 commits in 55 ms, 128 in 14 ms, all 2,011 in 268 ms.
-#: A witness older than the newest 512 commits is not reached by the walk,
+#: `membership_records.WALK_LIMIT`, so a client's walk covers exactly the
+#: model's. Measured (ENG-160) on this repository's history of 2,011 commits
+#: from a fresh reader: 512 commits in 55 ms, 128 in 14 ms, all 2,011 in 268
+#: ms. A witness older than the newest 512 commits is not reached by the walk,
 #: and the other witnesses decide. `reachable_among` (ENG-151) reads the
 #: same 512 commits in all, shared among the commits it starts from, about
 #: 512/n below each of n: on a 20,000-commit line, 128 tied witnesses five
@@ -1609,8 +1609,8 @@ def _git(
 
 
 class RepositoryHistory:
-    """The history reader of a capture (`membership.HistoryReader`, design
-    3.1): objects read from the repository's files through
+    """The history reader of a capture (`membership_records.HistoryReader`,
+    design 3.1): objects read from the repository's files through
     `gitobjects.ObjectReader`, made on first use; ``git cat-file`` only
     where the reader reports itself incomplete (a pack index it could not
     parse, an evicted file, an object format it does not know). Without
