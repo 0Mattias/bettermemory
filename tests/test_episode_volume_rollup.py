@@ -30,7 +30,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import store as store_module
+from bettermemory import store_journal, store_rows
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.health import report_for_store
@@ -244,18 +244,20 @@ def test_report_for_store_does_not_materialise_episodes(
         store.write_episode(session_id=f"sess_{i}", body=f"body {i}")
 
     loads: list[Any] = []
-    original = store_module._row_to_episode
+    original = store_rows._row_to_episode
 
     def _spy(row: Any) -> Any:
         loads.append(row)
         return original(row)
 
-    monkeypatch.setattr(store_module, "_row_to_episode", _spy)
+    monkeypatch.setattr(store_journal, "_row_to_episode", _spy)
     report = report_for_store(store)
 
     assert report.episode_volume is not None
     assert report.episode_volume.episodes == 4
     assert loads == []
+    store.episodes_by_session("sess_0")
+    assert loads, "premise: the episode reads go through the patched reader"
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +329,7 @@ def test_the_volume_gauge_has_exactly_one_call_site_in_the_package() -> None:
         text = path.read_text(encoding="utf-8")
         rel = str(path.relative_to(src))
         # An attribute call, so `def episode_volume(` (the definition,
-        # inside store.py) does not register as a call site.
+        # inside store_journal.py) does not register as a call site.
         if re.search(r"\.episode_volume\(", text):
             volume_callers.add(rel)
         if re.search(r"\.prunable_episode_sessions\(", text):
@@ -340,7 +342,10 @@ def test_the_volume_gauge_has_exactly_one_call_site_in_the_package() -> None:
         f"the stats command: {sorted(volume_callers)}. Every other surface "
         "pays this read per turn; those two do not."
     )
-    assert predicate_callers == {"store.py", str(Path("cli") / "episodes.py")}, (
+    assert predicate_callers == {
+        "store_journal.py",
+        str(Path("cli") / "episodes.py"),
+    }, (
         "the shared TTL predicate gained an unexpected caller: "
         f"{sorted(predicate_callers)}."
     )

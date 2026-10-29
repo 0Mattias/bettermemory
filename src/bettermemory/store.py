@@ -81,6 +81,8 @@ from it. A method a module beside this one holds is a function of
   to one store file.
 - `store_records`: the methods that write and read records, standing
   answers and tombstones, and the corroboration check.
+- `store_journal`: the episode journal's methods, its TTL prune and the
+  health report's gauge.
 """
 
 from __future__ import annotations
@@ -97,7 +99,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple, Protocol, TypeVar
 
@@ -131,8 +133,6 @@ from .log import (
     same_mac,
     verify_chain,
 )
-from .models import Episode, generate_ulid, utcnow
-from .origin import Origin
 
 # `fts_index_text` passes through: bench/integrity/adapters.py reads it here.
 from .search import (
@@ -205,7 +205,6 @@ from .store_rows import (
     _membership_spec,
     _membership_values,
     _record_columns as _record_columns,
-    _row_to_episode as _row_to_episode,
     _scopes_text as _scopes_text,
     _sort_rows,
     _table_rows as _table_rows,
@@ -225,6 +224,7 @@ from . import store_records as _records
 from .store_records import (
     CORROBORATION_CHECK_SQL as CORROBORATION_CHECK_SQL,
 )
+from . import store_journal as _journal
 
 log = logging.getLogger("bettermemory.store")
 
@@ -1615,51 +1615,20 @@ class Store:
     rename_scope = _records.rename_scope
     prune_tombstones = _records.prune_tombstones
 
-    # -- episodes -----------------------------------------------------------
-
-    def put_episode(
-        self,
-        episode: Episode,
-        *,
-        session: str | None = None,
-        home: RecordHome | None = None,
-    ) -> Episode:
-        """Insert or replace the episode; ``home`` writes its ``homes`` row
-        in the same transaction, as ``put_memory`` does."""
-        payload = {"episode": episode.model_dump(mode="json")}
-        with self._transaction() as tx:
-            home_row = self._home_row(episode.id, "episode", home)
-            self._mutate(tx, "episode_put", payload, session=session)
-            if home_row is not None:
-                self._mutate(tx, "home_put", {"home": home_row}, session=session)
-        return episode
-
-    def get_episode(self, episode_id: str) -> Episode:
-        row = self._conn.execute(
-            "SELECT * FROM episodes WHERE id = ?", (episode_id,)
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(episode_id)
-        return _row_to_episode(row)
-
-    def iter_episodes(self, *, session_id: str | None = None) -> Iterator[Episode]:
-        if session_id is None:
-            cursor = self._conn.execute("SELECT * FROM episodes ORDER BY rowid")
-        else:
-            cursor = self._conn.execute(
-                "SELECT * FROM episodes WHERE session_id = ? ORDER BY rowid",
-                (session_id,),
-            )
-        for row in cursor:
-            yield _row_to_episode(row)
-
-    def count_episodes(self) -> int:
-        return int(self._conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0])
-
-    def delete_episode(self, episode_id: str, *, session: str | None = None) -> None:
-        with self._transaction() as tx:
-            self._require_row(tx, "episodes", "id", episode_id)
-            self._mutate(tx, "episode_delete", {"id": episode_id}, session=session)
+    # The episode journal (store_journal.py).
+    put_episode = _journal.put_episode
+    get_episode = _journal.get_episode
+    iter_episodes = _journal.iter_episodes
+    count_episodes = _journal.count_episodes
+    delete_episode = _journal.delete_episode
+    write_episode = _journal.write_episode
+    write_floor = _journal.write_floor
+    episodes_by_session = _journal.episodes_by_session
+    episodes_by_swarm = _journal.episodes_by_swarm
+    episode_session_ids = _journal.episode_session_ids
+    prunable_episode_sessions = _journal.prunable_episode_sessions
+    prune_episode_sessions = _journal.prune_episode_sessions
+    episode_volume = _journal.episode_volume
 
     # -- verifications ------------------------------------------------------
 
@@ -3155,155 +3124,6 @@ class Store:
             raw["payload"],
         )
 
-    # -- the journal ------------------------------------------------------------
-
-    def write_episode(
-        self,
-        *,
-        session_id: str,
-        body: str,
-        scopes: list[str] | None = None,
-        takeaway: str | None = None,
-        swarm_id: str | None = None,
-        origin: Origin | None = None,
-        now: datetime | None = None,
-        home: RecordHome | None = None,
-    ) -> Episode:
-        """Append one journal entry for `session_id`, with its home when
-        `home` is given (`put_episode`)."""
-        if not body or not body.strip():
-            raise ValueError("episode body must be a non-empty string")
-        episode = Episode(
-            id=generate_ulid(),
-            session_id=session_id,
-            created=now or utcnow(),
-            body=body.strip() + "\n",
-            scopes=list(scopes or []),
-            takeaway=takeaway.strip() if takeaway else None,
-            swarm_id=swarm_id,
-            origin=origin,
-        )
-        return self.put_episode(episode, session=session_id, home=home)
-
-    def write_floor(
-        self,
-        *,
-        session_id: str,
-        origin: Origin | None = None,
-        now: datetime | None = None,
-        home: RecordHome | None = None,
-    ) -> Episode:
-        """The session-tag floor the handoff writes at its entry, so a
-        session that crashes before its first takeaway still marks its
-        worktree; homed like any episode when `home` is given."""
-        episode = Episode(
-            id=generate_ulid(),
-            session_id=session_id,
-            created=now or utcnow(),
-            body="(session-tag floor, no takeaway recorded)\n",
-            scopes=[],
-            takeaway=None,
-            origin=origin,
-            is_floor=True,
-        )
-        return self.put_episode(episode, session=session_id, home=home)
-
-    def episodes_by_session(self, session_id: str) -> list[Episode]:
-        out = list(self.iter_episodes(session_id=session_id))
-        out.sort(key=lambda e: e.created)
-        return out
-
-    def episodes_by_swarm(self, swarm_id: str) -> list[Episode]:
-        out = [
-            _row_to_episode(row)
-            for row in self._conn.execute(
-                "SELECT * FROM episodes WHERE swarm_id = ? ORDER BY created, rowid",
-                (swarm_id,),
-            )
-        ]
-        return out
-
-    def episode_session_ids(self) -> list[str]:
-        """Every session with at least one episode, oldest first."""
-        return [
-            str(row["session_id"])
-            for row in self._conn.execute(
-                "SELECT session_id, MIN(rowid) AS first FROM episodes "
-                "GROUP BY session_id ORDER BY first"
-            )
-        ]
-
-    def prunable_episode_sessions(
-        self,
-        *,
-        ttl_days: int = DEFAULT_EPISODE_TTL_DAYS,
-        now: datetime | None = None,
-    ) -> list[str]:
-        """Sessions whose newest episode is older than the TTL."""
-        if ttl_days <= 0:
-            return []
-        cutoff = _iso((now or utcnow()) - timedelta(days=ttl_days))
-        return [
-            str(row["session_id"])
-            for row in self._conn.execute(
-                "SELECT session_id, MAX(created) AS newest FROM episodes "
-                "GROUP BY session_id HAVING newest < ? ORDER BY newest",
-                (cutoff,),
-            )
-        ]
-
-    def prune_episode_sessions(
-        self,
-        *,
-        ttl_days: int = DEFAULT_EPISODE_TTL_DAYS,
-        keep_session_id: str | None = None,
-        now: datetime | None = None,
-        session: str | None = None,
-    ) -> list[str]:
-        """Delete every episode of the sessions past the TTL, except the
-        session named by `keep_session_id`. Returns the pruned session
-        ids. The sessions are pruned in chunks (`_in_chunks`), each one's
-        newest episode read again under its chunk's write lock, so a
-        session that gained an episode meanwhile is kept whole. With no
-        session past the TTL it takes no lock.
-
-        A failure part way raises, and the ids are not returned: the chunks
-        committed before it stay committed (those sessions are gone), the
-        failing chunk is rolled back, and the rest are still there.
-        Running it again prunes what is left."""
-        if ttl_days <= 0:
-            return []
-        cutoff = _iso((now or utcnow()) - timedelta(days=ttl_days))
-        candidates = [
-            sid
-            for sid in self.prunable_episode_sessions(ttl_days=ttl_days, now=now)
-            if sid != keep_session_id
-        ]
-        pruned: list[str] = []
-
-        def prune(sid: str) -> None:
-            newest = self._conn.execute(
-                "SELECT MAX(created) FROM episodes WHERE session_id = ?", (sid,)
-            ).fetchone()[0]
-            if newest is None or str(newest) >= cutoff:
-                return
-            episode_ids = [
-                str(row[0])
-                for row in self._conn.execute(
-                    "SELECT id FROM episodes WHERE session_id = ? ORDER BY rowid",
-                    (sid,),
-                )
-            ]
-            with self._transaction() as tx:
-                for episode_id in episode_ids:
-                    self._mutate(
-                        tx, "episode_delete", {"id": episode_id}, session=session
-                    )
-            pruned.append(sid)
-
-        self._in_chunks(candidates, prune)
-        return pruned
-
     def episode_provenance(self, episode_ids: Sequence[str]) -> dict[str, str]:
         """``{id: label}`` for the episodes asked: ``local`` when the row's
         pointer into the log verifies, ``unaccounted`` when it does not
@@ -3328,28 +3148,6 @@ class Store:
                 )
                 out[episode_id] = UNACCOUNTED if verified is False else LOCAL
         return out
-
-    def episode_volume(
-        self,
-        *,
-        ttl_days: int = DEFAULT_EPISODE_TTL_DAYS,
-        now: datetime | None = None,
-    ) -> EpisodeVolume:
-        row = self._conn.execute(
-            "SELECT COUNT(DISTINCT session_id) AS sessions, COUNT(*) AS episodes, "
-            "COALESCE(SUM(LENGTH(CAST(body AS BLOB)) + "
-            "LENGTH(CAST(COALESCE(takeaway, '') AS BLOB))), 0) AS bytes "
-            "FROM episodes"
-        ).fetchone()
-        return EpisodeVolume(
-            sessions=int(row["sessions"]),
-            episodes=int(row["episodes"]),
-            bytes=int(row["bytes"]),
-            prunable_sessions=len(
-                self.prunable_episode_sessions(ttl_days=ttl_days, now=now)
-            ),
-            ttl_days=ttl_days,
-        )
 
     # -- the log ------------------------------------------------------------
 
