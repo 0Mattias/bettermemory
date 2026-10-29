@@ -43,8 +43,9 @@ def add_subparser(
         action="store_true",
         help=(
             "Print the plan for the key rings whose store is shown gone (the "
-            "orphan_keys check: the bound file's directory is there, readable "
-            "and not empty, and holds no file by its name); with --yes, move "
+            "orphan_keys check: no file at the bound path, and the nearest "
+            "directory on the way up that is there readable and not empty; a "
+            "disk unplugged reads the same); with --yes, move "
             "them to the keys directory's quarantine/<store_id>/, each read "
             "again under its lock first. Nothing is deleted, and `bettermemory "
             "key import` takes a key back. Every other ring is kept and named."

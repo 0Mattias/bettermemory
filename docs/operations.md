@@ -238,13 +238,19 @@ under the keys directory, owner-only, each with a `note.txt` line
 naming the store file it was bound to and why it was moved. Nothing is
 deleted: `bettermemory key import <keys>/quarantine/<store_id>/<store_id>.key`
 with `BETTERMEMORY_DIR` naming the store's directory files a key back.
-A ring moves only when its store is shown gone: the directory the
-binding names is there, can be read, is not empty and holds no file by
-the store file's name, each read within 0.5 s. Every other ring is kept
-and named (a directory not there, empty, unreadable or not answering, a
-file there that is damaged or holds another store, a ring that names no
-store file), so run it again once a volume is back, and run `key adopt
---yes` from a store moved by hand before the clear. `security audit` covers what `doctor` leaves out: file modes and
+A ring moves only when its store is shown gone: no file is at the path
+the binding names, and the nearest directory on the way up that is
+there (the store's own, or an ancestor when the directory was deleted
+with the store, as a bench's scratch directory under the temporary
+directory is) can be read and holds other entries, each read within
+0.5 s. A disk unplugged from `/Volumes` reads the same, since its mount
+point goes with it: its rings move to the quarantine, and `key import`
+takes each back once the disk is back. Every other ring is kept and
+named (the nearest directory there empty, as an unmounted mount point
+is, a link to nothing on the way, a directory unreadable or not
+answering, a file there that is damaged or holds another store, a ring
+that names no store file), so run it again once a volume is back, and
+run `key adopt --yes` from a store moved by hand before the clear. `security audit` covers what `doctor` leaves out: file modes and
 owners, the key against the store, git working trees and synced folders,
 and Claude Code's sandbox settings. `config check` grades the contents
 of `config.toml` and the managed config: a typo `doctor` cannot see, such

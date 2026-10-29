@@ -29,6 +29,7 @@ import stat
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -236,22 +237,82 @@ def test_key_import_takes_a_quarantined_key_back(
         assert store.log_verify()["status"] == "ok"
 
 
-@pytest.mark.parametrize("how", ["deleted_with_it", "link_to_nothing"])
-def test_a_ring_whose_directory_is_not_there_is_kept(
-    how: str, tmp_path: Path, keys_dir: Path
+def test_a_store_deleted_with_its_directory_under_a_temporary_root_is_quarantined(
+    tmp_path: Path, keys_dir: Path
 ) -> None:
-    """The store moved or deleted with its directory, or a directory on
-    the way that became a link to nothing (a volume's link left behind):
-    nothing shows the store gone rather than elsewhere."""
-    path, store_id = _store(tmp_path / "vol" / "project")
-    if how == "deleted_with_it":
-        shutil.rmtree(path.parent)
-    else:
-        if sys.platform == "win32":
-            pytest.skip("symbolic links need a privilege on Windows")
-        shutil.move(str(tmp_path / "vol"), str(tmp_path / "elsewhere"))
-        (tmp_path / "vol").symlink_to(tmp_path / "missing")
-    _kept(keys_dir, store_id, "is not there")
+    """A bench's scratch directory under the temporary directory, removed
+    whole with its store: the nearest directory still there holds other
+    entries, so the directory was deleted, not unmounted, and the ring
+    moves to the quarantine, from which `key import` takes it back."""
+    root = (tmp_path / "tmp").resolve()
+    (root / "another-run").mkdir(parents=True)
+    path, store_id = _store(root / "pytest-of-bench" / "run-7" / "store")
+    ring = _ring_files(keys_dir, store_id)
+    shutil.rmtree(root / "pytest-of-bench")
+    standing = _standing(keys_dir, store_id)
+    assert standing.state == lifecycle.RING_ORPHANED, standing
+    assert f"{path.parent} is not there, and {root}, the nearest" in standing.reason
+    assert "a disk unplugged reads the same" in standing.reason
+    result = lifecycle.clear_orphan_rings(None, apply=True)
+    assert [m["store_id"] for m in result["moved"]] == [store_id], result
+    target = lifecycle.quarantine_path(keys_dir, store_id)
+    assert _ring_files(keys_dir, store_id) == {}
+    held = {p.name: p.read_bytes() for p in target.glob(f"{store_id}.*")}
+    assert {name: held[name] for name in ring} == ring
+    [line] = (target / lifecycle.QUARANTINE_NOTE).read_text("utf-8").splitlines()
+    assert str(path) in line and "is not there" in line
+
+
+def test_a_ring_whose_way_up_meets_a_link_to_nothing_is_kept(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """A directory on the way that became a link to nothing (a volume's
+    link left behind): nothing shows the store gone rather than away."""
+    if sys.platform == "win32":
+        pytest.skip("symbolic links need a privilege on Windows")
+    _, store_id = _store(tmp_path / "vol" / "project")
+    shutil.move(str(tmp_path / "vol"), str(tmp_path / "elsewhere"))
+    (tmp_path / "vol").symlink_to(tmp_path / "missing")
+    _kept(keys_dir, store_id, "does not read as a directory")
+
+
+def test_a_store_under_an_empty_mount_point_is_kept(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """The store's directory is not there and the nearest directory that
+    is, its mount point, is empty: a volume not mounted reads so, and the
+    ring stays."""
+    mount = tmp_path / "mnt" / "disk"
+    _, store_id = _store(mount / "projects" / "app")
+    shutil.rmtree(mount / "projects")
+    assert not any(mount.iterdir())
+    _kept(keys_dir, store_id, f"{mount.resolve()} is empty")
+
+
+def test_a_store_whose_ancestor_does_not_answer_is_kept(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store's directory is not there and listing the nearest one that
+    is hangs (a hard-mounted share): the walk up is read within the budget
+    and the ring kept."""
+    share = (tmp_path / "share").resolve()
+    _, store_id = _store(share / "team" / "app")
+    (share / "notes.txt").write_text("still here\n", encoding="utf-8")
+    shutil.rmtree(share / "team")
+    release = threading.Event()
+    real_listdir = os.listdir
+
+    def hangs_on_the_share(target: Any = ".") -> list[str]:
+        if Path(target) == share:
+            release.wait(30)
+        return real_listdir(target)
+
+    monkeypatch.setattr(os, "listdir", hangs_on_the_share)
+    monkeypatch.setattr(location, "PROBE_BUDGET", 0.05)
+    try:
+        _kept(keys_dir, store_id, "did not answer in 0.05 s")
+    finally:
+        release.set()
 
 
 def test_a_ring_whose_directory_is_empty_is_kept(

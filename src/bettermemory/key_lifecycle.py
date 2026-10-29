@@ -1274,13 +1274,16 @@ def _accept(
 # ---------------------------------------------------------------------------
 
 #: How a key ring in the keys directory stands with its store
-#: (`ring_standing`). ``orphaned``: its store is shown gone (the bound
-#: file's directory is there, can be read, holds other entries and none by
-#: the file's name); `clear_orphan_rings` moves it to the quarantine
-#: directory. ``in_use``: the bound file holds its store, a daemon serves
-#: that file, or it is the ring of the store doctor checks. ``kept``: the
-#: store is not shown gone (its directory is not there, is empty, cannot be
-#: read or did not answer in `location.PROBE_BUDGET`; a file by its name is
+#: (`ring_standing`). ``orphaned``: its store is shown gone (no file is at
+#: the bound path, and the nearest directory on the way up that is there,
+#: its own or an ancestor, can be read and holds other entries: a directory
+#: deleted, not a volume unmounted; a disk unplugged reads the same, and
+#: the quarantine keeps its ring); `clear_orphan_rings` moves it to the
+#: quarantine directory. ``in_use``: the bound file holds its store, a
+#: daemon serves that file, or it is the ring of the store doctor checks.
+#: ``kept``: the store is not shown gone (the nearest directory there is
+#: empty, the nearest entry there is not a directory, or it cannot be read
+#: or did not answer in `location.PROBE_BUDGET`; a file by its name is
 #: there, holding another store, none, or one that cannot be read; the
 #: binding cannot be read). ``unbound``: it names no store file. Only
 #: ``orphaned`` rings are ever moved, and no ring file is ever deleted.
@@ -1342,15 +1345,38 @@ def quarantine_path(root: Path, store_id: str) -> Path:
     return root / QUARANTINE_DIR / store_id
 
 
+def _nearest_there(directory: Path) -> tuple[Path, list[str] | None]:
+    """The nearest of ``directory`` and its ancestors that is there, and
+    its entries when it reads as a directory; None for an entry there that
+    does not (a link to nothing, a file). OSError when one on the way
+    cannot be read."""
+    while True:
+        try:
+            return directory, os.listdir(directory)
+        except (FileNotFoundError, NotADirectoryError):
+            pass
+        try:
+            os.lstat(directory)
+        except (FileNotFoundError, NotADirectoryError):
+            if directory.parent == directory:
+                raise
+            directory = directory.parent
+            continue
+        return directory, None
+
+
 def _shown_gone(bound: Path, store_id: str) -> tuple[str, str]:
     """How the store file ``bound`` stands, read without writing: in use
     when it holds the store ``store_id``; orphaned only when it is shown
-    gone (its directory is there, readable and not empty, and holds no
-    entry by its name); kept otherwise, with why. OSError when it cannot be
-    read to tell, which the caller keeps."""
+    gone: no entry by its name, and the nearest directory on the way up
+    that is there (its own, or an ancestor when the directory was deleted
+    with the store) readable and not empty. Kept otherwise, with why: that
+    directory empty (a mount point whose volume is not mounted), or the
+    nearest entry there not a directory. OSError when it cannot be read to
+    tell, which the caller keeps."""
     try:
         os.lstat(bound)
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         pass
     else:
         held = _store_id_at(bound)
@@ -1362,15 +1388,28 @@ def _shown_gone(bound: Path, store_id: str) -> tuple[str, str]:
                 "store keeps its key ring)"
             )
         return RING_KEPT, f"{bound} holds another store now ({held})"
-    directory = bound.parent
-    if not os.listdir(directory):
+    there, entries = _nearest_there(bound.parent)
+    if entries is None:
         return RING_KEPT, (
-            f"{directory} is empty: a mount point whose volume is not mounted, "
+            f"{there} is there and does not read as a directory (a link to "
+            "nothing, perhaps to a volume not mounted, or a file): whether "
+            "the store is gone cannot be told"
+        )
+    if not entries:
+        return RING_KEPT, (
+            f"{there} is empty: a mount point whose volume is not mounted, "
             "or a folder emptied by hand, reads the same"
         )
-    return (
-        RING_ORPHANED,
-        f"{bound} is gone: {directory} is there and holds no {bound.name}",
+    if there == bound.parent:
+        return (
+            RING_ORPHANED,
+            f"{bound} is gone: {there} is there and holds no {bound.name}",
+        )
+    return RING_ORPHANED, (
+        f"{bound} is gone: {bound.parent} is not there, and {there}, the "
+        "nearest directory above it, holds other entries: a directory "
+        "deleted (a disk unplugged reads the same; `key import` takes the "
+        "ring back from the quarantine)"
     )
 
 
@@ -1384,12 +1423,6 @@ def _probe(bound: Path, store_id: str) -> tuple[str, str]:
     try:
         answer = location.bounded_read(
             str(bound), "orphan_keys", lambda: _shown_gone(bound, store_id), budget
-        )
-    except (FileNotFoundError, NotADirectoryError):
-        return RING_KEPT, (
-            f"{bound.parent} is not there: a store moved or deleted with its "
-            "directory, a link on the way that points nowhere, or a volume not "
-            "mounted reads the same"
         )
     except OSError as exc:
         return (
@@ -1501,8 +1534,10 @@ class RingSurvey:
             "run `bettermemory doctor --clear-orphan-keys` for the plan, then with "
             f"`--yes` to move them to {self.keys_dir / QUARANTINE_DIR} (nothing is "
             "deleted; `bettermemory key import` takes a key back); a store moved "
-            "by hand and not opened since reads as gone, so run `bettermemory key "
-            "adopt --yes` with BETTERMEMORY_DIR naming its directory first"
+            "by hand and not opened since, or on a disk unplugged, reads as gone, "
+            "so run `bettermemory key adopt --yes` with BETTERMEMORY_DIR naming "
+            "its directory first, or `key import` its key from the quarantine "
+            "once the disk is back"
         )
 
     def to_dict(self) -> dict[str, Any]:

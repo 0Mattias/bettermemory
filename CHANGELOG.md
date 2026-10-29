@@ -152,19 +152,22 @@ follows the candidates' testing.
   the store id the bound file holds, without opening it as a store
   (`store_keys._store_id_at`), each read within `location.PROBE_BUDGET`
   (`location.bounded_read`), so a share that hangs does not hold doctor,
-  and warns when a store is shown gone: the directory the binding names
-  is there, can be read, is not empty, and holds no file by the store
-  file's name. `--clear-orphan-keys` prints the plan; with `--yes` it
+  and warns when a store is shown gone: no file is at the path the
+  binding names, and the nearest directory on the way up that is there
+  (the store's own, or an ancestor when the directory was deleted with
+  the store) can be read and holds other entries; a disk unplugged from
+  `/Volumes` reads the same, and the quarantine keeps its rings for `key
+  import`. `--clear-orphan-keys` prints the plan; with `--yes` it
   moves those rings, never deleting a file, to `quarantine/<store_id>/`
   under the keys directory (owner-only, with a `note.txt` line naming
   the bound path, the reason and `key import`, which takes a key back),
   each read again under its binding's lock first, so an owner's open of
   a store moved there in the meantime keeps it; a name the quarantine
   holds already is never written over. Kept whatever is asked, each
-  named: a ring whose bound directory is not there (a store moved or
-  deleted with its directory, a link to nothing on the way, a volume
-  not mounted), is empty (a mount point), cannot be read or does not
-  answer; one whose bound file is there and damaged or holds another
+  named: a ring whose nearest directory there is empty (a mount point
+  whose volume is not mounted), whose way up meets a link to nothing,
+  or whose path cannot be read or does not answer; one whose bound file
+  is there and damaged or holds another
   store; a ring that names no store file (from before 9.0.0rc13); one a
   daemon still serves; and the ring of the store doctor checks. A store
   moved by hand and not opened since reads as gone, and the remedy
