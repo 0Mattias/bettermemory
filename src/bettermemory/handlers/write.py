@@ -347,18 +347,23 @@ async def memory_write(
     # `[policy]` (policy.py): a flag the install forbids refuses the whole
     # call, before anything is validated or written. Checked after the
     # capture block, whose flags are already cleared, so a capture is
-    # unchanged by any policy. A no-op with both switches off.
-    _policy.check_overrides(
-        deps.config,
-        "memory_write",
-        force=force,
-        acknowledge={
-            "credential": acknowledge_credential,
-            "transient": acknowledge_transient,
-            "scope_mismatch": acknowledge_scope_mismatch,
-            "user_claim": acknowledge_user_claim,
-        },
-    )
+    # unchanged by any policy. A no-op with both switches off. The refusal
+    # leaves its audit row (`events.AUDIT_STATUSES`) before it is raised.
+    try:
+        _policy.check_overrides(
+            deps.config,
+            "memory_write",
+            force=force,
+            acknowledge={
+                "credential": acknowledge_credential,
+                "transient": acknowledge_transient,
+                "scope_mismatch": acknowledge_scope_mismatch,
+                "user_claim": acknowledge_user_claim,
+            },
+        )
+    except _policy.PolicyRefusal as refused:
+        deps.recorder.record("write", **refused.event_fields())
+        raise
     payload = _validate_write_payload(
         content=content,
         scopes=scopes,
@@ -463,6 +468,15 @@ async def memory_write(
         if gc.user_claim_hits and acknowledge_user_claim
         else []
     )
+    # And the scope-mismatch gate's: the mismatch kinds (`project_name`,
+    # `project_root`) the flag waved through, never the cited text. Before
+    # ENG-108 the gate stepped aside on the flag without looking, so an
+    # acknowledged mismatch left no evidence and no audit row.
+    scope_mismatches_acknowledged = (
+        [m.kind for m in gc.scope_mismatch_hits]
+        if gc.scope_mismatch_hits and acknowledge_scope_mismatch
+        else []
+    )
 
     commit = _CommitArgs(
         related=gc.related,
@@ -471,6 +485,7 @@ async def memory_write(
         acknowledged=acknowledged,
         credentials_acknowledged=credentials_acknowledged,
         user_claims_acknowledged=user_claims_acknowledged,
+        scope_mismatches_acknowledged=scope_mismatches_acknowledged,
     )
 
     # The review runs after every gate, so a duplicate, a previously
@@ -527,6 +542,7 @@ class _CommitArgs:
     acknowledged: list[str]
     credentials_acknowledged: list[str]
     user_claims_acknowledged: list[str]
+    scope_mismatches_acknowledged: list[str]
 
 
 _REVIEW_SECRET_HINT = (
@@ -1426,6 +1442,7 @@ def _commit_write(
         markers_acknowledged=commit.acknowledged,
         credentials_acknowledged=commit.credentials_acknowledged,
         user_claims_acknowledged=commit.user_claims_acknowledged,
+        scope_mismatches_acknowledged=commit.scope_mismatches_acknowledged,
         warnings=warnings,
         # Conditional so the default write event keeps its exact shape —
         # a populated field in the log means claims were actually

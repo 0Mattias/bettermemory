@@ -160,10 +160,14 @@ async def test_a_forbidden_acknowledge_refuses_the_write_whole(
     assert "set in the user's config" in text
     assert "managed" not in text
     assert "Nothing was written." in text
-    # The secret is not echoed back, and nothing reached the store.
+    # The secret is not echoed back, and nothing reached the store but the
+    # refusal's audit row (ENG-108), which names the flag and no content.
     assert _AWS not in text
     assert world.store.load_all() == []
-    assert world.events("write") == []
+    [row] = world.events("write")
+    assert row["status"] == REFUSAL_STATUS
+    assert row["policy_flags"] == ["acknowledge_credential"]
+    assert _AWS not in str(row)
 
 
 async def test_the_flag_is_refused_even_where_its_gate_would_not_fire(
@@ -259,10 +263,13 @@ async def test_memory_update_takes_the_same_policy(make_world: Any) -> None:
         assert "Nothing was changed." in text
 
     assert world.store.load_one(written["id"]).body == before.body
-    # No update event at all: a committed update records one without a
-    # `status`, so filtering on the status would miss the very row a
-    # refusal must not leave.
-    assert world.events("update") == []
+    # No update event but the two refusals' audit rows (ENG-108): a
+    # committed update records one without a `status`, so reading every
+    # row's status catches the very row a refusal must not leave.
+    assert [e.get("status") for e in world.events("update")] == [
+        REFUSAL_STATUS,
+        REFUSAL_STATUS,
+    ]
 
     # A flag the policy does not name passes, and the gate behind it runs.
     claimed = await world.call(

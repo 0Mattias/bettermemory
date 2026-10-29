@@ -129,22 +129,32 @@ AUDIT_KINDS: frozenset[str] = frozenset({"standing_guard"})
 #: (`forced=False`, every `*_acknowledged` empty or false) is telemetry.
 OVERRIDE_EVIDENCE_KINDS: frozenset[str] = frozenset({"write", "update"})
 
-#: The suffix every override-evidence field but `forced` carries.
+#: The suffix every override-evidence field but `forced` carries. The
+#: scope-mismatch gate's is `scope_mismatches_acknowledged` (ENG-108): the
+#: mismatch kinds `acknowledge_scope_mismatch` waved through.
 _ACKNOWLEDGED_SUFFIX = "_acknowledged"
+
+#: The statuses that make a row of `OVERRIDE_EVIDENCE_KINDS` an audit row
+#: whatever else it carries: a call `[policy]` refused for passing a flag
+#: the install forbids (`policy.REFUSAL_STATUS`, ENG-108). Nothing was
+#: written, and the row is the trail that the agent reached for a hatch
+#: the user or the organisation took away.
+AUDIT_STATUSES: frozenset[str] = frozenset({"policy_refused"})
 
 
 def is_audit_row(kind: str, fields: Mapping[str, Any]) -> bool:
     """Whether a `kind` row with `fields` is an audit row, recorded with
-    telemetry off: a standing guard row, or a write or update that used
+    telemetry off: a standing guard row, a write or update that used
     an escape hatch (`force=True`, or an acknowledge flag that waved a
-    gate's hit through). Read on the fields as the handler passes them,
-    so a new `*_acknowledged` field on either kind is covered without a
-    second list to keep in step."""
+    gate's hit through), or one `[policy]` refused (`AUDIT_STATUSES`).
+    Read on the fields as the handler passes them, so a new
+    `*_acknowledged` field on either kind is covered without a second
+    list to keep in step."""
     if kind in AUDIT_KINDS:
         return True
     if kind not in OVERRIDE_EVIDENCE_KINDS:
         return False
-    if fields.get("forced") is True:
+    if fields.get("forced") is True or fields.get("status") in AUDIT_STATUSES:
         return True
     return any(
         bool(value)
@@ -596,6 +606,7 @@ def _event_id_list(value: Any) -> list[str]:
 
 __all__ = [
     "AUDIT_KINDS",
+    "AUDIT_STATUSES",
     "HARNESS_SESSION_FIELD",
     "HARNESS_STAMPED_KINDS",
     "MEASUREMENT_KINDS",

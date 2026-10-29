@@ -162,17 +162,22 @@ async def memory_update(
     # `[policy]` (policy.py): a flag the install forbids refuses the whole
     # call before anything is read or changed. memory_update has no
     # `force`, so only `forbid_acknowledge` reaches it. A no-op with both
-    # switches off.
-    _policy.check_overrides(
-        deps.config,
-        "memory_update",
-        acknowledge={
-            "credential": acknowledge_credential,
-            "transient": acknowledge_transient,
-            "user_claim": acknowledge_user_claim,
-            "truncation": acknowledge_truncation,
-        },
-    )
+    # switches off. The refusal leaves its audit row
+    # (`events.AUDIT_STATUSES`) before it is raised.
+    try:
+        _policy.check_overrides(
+            deps.config,
+            "memory_update",
+            acknowledge={
+                "credential": acknowledge_credential,
+                "transient": acknowledge_transient,
+                "user_claim": acknowledge_user_claim,
+                "truncation": acknowledge_truncation,
+            },
+        )
+    except _policy.PolicyRefusal as refused:
+        deps.recorder.record("update", id=id, **refused.event_fields())
+        raise
     metadata_only = (
         content is None
         and scopes is None

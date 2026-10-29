@@ -1994,6 +1994,31 @@ follows the candidates' testing.
   is listed under one class.
   (`src/bettermemory/events.py`, `src/bettermemory/recall.py`,
   `tests/test_row_classes.py`)
+- **A `[policy]` refusal and an acknowledged scope mismatch leave an
+  audit row (ENG-108).** A call `[policy]` refused for a forbidden flag
+  recorded nothing, so an agent reaching for a hatch the organisation
+  took away left no trace; and `acknowledge_scope_mismatch` stepped the
+  gate aside without looking, so the committed write named nothing it
+  waved through and, as a plain write, was dropped with telemetry off.
+  The refusal now records one `write` or `update` row with `status =
+  "policy_refused"`, the flags as passed, the switches and the managed
+  ones (`policy_flags`, `policy_keys`, `policy_managed`; no content of
+  the call), before the refusal is raised; `events.AUDIT_STATUSES` makes
+  it an audit row. The scope-mismatch gate now checks an acknowledged
+  write too and lets it through, and the commit row names the mismatch
+  kinds it waved through (`scope_mismatches_acknowledged`, the kinds
+  only, never the cited text), which `events.is_audit_row` reads as
+  override evidence. Both rows are state: recorded with telemetry off,
+  tried again against a busy store and raised (`store_busy`) when they
+  cannot land. A flag that waved nothing through stays no override. An
+  acknowledged write now pays the gate's detection, as an
+  unacknowledged one always has.
+  (`src/bettermemory/policy.py`, `src/bettermemory/events.py`,
+  `src/bettermemory/handlers/write.py`,
+  `src/bettermemory/handlers/update.py`,
+  `src/bettermemory/handlers/write_gates.py`, `SECURITY.md`,
+  `docs/internals.md`, `tests/test_audit_rows.py`, and
+  `tests/test_policy.py`, whose two refusal tests pinned the empty log)
 
 #### Known limitations
 

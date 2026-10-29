@@ -101,6 +101,9 @@ class GateContext:
     credential_hits: list[Any] = None  # type: ignore[assignment]
     transient_hits: list[Any] = None  # type: ignore[assignment]
     user_claim_hits: list[Any] = None  # type: ignore[assignment]
+    # The mismatches `acknowledge_scope_mismatch` waved through, for the
+    # commit row's override evidence (ENG-108).
+    scope_mismatch_hits: list[Any] = None  # type: ignore[assignment]
     related: list[SimilarHit] = None  # type: ignore[assignment]
     removed_related: list[SimilarHit] = None  # type: ignore[assignment]
     # The active set `DedupActiveGate` loaded, kept so the review's related
@@ -116,6 +119,8 @@ class GateContext:
             self.transient_hits = []
         if self.user_claim_hits is None:
             self.user_claim_hits = []
+        if self.scope_mismatch_hits is None:
+            self.scope_mismatch_hits = []
         if self.related is None:
             self.related = []
         if self.removed_related is None:
@@ -494,11 +499,12 @@ class UserClaimGate(WriteGate):
 
 class ScopeMismatchGate(WriteGate):
     """Reject bodies whose path / project-name citations don't match
-    the declared scope list (unless `acknowledge_scope_mismatch`)."""
+    the declared scope list (unless `acknowledge_scope_mismatch`). An
+    acknowledged write is still checked, so the commit row names the
+    mismatches the flag waved through (`scope_mismatch_hits`), as the
+    other gates' acknowledged hits are named (ENG-108)."""
 
     def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
-        if gc.acknowledge_scope_mismatch:
-            return Continue()
         existing_memories = deps.store.load_all()
         mismatch = detect_scope_mismatch(
             body=gc.payload["content"],
@@ -507,6 +513,9 @@ class ScopeMismatchGate(WriteGate):
             project_roots=collect_project_roots(existing_memories),
         )
         if not mismatch.has_mismatch:
+            return Continue()
+        if gc.acknowledge_scope_mismatch:
+            gc.scope_mismatch_hits = list(mismatch.matches)
             return Continue()
         return Reject(
             response={

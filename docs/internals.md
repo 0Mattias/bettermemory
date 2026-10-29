@@ -1395,8 +1395,12 @@ policy switch and the strict switch (`write_token`, `strict`). Since
   flags (`credential`, `transient`, `scope_mismatch`, `user_claim`,
   `truncation`) whose `acknowledge_<name>=true` refuses the call. The
   refusal starts `policy_refused:` and says whether the switch is
-  managed. These three switches take only a boolean spelling, and the
-  list only known names: anything else stops the load.
+  managed; since 9.0.0rc14 it leaves one audit row, a `write` or `update`
+  row with `status = "policy_refused"` and the flags, the switches and
+  the managed ones (`policy_flags`, `policy_keys`, `policy_managed`),
+  recorded with telemetry off too. These three switches take only a
+  boolean spelling, and the list only known names: anything else stops
+  the load.
 - `[security] strict_provenance = false`: true reads every row in a log
   segment whose key this machine does not hold `unaccounted`
   (Provenance, above).

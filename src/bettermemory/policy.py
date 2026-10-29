@@ -16,10 +16,13 @@ an organisation pins them in the managed file (`managed.py`), where the
 user's config cannot loosen them.
 
 A call that passes a forbidden flag as true is refused whole, before
-payload validation and before any gate runs: nothing is written, no write
-or update event is recorded (as for the handlers' other ValueError
-refusals, an unknown scope or a cap), and no gate answers. Refusing the
-call, rather than dropping
+payload validation and before any gate runs: nothing is written and no
+gate answers. One audit row is recorded (ENG-108): a `write` or an
+`update` row whose status is `REFUSAL_STATUS`, naming the flags, the
+switches and which of them the managed file pins
+(`PolicyRefusal.event_fields`), recorded whatever `[telemetry] enabled`
+says (`events.AUDIT_STATUSES`), so the agent reaching for a hatch the
+install took away is on the log. Refusing the call, rather than dropping
 the flag and letting the gate decide, is deliberate. A dropped flag on a
 call its gate would not have refused (a clean body sent with
 `acknowledge_credential=True`) commits exactly as if the flag had been
@@ -48,7 +51,7 @@ never in force.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .config import ACKNOWLEDGE_NAMES
 
@@ -89,6 +92,18 @@ class PolicyRefusal(ValueError):
         self.keys = keys
         self.managed = managed
         super().__init__(_message(tool, flags, keys, managed))
+
+    def event_fields(self) -> dict[str, Any]:
+        """The refusal's audit row, as the handler records it under its
+        own kind: the status (`REFUSAL_STATUS`), the flags as the call
+        passed them, the switches that forbid them and the ones the
+        managed file pins. No content of the call."""
+        return {
+            "status": REFUSAL_STATUS,
+            "policy_flags": list(self.flags),
+            "policy_keys": list(self.keys),
+            "policy_managed": sorted(self.managed),
+        }
 
 
 def _message(
