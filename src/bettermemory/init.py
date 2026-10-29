@@ -32,14 +32,17 @@ required setup.
 
 from __future__ import annotations
 
+import contextlib
 import errno
+import hashlib
 import json
 import os
 import platform
 import shutil
 import stat
 import sys
-from collections.abc import Mapping
+import time
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -499,17 +502,32 @@ def _uv_args_run_bettermemory(args: list[Any]) -> bool:
     return False
 
 
-def _config_signature(path: Path) -> tuple[int, int]:
-    """Cheap change-detector for the target config: ``(mtime_ns, size)``.
-    Snapshotted right BEFORE the read (so the baseline describes the exact
-    bytes we are about to read and overwrite) and re-checked right before
-    the atomic write so a concurrent writer (the live client that owns
-    ``~/.claude.json``) mutating the file under us aborts loudly instead
-    of being silently clobbered. Capturing it after the read would leave an
-    unguarded read->stat window: a write landing there folds into the
-    baseline and the pre-write re-stat then matches, clobbering it."""
-    st = path.stat()
-    return (st.st_mtime_ns, st.st_size)
+def _config_signature(raw: bytes) -> str:
+    """The change-detector for a client config: the SHA-256 of its bytes.
+    Taken over the exact bytes a patcher parses (`_read_config`) and taken
+    again over the file's bytes right before the atomic write, so a
+    concurrent writer (the live client that owns ``~/.claude.json``)
+    mutating the file in between aborts the write loudly instead of being
+    silently clobbered. A content hash, not ``(mtime, size)``: on a
+    filesystem with one-second mtimes (HFS+, ext3, FAT, many SMB and NFS
+    servers) a same-size rewrite in the same second, a new session id of
+    the same length, kept both, and the bytes it wrote were lost. And taken
+    over the bytes read rather than a stat beside the read, so no write can
+    land between the two and fold into the baseline."""
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _read_config(path: Path) -> tuple[str, str] | None:
+    """The text of a client config and its `_config_signature`, from one
+    read, or None when the file is not there. The text is decoded as UTF-8
+    with universal newlines, as `Path.read_text` reads it; a file that is
+    not UTF-8 raises UnicodeDecodeError, a ValueError."""
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return text, _config_signature(raw)
 
 
 def _heal_stale_sidecar_lockfile(target_path: Path) -> Path | None:
@@ -545,6 +563,148 @@ def _heal_stale_sidecar_lockfile(target_path: Path) -> Path | None:
         # Healing is best-effort; a permission error must not fail init.
         pass
     return None
+
+
+#: Claude Code takes a lock on its global config before each write: a
+#: directory, ``<config>.lock``, made with mkdir by the proper-lockfile
+#: library (Claude Code 2.1.296's and 2.1.309's saveConfigWithLock pass
+#: ``lockfilePath: `${path}.lock``` for the global config as it resolves
+#: it, and keep the library's default staleness). The library reads a lock
+#: directory whose mtime is more than 10 s old as a dead holder's, which
+#: the next taker removes; a live holder refreshes the mtime every 5 s,
+#: half that.
+CLAUDE_CODE_LOCK_STALE_SECONDS = 10.0
+#: How long init waits for that lock before it refuses: past the stale time
+#: a lock still there is either refreshed by a live holder or stale and
+#: taken over, so a longer wait could not change the answer; 2 s of margin
+#: covers a refresh that lands late. Claude Code itself retries for about
+#: 10 to 20 s (six waits of 0.2 to 4 s, each up to doubled).
+CLAUDE_CODE_LOCK_WAIT_SECONDS = 12.0
+#: The poll between two attempts: a Claude Code config write holds the
+#: lock for one read, a merge and one atomic write, milliseconds, so the
+#: poll is what a waiting init adds.
+_CLAUDE_CODE_LOCK_POLL_SECONDS = 0.05
+
+
+@dataclass
+class _ConfigLock:
+    """Claude Code's config lock as init holds it: the directory, and its
+    identity (device, inode, mtime) when init made it or last refreshed
+    it. A lock at that path with another identity is someone else's."""
+
+    path: Path
+    stamp: tuple[int, int, int]
+
+
+def _lock_stamp(found: os.stat_result) -> tuple[int, int, int]:
+    return (found.st_dev, found.st_ino, found.st_mtime_ns)
+
+
+def _still_held(lock: _ConfigLock) -> bool:
+    """Whether the lock directory at `lock.path` is still the one init
+    made: a holder that judged init's lock stale removes it and makes its
+    own, as proper-lockfile does, and that one is not init's to remove."""
+    try:
+        found = os.lstat(lock.path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(found.st_mode) and _lock_stamp(found) == lock.stamp
+
+
+def _confirm_config_lock(lock: _ConfigLock | None) -> None:
+    """Right before the write: the lock init took is still its own, or
+    ValueError, nothing written; then its mtime is refreshed, as a live
+    holder's is (proper-lockfile's update), so the write that follows runs
+    under a lock no taker reads as stale."""
+    if lock is None:
+        return
+    if not _still_held(lock):
+        raise ValueError(
+            f"Claude Code's config lock {lock.path} was taken over while init "
+            f"held it (a hold past {CLAUDE_CODE_LOCK_STALE_SECONDS:.0f} s reads "
+            "as a dead holder's); nothing was modified. Re-run init."
+        )
+    with contextlib.suppress(OSError):
+        os.utime(lock.path)
+        lock.stamp = _lock_stamp(os.lstat(lock.path))
+
+
+@contextlib.contextmanager
+def _claude_code_config_lock(target_path: Path) -> Iterator[_ConfigLock | None]:
+    """Hold Claude Code's own lock on its global config for a patch, taken
+    the way proper-lockfile takes it: mkdir ``<target>.lock``, at the name
+    the caller gave (Claude Code locks its config path as it spells it, a
+    symbolic link's own name included), and rmdir it on the way out, only
+    while it is still init's own (`_still_held`): a lock another holder
+    took over in the meantime is left to it.
+
+    Only a Claude Code global config has one (`claude_paths.is_global_config`:
+    a ``.claude.json`` or ``.claude-custom-oauth.json``, or the file the
+    resolver names here, a legacy ``.config.json`` included): Claude Code
+    takes no cross-process lock on its settings files, and the other
+    clients none that is known. A lock held by a live process is waited for up to
+    `CLAUDE_CODE_LOCK_WAIT_SECONDS`, then refused with ValueError, nothing
+    written; a stale one (older than `CLAUDE_CODE_LOCK_STALE_SECONDS`) is
+    removed and taken, as the library does. A ``<target>.lock`` that is not
+    a directory (a file some other tool left; the empty one 3.15.0 left is
+    healed before this) is no lock anyone can take, Claude Code included,
+    so the patch runs without it, under the content check alone. Yields
+    the lock taken, or None; `_confirm_config_lock` checks it before the
+    write. The identity check leaves one residue: a takeover that reuses
+    the inode within the same mtime tick, on a filesystem with coarse
+    mtimes, reads as init's own."""
+    if not claude_paths.is_global_config(target_path):
+        yield None
+        return
+    lock = target_path.with_name(target_path.name + ".lock")
+    deadline = time.monotonic() + CLAUDE_CODE_LOCK_WAIT_SECONDS
+    held_lock: _ConfigLock | None = None
+    while True:
+        try:
+            os.mkdir(lock)
+        except FileExistsError:
+            pass
+        else:
+            with contextlib.suppress(OSError):
+                held_lock = _ConfigLock(lock, _lock_stamp(os.lstat(lock)))
+            if held_lock is not None:
+                break
+        try:
+            held: os.stat_result | None = os.lstat(lock)
+        except FileNotFoundError:
+            held = None  # let go between the two calls: try again now
+        if held is not None and not stat.S_ISDIR(held.st_mode):
+            yield None
+            return
+        stale = (
+            held is not None
+            and time.time() - held.st_mtime > CLAUDE_CODE_LOCK_STALE_SECONDS
+        )
+        if stale:
+            with contextlib.suppress(OSError):
+                os.rmdir(lock)
+        if time.monotonic() >= deadline:
+            raise ValueError(
+                (
+                    f"Claude Code's config lock {lock} is stale and cannot be "
+                    "removed; nothing was modified. Remove it once no Claude "
+                    "Code process is running, then re-run init."
+                )
+                if stale
+                else (
+                    f"Claude Code holds its config lock {lock} and kept it for "
+                    f"{CLAUDE_CODE_LOCK_WAIT_SECONDS:.0f} s; nothing was "
+                    "modified. Re-run init once Claude Code is idle."
+                )
+            )
+        if held is not None:
+            time.sleep(_CLAUDE_CODE_LOCK_POLL_SECONDS)
+    try:
+        yield held_lock
+    finally:
+        if _still_held(held_lock):
+            with contextlib.suppress(OSError):
+                os.rmdir(lock)
 
 
 def _write_target(path: Path) -> Path:
@@ -643,15 +803,16 @@ def patch_client_config(
     `_fsutil.flock_excl` on a PRIVATE `<target>.bettermemory.lock` sidecar
     (so two bettermemory writers serialise without squatting on
     `<target>.lock`, a name the owning client's own locking protocol may
-    use — Claude Code takes a mkdir-style directory lock there), and the
-    file is re-checked immediately before the atomic write: a change to a
-    pre-existing file (mtime/size signature moved) or a file CREATED under
-    us by a non-locking writer aborts with a ValueError rather than
-    clobbering the client's update. The guard covers the read→pre-write
-    window; the few milliseconds between that re-check and the atomic
-    rename remain unguarded against a non-cooperating writer — with no
-    shared lock protocol between the processes a residual window is
-    irreducible, which is why the re-check sits as late as possible.
+    use — Claude Code takes a mkdir-style directory lock there). For
+    Claude Code's global config that lock is taken too, Claude Code's own
+    protocol (`_claude_code_config_lock`), so the running client waits for
+    the patch instead of writing under it. And the file is re-checked
+    immediately before the atomic write: a change to a pre-existing file
+    (its content hash moved, `_config_signature`) or a file CREATED under
+    us by a writer that takes no lock aborts with a ValueError rather than
+    clobbering the client's update. Without a shared lock, the few
+    milliseconds between that re-check and the atomic rename stay
+    unguarded, which is why the re-check sits as late as possible.
     A leftover 3.15.0 `<target>.lock` regular file (which wedges Claude
     Code's own config lock) is healed on entry; the result carries
     `removed_stale_lockfile` when that happened.
@@ -677,10 +838,12 @@ def patch_client_config(
     # An UNLOCKED RMW here races that writer: we read a snapshot, the
     # client rewrites the file, then our atomic rename lands and silently
     # drops the client's update. Hold the cross-process `flock_excl` for
-    # the whole RMW so two bettermemory writers serialise, AND re-check the
-    # file immediately before the atomic write so a change by the
-    # NON-locking client aborts loudly instead of clobbering. It's a
-    # single lock, so the lock order is trivial and deadlock-free.
+    # the whole RMW so two bettermemory writers serialise, take Claude
+    # Code's own `<config>.lock` inside it so the client waits for us, AND
+    # re-check the file immediately before the atomic write so a change by
+    # a writer that takes no lock aborts loudly instead of clobbering. The
+    # client never takes our flock, so the lock order is fixed and
+    # deadlock-free.
     #
     # The sidecar is the PRIVATE `<target>.bettermemory.lock`, never
     # `<target>.lock`: that default name collides with Claude Code's own
@@ -688,26 +851,26 @@ def patch_client_config(
     # persistent regular file there broke the client's mkdir/rmdir cycle
     # (EEXIST, then ENOTDIR forever), and the client's live lock DIRECTORY
     # made our `os.open` die with EISDIR. Distinct names remove the
-    # collision in both directions; interference with the client's
-    # unlocked writes stays covered by the signature guard below.
+    # collision in both directions. The client's own lock directory is
+    # taken by mkdir, as the client takes it (`_claude_code_config_lock`).
     #
     # Everything after the lock reads and writes `real_path`: the link's
-    # target when the config is a symbolic link (`_write_target`).
+    # target when the config is a symbolic link (`_write_target`). Claude
+    # Code's own lock on its global config is held inside ours, for the
+    # read, the check and the write (`_claude_code_config_lock`).
     real_path = _write_target(target_path)
-    with _fsutil.flock_excl(target_path, lock_suffix=".bettermemory.lock"):
-        baseline_sig: tuple[int, int] | None = None
-        if real_path.exists():
-            # Snapshot the on-disk signature BEFORE the read, not after. The
-            # baseline must describe the exact bytes we are about to read and
-            # overwrite. Capturing it after read_text() leaves an unguarded
-            # read->stat window: a non-locking client write landing between the
-            # read and the stat folds into the baseline, so the pre-write
-            # re-stat matches and we silently clobber the client's update.
-            # Snapshotting first means any write after this point moves the
-            # signature, so the pre-write re-stat mismatches and aborts loudly.
-            baseline_sig = _config_signature(real_path)
+    with (
+        _fsutil.flock_excl(target_path, lock_suffix=".bettermemory.lock"),
+        _claude_code_config_lock(target_path) as config_lock,
+    ):
+        baseline_sig: str | None = None
+        read = _read_config(real_path) if real_path.exists() else None
+        if read is not None:
+            # The baseline is the hash of the exact bytes parsed here
+            # (`_read_config`), so a client write landing at any point after
+            # the read moves the pre-write re-check and aborts loudly.
+            text, baseline_sig = read
             try:
-                text = real_path.read_text(encoding="utf-8")
                 existing = json.loads(text) if text.strip() else {}
             except json.JSONDecodeError as exc:
                 raise ValueError(
@@ -820,9 +983,9 @@ def patch_client_config(
         if legacy_present:
             del mcp_servers[LEGACY_SERVER_NAME]
 
-        # Concurrency guard: a non-locking writer (the live Claude Code
-        # process that owns `~/.claude.json`) may have rewritten the file
-        # after we snapshotted it. Re-check immediately before the atomic
+        # Concurrency guard: a writer that takes no lock (another client, a
+        # Claude Code that predates its lock, an editor) may have rewritten
+        # the file after we read it. Re-check immediately before the atomic
         # replace; abort rather than clobber the client's update. Raised as
         # ValueError so the CLI renders a clean "re-run" message (exit 2)
         # instead of a traceback. Two shapes:
@@ -831,9 +994,12 @@ def patch_client_config(
         #    CREATED it under us. Without this arm the skeleton doc below
         #    would silently replace the client's brand-new config: the same
         #    clobber class the signature guard closes, on the create path.
-        # 2. The file existed and its mtime/size signature moved.
+        # 2. The file existed and the hash of its bytes moved.
         # Both arms live in `_refuse_if_moved`, shared with the YAML path.
         _refuse_if_moved(real_path, baseline_sig)
+        # Claude Code's lock is still init's own (no holder took it over as
+        # stale), and is refreshed for the write.
+        _confirm_config_lock(config_lock)
 
         # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
         # `target_path.write_text(...)` here would truncate the file before
@@ -860,25 +1026,32 @@ def patch_client_config(
         return result
 
 
-def _refuse_if_moved(target_path: Path, baseline_sig: tuple[int, int] | None) -> None:
-    """The pre-write half of the concurrency guard both patchers share.
+def _refuse_if_moved(target_path: Path, baseline_sig: str | None) -> None:
+    """The pre-write half of the concurrency guard the patchers share.
 
-    `baseline_sig` is the `_config_signature` snapshotted before the read
-    (`None` when the file did not exist then). Two shapes abort, each as
-    a ValueError the CLI renders as a clean "re-run" message: the file
-    was CREATED under us by a non-locking writer, so the skeleton we
-    built would replace the client's brand-new config; or it existed and
-    its mtime/size signature moved, so the bytes we read are not the
-    bytes on disk. The re-check sits as late as possible before the
-    atomic replace; the few milliseconds after it stay unguarded, which
-    no shared lock protocol between the processes can close."""
-    if baseline_sig is None and target_path.exists():
-        raise ValueError(
-            f"config at {target_path} was created under us between read "
-            f"and write (another process, likely the running client, "
-            f"wrote it). Nothing was modified; re-run init."
-        )
-    if baseline_sig is not None and _config_signature(target_path) != baseline_sig:
+    `baseline_sig` is the `_config_signature` of the bytes the patcher
+    parsed (`None` when the file did not exist then). Two shapes abort,
+    each as a ValueError the CLI renders as a clean "re-run" message: the
+    file was CREATED under us by a writer that takes no lock, so the
+    skeleton we built would replace the client's brand-new config; or it
+    existed and its bytes are no longer the bytes we read (rewritten,
+    same size and same second included, or removed). The re-check sits as
+    late as possible before the atomic replace; the few milliseconds after
+    it are closed only where the client's own lock is held
+    (`_claude_code_config_lock`)."""
+    if baseline_sig is None:
+        if target_path.exists():
+            raise ValueError(
+                f"config at {target_path} was created under us between read "
+                f"and write (another process, likely the running client, "
+                f"wrote it). Nothing was modified; re-run init."
+            )
+        return
+    try:
+        now: str | None = _config_signature(target_path.read_bytes())
+    except FileNotFoundError:
+        now = None
+    if now != baseline_sig:
         raise ValueError(
             f"config at {target_path} changed under us between read and "
             f"write (another process, likely the running client, wrote "
@@ -912,10 +1085,11 @@ def remove_claude_code_deny_rules(settings_path: Path) -> dict[str, Any]:
     `action` "removed" or "noop".
 
     The read-modify-write follows `patch_client_config`: the private
-    `<target>.bettermemory.lock` sidecar held throughout, the file's
-    signature taken before the read and checked again before the atomic
-    write, so a write by the running client aborts with ValueError instead
-    of being overwritten. A file that is not a JSON object, or whose
+    `<target>.bettermemory.lock` sidecar held throughout, the hash of the
+    bytes read checked again before the atomic write, so a write by the
+    running client aborts with ValueError instead of being overwritten.
+    Claude Code takes no cross-process lock on a settings file, so there is
+    none of its own to take here. A file that is not a JSON object, or whose
     `permissions.deny` is not a list, raises ValueError and is left as it
     is. A settings file that is a symbolic link is edited where the link
     points, the link and the file's mode kept (`_write_target`)."""
@@ -923,9 +1097,11 @@ def remove_claude_code_deny_rules(settings_path: Path) -> dict[str, Any]:
         return {"action": "noop", "path": str(settings_path), "removed": []}
     real_path = _write_target(settings_path)
     with _fsutil.flock_excl(settings_path, lock_suffix=".bettermemory.lock"):
-        baseline_sig = _config_signature(real_path)
+        read = _read_config(real_path)
+        if read is None:
+            return {"action": "noop", "path": str(settings_path), "removed": []}
+        text, baseline_sig = read
         try:
-            text = real_path.read_text(encoding="utf-8")
             existing = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError as exc:
             raise ValueError(
@@ -1132,7 +1308,7 @@ def patch_hermes_config(
     """Idempotently merge the bettermemory entry into Hermes Agent's
     `config.yaml` — the YAML twin of `patch_client_config`, under the
     same discipline: the private `<target>.bettermemory.lock` flock, the
-    pre-read signature re-checked before the write, the atomic replace
+    hash of the bytes read re-checked before the write, the atomic replace
     through a symbolic link to its target with the file's mode kept, and
     the same result dict (`action` is `added`, `updated` or `noop`).
 
@@ -1165,11 +1341,11 @@ def patch_hermes_config(
     # A symbolic link is patched where it points (`_write_target`).
     real_path = _write_target(target_path)
     with _fsutil.flock_excl(target_path, lock_suffix=".bettermemory.lock"):
-        baseline_sig: tuple[int, int] | None = None
+        baseline_sig: str | None = None
         text = ""
-        if real_path.exists():
-            baseline_sig = _config_signature(real_path)
-            text = real_path.read_text(encoding="utf-8")
+        read = _read_config(real_path) if real_path.exists() else None
+        if read is not None:
+            text, baseline_sig = read
         try:
             root = yaml.compose(text, Loader=yaml.SafeLoader)
             loaded = yaml.safe_load(text)

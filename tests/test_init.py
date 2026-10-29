@@ -12,6 +12,7 @@ import json
 import os
 import stat
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -968,8 +969,8 @@ def test_patch_aborts_when_config_changes_under_us(
     the client's update. We simulate the race by mutating the file right
     after the baseline signature is captured.
 
-    Mutation-soundness: drop the re-stat guard and the write proceeds, no
-    ValueError is raised, and this `pytest.raises` fails."""
+    Mutation-soundness: drop the pre-write re-check and the write proceeds,
+    no ValueError is raised, and this `pytest.raises` fails."""
     from bettermemory import init as init_mod
 
     target = tmp_path / "config.json"
@@ -980,13 +981,13 @@ def test_patch_aborts_when_config_changes_under_us(
     real_sig = init_mod._config_signature
     calls: list[int] = []
 
-    def racing_sig(path: Path) -> tuple[int, int]:
+    def racing_sig(raw: bytes) -> str:
         calls.append(1)
-        sig = real_sig(path)
+        sig = real_sig(raw)
         if len(calls) == 1:
-            # Baseline captured; now a concurrent (non-locking) writer lands
-            # a bigger payload, so the size in the signature moves.
-            path.write_text(
+            # Baseline captured over the bytes read; now a concurrent
+            # (non-locking) writer lands a bigger payload.
+            target.write_text(
                 json.dumps(
                     {
                         "mcpServers": {"other": {"command": "y", "args": []}},
@@ -1006,32 +1007,31 @@ def test_patch_aborts_on_write_between_read_and_stat(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """TOCTOU (item A): the baseline signature MUST be snapshotted BEFORE
-    `read_text()`, not after. If a non-locking client write lands in the
-    read->stat window — after we read the bytes we're about to overwrite but
-    before the signature is captured — capturing the signature after the read
-    folds that write into the baseline, so the pre-write re-stat matches and
-    the client's update is silently clobbered.
+    """TOCTOU (item A): the baseline signature must describe the bytes the
+    patcher parsed. A signature taken by a stat beside the read let a
+    non-locking client write landing between the two fold into the
+    baseline, so the pre-write re-check matched and the client's update was
+    silently clobbered. The signature is now the hash of the bytes read
+    (ENG-178), so no such window exists.
 
-    We simulate the race by mutating the file DURING `read_text()` (returning
-    the pre-mutation bytes, then landing a bigger payload on disk). With the
-    baseline captured before the read, the pre-write re-stat sees the moved
-    signature and aborts loudly.
+    We simulate the race by mutating the file DURING the read (returning
+    the pre-mutation bytes, then landing a bigger payload on disk). The
+    pre-write re-check hashes what is on disk now and aborts loudly.
 
-    Mutation-soundness: revert the fix (snapshot after the read) and the
-    concurrent write is captured into the baseline, no ValueError is raised,
-    and this `pytest.raises` fails.
+    Mutation-soundness: take the baseline from the file after the read
+    instead of from the bytes read and the concurrent write is captured
+    into it, no ValueError is raised, and this `pytest.raises` fails.
     """
     target = tmp_path / "config.json"
     original = json.dumps({"mcpServers": {"other": {"command": "y", "args": []}}})
     target.write_text(original, encoding="utf-8")
 
-    real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
     real_write_text = Path.write_text
     state = {"fired": False}
 
-    def racing_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
-        content = real_read_text(self, *args, **kwargs)
+    def racing_read_bytes(self: Path) -> bytes:
+        content = real_read_bytes(self)
         if self == target and not state["fired"]:
             state["fired"] = True
             # Non-locking client write lands in the read->stat window: we have
@@ -1045,7 +1045,7 @@ def test_patch_aborts_on_write_between_read_and_stat(
             real_write_text(self, bigger, encoding="utf-8")
         return content
 
-    monkeypatch.setattr(Path, "read_text", racing_read_text)
+    monkeypatch.setattr(Path, "read_bytes", racing_read_bytes)
     with pytest.raises(ValueError, match="changed under us"):
         patch_client_config(target, binary="/x/bm")
 
@@ -1079,13 +1079,13 @@ def test_init_via_cli_exits_clean_on_concurrent_write_race(
     real_sig = init_mod._config_signature
     calls: list[int] = []
 
-    def racing_sig(path: Path) -> tuple[int, int]:
+    def racing_sig(raw: bytes) -> str:
         calls.append(1)
-        sig = real_sig(path)
+        sig = real_sig(raw)
         if len(calls) == 1:
             # Baseline captured; a concurrent (non-locking) writer lands a
-            # bigger payload, moving the size in the signature.
-            path.write_text(
+            # bigger payload, moving the content hash.
+            target.write_text(
                 json.dumps(
                     {
                         "mcpServers": {"other": {"command": "y", "args": []}},
@@ -1159,11 +1159,13 @@ def test_patch_locks_private_sidecar_not_client_lock_name(tmp_path: Path) -> Non
 
 
 def test_patch_survives_client_dir_lock_and_leaves_it_alone(tmp_path: Path) -> None:
-    """The reverse collision direction: while the owning client holds (or has
-    crash-leaked) its mkdir-style lock DIRECTORY at `<target>.lock`,
+    """The reverse collision direction: while a client holds (or has
+    crash-leaked) a mkdir-style lock DIRECTORY at `<target>.lock`,
     bettermemory init must still work — 3.15.0's `os.open` on that exact path
     died with EISDIR (exit 2) until the client cleaned its own lock — and must
-    not touch the client's directory."""
+    not touch the client's directory. Claude Code's global config is the
+    exception: init takes that lock itself, waiting for a live holder and
+    taking over a stale one (`test_claude_codes_config_lock_*`)."""
     from bettermemory.init import patch_client_config
 
     target = tmp_path / "config.json"
@@ -1408,6 +1410,242 @@ def test_a_new_config_is_owner_only_and_an_existing_one_keeps_its_mode(
     patch_client_config(kept, binary="/x/bm")
     assert _mode(fresh) == 0o600
     assert _mode(kept) == 0o640
+
+
+def _claude_config(tmp_path: Path) -> Path:
+    target = tmp_path / "cc" / ".claude.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        json.dumps({"mcpServers": {"other": {"command": "y", "args": []}}}),
+        encoding="utf-8",
+    )
+    return target
+
+
+def test_a_same_size_rewrite_in_the_same_second_is_detected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-178 (G2). The guard's signature was ``(mtime, size)``: on a
+    filesystem with one-second mtimes (HFS+, ext3, FAT, many SMB and NFS
+    servers) a rewrite of the same size in the same second (a new session
+    id of the same length) kept both, passed the re-check and was
+    clobbered. The signature is the content hash now. The race lands while
+    the bytes read are parsed: same size, and the mtime set back to the
+    one the file had."""
+    from bettermemory.init import remove_claude_code_deny_rules
+
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"lastSessionId": "a" * 36}), encoding="utf-8")
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {"permissions": {"deny": ["Bash(bettermemory project:*)"]}, "x": "a" * 8}
+        ),
+        encoding="utf-8",
+    )
+    real_loads = json.loads
+    raced: dict[Path, bytes] = {}
+
+    def racing_loads(text: str, *args: Any, **kwargs: Any) -> Any:
+        for path in (config, settings):
+            if path not in raced and path.exists():
+                before = path.stat()
+                rewritten = path.read_bytes().replace(b"a", b"b")
+                path.write_bytes(rewritten)
+                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+                assert path.stat().st_size == before.st_size
+                raced[path] = rewritten
+                break
+        return real_loads(text, *args, **kwargs)
+
+    monkeypatch.setattr(json, "loads", racing_loads)
+    with pytest.raises(ValueError, match="changed under us"):
+        patch_client_config(config, binary="/x/bm")
+    with pytest.raises(ValueError, match="changed under us"):
+        remove_claude_code_deny_rules(settings)
+    assert config.read_bytes() == raced[config]
+    assert settings.read_bytes() == raced[settings]
+
+
+def test_claude_codes_config_lock_is_held_for_the_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-178 (G2). Claude Code takes a mkdir lock, `<config>.lock`, around
+    each write of its global config (proper-lockfile); init only detected a
+    concurrent write. Now init takes the same lock for its own write, so
+    the running client waits instead of writing under it, and lets it go
+    after."""
+    from bettermemory import init as init_mod
+
+    target = _claude_config(tmp_path)
+    lock = target.with_name(".claude.json.lock")
+    seen: list[bool] = []
+    real_write = init_mod._write_config
+
+    def watching(path: Path, data: bytes, **kwargs: Any) -> None:
+        seen.append(lock.is_dir())
+        real_write(path, data, **kwargs)
+
+    monkeypatch.setattr(init_mod, "_write_config", watching)
+    assert patch_client_config(target, binary="/x/bm")["action"] == "added"
+    assert seen == [True]
+    assert not lock.exists()
+    # Any other file is no Claude Code global config: no lock there.
+    other = tmp_path / "other" / "config.json"
+    patch_client_config(other, binary="/x/bm")
+    assert seen == [True, False]
+
+
+def test_claude_codes_config_lock_held_by_a_live_writer_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lock a live Claude Code holds (its mtime fresh) is waited for, and
+    after the wait init refuses, writes nothing and leaves the lock."""
+    from bettermemory import init as init_mod
+
+    monkeypatch.setattr(init_mod, "CLAUDE_CODE_LOCK_WAIT_SECONDS", 0.3)
+    target = _claude_config(tmp_path)
+    before = target.read_bytes()
+    lock = target.with_name(".claude.json.lock")
+    lock.mkdir()
+    with pytest.raises(ValueError, match="holds its config lock"):
+        patch_client_config(target, binary="/x/bm")
+    assert target.read_bytes() == before
+    assert lock.is_dir()
+
+
+def test_claude_codes_config_lock_released_during_the_wait_is_taken(
+    tmp_path: Path,
+) -> None:
+    """A lock let go while init waits is taken, and init's write lands."""
+    import threading
+
+    target = _claude_config(tmp_path)
+    lock = target.with_name(".claude.json.lock")
+    lock.mkdir()
+    timer = threading.Timer(0.3, lock.rmdir)
+    timer.start()
+    try:
+        result = patch_client_config(target, binary="/x/bm")
+    finally:
+        timer.join()
+    assert result["action"] == "added"
+    assert not lock.exists()
+
+
+def test_claude_codes_stale_config_lock_is_taken_over(tmp_path: Path) -> None:
+    """A lock older than the stale time is a dead holder's: removed and
+    taken, as proper-lockfile does, and let go after the write. A file at
+    that name is no lock anyone can take: init writes without one and
+    leaves the file."""
+    from bettermemory import init as init_mod
+
+    target = _claude_config(tmp_path)
+    lock = target.with_name(".claude.json.lock")
+    lock.mkdir()
+    old = time.time() - init_mod.CLAUDE_CODE_LOCK_STALE_SECONDS - 5
+    os.utime(lock, (old, old))
+    assert patch_client_config(target, binary="/x/bm")["action"] == "added"
+    assert not lock.exists()
+    lock.write_text("pid: 4242\n", encoding="utf-8")
+    result = patch_client_config(target, binary="/x/bm", name="second")
+    assert result["action"] == "added"
+    assert lock.read_text(encoding="utf-8") == "pid: 4242\n"
+
+
+def _take_over(lock: Path) -> None:
+    """What a Claude Code that judged init's lock stale does: remove it and
+    make its own (proper-lockfile's takeover)."""
+    os.rmdir(lock)
+    os.mkdir(lock)
+
+
+def test_a_config_lock_taken_over_during_the_write_is_left_to_its_holder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-178 (G2). init removed "its" lock on the way out without asking
+    whether it still was: a Claude Code that took the lock over as stale
+    (a hold past 10 s on a slow filesystem) lost its live lock to init's
+    release, and the two writers ran unexcluded. init now removes only the
+    lock directory it made (`_still_held`), so the other holder's lock
+    survives a takeover that lands during the write."""
+    from bettermemory import init as init_mod
+
+    target = _claude_config(tmp_path)
+    lock = target.with_name(".claude.json.lock")
+    real_write = init_mod._write_config
+
+    def taken_over(path: Path, data: bytes, **kwargs: Any) -> None:
+        _take_over(lock)
+        real_write(path, data, **kwargs)
+
+    monkeypatch.setattr(init_mod, "_write_config", taken_over)
+    assert patch_client_config(target, binary="/x/bm")["action"] == "added"
+    assert lock.is_dir()
+
+
+def test_a_config_lock_taken_over_before_the_write_refuses_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A takeover that lands before the write leaves init writing under
+    someone else's lock: init checks the lock is still its own right
+    before the write (`_confirm_config_lock`) and refuses, nothing written,
+    the other holder's lock kept."""
+    from bettermemory import init as init_mod
+
+    target = _claude_config(tmp_path)
+    before = target.read_bytes()
+    lock = target.with_name(".claude.json.lock")
+    real_check = init_mod._refuse_if_moved
+
+    def taken_over(path: Path, baseline: str | None) -> None:
+        _take_over(lock)
+        real_check(path, baseline)
+
+    monkeypatch.setattr(init_mod, "_refuse_if_moved", taken_over)
+    with pytest.raises(ValueError, match="taken over"):
+        patch_client_config(target, binary="/x/bm")
+    assert target.read_bytes() == before
+    assert lock.is_dir()
+
+
+def test_the_config_lock_follows_the_global_config_claude_code_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-176's resolver and the lock agree: Claude Code locks the global
+    config it resolves, a legacy ``.config.json`` (``.config.json.lock``)
+    or ``.claude-custom-oauth.json``, and init takes the lock at the same
+    name; a ``.config.json`` that is not the resolved config is no Claude
+    Code global config, and gets none."""
+    from bettermemory import claude_paths
+    from bettermemory import init as init_mod
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    legacy = home / ".claude" / ".config.json"
+    legacy.parent.mkdir()
+    legacy.write_text('{"projects": {}}', encoding="utf-8")
+    custom = tmp_path / "elsewhere" / ".claude-custom-oauth.json"
+    other = tmp_path / "project" / ".config.json"
+    seen: list[tuple[str, bool]] = []
+    real_write = init_mod._write_config
+
+    def watching(path: Path, data: bytes, **kwargs: Any) -> None:
+        seen.append((path.name, path.with_name(path.name + ".lock").is_dir()))
+        real_write(path, data, **kwargs)
+
+    monkeypatch.setattr(init_mod, "_write_config", watching)
+    assert claude_paths.global_config_path() == legacy
+    for target in (legacy, custom, other):
+        assert patch_client_config(target, binary="/x/bm")["action"] == "added"
+        assert not target.with_name(target.name + ".lock").exists()
+    assert seen == [
+        (".config.json", True),
+        (".claude-custom-oauth.json", True),
+        (".config.json", False),
+    ]
 
 
 def test_recognizer_accepts_version_pinned_uv_shapes() -> None:
@@ -1724,11 +1962,11 @@ def test_patch_hermes_aborts_when_config_changes_under_us(
     calls: list[int] = []
     raced = "a: 1\ngrew_under_us: xxxxxxxxxxxxxxxxxxxx\n"
 
-    def racing_sig(path: Path) -> tuple[int, int]:
+    def racing_sig(raw: bytes) -> str:
         calls.append(1)
-        sig = real_sig(path)
+        sig = real_sig(raw)
         if len(calls) == 1:
-            path.write_text(raced, encoding="utf-8")
+            target.write_text(raced, encoding="utf-8")
         return sig
 
     monkeypatch.setattr(init_mod, "_config_signature", racing_sig)

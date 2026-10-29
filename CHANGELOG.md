@@ -507,6 +507,25 @@ the candidates' testing.
   into) and a dangling link whose target's directory is missing are
   refused by name, with nothing created or changed.
   (`src/bettermemory/init.py`, `src/bettermemory/_fsutil.py`)
+- **`init` takes Claude Code's own lock on its global config, and checks
+  for a concurrent write by content.** The patchers held a private lock
+  and re-checked the file before writing, by its `(mtime, size)`: that
+  detected a concurrent write rather than excluding it, though Claude
+  Code locks its global config with a `<config>.lock` directory init
+  could take, and on a filesystem with one-second mtimes (HFS+, ext3,
+  FAT, many SMB and NFS servers) a same-size rewrite in the same second,
+  a new session id of the same length, passed the check and was
+  overwritten. `init` now takes Claude Code's lock around its read,
+  check and write of Claude Code's global config (`.claude.json`, or the
+  legacy or custom-OAuth file Claude Code resolves instead), the way
+  Claude Code takes it: waiting up to 12 s for a live holder and then
+  refusing with nothing written, and taking over a lock older than the
+  library's 10 s stale time. It writes only while the lock is still its
+  own and removes only its own, so a Claude Code that took the lock over
+  as stale keeps it. Every patcher's check is now the SHA-256 of the
+  exact bytes it parsed, taken again before the write, so neither a
+  same-size rewrite nor a write between a stat and the read can pass it.
+  (`src/bettermemory/init.py`)
 
 #### Known limitations
 
