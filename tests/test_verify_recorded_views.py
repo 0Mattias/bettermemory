@@ -6,8 +6,9 @@ view before it hands the path to the model to translate. Its own test
 checked "/" and the platform's separator while the model's checks either
 slash, so on POSIX a path recorded on Windows below a backslash view was
 never translated: it was stat'd as spelled and an attested one read as a
-claim-anchored miss (ENG-166). Both read `_paths.inside` now. The model
-end of the same read, on a real store, is
+claim-anchored miss (ENG-166). Both read `_paths.inside` now, and so
+does the membership migration, whose copy checked the platform's
+separator too. The model end of the same read, on a real store, is
 `test_membership_model.test_an_attestation_recorded_on_another_kind_of_machine_reads_here`.
 """
 
@@ -18,7 +19,7 @@ from typing import Any, cast
 
 import pytest
 
-from bettermemory import membership_records
+from bettermemory import _paths, membership_migrate, membership_records
 from bettermemory.verify import Anchoring
 
 #: (path, root, inside), each read the same on every host.
@@ -40,10 +41,16 @@ TABLE = [
 def test_inside_reads_either_slash_on_every_host(
     path: str, root: str, expected: bool
 ) -> None:
-    from bettermemory import _paths
-
     assert _paths.inside(path, root) is expected
     assert membership_records._inside(path, root) is expected
+    assert membership_migrate._inside(path, root) is expected
+
+
+def test_the_membership_family_reads_the_one_rule() -> None:
+    assert membership_records._inside is _paths.inside
+    assert membership_records._norm is _paths.norm
+    assert membership_migrate._inside is _paths.inside
+    assert membership_migrate._norm is _paths.norm
 
 
 class _Model:

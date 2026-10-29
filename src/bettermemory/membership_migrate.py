@@ -69,6 +69,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import location
 from . import membership as mb
+from ._paths import inside, norm
 from .membership_records import _FULL_SHA
 from .models import utcnow
 from .store import Store
@@ -436,14 +437,12 @@ def ensure_migrated(
 # ---------------------------------------------------------------------------
 
 
-def _norm(path: str) -> str:
-    stripped = path.rstrip("/\\")
-    return stripped or path
-
-
-def _inside(path: str, root: str) -> bool:
-    path, root = _norm(path), _norm(root)
-    return path == root or any(path.startswith(root + sep) for sep in ("/", os.sep))
+# A recorded root and what lies below it, by the family's one rule
+# (`_paths`, ENG-166): either slash separates, on every host, since a cwd
+# or a root recorded on another kind of machine reaches the migration
+# through a synced store.
+_norm = norm
+_inside = inside
 
 
 def _basename(path: str) -> str:

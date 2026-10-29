@@ -11,7 +11,8 @@ paths in either spelling.
 from here, so they keep importing from it. This module lives apart from
 `membership.py` to keep each module under the package's 2,000-line bound
 (ENG-96). It is the family's bottom module: it imports the standard
-library and `store` (for `RecordHome`) and no other membership module.
+library, `_paths` (the rule of a path below a root, which verify reads
+too) and `store` (for `RecordHome`), and no other membership module.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
+from ._paths import inside, norm
 from .store import RecordHome
 
 if TYPE_CHECKING:
@@ -971,20 +973,16 @@ def admitted(surface: str, home: Home, caller: Resolution) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _norm(path: str) -> str:
-    stripped = path.rstrip("/\\")
-    return stripped or path
+# Whether a recorded path is a root or lies below it, whichever separator
+# the two are spelled with (recorded paths cross machines, `_flavour`): the
+# one rule verify's anchoring reads too (`_paths`, ENG-166), under the names
+# the family imports from here.
+_norm = norm
+_inside = inside
 
 
 def _same_path(a: str, b: str) -> bool:
     return _norm(a) == _norm(b)
-
-
-def _inside(path: str, root: str) -> bool:
-    """`path` is `root` or below it, whichever separator the two are
-    spelled with: recorded paths cross machines (`_flavour`)."""
-    path, root = _norm(path), _norm(root)
-    return path == root or any(path.startswith(root + sep) for sep in ("/", "\\"))
 
 
 _DRIVE_PATH = re.compile(r"^[A-Za-z]:")

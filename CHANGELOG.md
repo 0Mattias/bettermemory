@@ -1223,12 +1223,17 @@ the candidates' testing.
   or Linux a path recorded on Windows below a backslash view
   (`C:\w\app\src\x.py`) was never translated: it was stat'd as spelled,
   read absent, and an attested one read as a claim-anchored miss that
-  escalated the verdict. The anchoring now reads `_paths.inside`, the
-  either-slash rule the model's translation reads, which imports
-  nothing, so the verify family keeps the membership family and the
-  store off the hook path; the attestation now reads at this machine's
-  checkout of the project, on either kind of host.
-  (`src/bettermemory/_paths.py`, `src/bettermemory/verify_anchoring.py`)
+  escalated the verdict. The membership migration kept a third copy of
+  the test, splitting on `/` and the platform's separator too, and read
+  a cwd recorded below a backslash root as under no root. The anchoring,
+  the model's records and the migration now read one rule,
+  `_paths.inside`, which imports nothing, so the verify family keeps the
+  membership family and the store off the hook path; the attestation now
+  reads at this machine's checkout of the project, on either kind of
+  host. (`src/bettermemory/_paths.py`,
+  `src/bettermemory/verify_anchoring.py`,
+  `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_migrate.py`)
 - **An attestation spelled with `$HOME` counts the commits that changed
   its file.** The commit-drift anchors handed each attestation to the
   pathspec resolver as spelled. `~/proj/src/x.py` resolved, but
