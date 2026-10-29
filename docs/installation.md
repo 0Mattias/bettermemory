@@ -191,12 +191,14 @@ managed config (below) to keep a repository from choosing the store at
 all. The `denyRead` entries
 hold for every process a sandboxed command starts; the
 `permissions.deny` rules cover Claude Code's own Read, Edit and Write
-tools, which run outside the sandbox. Beside them: no `localhost`,
-`*.localhost` or `127.0.0.1` entry without a port in
-`sandbox.network.allowedDomains`, since an entry with no port opens
-every port on that host and the daemon's with it;
-`sandbox.network.allowLocalBinding` left off; and no
-`sandbox.excludedCommands`, since an excluded command runs as the user.
+tools, which run outside the sandbox. Beside them: no entry in
+`sandbox.network.allowedDomains` that reaches the loopback (`localhost`,
+`*.localhost`, any address in `127.0.0.0/8` in any spelling, `::1`,
+`0.0.0.0`, `*`) without a port, or with the daemon's, since an entry
+with no port opens every port on that host and the daemon listens on
+`127.0.0.1`; on macOS, `sandbox.network.allowLocalBinding` left off (it
+has no effect on Linux); and no `sandbox.excludedCommands`, since an
+excluded command runs as the user.
 
 Under these settings a `bettermemory` command the agent runs fails: it
 can read neither the state file nor the store. The hooks and the shim

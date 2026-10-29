@@ -66,7 +66,9 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import shlex
+import socket
 import sqlite3
 import stat
 import sys
@@ -104,22 +106,13 @@ _OVERRIDES: tuple[str, ...] = (
     _daemon_client.STATE_DIR_ENV,
 )
 
-#: Hosts whose portless entry in ``sandbox.network.allowedDomains`` opens
-#: the daemon's port to the sandboxed shell. ``*`` opens every host; a
-#: connection to the unspecified address (``0.0.0.0``, ``[::]``) reaches
-#: the host's own listeners on macOS and Linux.
-_LOOPBACK_HOSTS = frozenset(
-    {
-        "localhost",
-        "*.localhost",
-        "127.0.0.1",
-        "::1",
-        "[::1]",
-        "0.0.0.0",
-        "[::]",
-        "*",
-    }
-)
+#: An IPv4 address in one of the legacy spellings the C resolver
+#: (``inet_aton``) still accepts: fewer than four parts (``127.1``), one
+#: number (``2130706433``), octal or hex parts (``0177.0.0.1``,
+#: ``0x7f.1``). Held to digits, hex digits, ``x`` and dots before it is
+#: parsed, since ``inet_aton`` stops at the first space and would read
+#: ``127.0.0.1 junk`` as an address.
+_LEGACY_IPV4 = re.compile(r"[0-9][0-9a-fA-FxX.]*")
 
 _geteuid = getattr(os, "geteuid", None)
 
@@ -1332,9 +1325,47 @@ def _rule_covers(rules: list[str], tool: str, target: Path, home: Path | None) -
     return False
 
 
+def _reaches_loopback(host: str) -> bool:
+    """Whether a host in ``sandbox.network.allowedDomains`` reaches this
+    machine's loopback listeners, the daemon's among them, in any spelling
+    a resolver reads: ``*`` (every host); ``localhost`` and ``*.localhost``,
+    the names Claude Code's proxy lets resolve to loopback, with a root
+    dot (``localhost.``) or without; and an address, parsed rather than
+    matched as text, so every address in ``127.0.0.0/8``, ``::1``, an
+    IPv4-mapped one (``::ffff:127.0.0.1``), the unspecified address
+    (``0.0.0.0``, ``::``: a connection to it reaches the host's own
+    listeners on macOS and Linux) and the legacy IPv4 spellings
+    (``127.1``, ``2130706433``) all count."""
+    name = host.strip().lower()
+    if name.startswith("[") and name.endswith("]"):
+        name = name[1:-1]
+    name = name.rstrip(".")
+    if name in ("*", "localhost", "*.localhost") or name.endswith(".localhost"):
+        return True
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        if not _LEGACY_IPV4.fullmatch(name):
+            return False
+        try:
+            address = ipaddress.IPv4Address(socket.inet_aton(name))
+        except (OSError, ValueError):
+            return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return address.is_loopback or address.is_unspecified
+
+
 def _loopback_entries(domains: list[str], ports: tuple[int, ...]) -> list[str]:
-    """The ``allowedDomains`` entries that open the daemon's port: a
-    loopback host with no port, or with the daemon's."""
+    """The ``allowedDomains`` entries that let sandboxed commands reach this
+    machine's loopback on the daemon's port or on every port: a host that
+    reaches loopback (`_reaches_loopback`) with no port, or with the
+    daemon's. The daemon binds 127.0.0.1 alone (`_daemon_client.HOST`), so
+    the spellings of that address, ``localhost``, ``*`` and the unspecified
+    address reach the daemon itself; another address in ``127.0.0.0/8`` or
+    ``::1`` reaches whatever else listens on the loopback, which the block
+    keeps sandboxed commands off as well, and is flagged with them."""
     flagged: list[str] = []
     for entry in domains:
         host, port = entry.strip().lower(), None
@@ -1349,7 +1380,7 @@ def _loopback_entries(domains: list[str], ports: tuple[int, ...]) -> list[str]:
             name, _, tail = host.partition(":")
             if tail.isdigit():
                 host, port = name, int(tail)
-        if host in _LOOPBACK_HOSTS and (port is None or port in ports):
+        if _reaches_loopback(host) and (port is None or port in ports):
             flagged.append(entry)
     return flagged
 
@@ -1551,7 +1582,8 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
         yield Finding(
             "claude.sandbox.network",
             "warn",
-            "sandbox.network.allowedDomains opens the daemon's port: "
+            "sandbox.network.allowedDomains lets sandboxed commands reach "
+            "this machine's loopback, where the daemon listens on 127.0.0.1: "
             f"{', '.join(flagged)}",
             fix=(
                 "name a port other than the daemon's "
@@ -1560,13 +1592,25 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             details={"entries": flagged, "ports": list(plan.ports)},
         )
     local_binding, _ = scalar("sandbox", "network", "allowLocalBinding")
-    if local_binding is True:
+    if local_binding is True and platform == "darwin":
         gaps += 1
         yield Finding(
             "claude.sandbox.local_binding",
             "warn",
-            "sandbox.network.allowLocalBinding is true",
+            "sandbox.network.allowLocalBinding is true: sandboxed commands can "
+            "connect to any port on localhost, the daemon's included",
             fix="leave it off",
+        )
+    elif local_binding is True:
+        # Claude Code's sandboxing documentation: on Linux and WSL2 a
+        # sandboxed command's localhost is its own, and the key has no
+        # effect there. Native Windows, where the sandbox does not run,
+        # returned a skip above and never reaches this.
+        yield Finding(
+            "claude.sandbox.local_binding",
+            "info",
+            "sandbox.network.allowLocalBinding is true, which has no effect on "
+            "Linux: a sandboxed command's localhost is its own",
         )
     excluded = merged("sandbox", "excludedCommands")
     if excluded:

@@ -954,10 +954,12 @@ def test_sandbox_gaps_are_warnings(layout: Layout) -> None:
         "claude.sandbox.deny_read",
         "claude.sandbox.deny_rules",
         "claude.sandbox.network",
-        "claude.sandbox.local_binding",
         "claude.sandbox.excluded_commands",
     ):
         assert _by_id(report, finding_id).status == "warn", finding_id
+    # Claude Code's sandboxing documentation: allowLocalBinding has no
+    # effect on Linux, where a sandboxed command's localhost is its own.
+    assert _by_id(report, "claude.sandbox.local_binding").status == "info"
     assert state in _by_id(report, "claude.sandbox.deny_read").details["missing"]
     network = _by_id(report, "claude.sandbox.network").details["entries"]
     assert network == ["127.0.0.1", "localhost:7397", "[::1]"]
@@ -1057,6 +1059,57 @@ def test_allow_read_that_reopens_a_directory_is_a_gap(
     wide["sandbox"]["filesystem"]["allowManagedReadPathsOnly"] = True
     _write_json(layout.managed, wide)
     assert _by_id(audit(platform="linux"), "claude.sandbox").status == "ok"
+
+
+@pytest.mark.parametrize(
+    ("entry", "flagged"),
+    [
+        ("127.1", True),
+        ("2130706433", True),
+        ("localhost.", True),
+        ("LOCALHOST", True),
+        ("api.localhost", True),
+        ("127.0.0.2", True),
+        ("[::ffff:127.0.0.1]", True),
+        ("::1", True),
+        ("[::]", True),
+        ("127.1:7397", True),
+        ("localhost.:7397", True),
+        ("127.1:8080", False),
+        ("localhost.example.com", False),
+        ("example.com", False),
+        ("10.0.0.1", False),
+        ("1.2.3.4", False),
+    ],
+)
+def test_every_spelling_of_the_loopback_is_flagged(entry: str, flagged: bool) -> None:
+    """ENG-185. The loopback hosts were a fixed list, while a resolver reads
+    the loopback in many spellings: ``127.1``, ``2130706433`` and
+    ``localhost.`` reached 127.0.0.1, where the daemon listens, unflagged.
+    Hosts are parsed now, and every loopback or unspecified address is
+    flagged, with no port or the daemon's."""
+    assert posture._loopback_entries([entry], (7397,)) == ([entry] if flagged else [])
+
+
+@posix_only
+def test_local_binding_is_a_gap_on_macos_only(layout: Layout) -> None:
+    """``allowLocalBinding`` lets a sandboxed command on macOS connect to any
+    localhost port, the daemon's included; on Linux it has no effect
+    (Claude Code's sandboxing documentation), so it is information there.
+    On native Windows the sandbox does not run: the audit skips it whole,
+    so the Linux text never reaches a Windows report (review H6)."""
+    block = _block()
+    block["sandbox"]["network"] = {"allowLocalBinding": True}
+    _write_json(layout.managed, block)
+    assert _by_id(audit(platform="darwin"), "claude.sandbox.local_binding").status == (
+        "warn"
+    )
+    linux = audit(platform="linux")
+    assert _by_id(linux, "claude.sandbox.local_binding").status == "info"
+    assert _by_id(linux, "claude.sandbox").status == "ok"
+    windows = audit(platform="win32")
+    assert "claude.sandbox.local_binding" not in _ids(windows)
+    assert _by_id(windows, "claude.sandbox").status == "skip"
 
 
 @posix_only

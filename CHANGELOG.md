@@ -526,6 +526,21 @@ the candidates' testing.
   exact bytes it parsed, taken again before the write, so neither a
   same-size rewrite nor a write between a stat and the read can pass it.
   (`src/bettermemory/init.py`)
+- **The security audit reads every spelling of the loopback in the
+  sandbox's allowed domains, and `allowLocalBinding` is a gap on macOS
+  only.** `claude.sandbox.network` matched `allowedDomains` hosts against
+  a fixed list (`localhost`, `127.0.0.1`, `[::1]`, ...), so `127.1`,
+  `2130706433`, `localhost.` and `[::ffff:127.0.0.1]`, all 127.0.0.1,
+  where the daemon listens, went unflagged. Hosts are parsed now:
+  `localhost` and `*.localhost` with or without a root dot, any loopback
+  or unspecified address, IPv4-mapped ones included, and the legacy IPv4
+  spellings the C resolver reads; every loopback or unspecified address
+  is flagged now, the ones other than 127.0.0.1 for the rest of the
+  loopback they open. `allowLocalBinding` was a warning on
+  every platform, though Claude Code's sandboxing documentation says it
+  has no effect on Linux, where a sandboxed command's localhost is its
+  own; it is information there and a warning on macOS.
+  (`src/bettermemory/posture.py`, `docs/installation.md`)
 
 #### Known limitations
 
