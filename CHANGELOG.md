@@ -1293,6 +1293,16 @@ the candidates' testing.
   object is read; a split index, which this does not open, declines, and
   its absent paths read unconfirmed: an unread index convicts nothing.
   (`src/bettermemory/verify_anchoring.py`)
+- **The session brief's ranking stats no claimed path.** The brief
+  ranks its records through the search ranker and reads only the ids,
+  yet every ranked hit carried a path-drift read, and the browse fill
+  asks for every delivered record of the project, so each SessionStart
+  stat'd every cited and attested path of every one of them. A path on a
+  network mount that stopped answering blocked the hook's worker in
+  `stat()` for a result the brief threw away. The search takes
+  `path_drift=False` for a caller that reads only the ranking, and the
+  brief passes it; `memory_search` reads drift as before.
+  (`src/bettermemory/search.py`, `src/bettermemory/recall_brief.py`)
 
 #### Known limitations
 

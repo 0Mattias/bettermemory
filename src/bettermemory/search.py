@@ -101,7 +101,7 @@ from .search_lexicon import (
     tokenize as tokenize,
     tokenizer_fingerprint as tokenizer_fingerprint,
 )
-from .verify import detect_path_drift
+from .verify import PathDriftReport, detect_path_drift
 
 if TYPE_CHECKING:
     from .admission import Admission
@@ -943,6 +943,7 @@ def _build_hit(
     *,
     query_unique: int,
     anchor: ClaimAnchor | None = None,
+    path_drift: bool = True,
 ) -> MemoryHit:
     """Construct a MemoryHit from a scored memory.
 
@@ -952,7 +953,9 @@ def _build_hit(
     anchoring) at the worktree its origin recorded.
 
     `detect_path_drift` is the only call here that touches the
-    filesystem — one regex pass + up to 8 stat() calls per hit. The
+    filesystem — one regex pass + up to 8 stat() calls per hit — and
+    with `path_drift` False it is not made: the hit carries an empty
+    drift report, for a caller that reads only the ranking. The
     body's already in memory at this point (load_all already ran), so
     the marginal cost is bounded by the cap inside `detect_path_drift`
     rather than corpus size.
@@ -965,16 +968,20 @@ def _build_hit(
     most `max_results` times (default 5), after the ranking has been
     trimmed.
     """
-    drift = detect_path_drift(
-        memory.body,
-        verified_paths=memory.verified_paths,
-        absent_paths=memory.verified_absent_paths,
-        worktree_root=(
-            memory.origin.worktree_root
-            if anchor is None and memory.origin is not None
-            else None
-        ),
-        anchor=anchor,
+    drift = (
+        detect_path_drift(
+            memory.body,
+            verified_paths=memory.verified_paths,
+            absent_paths=memory.verified_absent_paths,
+            worktree_root=(
+                memory.origin.worktree_root
+                if anchor is None and memory.origin is not None
+                else None
+            ),
+            anchor=anchor,
+        )
+        if path_drift
+        else PathDriftReport(checked=(), missing=())
     )
     return MemoryHit(
         id=memory.id,
@@ -1234,6 +1241,7 @@ def search(
     rescue_expansion: bool = False,
     conversational: bool = True,
     anchoring: Anchoring | None = None,
+    path_drift: bool = True,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -1353,6 +1361,13 @@ def search(
       record when None (the offline callers), is read at the worktree
       its origin recorded, as `verdict.resolve_verdicts` reads it.
 
+    - `path_drift`: False reads no hit's path claims, so the search
+      stats nothing on the disk and every hit carries an empty drift
+      report. For a caller that reads only the ranking (the session
+      brief, `recall_brief._ranked`): a path on a mount that stopped
+      answering would block it in stat() for a result it discards
+      (ENG-169 G2).
+
     Score semantics vary by mode: keyword/BM25 scores live on
     different scales and are not comparable across modes. Hybrid scores
     are RRF outputs (~0.01-0.05 range, summed `1/(k+rank)` over rankers).
@@ -1414,7 +1429,14 @@ def search(
         browse_candidates.sort(key=lambda m: (m.updated, m.id), reverse=True)
         browsed = browse_candidates[:max_results]
         return [
-            _build_hit(memory, score=0.0, matched=[], query_unique=0, anchor=anchor)
+            _build_hit(
+                memory,
+                score=0.0,
+                matched=[],
+                query_unique=0,
+                anchor=anchor,
+                path_drift=path_drift,
+            )
             for memory, anchor in zip(
                 browsed, _claim_anchors(anchoring, browsed), strict=True
             )
@@ -1707,7 +1729,14 @@ def search(
                 matched_leg_out[memory.id] = leg
     anchors = _claim_anchors(anchoring, [memory for memory, _, _ in trimmed])
     return [
-        _build_hit(memory, score, matched, query_unique=query_unique, anchor=anchor)
+        _build_hit(
+            memory,
+            score,
+            matched,
+            query_unique=query_unique,
+            anchor=anchor,
+            path_drift=path_drift,
+        )
         for (memory, score, matched), anchor in zip(trimmed, anchors, strict=True)
     ]
 

@@ -127,7 +127,9 @@ def _ranked(
     (`search.search`, the configured mode and half-life, the pool's
     corpus statistics), the newest by ``updated`` filling the places the
     ranker leaves (the ranker's browse order; every place when `probe` is
-    empty): Stage C's ranking."""
+    empty): Stage C's ranking. Only the hits' ids are read, so the
+    ranker reads no path claims (`path_drift=False`): the browse fill
+    alone would stat every delivered record's paths (ENG-169 G2)."""
     if not memories:
         return []
     rows = list(memories)
@@ -147,6 +149,7 @@ def _ranked(
                 mode=mode,
                 corpus_stats_provider=pool.corpus_stats_provider,
                 conversational=cfg.behavior.conversational,
+                path_drift=False,
             )
         ]
     if len(picked) < limit:
@@ -160,6 +163,7 @@ def _ranked(
             mode=mode,
             allow_empty_query=True,
             conversational=cfg.behavior.conversational,
+            path_drift=False,
         ):
             if hit.id not in picked:
                 picked.append(hit.id)
