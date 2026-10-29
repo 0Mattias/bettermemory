@@ -598,6 +598,38 @@ def test_e18c_a_path_the_sparse_head_does_not_track_is_still_missing(
     assert not new.unconfirmed
 
 
+@pytest.mark.usefixtures("discovery")
+def test_e18c_a_path_the_cone_keeps_and_the_disk_lost_is_still_missing(
+    bench: Bench,
+) -> None:
+    """HEAD tracks the path, but the cone keeps it: its index entry
+    carries no skip-worktree bit, and its absence is a deletion (ENG-169
+    G1), not a path the sparse checkout leaves out."""
+    sparse, rid = _sparse(bench)
+    (sparse / "api" / "main.py").unlink()
+    new = bench.read(rid, "The api entry is `api/main.py`.", ["api/main.py"])
+    assert _ends(new.claim_anchored_missing, "api/main.py")
+    assert not new.unconfirmed
+
+
+@pytest.mark.usefixtures("discovery")
+def test_e18c_an_unread_index_convicts_no_absent_path(bench: Bench) -> None:
+    """A split index is not read (its shared index is not opened): the
+    path the cone leaves out and the deleted one both read unconfirmed,
+    never a claim-anchored miss and never a refused attestation."""
+    sparse, rid = _sparse(bench)
+    _git(sparse, "update-index", "--split-index")
+    (sparse / "api" / "main.py").unlink()
+    body = "The entries are `web/main.py` and `api/main.py`."
+    new = bench.read(rid, body, ["web/main.py", "api/main.py"])
+    assert not new.missing and not new.claim_anchored_missing
+    assert new.unconfirmed_reasons == (SPARSE_CHECKOUT, SPARSE_CHECKOUT)
+    anchor = bench.anchor(rid)
+    attested = ["web/main.py", "api/main.py"]
+    assert unverifiable_attestations(attested, anchor=anchor) == []
+    assert unverifiable_attestations(attested, anchor=anchor, stored=True) == []
+
+
 # ---------------------------------------------------------------------------
 # The cited commit: the home's store, then the caller's, else unconfirmed
 # ---------------------------------------------------------------------------

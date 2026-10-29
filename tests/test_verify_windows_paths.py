@@ -19,11 +19,13 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from bettermemory import githead, verify
+from bettermemory import githead, verify, verify_anchoring
 from bettermemory.githead import GitDir
+from bettermemory.gitobjects import ObjectReader
 
 from .conftest import set_git_discovery_ceiling
 
@@ -190,8 +192,9 @@ def test_holds_commit_reads_the_store_under_another_spelling(tmp_path: Path) -> 
 # ---------------------------------------------------------------------------
 
 
-def _sparse(tmp_path: Path) -> Path:
-    """A monorepo's sparse clone holding only ``api``; its resolved root."""
+def _sparse(tmp_path: Path, *options: str) -> Path:
+    """A monorepo's sparse clone holding only ``api``, its sparse checkout
+    set with `options`; its resolved root."""
     mono = tmp_path / "mono" / "repo"
     _repo(mono)
     for package in ("api", "web"):
@@ -202,7 +205,7 @@ def _sparse(tmp_path: Path) -> Path:
     sparse = tmp_path / "sparse" / "repo"
     sparse.parent.mkdir(parents=True)
     _git(sparse.parent, "clone", "-q", "--no-checkout", mono.as_uri(), str(sparse))
-    _git(sparse, "sparse-checkout", "set", "api")
+    _git(sparse, "sparse-checkout", "set", *options, "api")
     _git(sparse, "checkout", "-q", "main")
     assert not (sparse / "web").exists()
     return Path(os.path.realpath(sparse))
@@ -226,6 +229,122 @@ def test_a_path_the_cone_leaves_out_reads_the_same_under_another_spelling(
     for spelled in spellings:
         assert verify._absent_by_sparsity(str(spelled / "web" / "main.py")), spelled
         assert not verify._absent_by_sparsity(str(spelled / "docs" / "x.py")), spelled
+
+
+def test_a_tracked_path_the_cone_keeps_and_the_disk_lost_reads_missing(
+    tmp_path: Path,
+) -> None:
+    """A path the sparse patterns keep, deleted from the disk, is a
+    deletion: ``git status`` reports it, since its index entry carries no
+    skip-worktree bit. The probe read whether HEAD tracks the path, which
+    it does, so the deletion read as a path the cone leaves out and the
+    anchored read reported it unconfirmed, not missing (ENG-169 G1)."""
+    sparse = _sparse(tmp_path)
+    (sparse / "api" / "main.py").unlink()
+    assert _git(sparse, "status", "--porcelain") == "D api/main.py", "premise"
+    assert not verify._absent_by_sparsity(str(sparse / "api" / "main.py"))
+    shutil.rmtree(sparse / "api")
+    assert not verify._absent_by_sparsity(str(sparse / "api"))
+    assert not verify._absent_by_sparsity(str(sparse / "api" / "main.py"))
+    assert verify._absent_by_sparsity(str(sparse / "web" / "main.py"))
+
+
+@pytest.mark.parametrize("layout", ["full", "sparse-index", "version-4"])
+def test_the_skip_worktree_bit_reads_in_every_index_layout_git_writes(
+    tmp_path: Path, layout: str
+) -> None:
+    """The index git writes for a sparse checkout (version 3, the bit in
+    each entry's second flags word), a sparse index (one directory entry,
+    ``web/``, for everything the cone leaves out of ``web``) and a version
+    4 index (each name compressed against the one before it) read alike."""
+    options = ("--sparse-index",) if layout == "sparse-index" else ()
+    sparse = _sparse(tmp_path, *options)
+    if layout == "version-4":
+        _git(sparse, "update-index", "--index-version", "4")
+    if layout == "sparse-index":
+        listed = _git(sparse, "ls-files", "--sparse").splitlines()
+        assert "web/" in listed and "web/main.py" not in listed, "premise"
+    (sparse / "api" / "main.py").unlink()
+    assert verify._absent_by_sparsity(str(sparse / "web" / "main.py"))
+    assert verify._absent_by_sparsity(str(sparse / "web"))
+    assert not verify._absent_by_sparsity(str(sparse / "api" / "main.py"))
+    assert not verify._absent_by_sparsity(str(sparse / "docs" / "main.py"))
+
+
+def test_a_sha256_repository_s_index_reads_the_bit(tmp_path: Path) -> None:
+    """A SHA-256 repository's index entries hold 32-byte object names, so
+    each entry's flags sit twelve bytes further on; its config's
+    ``extensions.objectFormat`` says so."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    made = subprocess.run(
+        ["git", "init", "-q", "-b", "main", "--object-format=sha256"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    if made.returncode != 0:
+        pytest.skip("this git cannot make a SHA-256 repository")
+    for package in ("api", "web"):
+        (repo / package).mkdir()
+        (repo / package / "main.py").write_bytes(f"# {package}\n".encode())
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "packages")
+    _git(repo, "sparse-checkout", "set", "api")
+    assert not (repo / "web").exists(), "premise"
+    root = Path(os.path.realpath(repo))
+    (root / "api" / "main.py").unlink()
+    assert verify._absent_by_sparsity(str(root / "web" / "main.py"))
+    assert not verify._absent_by_sparsity(str(root / "api" / "main.py"))
+
+
+def test_a_split_index_is_not_read_and_convicts_no_absent_path(
+    tmp_path: Path,
+) -> None:
+    """A split index holds only the entries that differ from a shared
+    index the probe does not open; it declines, and every absent path in
+    the sparse checkout reads as one the probe cannot judge (True, read
+    unconfirmed), the one the cone leaves out and the deleted one alike:
+    an unread index convicts nothing."""
+    sparse = _sparse(tmp_path)
+    _git(sparse, "update-index", "--split-index")
+    assert any(p.name.startswith("sharedindex.") for p in (sparse / ".git").iterdir())
+    (sparse / "api" / "main.py").unlink()
+    assert verify._absent_by_sparsity(str(sparse / "web" / "main.py"))
+    assert verify._absent_by_sparsity(str(sparse / "api" / "main.py"))
+
+
+def test_absent_paths_read_the_index_once_and_no_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe built a new object reader per absent path, reading every
+    pack index of the repository whole each time (ENG-169 G1). The index
+    is parsed once while its stamp holds, and again once git rewrites it."""
+    sparse = _sparse(tmp_path)
+    readers: list[object] = []
+
+    def reader(*args: Any) -> object:
+        readers.append(args)
+        return ObjectReader(*args)
+
+    parses: list[int] = []
+    real_parse = getattr(verify_anchoring, "_parse_skip_index", None)
+
+    def parse(data: bytes, hash_len: int) -> object:
+        parses.append(len(data))
+        assert real_parse is not None
+        return real_parse(data, hash_len)
+
+    monkeypatch.setattr(verify_anchoring, "ObjectReader", reader)
+    monkeypatch.setattr(verify_anchoring, "_parse_skip_index", parse, raising=False)
+    assert verify._absent_by_sparsity(str(sparse / "web" / "main.py"))
+    assert verify._absent_by_sparsity(str(sparse / "web"))
+    assert verify._absent_by_sparsity(str(sparse / "web" / "main.py"))
+    assert readers == []
+    assert len(parses) == 1
+    _git(sparse, "update-index", "--index-version", "4")
+    assert verify._absent_by_sparsity(str(sparse / "web" / "main.py"))
+    assert len(parses) == 2
 
 
 # ---------------------------------------------------------------------------

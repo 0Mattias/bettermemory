@@ -1274,6 +1274,20 @@ the candidates' testing.
   removed: no tool has called it since `memory_list` left the surface.
   (`src/bettermemory/search.py`, `src/bettermemory/handlers/search.py`,
   `src/bettermemory/_response.py`)
+- **A file the sparse checkout keeps and the disk lost reads missing.**
+  An absent path in a sparse checkout read as one the cone leaves out
+  whenever HEAD tracked it, so deleting a file inside the cone hid the
+  deletion: the anchored read reported the claim unconfirmed
+  (`sparse_checkout`), not missing, where `git status` reports it
+  deleted. Each absent path also built a new object reader, which reads
+  every pack index of the repository whole. The probe now reads the
+  index's skip-worktree bit, as git does: a path reads left out when its
+  entry carries the bit, when a sparse index's directory entry above it
+  does, or, for a directory, when every entry below it does. The index
+  is parsed once per stamp (versions 2 to 4, SHA-1 and SHA-256) and no
+  object is read; a split index, which this does not open, declines, and
+  its absent paths read unconfirmed: an unread index convicts nothing.
+  (`src/bettermemory/verify_anchoring.py`)
 
 #### Known limitations
 
@@ -1386,6 +1400,16 @@ the candidates' testing.
   written can make an alias clone and a full-URL clone, kept as two
   projects before, both candidates by their remote: they are one
   repository, and the ladder asks.
+- **Some spellings of a claimed path are still read apart.** On macOS's
+  case-insensitive volumes, a path claimed under another case of a
+  component (`.../Proj` beside `.../PROJ`) keys as a second claim, since
+  the claim key folds case only on Windows: an absence attested under one
+  case can read as a claim-anchored miss under the other. On Windows a
+  reserved device name (`NUL`, `CON`, `COM1`, `src/CON`) is not refused
+  by the path gate; a stat of one opens no network connection. In a
+  sparse checkout with a split index (`git update-index --split-index`),
+  whose shared index is not read, every absent path reads unconfirmed,
+  neither missing nor left out by the cone.
 
 ### 9.0.0rc13
 

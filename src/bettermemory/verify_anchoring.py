@@ -16,16 +16,19 @@ names callers import from it.
 
 from __future__ import annotations
 
+import bisect
 import os
+import threading
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import _caches
 from ._paths import inside
-from .githead import GitDir, locate
-from .githead import head_sha as _files_head_sha
-from .gitobjects import ObjectReader
+from .githead import GitDir, Stamp, locate, stamp
+from .gitobjects import ObjectReader, _config_object_format
 from .verify_candidates import (
     _CHECKABLE_CITATION_EXTENSIONS,
     _MAX_ANCHORED_CITATION_STATS,
@@ -279,7 +282,8 @@ CONVICTING_ANCHORS = frozenset({"home_checkout", "checkout", "absolute"})
 UNANCHORED = "unanchored"
 
 #: The reason an absent path reads unconfirmed in a sparse checkout whose
-#: HEAD tracks it outside the cone (E18 c).
+#: index entry, or a sparse directory entry above it, carries the
+#: skip-worktree bit, or whose index cannot be read (E18 c).
 SPARSE_CHECKOUT = "sparse_checkout"
 
 #: The rule of a cited commit no live store here holds (design 3.6).
@@ -524,11 +528,230 @@ def _parts_below(path: str, root: str | Path) -> list[str] | None:
     return list(inner[len(outer) :])
 
 
+# The index is read here and, for its .gitmodules entry, in
+# origin_gitfiles (`_gitmodules_entries`). Two readers on purpose: that one
+# reads a prefix of the index up to one name, for a memo free to decline,
+# and declines a SHA-256 repository and a version-2 entry carrying the
+# extended flag; this one reads every entry's skip-worktree bit, in either
+# object format. Their declines differ, so merging them is not a pure move;
+# one reader with two consumers is a follow-up in origin's module.
+#
+# An index entry's flags (read-cache.c): CE_EXTENDED in the first word says
+# a second word follows, which carries CE_SKIP_WORKTREE and CE_INTENT_TO_ADD
+# and nothing else git reads ("unknown index entry format").
+_CE_EXTENDED = 0x4000
+_CE_SKIP_WORKTREE = 0x4000
+_CE_EXTENDED_FLAGS = 0x4000 | 0x2000
+_INDEX_HASH_LEN = {b"sha1": 20, b"sha256": 32}
+
+
+class _IndexDeclined(Exception):
+    """The index is not one `_parse_skip_index` reads exactly."""
+
+
+@dataclass(frozen=True)
+class _SkipIndex:
+    """The names of an index's stage-0 entries split by the skip-worktree
+    bit, each tuple in byte order: `skipped` carries it (a path the sparse
+    patterns leave out of the working tree, or a sparse index's directory
+    entry, named with its trailing slash), `kept` does not."""
+
+    skipped: tuple[bytes, ...]
+    kept: tuple[bytes, ...]
+
+    def skips(self, parts: Sequence[bytes]) -> bool:
+        """Whether the working-tree path of `parts` is one the index leaves
+        out: an entry of that name carries the bit, or a directory entry
+        above it does, or entries below it do and none below it lacks it."""
+        name = b"/".join(parts)
+        if _holds(self.skipped, name):
+            return True
+        if any(
+            _holds(self.skipped, b"/".join(parts[:cut]) + b"/")
+            for cut in range(1, len(parts))
+        ):
+            return True
+        below = name + b"/"
+        return _any_below(self.skipped, below) and not _any_below(self.kept, below)
+
+
+def _holds(names: tuple[bytes, ...], name: bytes) -> bool:
+    at = bisect.bisect_left(names, name)
+    return at < len(names) and names[at] == name
+
+
+def _any_below(names: tuple[bytes, ...], prefix: bytes) -> bool:
+    at = bisect.bisect_left(names, prefix)
+    return at < len(names) and names[at].startswith(prefix)
+
+
+def _index_varint(data: bytes, pos: int) -> tuple[int, int]:
+    """git's ``decode_varint`` (varint.c): the value at `pos` and the
+    position after it."""
+    if pos >= len(data):
+        raise _IndexDeclined
+    byte = data[pos]
+    pos += 1
+    value = byte & 0x7F
+    while byte & 0x80:
+        value += 1
+        if value >> 57 or pos >= len(data):
+            raise _IndexDeclined
+        byte = data[pos]
+        pos += 1
+        value = (value << 7) + (byte & 0x7F)
+    return value, pos
+
+
+def _parse_skip_index(data: bytes, hash_len: int) -> _SkipIndex:
+    """The `_SkipIndex` of the index file `data`, whose object names are
+    `hash_len` bytes long, read as git's ``do_read_index`` reads it:
+    versions 2 and 3 pad each entry to a multiple of eight bytes, version 4
+    compresses each name against the one before it, a name of 4,095 bytes
+    or more is found by its terminating NUL, and an entry at stage 1 to 3
+    (a conflicted path) is passed over. Raises `_IndexDeclined` for anything
+    git would refuse or lay out otherwise, and for a split index (a
+    ``link`` extension), whose entries are only those that differ from a
+    shared index this does not open."""
+    end = len(data) - hash_len
+    if end < 12 or data[:4] != b"DIRC":
+        raise _IndexDeclined
+    version = int.from_bytes(data[4:8], "big")
+    if version not in (2, 3, 4):
+        raise _IndexDeclined
+    skipped: list[bytes] = []
+    kept: list[bytes] = []
+    pos = 12
+    previous = b""
+    for _ in range(int.from_bytes(data[8:12], "big")):
+        start = pos
+        flags_at = start + 40 + hash_len
+        if flags_at + 2 > end:
+            raise _IndexDeclined
+        flags = int.from_bytes(data[flags_at : flags_at + 2], "big")
+        name_at = flags_at + 2
+        extended = 0
+        if flags & _CE_EXTENDED:
+            if name_at + 2 > end:
+                raise _IndexDeclined
+            extended = int.from_bytes(data[name_at : name_at + 2], "big")
+            if extended & ~_CE_EXTENDED_FLAGS:
+                raise _IndexDeclined
+            name_at += 2
+        length = flags & 0x0FFF
+        if version == 4:
+            strip, name_at = _index_varint(data, name_at)
+            stop = data.find(b"\0", name_at, end)
+            if strip > len(previous) or stop < 0:
+                raise _IndexDeclined
+            name = previous[: len(previous) - strip] + data[name_at:stop]
+            if length != 0x0FFF and len(name) != length:
+                raise _IndexDeclined
+            pos = stop + 1
+        else:
+            if length == 0x0FFF:
+                stop = data.find(b"\0", name_at, end)
+                if stop < 0:
+                    raise _IndexDeclined
+                length = stop - name_at
+            name = data[name_at : name_at + length]
+            pos = start + ((name_at - start + length + 8) & ~7)
+        if pos > end:
+            raise _IndexDeclined
+        previous = name
+        if not (flags >> 12) & 0x3:
+            (skipped if extended & _CE_SKIP_WORKTREE else kept).append(name)
+    while pos + 8 <= end:
+        if data[pos : pos + 4] == b"link":
+            raise _IndexDeclined
+        pos += 8 + int.from_bytes(data[pos + 4 : pos + 8], "big")
+    return _SkipIndex(tuple(sorted(skipped)), tuple(sorted(kept)))
+
+
+# The skip-worktree reading of each working tree's index, memoised on the
+# stamps of the index and of the config that sets its object format: one
+# read of a record's claims asks after every absent path in turn, and a
+# request reads several records, while git rewrites the index (through a
+# lock file and a rename, so a new inode) on most commands. Bounded, since
+# a sparse checkout's index can hold hundreds of thousands of names;
+# registered with `_caches`.
+_SKIP_MEMO_CAP = 4
+_SKIP_MEMO: OrderedDict[str, tuple[tuple[Stamp | None, ...], _SkipIndex | None]] = (
+    OrderedDict()
+)
+_SKIP_MEMO_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_skip_memo() -> None:
+    with _SKIP_MEMO_LOCK:
+        _SKIP_MEMO.clear()
+
+
+def _skip_index(found: GitDir) -> _SkipIndex | None:
+    """The `_SkipIndex` of the index of the working tree `found` names, read
+    from the open file and memoised on its stamp; None where there is no
+    index, where a read fails, and where the index is not read exactly
+    (`_parse_skip_index`, or an object format this does not know)."""
+    path = found.gitdir / "index"
+    config = found.commondir / "config"
+    key = os.fspath(path)
+    try:
+        current = (stamp(path), stamp(config))
+        if current[0] is None:
+            return None
+        with _SKIP_MEMO_LOCK:
+            held = _SKIP_MEMO.get(key)
+            if held is not None and held[0] == current:
+                _SKIP_MEMO.move_to_end(key)
+                return held[1]
+        text = config.read_bytes() if current[1] is not None else b""
+        with open(path, "rb") as handle:
+            status = os.fstat(handle.fileno())
+            data = handle.read()
+    except (OSError, ValueError):
+        return None
+    read = (
+        (
+            status.st_mtime_ns,
+            status.st_ctime_ns,
+            status.st_size,
+            status.st_ino,
+            status.st_mode,
+        ),
+        current[1],
+    )
+    hash_len = _INDEX_HASH_LEN.get(_config_object_format(text))
+    try:
+        index = None if hash_len is None else _parse_skip_index(data, hash_len)
+    except _IndexDeclined:
+        index = None
+    with _SKIP_MEMO_LOCK:
+        _SKIP_MEMO[key] = (read, index)
+        _SKIP_MEMO.move_to_end(key)
+        while len(_SKIP_MEMO) > _SKIP_MEMO_CAP:
+            _SKIP_MEMO.popitem(last=False)
+    return index
+
+
 def _absent_by_sparsity(path: str) -> bool:
-    """True when `path`, absent from the disk, sits in a sparse checkout
-    whose HEAD tracks it: the cone leaves it out of the working tree, it was
-    not deleted (E18 c). Read from the repository's files: the
-    ``core.sparseCheckout`` switch, then HEAD's tree (no git process).
+    """True when `path`, absent from the disk, is one a sparse checkout
+    leaves out of its working tree (E18 c), as git reads that: the index
+    holds it with the skip-worktree bit, or holds a directory above it so
+    (a sparse index), or holds entries below it and every one carries the
+    bit. A tracked path the sparse patterns keep carries no bit, so one
+    deleted from the disk reads missing, as ``git status`` reads it
+    deleted; a path the index does not hold reads missing too. Read from
+    the repository's files: the ``core.sparseCheckout`` switch, then the
+    index (`_skip_index`, parsed once per stamp of the index, across
+    requests, not once per path), and no git process and no object.
+
+    Where a sparse checkout's index cannot be read exactly (a split index,
+    an object format or a layout this does not know, a failed read, no
+    index at all) this answers True too, so the readers (`_AnchoredRead.
+    miss`, the write gate's `_unverifiable_at`) read the path unconfirmed,
+    never as a miss or a refusal: an unread index reads every absent path
+    unconfirmed; it neither convicts nor hides.
 
     The repository is found by `githead.locate`, which answers on every
     platform; `githead.find_gitdir` declines off POSIX, and through it a
@@ -550,31 +773,11 @@ def _absent_by_sparsity(path: str) -> bool:
     base = _parts_below(start, found.worktree_root)
     if base is None:
         return False
-    parts = [*base, *reversed(tail)]
-    head = _files_head_sha(found)
-    if head is None or not parts:
+    parts = [os.fsencode(part) for part in (*base, *reversed(tail))]
+    if not parts:
         return False
-    reader = ObjectReader(found.commondir)
-    try:
-        commit = reader.commit(head)
-        if commit is None:
-            return False
-        tree = commit.tree
-        for index, part in enumerate(parts):
-            entries = reader.tree(tree)
-            if entries is None:
-                return False
-            match = next((e for e in entries if e.name == os.fsencode(part)), None)
-            if match is None:
-                return False
-            if index == len(parts) - 1:
-                return True
-            if match.mode != 0o40000:
-                return False
-            tree = match.sha
-    except (OSError, ValueError):
-        return False
-    return False
+    index = _skip_index(found)
+    return index is None or index.skips(parts)
 
 
 def detect_path_drift(
