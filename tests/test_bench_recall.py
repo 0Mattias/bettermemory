@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+from collections import Counter
 from datetime import datetime, timezone
 import sqlite3
 import sys
@@ -29,6 +30,12 @@ from typing import Any
 import pytest
 
 from bettermemory.recall import RECALL_CAP_CHARS
+
+from ._review_rows import Clock
+from .test_recall_prompt import PromptWorld
+from .test_recall_subagent import OTHER_QUERY, Parent, _subagent_compacts
+from .test_recall_subagent import clock as clock  # noqa: F401
+from .test_recall_subagent import world as world  # noqa: F401
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -565,3 +572,65 @@ def test_a_queued_command_is_counted_beside_the_denominator(tmp_path: Path) -> N
     d = deliveries["rs-v1"]
     assert d["owner_deliveries"] == 3 and d["matched_deliveries"] == 1
     assert unmatched["rs-v1"] == [3, 4] and d["matched_queued"] == 1
+
+
+def _clause_one(db: sqlite3.Connection) -> Counter[str]:
+    """RS-P11's show counters over every rule, for all time."""
+    marks = read_p11.rule_marks(db)
+    counted = read_p11.shows(
+        db,
+        datetime(2000, 1, 1, tzinfo=timezone.utc),
+        datetime(2100, 1, 1, tzinfo=timezone.utc),
+        marks,
+    )
+    total: Counter[str] = Counter()
+    for counts in counted.values():
+        total.update(counts)
+    return total
+
+
+def test_clause_one_reads_a_brief_taken_back_as_the_subagents_show(
+    world: PromptWorld, clock: Clock, tmp_path: Path
+) -> None:
+    """ENG-150's rows, written by the hooks on the receipt's shape. A
+    subagent's compaction, raised as the session's, prints a brief the
+    session counts as its own until a later read takes it back for the
+    subagent; the session's prompt recall then delivers the withdrawn id
+    in the segment the brief row named. Keyed by (session_id, segment)
+    alone that delivery read as a repeat show (3 shows, 1 repeat), which
+    the session never had before the take-back existed; keyed by session,
+    subagent and segment, the brief's show is the subagent's, in the
+    segment the take-back row names, and the clause reads no repeat."""
+    parent = Parent(world, clock, tmp_path / "project", held=True)
+    _first, second, _compact, _signal = _subagent_compacts(parent, world, clock)
+    clock.advance(seconds=300)
+    parent.stop()
+    clock.advance(seconds=30)
+    assert parent.prompt(OTHER_QUERY).ids == (second,)
+
+    total = _clause_one(world.store._conn)
+    assert (total["shows"], total["repeat_shows"], total["segments"]) == (2, 0, 1)
+    assert (
+        total["subagent_shows"],
+        total["subagent_repeat_shows"],
+        total["subagent_segments"],
+    ) == (1, 0, 1)
+
+
+def test_clause_one_reads_a_brief_naming_its_subagent_in_its_scope(
+    world: PromptWorld, clock: Clock, tmp_path: Path
+) -> None:
+    """A SessionStart whose payload names a subagent writes a brief row
+    that carries `agent_id` and the subagent's segment: its shows are
+    the subagent's, and an id the session had shown is no repeat."""
+    parent = Parent(world, clock, tmp_path / "project", held=True)
+    first = world.write("the nightly backup runs at two from the ops host").id
+    clock.advance(seconds=1)
+    assert parent.start("startup").ids == (first,)
+    clock.advance(seconds=30)
+    assert parent.start("compact", agent_id="a0123456789abcdef").ids == (first,)
+
+    total = _clause_one(world.store._conn)
+    assert (total["shows"], total["repeat_shows"]) == (1, 0)
+    assert (total["subagent_shows"], total["subagent_repeat_shows"]) == (1, 0)
+    assert (total["segments"], total["subagent_segments"]) == (1, 1)

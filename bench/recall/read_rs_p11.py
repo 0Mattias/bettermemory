@@ -14,9 +14,18 @@ THE FORMULAS, per rule. Probe sessions (session id opening with
 (1) repeat_shows / shows. A show is one id on a session_brief row's `ids`
 or a prompt_recall row's `shown_ids`; a session_brief row's `omitted`
 (the ids a brief withheld because its segment had shown them, recorded
-since RS-F2) names no show and is not read. A repeat show is one whose id
-was already shown under the same (session_id, segment), by either
-surface, with the most recent earlier show within
+since RS-F2) names no show and is not read. A show is keyed by
+(session_id, agent, segment). The agent is empty for the session's own
+shows, and a subagent's (ENG-150) for a brief printed into it: a
+session_brief row that carries `agent_id` (a SessionStart whose payload
+named the subagent), or one whose `event_id` a segment_opened row names
+as its `brief_event_id` beside an `agent_id` (a compaction a later read
+took back from the session for the subagent; that row is read wherever
+it sits in the log, and its `segment`, the subagent's own, replaces the
+brief row's). The clause is read over the session's keys, as the
+prediction means it; a subagent's shows and repeats print on their own
+line. A repeat show is one whose id was already shown under the same
+key, by either surface, with the most recent earlier show within
 `recall.STATE_IDLE_SECONDS` (24 hours) of it. A show across a longer gap
 is counted on its own line, "re-shows past the idle window", and is not
 a repeat: the daemon drops a session idle past that many seconds and
@@ -241,18 +250,64 @@ def _is_owner_delivery(event: dict[str, Any]) -> bool:
     return not (isinstance(preview, str) and preview.lstrip().startswith(PREVIEW_TAGS))
 
 
+#: A brief's event id -> the (agent_id, segment) of the subagent it was
+#: printed into, as a segment_opened row that took it back names them.
+TakenBack = dict[str, tuple[str, int]]
+#: The prefix of a subagent's counters (`shows`).
+SUBAGENT = "subagent_"
+
+
+def taken_back(db: sqlite3.Connection) -> TakenBack:
+    """Every brief a later read took back from its session for a
+    subagent (ENG-150): the `brief_event_id` of each segment_opened row
+    that carries it beside an `agent_id` and an integer `segment`, mapped
+    to that subagent and its segment."""
+    out: TakenBack = {}
+    for _stamp, _session, _kind, event in _events(db, ("segment_opened",)):
+        agent = event.get("agent_id")
+        brief = event.get("brief_event_id")
+        segment = event.get("segment")
+        if (
+            isinstance(agent, str)
+            and agent
+            and isinstance(brief, str)
+            and brief
+            and isinstance(segment, int)
+            and not isinstance(segment, bool)
+        ):
+            out[brief] = (agent, segment)
+    return out
+
+
+def show_scope(event: dict[str, Any], kind: str, taken: TakenBack) -> tuple[str, Any]:
+    """The (agent, segment) a show row counts under: a subagent's for a
+    brief printed into it (its own `agent_id`, or the take-back that
+    names its `event_id`), the session's ("") otherwise."""
+    if kind == "session_brief":
+        event_id = event.get("event_id")
+        if isinstance(event_id, str) and event_id in taken:
+            return taken[event_id]
+        agent = event.get("agent_id")
+        if isinstance(agent, str) and agent:
+            return agent, event.get("segment")
+    return "", event.get("segment")
+
+
 def shows(
     db: sqlite3.Connection, since: datetime, until: datetime, marks: RuleMarks
 ) -> dict[str, Counter[str]]:
     out: dict[str, Counter[str]] = defaultdict(Counter)
-    #: (session_id, segment) -> each shown id's most recent show.
-    last_shown: dict[tuple[Any, Any], dict[str, datetime]] = defaultdict(dict)
-    segments: dict[str, set[tuple[Any, Any]]] = defaultdict(set)
+    taken = taken_back(db)
+    #: (session_id, agent, segment) -> each shown id's most recent show.
+    last_shown: dict[tuple[Any, str, Any], dict[str, datetime]] = defaultdict(dict)
+    segments: dict[str, set[tuple[Any, str, Any]]] = defaultdict(set)
     for stamp, session, kind, event in _events(db, ("session_brief", "prompt_recall")):
         if stamp >= until:
             continue
         ids = event.get("ids") if kind == "session_brief" else event.get("shown_ids")
-        key = (event.get("session_id") or session, event.get("segment"))
+        agent, segment = show_scope(event, kind, taken)
+        key = (event.get("session_id") or session, agent, segment)
+        prefix = SUBAGENT if agent else ""
         inside = stamp >= since
         rule = rule_of(event, stamp, marks)
         repeated_by = (
@@ -261,18 +316,19 @@ def shows(
         for memory_id in ids if isinstance(ids, list) else []:
             earlier = last_shown[key].get(memory_id)
             if inside:
-                out[rule]["shows"] += 1
+                out[rule][prefix + "shows"] += 1
                 segments[rule].add(key)
                 if earlier is not None:
                     gap = (stamp - earlier).total_seconds()
                     if gap <= STATE_IDLE_SECONDS:
-                        out[rule]["repeat_shows"] += 1
-                        out[rule][repeated_by] += 1
+                        out[rule][prefix + "repeat_shows"] += 1
+                        out[rule][prefix + repeated_by] += 1
                     else:
-                        out[rule]["reshows_past_idle"] += 1
+                        out[rule][prefix + "reshows_past_idle"] += 1
             last_shown[key][memory_id] = stamp
     for rule, keys in segments.items():
-        out[rule]["segments"] = len(keys)
+        out[rule]["segments"] = sum(1 for key in keys if not key[1])
+        out[rule][SUBAGENT + "segments"] = sum(1 for key in keys if key[1])
     return out
 
 
@@ -435,6 +491,12 @@ def main() -> None:
             f"(repeated by a brief {s['repeat_shows_brief']}, by a prompt recall "
             f"{s['repeat_shows_recall']}; re-shows past the idle window "
             f"{s['reshows_past_idle']})"
+        )
+        print(
+            f"      subagents (ENG-150), outside the clause: repeat_shows "
+            f"{s[SUBAGENT + 'repeat_shows']} / shows {s[SUBAGENT + 'shows']} over "
+            f"{s[SUBAGENT + 'segments']} segments (re-shows past the idle window "
+            f"{s[SUBAGENT + 'reshows_past_idle']})"
         )
         print(
             f"  (2) with_prompt_id {j['with_prompt_id']} / deliveries {j['deliveries']} "
