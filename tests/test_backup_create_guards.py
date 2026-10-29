@@ -184,6 +184,35 @@ def test_an_unreadable_retired_key_is_named(tmp_path: Path) -> None:
     assert all("is there and cannot be read (" in text for text in found.values())
 
 
+def test_a_fingerprint_no_file_name_can_hold_is_no_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fingerprint the store's meta spells with characters a file name
+    cannot hold (Windows refuses control characters: EINVAL), or longer
+    than a name may be (ENAMETOOLONG), names no file that could be there
+    to read; it is no finding, where it read as a key file that cannot
+    be read (the Windows leg on c0110fca, `backup create` exit 1 for a
+    fingerprint of `\\x1b]52;c;aGk=\\x07`)."""
+    import errno
+
+    from bettermemory.backup import _unreadable_key_files
+
+    ring = KeyRing(tmp_path, "a" * 32)
+    ring.ensure_dir()
+    current, refused, retired = "c" * 64, "\x1b]52;c;aGk=\x07", "r" * 64
+    ring.retired_path(retired).mkdir()
+    real = Path.read_bytes
+
+    def read_bytes(self: Path) -> bytes:
+        if refused in self.name:
+            raise OSError(errno.EINVAL, "Invalid argument", str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    found = _unreadable_key_files(ring, current, [refused, retired, "x" * 300])
+    assert set(found) == {retired}
+
+
 @pytest.mark.parametrize("poison", ["view", "generated", "check"])
 def test_create_admits_the_store_before_it_copies_it(
     store_file: Path, tmp_path: Path, poison: str

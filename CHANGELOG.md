@@ -2513,8 +2513,10 @@ follows the candidates' testing.
   (<reason>): the manifest could not be signed, ...; make it readable
   and run the backup again`. A retired key's unreadable file is named
   the same way in the `--include-key` warning. Only a key that is not
-  held still gives an unsigned bundle, with a warning. (ENG-93 item 3;
-  `src/bettermemory/backup.py`, `docs/api.md`,
+  held still gives an unsigned bundle, with a warning; so does a
+  fingerprint no file name can hold (characters Windows refuses in a
+  name, or a name too long), which names no file that could be there to
+  read. (ENG-93 item 3; `src/bettermemory/backup.py`, `docs/api.md`,
   `tests/test_backup_create_guards.py`)
 - **Benches keep their scratch stores' keys out of the user's keys
   directory (ENG-106).** The storage, retrieval and parity benches, the

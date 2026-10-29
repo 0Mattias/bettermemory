@@ -117,6 +117,7 @@ package does.
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import hmac
 import json
@@ -742,10 +743,13 @@ def _unreadable_key_files(
     key file that should hold it is there and cannot be read, in the words
     the owner's open uses for the current key (`KeyRing.load_current`).
     A fingerprint whose file is simply absent, or holds another key, is
-    left out. `KeyRing.key_for_fingerprint` reads every failure as no key,
-    so `create_backup` reported an unreadable key file (a permission, a
-    directory in its place, a volume not mounted under a link) as no key
-    matching the store's fingerprint."""
+    left out, as is one no file name here can hold (a fingerprint the
+    store's meta spells with characters Windows refuses in a name, or
+    longer than a name may be: EINVAL or ENAMETOOLONG, where no file can
+    be there to read). `KeyRing.key_for_fingerprint` reads every failure
+    as no key, so `create_backup` reported an unreadable key file (a
+    permission, a directory in its place, a volume not mounted under a
+    link) as no key matching the store's fingerprint."""
     found: dict[str, str] = {}
     for fp in missing:
         if fp == current:
@@ -766,6 +770,8 @@ def _unreadable_key_files(
                     "symbolic link to a file that is not there)"
                 )
         except OSError as exc:
+            if exc.errno in (errno.EINVAL, errno.ENAMETOOLONG):
+                continue
             reason = exc.strerror or str(exc) or type(exc).__name__
             found[fp] = f"the key file {path} is there and cannot be read ({reason})"
     return found
