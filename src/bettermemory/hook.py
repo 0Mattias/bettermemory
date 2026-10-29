@@ -962,8 +962,10 @@ def run_prompt_recall(
     caller prints nothing and Claude Code adds nothing).
 
     A delegate kept under its 8.x name so `prompt_main` and its callers
-    are unchanged. The in-process path has no daemon, so the recall's
-    per-session cooldown is computed from the log on every call."""
+    are unchanged: `prompt_main` is its one caller in the package, and
+    the tests call it directly and through `prompt_main`. The in-process
+    path has no daemon, so the recall's per-session cooldown is computed
+    from the log on every call."""
     from .recall import prompt_recall
 
     result = prompt_recall(
@@ -982,7 +984,9 @@ def run_prompt_recall(
 def prompt_main(argv: list[str] | None = None) -> int:
     """The prompt recall in process. No command reaches it: the console's
     `prompt-recall` is an alias of `bettermemory hook prompt`, which the
-    daemon serves (`_entry.route_hook_word`).
+    daemon serves (`_entry.route_hook_word`). Nothing shipped calls it;
+    the tests drive the prompt recall through it in process, without a
+    daemon.
 
     Reads the Claude Code UserPromptSubmit payload from stdin
     (`{session_id, transcript_path, cwd, hook_event_name, prompt}`),
@@ -1247,7 +1251,8 @@ def _pending_retrievals(
 def main(argv: list[str] | None = None) -> int:
     """The Stop audit in process. No command reaches it: the console's
     `audit-turn` is an alias of `bettermemory hook stop`, which the daemon
-    serves (`_entry.route_hook_word`).
+    serves (`_entry.route_hook_word`). Nothing shipped calls it; the
+    tests drive the Stop through it in process, without a daemon.
 
     Defaults to reading the Claude Code Stop hook payload from
     stdin. Use `--transcript-path` + `--session-id` to drive the

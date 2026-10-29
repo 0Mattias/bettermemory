@@ -297,12 +297,15 @@ def standing_line(store: Store, caller: Resolution | None) -> str:
 
 
 def _open_store(cfg: Config) -> Store | None:
-    """The store the config names, opened for a caller that passes none
-    (`hook.prompt_main`, which no command reaches, and the tests; the
-    daemon passes its own), or None when there is none (a hook never
-    creates one). A store holding records without homes is migrated at
-    this open, once, when no daemon serves the hook (design 8.6); the
-    migration logs its own lines."""
+    """The store the config names, opened for a caller of
+    `recall.session_brief` or `recall.prompt_recall` that passes none
+    (`recall` reads this through its own binding), or None when there is
+    none (a hook never creates one). The daemon passes its own store, so
+    nothing shipped reaches this: only `hook.prompt_main`, which no
+    command reaches, and the tests that drive it in process. A store
+    holding records without homes is migrated at this open, once, when no
+    daemon serves the hook (design 8.6); the migration logs its own
+    lines."""
     from .cli._common import run_migration_at_open
 
     root = cfg.resolved_directory()
