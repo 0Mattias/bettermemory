@@ -778,7 +778,6 @@ def _server_at(
 ) -> Any:
     """A server whose caller stands in `cwd`."""
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     state = SessionState()
     server = build_server(
@@ -793,7 +792,6 @@ def _server_at(
         return origin
 
     monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
     return server
 
 

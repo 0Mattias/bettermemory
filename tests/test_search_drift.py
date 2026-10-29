@@ -234,7 +234,6 @@ def claims_repo_server(
         )
 
         import bettermemory._handlers as handlers_module
-        import bettermemory.server as server_module
 
         store = Store(memory_dir)
         rec = Recorder(store=store, session_id=state.session_id)
@@ -244,7 +243,6 @@ def claims_repo_server(
             return origin
 
         monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-        monkeypatch.setattr(server_module, "capture_origin", fake_capture)
         return server, repo
 
     return make

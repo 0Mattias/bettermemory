@@ -62,7 +62,6 @@ def server_factory(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
         # both bindings so a server built by either path sees the mock.
         # Patching the name as imported, not `origin.capture` itself.
         import bettermemory._handlers as handlers_module
-        import bettermemory.server as server_module
 
         captured = {"value": origin}
 
@@ -76,11 +75,9 @@ def server_factory(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
             state=state,
             recorder=rec,
         )
-        # Override the imported references so the handlers see our fake:
-        # capture_origin is a module-level binding the handlers re-resolve
-        # at call time.
+        # Override the handlers' binding so they see our fake: capture_origin
+        # is a module-level name the handlers read at call time.
         monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-        monkeypatch.setattr(server_module, "capture_origin", fake_capture)
         return server, captured
 
     return make

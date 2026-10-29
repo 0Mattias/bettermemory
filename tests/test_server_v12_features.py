@@ -487,7 +487,6 @@ def _build_stale_server_with_origin(
     so the fake is restored at teardown instead of leaking into later
     tests that rely on the real capture."""
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     state = SessionState()
     cfg = Config(
@@ -507,7 +506,6 @@ def _build_stale_server_with_origin(
         return origin
 
     monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
     return srv
 
 

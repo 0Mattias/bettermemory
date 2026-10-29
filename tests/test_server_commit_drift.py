@@ -230,7 +230,6 @@ def server_with_fake_origin(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
         # handler bodies live, and into `server` for `_cli_health`. Patch
         # both bindings so a server built by either path sees the mock.
         import bettermemory._handlers as handlers_module
-        import bettermemory.server as server_module
 
         rec = Recorder(store=store, session_id=state.session_id)
         server = build_server(
@@ -244,7 +243,6 @@ def server_with_fake_origin(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
             return origin
 
         monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-        monkeypatch.setattr(server_module, "capture_origin", fake_capture)
         return server
 
     return make

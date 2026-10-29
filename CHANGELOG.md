@@ -227,6 +227,21 @@ the candidates' testing.
   `src/bettermemory/membership_declare.py`,
   `src/bettermemory/membership_queries.py`,
   `src/bettermemory/membership_portable.py`, `docs/internals.md`)
+- **A test's patch must reach a reader.** `tests/test_patch_targets.py`
+  holds every `monkeypatch.setattr`, `patch` and `patch.object` call in
+  `tests/` and `bench/` to a name its module reads at run time, or that
+  another module of the package, the bench or the tools reads as
+  `module.name` at call time: a binding a module keeps without reading
+  it, as the parents of the splits above keep their re-exports, is not a
+  patch point, and a patch on it replaces nothing the code under test
+  runs. The guard's one finding: `bettermemory.server` bound
+  `capture_origin` only so that fourteen test patches on it would not
+  raise, while the handlers read their own binding; the binding and the
+  fourteen patches are gone. (`tests/test_patch_targets.py`,
+  `src/bettermemory/server.py`, `tests/test_server_origin.py`,
+  `tests/test_server_claims.py`, `tests/test_server_commit_drift.py`,
+  `tests/test_server_v12_features.py`, `tests/test_commit_drift_cache.py`,
+  `tests/test_membership_anchoring.py`, `tests/test_search_drift.py`)
 
 #### Fixed
 

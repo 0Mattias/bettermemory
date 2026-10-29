@@ -1075,7 +1075,6 @@ async def test_memory_show_reads_the_same_block_around_a_warm_search(
     count and basis. The two surfaces share the whole-history memo and the
     head; neither memo changes what either surface says."""
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     repo = _repo(tmp_path)
     anchor = _commit(
@@ -1112,7 +1111,6 @@ async def test_memory_show_reads_the_same_block_around_a_warm_search(
         recorder=Recorder(store=store, session_id=state.session_id),
     )
     monkeypatch.setattr(handlers_module, "capture_origin", lambda cwd=None: caller)
-    monkeypatch.setattr(server_module, "capture_origin", lambda cwd=None: caller)
 
     before = {
         i: await _mcp_call(server, "memory_show", {"id": i}) for i in (author, reach)

@@ -120,7 +120,6 @@ def server_in_repo(memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyP
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     store = Store(memory_dir)
     rec = Recorder(store=store, session_id=state.session_id)
@@ -130,7 +129,6 @@ def server_in_repo(memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyP
         return origin
 
     monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
     return server, repo
 
 
@@ -194,7 +192,6 @@ async def test_write_refuses_claims_without_worktree(
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     store = Store(memory_dir)
     server = build_server(
@@ -208,7 +205,6 @@ async def test_write_refuses_claims_without_worktree(
         return Origin(cwd="/somewhere", repo=None, branch=None, worktree_root=None)
 
     monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
 
     with pytest.raises(Exception, match="worktree"):
         await _call(
@@ -234,7 +230,6 @@ async def test_verify_claims_fallback_for_legacy_origin_without_worktree(
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     store = Store(memory_dir)
     server = build_server(
@@ -250,7 +245,6 @@ async def test_verify_claims_fallback_for_legacy_origin_without_worktree(
         return legacy
 
     monkeypatch.setattr(handlers_module, "capture_origin", capture_legacy)
-    monkeypatch.setattr(server_module, "capture_origin", capture_legacy)
     written = await _call(
         server,
         "memory_write",
@@ -265,7 +259,6 @@ async def test_verify_claims_fallback_for_legacy_origin_without_worktree(
         return modern
 
     monkeypatch.setattr(handlers_module, "capture_origin", capture_modern)
-    monkeypatch.setattr(server_module, "capture_origin", capture_modern)
     verified = await _call(
         server, "memory_verify", id=written["id"], claims=["pkg/mod.py::handler"]
     )
@@ -576,7 +569,6 @@ async def test_verify_with_claims_refuses_cleanly_on_an_unreadable_worktree(
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     store = Store(memory_dir)
     server = build_server(
@@ -591,7 +583,6 @@ async def test_verify_with_claims_refuses_cleanly_on_an_unreadable_worktree(
         return origin
 
     monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
 
     written = await _call(
         server,
@@ -636,7 +627,6 @@ async def test_verify_without_claims_skips_an_unreadable_worktree(
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     store = Store(memory_dir)
     server = build_server(
@@ -651,7 +641,6 @@ async def test_verify_without_claims_skips_an_unreadable_worktree(
         return origin
 
     monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
 
     written = await _call(
         server,
@@ -758,7 +747,6 @@ async def test_verify_names_a_stored_claim_it_could_not_check_without_accusing_i
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     store = Store(memory_dir)
     server = build_server(
@@ -773,7 +761,6 @@ async def test_verify_names_a_stored_claim_it_could_not_check_without_accusing_i
         return origin
 
     monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
 
     written = await _call(
         server,
@@ -821,7 +808,6 @@ async def test_a_relative_attestation_under_a_dead_root_is_could_not_ask(
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
 
     store = Store(memory_dir)
     server = build_server(
@@ -837,7 +823,6 @@ async def test_a_relative_attestation_under_a_dead_root_is_could_not_ask(
         return origin
 
     monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
-    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
     del repo  # the caller is NOT standing in a checkout of the record's repo
 
     written = await _call(

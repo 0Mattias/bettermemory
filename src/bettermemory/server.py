@@ -17,11 +17,8 @@ What's left in this module:
 * Re-export of ``build_server`` from ``bettermemory.builder`` so the
   forty+ test files that import ``from bettermemory.server import
   build_server`` keep resolving.
-* Re-exports of ``SYSTEM_PROMPT_ADDENDUM`` and ``capture_origin`` for
-  the same back-compat reason. ``test_server_origin`` and
-  ``test_server_commit_drift`` patch
-  ``bettermemory.server.capture_origin``; the binding must stay
-  importable here.
+* Re-export of ``SYSTEM_PROMPT_ADDENDUM`` for the same back-compat
+  reason.
 * Re-export of ``_cli_export`` for ``test_export``.
 
 The tool surface (mirrored in ``prompts.SYSTEM_PROMPT_ADDENDUM`` so the
@@ -44,17 +41,7 @@ default, the rest behind ``[behavior] full_tool_surface``.
 from __future__ import annotations
 
 from .builder import build_server
-from .origin import capture as capture_origin  # noqa: F401
 from .prompts import SYSTEM_PROMPT_ADDENDUM
-
-
-# ``capture_origin`` is unused inside this module — every live call site
-# moved with the CLI extraction (the handlers in `_handlers.py` import
-# their own binding from `.origin`). Kept importable here because
-# `tests/test_server_origin.py` and `tests/test_server_commit_drift.py`
-# defensively monkeypatch `bettermemory.server.capture_origin`; removing
-# the binding would AttributeError on the patch even though the test's
-# active code path never calls the symbol.
 
 
 # ---------------------------------------------------------------------------
@@ -70,12 +57,12 @@ from .prompts import SYSTEM_PROMPT_ADDENDUM
 #    every existing install ships that entry point. Re-exporting `main`
 #    here keeps the script working without bumping pyproject — older
 #    wheels already on PyPI still resolve.
-# 2. The test_server_origin / test_server_commit_drift suites
-#    monkeypatch `bettermemory.server.capture_origin`; the binding
-#    stays importable at this module path. (The canonical patch target
-#    for `load_config` is now `bettermemory.config.load_config` —
-#    every CLI module imports it from `..config` directly, so no
-#    back-edge through this module is needed.)
+# 2. The canonical patch target for `load_config` is
+#    `bettermemory.config.load_config`: every CLI module imports it
+#    from `..config` directly, so no back-edge through this module is
+#    needed. (`capture_origin` was bound here for the same kind of
+#    patch until nothing read it; the handlers read their own binding,
+#    and `tests/test_patch_targets.py` holds every patch to a reader.)
 # 3. `tests/test_export.py` imports `_cli_export` directly from
 #    `bettermemory.server`. The re-export below preserves that import
 #    path after the move into `cli/`.
@@ -102,14 +89,11 @@ from .cli.export import _cli_export  # noqa: E402
 
 
 # Re-export the prompt for consumers who import the package.
-# `capture_origin` is exposed so the test-monkeypatch contract
-# documented above passes mypy's `Module ... does not explicitly export
-# attribute` check. `build_server` is re-exported from
-# `bettermemory.builder`, the canonical home post-Round-3.
+# `build_server` is re-exported from `bettermemory.builder`, the
+# canonical home post-Round-3.
 __all__ = [
     "build_server",
     "main",
     "SYSTEM_PROMPT_ADDENDUM",
-    "capture_origin",
     "_cli_export",
 ]
