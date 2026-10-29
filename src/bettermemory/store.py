@@ -95,8 +95,8 @@ is a function of `self: Store` that `Store` binds by name
 - `store_index`: the reads behind search (the FTS candidates, the links,
   the declared scopes) and the document frequency memo.
 - `store_open`: the steps of `Store.open` once the file is connected. It
-  reads `chain_segments` and `resolve_keys_dir` from this module when it
-  runs, so a patch of either here reaches the open.
+  reads the names this module re-exports, and `log`, through this module
+  when it runs, so a patch here reaches the open.
 """
 
 from __future__ import annotations

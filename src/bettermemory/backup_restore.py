@@ -5,8 +5,9 @@ change through ``_plan_restore``: the key actions, where the store is moved
 aside, the head and origin anchor before and after, the binding and the
 record's path. It sets the report's ``plan`` and returns a ``_RestorePlan``
 that ``backup._apply_restore`` carries out. The order and why are in
-``backup``'s module docstring. ``backup`` imports this when a restore runs,
-since this module reads its names.
+``backup``'s module docstring. ``backup`` imports this only when a restore
+runs, and it reads ``backup``'s names through the module when it runs, so
+a patch on ``backup`` reaches it.
 """
 
 from __future__ import annotations
@@ -16,19 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import backup as _backup
 from . import restore_lock
-from .backup import (
-    _SIBLING_SUFFIXES,
-    _aside_base,
-    _key_actions,
-    _origin_dict,
-    _path_str,
-    _replaced_log_end,
-    _self_signed_fingerprint,
-    _sibling,
-    _store_facts,
-    restore_record_path,
-)
 from .log import Head, HistoryOrigin, KeyRing, KeyUnreadableError, parse_origin
 from .time_utils import isoformat_utc
 
@@ -61,7 +51,9 @@ def _plan_restore(
     report: dict[str, Any],
 ) -> _RestorePlan | None:
     """Read what the restore would change and set the report's plan; returns the plan, or None with the refusal in the report."""
-    trusted_key = _self_signed_fingerprint(verification) if self_signed else None
+    trusted_key = (
+        _backup._self_signed_fingerprint(verification) if self_signed else None
+    )
     store_id = str(verification["store_id"])
     live = KeyRing(keys_root, store_id)
     bundle_ring = KeyRing(bundle, store_id)
@@ -73,15 +65,15 @@ def _plan_restore(
     needed = [str(k["fingerprint"]) for k in verification["keys"]]
     final = str(verification["log"]["key_fingerprint"])
     try:
-        actions = _key_actions(live, bundle_ring, needed, final)
+        actions = _backup._key_actions(live, bundle_ring, needed, final)
     except KeyUnreadableError as exc:
         # Read as missing, the store's current key would be written over
         # by the bundle's. Refused before anything changes.
         report["detail"] = f"{exc}; make it readable and run the restore again"
         return None
-    aside = _aside_base(store_file, stamp)
+    aside = _backup._aside_base(store_file, stamp)
     before = live.read_head()
-    facts = _store_facts(store_file)
+    facts = _backup._store_facts(store_file)
     current_store_id = facts[0]
     origin = parse_origin(verification["origin"])
     origin_before = live.read_origin()
@@ -89,17 +81,20 @@ def _plan_restore(
         bound = live.read_binding()
     except OSError:
         bound = None
-    binding_before = _path_str(bound)
+    binding_before = _backup._path_str(bound)
     binding_after = str(store_file.resolve())
-    log_end = _replaced_log_end(store_file, store_id, facts, bound)
-    record = restore_record_path(keys_root, store_id)
+    log_end = _backup._replaced_log_end(store_file, store_id, facts, bound)
+    record = _backup.restore_record_path(keys_root, store_id)
     report["plan"] = {
         "current_store_id": current_store_id,
         "bundle_store_id": store_id,
         "move_aside": [
-            {"from": str(_sibling(store_file, s)), "to": str(_sibling(aside, s))}
-            for s in _SIBLING_SUFFIXES
-            if _sibling(store_file, s).exists()
+            {
+                "from": str(_backup._sibling(store_file, s)),
+                "to": str(_backup._sibling(aside, s)),
+            }
+            for s in _backup._SIBLING_SUFFIXES
+            if _backup._sibling(store_file, s).exists()
         ],
         "keys": actions,
         "head": {
@@ -110,8 +105,8 @@ def _plan_restore(
         },
         "log_end_before": log_end,
         "origin": {
-            "before": _origin_dict(origin_before),
-            "after": _origin_dict(origin),
+            "before": _backup._origin_dict(origin_before),
+            "after": _backup._origin_dict(origin),
         },
         "binding": {"before": binding_before, "after": binding_after},
         "record": str(record),

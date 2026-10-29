@@ -8,25 +8,21 @@ the keys the snapshot's log names in a scratch key ring
 signature (``_check_keys_and_signature``), then runs the store's own
 ``log_verify`` on the copy. Each step adds what it finds to the report's
 ``problems``. The verdicts are documented on ``verify_bundle``. ``backup``
-imports these when a bundle is verified, since this module reads its names.
+imports these only when a bundle is verified, and they read ``backup``'s
+names through the module when they run, so a patch on ``backup`` reaches
+them.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .backup import (
-    OK,
-    SELF_SIGNED,
-    SNAPSHOT_NAME,
-    UNVERIFIABLE,
-    SnapshotFacts,
-    _file_digest,
-    _write_private,
-    manifest_mac,
-)
+from . import backup as _backup
 from .log import Head, KeyRing, same_mac
+
+if TYPE_CHECKING:
+    from .backup import SnapshotFacts
 
 
 def _check_bundle_files(
@@ -41,7 +37,7 @@ def _check_bundle_files(
         path = bundle / name
         result: dict[str, Any] = {
             "name": name,
-            "status": OK,
+            "status": _backup.OK,
             "sha256": entry["sha256"],
             "size": entry["size"],
         }
@@ -50,7 +46,7 @@ def _check_bundle_files(
             problems.append({"problem": "file_missing", "file": name})
         else:
             try:
-                digest, size = _file_digest(path)
+                digest, size = _backup._file_digest(path)
             except OSError as exc:
                 # A file this account cannot read (its mode, a lock, a
                 # read error) proves nothing either way about what the
@@ -60,7 +56,9 @@ def _check_bundle_files(
                     {"problem": "file_unreadable", "file": name, "detail": str(exc)}
                 )
                 report["files"].append(result)
-                snapshot_unreadable = snapshot_unreadable or name == SNAPSHOT_NAME
+                snapshot_unreadable = (
+                    snapshot_unreadable or name == _backup.SNAPSHOT_NAME
+                )
                 continue
             if size != entry["size"]:
                 result["status"] = "size_mismatch"
@@ -125,9 +123,9 @@ def _scratch_keys(
             problems.append({"problem": "key_absent", "fingerprint": fp})
             continue
         keys[fp] = (key, source)
-        _write_private(scratch_ring.retired_path(fp), key)
+        _backup._write_private(scratch_ring.retired_path(fp), key)
         if fp == facts.key_fingerprint:
-            _write_private(scratch_ring.current_path(), key)
+            _backup._write_private(scratch_ring.current_path(), key)
     return keys
 
 
@@ -163,8 +161,8 @@ def _check_keys_and_signature(
         report["manifest_mac"] = "absent"
         problems.append({"problem": "manifest_unsigned"})
     elif signing is None:
-        report["manifest_mac"] = UNVERIFIABLE
-    elif not same_mac(manifest_mac(signing[0], manifest), str(manifest["mac"])):
+        report["manifest_mac"] = _backup.UNVERIFIABLE
+    elif not same_mac(_backup.manifest_mac(signing[0], manifest), str(manifest["mac"])):
         report["manifest_mac"] = "mismatch"
         problems.append({"problem": "manifest_mac_mismatch"})
     elif signing[1] == "bundle":
@@ -172,7 +170,7 @@ def _check_keys_and_signature(
         # who can write the bundle can remake it under a key of their
         # own and sign it so. It proves the bundle is whole, not that
         # this store's key holder wrote it.
-        report["manifest_mac"] = SELF_SIGNED
+        report["manifest_mac"] = _backup.SELF_SIGNED
         problems.append(
             {
                 "problem": "manifest_self_signed",
@@ -180,4 +178,4 @@ def _check_keys_and_signature(
             }
         )
     else:
-        report["manifest_mac"] = OK
+        report["manifest_mac"] = _backup.OK

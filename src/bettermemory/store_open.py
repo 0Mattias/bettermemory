@@ -7,10 +7,10 @@ key is present; as a reader (``_open_reader``) when the open may not rekey
 or the key ring is bound to another file; as its owner reclaiming the log
 when the key signs a segment of it; or under a new key, with a ``rekey``
 row (``_open_rekeyed``). Why each, and what the owner's opener repairs, is
-in ``Store.open``'s docstring. ``store`` imports this when a store is
-opened, since this module reads its names. The two that tests patch on
-``store`` (``chain_segments`` and ``resolve_keys_dir``) are read from it
-at call time.
+in ``Store.open``'s docstring. ``store`` imports this only when a store
+is opened. The names ``store`` re-exports, and its ``log``, are read
+through ``store`` when the steps run, so a patch on ``store`` reaches the
+open; names ``store`` does not re-export come from their own modules.
 """
 
 from __future__ import annotations
@@ -19,15 +19,13 @@ import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from . import store as _store
 from .log import REKEY, KeyRing, Segment, fingerprint
-from .store import log
-from .store_keys import KEY_PRESENT, KeyState, _signs_a_segment, key_state
+from .store_keys import KeyState, _signs_a_segment
 from .store_schema import (
     SCHEMA_VERSION,
     _STORE_ID_PATTERN,
-    _add_membership_tables,
     check_versions,
-    read_store_meta,
 )
 
 if TYPE_CHECKING:
@@ -45,9 +43,7 @@ def _open_connected(
     read_only: bool,
 ) -> Store:
     """Read the connected store's meta and key and bind it as its owner, a reader or under a new key; takes the open's arguments and returns the store."""
-    from .store import chain_segments, resolve_keys_dir
-
-    meta = read_store_meta(conn, path)
+    meta = _store.read_store_meta(conn, path)
     store_id = meta.get("store_id")
     expected = meta.get("key_fingerprint")
     if not store_id or not expected:
@@ -65,9 +61,9 @@ def _open_connected(
         )
     allow_rekey = check_versions(conn, path, meta, allow_rekey, keys_dir).writes
     if not read_only:
-        _add_membership_tables(conn, path, meta)
+        _store._add_membership_tables(conn, path, meta)
     keyring = KeyRing(
-        Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
+        Path(keys_dir) if keys_dir is not None else _store.resolve_keys_dir(),
         store_id,
     )
     # The owner's opener first claims the key ring for this file
@@ -76,10 +72,10 @@ def _open_connected(
     # open writes nothing to it or with it. A reader asks the same,
     # writing no binding, since a reader whose key matches would
     # sign with it too (`store_keys.key_state`).
-    state = key_state(keyring, path, expected, claim=allow_rekey, conn=conn)
+    state = _store.key_state(keyring, path, expected, claim=allow_rekey, conn=conn)
     key, elsewhere = state.key, state.withheld
     matches = key is not None and fingerprint(key) == expected
-    if state.state == KEY_PRESENT:
+    if state.state == _store.KEY_PRESENT:
         store = cls._bind(
             path,
             conn,
@@ -109,7 +105,7 @@ def _open_connected(
             read_only=read_only,
             scratch=scratch,
         )
-    segments = chain_segments(
+    segments = _store.chain_segments(
         conn, keyring=keyring, current_fingerprint=expected, current_key=key
     )
     if key is not None and _signs_a_segment(segments, key):
@@ -153,8 +149,6 @@ def _open_reader(
     scratch: Path | None,
 ) -> Store:
     """Bind the store for reading, keeping its key for checks where this machine has a history of it; returns the reader."""
-    from .store import chain_segments
-
     reader = cls._bind(
         path,
         conn,
@@ -183,7 +177,7 @@ def _open_reader(
         matches
         or keyring.read_origin() is not None
         or _signs_a_segment(
-            chain_segments(
+            _store.chain_segments(
                 conn,
                 keyring=keyring,
                 current_fingerprint=expected,
@@ -229,7 +223,7 @@ def _open_rekeyed(
             {"old_fingerprint": previous, "new_fingerprint": fingerprint(key)},
             session=None,
         )
-    log.warning(
+    _store.log.warning(
         "store %s was opened without its key (fingerprint %s); a new key "
         "%s was written and the log rekeyed",
         path,
