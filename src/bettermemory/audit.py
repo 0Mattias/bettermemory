@@ -49,9 +49,10 @@ Design notes:
   The miss probe doesn't fire when a `search`, `show`, `list`, or
   `prompt_recall` event landed in the session's lookback window — the
   first three are retrievals from the model's perspective (`list`
-  surfaces ids and, with `with_bodies=True`, full bodies — the model
-  has the content it needed without a `search`), and the fourth is
-  the UserPromptSubmit hook having already delivered the pointer, so
+  events, logged while memory_list was on the tool surface, surfaced ids
+  and, with `with_bodies=True`, full bodies — the model had the content
+  it needed without a `search`), and the fourth is the UserPromptSubmit
+  hook having already delivered the pointer, so
   whatever the model does next the miss is not silent. Counting only
   `search` would mis-flag the legitimate search-then-show and
   triage-via-list flows.

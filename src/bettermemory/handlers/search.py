@@ -512,6 +512,9 @@ async def memory_search(
         # The expansion leg is a bench instrument, not a shipped knob.
         rescue_expansion=False,
         conversational=deps.config.behavior.conversational,
+        # Every hit's path drift reads a homed record where memory_show
+        # reads it (design 3.6), so a non-top hit and memory_show agree.
+        anchoring=anchoring,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper

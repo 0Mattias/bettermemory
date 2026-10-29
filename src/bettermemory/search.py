@@ -37,6 +37,7 @@ import logging
 import threading
 from bisect import bisect_left
 from collections import OrderedDict
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Literal, NamedTuple
 
@@ -104,6 +105,7 @@ from .verify import detect_path_drift
 
 if TYPE_CHECKING:
     from .admission import Admission
+    from .verify import Anchoring, ClaimAnchor
 
 log = logging.getLogger("bettermemory.search")
 
@@ -940,8 +942,14 @@ def _build_hit(
     matched: list[str],
     *,
     query_unique: int,
+    anchor: ClaimAnchor | None = None,
 ) -> MemoryHit:
     """Construct a MemoryHit from a scored memory.
+
+    `anchor` is where the record's claims are read (`verify.ClaimAnchor`,
+    design 3.6): a homed record's at its anchor, as `memory_show` reads
+    them; with None (a record with no home row, or a search with no
+    anchoring) at the worktree its origin recorded.
 
     `detect_path_drift` is the only call here that touches the
     filesystem — one regex pass + up to 8 stat() calls per hit. The
@@ -961,7 +969,12 @@ def _build_hit(
         memory.body,
         verified_paths=memory.verified_paths,
         absent_paths=memory.verified_absent_paths,
-        worktree_root=memory.origin.worktree_root if memory.origin else None,
+        worktree_root=(
+            memory.origin.worktree_root
+            if anchor is None and memory.origin is not None
+            else None
+        ),
+        anchor=anchor,
     )
     return MemoryHit(
         id=memory.id,
@@ -1220,6 +1233,7 @@ def search(
     matched_leg_out: dict[str, str] | None = None,
     rescue_expansion: bool = False,
     conversational: bool = True,
+    anchoring: Anchoring | None = None,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -1331,6 +1345,14 @@ def search(
       conversational = false` is the supported opt-out; the module
       constants carry the tuned finals the gate ranked with.
 
+    - `anchoring`: the request's claim anchoring (`verify.Anchoring`,
+      design 3.6). Each hit's path drift reads a homed record's claims at
+      its anchor, the reading `memory_show` and the expanded top hit
+      take, so one memory reads one verdict on every hit of a search and
+      on `memory_show` (ENG-165). A record with no home row, and every
+      record when None (the offline callers), is read at the worktree
+      its origin recorded, as `verdict.resolve_verdicts` reads it.
+
     Score semantics vary by mode: keyword/BM25 scores live on
     different scales and are not comparable across modes. Hybrid scores
     are RRF outputs (~0.01-0.05 range, summed `1/(k+rank)` over rankers).
@@ -1390,9 +1412,12 @@ def search(
             model_filter=model_filter,
         )
         browse_candidates.sort(key=lambda m: (m.updated, m.id), reverse=True)
+        browsed = browse_candidates[:max_results]
         return [
-            _build_hit(memory, score=0.0, matched=[], query_unique=0)
-            for memory in browse_candidates[:max_results]
+            _build_hit(memory, score=0.0, matched=[], query_unique=0, anchor=anchor)
+            for memory, anchor in zip(
+                browsed, _claim_anchors(anchoring, browsed), strict=True
+            )
         ]
 
     query_unique = len(set(query_tokens))
@@ -1680,7 +1705,20 @@ def search(
             )
             if leg:
                 matched_leg_out[memory.id] = leg
+    anchors = _claim_anchors(anchoring, [memory for memory, _, _ in trimmed])
     return [
-        _build_hit(memory, score, matched, query_unique=query_unique)
-        for memory, score, matched in trimmed
+        _build_hit(memory, score, matched, query_unique=query_unique, anchor=anchor)
+        for (memory, score, matched), anchor in zip(trimmed, anchors, strict=True)
     ]
+
+
+def _claim_anchors(
+    anchoring: Anchoring | None, memories: Sequence[Memory]
+) -> list[ClaimAnchor | None]:
+    """Each memory's claim anchor under `anchoring`, its homes read in one
+    query; None for a record with no home row and for every record when
+    there is no anchoring."""
+    if anchoring is None:
+        return [None] * len(memories)
+    anchoring.prime([memory.id for memory in memories])
+    return [anchoring.for_record(memory.id) for memory in memories]

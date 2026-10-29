@@ -1259,6 +1259,21 @@ the candidates' testing.
   benchmark's memoised stand-in for the path-filtered log reads the
   magic too.
   (`src/bettermemory/verify.py`, `bench/rot/run.py`)
+- **Every search hit reads a homed record's claims where `memory_show`
+  reads them.** Only the expanded top hit and `memory_show` read a homed
+  record's path claims at its anchor (its home checkout's live view,
+  design 3.6); every other hit read them at the worktree its origin
+  recorded, the reading the anchoring tests pin as wrong for a homed
+  record. So a record read from its checkout after the checkout moved
+  read `fresh` on `memory_show` and `spot_check_recommended` as the
+  second hit of a search, on a claim-anchored miss at the old path. The
+  search now takes the request's anchoring and reads each hit's claims
+  through that hit's anchor; a record with no home row is read at its
+  recorded worktree as before. The unused `with_bodies` serialiser,
+  the last tool surface that read a homed record without its anchor, is
+  removed: no tool has called it since `memory_list` left the surface.
+  (`src/bettermemory/search.py`, `src/bettermemory/handlers/search.py`,
+  `src/bettermemory/_response.py`)
 
 #### Known limitations
 

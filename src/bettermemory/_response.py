@@ -62,7 +62,6 @@ from .verify import (
     compute_staleness_verdict,
     remote_verification_status,
     compute_verification_status,
-    detect_path_drift,
     resolve_commit_drift,
     verdict_from_signals,
 )
@@ -725,82 +724,6 @@ class ResponseBuilder:
             "removed_reason": summary.removed_reason,
             "removed_session": summary.removed_session,
         }
-
-    def memory_to_dict(  # type: ignore[no-untyped-def]
-        self,
-        memory,
-        *,
-        now: datetime,
-    ) -> dict[str, Any]:
-        """Full memory shape used by `memory_list(with_bodies=True)`.
-
-        A strict SUBSET of `memory_show`'s fields, plus the `summary` line
-        so a consumer can treat the response uniformly with the body-less
-        `memory_list` shape. The subset direction is the contract: every
-        key here also appears on `memory_show`, but not the reverse —
-        `memory_show` additionally computes the per-id extras a single-id
-        read earns (the drift reports, the use token, the attestation
-        lists, the link graph), and a listing that walked the store would
-        pay for those N times. Do NOT read this as shape parity: code that
-        needs a `memory_show`-only field has to call `memory_show`.
-
-        Includes the `verification` block for parity with the rest of the
-        retrieval surface — a `with_bodies=True` listing carries the same
-        staleness signal a `memory_show` would. One caveat on a shared key:
-        `staleness_verdict` is computed here WITHOUT a commit-drift
-        contribution (`commit_drift_count=None`, since no per-row repo is
-        resolved), so it can read fresher than the same memory's
-        `memory_show` verdict. Path drift does contribute — the body is
-        loaded on this path, unlike `summary_to_dict`'s — but only
-        through `claim_anchored_missing`, the narrowed input every other
-        verdict site passes; a prose-scraped miss leaves the verdict
-        where it was.
-        """
-        from .models import first_summary_line
-
-        verification = compute_verification_status(
-            memory.last_verified_at, now=now, stale_after_days=self._stale_after_days
-        )
-        drift = detect_path_drift(
-            memory.body,
-            verified_paths=memory.verified_paths,
-            absent_paths=memory.verified_absent_paths,
-            worktree_root=memory.origin.worktree_root if memory.origin else None,
-        )
-        verdict = compute_staleness_verdict(
-            verification=verification,
-            # Claim-anchored subset only — same rule as every other
-            # verdict site. See `verdict_from_signals`.
-            path_drift_missing=len(drift.claim_anchored_missing),
-            commit_drift_count=None,
-        )
-        out = {
-            "id": memory.id,
-            "scopes": memory.scopes,
-            "confidence": memory.confidence.value,
-            "source": memory.source.value,
-            "category": (
-                memory.category.value if memory.category is not None else None
-            ),
-            "summary": first_summary_line(memory.body),
-            "body": memory.body,
-            "created": isoformat(memory.created),
-            "updated": isoformat(memory.updated),
-            "last_verified_at": isoformat_optional(memory.last_verified_at),
-            "verification": verification.to_dict(),
-            "staleness_verdict": verdict,
-            "origin": self.origin_to_dict(memory.origin),
-        }
-        actor = self.actor_to_dict(memory.actor)
-        if actor is not None:
-            out["actor"] = actor
-        # Corroboration rollup — omitted while zero, the same
-        # absence-as-signal contract the on-disk frontmatter uses, so
-        # the common never-corroborated shape is unchanged.
-        if memory.corroborations:
-            out["corroborations"] = memory.corroborations
-            out["last_corroborated"] = isoformat_optional(memory.last_corroborated)
-        return out
 
     # ---- write / update / restore commit responses ----------------------
 

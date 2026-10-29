@@ -883,3 +883,60 @@ async def test_memory_verify_from_another_tree_leaves_a_record_with_no_home(
     assert _model(store, this_machine).home(rid) is None
     assert store.load_one(rid).last_verified_at is not None
     store.close()
+
+
+# ---------------------------------------------------------------------------
+# One verdict on every surface: memory_show and each memory_search hit
+# ---------------------------------------------------------------------------
+
+_DECOY = (
+    "The loader feeds the parser; loader before parser, the parser after "
+    "the loader, loader and parser, loader parser loader parser."
+)
+
+
+async def test_e14_2b_memory_show_and_a_non_top_search_hit_read_one_verdict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    this_machine: MachineIdentity,
+) -> None:
+    """A homed record read from its checkout after the checkout moved: the
+    anchored read (`memory_show`, the expanded top hit) verifies both
+    attestations at the moved checkout, while the hit builder read the
+    claims at the recorded worktree (the rc3 reading E14 2a pins as wrong
+    for a homed record), stat'd the absolute attestation at the old path
+    and escalated the hit on a claim-anchored miss (ENG-165). Every hit now
+    reads its claims through the request's anchoring, so the record reads
+    one verdict as a non-top `memory_search` hit and on `memory_show`."""
+    bench = Bench(tmp_path)
+    here = this_machine.id
+    old = _repo(bench.fx / "Desktop" / "game", "a.py", "b.py")
+    body = f"The loader is in `src/a.py`; the parser is in `{old}/src/b.py`."
+    rid = bench.write(
+        old, machine=here, body=body, verified_paths=["src/a.py", f"{old}/src/b.py"]
+    )
+    decoy = bench.write(old, machine=here, body=_DECOY)
+    new = bench.fx / "Developer" / "game"
+    new.parent.mkdir(parents=True)
+    os.rename(old, new)
+    bench.see(new, machine=here)
+
+    server = _server_at(bench.store, tmp_path / "store", new, monkeypatch)
+    await call_tool(server, "memory_verify", {"id": rid})
+    await call_tool(server, "memory_verify", {"id": decoy})
+
+    shown = await call_tool(server, "memory_show", {"id": rid})
+    raw = await call_tool(
+        server,
+        "memory_search",
+        {"query": "loader parser", "expand_top": True, "max_results": 5},
+    )
+    hits = raw.get("result", raw) if isinstance(raw, dict) else raw
+    ids = [hit["id"] for hit in hits]
+    assert ids[0] == decoy and rid in ids[1:], "premise: the record is not the top hit"
+    hit = hits[ids.index(rid)]
+
+    assert shown["staleness_verdict"] == "fresh"
+    assert hit["staleness_verdict"] == shown["staleness_verdict"]
+    assert not hit.get("path_drift", {}).get("claim_anchored_missing")
+    bench.store.close()

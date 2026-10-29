@@ -149,7 +149,7 @@ async def memory_show(
         "commit_drift": (commit_drift.to_dict() if commit_drift is not None else None),
         "use_token": token_map[memory.id],
         # Corroboration rollup — omitted while zero (absence-as-signal,
-        # matching the frontmatter and memory_to_dict shapes).
+        # matching the frontmatter shape).
         **(
             {
                 "corroborations": memory.corroborations,
