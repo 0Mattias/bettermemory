@@ -114,6 +114,7 @@ from .attribution import attribute_uses
 from .audit import (
     ATTRIBUTION_LOOKBACK_SECONDS,
     REAUDIT_DEDUP_WINDOW_SECONDS,
+    MissReport,
     is_duplicate_audit,
     no_owner_prompt_report,
     search_miss_fields,
@@ -166,6 +167,7 @@ from .time_utils import parse_event_ts
 from .transcript import stop_turn
 
 if TYPE_CHECKING:
+    from .admission import Admission
     from .recall import RecallState
 
 log = logging.getLogger("bettermemory.hook")
@@ -407,18 +409,6 @@ def run_audit(
     origin 36.7 ms cold (four git spawns) and 0.2 ms warm, the admission
     0.9 ms cold and 0.2 ms warm with no subprocess, so a Stop with no
     owner prompt pays under a millisecond for them."""
-    from .membership import POOL_PREFILTER
-    from .recall import RULE, RecallState as _RecallState
-    from .recall import (
-        _probe_message,
-        caller_admission,
-        confirm_compaction,
-        previous_audit_at,
-        review_unanswered,
-        settle_interrupted,
-        settle_shown,
-    )
-
     if dry_run:
         # Nothing of any class is recorded (`events.suppressed`), at one
         # switch rather than a conditional at each emit site, where a
@@ -442,27 +432,48 @@ def run_audit(
                 state=None,
                 posted=posted,
             )
+    return _audit_turn(
+        user_message=user_message,
+        assistant_response=assistant_response,
+        session_id=session_id,
+        client_model=client_model,
+        config=config,
+        store=store,
+        cwd=cwd,
+        harness=harness,
+        prompt_id=prompt_id,
+        reply_source=reply_source,
+        transcript_path=transcript_path,
+        state=state,
+        posted=posted,
+    )
+
+
+def _audit_turn(
+    *,
+    user_message: str | None,
+    assistant_response: str | None,
+    session_id: str,
+    client_model: str | None,
+    config: Config | None,
+    store: Store | None,
+    cwd: Path | None,
+    harness: str | None,
+    prompt_id: str | None,
+    reply_source: str | None,
+    transcript_path: str | None,
+    state: RecallState | None,
+    posted: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Take `run_audit`'s arguments past its dry-run switch; return its report dict."""
+    from .recall import RecallState as _RecallState
+    from .recall import confirm_compaction, previous_audit_at
+
     cfg = config or load_config(None)
     if store is None:
         root = cfg.resolved_directory()
         store = Store.open_or_create(root / STORE_FILENAME)
-    # Window-aware read: rotation archives the ENTIRE active log at a
-    # moment independent of turn boundaries, so a turn that straddles a
-    # rotation would lose its own `search` / `scope_disable` events
-    # from a plain active-log read and re-fire as a false miss.
-    # `iter_events_window` prepends the newest rotated segment whenever
-    # the active log doesn't cover the requested window, so every
-    # consumer of `recent` below (the retrieval shield, the disabled-
-    # scope replay, the pending-retrieval attribution) sees the full
-    # window across a single rotation. The request asks for the WIDEST
-    # window any consumer needs — the re-audit dedup's
-    # `REAUDIT_DEDUP_WINDOW_SECONDS` — which is a coverage request, not
-    # a filter: the reader yields the whole active log either way, and
-    # every time-scoped consumer (the retrieval shield, the attribution
-    # pass) applies its own narrower cutoff internally.
-    recent = list(
-        store.events_since(_utcnow() - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS))
-    )
+    recent = _stop_window(store)
     # The hook reads a transcript, not the wire: publish its caller so
     # the events below carry `actor` (client, transcript-derived model,
     # transcript id as the session — every value declared, the principal
@@ -476,27 +487,8 @@ def run_audit(
     # below mean "unknown", not "nowhere". What the probe ranks is the
     # caller's membership admission, resolved below.
     caller_origin = _origin_for(cwd)
-    # Reconstruct the session-disabled scope set from the event log so the
-    # probe shields the same scopes the in-process audit would. Without
-    # this, a scope the user disabled via `memory_scope_disable` (e.g.
-    # "this is unrelated to project X") would still produce silent-miss
-    # flags here, since the hook can't read the server's in-memory state.
-    # The probe's retrieval shield ("did the model already search this
-    # turn?") must match the server's session id, not this hook's
-    # `session_id` (which is Claude Code's transcript id — a different id
-    # space from the server's `sess_<hex>`). Bridge to the live in-process
-    # server session the same way `_disabled_scopes_from_events` and
-    # `_emit_hook_attributions` do; the probe falls back to `session_id`
-    # when no in-process session is on record. Without this, the shield was
-    # structurally dead in the Stop hook and every searched-then-continued
-    # turn could still emit a `search_miss`. Anchored to this hook's
-    # worktree so a concurrent window's server can't hijack the bridge
-    # (see `_latest_in_process_session`).
-    server_session = bridged_session(
-        recent, harness_session=session_id, worktree_root=caller_origin.worktree_root
-    )
-    admission, _resolution = caller_admission(
-        POOL_PREFILTER,
+    server_session, admission, excluded_scopes = _stop_pool(
+        recent,
         store=store,
         cfg=cfg,
         cwd=cwd,
@@ -504,57 +496,18 @@ def run_audit(
         posted=posted,
         session_id=session_id,
     )
-    excluded_scopes = _disabled_scopes_from_events(
-        recent,
-        worktree_root=caller_origin.worktree_root,
-        server_session=server_session,
-    )
-    if user_message is None:
-        report = no_owner_prompt_report(
-            session_id=session_id,
-            now=utcnow(),
-            lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
-        )
-    else:
-        report = _probe_message(
-            cfg=cfg,
-            store=store,
-            user_message=user_message,
-            session_id=session_id,
-            server_session=server_session,
-            admission=admission,
-            excluded_scopes=excluded_scopes,
-            recent=recent,
-            worktree_root=caller_origin.worktree_root,
-            now=utcnow(),
-        )
-    # Emit the audit event so cadence is visible even when there's
-    # nothing to flag — matches the MCP handler's discipline. Honour
-    # the same `telemetry.enabled` config the server-side recorder
-    # reads: with it off the measurement rows (`search_miss`) are not
-    # written, while the state rows (`turn_audited`, the settlements'
-    # `use`, `review_unanswered`) are, since the next hooks read them
-    # (`events.STATE_KINDS`).
-    recorder = Recorder(
+    report = _stop_probe(
+        user_message,
+        cfg=cfg,
         store=store,
         session_id=session_id,
-        enabled=cfg.telemetry.enabled,
+        server_session=server_session,
+        admission=admission,
+        excluded_scopes=excluded_scopes,
+        recent=recent,
         worktree_root=caller_origin.worktree_root,
     )
-    # `turn_audited` / `search_miss` field sets come from the shared
-    # builders in `audit.py`, so the Stop hook and the in-process MCP
-    # handler (`_handlers._advance_turn`) cannot drift — the 2.6.4
-    # audit found them already diverged. `triggered_from="stop_hook"`
-    # tags the source.
-    #
-    # Re-audit dedup: a long autonomous turn stops many times with the
-    # same last user message, and each stop used to re-probe and
-    # re-flag it (7 identical `search_miss` events from one ship-go
-    # message on the 2026-07-03 dogfood log). A repeat still records
-    # `turn_audited` — with `repeat=True`, so cadence stays observable
-    # and eval/health can exclude it — but never a second
-    # `search_miss`. The hash is computed with the production
-    # `redact_query` so it compares equal to what the Recorder wrote.
+    recorder = _stop_recorder(store, session_id, cfg, caller_origin.worktree_root)
     probe_mode = cfg.behavior.search_mode or "hybrid"
     now = utcnow()
     recall_state = state if state is not None else _RecallState()
@@ -573,13 +526,226 @@ def run_audit(
     # The unanswered-review window opens at the session's previous
     # turn, read before this turn's row lands.
     previous_audit = previous_audit_at(store, session_id, now=now)
-    repeat = user_message is not None and is_duplicate_audit(
+    repeat = _is_repeat_audit(recent, session_id, user_message)
+    settled_count = _settle_stop_turn(
+        store=store,
+        recorder=recorder,
+        recent=recent,
+        session_id=session_id,
+        user_message=user_message,
+        assistant_response=assistant_response,
+        worktree_root=caller_origin.worktree_root,
+        client_model=client_model,
+        server_session=server_session,
+        recall_state=recall_state,
+        harness=harness,
+        prompt_id=prompt_id,
+        now=now,
+    )
+    _record_stop_rows(
+        recorder,
+        report,
+        session_id=session_id,
+        probe_mode=probe_mode,
+        assistant_present=assistant_response is not None,
+        repeat=repeat,
+        client_model=client_model,
+        prompt_id=prompt_id,
+        reply_source=reply_source,
+        settled_count=settled_count,
+    )
+    _count_stop_reviews(
+        store,
+        recorder,
+        recall_state,
+        session_id=session_id,
+        harness=harness,
+        server_session=server_session,
+        previous_audit=previous_audit,
+        now=now,
+    )
+    _settle_stop_interrupted(
+        store=store,
+        cfg=cfg,
+        session_id=session_id,
+        transcript_path=transcript_path,
+        admission=admission,
+        excluded_scopes=excluded_scopes,
+        recent=recent,
+        server_session=server_session,
+        worktree_root=caller_origin.worktree_root,
+        now=now,
+        previous_audit=previous_audit,
+        prompt_id=prompt_id,
+    )
+    return report.to_dict()
+
+
+def _stop_window(store: Store) -> list[dict[str, Any]]:
+    """Take the store; return its events over the widest window the Stop reads."""
+    # Window-aware read: rotation archives the ENTIRE active log at a
+    # moment independent of turn boundaries, so a turn that straddles a
+    # rotation would lose its own `search` / `scope_disable` events
+    # from a plain active-log read and re-fire as a false miss.
+    # `iter_events_window` prepends the newest rotated segment whenever
+    # the active log doesn't cover the requested window, so every
+    # consumer of `recent` below (the retrieval shield, the disabled-
+    # scope replay, the pending-retrieval attribution) sees the full
+    # window across a single rotation. The request asks for the WIDEST
+    # window any consumer needs — the re-audit dedup's
+    # `REAUDIT_DEDUP_WINDOW_SECONDS` — which is a coverage request, not
+    # a filter: the reader yields the whole active log either way, and
+    # every time-scoped consumer (the retrieval shield, the attribution
+    # pass) applies its own narrower cutoff internally.
+    return list(
+        store.events_since(_utcnow() - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS))
+    )
+
+
+def _stop_pool(
+    recent: list[dict[str, Any]],
+    *,
+    store: Store,
+    cfg: Config,
+    cwd: Path | None,
+    origin: Origin,
+    posted: Mapping[str, Any] | None,
+    session_id: str,
+) -> tuple[str | None, Admission, set[str]]:
+    """Take the log window and the caller; return (server session, pool, scopes off)."""
+    from .membership import POOL_PREFILTER
+    from .recall import caller_admission
+
+    # Reconstruct the session-disabled scope set from the event log so the
+    # probe shields the same scopes the in-process audit would. Without
+    # this, a scope the user disabled via `memory_scope_disable` (e.g.
+    # "this is unrelated to project X") would still produce silent-miss
+    # flags here, since the hook can't read the server's in-memory state.
+    # The probe's retrieval shield ("did the model already search this
+    # turn?") must match the server's session id, not this hook's
+    # `session_id` (which is Claude Code's transcript id — a different id
+    # space from the server's `sess_<hex>`). Bridge to the live in-process
+    # server session the same way `_disabled_scopes_from_events` and
+    # `_emit_hook_attributions` do; the probe falls back to `session_id`
+    # when no in-process session is on record. Without this, the shield was
+    # structurally dead in the Stop hook and every searched-then-continued
+    # turn could still emit a `search_miss`. Anchored to this hook's
+    # worktree so a concurrent window's server can't hijack the bridge
+    # (see `_latest_in_process_session`).
+    server_session = bridged_session(
+        recent, harness_session=session_id, worktree_root=origin.worktree_root
+    )
+    admission, _resolution = caller_admission(
+        POOL_PREFILTER,
+        store=store,
+        cfg=cfg,
+        cwd=cwd,
+        origin=origin,
+        posted=posted,
+        session_id=session_id,
+    )
+    excluded_scopes = _disabled_scopes_from_events(
+        recent,
+        worktree_root=origin.worktree_root,
+        server_session=server_session,
+    )
+    return server_session, admission, excluded_scopes
+
+
+def _stop_probe(
+    user_message: str | None,
+    *,
+    cfg: Config,
+    store: Store,
+    session_id: str,
+    server_session: str | None,
+    admission: Admission,
+    excluded_scopes: set[str],
+    recent: list[dict[str, Any]],
+    worktree_root: str | None,
+) -> MissReport:
+    """Take the owner's prompt (None for none) and the pool; return the report."""
+    from .recall import _probe_message
+
+    if user_message is None:
+        return no_owner_prompt_report(
+            session_id=session_id,
+            now=utcnow(),
+            lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
+        )
+    return _probe_message(
+        cfg=cfg,
+        store=store,
+        user_message=user_message,
+        session_id=session_id,
+        server_session=server_session,
+        admission=admission,
+        excluded_scopes=excluded_scopes,
+        recent=recent,
+        worktree_root=worktree_root,
+        now=utcnow(),
+    )
+
+
+def _stop_recorder(
+    store: Store, session_id: str, cfg: Config, worktree_root: str | None
+) -> Recorder:
+    """Take the store, the session and the config; return the Stop's recorder."""
+    # Emit the audit event so cadence is visible even when there's
+    # nothing to flag — matches the MCP handler's discipline. Honour
+    # the same `telemetry.enabled` config the server-side recorder
+    # reads: with it off the measurement rows (`search_miss`) are not
+    # written, while the state rows (`turn_audited`, the settlements'
+    # `use`, `review_unanswered`) are, since the next hooks read them
+    # (`events.STATE_KINDS`).
+    return Recorder(
+        store=store,
+        session_id=session_id,
+        enabled=cfg.telemetry.enabled,
+        worktree_root=worktree_root,
+    )
+
+
+def _is_repeat_audit(
+    recent: list[dict[str, Any]], session_id: str, user_message: str | None
+) -> bool:
+    """Take the log window and the owner's prompt; return True for a re-audited turn."""
+    # Re-audit dedup: a long autonomous turn stops many times with the
+    # same last user message, and each stop used to re-probe and
+    # re-flag it (7 identical `search_miss` events from one ship-go
+    # message on the 2026-07-03 dogfood log). A repeat still records
+    # `turn_audited` — with `repeat=True`, so cadence stays observable
+    # and eval/health can exclude it — but never a second
+    # `search_miss`. The hash is computed with the production
+    # `redact_query` so it compares equal to what the Recorder wrote.
+    return user_message is not None and is_duplicate_audit(
         recent,
         session_id=session_id,
         probe_query_hash=redact_query(user_message)["hash"],
         probe_query_text=user_message,
         now=utcnow(),
     )
+
+
+def _settle_stop_turn(
+    *,
+    store: Store,
+    recorder: Recorder,
+    recent: list[dict[str, Any]],
+    session_id: str,
+    user_message: str | None,
+    assistant_response: str | None,
+    worktree_root: str | None,
+    client_model: str | None,
+    server_session: str | None,
+    recall_state: RecallState,
+    harness: str | None,
+    prompt_id: str | None,
+    now: datetime,
+) -> int:
+    """Take the turn's reply and the log window; return how many memories it settled."""
+    from .recall import settle_shown
+
     # Post-hoc use settlement — the turn's end is the semantically
     # correct place to decide what happened to this turn's retrievals.
     # Two tiers per pending retrieval:
@@ -603,7 +769,7 @@ def run_audit(
     #    and purges the matching in-memory tokens, so each retrieval
     #    generates one applied event total.
     sessions = joined_sessions(
-        recent, harness_session=session_id, worktree_root=caller_origin.worktree_root
+        recent, harness_session=session_id, worktree_root=worktree_root
     )
     # A turn with no owner prompt settles nothing: its reply answered rows
     # the harness composed.
@@ -615,7 +781,7 @@ def run_audit(
             recent_events=recent,
             session_id=session_id,
             assistant_response=assistant_response,
-            worktree_root=caller_origin.worktree_root,
+            worktree_root=worktree_root,
             client_model=client_model,
             server_session=server_session,
         )
@@ -636,7 +802,31 @@ def run_audit(
             now=now,
         )
         settled_count = len(settled) + len(shown)
+    return settled_count
 
+
+def _record_stop_rows(
+    recorder: Recorder,
+    report: MissReport,
+    *,
+    session_id: str,
+    probe_mode: str,
+    assistant_present: bool,
+    repeat: bool,
+    client_model: str | None,
+    prompt_id: str | None,
+    reply_source: str | None,
+    settled_count: int,
+) -> None:
+    """Take the recorder and the report; record the turn's audit and miss rows."""
+    from .recall import RULE
+
+    # `turn_audited` / `search_miss` field sets come from the shared
+    # builders in `audit.py`, so the Stop hook and the in-process MCP
+    # handler (`_handlers._advance_turn`) cannot drift — the 2.6.4
+    # audit found them already diverged. `triggered_from="stop_hook"`
+    # tags the source.
+    #
     # The turn's own audit row, after its settlements so it carries their
     # count (`settled_count`, ENG-108), and before the past turns' walk
     # below, which reads it to leave this turn alone. Nothing between the
@@ -648,7 +838,7 @@ def run_audit(
             report,
             session_id=session_id,
             probe_mode=probe_mode,
-            assistant_present=assistant_response is not None,
+            assistant_present=assistant_present,
             triggered_from="stop_hook",
             repeat=repeat,
             client_model=client_model,
@@ -669,6 +859,21 @@ def run_audit(
                 rule=RULE,
             ),
         )
+
+
+def _count_stop_reviews(
+    store: Store,
+    recorder: Recorder,
+    recall_state: RecallState,
+    *,
+    session_id: str,
+    harness: str | None,
+    server_session: str | None,
+    previous_audit: datetime | None,
+    now: datetime,
+) -> None:
+    """Take the recall state and the previous audit; record unanswered reviews."""
+    from .recall import review_unanswered
 
     # The window opens at the previous turn; a session's first turn reads
     # from when the recall state first saw it, at most the re-audit window
@@ -696,6 +901,25 @@ def run_audit(
         now=now,
     )
 
+
+def _settle_stop_interrupted(
+    *,
+    store: Store,
+    cfg: Config,
+    session_id: str,
+    transcript_path: str | None,
+    admission: Admission,
+    excluded_scopes: set[str],
+    recent: list[dict[str, Any]],
+    server_session: str | None,
+    worktree_root: str | None,
+    now: datetime,
+    previous_audit: datetime | None,
+    prompt_id: str | None,
+) -> None:
+    """Take the Stop's pool and log window; settle the session's interrupted turns."""
+    from .recall import settle_interrupted
+
     # Best effort, as every settlement is, and last: a past turn's audit
     # never costs the Stop its own rows, and a slow walk delays only the
     # past turns' rows, never this turn's settlements above.
@@ -709,7 +933,7 @@ def run_audit(
             excluded_scopes=excluded_scopes,
             recent=recent,
             server_session=server_session,
-            worktree_root=caller_origin.worktree_root,
+            worktree_root=worktree_root,
             now=now,
             previous_audit=previous_audit,
             triggered_from="stop_hook",
@@ -721,8 +945,6 @@ def run_audit(
             exc.__class__.__name__,
             exc,
         )
-
-    return report.to_dict()
 
 
 def run_prompt_recall(
