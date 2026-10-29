@@ -1064,7 +1064,7 @@ def _record_search(
         # one specific one: the 2026-07-30 attempt to re-cut the label
         # for pure-semantic hits could not be evaluated because nothing
         # in the event history recorded whether a hit had a semantic leg
-        # at all (`search._relevance_label` carries the full negative
+        # at all (`search_lane._relevance_label` carries the full negative
         # result). A replay can now separate the populations.
         matched_leg=[h.get("matched_leg") for h in out],
         query_unique=_query_unique,

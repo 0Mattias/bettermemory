@@ -2,7 +2,7 @@
 
 Covers, in one place, the feature set that ships together:
 
-- shadow relevance label v2 (`search._relevance_label_v2`) and the
+- shadow relevance label v2 (`search_lane._relevance_label_v2`) and the
   `query_unique` coverage denominator threaded onto `MemoryHit`;
 - per-turn calibration features on `turn_audited` (probe_query /
   compact top_hits) and the enriched `MissHit`;

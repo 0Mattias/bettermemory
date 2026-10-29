@@ -774,7 +774,7 @@ def _rule_w1_top1_v2_high(
     top_hits: list[dict[str, Any]], recent_retrieval_count: int
 ) -> bool:
     """Widening candidate: top-1 SHADOW label == "high" and no recent
-    retrieval. The shadow label (`search._relevance_label_v2`) keeps
+    retrieval. The shadow label (`search_lane._relevance_label_v2`) keeps
     v1's coverage arm and adds an absolute matched-token floor, so this
     rule flags a strict superset of the v1 replay — the delta is
     exactly the cohort the coverage-fraction blind spot hides."""

@@ -238,7 +238,7 @@ class ExpansionTables(NamedTuple):
 def build_tables(stem: Callable[[str], str]) -> ExpansionTables:
     """Stem every raw table into ranker token space.
 
-    `stem` is `search._stem_token`. Values are stemmed at build time so
+    `stem` is `search_lexicon._stem_token`. Values are stemmed at build time so
     a query-token lookup and the emitted expansion terms are both in
     matchable form; keys are stemmed too because query tokens arrive
     post-stem ("policies" reaches the lookup as "polici")."""
@@ -321,7 +321,7 @@ def expansion_terms(
     against the filler list entry by entry, but `morph_variants` is a
     RULE: "wondering" regenerates 'wonder'/'wondered', "thinking"
     regenerates 'think'. The df-floor that deflates filler
-    (`search._filler_floor_stats`) is applied to the CALLER's tokens
+    (`search_bm25._filler_floor_stats`) is applied to the CALLER's tokens
     only, so a synthesized filler stem reaching the rescue leg prices
     at full corpus-rare IDF — restoring exactly the weight the floor
     removed, on the leg that has no floor. The two mechanisms must stay

@@ -1271,12 +1271,12 @@ the later build, not moving the file aside.
 The search index is spelled by a tokenizer, and the signed log names which
 (ENG-100). Each memory row keeps its index text beside its body:
 `body_fts` and `scopes_fts`, its body and its space-joined scopes as
-`search.fts_index_text` spells them, which the FTS5 table indexes, and
+`search_lexicon.fts_index_text` spells them, which the FTS5 table indexes, and
 the log's `store_created` row, then the `index_rebuilt` row of each
 re-spelling, name that spelling by its fingerprint (`meta` keeps a copy, read
 only for a log that names none: `store_index.stored_fingerprint`)
-(`search.tokenizer_fingerprint`: a digest of a probe corpus's spelling, of
-every table in `search_lexicon` and of the FTS5 table's definition, so an
+(`search_lexicon.tokenizer_fingerprint`: a digest of a probe corpus's spelling,
+of every table in `search_lexicon` and of the FTS5 table's definition, so an
 edit of a stopword list or a stem exception moves it whatever the probes
 spell, and a change to the code moves it only through a probe that
 exercises it). A change that moves it is a schema step raising the

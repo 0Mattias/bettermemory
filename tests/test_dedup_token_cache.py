@@ -1,6 +1,6 @@
 """The raw token-set cache behind `find_similar` and `detect_supersession`.
 
-`search.raw_content_tokens` memoises `_raw_content_token_set` on the text
+`search_dedup.raw_content_tokens` memoises `_raw_content_token_set` on the text
 in a bounded LRU registered with `_caches` (unit D1, DESIGN item 11). The
 contract is exactness: a hit is the set the uncached tokeniser builds, so
 the dedup hits and the supersession report are the same cold, warm, and

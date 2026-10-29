@@ -1,4 +1,4 @@
-"""Tests for BM25 scoring in search.py.
+"""Tests for BM25 scoring in search_bm25.py.
 
 Separate file from test_search.py because the BM25 path lives next to the
 keyword scorer and we want a clean signal when it regresses. The keyword
@@ -754,8 +754,8 @@ def test_find_similar_comparable_pair_widened_related_band_is_deliberate() -> No
     confined to the advisory surface by the containment ceiling (< every
     high/block threshold), so nothing is ever REFUSED by it. If this starts
     failing because the band was re-narrowed, update the honest-scope comment
-    in `search.py`'s containment block alongside — code comment and pin must
-    tell the same story."""
+    in `search_dedup.py`'s containment block alongside — code comment and pin
+    must tell the same story."""
     from bettermemory.search import _raw_content_token_set, find_similar
 
     a = " ".join(_POOL_EIGHT[0:4] + _POOL_EXTRA[0:6])  # 10 tokens, 4 shared

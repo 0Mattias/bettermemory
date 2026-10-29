@@ -149,8 +149,8 @@ def _links_json(links: Iterable[MemoryLink]) -> str:
 
 #: A memory row's index text: its body and its space-joined scopes as the
 #: tokenizer of the build that wrote the row spelled them
-#: (`search.fts_index_text`), which the FTS5 table indexes. Derived, not
-#: recorded: no log row carries it, and the fold compares it only while
+#: (`search_lexicon.fts_index_text`), which the FTS5 table indexes. Derived,
+#: not recorded: no log row carries it, and the fold compares it only while
 #: the signed log names this build's tokenizer (`store_events.refold`,
 #: ENG-100).
 INDEX_TEXT_COLUMNS = ("body_fts", "scopes_fts")

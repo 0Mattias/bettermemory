@@ -1,4 +1,5 @@
-"""Tests for search.py — keyword scoring and recency boost."""
+"""Tests for search.py and its parts — keyword scoring and recency boost
+(search_bm25.py)."""
 
 from __future__ import annotations
 

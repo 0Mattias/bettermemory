@@ -1109,7 +1109,7 @@ def _as_memory(body: str) -> Any:
 
 def write_workload(seed: int = WRITE_SEED, count: int = WRITE_N) -> list[str]:
     """`count` bodies from `seed`, each distinct from the others by the
-    dedup measure (`search.find_similar` returns nothing against the ones
+    dedup measure (`search_dedup.find_similar` returns nothing against the ones
     before it). Sequential, so `write_workload(seed, n)` is a prefix of
     `write_workload(seed, n + k)`, and a function of the seed alone: no
     store is read. Whether the bodies are new to a store is

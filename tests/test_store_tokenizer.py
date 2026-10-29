@@ -479,7 +479,7 @@ def test_an_edit_of_metas_fingerprint_moves_neither_the_fold_nor_the_open(
 # The fingerprint is pinned
 # ---------------------------------------------------------------------------
 
-#: Every `search.tokenizer_fingerprint()` a build of this store format
+#: Every `search_lexicon.tokenizer_fingerprint()` a build of this store format
 #: has spelled the index with, oldest first, each with the schema revision
 #: whose step introduced it (`store_steps.STEPS`). A change that moves the
 #: fingerprint adds an entry, never replaces one, and ships the step its
@@ -494,8 +494,8 @@ TOKENIZER_REVISIONS: dict[str, int] = {
     "972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd": 1,
 }
 
-#: `search.tokenizer_fingerprint()` as this build's tokenizer computes it:
-#: the newest entry.
+#: `search_lexicon.tokenizer_fingerprint()` as this build's tokenizer computes
+#: it: the newest entry.
 TOKENIZER_FINGERPRINT = list(TOKENIZER_REVISIONS)[-1]
 
 
@@ -503,8 +503,8 @@ def test_the_tokenizer_fingerprint_is_pinned() -> None:
     """The spelling the store's index keeps is named, and a change to it
     is a step of its own.
 
-    `search.tokenizer_fingerprint()` digests the probe corpus's spelling
-    (`_FINGERPRINT_PROBES` through `fts_index_text`), every table in
+    `search_lexicon.tokenizer_fingerprint()` digests the probe corpus's
+    spelling (`_FINGERPRINT_PROBES` through `fts_index_text`), every table in
     `search_lexicon` (the stopword lists, `_STEM_EXCEPTIONS`,
     `_ACRONYM_PLURALS`, `_SYMBOL_ALIASES`, the patterns, the fold table,
     the probes themselves) and the store's FTS5 table definition

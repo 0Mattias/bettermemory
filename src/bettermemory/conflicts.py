@@ -473,7 +473,7 @@ def _has_negation(body: str) -> bool:
     """True when the body carries a grammatical-negation token.
 
     Tokenizes WITHOUT stopword stripping (the whole point — the shared
-    dedup tokenizer `search._raw_content_token_set` drops the negators)
+    dedup tokenizer `search_dedup._raw_content_token_set` drops the negators)
     and normalizes apostrophes away so contracted forms ("don't",
     "won't") match their stripped spellings in `_NEGATION_MARKERS`.
     """

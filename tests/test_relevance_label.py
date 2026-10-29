@@ -16,7 +16,7 @@ pieces that outlived the 4.0.0 strip still carry it:
 - `expand_top` gates on the coverage label OR a decisive score lead, so a
   hit no lexical rule can call "high" can still reach the affordance.
 - The label rule itself is UNCHANGED. The cosine-band recut was measured
-  and closed negative — `search._relevance_label` carries the numbers and
+  and closed negative — `search_lane._relevance_label` carries the numbers and
   the reason.
 
 The tests here pin all three, plus the boundary arithmetic of the margin,

@@ -45,7 +45,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# search.find_similar_tombstones
+# search_dedup.find_similar_tombstones
 # ---------------------------------------------------------------------------
 
 

@@ -321,7 +321,7 @@ class MissHit:
 
     `matched_unique` / `query_unique` are the raw coverage pair the
     relevance label was computed from, and `relevance_v2` is the shadow
-    label (`search._relevance_label_v2`) over the same pair. Logging
+    label (`search_lane._relevance_label_v2`) over the same pair. Logging
     the RAW pair — not just the labels — is what makes the historical
     record formula-agnostic: any future candidate rule can be replayed
     from the log alone, closing the "threshold-sweep can narrow but

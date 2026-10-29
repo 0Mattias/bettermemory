@@ -27,7 +27,7 @@ deterministic — the project ships no models and this runs inside every
 `memory_write`:
 
 1. Same subject? The pairwise Jaccard the dedup gate computes
-   (`search._pairwise_content_jaccard`) is at least `MIN_JACCARD`.
+   (`search_dedup._pairwise_content_jaccard`) is at least `MIN_JACCARD`.
    Low on purpose: an update rarely restates its subject the way the
    original did ("Paging moved to Opsgenie" against "On-call pages are
    sent through PagerDuty"), so the bar is a floor and the evidence

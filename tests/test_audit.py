@@ -279,7 +279,7 @@ def test_all_acknowledgment_message_returns_no_signal() -> None:
     """Two-word acknowledgments built from non-stopword filler ("all
     done", "looks good", "sounds good", "thanks, done!") are bare
     continuations the gate documents itself as dropping — but the words
-    aren't in search.py's deliberately-short stopword list, so they'd
+    aren't in search_lexicon.py's deliberately-short stopword list, so they'd
     otherwise clear the two-token floor and score 2/2 = "high" against
     any ordinary body containing both words (the fixture body contains
     all of them). The audit-local `_ACK_TOKENS` set gates the
@@ -1900,7 +1900,7 @@ def test_turn_audited_fields_rejects_unknown_triggered_from() -> None:
     `"mcptool"`) would silently produce unsplittable eval rows since
     downstream consumers `groupby`-split on this field. The builder
     raises at the dispatch boundary, mirroring the search-mode guard
-    in `search.py:761`.
+    in `search_steps._check_mode`.
 
     Pinned against the hardcoded ``_EXPECTED_VALID_TRIGGERED_FROM``
     tuple so a deletion from ``_VALID_TRIGGERED_FROM`` fails the loop

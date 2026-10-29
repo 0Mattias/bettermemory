@@ -141,7 +141,7 @@ _FILLER_INFLECTIONS: tuple[str, ...] = (
     "word", sorted(set(QUERY_FILLER_WORDS) | set(_FILLER_INFLECTIONS))
 )
 def test_morph_variants_never_leak_filler_into_the_rescue_leg(word: str) -> None:
-    """The df-floor (`search._filler_floor_stats`) is applied to the
+    """The df-floor (`search_bm25._filler_floor_stats`) is applied to the
     CALLER's tokens only, so a filler stem synthesized by the rule
     reaches the rescue leg at full corpus-rare IDF — restoring exactly
     the weight the floor removed, on the one leg that has no floor.

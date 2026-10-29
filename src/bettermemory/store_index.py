@@ -410,15 +410,15 @@ def contradicted_at(self: Store, memory_ids: Sequence[str]) -> dict[str, datetim
 # -- the tokenizer the index is spelled by (ENG-100) ----------------------
 #
 # Each memory row keeps its index text (`body_fts`, `scopes_fts`) as this
-# build's tokenizer spells its body and scopes (`search.fts_index_text`),
-# and the FTS5 table indexes that text, so a query matches a memory only
-# while the tokenizer that spells the query is the one that spelled the
-# row. The signed log names that tokenizer (`search.tokenizer_fingerprint`):
-# the `store_created` row from `Store.create`, then the `index_rebuilt`
-# row of each re-spelling (`stored_fingerprint`); meta keeps a copy. Every
-# open compares it with this build's (`reconciles_tokenizer`). The owner's
-# writing open re-spells a store whose fingerprint differs
-# (`rebuild_index`), in one write
+# build's tokenizer spells its body and scopes
+# (`search_lexicon.fts_index_text`), and the FTS5 table indexes that text, so a
+# query matches a memory only while the tokenizer that spells the query is the
+# one that spelled the row. The signed log names that tokenizer
+# (`search_lexicon.tokenizer_fingerprint`): the `store_created` row from
+# `Store.create`, then the `index_rebuilt` row of each re-spelling
+# (`stored_fingerprint`); meta keeps a copy. Every open compares it with this
+# build's (`reconciles_tokenizer`). The owner's writing open re-spells a store
+# whose fingerprint differs (`rebuild_index`), in one write
 # transaction, as the owner's open runs a store's schema steps
 # (`store_schema.check_versions`); every other open says so once and
 # searches the index as it stands, so a memory spelled by the old
@@ -504,9 +504,9 @@ def stored_fingerprint(conn: sqlite3.Connection) -> str | None:
 
 def tokenizer_drift(conn: sqlite3.Connection) -> tuple[str | None, str] | None:
     """`(stored, live)` when the tokenizer the log names
-    (`stored_fingerprint`) is not this build's (`search.tokenizer_fingerprint`),
-    None when they agree. Two indexed reads of the log; the live digest is
-    computed once a process."""
+    (`stored_fingerprint`) is not this build's
+    (`search_lexicon.tokenizer_fingerprint`), None when they agree. Two indexed
+    reads of the log; the live digest is computed once a process."""
     stored = stored_fingerprint(conn)
     live = tokenizer_fingerprint()
     return None if stored == live else (stored, live)
@@ -651,12 +651,12 @@ def rebuild_index(store: Store, *, reason: str) -> IndexRebuild | None:
     """Re-spell `store`'s index with this build's tokenizer, in one write
     transaction (`Store._transaction`, ``BEGIN IMMEDIATE``: the store's
     write lock, held to the commit): every memory row's `body_fts` and
-    `scopes_fts` is set from its body and scopes as `search.fts_index_text`
-    spells them now (only the rows whose text changes are written), the
-    FTS5 table is rebuilt from those columns (``'rebuild'``), meta's
-    `tokenizer_fingerprint` names this build's tokenizer, and one
-    `index_rebuilt` row records it, so `log verify` and `log export` see
-    it. No record changes: the fold applies no `index_rebuilt` row.
+    `scopes_fts` is set from its body and scopes as
+    `search_lexicon.fts_index_text` spells them now (only the rows whose text
+    changes are written), the FTS5 table is rebuilt from those columns
+    (``'rebuild'``), meta's `tokenizer_fingerprint` names this build's
+    tokenizer, and one `index_rebuilt` row records it, so `log verify` and `log
+    export` see it. No record changes: the fold applies no `index_rebuilt` row.
 
     With `reason` `REBUILT_FOR_TOKENIZER`, the tokenizer the log names is
     read again under the lock and a store another opener re-spelled while

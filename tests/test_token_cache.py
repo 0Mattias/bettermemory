@@ -116,7 +116,7 @@ def _empty_cache() -> Iterator[None]:
 
 @pytest.fixture
 def tokenize_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Every text `search.tokenize` is called on, in order."""
+    """Every text `search_lexicon.tokenize` is called on, in order."""
     calls: list[str] = []
     real = search_module.tokenize
 
