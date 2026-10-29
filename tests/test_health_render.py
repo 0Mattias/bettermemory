@@ -76,7 +76,7 @@ def _report(text: str) -> str:
                 "session": "s",
                 "kind": "write",
                 # A fire as the transient gate records it (ENG-108: health
-                # counts a fire off a refusal row, `events.row_class`).
+                # counts a fire off a refusal row, `events.is_audit_row`).
                 "status": "transient_warning",
                 "markers": [f"marker{text}"],
             }
@@ -152,6 +152,19 @@ def test_render_text_escapes_every_store_and_log_sourced_string() -> None:
     ):
         assert field in text, field
     assert len(text.splitlines()) == len(_report("plain").splitlines())
+
+
+def test_the_marker_stats_say_what_the_rate_is() -> None:
+    """The rate is overrides over fires plus overrides, and a refusal the
+    caller sent again before overriding it is two fires (the cold review's
+    L3): the section says so once, above its rows."""
+    text = _report("plain").splitlines()
+    head = text.index("Marker stats (1):")
+    assert text[head + 1] == (
+        "  rate = overrides / (fires + overrides); a refusal retried counts as "
+        "two fires"
+    )
+    assert text[head + 2].lstrip().startswith("markerplain")
 
 
 def test_render_text_keeps_printable_text_as_it_is() -> None:

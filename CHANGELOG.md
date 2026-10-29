@@ -2156,6 +2156,12 @@ follows the candidates' testing.
   `src/bettermemory/hook.py`, `plugin/hooks/hooks.json`,
   `docs/operations.md`, `docs/internals.md`, `tests/test_hook_budget.py`,
   `tests/test_telemetry_docs.py`)
+- **Health's marker stats say what the rate is (ENG-108).** The report
+  printed `fires= overrides= rate=` without the rate's terms. It now says
+  once, above the rows, that the rate is overrides over fires plus
+  overrides and that a refusal sent again before its override counts as
+  two fires.
+  (`src/bettermemory/health_render.py`, `tests/test_health_render.py`)
 
 #### Known limitations
 

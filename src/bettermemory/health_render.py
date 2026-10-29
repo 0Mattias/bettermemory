@@ -129,6 +129,13 @@ def render_text(report: HealthReport) -> str:
     lines.append(f"Marker stats ({len(report.marker_stats)}):")
     if not report.marker_stats:
         lines.append("  (none)")
+    else:
+        # The rate's terms, once (`health_model.MarkerStats.override_rate`):
+        # a refusal sent again before its override counts as a second fire.
+        lines.append(
+            "  rate = overrides / (fires + overrides); a refusal retried "
+            "counts as two fires"
+        )
     for m in report.marker_stats:
         rate_pct = round(m.override_rate * 100, 1)
         lines.append(
