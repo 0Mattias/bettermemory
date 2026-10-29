@@ -76,6 +76,7 @@ import os
 import re
 import stat
 import sys
+import time
 import tomllib
 from collections.abc import Iterable
 from contextlib import AbstractContextManager
@@ -158,6 +159,8 @@ class _Winreg(Protocol):
     ) -> AbstractContextManager[Any]: ...
 
     def QueryValueEx(self, key: Any, name: str, /) -> tuple[Any, int]: ...
+
+    def QueryInfoKey(self, key: Any, /) -> tuple[int, int, int]: ...
 
 
 def _platform() -> str:
@@ -496,21 +499,18 @@ def read_registry_text(location: RegistryValue = MANAGED_REGISTRY) -> str | None
     comment without complaint, so a pinned ``[storage] directory`` would
     carry it to the store's open and stop there with a bare
     UnicodeEncodeError naming nothing. Refused here, it fails the load
-    with the file's own error, naming the value."""
+    with the file's own error, naming the value.
+
+    A key that is there without its value is read again across the gap a
+    rewrite leaves (`_read_across_rewrite`)."""
     try:
         reg = _winreg()
-        with reg.OpenKey(
-            reg.HKEY_LOCAL_MACHINE,
-            location.key,
-            0,
-            reg.KEY_READ | reg.KEY_WOW64_64KEY,
-        ) as handle:
-            value, kind = reg.QueryValueEx(handle, location.name)
-        text = _registry_text(reg, value, kind, location)
-    except FileNotFoundError:
-        # The key or the value is not there: no managed config, as a
-        # missing file is none.
-        return None
+        found = _read_across_rewrite(reg, location)
+        if found is None:
+            # The key or the value is not there: no managed config, as a
+            # missing file is none.
+            return None
+        text = _registry_text(reg, found[0], found[1], location)
     except OSError as exc:
         raise ValueError(
             f"managed config {location} could not be read "
@@ -523,6 +523,140 @@ def read_registry_text(location: RegistryValue = MANAGED_REGISTRY) -> str | None
     except UnicodeEncodeError as exc:
         raise ValueError(f"malformed managed config in {location}: {exc}") from exc
     return text.removeprefix("\ufeff")
+
+
+#: The pauses, in seconds, before each further read of a key found without
+#: its value: five reads over half a second in all (`_read_across_rewrite`).
+_REWRITE_PAUSES = (0.05, 0.1, 0.15, 0.2)
+
+#: How recently, in seconds, a key found without its value must have been
+#: written for a read to wait for the value: a rewrite in progress. An
+#: older key is a retired one, its value removed on purpose.
+_REWRITE_RECENT = 5.0
+
+#: Seconds from 1601-01-01, where the registry's FILETIME counts from, to
+#: the Unix epoch.
+_FILETIME_EPOCH = 11_644_473_600
+
+#: Windows' ERROR_KEY_DELETED: the key was deleted after this read opened
+#: it, as a rewrite of the whole key does between two calls.
+_ERROR_KEY_DELETED = 1018
+
+#: Per value, the last-write time of a key this process already waited
+#: out without its value: a later load of that same write does not wait
+#: again, and the warning is logged once.
+_WAITED_OUT: dict[RegistryValue, int] = {}
+
+
+def _sleep(seconds: float) -> None:
+    """`time.sleep`, looked up at call time: the tests patch it."""
+    time.sleep(seconds)
+
+
+def _now_filetime() -> int:
+    """Now as the registry keeps times: 100-ns ticks since 1601-01-01 UTC."""
+    return int((time.time() + _FILETIME_EPOCH) * 10**7)
+
+
+def _read_across_rewrite(
+    reg: _Winreg, location: RegistryValue
+) -> tuple[Any, int] | None:
+    """The value's data and type, None when the key or the value is absent.
+
+    Group Policy rewrites a value by deleting it and writing it again: a
+    Group Policy Preferences registry item with the Replace action does,
+    and so does a refresh of registry-based policy, which deletes the
+    values it applied before it writes them again. A load in that gap read
+    no managed config and started without every pin, a daemon for its
+    whole life. So a key found without its value is read again after each
+    pause in `_REWRITE_PAUSES`, half a second in all, until the value is
+    there; the key gone on a later read (a rewrite of the whole key) is
+    read again too. Re-reading the source was chosen over keeping the last
+    pinned values: a hook is a new process, and a daemon reads its config
+    once at its start, so a value kept in memory reaches neither, and one
+    kept on disk would outlive an administrator's removal of the pins.
+
+    Only a rewrite in progress is waited for. The key's last-write time
+    (`QueryInfoKey`) moves when a value under it is deleted, so a key
+    written within `_REWRITE_RECENT` seconds is mid-rewrite, and an older
+    one was retired: its value removed with ``reg delete /v`` or a policy
+    set back to Not Configured, the key left behind. That one is no
+    managed config at once, as an absent key is (every machine without
+    one), so a hook, which loads the config on every tool call, never
+    pays the window for it. A key written within the window whose value
+    never comes back is no managed config after the window, with one
+    warning per process; a later load in the process that finds the same
+    write does not wait again (`_WAITED_OUT`). A key gone by the end of
+    the window is no managed config, as an absent key is, with no
+    warning."""
+    found, written = _query(reg, location)
+    if found is not None or written is None:
+        return found
+    recent = _now_filetime() - written < _REWRITE_RECENT * 10**7
+    if not recent or _WAITED_OUT.get(location) == written:
+        return None
+    last: int | None = written
+    for pause in _REWRITE_PAUSES:
+        _sleep(pause)
+        found, last = _query(reg, location)
+        if found is not None:
+            return found
+        if last is not None:
+            written = last
+    if last is None:
+        return None
+    if location not in _WAITED_OUT:
+        import logging
+
+        logging.getLogger("bettermemory.config").warning(
+            "bettermemory: the managed config's key HKLM\\%s was rewritten "
+            "moments ago and is still without its %s value after %.1f s, so "
+            "no managed config is read. If the value was removed on purpose, "
+            "delete the key too.",
+            location.key,
+            location.name,
+            sum(_REWRITE_PAUSES),
+        )
+    _WAITED_OUT[location] = written
+    return None
+
+
+def _query(
+    reg: _Winreg, location: RegistryValue
+) -> tuple[tuple[Any, int] | None, int | None]:
+    """One read of the value: its data and type, or None when it is
+    absent; and, when the key is there without it, the key's last-write
+    time (a FILETIME), else None. A key deleted under the open read is
+    one written now. Any other failure raises."""
+    try:
+        opened = reg.OpenKey(
+            reg.HKEY_LOCAL_MACHINE,
+            location.key,
+            0,
+            reg.KEY_READ | reg.KEY_WOW64_64KEY,
+        )
+    except FileNotFoundError:
+        return None, None
+    with opened as handle:
+        try:
+            return reg.QueryValueEx(handle, location.name), None
+        except OSError as exc:
+            if not _absent(exc):
+                raise
+        try:
+            return None, int(reg.QueryInfoKey(handle)[2])
+        except OSError as exc:
+            if not _absent(exc):
+                raise
+            return None, _now_filetime()
+
+
+def _absent(exc: OSError) -> bool:
+    """Whether a registry error says the value, or the key under an open
+    handle, is gone: a rewrite's gap, not a failure."""
+    return isinstance(exc, FileNotFoundError) or (
+        getattr(exc, "winerror", None) == _ERROR_KEY_DELETED
+    )
 
 
 def _registry_text(reg: _Winreg, value: Any, kind: int, location: RegistryValue) -> str:

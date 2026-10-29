@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
+import time
 import types
 from dataclasses import asdict
 from pathlib import Path
@@ -102,6 +103,9 @@ class FakeRegistry:
             setattr(self.module, name, number)
         setattr(self.module, "OpenKey", self._open_key)
         setattr(self.module, "QueryValueEx", self._query_value)
+        setattr(self.module, "QueryInfoKey", self._query_info)
+        #: The key's last-write time as a FILETIME; None reads as now.
+        self.last_write: int | None = None
 
     def set(self, value: Any, kind: int, *, name: str = "ManagedConfig") -> None:
         self.keys.setdefault(_KEY, {})[name] = (value, kind)
@@ -127,12 +131,24 @@ class FakeRegistry:
             raise FileNotFoundError(2, "The system cannot find the file specified")
         return key.values[name]
 
+    def _query_info(self, key: _Key) -> tuple[int, int, int]:
+        """Subkeys, values, and the last-write time (100-ns ticks since
+        1601-01-01 UTC), as winreg.QueryInfoKey answers."""
+        written = self.last_write
+        if written is None:
+            written = int((time.time() + 11_644_473_600) * 10**7)
+        return 0, len(key.values), written
+
 
 @pytest.fixture(autouse=True)
 def registry(monkeypatch: pytest.MonkeyPatch) -> FakeRegistry:
-    """Every test here reads a fake registry, never the machine's."""
+    """Every test here reads a fake registry, never the machine's, and
+    never waits out the re-reads of a key found without its value
+    (tests/test_managed_gp_refresh.py pins those)."""
     fake = FakeRegistry()
     monkeypatch.setattr(_managed, "_winreg", lambda: fake.module)
+    monkeypatch.setattr(_managed, "_sleep", lambda seconds: None)
+    monkeypatch.setattr(_managed, "_WAITED_OUT", {})
     return fake
 
 

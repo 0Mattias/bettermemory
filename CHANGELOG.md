@@ -1364,6 +1364,30 @@ the candidates' testing.
   (`src/bettermemory/managed.py`, `SECURITY.md`, `docs/operations.md`,
   `docs/installation.md`, `docs/internals.md`,
   `tests/test_managed_cygwin.py`)
+- **The managed config's registry value is read across a Group Policy
+  rewrite.** A Group Policy Preferences item with the Replace action,
+  and a refresh of registry-based policy, delete the `ManagedConfig`
+  value and write it again; a config load in that gap read no managed
+  config, so a daemon started then ran its whole life without the pins.
+  A key found without its value and last written (`QueryInfoKey`) in the
+  last five seconds, a rewrite in progress, is now read again, five
+  reads over half a second, until the value is there, a key gone or
+  deleted under an open read on a later read included; any other
+  registry error still fails the load. A re-read was chosen over keeping
+  the last pinned values: a hook is a new process and a daemon reads its
+  config once at its start, so values kept in memory reach neither, and
+  values kept on disk would outlive an administrator's removal of the
+  pins. The cost per load: a value there, a key absent, or an older key
+  without its value (a config retired with `reg delete /v` or Not
+  Configured) is one read and no wait, as before; a key written in the
+  last five seconds without its value is at most five reads and half a
+  second, once per process for that write, and a value that never comes
+  back is no managed config after the window, with one warning per
+  process. `config check` reads across the gap too. The rc13 review
+  raised this (ENG-93 item 10), and it is closed.
+  (`src/bettermemory/managed.py`, `SECURITY.md`, `docs/operations.md`,
+  `docs/internals.md`, `tests/test_managed_gp_refresh.py`,
+  `tests/test_managed_windows.py`)
 
 #### Known limitations
 
@@ -1496,6 +1520,19 @@ the candidates' testing.
   the folder that holds it, not its own access list, so a link object
   another account may rewrite in place is not refused either. Neither
   check has run on a real Cygwin or MSYS host. (`src/bettermemory/managed.py`)
+- **A Group Policy rewrite of the whole key, or one longer than half a
+  second, can still be read as no managed config.** The re-read starts
+  only from a key found without its value and written in the last five
+  seconds: a load whose first read finds the key itself deleted, mid-way
+  through a preference item that replaces the key, reads no managed
+  config at once, since re-reading an absent key would make every
+  machine without a managed config wait on every load. A rewrite whose
+  gap outlasts the five reads over half a second is read the same way.
+  A key written in the last five seconds whose value never comes back
+  costs a process's first load the half second. Whether the key's
+  last-write time moves when Group Policy deletes the value, as
+  Microsoft documents it does, has not been measured on Windows.
+  (`src/bettermemory/managed.py`)
 
 ### 9.0.0rc13
 

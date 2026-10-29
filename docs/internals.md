@@ -1236,7 +1236,14 @@ and on Windows, since 9.0.0rc13, the `ManagedConfig` value under
 `HKEY_LOCAL_MACHINE\SOFTWARE\Policies\bettermemory`
 (`managed.MANAGED_REGISTRY`), read through the 64-bit view: a REG_SZ is
 the text, a REG_MULTI_SZ its lines joined with newlines, and any other
-type, a REG_EXPAND_SZ included, is refused. Nothing under
+type, a REG_EXPAND_SZ included, is refused. A key found without its
+value, and last written (`QueryInfoKey`) within
+`managed._REWRITE_RECENT` seconds, is read again after each pause in
+`managed._REWRITE_PAUSES` (half a second in all), the gap a Group Policy
+rewrite leaves (`_read_across_rewrite`, since 9.0.0rc14); a key absent
+at the first read, or one without its value written earlier, is no
+managed config at once, and a write a process already waited out is not
+waited for again (`managed._WAITED_OUT`). Nothing under
 `%ProgramData%` is read, and no environment variable moves either
 source. Cygwin's and MSYS2's Python (`sys.platform` starting `cygwin` or
 `msys`) read the Linux path, under a `/` that is a Windows folder:

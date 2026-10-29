@@ -526,6 +526,22 @@ unpaired surrogate, which the file would refuse as bytes that are not
 UTF-8. Reports name the source `registry
 HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig`.
 
+A preference item with the Replace action, and a refresh of
+registry-based policy, delete the value and write it again. Since
+9.0.0rc14 a load that finds the key without its value, and the key
+written in the last five seconds, reads it again, five reads over half a
+second, so a daemon or a hook starting in that gap still gets the pins.
+A key found absent is no managed config at once, so a machine without
+one never waits, and so is a key whose value was removed earlier, with
+`reg delete /v` or a policy set back to Not Configured: a retired config
+costs a hook one read, no wait. A key written in the last five seconds
+whose value never comes back costs each process the half second once,
+and the process logs one warning naming it; retiring the config by
+deleting the key, not only the value, avoids even that. A rewrite that
+deletes the whole key, or one longer than half a second, can still be
+read in its gap as no managed config; the Update action rewrites
+nothing.
+
 No environment variable moves either source. Then restart the daemons:
 each reads the managed config at its start. The hooks read it at each
 config load when `BETTERMEMORY_DIR` is unset, to resolve the store.
