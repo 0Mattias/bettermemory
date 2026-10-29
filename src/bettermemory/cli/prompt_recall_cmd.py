@@ -21,7 +21,7 @@ def add_subparser(
         "Code UserPromptSubmit hook target: reads the hook's stdin JSON "
         "(`session_id`, `prompt`), runs the probe the Stop hook's "
         "silent-miss audit runs (same pool and ranker — "
-        "`hook._probe_message`), and prints up to three pointers (id, "
+        "`recall._probe_message`), and prints up to three pointers (id, "
         "relevance, summary, snippet) to relevant memories written in this "
         "repository that this session segment has not already seen. Claude "
         "Code injects stdout into the model's context; empty stdout adds "

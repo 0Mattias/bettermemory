@@ -27,7 +27,7 @@ an undo reverted) is read back from them. There are no state files.
 THE SESSION AS EVIDENCE. A capture write's harness session (the Claude
 Code session id the shim forwards) and server session are recorded on
 its member row. The harness session must be the Stop's, or one the hooks'
-/clear bridge joins to it (`hook.joined_sessions`): the shim keeps the id
+/clear bridge joins to it (`sessions.joined_sessions`): the shim keeps the id
 it was started with, and Claude Code issues a new one on /clear, so an
 exact match alone would refuse every capture after a /clear.
 """
@@ -753,7 +753,7 @@ def joined_by(
     if server_session is None:
         return None
     from .audit import REAUDIT_DEDUP_WINDOW_SECONDS
-    from .hook import joined_sessions
+    from .sessions import joined_sessions
 
     events = list(
         store.events_since(

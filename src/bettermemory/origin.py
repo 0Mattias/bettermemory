@@ -277,6 +277,21 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     return origin
 
 
+def capture_caller(cwd: Path | None = None) -> Origin:
+    """The origin of a hook's caller: `capture()` when `cwd` is None (a
+    hook process spawned in the project), else the capture of the
+    directory the hook posted to the daemon, labelled as the process cwd
+    it was (`identity.SOURCE_PROCESS_CWD`).
+
+    The Stop audit (`hook.run_audit`), the prompt recall and the session
+    brief (`recall`) capture their caller here, and each reads this name
+    through the module at the call (`origin.capture_caller`), so a test
+    places the hooks' caller for all of them by patching this one name."""
+    if cwd is None:
+        return capture()
+    return capture(cwd, source=identity.SOURCE_PROCESS_CWD)
+
+
 # ---------------------------------------------------------------------------
 # The origin cache
 # ---------------------------------------------------------------------------
@@ -2924,6 +2939,7 @@ __all__ = [
     "Origin",
     "attribute_files_signature",
     "capture",
+    "capture_caller",
     "commit_author_sha_pairs_touching_pathspecs",
     "commit_author_timestamps",
     "commit_author_timestamps_touching_pathspecs",

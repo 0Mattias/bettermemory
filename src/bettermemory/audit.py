@@ -291,8 +291,8 @@ _ACK_TOKENS: frozenset[str] = frozenset(
 # produces unsplittable eval rows (downstream consumers `groupby`-split
 # on this field). Mirrors the same Literal-at-types-only situation:
 # Python doesn't enforce it at call time. Any out-of-process value
-# added here must ALSO join `hook._OUT_OF_PROCESS_TRIGGERS`, or its
-# events become false anchors for `hook._latest_in_process_session`
+# added here must ALSO join `sessions._OUT_OF_PROCESS_TRIGGERS`, or its
+# events become false anchors for `sessions._latest_in_process_session`
 # (the server-session bridge skips on that set alone).
 _VALID_TRIGGERED_FROM: frozenset[str] = frozenset(
     {"stop_hook", "mcp_tool", "prompt_hook", "session_hook"}
@@ -484,7 +484,7 @@ _VALID_NO_SIGNAL_REASON: frozenset[str] = frozenset({NO_OWNER_PROMPT})
 # `last_assistant_message`, or the transcript's newest assistant text when
 # the payload carried none. None (no reply at all) writes no key.
 # "interrupted" (RS-F7 part 6): the turn ended with no Stop; a later hook
-# audited it from the transcript (`hook.settle_interrupted`), its reply the
+# audited it from the transcript (`recall.settle_interrupted`), its reply the
 # partial one the transcript holds.
 _VALID_REPLY_SOURCE: frozenset[str] = frozenset({"payload", "tail", "interrupted"})
 

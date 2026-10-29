@@ -28,12 +28,10 @@ import pytest
 
 from bettermemory.events import Recorder
 from bettermemory.hook import (
-    _disabled_scopes_from_events,
-    audit_transcript,
     _flatten_assistant_content,
-    _latest_in_process_session,
     _pending_retrievals,
     _read_payload,
+    audit_transcript,
     human_prompt,
     is_synthetic_prompt,
     main as hook_main,
@@ -43,12 +41,15 @@ from bettermemory.hook import (
 )
 from bettermemory.membership import RecordHome
 from bettermemory.models import Memory
+from bettermemory.sessions import (
+    _disabled_scopes_from_events,
+    _latest_in_process_session,
+)
 from bettermemory.store import STORE_FILENAME, Store
 from bettermemory.transcript import stop_turn
 
 from . import _transcript_rows as tr
 from .test_membership_security import checkout
-
 
 # ---------------------------------------------------------------------------
 # Payload parsing
@@ -729,7 +730,7 @@ def test_main_respects_telemetry_disabled(
     # it through the function entry point — the CLI-level override via
     # env-var is tested above; here we lock the behaviour at the
     # public surface.
-    from bettermemory.config import Config, TelemetryConfig, StorageConfig
+    from bettermemory.config import Config, StorageConfig, TelemetryConfig
     from bettermemory.hook import run_audit
 
     cfg = Config(
@@ -1562,7 +1563,7 @@ def test_run_audit_foreign_worktree_event_does_not_unshield(
     wt_this = str(tmp_path / "wt-this")
     wt_other = str(tmp_path / "wt-other")
     monkeypatch.setattr(
-        "bettermemory.hook.capture_origin",
+        "bettermemory.origin.capture_caller",
         lambda *a, **k: Origin(worktree_root=wt_this),
     )
 
@@ -1605,7 +1606,7 @@ def test_run_audit_foreign_worktree_search_does_not_shield(
     wt_this = str(tmp_path / "wt-this")
     wt_other = str(tmp_path / "wt-other")
     monkeypatch.setattr(
-        "bettermemory.hook.capture_origin",
+        "bettermemory.origin.capture_caller",
         lambda *a, **k: Origin(worktree_root=wt_this),
     )
 
@@ -1655,7 +1656,7 @@ def test_run_audit_same_worktree_concurrent_session_retrieval_shields(
 
     wt_this = str(tmp_path / "wt-this")
     monkeypatch.setattr(
-        "bettermemory.hook.capture_origin",
+        "bettermemory.origin.capture_caller",
         lambda *a, **k: Origin(worktree_root=wt_this),
     )
 
@@ -1927,7 +1928,7 @@ def test_run_audit_threads_ranker_config_into_probe(
         captured.update(kwargs)
         return real_probe(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr("bettermemory.hook.probe_for_miss", spy)
+    monkeypatch.setattr("bettermemory.recall.probe_for_miss", spy)
     cfg = Config(
         storage=StorageConfig(directory=str(mem_dir)),
         behavior=BehaviorConfig(recency_boost_half_life_days=7.0),
@@ -1973,7 +1974,7 @@ def test_run_audit_threads_conversational_opt_out_into_probe(
         captured.update(kwargs)
         return real_probe(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr("bettermemory.hook.probe_for_miss", spy)
+    monkeypatch.setattr("bettermemory.recall.probe_for_miss", spy)
     cfg = Config(
         storage=StorageConfig(directory=str(mem_dir)),
         behavior=BehaviorConfig(conversational=False),
@@ -2071,7 +2072,7 @@ def test_run_audit_ranks_productions_candidate_pool(
     worktree = str(checkout(tmp_path / "repo-a-wt"))
     target_id = _write_prefilter_starved_store(mem_dir, worktree)
     monkeypatch.setattr(
-        "bettermemory.hook.capture_origin",
+        "bettermemory.origin.capture_caller",
         lambda *a, **k: _Origin(
             cwd=worktree, repo=_STARVED_REPO, worktree_root=worktree
         ),
@@ -2120,7 +2121,7 @@ def test_run_audit_declines_a_miss_when_git_could_not_be_asked(
     assert unread.outcome == "indeterminate"
 
     nowhere = Origin(cwd=str(tmp_path))
-    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: nowhere)
+    monkeypatch.setattr("bettermemory.origin.capture_caller", lambda *a, **k: nowhere)
     with monkeypatch.context() as patched:
         patched.setattr(location, "resolve_hook", lambda *a, **k: unread)
         result = run_audit(
@@ -2162,7 +2163,7 @@ def _pin_caller_in_repo(monkeypatch: pytest.MonkeyPatch, worktree: Path) -> None
     from bettermemory.origin import Origin
 
     caller = Origin(cwd=str(worktree), repo=_HOOK_REPO, worktree_root=str(worktree))
-    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: caller)
+    monkeypatch.setattr("bettermemory.origin.capture_caller", lambda *a, **k: caller)
 
 
 def _write_project_memory(mem_dir: Path, worktree: Path) -> str:
@@ -2413,12 +2414,12 @@ _SEARCH_MISS_KEYS = {
 
 @pytest.fixture
 def review_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    from bettermemory import hook as hook_module
-
     from .test_recall_prompt import PromptWorld
 
     world = PromptWorld(tmp_path)
-    monkeypatch.setattr(hook_module, "capture_origin", lambda *a, **k: world.caller)
+    monkeypatch.setattr(
+        "bettermemory.origin.capture_caller", lambda *a, **k: world.caller
+    )
     return world
 
 

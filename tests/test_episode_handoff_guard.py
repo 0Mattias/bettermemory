@@ -507,7 +507,7 @@ async def test_episode_handoff_skips_out_of_process_hook_phantom_sessions(
     memory_dir: Path,
 ) -> None:
     """A newer "session" whose only events are client-side hook rows
-    (`triggered_from` in `hook._OUT_OF_PROCESS_TRIGGERS`) must not enter
+    (`triggered_from` in `sessions._OUT_OF_PROCESS_TRIGGERS`) must not enter
     the auto-resolution walk at all. Those rows record under Claude
     Code's transcript session id — a namespace that can never hold
     episodes — so admitting one manufactures a worktree-matching

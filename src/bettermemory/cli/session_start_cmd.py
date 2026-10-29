@@ -19,8 +19,8 @@ one thing the recall surface never makes.
 The recording rules the old counts block lived by still hold, through
 the event's stamp rather than through silence. The row is stamped
 ``triggered_from="session_hook"``, a member of
-`hook._OUT_OF_PROCESS_TRIGGERS`, so the turn audit's server-session
-anchor (`hook._latest_in_process_session`) skips it and cannot be
+`sessions._OUT_OF_PROCESS_TRIGGERS`, so the turn audit's server-session
+anchor (`sessions._latest_in_process_session`) skips it and cannot be
 hijacked by it; and it is recorded under the harness's own session id,
 the one that session's `turn_audited` rows carry, so it publishes no
 phantom session. The recorder lives in `recall.py`; this module names

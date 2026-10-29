@@ -46,7 +46,6 @@ from typing import Any
 
 from .admission import Admission, recorded_caller
 from .events import redact_query
-from .hook import event_joined, joined_sessions
 from .membership import PROMPT_RECALL, Membership
 from .models import Memory
 from .owner_prompt import owner_prompt, owner_text, queued_text, submitted_text
@@ -60,6 +59,7 @@ from .recall_counters import (
     session_of,
     shown_ids,
 )
+from .sessions import event_joined, joined_sessions
 from .time_utils import isoformat_utc, parse_event_ts
 
 #: How many of each the draw takes by default.

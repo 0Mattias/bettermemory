@@ -13,6 +13,9 @@ design 8.2 does not import `admitted` from membership or `Admission` from
 admission. Unit RS-F7 adds two (P12): a global record's named projects
 are read in membership.py and admission.py alone, and the walk over a
 record's ``supersedes`` and ``extends`` links is `in_force`'s alone.
+A site that takes its Admission from another module's decision names
+that import in `_SITE_IMPORTS` (hook.py's Stop reads
+`recall.caller_admission`) and the guard accepts it there.
 """
 
 from __future__ import annotations
@@ -54,7 +57,9 @@ def _rc3_function(function: str | None) -> bool:
     return function is not None and function.startswith(_RC3_HELPER)
 
 
-#: The membership sites of design 8.2, each with what it must import.
+#: The membership sites of design 8.2. Each imports `membership.admitted`
+#: or the `admission.Admission` that caches its answers, except where
+#: `_SITE_IMPORTS` names the import that carries the site's decision.
 _SITES = (
     "recall.py",
     "search.py",
@@ -67,6 +72,16 @@ _SITES = (
     "_response.py",
     "handlers/show.py",
 )
+
+
+#: A site whose `Admission` arrives through another module's resolver.
+#: `hook.py`'s Stop ranks its probe and settles interrupted turns on the
+#: caller's admission, which it takes from `recall.caller_admission` since
+#: the probe and the settlement moved into `recall` (the recall/hook
+#: import cycle, open-list item 16); that import is the site's evidence.
+_SITE_IMPORTS: dict[str, frozenset[tuple[str, str]]] = {
+    "hook.py": frozenset({("recall", "caller_admission")}),
+}
 
 
 def _modules() -> list[Path]:
@@ -152,9 +167,14 @@ def _imports(module: str) -> set[tuple[str, str]]:
 @pytest.mark.parametrize("module", _SITES)
 def test_every_membership_site_decides_through_admitted(module: str) -> None:
     """Each site of design 8.2 imports `membership.admitted` or the
-    `admission.Admission` that caches its answers."""
+    `admission.Admission` that caches its answers, or the resolver
+    `_SITE_IMPORTS` names for it."""
     found = _imports(module)
-    assert ("membership", "admitted") in found or ("admission", "Admission") in found
+    accepted = {("membership", "admitted"), ("admission", "Admission")}
+    accepted |= _SITE_IMPORTS.get(module, frozenset())
+    assert found & accepted, (
+        f"{module} decides membership through none of {sorted(accepted)}"
+    )
 
 
 def test_the_handoff_decides_by_checkout_through_membership() -> None:

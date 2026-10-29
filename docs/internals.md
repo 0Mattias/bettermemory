@@ -933,7 +933,7 @@ Claude Code names the conversation anew on /clear and /resume while
 the server keeps the id it was spawned with, so a server stamped with
 another id is another window's only when that id's hooks run beside this
 conversation (a hook row at or after its first); otherwise the bridge
-may take it as this window's own (`hook.runs_beside`, which the eval's
+may take it as this window's own (`sessions.runs_beside`, which the eval's
 surfaces section reads a stamp by too). Its costs: a /resume joins from
 its second hook call; and when another window in the same checkout is in
 a turn that began before a /clear, the two servers look alike until that

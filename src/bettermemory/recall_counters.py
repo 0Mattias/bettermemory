@@ -23,7 +23,7 @@ that is the conversation's (the hooks' rows), and otherwise by the
 worktree bridge: the conversation whose hook row (a show or a Stop's
 `turn_audited`) was the latest in the row's worktree before it. A
 conversation any row is stamped for is joined by the stamp only, as the
-hooks join it. A stamp is read by the hooks' rule (`hook.runs_beside`):
+hooks join it. A stamp is read by the hooks' rule (`sessions.runs_beside`):
 Claude Code names the conversation anew on /clear and /resume while the
 server keeps the id it was spawned with, so a row stamped with an id
 whose hooks do not run beside the bridge's conversation (none at or
@@ -48,8 +48,8 @@ from datetime import datetime
 from typing import Any
 
 from .events import HARNESS_SESSION_FIELD, HARNESS_STAMPED_KINDS
-from .hook import hook_spans, runs_beside
 from .recall import SURFACE_BRIEF, SURFACE_RECALL, is_settlement
+from .sessions import hook_spans, runs_beside
 from .time_utils import parse_event_ts
 
 #: The event kind `bettermemory recall grade` writes.
@@ -243,7 +243,7 @@ def _conversation_rows(
     Walks the rows in log order, holding per worktree the conversation of
     the latest hook row there (the bridge); a row stamped with a harness
     session joins that one unless its hooks do not run beside the
-    bridge's answer (`hook.runs_beside`: the stamp is that window's own
+    bridge's answer (`sessions.runs_beside`: the stamp is that window's own
     server under the id it had before a /clear or /resume), a row
     recorded under a conversation's own id joins it, and any other row
     joins the bridge's answer for its worktree. The bridge never answers

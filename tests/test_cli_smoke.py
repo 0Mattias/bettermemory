@@ -1032,8 +1032,8 @@ def test_subparser_registry_matches_main_dispatch() -> None:
 #   1. The command records exactly what it showed and nothing else: one
 #      `session_brief` row per shown brief, stamped
 #      `triggered_from="session_hook"` (a member of
-#      `hook._OUT_OF_PROCESS_TRIGGERS`) and recorded under the harness's
-#      own session id, so `hook._latest_in_process_session` skips it (no
+#      `sessions._OUT_OF_PROCESS_TRIGGERS`) and recorded under the harness's
+#      own session id, so `sessions._latest_in_process_session` skips it (no
 #      anchor hijack) and it publishes no session that turn audits cannot
 #      accompany. An empty brief records nothing.
 #   2. Stdout is the brief and nothing else. A diagnostic line printed on
@@ -1090,7 +1090,7 @@ def _pin_brief_caller(
     here = tmp_path / "checkout-here"
     _stand_in_scratch_checkout(monkeypatch, here, seen=seen)
     caller = Origin(cwd=str(here), repo=_FIXTURE_REPO_HERE, worktree_root=str(here))
-    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: caller)
+    monkeypatch.setattr("bettermemory.origin.capture_caller", lambda *a, **k: caller)
     return caller
 
 
@@ -1149,10 +1149,10 @@ def test_session_start_records_its_brief_and_hijacks_no_anchor(
     """The negative mandate the counts block lived by became a positive
     one: a shown brief is recorded, as exactly one `session_brief` row,
     and that row cannot become the anchor the turn audit attributes
-    against. The guard reads `hook._latest_in_process_session` itself,
+    against. The guard reads `sessions._latest_in_process_session` itself,
     the walk the old mandate protected."""
     from bettermemory.events import Recorder
-    from bettermemory.hook import _latest_in_process_session
+    from bettermemory.sessions import _latest_in_process_session
 
     store = _seeded_store(tmp_path, monkeypatch)
     caller = _pin_brief_caller(monkeypatch, tmp_path)
@@ -1568,7 +1568,7 @@ def test_session_start_points_only_into_this_repository(
     store, caller = _out_of_scope_store(tmp_path, monkeypatch)
     for memory in store.load_all():
         store.mark_verified(memory.id)
-    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: caller)
+    monkeypatch.setattr("bettermemory.origin.capture_caller", lambda *a, **k: caller)
     here = _briefable(store, caller, "this project's note")
     store.mark_verified(
         store.write(content="a global preference", scopes=["personal-context"]).id
@@ -1604,7 +1604,7 @@ def test_session_start_stays_silent_when_nothing_is_in_scope(
     store, caller = _out_of_scope_store(tmp_path, monkeypatch)
     for memory in store.load_all():
         store.mark_verified(memory.id)
-    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: caller)
+    monkeypatch.setattr("bettermemory.origin.capture_caller", lambda *a, **k: caller)
 
     _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
 

@@ -22,18 +22,18 @@ from bettermemory import shim as shim_module
 from bettermemory._daemon_client import HARNESS_SESSION_ENV, daemon_env_for
 from bettermemory.config import Config
 from bettermemory.events import HARNESS_STAMPED_KINDS, Recorder
-from bettermemory.hook import (
-    bridged_session,
-    event_joined,
-    joined_sessions,
-    live_harness_sessions,
-)
 from bettermemory.identity import (
     ENV_HARNESS_SESSION,
     HEADER_HARNESS_SESSION,
     HEADER_SESSION,
 )
 from bettermemory.recall import RecallState
+from bettermemory.sessions import (
+    bridged_session,
+    event_joined,
+    joined_sessions,
+    live_harness_sessions,
+)
 from bettermemory.store import Store
 
 from .test_daemon import _auth, mcp_session, running_app

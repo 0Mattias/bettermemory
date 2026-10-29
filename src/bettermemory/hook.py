@@ -18,8 +18,8 @@ and calls `audit.probe_for_miss` against the
 store identified by `BETTERMEMORY_DIR` (or the usual resolution
 rules). The UserPromptSubmit half (`prompt_main` /
 `run_prompt_recall`) is a delegate of `recall.prompt_recall`, which
-runs the SAME probe over the prompt being submitted — before the turn,
-via the shared `_probe_message` — and delivers up to three pointers to
+runs the SAME probe over the prompt being submitted (before the turn,
+via the shared `recall._probe_message`) and delivers up to three pointers to
 the hits it ranks, under the recall surface's own per-session cooldown.
 The session brief, the SessionStart surface, lives in `recall.py` too.
 
@@ -40,13 +40,14 @@ so the hook replays those toggles for the *current in-process server
 session* and feeds the net set into the probe as `excluded_scopes`,
 the same shield `audit.probe_for_miss` applies in process. A turn the
 user framed as "unrelated to project X" is therefore no longer
-false-flagged as a silent miss here. See `_disabled_scopes_from_events`.
+false-flagged as a silent miss here. See
+`sessions._disabled_scopes_from_events`.
 Stop-hook events still carry `triggered_from="stop_hook"` so
 downstream rollups can distinguish the two sources.
 
 Reset-on-restart eventually holds, but not atomically. A restarted
 server mints a fresh session id with no scope toggles under it yet —
-but `_latest_in_process_session` anchors to the *most recent
+but `sessions._latest_in_process_session` anchors to the *most recent
 non-stop-hook event*, which is still the PRIOR session until the new
 server writes its first in-process event. During that gap window the
 prior session's `scope_disable` events keep being replayed, so a stale
@@ -107,31 +108,52 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Collection, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from ._fsutil import bounded_stream_read
 from .attribution import attribute_uses
 from .audit import (
     ATTRIBUTION_LOOKBACK_SECONDS,
     REAUDIT_DEDUP_WINDOW_SECONDS,
-    MissReport,
     is_duplicate_audit,
     no_owner_prompt_report,
-    probe_for_miss,
     search_miss_fields,
     turn_audited_fields,
 )
 from .config import Config, load_config
 from .events import (
-    HARNESS_SESSION_FIELD,
     HARNESS_STAMPED_KINDS,
     Recorder,
     redact_query,
 )
 from .models import utcnow
 from . import identity
-from .origin import Origin, capture as capture_origin
+from . import origin as _origin
+from .origin import Origin
 from .owner_prompt import COMPOSED_OPENINGS, owner_prompt, owner_text, text_blocks
+
+# The session join lives in `sessions`, which imports neither this module
+# nor `recall`. Every name stays importable from here under the path it
+# had before it moved (the `name as name` form marks the re-export) for a
+# script outside the package that still reads it here; the package and
+# its tests import from `sessions`. A patch on this module's binding
+# reaches this module's own calls alone, since `recall` reads `sessions`.
+# The probe and the interrupted-turn settlement are `recall`'s and are
+# not re-exported: this module imports `recall` only inside the
+# functions that call it, so a hook process loads it where it calls it.
+from .sessions import (
+    _OUT_OF_PROCESS_TRIGGERS as _OUT_OF_PROCESS_TRIGGERS,
+    _disabled_scopes_from_events as _disabled_scopes_from_events,
+    _latest_in_process_session as _latest_in_process_session,
+    _session_of as _session_of,
+    bridged_session as bridged_session,
+    event_joined as event_joined,
+    harness_joined_sessions as harness_joined_sessions,
+    hook_spans as hook_spans,
+    joined_sessions as joined_sessions,
+    live_harness_sessions as live_harness_sessions,
+    runs_beside as runs_beside,
+)
 from .store import (
     STORE_FILENAME,
     MemoryNotFoundError,
@@ -142,7 +164,6 @@ from .time_utils import parse_event_ts
 from .transcript import stop_turn
 
 if TYPE_CHECKING:
-    from .admission import Admission
     from .recall import RecallState
 
 log = logging.getLogger("bettermemory.hook")
@@ -182,26 +203,6 @@ _SYNTHETIC_USER_PREFIXES = COMPOSED_OPENINGS
 # and an over-cap payload no-ops identically (no recall beats a blocked
 # prompt).
 _STDIN_PAYLOAD_CAP_BYTES = 64 * 1024
-
-# `triggered_from` values stamped by OUT-OF-PROCESS writers — the two
-# client-side hooks, which record under Claude Code's transcript session
-# id rather than the server's `sess_<hex>`. `_latest_in_process_session`
-# must skip every member when recovering the live server session: the
-# bridge's premise is "the newest event not written by a hook was
-# written by the in-process server", and a `prompt_recall` row admitted
-# as an anchor would hand the shield a transcript id that matches no
-# server-emitted retrieval event, silently killing it (the same
-# structurally-dead-shield failure the `retrieval_session_id` bridge
-# exists to prevent). `audit._VALID_TRIGGERED_FROM` cross-references
-# this set; extend both together. `session_hook` is the third: the
-# SessionStart hook's `session_brief` row (`recall.session_brief`),
-# recorded under the transcript id like the prompt hook's.
-# `session_capture` stays for the rows 8.x's `bettermemory capture`
-# recorded under a transcript id, which a migrated store still holds;
-# nothing writes it now, so it is no longer a valid trigger to stamp.
-_OUT_OF_PROCESS_TRIGGERS: frozenset[str] = frozenset(
-    {"stop_hook", "prompt_hook", "session_capture", "session_hook"}
-)
 
 
 def _read_payload(stdin_text: str) -> dict[str, Any]:
@@ -244,115 +245,12 @@ def human_prompt(row: dict[str, Any]) -> str | None:
 _flatten_assistant_content = text_blocks
 
 
-def _probe_message(
-    *,
-    cfg: Config,
-    store: Store,
-    user_message: str,
-    session_id: str,
-    server_session: str | None,
-    admission: Admission,
-    excluded_scopes: set[str],
-    recent: list[dict[str, Any]],
-    worktree_root: str | None = None,
-) -> MissReport:
-    """The one probe both hooks run: production pool, production
-    ranking inputs, `probe_for_miss`, nothing else.
-
-    `admission` is the caller's admission for the pool, built once by the
-    hook from the caller's resolution: the pool, the ranked set, the
-    document frequencies and the audit's project tests all decide
-    through it. The Stop's is always POOL_PREFILTER (design 3.5), and so
-    is the prompt recall's under `prompt_recall = "project"`; under
-    ``"everywhere"`` the prompt recall draws under the unscoped search's
-    admission (decision B21), the pool its delivery admits, and a turn it
-    served is shielded from the Stop's narrower probe by its
-    `prompt_recall` row.
-
-    Shared by `run_audit` (Stop — the after-the-fact audit) and
-    `recall.prompt_recall` (UserPromptSubmit — the same probe run before
-    the turn, its hits delivered as pointers). One body because the two
-    callers MUST rank alike over one pool: a pointer the recall delivers
-    is a hit the audit's probe ranks for the same message, and two
-    hand-kept copies of this plumbing would let them drift the first
-    time one of them was retuned.
-    """
-    from .handlers.search import default_search_width, resolve_search_pool
-
-    # Candidate pool: production's, not an unconditional `load_all()`.
-    # `resolve_search_pool` is the same helper `memory_search` builds its
-    # pool with — the FTS prefilter above `_INDEX_THRESHOLD_DEFAULT`, the
-    # cap-starvation guard, and the BM25 corpus-statistics provider that
-    # capped slice needs. Probing the whole corpus instead ranked a
-    # strict SUPERSET of what the model's retrieval could reach, and the
-    # miss verdict reads only the rank-1 hit, so a memory production's
-    # prefilter would have dropped could take that slot and decide the
-    # verdict on its own. The filters handed here are the ones
-    # `probe_for_miss` re-applies inside `run_search` (the same
-    # admission object), so the
-    # document frequencies price exactly the collection about to be
-    # ranked. `min_survivors` is the width of a DEFAULT `memory_search`
-    # (`default_search_width` — the config knob under the same clamp a
-    # request goes through, NOT the raw knob, which `config.py` never
-    # range-checks), not the probe's `_TOP_HITS_RETAINED`: the starvation
-    # guard has to fire on the same slices a default-width retrieval's
-    # would. It does NOT track a wider or narrower REQUEST — there is no
-    # request on this path, and `resolve_search_pool` records what that
-    # leaves open.
-    #
-    # `probe_pool` is deliberately NOT named `memories`: it is a capped,
-    # query-biased SEARCH pool, not the store.
-    probe_pool = resolve_search_pool(
-        store,
-        user_message,
-        excluded_scopes=excluded_scopes,
-        admission=admission,
-        min_survivors=default_search_width(cfg.behavior),
-    )
-    # The ranker knobs production `memory_search` threads — the recency
-    # half-life and the Lane L conversational repairs — are read straight
-    # off the config, so the probe cannot rank on a different set of
-    # factors than the model's actual retrieval would have. No event read
-    # is issued here: the usage-aware multipliers that once needed one
-    # left in 9.0.0, and `recent` (the dedup-widened coverage read the
-    # caller took) already serves the retrieval shield.
-    return probe_for_miss(
-        probe_pool.memories,
-        user_message,
-        recent_events=recent,
-        session_id=session_id,
-        retrieval_session_id=server_session,
-        now=utcnow(),
-        # The probe's "did the model already retrieve this turn?" shield
-        # must use the same wall-clock definition of "this turn" as the
-        # attribution pass at the Stop hook — the Stop hook fires at turn
-        # END, so a tool-heavy turn easily outlives a short window.
-        # Pre-fix this hardcoded 60s while attribution used 600s: any
-        # turn longer than a minute aged its own search event out of the
-        # shield and emitted a false `search_miss`. 600s is also the
-        # ceiling the MCP handler clamps `lookback_seconds` to; the
-        # wider window's bias is conservative (over-suppress), matching
-        # the project's stance on miss-signal noise. The recall surface
-        # reads the hits, not this verdict: its anti-spam bound is its
-        # own per-session cooldown (`recall.RecallState`).
-        lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
-        admission=admission,
-        worktree_root=worktree_root,
-        excluded_scopes=excluded_scopes,
-        mode=cfg.behavior.search_mode or "hybrid",
-        half_life_days=cfg.behavior.recency_boost_half_life_days,
-        conversational=cfg.behavior.conversational,
-        corpus_stats_provider=probe_pool.corpus_stats_provider,
-    )
-
-
 def _origin_for(cwd: Path | None) -> Origin:
-    """The caller's origin: the process's own when `cwd` is None (the
-    8.x hook, a process spawned in the project), else the directory the
-    hook posted to the daemon, labelled as the process cwd it was."""
-    if cwd is None:
-        return capture_origin()
-    return capture_origin(cwd, source=identity.SOURCE_PROCESS_CWD)
+    """The caller's origin as the hooks capture it (`origin.capture_caller`),
+    read through the module at call time so a test that places the caller
+    there places it for the Stop and the recall alike. `capture_hook`
+    imports it under this name."""
+    return _origin.capture_caller(cwd)
 
 
 def audit_transcript(
@@ -474,7 +372,7 @@ def run_audit(
     pointers are (`recall.settle_shown`), and the reviews the session
     left open since its previous turn are counted
     (`recall.review_unanswered`); last, the session's interrupted turns
-    are audited (`settle_interrupted`), best effort, so a slow walk
+    are audited (`recall.settle_interrupted`), best effort, so a slow walk
     delays only their rows. `state` is the daemon's recall state;
     the in-process path passes None and the state is rebuilt from the
     log. `harness` names the session's harness (the recall's key) and
@@ -507,10 +405,12 @@ def run_audit(
     from .membership import POOL_PREFILTER
     from .recall import RULE, RecallState as _RecallState
     from .recall import (
+        _probe_message,
         caller_admission,
         confirm_compaction,
         previous_audit_at,
         review_unanswered,
+        settle_interrupted,
         settle_shown,
     )
 
@@ -613,6 +513,7 @@ def run_audit(
             excluded_scopes=excluded_scopes,
             recent=recent,
             worktree_root=caller_origin.worktree_root,
+            now=utcnow(),
         )
     # Emit the audit event so cadence is visible even when there's
     # nothing to flag — matches the MCP handler's discipline. Honour
@@ -802,99 +703,6 @@ def run_audit(
     return report.to_dict()
 
 
-def settle_interrupted(
-    *,
-    store: Store,
-    cfg: Config,
-    session_id: str,
-    transcript_path: str | None,
-    admission: Admission,
-    excluded_scopes: set[str],
-    recent: list[dict[str, Any]],
-    server_session: str | None,
-    worktree_root: str | None,
-    now: datetime,
-    previous_audit: datetime | None,
-    triggered_from: str,
-    exclude_prompt_id: str | None,
-) -> list[str]:
-    """Settle the session's interrupted turns (RS-F7 part 6, RS-F3-M5): a
-    turn the owner interrupted ends with no Stop hook, so the next hook
-    that reads the transcript, the Stop of a later turn or the prompt
-    recall of the next prompt, writes its `turn_audited` row. For each
-    turn `transcript.interrupted_turns` finds since `previous_audit`, the
-    session's previous `turn_audited` as the caller read it before
-    recording its own (`recall.previous_audit_at`; the idle window back
-    when it has none), other than `exclude_prompt_id` (the turn this Stop
-    audits itself) and any turn a row already names: the probe's verdict over the prompt, as a Stop
-    probes it (`_probe_message` under the Stop's POOL_PREFILTER admission
-    whichever hook settles the turn, the same scopes and shield),
-    ``reply_source="interrupted"``, whether a partial reply exists and its
-    model, stamped `triggered_from` the hook that settled it. No
-    `search_miss`: the turn did not finish, so a miss is not the reply's;
-    the pointers it showed stay pending for the segment's later Stops or
-    its close. Nothing with telemetry off or without a transcript file.
-    The prompt ids settled."""
-    from .recall import RULE, STATE_IDLE_SECONDS
-    from .transcript import interrupted_turns
-
-    if not cfg.telemetry.enabled or not transcript_path:
-        return []
-    path = Path(transcript_path).expanduser()
-    if not path.is_file():
-        return []
-    since = previous_audit
-    if since is None:
-        since = now - timedelta(seconds=STATE_IDLE_SECONDS)
-    audited: set[str] = set()
-    for event in store.events_of_kinds(("turn_audited",), since=since):
-        if (event.get("session") or event.get("session_id")) != session_id:
-            continue
-        named = event.get("prompt_id")
-        if isinstance(named, str):
-            audited.add(named)
-    recorder = Recorder(
-        store=store, session_id=session_id, enabled=True, worktree_root=worktree_root
-    )
-    probe_mode = cfg.behavior.search_mode or "hybrid"
-    settled: list[str] = []
-    for turn in interrupted_turns(path, since=since):
-        if (
-            turn.prompt_id is None
-            or turn.prompt_id == exclude_prompt_id
-            or turn.prompt_id in audited
-            or turn.prompt is None
-        ):
-            continue
-        report = _probe_message(
-            cfg=cfg,
-            store=store,
-            user_message=turn.prompt,
-            session_id=session_id,
-            server_session=server_session,
-            admission=admission,
-            excluded_scopes=excluded_scopes,
-            recent=recent,
-            worktree_root=worktree_root,
-        )
-        recorder.record(
-            "turn_audited",
-            **turn_audited_fields(
-                report,
-                session_id=session_id,
-                probe_mode=probe_mode,
-                assistant_present=turn.reply is not None,
-                triggered_from=triggered_from,
-                client_model=turn.model,
-                prompt_id=turn.prompt_id,
-                reply_source="interrupted",
-                rule=RULE,
-            ),
-        )
-        settled.append(turn.prompt_id)
-    return settled
-
-
 def run_prompt_recall(
     *,
     prompt: str,
@@ -1004,310 +812,6 @@ def prompt_main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 — hook must never block a prompt
         print(f"bettermemory prompt-recall: {exc}", file=sys.stderr)
     return 0
-
-
-def _disabled_scopes_from_events(
-    events: list[dict[str, Any]],
-    *,
-    worktree_root: str | None = None,
-    server_session: str | None = None,
-) -> set[str]:
-    """Reconstruct the session-disabled scope set from the event log.
-
-    `memory_scope_disable` / `memory_scope_enable` append `scope_disable`
-    / `scope_enable` events stamped with the MCP server's stable
-    per-process session id. The Stop hook runs in a separate process and
-    can't read the server's in-memory `SessionState.disabled_scopes`, but
-    it CAN replay those events off disk.
-
-    The replay is anchored to the *current in-process server session* —
-    the session id of the most recent event that did NOT originate from a
-    Stop hook (see `_latest_in_process_session`; `worktree_root` is this
-    hook's worktree, threaded through so a concurrent session in another
-    worktree can't hijack the anchor and leak its scope toggles into this
-    window's probe exclusions). Anchoring this way is what preserves
-    reset-on-restart semantics: a restarted server mints a fresh session
-    id and has emitted no scope toggles under it yet, so the
-    reconstructed set is empty until the user disables a scope again —
-    mirroring the in-memory state the server itself reset on startup.
-
-    Returns the net disabled set: each `scope_disable` adds, each later
-    `scope_enable` removes, walked in chronological (append) order. Empty
-    when no in-process session is found or it toggled no scopes.
-    `server_session`, when given, is the anchor the caller already
-    resolved (`bridged_session`, the harness join first).
-    """
-    if server_session is None:
-        server_session = _latest_in_process_session(events, worktree_root=worktree_root)
-    if server_session is None:
-        return set()
-    disabled: set[str] = set()
-    for event in events:
-        # Canonical-first session lookup with legacy fallback — same
-        # discipline `_pending_retrievals` uses.
-        if (event.get("session") or event.get("session_id")) != server_session:
-            continue
-        kind = event.get("kind")
-        if kind not in ("scope_disable", "scope_enable"):
-            continue
-        scope = event.get("scope")
-        if not isinstance(scope, str):
-            continue
-        if kind == "scope_disable":
-            disabled.add(scope)
-        else:
-            disabled.discard(scope)
-    return disabled
-
-
-def _latest_in_process_session(
-    events: list[dict[str, Any]],
-    *,
-    worktree_root: str | None = None,
-) -> str | None:
-    """Session id of the most recent in-process event, or None.
-
-    In-process MCP tool calls and the client-side hooks write to the
-    same event log under different session-id spaces (the server's
-    `sess_<hex>` vs. Claude Code's transcript session id). Hook events
-    tag `triggered_from` with a member of `_OUT_OF_PROCESS_TRIGGERS`
-    (`"stop_hook"` for the Stop hook, `"prompt_hook"` for the
-    UserPromptSubmit recall); everything else is in-process. The last
-    such event identifies the live server session whose disabled-scope
-    toggles the hook should honour. `events` is in chronological (append)
-    order, so the latest match is found by walking in reverse.
-
-    `worktree_root` makes the anchor concurrency-safe: the store and
-    event log are shared across ALL projects and processes, so with two
-    concurrent Claude Code windows the latest event frequently belongs
-    to the OTHER window's server — which used to hijack the anchor and
-    flip the audit verdict both ways (the foreign session's search
-    shielding this window's miss; the foreign session's unrelated events
-    unshielding a turn that searched correctly). The server-side
-    Recorder already stamps `worktree_root` on every in-process event,
-    so when the hook's own worktree is known we prefer the latest event
-    whose stamp matches it. When no stamped match exists (legacy logs
-    written before the stamp shipped, a server running outside any git
-    checkout, or the restart gap before this worktree's server writes
-    its first event) we fall back to the latest-any behaviour, which
-    preserves the documented reset-on-restart semantics.
-    """
-    fallback: str | None = None
-    for event in reversed(events):
-        if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
-            continue
-        session = event.get("session") or event.get("session_id")
-        if not isinstance(session, str):
-            continue
-        if worktree_root is None or event.get("worktree_root") == worktree_root:
-            return session
-        if fallback is None:
-            fallback = session
-    return fallback
-
-
-def _session_of(event: dict[str, Any]) -> str | None:
-    session = event.get("session") or event.get("session_id")
-    return session if isinstance(session, str) else None
-
-
-def harness_joined_sessions(
-    events: Iterable[dict[str, Any]], harness_session: str | None
-) -> set[str]:
-    """The in-process sessions whose tool events carry `harness_session`
-    (`events.HARNESS_SESSION_FIELD`, stamped from the shim's header or the
-    in-process server's environment): the server sessions that served
-    this conversation. Empty when nothing is stamped with it."""
-    if not harness_session:
-        return set()
-    found: set[str] = set()
-    for event in events:
-        if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
-            continue
-        if event.get(HARNESS_SESSION_FIELD) != harness_session:
-            continue
-        session = _session_of(event)
-        if session is not None:
-            found.add(session)
-    return found
-
-
-def hook_spans(
-    events: Iterable[Mapping[str, Any]],
-) -> dict[str, tuple[datetime, datetime]]:
-    """Per harness session, the first and the last of its hook rows in
-    `events` (rows a hook wrote: `triggered_from` names one)."""
-    spans: dict[str, tuple[datetime, datetime]] = {}
-    for event in events:
-        if event.get("triggered_from") not in _OUT_OF_PROCESS_TRIGGERS:
-            continue
-        session = event.get("session") or event.get("session_id")
-        stamp = parse_event_ts(event.get("ts"))
-        if not isinstance(session, str) or not session or stamp is None:
-            continue
-        span = spans.get(session)
-        if span is None:
-            spans[session] = (stamp, stamp)
-        else:
-            spans[session] = (min(span[0], stamp), max(span[1], stamp))
-    return spans
-
-
-def runs_beside(
-    spans: Mapping[str, tuple[datetime, datetime]], other: str, conversation: str
-) -> bool:
-    """Whether harness session `other`'s hooks run beside `conversation`'s
-    (`spans` from `hook_spans`): it has a hook row of its own, and, once
-    `conversation` has one, a hook row at or after its first.
-
-    A server's stamp is fixed when it is spawned (the in-process server
-    reads CLAUDE_CODE_SESSION_ID once, the shim forwards what it was
-    started with), while Claude Code issues a new session id on /clear
-    and /resume. A stamp whose conversation shows no hook row, or went
-    quiet before this one began, is this window's own server under its
-    old id, not another window's; a conversation whose hooks still run
-    is another window. Before `conversation` has a hook row of its own
-    any conversation with one counts as running beside it, so a /resume
-    whose brief showed nothing joins through the bridge from its second
-    hook call. The hooks' join (`bridged_session`) and the eval's
-    surfaces section (`recall_counters`) both read a stamp by this rule."""
-    span = spans.get(other)
-    if span is None:
-        return False
-    own = spans.get(conversation)
-    return own is None or span[1] >= own[0]
-
-
-def live_harness_sessions(
-    events: Iterable[dict[str, Any]], harness_session: str | None
-) -> set[str]:
-    """The other harness sessions whose hooks run beside `harness_session`
-    in `events` (`runs_beside`)."""
-    if not harness_session:
-        return set()
-    spans = hook_spans(events)
-    return {
-        session
-        for session in spans
-        if session != harness_session and runs_beside(spans, session, harness_session)
-    }
-
-
-def bridged_session(
-    events: list[dict[str, Any]],
-    *,
-    harness_session: str | None,
-    worktree_root: str | None = None,
-) -> str | None:
-    """The in-process session a hook's rows join: the harness join first,
-    the 9.0.0 worktree bridge only when it has nothing.
-
-    The newest in-process event stamped with this hook's harness session
-    names the session (a restarted server stamps the same harness id, so
-    the newest is the live one, the reset-on-restart the bridge keeps).
-    With no such event, `_latest_in_process_session` answers, over the
-    events of every session NOT stamped with another live harness session
-    (`runs_beside`): a server that declared it serves another window's
-    conversation is never this one's bridge, while a server stamped with
-    this window's id from before a /clear or /resume is found by the
-    bridge as 9.0.0 found it.
-
-    The bridge never chooses between two such servers the log cannot
-    tell apart: when servers stamped with two or more ids that do not
-    run beside this conversation have written in this checkout since
-    its first hook row, every server stamped with another id is set
-    aside, as before the /clear repair. That is the case of a /clear in
-    one window while another window in the same checkout is in a turn
-    that began before the clear (its last hook row predates this
-    conversation's first): the other window's server looks exactly like
-    this window's own under its old id until that window's next hook
-    row, and the latest of the two would be a coin toss.
-
-    What remains: a /resume's conversation joins through the bridge only
-    from its second hook call (`runs_beside`); while another window's
-    turn that began before a /clear is still running, the clear loses
-    its join until that window's next hook row (a missed join, as before
-    the repair); and when this window's server has not written since the
-    clear while that turn's server has, that server is the only
-    candidate and the bridge takes it until that window's next hook row
-    (a foreign join: nothing on the log tells the two apart then; from
-    the first row this window's server writes, it is the missed join)."""
-    if harness_session:
-        stamped_by: dict[str, str] = {}
-        for event in reversed(events):
-            if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
-                continue
-            stamped = event.get(HARNESS_SESSION_FIELD)
-            if not isinstance(stamped, str) or not stamped:
-                continue
-            session = _session_of(event)
-            if session is None:
-                continue
-            if stamped == harness_session:
-                return session
-            stamped_by.setdefault(session, stamped)
-        if stamped_by:
-            spans = hook_spans(events)
-            foreign = {
-                s
-                for s, stamped in stamped_by.items()
-                if runs_beside(spans, stamped, harness_session)
-            }
-            own = spans.get(harness_session)
-            if own is not None:
-                stamps: set[str] = set()
-                for event in events:
-                    if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
-                        continue
-                    session = _session_of(event)
-                    if session is None or session not in stamped_by:
-                        continue
-                    if session in foreign:
-                        continue
-                    if worktree_root is not None and (
-                        event.get("worktree_root") != worktree_root
-                    ):
-                        continue
-                    stamp = parse_event_ts(event.get("ts"))
-                    if stamp is not None and stamp >= own[0]:
-                        stamps.add(stamped_by[session])
-                if len(stamps) > 1:
-                    foreign = set(stamped_by)
-            if foreign:
-                events = [e for e in events if _session_of(e) not in foreign]
-    return _latest_in_process_session(events, worktree_root=worktree_root)
-
-
-def joined_sessions(
-    events: list[dict[str, Any]],
-    *,
-    harness_session: str | None,
-    worktree_root: str | None = None,
-) -> set[str]:
-    """Every in-process session the harness join names, or the one the
-    bridge names when it names none (`bridged_session`)."""
-    found = harness_joined_sessions(events, harness_session)
-    if found:
-        return found
-    bridged = bridged_session(
-        events, harness_session=harness_session, worktree_root=worktree_root
-    )
-    return {bridged} if bridged is not None else set()
-
-
-def event_joined(
-    event: dict[str, Any], *, harness_session: str | None, sessions: Collection[str]
-) -> bool:
-    """Whether a tool event belongs to the hook's conversation: by its
-    harness stamp when it names this conversation, else by its session
-    (one of `sessions`, the joined in-process sessions and the hook's own
-    id). A stamp naming another id joins through its session: the bridge
-    puts a server in `sessions` only when its stamp is not another live
-    window's (`bridged_session`), so a server stamped before a /clear
-    stays joined."""
-    if event.get(HARNESS_SESSION_FIELD) == harness_session and harness_session:
-        return True
-    return _session_of(event) in sessions
 
 
 def _emit_hook_attributions(

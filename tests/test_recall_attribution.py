@@ -19,7 +19,6 @@ from typing import Any
 
 import pytest
 
-from bettermemory import hook as hook_module
 from bettermemory.config import Config
 from bettermemory.events import Recorder
 from bettermemory.hook import audit_transcript, run_audit
@@ -46,7 +45,9 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PromptWorld:
     built = PromptWorld(tmp_path)
     # The Stop captures the caller's origin; pin it to the world's
     # worktree so no test asks git about the checkout running the suite.
-    monkeypatch.setattr(hook_module, "capture_origin", lambda *a, **k: built.caller)
+    monkeypatch.setattr(
+        "bettermemory.origin.capture_caller", lambda *a, **k: built.caller
+    )
     return built
 
 

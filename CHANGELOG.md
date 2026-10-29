@@ -25,6 +25,71 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc14
+
+The fourteenth candidate is the first cut under the rule that the stable
+9.0.0 ships when no feasible foreseeable work is left: from here on the
+work the plan of 2026-10-28 tracks lands in candidates. This one breaks
+the import cycle between the recall and hook modules, so the module
+split can build on it. The store's schema does not move. It is a
+release candidate like the thirteenth; the stable 9.0.0 follows the
+candidates' testing.
+
+#### Changed
+
+- **`recall` no longer imports `hook`.** The session join
+  (`bridged_session`, `joined_sessions`, `event_joined`,
+  `harness_joined_sessions`, `live_harness_sessions`, `hook_spans`,
+  `runs_beside` and their helpers) moves to a new `bettermemory.sessions`,
+  which imports only `events` and `time_utils`. The probe both hooks run
+  (`_probe_message`) and the interrupted-turn settlement
+  (`settle_interrupted`) move into `recall`, and the caller's origin as a
+  hook captures it becomes `origin.capture_caller`. `recall` imported
+  `hook` inside four functions, `prompt_recall` among them, while `hook`
+  imported `recall` inside three: a cycle the module split could not
+  build on, and a hook import paid on every prompt recall. `recall` now
+  imports neither `hook` nor any module that does, and
+  `tests/test_import_graph.py` pins that rule, the rule that `sessions`
+  imports neither, and the absence of any module-level import cycle in
+  the package. `hook` keeps the session-join names importable under
+  their old path for a script outside the package; the package and its
+  tests read them from `sessions`, and a patch on `hook`'s binding
+  reaches the Stop alone. The probe and the settlement are `recall`'s
+  with no re-export, so a hook process still imports `recall` only
+  where it calls it. The probe dates its report at
+  the caller's instant: the Stop's clock reading as before, prompt
+  recall's own `now`, and the settlement's `now` for an interrupted turn.
+  A test that places the hooks' caller patches `origin.capture_caller`,
+  and one that spies on the probe patches `recall.probe_for_miss`;
+  `hook.capture_origin` and `hook.probe_for_miss` are gone. Importing
+  `bettermemory.hook` measures 203 ms before and 195 ms after, and
+  `bettermemory.recall` 253 ms and 251 ms (median of three cold runs
+  each). (`src/bettermemory/sessions.py`, `src/bettermemory/recall.py`,
+  `src/bettermemory/hook.py`, `src/bettermemory/origin.py`)
+
+#### Known limitations
+
+- **The key ring's binding is trust on first use on upgrade.** A ring
+  from before rc13 has no `<store_id>.path`, and the first owner's open
+  after the upgrade binds it to the file it opens. When that is a file
+  that borrowed the store's id (a repository's `./.claude-memory/`
+  opened before the home store), it takes the ring as in rc12: the home
+  store's key is retired, the head moves past the home log, which reads
+  `tampered` (`tail_deleted`), and the home store opens for reading
+  only. `[storage] cwd_store = false` closes the repository route, and
+  a ring already bound is not taken this way.
+- **An rc12 anchor whose key is lost before rc13 names it reads
+  tampered.** An origin anchor written before rc13 names no key, and the
+  first writing open that sees a held key verify its row names it. When
+  the key that signed the row was lost before that open, nothing tells
+  the loss from a rewrite: the origin reads `origin_mismatch` (reason
+  `signature`), `log verify` reads `tampered`, and every segment whose key
+  is not held reads `unaccounted`, where rc12 moved the anchor to the
+  `rekey` row. Filing the old key back as `<store_id>.<first 16 hex of its
+  fingerprint>.key` makes the anchor hold and be named; without the key,
+  deleting `<store_id>.origin` and `<store_id>.head` accepts the history
+  on purpose.
+
 ### 9.0.0rc13
 
 The thirteenth candidate closes three of rc12's known limitations: a

@@ -64,7 +64,9 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
 @pytest.fixture
 def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PromptWorld:
     world = PromptWorld(tmp_path)
-    monkeypatch.setattr(hook_module, "capture_origin", lambda *a, **k: world.caller)
+    monkeypatch.setattr(
+        "bettermemory.origin.capture_caller", lambda *a, **k: world.caller
+    )
     return world
 
 

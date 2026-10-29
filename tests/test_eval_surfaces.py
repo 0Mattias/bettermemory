@@ -978,14 +978,15 @@ def test_the_split_renders_in_text_json_and_markdown() -> None:
 def test_a_real_delivery_and_its_settlement(tmp_path: Path, monkeypatch: Any) -> None:
     """The prompt recall delivers through the production path, the Stop
     settles the pointer against the reply, and the eval reads both."""
-    from bettermemory import hook as hook_module
     from bettermemory.eval import compute_eval
     from bettermemory.hook import audit_transcript
 
     from .test_recall_prompt import PromptWorld
 
     world = PromptWorld(tmp_path)
-    monkeypatch.setattr(hook_module, "capture_origin", lambda *a, **k: world.caller)
+    monkeypatch.setattr(
+        "bettermemory.origin.capture_caller", lambda *a, **k: world.caller
+    )
     sentence = (
         "The deploy pipeline signs every release artifact with the hardware "
         "key kept in the vault on the third floor."
