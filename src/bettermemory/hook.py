@@ -138,9 +138,10 @@ from .owner_prompt import COMPOSED_OPENINGS, owner_prompt, owner_text, text_bloc
 # script outside the package that still reads it here; the package and
 # its tests import from `sessions`. A patch on this module's binding
 # reaches this module's own calls alone, since `recall` reads `sessions`.
-# The probe and the interrupted-turn settlement are `recall`'s and are
-# not re-exported: this module imports `recall` only inside the
-# functions that call it, so a hook process loads it where it calls it.
+# The probe and the interrupted-turn settlement live in `recall_settle`
+# and are read from `recall`, not re-exported here: this module imports
+# `recall` only inside the functions that call it, so a hook process
+# loads the recall family where it calls it.
 from .sessions import (
     _OUT_OF_PROCESS_TRIGGERS as _OUT_OF_PROCESS_TRIGGERS,
     _disabled_scopes_from_events as _disabled_scopes_from_events,

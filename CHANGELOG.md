@@ -58,13 +58,14 @@ the candidates' testing.
   the package. `hook` keeps the session-join names importable under
   their old path for a script outside the package; the package and its
   tests read them from `sessions`, and a patch on `hook`'s binding
-  reaches the Stop alone. The probe and the settlement are `recall`'s
-  with no re-export, so a hook process still imports `recall` only
-  where it calls it. The probe dates its report at
+  reaches the Stop alone. The probe and the settlement leave `hook` for
+  the recall family (`recall_settle.py`, below) with no re-export, so a
+  hook process still imports `recall` only where it calls it. The
+  probe dates its report at
   the caller's instant: the Stop's clock reading as before, prompt
   recall's own `now`, and the settlement's `now` for an interrupted turn.
   A test that places the hooks' caller patches `origin.capture_caller`,
-  and one that spies on the probe patches `recall.probe_for_miss`;
+  and one that spies on the probe patches `recall_settle.probe_for_miss`;
   `hook.capture_origin` and `hook.probe_for_miss` are gone. Importing
   `bettermemory.hook` measures 203 ms before and 195 ms after, and
   `bettermemory.recall` 253 ms and 251 ms (median of three cold runs
@@ -155,6 +156,32 @@ the candidates' testing.
   `src/bettermemory/verify_candidates.py`,
   `src/bettermemory/verify_anchoring.py`, `tests/test_verify.py`,
   `tests/test_body_parse_memo.py`)
+- **`recall.py` is split into five modules.** `recall.py` was 3,104
+  lines. The per-session state (`RecallState`, `rebuild_session` and the
+  cooldown's transitions) moves to `recall_state.py` with the vocabulary
+  every recall module reads (the rule, the default harness, the delivered
+  provenance labels, the state's kinds and bounds, the settlement
+  surfaces); the caller's admission and the helpers both surfaces' rows
+  read (`caller_admission`, `summarize`, `disputed_marks`, the
+  rc3_admitted column) to `recall_admission.py`; the brief's ranking
+  pieces, its render, the compaction-marker reader and the orphan notice
+  to `recall_brief.py`; and the probe both hooks run with the Stop's
+  settlement (`_probe_message`, `settle_shown`, `settle_unused`,
+  `settle_interrupted`, `review_unanswered`) to `recall_settle.py`.
+  `recall.py` (1,555 lines) keeps both surfaces, the brief's selection,
+  the recall block and `confirm_compaction`, and re-exports every name a
+  caller imports from it as the same object, so no import path changes
+  and `hook` still imports `recall` only inside the functions that call
+  it. Every function moves unchanged; none of the four imports `recall`
+  or `hook`, and `tests/test_import_graph.py` holds each to `recall`'s
+  rule and pins that a cold import of `hook` or of `sessions` loads none
+  of the five. A test that spies on the probe now patches
+  `recall_settle.probe_for_miss`. (`src/bettermemory/recall.py`,
+  `src/bettermemory/recall_state.py`, `src/bettermemory/recall_admission.py`,
+  `src/bettermemory/recall_brief.py`, `src/bettermemory/recall_settle.py`,
+  `src/bettermemory/hook.py`, `tests/test_import_graph.py`,
+  `tests/test_hook.py`, `tests/test_membership_guard.py`,
+  `docs/internals.md`)
 
 #### Fixed
 

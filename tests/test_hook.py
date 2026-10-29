@@ -1928,7 +1928,7 @@ def test_run_audit_threads_ranker_config_into_probe(
         captured.update(kwargs)
         return real_probe(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr("bettermemory.recall.probe_for_miss", spy)
+    monkeypatch.setattr("bettermemory.recall_settle.probe_for_miss", spy)
     cfg = Config(
         storage=StorageConfig(directory=str(mem_dir)),
         behavior=BehaviorConfig(recency_boost_half_life_days=7.0),
@@ -1974,7 +1974,7 @@ def test_run_audit_threads_conversational_opt_out_into_probe(
         captured.update(kwargs)
         return real_probe(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr("bettermemory.recall.probe_for_miss", spy)
+    monkeypatch.setattr("bettermemory.recall_settle.probe_for_miss", spy)
     cfg = Config(
         storage=StorageConfig(directory=str(mem_dir)),
         behavior=BehaviorConfig(conversational=False),

@@ -77,8 +77,9 @@ _SITES = (
 #: A site whose `Admission` arrives through another module's resolver.
 #: `hook.py`'s Stop ranks its probe and settles interrupted turns on the
 #: caller's admission, which it takes from `recall.caller_admission` since
-#: the probe and the settlement moved into `recall` (the recall/hook
-#: import cycle, open-list item 16); that import is the site's evidence.
+#: the probe and the settlement moved out of `hook` into `recall_settle`
+#: (the recall/hook import cycle, open-list item 16); that import is the
+#: site's evidence.
 _SITE_IMPORTS: dict[str, frozenset[tuple[str, str]]] = {
     "hook.py": frozenset({("recall", "caller_admission")}),
 }

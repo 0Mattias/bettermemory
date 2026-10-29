@@ -923,10 +923,11 @@ turn's newest assistant text after its prompt, else none; the row
 carries `prompt_id`, `rule` and `reply_source` (`payload`, `tail`, or
 `interrupted` for a turn the owner interrupted, which the next Stop
 audits from the previous audit's row on).
-`recall.py` is the recall surface, the session brief and
-the prompt recall with their per-session cooldown (`recall_state.py`),
-the caller's admission (`recall_admission.py`) and the brief's ranking
-and render (`recall_brief.py`);
+`recall.py` is the recall surface, the session brief and the prompt
+recall, and re-exports its family: the per-session state and cooldown
+(`recall_state.py`), the caller's admission (`recall_admission.py`),
+the brief's ranking and render (`recall_brief.py`) and the probe both
+hooks run with the Stop's settlement (`recall_settle.py`);
 `standing.py` says what is standing and `in_force.py` what is in force
 at delivery;
 `owner_prompt.py` is the one definition of an owner prompt; `verdict.py`

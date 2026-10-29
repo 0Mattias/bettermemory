@@ -3,10 +3,12 @@
 `recall` imports nothing from `hook`, and `sessions` (the session join
 both of them read) imports neither, at module level, inside a function
 or under `TYPE_CHECKING`: `hook` is the recall surface's CLI shim and
-imports `recall`, never the reverse. `hook` keeps every session-join
+imports `recall`, never the reverse. The modules split out of `recall`
+(ENG-96) are held to the same edges. `hook` keeps every session-join
 name that moved out of it importable under its old path; the probe and
-the settlement are `recall`'s alone. No import cycle runs at module level
-anywhere in the package.
+the settlement live in `recall_settle`, read from `recall`, and `hook`
+binds neither. No import cycle runs at module level anywhere in the
+package.
 
 The graph is every `import` statement under `src/bettermemory`, read with
 `ast`, so an import inside a function body is an edge though the
@@ -31,23 +33,22 @@ from bettermemory import hook, sessions
 PACKAGE = "bettermemory"
 SOURCE = Path(bettermemory.__file__).resolve().parent
 
+#: `recall` and the modules split out of it (ENG-96): `hook` imports them
+#: only inside the functions that call them, and `sessions` never.
+RECALL_FAMILY: tuple[str, ...] = (
+    "bettermemory.recall",
+    "bettermemory.recall_state",
+    "bettermemory.recall_admission",
+    "bettermemory.recall_brief",
+    "bettermemory.recall_settle",
+)
+
 #: The edges that must not exist, of any kind: a module-level import, an
 #: import inside a function, or one under `TYPE_CHECKING`. The modules
-#: split out of `recall` (ENG-96) are held to the same edges as `recall`.
+#: split out of `recall` are held to the same edges as `recall`.
 FORBIDDEN: dict[str, frozenset[str]] = {
-    "bettermemory.recall": frozenset({"bettermemory.hook"}),
-    "bettermemory.recall_state": frozenset({"bettermemory.hook"}),
-    "bettermemory.recall_admission": frozenset({"bettermemory.hook"}),
-    "bettermemory.recall_brief": frozenset({"bettermemory.hook"}),
-    "bettermemory.sessions": frozenset(
-        {
-            "bettermemory.recall",
-            "bettermemory.recall_state",
-            "bettermemory.recall_admission",
-            "bettermemory.recall_brief",
-            "bettermemory.hook",
-        }
-    ),
+    **{module: frozenset({"bettermemory.hook"}) for module in RECALL_FAMILY},
+    "bettermemory.sessions": frozenset({*RECALL_FAMILY, "bettermemory.hook"}),
 }
 
 #: The module-level import cycles the package holds, each as the sorted
@@ -58,7 +59,8 @@ KNOWN_CYCLES: frozenset[tuple[str, ...]] = frozenset()
 
 #: Every name that moved out of `hook` and stays importable from it, by
 #: the module that holds it now. The probe and the settlement moved to
-#: `recall` with no re-export (`test_the_seams_that_left_hook_are_gone`).
+#: `recall_settle`, read from `recall`, with no re-export from `hook`
+#: (`test_the_seams_that_left_hook_are_gone`).
 MOVED_FROM_HOOK: dict[str, tuple[str, ...]] = {
     "bettermemory.sessions": (
         "_OUT_OF_PROCESS_TRIGGERS",
@@ -274,12 +276,18 @@ def test_the_walk_tells_when_an_import_runs() -> None:
 def test_the_graph_holds_the_edges_the_shim_is_built_on(edges: list[Edge]) -> None:
     """Premise, on the package itself: `hook` and `recall` import
     `sessions` at module level, and `hook` imports `recall` only where it
-    does not run on import, so the assertions below read a real graph."""
+    does not run on import and no module of the recall family at module
+    level, so the assertions below read a real graph."""
     kinds = {(edge.source, edge.target, edge.module_level) for edge in edges}
     assert ("bettermemory.hook", "bettermemory.sessions", True) in kinds
     assert ("bettermemory.recall", "bettermemory.sessions", True) in kinds
     assert ("bettermemory.hook", "bettermemory.recall", False) in kinds
-    assert ("bettermemory.hook", "bettermemory.recall", True) not in kinds
+    on_import = sorted(
+        target
+        for source, target, module_level in kinds
+        if source == "bettermemory.hook" and target in RECALL_FAMILY and module_level
+    )
+    assert on_import == [], on_import
 
 
 def test_recall_and_sessions_do_not_import_the_hook_shim(edges: list[Edge]) -> None:
@@ -297,16 +305,21 @@ def test_recall_and_sessions_do_not_import_the_hook_shim(edges: list[Edge]) -> N
     ("module", "absent"),
     [
         ("bettermemory.recall", ("bettermemory.hook",)),
-        ("bettermemory.sessions", ("bettermemory.recall", "bettermemory.hook")),
-        ("bettermemory.hook", ("bettermemory.recall",)),
+        *(
+            (child, ("bettermemory.hook", "bettermemory.recall"))
+            for child in RECALL_FAMILY[1:]
+        ),
+        ("bettermemory.sessions", (*RECALL_FAMILY, "bettermemory.hook")),
+        ("bettermemory.hook", RECALL_FAMILY),
     ],
 )
 def test_importing_a_module_loads_none_of_the_others(
     module: str, absent: tuple[str, ...]
 ) -> None:
-    """In a fresh interpreter: `recall` loads no `hook`, `sessions` loads
-    neither, and `hook` loads no `recall`, which it imports only inside
-    the functions that call it."""
+    """In a fresh interpreter: `recall` loads no `hook`, no module split
+    out of it loads `hook` or `recall`, `sessions` loads none of them,
+    and `hook` loads none of the recall family, which it imports only
+    inside the functions that call it."""
     code = (
         "import sys\n"
         f"import {module}\n"
@@ -361,9 +374,9 @@ def test_every_moved_name_is_importable_from_hook(home: str, name: str) -> None:
 def test_the_seams_that_left_hook_are_gone(name: str) -> None:
     """The Stop and the recall read the caller's origin through
     `origin.capture_caller` and run the probe and the interrupted-turn
-    settlement in `recall`, which `hook` imports inside the functions
-    that call them, so `hook` binds none of these four names: a test that
-    patches one on `hook` fails at the patch instead of patching a name
-    nothing reads."""
+    settlement from `recall_settle`, which `hook` reads through `recall`
+    inside the functions that call them, so `hook` binds none of these
+    four names: a test that patches one on `hook` fails at the patch
+    instead of patching a name nothing reads."""
     with pytest.raises(AttributeError, match=f"no attribute {name!r}"):
         getattr(hook, name)
