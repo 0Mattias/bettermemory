@@ -924,7 +924,8 @@ carries `prompt_id`, `rule` and `reply_source` (`payload`, `tail`, or
 `interrupted` for a turn the owner interrupted, which the next Stop
 audits from the previous audit's row on).
 `recall.py` is the recall surface, the session brief and
-the prompt recall with their per-session cooldown (`recall_state.py`);
+the prompt recall with their per-session cooldown (`recall_state.py`)
+and the caller's admission (`recall_admission.py`);
 `standing.py` says what is standing and `in_force.py` what is in force
 at delivery;
 `owner_prompt.py` is the one definition of an owner prompt; `verdict.py`

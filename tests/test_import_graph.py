@@ -37,10 +37,12 @@ SOURCE = Path(bettermemory.__file__).resolve().parent
 FORBIDDEN: dict[str, frozenset[str]] = {
     "bettermemory.recall": frozenset({"bettermemory.hook"}),
     "bettermemory.recall_state": frozenset({"bettermemory.hook"}),
+    "bettermemory.recall_admission": frozenset({"bettermemory.hook"}),
     "bettermemory.sessions": frozenset(
         {
             "bettermemory.recall",
             "bettermemory.recall_state",
+            "bettermemory.recall_admission",
             "bettermemory.hook",
         }
     ),
