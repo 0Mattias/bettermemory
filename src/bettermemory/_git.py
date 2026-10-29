@@ -174,7 +174,12 @@ def run_git(
             env=_environment(),
         )
     except FileNotFoundError as exc:
-        log.warning("git binary not found on PATH: %s", exc)
+        # On POSIX the spawn raises the same error for a working directory
+        # that is not there; Windows reports that as another OSError, below.
+        if cwd is not None and not os.path.isdir(cwd):
+            log.warning("git cannot run in %s: the directory does not exist", cwd)
+        else:
+            log.warning("git binary not found on PATH: %s", exc)
     except subprocess.TimeoutExpired:
         log.warning(
             "git %s timed out after %ss in %s", subcommand(args), timeout, where

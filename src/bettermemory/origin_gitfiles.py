@@ -3,6 +3,7 @@
 The config reader (`_config_variable_names`, memoised per file state in
 `_config_facts`), the root spelled as git prints it (`_spelled_as_git`),
 the root of a repository git refused to read (`refused_worktree_root`),
+the paths the capture has warned are no directory (`first_not_a_directory`),
 the decoder of git's C-quoted patch headers, the index's ``.gitmodules``
 entry, and the file signatures the drift memos key on
 (`attribute_files_signature`, `gitattributes_signature`,
@@ -270,6 +271,35 @@ def refused_worktree_root(cwd: Path) -> tuple[str | None, bool]:
         return str(spelled.resolve()), True
     except OSError:
         return str(spelled), True
+
+
+# The paths `first_not_a_directory` has seen, oldest first. An indeterminate
+# capture is never kept, so a declared workspace this host does not hold is
+# probed on every hook call; `origin` warns of it once per path per process
+# and logs at DEBUG after (review Ob, G7). Bounded at `_NOT_A_DIRECTORY_CAP`
+# paths; registered with `_caches`.
+_NOT_A_DIRECTORY: dict[str, None] = {}
+_NOT_A_DIRECTORY_CAP = 64
+_NOT_A_DIRECTORY_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_not_a_directory() -> None:
+    with _NOT_A_DIRECTORY_LOCK:
+        _NOT_A_DIRECTORY.clear()
+
+
+def first_not_a_directory(path: Path) -> bool:
+    """Whether `path` is reported as no directory this host holds for the
+    first time in this process (among the last `_NOT_A_DIRECTORY_CAP`
+    paths reported)."""
+    with _NOT_A_DIRECTORY_LOCK:
+        if str(path) in _NOT_A_DIRECTORY:
+            return False
+        _NOT_A_DIRECTORY[str(path)] = None
+        if len(_NOT_A_DIRECTORY) > _NOT_A_DIRECTORY_CAP:
+            del _NOT_A_DIRECTORY[next(iter(_NOT_A_DIRECTORY))]
+        return True
 
 
 # ---------------------------------------------------------------------------

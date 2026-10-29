@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import ast
+import logging
 import os
 import re
 import shutil
@@ -68,6 +69,78 @@ def test_capture_when_cwd_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
     assert origin.repo is None
     assert origin.branch is None
     assert origin.worktree_root is None
+
+
+def test_capture_of_a_declared_workspace_that_does_not_exist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ENG-185: a declared workspace this host does not hold was handed to
+    git, whose spawn failed with the FileNotFoundError a missing binary
+    raises, and the log said "git binary not found on PATH". The capture
+    now stats the directory first: no process, an indeterminate origin
+    counted as a failure as the spawn was, and a warning naming the
+    directory, once per directory per process and at DEBUG after (review
+    Ob, G7), since an indeterminate capture is never kept."""
+    from bettermemory import _git as git_runner
+
+    missing = tmp_path / "missing"
+    monkeypatch.setenv("BETTERMEMORY_WORKSPACE", str(missing))
+    spawned: list[Any] = []
+    real_run = subprocess.run
+
+    def counting(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        spawned.append(argv)
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", counting)
+    failed = git_runner.failed_calls()
+    with caplog.at_level(logging.INFO, logger="bettermemory"):
+        origin = capture()
+    assert origin.cwd == str(missing.resolve())
+    assert origin.worktree_root is None and origin.repo is None
+    assert origin.git_indeterminate
+    assert git_runner.failed_calls() == failed + 1
+    assert spawned == []
+    assert "binary not found" not in caplog.text
+    said = (
+        f"{missing.resolve()} is indeterminate: it is not a directory this host holds"
+    )
+    assert [r.levelno for r in caplog.records if said in r.getMessage()] == [
+        logging.WARNING
+    ]
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="bettermemory"):
+        assert capture().git_indeterminate
+    assert git_runner.failed_calls() == failed + 2
+    assert spawned == []
+    assert [r.levelno for r in caplog.records if said in r.getMessage()] == [
+        logging.DEBUG
+    ], "the second capture probes again and does not warn again"
+    other = tmp_path / "other"
+    monkeypatch.setenv("BETTERMEMORY_WORKSPACE", str(other))
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="bettermemory"):
+        assert capture().git_indeterminate
+    assert [
+        r.levelno for r in caplog.records if str(other.resolve()) in r.getMessage()
+    ] == [logging.WARNING], "another directory warns once of its own"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not on PATH")
+def test_git_in_a_directory_that_does_not_exist_is_not_a_missing_binary(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ENG-185: the runner, for every caller, names a working directory
+    that is not there instead of reporting git's binary missing."""
+    from bettermemory import _git as git_runner
+
+    missing = tmp_path / "missing"
+    with caplog.at_level(logging.INFO, logger="bettermemory"):
+        assert git_runner.run_git(("rev-parse", "HEAD"), cwd=missing) is None
+    assert "binary not found" not in caplog.text
+    assert str(missing) in caplog.text
 
 
 # ---------------------------------------------------------------------------

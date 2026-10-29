@@ -73,6 +73,7 @@ from .origin_gitfiles import (
     attribute_files_signature,
     capture_files,
     directories_held,
+    first_not_a_directory,
     gitattributes_signature,
     refused_worktree_root,
     walk_files_signature,
@@ -956,7 +957,26 @@ def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool, str | None]:
     either ("not a git repository") is the measured no this probe has
     always reported as None. `refusal` is the first line git wrote when
     it refused, None otherwise.
+
+    A path that is not a directory here (a declared workspace this host
+    does not hold, a directory removed under a hook, a file) is not
+    probed: git cannot run in it, the spawn's FileNotFoundError read as a
+    missing git binary, and the answer is indeterminate, counted as a
+    failure as the spawn was, with a warning that names the path, once
+    per path per process and at DEBUG after (`first_not_a_directory`).
     """
+    try:
+        missing = not cwd.is_dir()
+    except OSError:
+        missing = False
+    if missing:
+        log.log(
+            logging.WARNING if first_not_a_directory(cwd) else logging.DEBUG,
+            "the origin of %s is indeterminate: it is not a directory this host holds",
+            cwd,
+        )
+        _git_runner.note_failed()
+        return None, True, None
     result = _git_result(cwd, "rev-parse", "--show-toplevel")
     if result is None:
         return None, True, None

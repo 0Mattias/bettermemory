@@ -656,6 +656,18 @@ the candidates' testing.
   second's pop raised `KeyError` out of `capture`. The check, the
   eviction and the store are now one step under a lock, and the eviction
   tolerates a key already gone. (`src/bettermemory/origin.py`)
+- **A declared workspace that does not exist is named as such.** A
+  workspace declared through `BETTERMEMORY_WORKSPACE`, the
+  `x-bettermemory-workspace` header or a client's root that this host
+  does not hold was handed to git, whose spawn failed with the error a
+  missing binary raises, and the log said "git binary not found on
+  PATH". The capture now stats the directory first and, where it is not
+  a directory this host holds, runs no process: the origin is
+  indeterminate, counted as a failure as the spawn was, and the warning
+  names the path, once per path per process (every hook call probes it
+  again, so later ones log at DEBUG). The runner names a missing working
+  directory the same way for every caller. (`src/bettermemory/origin.py`,
+  `src/bettermemory/origin_gitfiles.py`, `src/bettermemory/_git.py`)
 
 #### Known limitations
 
