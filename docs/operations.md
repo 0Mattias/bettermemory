@@ -432,7 +432,11 @@ refuse it all the same): a store file with a bundle's
 `manifest.json` beside it, through a symbolic link too, is refused
 before it is opened, with a message that says to copy `memory.sqlite`
 out of the bundle to a directory of its own first and point the command
-at the copy. A `manifest.json` counts when it names the format
+at the copy. A store file with other names (hard links) is refused the
+same way, since one of them may be a bundle's snapshot: one named on
+the command line, and one that `BETTERMEMORY_DIR` or `[storage]
+directory` reaches, where the message says to point the directory at a
+copy. A `manifest.json` counts when it names the format
 `bettermemory.backup` or does not parse, so another tool's file of that
 name beside a store changes nothing. `backup create` refuses a bundle's
 store too (`BETTERMEMORY_DIR` naming a bundle), with or without `--out`,

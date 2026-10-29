@@ -2202,6 +2202,22 @@ follows the candidates' testing.
   `src/bettermemory/store.py`, `src/bettermemory/backup.py`,
   `src/bettermemory/cli/backup_cmd.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_lock.py`)
+- **A store reached through a hard link to a bundle's snapshot is
+  refused.** `backup.bundle_refusal` checked a file's link count only for
+  a file named on the command line, so `BETTERMEMORY_DIR` or `[storage]
+  directory` naming a directory whose `memory.sqlite` is a hard link to a
+  bundle's snapshot opened the snapshot in place, and a writing open
+  changed its bytes and failed the bundle's signed hash. The link count
+  is now checked for the store the configuration resolves too, so every
+  command that refuses a bundle's store (the writing commands, `serve`,
+  the shim, `up`, the hooks, `export`, the read-only commands, `backup
+  create`) refuses such a file with its own exit code: `<path> has other
+  names (hard links), and opening it would change the file under each of
+  them, a backup bundle's snapshot among them: copy memory.sqlite to a
+  directory of its own first and point BETTERMEMORY_DIR or `[storage]
+  directory` at that directory`. A store file the user hard-linked on
+  purpose is refused the same way. (`src/bettermemory/backup.py`,
+  `SECURITY.md`, `docs/operations.md`, `tests/test_bundle_guard.py`)
 
 #### Known limitations
 

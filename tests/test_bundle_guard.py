@@ -326,6 +326,68 @@ def test_a_named_file_with_other_names_is_refused(
     _assert_untouched(bundle, before)
 
 
+@pytest.fixture
+def linked_dir(bundle: Path, tmp_path: Path) -> Path:
+    """A directory of its own whose `memory.sqlite` is a hard link to the
+    bundle's snapshot: no manifest beside it, the bundle's bytes under it."""
+    linked = tmp_path / "linked"
+    linked.mkdir()
+    try:
+        (linked / STORE_FILENAME).hardlink_to(bundle / STORE_FILENAME)
+    except OSError:
+        pytest.skip("this account cannot create the link")
+    return linked
+
+
+@pytest.mark.parametrize(
+    ("argv", "code"),
+    [
+        (["export"], 2),
+        (["membership", "export"], 2),
+        (["health"], 1),
+        (["episodes", "list"], 1),
+        (["serve"], 1),
+        (["log", "verify"], 1),
+        (["stats"], 2),
+        (["backup", "create"], 1),
+        (["session-start", "--session-id", "s1"], 0),
+    ],
+)
+def test_a_configured_store_that_is_a_hard_link_to_a_bundle_is_refused(
+    bundle: Path,
+    linked_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    code: int,
+) -> None:
+    """`BETTERMEMORY_DIR` (as `[storage] directory`, through the same
+    resolution) names a directory whose store file is a hard link to a
+    bundle's snapshot: every command refuses it, naming the path and
+    saying to point the directory at a copy, and the bundle verifies."""
+    before = _tree(bundle)
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(linked_dir))
+    assert _run_cli(argv, monkeypatch) == code
+    err = capsys.readouterr().err
+    assert f"{linked_dir / STORE_FILENAME} has other names (hard links)" in err
+    assert "point BETTERMEMORY_DIR or `[storage] directory` at that directory" in err
+    _assert_untouched(bundle, before)
+
+
+def test_the_refusal_names_a_hard_linked_store_file_resolved_from_the_config(
+    bundle: Path, linked_dir: Path
+) -> None:
+    link = linked_dir / STORE_FILENAME
+    refusal = bundle_refusal(link)
+    assert refusal is not None and refusal.startswith(f"{link} has other names")
+    named = bundle_refusal(link, named=True)
+    assert named is not None and "point the command at the copy" in named
+    # A copy has one name, and is opened as before.
+    link.unlink()
+    link.write_bytes((bundle / STORE_FILENAME).read_bytes())
+    assert bundle_refusal(link) is None
+
+
 def test_migrate_v8_refuses_a_bundle_as_its_target(
     bundle: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -668,8 +668,7 @@ def bundle_manifest_beside(path: Path) -> Path | None:
     as spelled and resolved, so a symlink to a bundle's file, or a path
     through a symlink to the bundle directory, is caught. A hard link is
     another name for the file in a directory of its own, which no path
-    check sees; a caller that opens a file it was handed checks the link
-    count for that (`bundle_refusal` with ``named``).
+    check sees; `bundle_refusal` checks the link count for that.
 
     ``manifest.json`` is a common name, and the writing openers refuse on
     this too (`cli._common.cli_context`, the daemon, `serve`), so a store
@@ -723,12 +722,15 @@ def bundle_refusal(path: Path, *, named: bool = False) -> str | None:
     each with its own exit code for a store it cannot read: opening the
     file, even read-only through `Store.open`, switches the snapshot to
     WAL and the bundle then fails its signed hash, and a writing opener
-    would also add rows to it. `named` is for a file the user named on
-    the command line: one with other names (hard links) is refused too,
-    since it may be a bundle's snapshot under a name no manifest sits
-    beside (`has_other_names`). Each message says to copy the file out
-    first: a copy has one name and no manifest beside it, and opening it
-    changes nothing in the bundle."""
+    would also add rows to it. A file with other names (hard links) is
+    refused too, since it may be a bundle's snapshot under a name no
+    manifest sits beside (`has_other_names`): a file the user named on
+    the command line (`named`) and the store file the configuration
+    resolves (`BETTERMEMORY_DIR` or ``[storage] directory`` naming a
+    directory that holds such a link) alike; `named` only chooses which
+    to point at the copy. Each message says to copy the file out first: a
+    copy has one name and no manifest beside it, and opening it changes
+    nothing in the bundle."""
     manifest = bundle_manifest_beside(path)
     if manifest is not None:
         return (
@@ -738,12 +740,17 @@ def bundle_refusal(path: Path, *, named: bool = False) -> str | None:
             "point the command at the copy (`bettermemory backup verify` checks "
             "a bundle where it is)"
         )
-    if named and has_other_names(path):
+    if has_other_names(path):
+        target = (
+            "the command at the copy"
+            if named
+            else "BETTERMEMORY_DIR or `[storage] directory` at that directory"
+        )
         return (
             f"{path} has other names (hard links), and opening it would change "
             "the file under each of them, a backup bundle's snapshot among "
             f"them: copy {path.name} to a directory of its own first and point "
-            "the command at the copy"
+            f"{target}"
         )
     return None
 
