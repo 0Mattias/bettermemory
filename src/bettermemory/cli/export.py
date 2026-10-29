@@ -72,9 +72,9 @@ def add_subparser(
             "silently. Under --no-tombstones the tombstone half is never "
             "read, so --strict cannot fire on it — the export records null "
             "there rather than a zero nobody checked. The store loads every "
-            "row it holds, so this fires only on a row the loader refused; "
-            "`bettermemory log verify` names such a row. A dropped "
-            "tombstone is reported here or not at all."
+            "row it holds, so this fires only when a `memory_restore` lands "
+            "between the export's count of the tombstones and its read of "
+            "them; run the export again."
         ),
     )
     parser.add_argument(
@@ -242,30 +242,10 @@ def _export_active(
     store: Store, scope_set: set[str] | None
 ) -> tuple[list[Memory], int]:
     """Load the active memories and filter them by scope; returns them and the skipped count."""
-    # Count BEFORE the load, not after, and the order is the whole
-    # protection. These are two walks of a directory a live server may be
-    # writing to; whichever walk runs SECOND sees the newer state, and the
-    # delta only accuses the loader when the file walk is the larger
-    # number. Counting after the load meant a `memory_write` landing
-    # between them was indistinguishable from a file the loader refused —
-    # a backup reporting itself short, and under --strict a red cron job,
-    # on a store that was never damaged. Counting first inverts that: a
-    # memory written in the gap is loaded but never counted, so the delta
-    # goes negative and `max(0, …)` reads it as the non-event it is.
-    #
-    # It does not make the pair atomic. A `memory_remove` in the gap moves
-    # a counted file to `.tombstones/` before the load sees it and still
-    # over-reports by one — the residual race, and the rarer of the two by
-    # a wide margin (writes are a routine reflex; removals are curation).
-    # `bettermemory doctor` re-reads and names files rather than
-    # subtracting counts, which is why the warning `_warn_skipped_files`
-    # prints sends the reader there instead of asserting which file is at
-    # fault.
+    # The store's reader returns every row its table holds or raises, so
+    # no active record is left out: `skipped_active_files` stays in the
+    # document because format_version 1 froze it, and is always 0.
     active = store.load_all()
-    # Count the drop BEFORE the scope filter. A file the reader could not
-    # parse has no scopes to test, so it can only be measured against the
-    # unfiltered read — subtracting after the filter would blame the scope
-    # filter for every out-of-scope memory.
     skipped_active_files = 0
     if scope_set is not None:
         active = [m for m in active if scope_set.intersection(m.scopes)]
@@ -276,13 +256,10 @@ def _export_tombstones(
     store: Store, scope_set: set[str] | None
 ) -> tuple[list[TombstonedMemory], int]:
     """Count and load the tombstones, then filter them by scope; returns them and the skipped count."""
-    # Same count-then-load ordering as the active half,
-    # `_export_active`, for the same reason. The write that lands in
-    # this gap is a `memory_remove` (it creates the tombstone), and
-    # the removal that lands in it is a `memory_restore`; both are
-    # rarer here than a `memory_write` is there, but the ordering
-    # costs nothing and keeping the two halves symmetrical is what
-    # stops one of them from being reasoned about again from scratch.
+    # Count, then read. A `memory_restore` that lands between the two
+    # takes a counted tombstone back before the read sees it, and the
+    # difference reports it; a `memory_remove` there adds one the count
+    # missed, which `max(0, …)` reads as the non-event it is.
     tombstone_files_before = store.count_tombstones()
     tombstoned = store.load_tombstones()
     skipped_tombstone_files = max(0, tombstone_files_before - len(tombstoned))
@@ -294,49 +271,21 @@ def _export_tombstones(
 def _warn_skipped_files(
     skipped_active_files: int, skipped_tombstone_files: int | None, directory: Path
 ) -> int:
-    """Warn on stderr about the files the loader skipped; returns how many it skipped."""
+    """Warn on stderr about the tombstones that changed while the export read them; returns how many rows are not in the export."""
     # Warn before writing, not after: an export that then fails on a bad
     # --output path has still already told the user their store is short.
     # The document is written either way — a partial backup beats none —
     # so this is a warning, and only --strict escalates it to an exit code.
     dropped = skipped_active_files + (skipped_tombstone_files or 0)
-    if dropped:
-        parts = []
-        if skipped_active_files:
-            parts.append(f"{skipped_active_files} active memory file(s)")
-        if skipped_tombstone_files:
-            parts.append(f"{skipped_tombstone_files} tombstone file(s)")
-        # Where to go next, branched on which half dropped, because the
-        # two have different answers: doctor re-reads the active files and
-        # names them, and no check anywhere names a skipped tombstone. Its
-        # `auto_memory_stranded` check does READ `.tombstones/` (via
-        # `store.load_tombstones`, for ingest dedup), but that reader
-        # swallows per-file failures, so a dropped tombstone shows up there
-        # only as one more source file called stranded — never as itself.
-        # A flat "run doctor" sent a user whose tombstone dropped to a
-        # command that cannot name the file they need.
-        if skipped_active_files and skipped_tombstone_files:
-            pointer = (
-                "Run `bettermemory log verify` to see the rows by id; a "
-                "tombstone row the loader refused is named the same way."
-            )
-        elif skipped_active_files:
-            pointer = "Run `bettermemory log verify` to see the rows by id."
-        else:
-            pointer = (
-                "No check names a skipped tombstone, so `doctor` will "
-                "not report these — inspect `.tombstones/` by hand."
-            )
-        # Doctor's claim for the same delta: the loader skipped these, and
-        # the two causes a count cannot tell apart are both named rather
-        # than collapsed into "could not be read". Telling a user their
-        # file is corrupt when it merely came from a newer install sends
-        # them editing frontmatter that is already correct.
+    if skipped_tombstone_files:
+        # The one way a row is left out (the active half never drops one):
+        # the tombstones changed while the export read them.
         sys.stderr.write(
-            f"WARNING: {' and '.join(parts)} in {directory} were skipped by "
-            f"the loader (malformed frontmatter, or a schema_version newer "
-            f"than this install) and are NOT in this export. The export is a "
-            f"partial capture of the store, not a complete backup. {pointer}\n"
+            f"WARNING: {skipped_tombstone_files} tombstone(s) of the store at "
+            f"{directory / STORE_FILENAME} changed while the export read them (a restore landed "
+            "between its count and its read) and are NOT in this export. The "
+            "export is a partial capture of the store, not a complete backup: "
+            "run it again.\n"
         )
     return dropped
 

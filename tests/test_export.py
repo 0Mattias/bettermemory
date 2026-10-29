@@ -104,7 +104,7 @@ def test_export_no_tombstones_reports_null_not_zero_for_that_half(
     assert parsed["skipped_tombstone_files"] is None
     assert parsed["skipped_active_files"] == 0
     # The unread tombstone half must not be described on stderr.
-    assert "tombstone file(s)" not in captured.err
+    assert "WARNING" not in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +131,45 @@ def test_export_strict_on_a_clean_store_exits_zero(
     assert written["skipped_active_files"] == 0
     assert written["skipped_tombstone_files"] == 0
     assert "WARNING" not in capsys.readouterr().err
+
+
+def test_export_strict_says_a_tombstone_changed_while_it_read_them(
+    populated_store: tuple[Path, Store],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The one way a row is left out: a `memory_restore` that lands
+    between the export's count of the tombstones and its read of them.
+    The count is one more than the read returns, the document reports
+    it, stderr says the tombstones changed and to run the export again
+    (no doctor, no `.tombstones/`, no loader), and --strict exits 1 after
+    the document is written."""
+    counted = Store.count_tombstones
+    monkeypatch.setattr(Store, "count_tombstones", lambda self: counted(self) + 1)
+    out_path = tmp_path / "backup.json"
+    parser = argparse.ArgumentParser(prog="bettermemory")
+    sub = parser.add_subparsers(dest="cmd")
+    export_parser = export_add_subparser(sub)
+    args = parser.parse_args(["export", "--strict", "-o", str(out_path)])
+
+    with pytest.raises(SystemExit) as exited:
+        export_run(args, sub_parser=export_parser)
+
+    assert exited.value.code == 1
+    written = json.loads(out_path.read_text(encoding="utf-8"))
+    assert written["skipped_active_files"] == 0
+    assert written["skipped_tombstone_files"] == 1
+    assert len(written["tombstoned_memories"]) == 1
+    err = capsys.readouterr().err
+    warnings = [line for line in err.splitlines() if line.startswith("WARNING")]
+    assert len(warnings) == 1
+    (warning,) = warnings
+    assert warning.startswith("WARNING: 1 tombstone(s) of the store at ")
+    assert "changed while the export read them" in warning
+    assert warning.endswith("not a complete backup: run it again.")
+    for stale in ("doctor", ".tombstones", "loader", "frontmatter", "active"):
+        assert stale not in warning
 
 
 # ---------------------------------------------------------------------------
