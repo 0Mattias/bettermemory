@@ -1207,7 +1207,8 @@ which `backup unlock` removes. `audit_export.py` and `anchor.py` are
 checks (`cli/log_cmd.py`). `history.py` is `memory history`
 (`cli/memory_move_cmd.py`), and `cli/stats_cmd.py` the usage report.
 `doctor.py` is `bettermemory doctor` (`cli/doctor_cmd.py`), with the
-checks' statuses, findings and verdicts in `doctor_model.py`. `posture.py`
+checks' statuses, findings and verdicts in `doctor_model.py` and the
+store, restore and index checks in `doctor_store.py`. `posture.py`
 (with its last check, Claude Code's sandbox settings, and the findings'
 type in `posture_sandbox.py`), `sandbox_settings.py` and `secret_scan.py`
 are `security audit`, `security sandbox` and `security scan`
