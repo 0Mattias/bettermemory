@@ -212,9 +212,9 @@ def _patch_sites(path: Path) -> list[tuple[int, str, str]]:
             isinstance(second, ast.Constant) and isinstance(second.value, str)
         ):
             continue
-        module = _module_of(parts, bound)
-        if module is not None:
-            sites.append((node.lineno, module, second.value))
+        target = _module_of(parts, bound)
+        if target is not None:
+            sites.append((node.lineno, target, second.value))
     return sites
 
 
