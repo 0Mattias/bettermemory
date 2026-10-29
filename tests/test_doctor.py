@@ -678,6 +678,18 @@ def test_removed_keys_and_loader_fallbacks_warn(env: Env) -> None:
     assert "removed key" in check.summary
 
 
+def test_a_hook_command_is_one_whose_word_the_hook_client_routes() -> None:
+    """Doctor's hook check reads the words from the hook client, so a word
+    `_entry` routes there is a hook to doctor and nothing else is."""
+    from bettermemory._daemon_client import HOOK_WORDS
+
+    assert HOOK_WORDS >= {"hook", "session-start", "audit-turn", "prompt-recall"}
+    for word in HOOK_WORDS:
+        assert doctor._hook_event_word(["bettermemory", word, "stop"])
+    assert not doctor._hook_event_word(["bettermemory", "serve"])
+    assert not doctor._hook_event_word(["hook"])
+
+
 def test_removed_keys_reads_the_loaders_registries() -> None:
     assert doctor.removed_keys({}) == []
     assert doctor.removed_keys({"behavior": "not a table"}) == []

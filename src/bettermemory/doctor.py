@@ -165,9 +165,6 @@ CLAUDE_HOOK_EVENTS: dict[str, str] = {
 #: The plugin's name in Claude Code's `enabledPlugins` keys
 #: (`<plugin>@<marketplace>`).
 PLUGIN_NAME = "bettermemory"
-#: The words after the binary that make a command a hook: `hook <event>`,
-#: and the three 8.x aliases `_daemon_client.HOOK_WORDS` still routes.
-_HOOK_WORDS = frozenset({"hook", "session-start", "audit-turn", "prompt-recall"})
 
 _PLUGIN_INSTALL = "/plugin install bettermemory@bettermemory"
 _BUG_REMEDY = (
@@ -1269,7 +1266,13 @@ def _hooks_copy() -> str:
 
 
 def _hook_event_word(words: Sequence[str]) -> bool:
-    return any(word in _HOOK_WORDS for word in words[1:])
+    """Whether a word after the binary makes the command a hook: `hook
+    <event>` or one of the three 8.x aliases, the words `_entry` routes to
+    the hook client (`_daemon_client.HOOK_WORDS`, read from there so the
+    two never name different sets)."""
+    from ._daemon_client import HOOK_WORDS
+
+    return any(word in HOOK_WORDS for word in words[1:])
 
 
 def _hook_commands(hooks: object) -> Iterator[tuple[str, str]]:
