@@ -614,22 +614,16 @@ def _maybe_write_session_floor(
     homed to the caller's checkout (`Caller.home`, design 3.6) in the
     record's own transaction.
 
-    Idempotent: a session that already has at least one episode on
-    disk (floor or real) skips the write. The check uses
-    `list_by_session(recorder.session_id)` — a cheap directory walk
-    bounded by the per-session episode count (usually 0-10). Multi-MCP
-    racing on the same session_id is serialised by the per-session
-    flock inside `EpisodeStore.write_floor` (delegated to
-    `_persist_episode`); two handoffs in the same process landing
-    concurrently both check empty, both attempt the write, but the
-    flock serialises them — the second one's `list_by_session` under
-    the flock would see the first's floor, BUT we don't re-check
-    under the flock because the cost of a rare duplicate floor (one
-    extra small file in the session_dir, 100+ bytes) is far less than
-    the latency of holding the flock across a directory walk on
-    every handoff. The duplicate is benign: `episode_handoff`'s emit
-    step filters both out, and the TTL prune handles cleanup at the
-    30-day horizon.
+    Idempotent: a session that already has at least one episode
+    (floor or real) skips the write. The check reads the session's
+    rows (`Store.episodes_by_session`), and the floor is written in
+    its own transaction (`Store.batch`), not under the check's: two
+    handoffs of one session landing concurrently can both read none
+    and both write a floor. (8.x checked a session directory and
+    wrote under a per-session flock in `EpisodeStore.write_floor`,
+    and did not re-check under it either.) The duplicate is benign:
+    `episode_handoff`'s emit step filters both out, and the TTL prune handles
+    cleanup at the 30-day horizon.
 
     The handoff handler at entry calls this UNCONDITIONALLY; the
     decision-to-write happens here so the call site stays a one-
@@ -637,7 +631,7 @@ def _maybe_write_session_floor(
     the recorder's session_id) is enforced in one place.
     """
     session_id = deps.recorder.session_for_request()
-    # Cheap existence check. `list_by_session` returns oldest-first
+    # Cheap existence check. `episodes_by_session` returns oldest-first
     # episodes; we only need to know whether any exists.
     try:
         existing = deps.store.episodes_by_session(session_id)

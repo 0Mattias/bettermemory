@@ -580,7 +580,8 @@ class MemoryHit(BaseModel):
 
 
 class MemorySummary(BaseModel):
-    """One row from memory_list — body stripped, just a one-line summary."""
+    """One row of `Store.list_summaries`, which 8.x's memory_list served —
+    body stripped, just a one-line summary."""
 
     id: str
     scopes: list[str]
@@ -723,12 +724,11 @@ class SimilarHit(BaseModel):
 # Episodes are NOT durable facts. They exist for journal-shaped writes the
 # durability gate (durability.TRANSIENT_PHRASE_MARKERS) explicitly rejects on
 # memory_write: loop-iteration state, "what we tried", run-local takeaways.
-# Stored at `<root>/episodes/<session_id>/<ulid>.md`, TTL-pruned to keep the
-# directory bounded (default 30 days). Excluded from memory_search,
-# memory_health, memory_list — episodes are a sibling primitive, not a tier
-# of memory. A useful episodic takeaway can be *promoted* into a durable
-# memory via `episode_promote`, which routes through `memory_write` so the
-# durability gate fires as normal.
+# Stored as rows of the store's `episodes` table, pruned by session past the
+# TTL (default 30 days). Excluded from memory_search and the health report's
+# memory buckets — episodes are a sibling primitive, not a tier of memory.
+# (8.x could *promote* an episodic takeaway into a durable memory through
+# `episode_promote`; 9.x has no promote.)
 
 
 class Episode(BaseModel):
@@ -768,8 +768,8 @@ class Episode(BaseModel):
       When a coordinator fans out N parallel sub-agents, each sub-agent
       stamps its episodes with the coordinator's id here; the
       coordinator then gathers every sub-agent's takeaways across their
-      individual session directories via `EpisodeStore.list_by_swarm`
-      / `episode_search(swarm_id=…)`. Distinct from the single-chain
+      sessions by it (`Store.episodes_by_swarm`; 8.x's
+      `episode_search(swarm_id=…)`). Distinct from the single-chain
       `episode_handoff` predecessor link (1:1, temporal "my previous
       self") — a swarm is an N:1 cohort. Optional/additive like
       `is_floor`: legacy episodes load as None and the writer only

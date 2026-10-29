@@ -647,8 +647,9 @@ class _StatsAccumulator:
     # `list` events are DELIBERATELY absent: `retrieval_count` is the
     # ranked-delivery basis the cold-endorsement floor and the
     # dead-weight rule read (a memory the RANKER keeps surfacing that
-    # the model never applies), and a `memory_list` browse of an entire
-    # scope would mark every row in it retrieved at once. `eval.py`
+    # the model never applies), and a `list` row, an 8.x `memory_list`
+    # browse of an entire scope, would mark every row in it retrieved at
+    # once. `eval.py`
     # keys `list` into its `retrieval_occurrences` rate denominator by
     # design while keeping its own floor basis (`search_delivery_count`)
     # search-only — the two surfaces split the same way, on purpose;

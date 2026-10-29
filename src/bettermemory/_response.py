@@ -730,7 +730,8 @@ class ResponseBuilder:
         *,
         now: datetime,
     ) -> dict[str, Any]:
-        """Serialise a memory_list summary with verification status attached.
+        """Serialise a summary, the row 8.x's memory_list served, with
+        verification status attached.
 
         Same contract as `hit_to_dict`: `now` injected for consistency,
         `verification` carries the actionable signal, raw `last_verified_at`

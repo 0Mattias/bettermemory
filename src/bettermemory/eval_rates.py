@@ -57,9 +57,9 @@ class _EvalWalk:
     # there is no `list` handler at all). Two reasons the bases must
     # match: the recalibrated floor is DERIVED per search delivery
     # ((1-p)^N over search-delivered explicit-endorse odds), and one
-    # `memory_list` call over an N-memory store would otherwise bump
-    # every memory's floor count at once, so the two surfaces would
-    # bucket different memories under the same nominal floor. The
+    # `list` row (an 8.x `memory_list` call) over an N-memory store would
+    # otherwise bump every memory's floor count at once, so the two surfaces
+    # would bucket different memories under the same nominal floor. The
     # `retrieval_occurrences` scalar deliberately keeps its wider
     # search+list+show basis — it is the helped-rate denominator with a
     # recorded baseline, not a floor input.
@@ -122,10 +122,10 @@ def _count_search(
     passes_scope: Callable[[str | None], bool],
 ) -> None:
     """Count one in-window search or list event's deliveries into ``walk``."""
-    # `list` is bundled with `search` because `audit.py` and the
-    # tool-usage map both treat memory_list as a retrieval
-    # surface (the model uses it to browse, the same way it
-    # uses memory_search to query). Keeping these aligned
+    # `list` rows (8.x's memory_list) are bundled with `search`
+    # because `audit.py` and the tool-usage map both treat them as
+    # a retrieval surface (the model used it to browse, the same
+    # way it uses memory_search to query). Keeping these aligned
     # keeps the eval denominator consistent with audit cadence.
     # Legacy-name fallback (`memory_ids` / `hit_ids`) — same
     # discipline as the other event consumers (hook /

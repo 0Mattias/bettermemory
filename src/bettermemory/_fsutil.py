@@ -101,8 +101,9 @@ def ensure_owner_only_dir(path: Path, *, parents: bool = False) -> None:
     """Create `path` as an owner-only directory, and heal one that is not.
 
     The single definition of "a directory this project owns", shared by
-    `Store.ensure` and `EpisodeStore`, because the two drifted apart once and
-    the drift was silent. `Path.mkdir(mode=...)` applies the mode ONLY to the
+    every caller that makes one, because 8.x's `Store.ensure` and
+    `EpisodeStore` drifted apart once and the drift was silent.
+    `Path.mkdir(mode=...)` applies the mode ONLY to the
     leaf it creates: with `parents=True` every intermediate directory is made
     at the caller's umask instead. That is how an episode-first write came to
     leave the memory root at 0o755 while `episodes/` underneath it was 0o700

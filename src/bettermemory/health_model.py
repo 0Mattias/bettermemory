@@ -610,10 +610,11 @@ class ActorSlice:
     event since 7.10.0.
 
     Keyed on `client`, because that is the axis a caller can act on:
-    `memory_search(client=...)` / `memory_list(client=...)` select with
-    it (7.12.0), and `identity.actor_matches` is the single definition
-    both of those read. `client=None` is the `undeclared` bucket — see
-    `ActorSlices.undeclared`, which is this same type.
+    `memory_search(client=...)` selects with it (7.12.0; 8.x's
+    `memory_list(client=...)` did too), and `identity.actor_matches` is
+    the single definition the selection reads. `client=None` is the
+    `undeclared` bucket — see `ActorSlices.undeclared`, which is this same
+    type.
 
     **Exactly one slice per memory.** Unlike `ScopeHealth`, whose counts
     deliberately over-sum (a memory carries many scopes and is counted
@@ -1396,16 +1397,16 @@ class HealthReport:
     # reporting a missing Stop hook as a clean store.
     telemetry_coverage: TelemetryCoverage | None = None
     # Episode-tier volume gauge — `{sessions, episodes, bytes,
-    # prunable_sessions, ttl_days}` for `<root>/episodes/`. NOT a
+    # prunable_sessions, ttl_days}` for the store's episodes. NOT a
     # curation bucket of memory rows and not a hole in the tier
-    # separation: episode CONTENT still never reaches `memory_search`,
-    # `memory_list` or any bucket above. This is the aggregate only.
+    # separation: episode CONTENT still never reaches `memory_search`
+    # or any bucket above. This is the aggregate only.
     #
     # It is here because episode GC is write-triggered.
-    # `EpisodeStore.prune_old_sessions` runs on `episode_write` and on
+    # `Store.prune_episode_sessions` runs on `episode_write` and on
     # `bettermemory episodes prune`, nowhere else — so a read-only loop
-    # (one that calls `episode_handoff` / `episode_search` and never
-    # writes) never collects anything and the journal grows unbounded
+    # (one that calls `episode_handoff` and never `episode_write`)
+    # never collects anything and the journal grows unbounded
     # with no surface reporting it. `prunable_sessions` is that missing
     # report; the rest is the denominator that makes it legible.
     #

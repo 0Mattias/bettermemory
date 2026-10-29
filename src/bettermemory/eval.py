@@ -5,10 +5,10 @@ Three rates the existing event log makes computable today:
 - ``memory_helped_rate`` — fraction of retrieval occurrences that
   produced an attested ``memory_record_use(applied)`` event carrying a
   non-empty ``claim_excerpt``. The denominator is per-event retrieval
-  occurrences across ``memory_search`` / ``memory_list`` / ``memory_show``
-  in the window, counted by memory id — a memory surfaced N times counts
-  N (there is no per-turn dedup; the event schema carries no turn id).
-  Two attestation tiers feed the numerator: model-explicit
+  occurrences across ``memory_search`` / ``memory_show`` (and 8.x's
+  ``memory_list`` rows) in the window, counted by memory id — a memory surfaced
+  N times counts N (there is no per-turn dedup; the event schema carries no
+  turn id). Two attestation tiers feed the numerator: model-explicit
   (the model called ``memory_record_use`` with excerpts) and
   hook-attributed (the Stop hook substring-matched a body sentence
   against the assistant reply and emitted an excerpt automatically).
@@ -452,8 +452,8 @@ def compute_eval(
 
     The ``cold_endorsement_memories`` bucket mirrors health's on both
     axes the 2026-08-30 recalibration touched: the per-memory floor
-    count is SEARCH deliveries only (``memory_list`` browses and
-    ``memory_show`` pinpoint reads keep feeding
+    count is SEARCH deliveries only (``memory_show`` pinpoint reads and
+    8.x's ``memory_list`` browses keep feeding
     ``retrieval_occurrences`` but not the floor — see the
     ``search_delivery_count`` comment in ``eval_rates._EvalWalk``),
     and the bucket rides the same Stop-hook telemetry honesty gate: on

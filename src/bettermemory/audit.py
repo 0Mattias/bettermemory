@@ -45,7 +45,7 @@ Design notes:
   different lens, but the default is "what would the model have
   done."
 
-- **`memory_show` and `memory_list` count as retrieval activity too.**
+- **`memory_show` (and 8.x's `memory_list`) count as retrieval activity too.**
   The miss probe doesn't fire when a `search`, `show`, `list`, or
   `prompt_recall` event landed in the session's lookback window — the
   first three are retrievals from the model's perspective (`list`
@@ -1393,9 +1393,9 @@ def _count_recent_retrievals(
     Retrieval = `kind in _RETRIEVAL_EVENT_KINDS` (`{"search", "show",
     "list"}`). All three shield the audit from flagging a miss: a
     memory_show by id is an equally legitimate way for the model to
-    pull content, and a memory_list call surfaces a known scope without
-    re-searching. Counting only `search` would mis-flag the common
-    search-then-show round-trip, where the search happens early in the
+    pull content, and a `list` row (an 8.x memory_list call) surfaced a
+    known scope without re-searching. Counting only `search` would mis-flag the
+    common search-then-show round-trip, where the search happens early in the
     turn and the show happens later.
 
     An in-window retrieval counts when ANY of:

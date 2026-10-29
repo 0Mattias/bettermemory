@@ -40,7 +40,7 @@ self-triage before relying on stored content. The first lives in
    about a remote we have no checkout for.
 
 All three are advisory. They never block; they shape a structured payload
-that the retrieval surface (memory_show, memory_search, memory_list)
+that the retrieval surface (memory_show, memory_search)
 attaches to its responses, so the model receives a recommendation as a
 first-class field rather than having to do timestamp arithmetic on a raw
 datetime. The cost of a false positive (a small extra prompt asking the

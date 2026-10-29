@@ -1177,10 +1177,10 @@ def _pending_retrievals(
     been recorded via `record_use`.
 
     A retrieval is the `search`/`list`/`list_active` event's `returned`
-    list or the `show` event's `id` — a `memory_list` surfaces ids the
-    same way a search does, so listed ids are eligible for attribution
-    too. A `use` event for the same id within the window counts as
-    already-recorded and removes the id from the pending set. This
+    list or the `show` event's `id` — a `list` row, 8.x's `memory_list`,
+    surfaced ids the same way a search does, so listed ids are eligible
+    for attribution too. A `use` event for the same id within the window counts
+    as already-recorded and removes the id from the pending set. This
     approximates the in-process SessionState's `pending_use_tokens` from
     the event log alone, which is what the hook has access to.
 
@@ -1204,9 +1204,8 @@ def _pending_retrievals(
         session = event.get("session") or event.get("session_id")
         kind = event.get("kind")
         if kind in ("search", "list", "list_active"):
-            # `list`/`list_active` (memory_list) surfaces memory ids exactly
-            # like a `search` hit — the `memory_list` handler in
-            # `src/bettermemory/handlers/list_active.py` records the
+            # `list`/`list_active` rows (8.x's memory_list) surfaced memory
+            # ids exactly like a `search` hit — its handler recorded the
             # ids under the same `returned` field name precisely so the
             # attribution pass and the probe's shield read one shape. Treat
             # them on the same branch so memories seen only via a listing are

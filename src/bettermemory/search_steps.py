@@ -65,7 +65,7 @@ def _record_matched_legs(
     # `search`'s `matched_leg_out` is an out-parameter rather than a
     # `MemoryHit` field because the leg is a property of THIS CALL's ranker
     # configuration, not of the memory, and every other consumer of
-    # `MemoryHit` (memory_show, memory_list, the detail surfaces) has no
+    # `MemoryHit` (memory_show, the detail surfaces) has no
     # legs to report; the MCP search handler is the one surface where it is
     # actionable.
     for memory, _, _ in trimmed:

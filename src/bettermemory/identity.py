@@ -199,7 +199,7 @@ def actor_matches(
 
     The single definition of the actor-selection rule, read by
     `search.candidate_admitted` (and so by the ranked set and the BM25
-    corpus-IDF denominator alike) and by `memory_list`. It lives here,
+    corpus-IDF denominator alike) and by `rollback`. It lives here,
     beside the type it reads, so those surfaces cannot drift apart.
 
     Two properties the callers depend on:

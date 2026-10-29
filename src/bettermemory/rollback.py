@@ -212,9 +212,9 @@ def plan_rollback(
     for memory in memories:
         actor = memory.actor
         # `actor_matches` is the single definition of the actor-
-        # selection rule (it is also what search and `memory_list`
-        # read); respelling it here is how two surfaces drift into
-        # disagreeing about who wrote what. It excludes a record with
+        # selection rule (it is also what search reads); respelling
+        # it here is how two surfaces drift into disagreeing about who
+        # wrote what. It excludes a record with
         # no actor, which is the case counted separately below.
         if actor is None or actor.client is None:
             declined_undeclared += 1
