@@ -992,9 +992,9 @@ def _flagged_turn(
     ev: dict[str, Any],
     top_hits: list[dict[str, Any]],
     v1_flags: bool,
-    _resolve: Callable[[str], tuple[str, str | None, list[str] | None]],
-) -> tuple[str, WideningFlaggedTurn]:
-    """Build one flagged turn's evidence from its audit event; returns its top hit's id and the turn."""
+    resolve: Callable[[str], tuple[str, str | None, list[str] | None]],
+) -> WideningFlaggedTurn:
+    """Build one flagged turn's evidence from its audit event; returns the turn."""
     top = top_hits[0] if isinstance(top_hits[0], dict) else {}
     preview, length, digest = _probe_query_display(ev.get("probe_query"))
     raw_score = top.get("score")
@@ -1006,9 +1006,9 @@ def _flagged_turn(
     matched = top.get("matched_unique")
     q_unique = top.get("query_unique")
     memory_id = str(top.get("id") or "?")
-    status, summary, scopes = _resolve(memory_id)
+    status, summary, scopes = resolve(memory_id)
     session = ev.get("session_id") or ev.get("session")
-    turn = WideningFlaggedTurn(
+    return WideningFlaggedTurn(
         ts=ev.get("ts") if isinstance(ev.get("ts"), str) else None,
         session_id=session if isinstance(session, str) else None,
         client_model=(
@@ -1042,13 +1042,11 @@ def _flagged_turn(
         memory_summary=summary,
         memory_scopes=scopes,
     )
-    return memory_id, turn
 
 
 def _rule_turns_and_rollup(
     turns: list[WideningFlaggedTurn],
-    sessions_by_rule_memory: dict[str, dict[str, set[str | None]]],
-    name: str,
+    sessions_by_memory: dict[str, set[str | None]],
 ) -> tuple[list[WideningFlaggedTurn], list[WideningMemoryRollup]]:
     """Order one rule's flagged turns and roll them up by memory; returns both lists."""
     # Newest first; undated rows sink to the end in stream order.
@@ -1088,7 +1086,7 @@ def _rule_turns_and_rollup(
                 else max(row.score_max, t.top_hit_score)
             )
     for memory_id, row in rollup.items():
-        row.distinct_sessions = len(sessions_by_rule_memory[name].get(memory_id, set()))
+        row.distinct_sessions = len(sessions_by_memory.get(memory_id, set()))
     by_memory = sorted(rollup.values(), key=lambda r: (-r.count, r.memory_id))
     return turns_sorted, by_memory
 
@@ -1142,10 +1140,10 @@ def compute_widening_detail(
         ]
         if not firing:
             continue
-        memory_id, turn = _flagged_turn(ev, top_hits, v1_flags, _resolve)
+        turn = _flagged_turn(ev, top_hits, v1_flags, _resolve)
         for name in firing:
             flagged_by_rule[name].append(turn)
-            sessions_by_rule_memory[name].setdefault(memory_id, set()).add(
+            sessions_by_rule_memory[name].setdefault(turn.top_hit_id, set()).add(
                 turn.session_id
             )
 
@@ -1153,7 +1151,7 @@ def compute_widening_detail(
     for name, rule in rules_in_use.items():
         turns = flagged_by_rule[name]
         turns_sorted, by_memory = _rule_turns_and_rollup(
-            turns, sessions_by_rule_memory, name
+            turns, sessions_by_rule_memory[name]
         )
         rule_details.append(
             WideningRuleDetail(
