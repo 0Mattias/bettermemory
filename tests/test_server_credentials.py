@@ -338,10 +338,9 @@ async def test_update_acknowledge_credential_records_kinds(
     """The override marker is auditable on the UPDATE surface too. An
     acknowledged body edit must record the detector KIND on the update
     success event (never the value), exactly as the write path does
-    (write.py) and the proposal-accept choke point (proposals.py). Without
-    it the too-loose-detector override-rate signal and a forensic
-    `grep credentials_acknowledged` sweep silently miss every secret
-    introduced by EDIT rather than by write."""
+    (write.py). Without it the too-loose-detector override-rate signal
+    and a forensic `grep credentials_acknowledged` sweep silently miss
+    every secret introduced by EDIT rather than by write."""
     server, store = server_with_events
     created = await _call(
         server, "memory_write", content="aws docs notes.", scopes=["reference"]

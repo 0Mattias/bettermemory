@@ -1265,8 +1265,9 @@ def _validate_declared_supersedes(deps: ToolHandlers, ids: Any) -> list[dict[str
     """The writer's `supersedes=` list as link dicts for the payload.
 
     Each id must be a ULID naming an ACTIVE memory: a declared edge to a
-    tombstone or a typo would render nothing and sit in the frontmatter
-    unread, so it is refused at the one moment the writer can fix it.
+    tombstone or a typo would render nothing and sit among the record's
+    links unread, so it is refused at the one moment the writer can fix
+    it.
     Dicts rather than `MemoryLink`s because they ride the payload to the
     commit as plain data; `Store.write` validates them.
     """

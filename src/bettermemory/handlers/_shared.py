@@ -196,8 +196,8 @@ def _validate_content_floor(content: str, min_tokens: int) -> None:
     earns its keep for unattended or bulk callers, where a fragment costs a
     durable record plus the curation pass that later removes it.
 
-    Blast radius when enabled, because the validator is shared: the floor
-    binds `memory_write` AND `accept_proposal` (`handlers/proposals.py`).
+    Blast radius when enabled: the floor binds `memory_write`, the one
+    caller of `_validate_write_payload`.
     It does NOT reach `memory_update`, which validates a replacement body
     through `_validate_content_size` directly and never calls this
     validator — a body edit can still take a memory below the floor.

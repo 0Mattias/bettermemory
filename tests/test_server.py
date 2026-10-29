@@ -3510,8 +3510,8 @@ def test_write_gates_match_expected_types_in_order() -> None:
 # clean bodies, and the other gates' tests never set this flag.
 #
 # The three gates are chosen to straddle the chain position:
-# credential (index 0) and transient (index 1) come BEFORE UserClaimGate
-# (index 2), and scope-mismatch (index 3) comes after.
+# credential (index 0) and transient (index 4) come BEFORE UserClaimGate
+# (index 5), and scope-mismatch (index 6) comes after.
 # ---------------------------------------------------------------------------
 
 

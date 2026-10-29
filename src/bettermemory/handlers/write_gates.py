@@ -732,7 +732,7 @@ _WRITE_GATES: tuple[WriteGate, ...] = (
 
 
 class GateDeps(Protocol):
-    """The four dependencies the gate chain actually reads.
+    """The three dependencies the gate chain actually reads.
 
     Narrower than `ToolHandlers` on purpose. `ToolHandlers` satisfies this
     structurally with no changes, and a caller without a server satisfies
@@ -745,19 +745,16 @@ class GateDeps(Protocol):
 
 
 class GateBundle:
-    """`GateDeps` for callers that hold a `MemoryStore` but no
-    `ToolHandlers`.
+    """`GateDeps` for callers that hold a `Store` but no `ToolHandlers`.
 
     `responses` is a real `ResponseBuilder` rather than a stub: the gates
     build their rejection payloads eagerly, so a caller that keeps only the
     reason still gets the shaping the MCP surface would have returned. One
     rejection shape, one place to change it.
 
-    Takes the PROTOCOL, matching `GateDeps.store`, because `GateDeps` is
-    satisfied structurally: a protocol attribute is invariant, so a
-    bundle declaring the concrete `Store` would not satisfy a `GateDeps`
-    whose `store` is a `MemoryStore` — and the two arrive together, since
-    `ToolHandlers.store` is the third member of that set.
+    Declares `store` as `Store`, the type `GateDeps.store` names, because
+    `GateDeps` is satisfied structurally and a protocol attribute is
+    invariant: a bundle declaring any other type would not satisfy it.
     """
 
     def __init__(

@@ -121,15 +121,15 @@ async def _advance(srv: Any) -> None:
 
 
 async def test_ambient_category_commits_immediately(server: Any) -> None:
-    """Ambient skips the pending-write gate (same fast path as fact).
+    """Ambient commits at once, as fact does.
 
     `acknowledge_user_claim=True` because the body is a claim about the
-    user filed as `ambient`, and `UserClaimGate` (index 2 of
+    user filed as `ambient`, and `UserClaimGate` (index 5 of
     `_WRITE_GATES`) refuses exactly that shape — it only exempts
     `user-inference`. The flag keeps this test on its own axis: what is
-    under test is that `ambient` takes the SAME fast path as `fact`
-    past `PendingGate`, not how the user-claim gate classifies bodies
-    (that lives in `tests/test_server_user_claims.py`)."""
+    under test is that `ambient` commits as `fact` does, not how the
+    user-claim gate classifies bodies (that lives in
+    `tests/test_server_user_claims.py`)."""
     res = await _call(
         server,
         "memory_write",
