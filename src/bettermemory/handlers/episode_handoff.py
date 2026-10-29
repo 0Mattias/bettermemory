@@ -340,8 +340,8 @@ def _emit_episodes(
     excluded_scopes: set[str],
     max_episodes: int,
     include_bodies: bool,
-) -> list[dict[str, Any]]:
-    """Take the pick; return the rows the handoff emits, setting its floor-only flag."""
+) -> tuple[list[dict[str, Any]], bool]:
+    """Take the pick; return the rows the handoff emits and its floor-only flag."""
     episodes: list[dict[str, Any]] = []
     resolved_session_id = pick.session_id
     chosen = pick.chosen
@@ -350,6 +350,7 @@ def _emit_episodes(
     # floor-only, whether or not we then rewound to an older real session).
     # The explicit-`prior_session_id` path bypasses that walk, so we derive
     # the floor-only determination for a named session below.
+    note_floor_only = pick.note_floor_only
     if resolved_session_id is not None:
         # An explicit `prior_session_id` flows in verbatim (the
         # auto-resolution branch in `_auto_pick` only ever assigns a
@@ -377,7 +378,7 @@ def _emit_episodes(
         if prior_session_id is not None:
             any_real_takeaway = any(not ep.is_floor for ep in all_eps)
             if all_eps and not any_real_takeaway:
-                pick.note_floor_only = True
+                note_floor_only = True
         # Filter floors from the emit stream — they carry no takeaway
         # and the marker body is a placeholder, not content the model
         # should reason over as "what the prior session concluded". The
@@ -419,13 +420,13 @@ def _emit_episodes(
                     "provenance": label,
                 }
             )
-    return episodes
+    return episodes, note_floor_only
 
 
 def _handoff_result(
-    pick: _HandoffPick, episodes: list[dict[str, Any]]
+    pick: _HandoffPick, episodes: list[dict[str, Any]], note_floor_only: bool
 ) -> dict[str, Any]:
-    """Take the pick and its emitted rows; return the handoff's response with any note."""
+    """Take the pick, its emitted rows and floor-only flag; return the response with any note."""
     result: dict[str, Any] = {
         "prior_session_id": pick.session_id,
         "episodes": episodes,
@@ -440,7 +441,7 @@ def _handoff_result(
     # rewound past the empty session to an older real takeaway, and the note
     # flags that the most recent session left nothing. The empty shapes get
     # distinct text because their on-disk cause differs.
-    if pick.note_floor_only:
+    if note_floor_only:
         # Floor-only: a real `is_floor` marker exists on disk (the session
         # called episode_handoff, which writes the entry floor). Genuinely
         # ambiguous between (a) a crash after entry but before
@@ -576,7 +577,7 @@ async def episode_handoff(
         if prior_session_id is not None
         else _auto_pick(deps, caller, excluded_scopes)
     )
-    episodes = _emit_episodes(
+    episodes, note_floor_only = _emit_episodes(
         deps,
         pick,
         prior_session_id=prior_session_id,
@@ -595,10 +596,10 @@ async def episode_handoff(
         max_episodes=max_episodes,
         include_bodies=include_bodies,
         returned=len(episodes),
-        prior_crashed_pre_takeaway=pick.note_floor_only,
+        prior_crashed_pre_takeaway=note_floor_only,
         **({HARNESS_SESSION_FIELD: harness} if harness is not None else {}),
     )
-    return _handoff_result(pick, episodes)
+    return _handoff_result(pick, episodes, note_floor_only)
 
 
 def _quiet_session(
