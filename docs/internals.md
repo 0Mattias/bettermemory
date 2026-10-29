@@ -1206,9 +1206,11 @@ which `backup unlock` removes. `audit_export.py` and `anchor.py` are
 `log export` and `log anchor` and the anchors `log verify --anchor`
 checks (`cli/log_cmd.py`). `history.py` is `memory history`
 (`cli/memory_move_cmd.py`), and `cli/stats_cmd.py` the usage report.
-`doctor.py` is `bettermemory doctor` (`cli/doctor_cmd.py`). `posture.py`,
-`sandbox_settings.py` and `secret_scan.py` are `security audit`,
-`security sandbox` and `security scan` (`cli/security_cmd.py`).
+`doctor.py` is `bettermemory doctor` (`cli/doctor_cmd.py`). `posture.py`
+(with its last check, Claude Code's sandbox settings, and the findings'
+type in `posture_sandbox.py`), `sandbox_settings.py` and `secret_scan.py`
+are `security audit`, `security sandbox` and `security scan`
+(`cli/security_cmd.py`).
 `cli/config_cmd.py` is `config path`, `show` and `check`, and
 `cli/completion_cmd.py` prints the shell completion it builds from the
 parser.
