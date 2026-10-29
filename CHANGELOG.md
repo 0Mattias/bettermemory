@@ -295,6 +295,27 @@ follows the candidates' testing.
   `src/bettermemory/config.py`, `src/bettermemory/_frontmatter.py`,
   `src/bettermemory/init.py`, `tests/test_frontmatter.py`,
   `tests/test_sqlite_uri.py`, `tests/test_import_graph.py`)
+- **Every function of the package is under 150 lines.** Forty-nine
+  functions were over that bound, the largest `memory_update` at 635
+  lines, `compute_eval` at 535 and `compute_health` at 520. Each is now
+  a sequence of named steps that live beside it: private, typed, one
+  line of doc each, making the same calls in the same order, writing the
+  same rows, raising the same exceptions and returning the same values,
+  so no response, log line or tool result changes. Where a function's
+  steps outgrew its module they moved to a sibling (`backup_create.py`,
+  `backup_restore.py`, `backup_verify.py`, `config_sections.py`,
+  `eval_rates.py`, `path_drift_steps.py`, `recall_prompt.py`,
+  `search_steps.py`, `store_open.py`, `verify_basis.py` and
+  `_response_depends.py`), and a sibling reads the names a test patches
+  through its parent at call time, so every existing patch point still
+  reaches its reader; a test refuses a sibling that binds a patched name
+  at import. Two functions were over the bound by their docstrings
+  alone; that prose now sits with the code it describes. A test holds
+  the bound: `tests/test_function_bounds.py` fails on any function over
+  150 lines unless the line above it starts with `# over 150 lines:` and
+  says why, and no function carries that mark. (48 modules under
+  `src/bettermemory/`, the eleven new ones among them;
+  `tests/test_function_bounds.py`, `tests/test_patch_targets.py`)
 - **A test pins every module of the package under 2,000 lines.** The
   bound the splits of `store`, `membership`, `handlers.write`, `recall`,
   `verify`, `search`, `origin`, `eval`, `health` and `location` were
