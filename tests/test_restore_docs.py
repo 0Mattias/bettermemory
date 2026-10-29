@@ -91,6 +91,7 @@ def test_the_limitations_the_fold_closed_are_gone() -> None:
     for closed in (
         "A `backup create` with an unreadable key still writes a bundle.",
         "The probe does not see an idle connection to a rollback-journal store.",
+        "`backup create` still reads a store through a connection of its own.",
     ):
         assert closed not in known, closed
 

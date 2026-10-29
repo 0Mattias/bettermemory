@@ -362,13 +362,22 @@ def _snapshot(source: Path, target: Path) -> None:
     step, so the backup never restarts under a writer) and cannot write to
     the store whatever happens. `target` is created 0600 before SQLite
     opens it, so its journal files, which SQLite creates with the database
-    file's own mode, are owner-only too."""
+    file's own mode, are owner-only too.
+
+    The source is admitted first (`store_schema.admit_store`, under its
+    deadline), as every opener admits a store: the copy is then read
+    (`_snapshot_facts`), and a file whose ``meta`` is an endless view
+    hung that read, where a writing open refuses it in under a second.
+    Raises `store_schema.StoreRefusedError` for a file it refuses."""
+    from .store_schema import admit_store
+
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(fd)
     src = sqlite3.connect(
         _read_only_uri(source), uri=True, timeout=5.0, isolation_level=None
     )
     try:
+        admit_store(src, source)
         src.execute("SELECT count(*) FROM sqlite_master").fetchone()
         _tighten_wal_siblings(source)
         dst = sqlite3.connect(str(target), isolation_level=None)
@@ -660,7 +669,11 @@ def create_backup(
         fsync_dir(bundle)
         return {"bundle": str(bundle), "manifest": manifest, "warnings": warnings}
     except BaseException as exc:
+        from .store_schema import StoreRefusedError
+
         shutil.rmtree(bundle, ignore_errors=True)
+        if isinstance(exc, StoreRefusedError):
+            raise BackupError(str(exc)) from exc
         if isinstance(exc, (OSError, sqlite3.Error)):
             raise BackupError(
                 f"backup of {store_file} failed: {exc.__class__.__name__}: {exc}"

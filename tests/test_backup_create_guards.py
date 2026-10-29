@@ -180,6 +180,26 @@ def test_an_unreadable_retired_key_is_named(tmp_path: Path) -> None:
     assert all("is there and cannot be read (" in text for text in found.values())
 
 
+@pytest.mark.parametrize("poison", ["view", "generated", "check"])
+def test_create_admits_the_store_before_it_copies_it(
+    store_file: Path, tmp_path: Path, poison: str
+) -> None:
+    """`backup create` read the copy's meta with nothing admitting the
+    store first: one whose meta is an endless view hung it (killed after
+    25 s, a partial bundle left behind), where a writing open refuses the
+    file in under a second. It now admits the store, under the
+    admission's deadline, before the online copy, and refuses with the
+    admission's line, leaving no bundle (cold review M5)."""
+    from .test_store_admission import _POISONS, _in_time, _sql
+
+    _sql(store_file, *_POISONS[poison])
+    out = tmp_path / "bundles"
+    with pytest.raises(BackupError) as refused:
+        _in_time(lambda: create_backup(store_file, out_dir=out))
+    assert str(refused.value).startswith(f"{store_file} is not opened: ")
+    assert not out.exists() or list(out.iterdir()) == []
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
 def test_a_key_file_without_read_permission_is_named(
     store_file: Path, keys_dir: Path, tmp_path: Path

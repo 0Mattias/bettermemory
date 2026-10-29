@@ -2263,6 +2263,14 @@ follows the candidates' testing.
   `src/bettermemory/store.py`, `src/bettermemory/backup.py`,
   `src/bettermemory/cli/backup_cmd.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_lock.py`)
+- **`backup create` admits a store before it copies it.** The copy's
+  meta was read with nothing admitting the store first, so one whose
+  `meta` is an endless view hung `backup create` (a scheduled backup
+  never ended, and a partial bundle stayed), where a writing open
+  refuses the file in under a second. The source is now admitted
+  (`store_schema.admit_store`, under its deadline) before the online
+  copy, and refused with the admission's line, exit 1, no bundle left.
+  (`src/bettermemory/backup.py`, `tests/test_backup_create_guards.py`)
 - **A read-only command reads no store a restore holds.** `log verify`
   run while a restore held the store read a file, keys and head that
   did not yet agree and said `tampered`, exit 1, so a cron or SIEM gate
@@ -2622,11 +2630,6 @@ follows the candidates' testing.
   is read; a refused file is left with what that wrote. Admitting
   through a read-only connection before the writing open would leave it
   as it was; the openers do not do that yet.
-- **`backup create` still reads a store through a connection of its
-  own.** The online-backup copy `backup create` takes does not admit the
-  file first. (The restore's reads of the store id and of the log's last
-  seq go through the read-only open, which admits it, since this
-  release.)
 - **A lock wait comes before the deadline.** The deadline counts from a
   statement's first progress callback, so a wait for another
   connection's lock is bounded by the 5 s busy timeout, not by it.
