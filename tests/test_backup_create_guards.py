@@ -7,7 +7,9 @@ the store side of the same mistake (`BETTERMEMORY_DIR` naming a bundle)
 was already refused. And a key file that is there and cannot be read was
 read as no key: the bundle came out unsigned with a warning that no key
 matched the store's fingerprint, which sends the owner looking for a key
-that is in its place. Both now say what is wrong.
+that is in its place. Both now say what is wrong, and an unreadable key
+refuses the backup: an unsigned bundle never verifies, so no restore
+takes it.
 """
 
 from __future__ import annotations
@@ -22,7 +24,6 @@ import pytest
 from bettermemory.backup import (
     BackupError,
     create_backup,
-    read_manifest,
     verify_bundle,
 )
 from bettermemory.log import KeyRing, fingerprint
@@ -123,23 +124,25 @@ def _key_in_the_way(store_file: Path, keys_dir: Path) -> tuple[Path, str]:
     return path, key_fp
 
 
-def test_an_unreadable_key_is_named_in_the_unsigned_bundles_warning(
+def test_an_unreadable_key_refuses_the_backup_by_its_file(
     store_file: Path,
     keys_dir: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """The bundle would be unsigned, which `backup verify` reads as
+    unverifiable and `backup restore` refuses even with
+    --trust-bundle-key: exit 1, the file named, and no bundle left."""
     path, _ = _key_in_the_way(store_file, keys_dir)
     out = tmp_path / "bundles"
     argv = ["backup", "create", "--out", str(out), "--json"]
-    assert _run_cli(argv, monkeypatch) == 0
+    assert _run_cli(argv, monkeypatch) == 1
     err = capsys.readouterr().err
     assert f"the key file {path} is there and cannot be read (" in err
-    assert "the manifest is not signed" in err
+    assert "no restore takes it; make it readable and run the backup again" in err
     assert "no key under" not in err
-    [made] = list(out.iterdir())
-    assert "mac" not in read_manifest(made)
+    assert not out.exists() or list(out.iterdir()) == []
 
 
 def test_an_unreadable_key_refuses_include_key_by_its_file(
@@ -154,7 +157,7 @@ def test_an_unreadable_key_refuses_include_key_by_its_file(
     argv = ["backup", "create", "--out", str(out), "--include-key"]
     assert _run_cli(argv, monkeypatch) == 1
     err = capsys.readouterr().err
-    assert f"--include-key: the key file {path} is there and cannot be read (" in err
+    assert f"the key file {path} is there and cannot be read (" in err
     assert "make it readable and run the backup again" in err
     assert "no key under" not in err
     assert not out.exists() or list(out.iterdir()) == []
@@ -187,9 +190,13 @@ def test_a_key_file_without_read_permission_is_named(
         store_id = opened.store_id
     path = KeyRing(keys_dir, store_id).current_path()
     path.chmod(0)
+    out = tmp_path / "bundles"
     try:
-        result = create_backup(store_file, out_dir=tmp_path / "bundles")
+        with pytest.raises(BackupError) as refused:
+            create_backup(store_file, out_dir=out)
     finally:
         path.chmod(0o600)
-    [warning] = [w for w in result["warnings"] if "not signed" in w]
-    assert warning.startswith(f"the key file {path} is there and cannot be read (")
+    assert str(refused.value).startswith(
+        f"the key file {path} is there and cannot be read ("
+    )
+    assert not out.exists() or list(out.iterdir()) == []

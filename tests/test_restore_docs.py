@@ -80,9 +80,16 @@ def test_the_residuals_are_rc14_known_limitations() -> None:
         "with no row.",
         "A restored store this build reads only gets no `store_restored` row.",
         "`backup create --out` checks the named directory and its parent only.",
-        "A `backup create` with an unreadable key still writes a bundle.",
     ):
         assert residual in known, residual
+
+
+def test_the_limitations_the_fold_closed_are_gone() -> None:
+    """The cold review's fold closed these rc14 Known limitations; the
+    section says so in its bullets, not as limitations."""
+    known = _section("9.0.0rc14").split("#### Known limitations", 1)[1]
+    for closed in ("A `backup create` with an unreadable key still writes a bundle.",):
+        assert closed not in known, closed
 
 
 def test_the_rc12_section_keeps_its_own_words() -> None:

@@ -531,10 +531,13 @@ def create_backup(
     itself a bundle, or a directory in one, is refused before anything is
     created for the same reason (`_bundle_at`).
 
-    A key file that is there and cannot be read is named, with what the
-    read said (`_unreadable_key_files`), in the warning of an unsigned
-    bundle and in the `include_key` refusal: read as no key, it was
-    reported as no key matching the store's fingerprint."""
+    A current key file that is there and cannot be read refuses the
+    backup, with or without `include_key`, naming the file and what the
+    read said (`_unreadable_key_files`): the bundle would be unsigned,
+    and an unsigned bundle never verifies, so no restore takes it (a
+    scheduled backup would go on writing bundles that cannot be
+    restored). Only a key that is not there gives an unsigned bundle,
+    with a warning."""
     from . import __version__
     from . import store as _store
 
@@ -574,13 +577,14 @@ def create_backup(
             live, facts.key_fingerprint, [fp for fp, key in held.items() if key is None]
         )
         current_unreadable = unreadable.get(facts.key_fingerprint)
+        if current_unreadable is not None:
+            raise BackupError(
+                f"{current_unreadable}: the manifest could not be signed, and a "
+                "bundle whose manifest is not signed never verifies, so no "
+                "restore takes it; make it readable and run the backup again"
+            )
         written = [snapshot]
         if include_key:
-            if current_unreadable is not None:
-                raise BackupError(
-                    f"--include-key: {current_unreadable}; make it readable and "
-                    "run the backup again"
-                )
             if current_key is None:
                 raise BackupError(
                     f"--include-key: no key under {keys_root} matches the "
@@ -645,12 +649,6 @@ def create_backup(
             )
         if current_key is not None:
             manifest["mac"] = manifest_mac(current_key, manifest)
-        elif current_unreadable is not None:
-            warnings.append(
-                f"{current_unreadable}: the manifest is not signed, and `backup "
-                "verify` reads the bundle as unverifiable; make it readable and "
-                "run the backup again"
-            )
         else:
             warnings.append(
                 f"no key under {keys_root} matches the store's fingerprint "

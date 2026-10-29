@@ -2327,19 +2327,21 @@ follows the candidates' testing.
   bundle still goes beside the others there. (ENG-93 item 2;
   `src/bettermemory/backup.py`, `docs/api.md`, `docs/operations.md`,
   `tests/test_backup_create_guards.py`)
-- **`backup create` names a key file it cannot read.** A key file that
-  was there and could not be read (a permission, a directory in its
-  place, a link to a volume not mounted) was read as no key, so the
-  bundle came out unsigned with a warning that no key matched the
-  store's fingerprint, and `--include-key` refused in the same words.
-  Both now name the file and what the read said, in the words the
+- **`backup create` names a key file it cannot read, and refuses.** A
+  key file that was there and could not be read (a permission, a
+  directory in its place, a link to a volume not mounted) was read as no
+  key, so the bundle came out unsigned with a warning that no key
+  matched the store's fingerprint, and `--include-key` refused in the
+  same words. An unsigned bundle never verifies, so no restore takes
+  it: a scheduled backup went on writing bundles that could not be
+  restored, exit 0. Such a key file now refuses the backup, with or
+  without `--include-key`, exit 1, and the partial bundle is removed;
+  the refusal names the file and what the read said, in the words the
   owner's open uses: `the key file <path> is there and cannot be read
-  (<reason>): the manifest is not signed, ...; make it readable and run
-  the backup again`, and `--include-key: the key file <path> is there
-  and cannot be read (<reason>); make it readable and run the backup
-  again`, exit 1. A retired key's unreadable file is named the same way
-  in the `--include-key` warning. Without `--include-key` the bundle is
-  still written, unsigned, as for a key that is not held. (ENG-93 item 3;
+  (<reason>): the manifest could not be signed, ...; make it readable
+  and run the backup again`. A retired key's unreadable file is named
+  the same way in the `--include-key` warning. Only a key that is not
+  held still gives an unsigned bundle, with a warning. (ENG-93 item 3;
   `src/bettermemory/backup.py`, `docs/api.md`,
   `tests/test_backup_create_guards.py`)
 
@@ -2731,11 +2733,6 @@ follows the candidates' testing.
   writing open that later runs the step does not add one.
 - **`backup create --out` checks the named directory and its parent
   only.** A directory two levels or more inside a bundle is not
-  refused.
-- **A `backup create` with an unreadable key still writes a bundle.** It
-  is unsigned and the warning names the key file, exit 0, as for a key
-  that is not held; a scheduled backup keeps writing unverifiable
-  bundles until the file reads again. With `--include-key` it is
   refused.
 
 ### 9.0.0rc13
