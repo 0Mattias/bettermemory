@@ -95,7 +95,11 @@ def test_a_keys_directory_linked_to_nothing_refuses_the_new_store(
     assert "no store is created" in text
     assert not directory.exists()
     assert not volume.parent.exists()
-    assert keys.is_symlink() and os.readlink(keys) == str(volume)
+    # Windows spells the raw target with the verbatim prefix; read it as
+    # the refusal does.
+    from bettermemory import log as _log
+
+    assert keys.is_symlink() and _log._link_target(keys) == str(volume)
 
 
 def test_a_link_to_nothing_on_the_way_to_the_keys_directory_is_named(
