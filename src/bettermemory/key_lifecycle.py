@@ -64,6 +64,7 @@ from ._fsutil import (
     bounded_read,
     ensure_owner_only_dir,
     flock_excl,
+    replace_atomic,
 )
 from .log import (
     HISTORY_ACCEPTED,
@@ -1587,11 +1588,11 @@ def _quarantine_ring(
             handle.write(note)
         moved: list[str] = []
         for path in files:
-            os.rename(path, target / path.name)
+            replace_atomic(path, target / path.name)
             moved.append(path.name)
     with contextlib.suppress(OSError):
         if not os.path.lexists(target / lock.name):
-            os.rename(lock, target / lock.name)
+            replace_atomic(lock, target / lock.name)
             moved.append(lock.name)
     return standing, moved
 

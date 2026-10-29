@@ -34,6 +34,7 @@ import pytest
 
 from bettermemory import _daemon_client, doctor, location
 from bettermemory import key_lifecycle as lifecycle
+from bettermemory._fsutil import replace_atomic
 from bettermemory.cli import main as cli_main
 from bettermemory.log import KeyRing
 from bettermemory.store import STORE_FILENAME, Store
@@ -436,18 +437,17 @@ def test_a_clear_cut_short_moves_the_rest_on_the_next_run(
     _, store_id = _gone(tmp_path / "gone")
     ring = _ring_files(keys_dir, store_id)
     binding = KeyRing(keys_dir, store_id).binding_path()
-    real_rename = os.rename
 
-    def no_binding(src: object, dst: object) -> None:
-        if Path(str(src)) == binding:
+    def no_binding(src: Path, dst: Path) -> None:
+        if Path(src) == binding:
             raise OSError("the disk went away")
-        real_rename(src, dst)  # type: ignore[arg-type]
+        replace_atomic(src, dst)
 
-    monkeypatch.setattr(os, "rename", no_binding)
+    monkeypatch.setattr(lifecycle, "replace_atomic", no_binding)
     first = lifecycle.clear_orphan_rings(None, apply=True)
     assert [f["store_id"] for f in first["failed"]] == [store_id]
     assert _standing(keys_dir, store_id).state == lifecycle.RING_ORPHANED
-    monkeypatch.setattr(os, "rename", real_rename)
+    monkeypatch.setattr(lifecycle, "replace_atomic", replace_atomic)
     second = lifecycle.clear_orphan_rings(None, apply=True)
     assert [m["store_id"] for m in second["moved"]] == [store_id]
     target = lifecycle.quarantine_path(keys_dir, store_id)
