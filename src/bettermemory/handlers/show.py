@@ -19,6 +19,8 @@ from ._shared import Context, _advance_turn, caller_anchoring
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..models import Memory
+    from ..verdict import MemoryVerdict
 
 
 DESC_MEMORY_SHOW = (
@@ -32,8 +34,6 @@ async def memory_show(
     deps: ToolHandlers, id: str, ctx: Context | None = None
 ) -> dict[str, Any]:
     """Body of the ``memory_show`` MCP tool."""
-    from .. import _handlers as _h
-
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
     try:
@@ -42,6 +42,46 @@ async def memory_show(
         raise ValueError(str(exc)) from exc
     except MemoryNotFoundError as exc:
         raise ValueError(str(exc)) from exc
+    shown = _show_verdict(deps, memory)
+    drift = shown.path_drift
+    commit_drift = shown.commit_drift
+    # The links payload carries `provenance` too: how the record entered
+    # the store, from the index (schema v7) and never from the file,
+    # since a hand-written frontmatter field cannot supply it. Null
+    # until a rebuild has classified the row, the same null-when-no-
+    # signal contract `path_drift` and `commit_drift` keep on this
+    # surface. Read on the index open the links query already holds, so
+    # the no-inbound show stays at two connections.
+    index_reads = _links_payload(deps, memory)
+    verified_locally_at = index_reads.pop("_verified_locally_at")
+    trust_unavailable = index_reads.pop("_trust_unavailable")
+    # Issue a use-token for this show before returning so the
+    # auto-`record_use` flow has something to commit on the next
+    # turn if the model doesn't override.
+    token_map = state.issue_use_tokens([memory.id])
+    response = _show_response(deps, memory, shown, index_reads, token_map[memory.id])
+    _apply_show_trust_and_standing(
+        deps, memory, response, trust_unavailable, verified_locally_at
+    )
+    deps.recorder.record(
+        "show",
+        id=memory.id,
+        path_drift_checked=len(drift.checked),
+        path_drift_missing=len(drift.missing),
+        verification_status=response["verification"]["status"],
+        staleness_verdict=response["staleness_verdict"],
+        commit_drift_status=(commit_drift.status if commit_drift is not None else None),
+        commits_since_verify=(
+            commit_drift.commits_since_verify if commit_drift is not None else None
+        ),
+    )
+    return response
+
+
+def _show_verdict(deps: ToolHandlers, memory: Memory) -> MemoryVerdict:
+    """Take the shown memory; return its verdict for the caller's checkout."""
+    from .. import _handlers as _h
+
     # One verdict for show and search (`verdict.memory_verdict`): the
     # calendar status, path drift and the commit leg, rolled up into
     # `staleness_verdict`, with the commit leg read through the search's
@@ -93,7 +133,7 @@ async def memory_show(
 
     anchoring, caller = caller_anchoring(deps.store, deps.config)
     links = Admission.of(LINKS, caller)
-    shown = memory_verdict(
+    return memory_verdict(
         memory,
         caller_origin=_h.capture_origin() if links.drift_counts(memory.id) else None,
         now=utcnow(),
@@ -101,24 +141,20 @@ async def memory_show(
         anchoring=anchoring,
         admission=links,
     )
+
+
+def _show_response(
+    deps: ToolHandlers,
+    memory: Memory,
+    shown: MemoryVerdict,
+    index_reads: dict[str, Any],
+    use_token: str,
+) -> dict[str, Any]:
+    """Take the memory, its verdict, index reads and token; return the response."""
     drift = shown.path_drift
     verification = shown.verification
     commit_drift = shown.commit_drift
     verdict = shown.staleness_verdict
-    # The links payload carries `provenance` too: how the record entered
-    # the store, from the index (schema v7) and never from the file,
-    # since a hand-written frontmatter field cannot supply it. Null
-    # until a rebuild has classified the row, the same null-when-no-
-    # signal contract `path_drift` and `commit_drift` keep on this
-    # surface. Read on the index open the links query already holds, so
-    # the no-inbound show stays at two connections.
-    index_reads = _links_payload(deps, memory)
-    verified_locally_at = index_reads.pop("_verified_locally_at")
-    trust_unavailable = index_reads.pop("_trust_unavailable")
-    # Issue a use-token for this show before returning so the
-    # auto-`record_use` flow has something to commit on the next
-    # turn if the model doesn't override.
-    token_map = state.issue_use_tokens([memory.id])
     response: dict[str, Any] = {
         "id": memory.id,
         "scopes": memory.scopes,
@@ -147,7 +183,7 @@ async def memory_show(
             else None
         ),
         "commit_drift": (commit_drift.to_dict() if commit_drift is not None else None),
-        "use_token": token_map[memory.id],
+        "use_token": use_token,
         # Corroboration rollup — omitted while zero (absence-as-signal,
         # matching the frontmatter shape).
         **(
@@ -170,6 +206,17 @@ async def memory_show(
         "verified_head": memory.verified_head,
         **index_reads,
     }
+    return response
+
+
+def _apply_show_trust_and_standing(
+    deps: ToolHandlers,
+    memory: Memory,
+    response: dict[str, Any],
+    trust_unavailable: bool,
+    verified_locally_at: str | None,
+) -> None:
+    """Take the assembled response; apply the trust rule and standing question."""
     # The trust rule (6.6.0), applied to the assembled response and
     # before the event so the log records what the caller was told: a
     # synced record whose stamp this host never made reads
@@ -196,19 +243,6 @@ async def memory_show(
         and _standing.answers(deps.store, [memory.id]).get(memory.id) is None
     ):
         response["standing_question"] = _standing.question(memory.id)
-    deps.recorder.record(
-        "show",
-        id=memory.id,
-        path_drift_checked=len(drift.checked),
-        path_drift_missing=len(drift.missing),
-        verification_status=response["verification"]["status"],
-        staleness_verdict=response["staleness_verdict"],
-        commit_drift_status=(commit_drift.status if commit_drift is not None else None),
-        commits_since_verify=(
-            commit_drift.commits_since_verify if commit_drift is not None else None
-        ),
-    )
-    return response
 
 
 def _links_payload(deps: ToolHandlers, memory: Any) -> dict[str, Any]:
