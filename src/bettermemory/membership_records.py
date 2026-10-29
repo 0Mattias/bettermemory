@@ -199,15 +199,6 @@ GLOBAL_NAMED = "global_named"
 OTHER_PROJECT = "other_project"
 OTHER_TENANT = "other_tenant"
 UNKNOWN = "unknown"
-RELATIONS = (
-    SAME_PROJECT,
-    SUB_PROJECT,
-    GLOBAL_RELATION,
-    GLOBAL_NAMED,
-    OTHER_PROJECT,
-    OTHER_TENANT,
-    UNKNOWN,
-)
 
 # The surfaces of design 3.5.
 SESSION_BRIEF = "session_brief"
