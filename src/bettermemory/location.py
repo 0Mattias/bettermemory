@@ -71,7 +71,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _caches, checkout_token, githead, gitobjects, project_file
-from ._location_probe import INDETERMINATE, TOKEN_VERSION, _hostname, _path_state, probe
+from ._location_probe import (
+    INDETERMINATE,
+    TOKEN_VERSION,
+    _hostname,
+    _path_state,
+    probe,
+    view_path,
+)
 
 # The vocabulary, discovery, the capture model and the history reader live
 # in `location_git`, which imports nothing from here. Every name a caller
@@ -186,6 +193,7 @@ __all__ = [
     "resolve_here",
     "signature",
     "to_location",
+    "view_path",
     "view_state",
 ]
 
@@ -496,11 +504,15 @@ def _capture_uncached(
 ) -> Capture:
     state, st, why = _path_state(cwd)
     if state != "present" or st is None:
-        return _indeterminate(cwd, f"cwd {state}: {why}" if why else f"cwd {state}")
+        # Nothing can be read here: the location is keyed as a view
+        # records the path, so a write it homes (B6) settles when the
+        # checkout there is resolved (ENG-155).
+        detail = f"cwd {state}: {why}" if why else f"cwd {state}"
+        return _indeterminate(view_path(cwd), detail)
     try:
         real = os.path.realpath(cwd)
     except (OSError, ValueError) as exc:
-        return _indeterminate(cwd, f"cwd unreadable: {exc}")
+        return _indeterminate(view_path(cwd), f"cwd unreadable: {exc}")
     cwd_key = object_key(real, st)
     host = _hostname()
     try:
@@ -1688,7 +1700,7 @@ def _machineless(
 
     loc = _Location(
         machine=NO_MACHINE,
-        cwd=NO_CWD if cwd is None else os.fspath(cwd),
+        cwd=NO_CWD if cwd is None else view_path(os.fspath(cwd)),
         state=_UNREADABLE,
         detail="this machine's state directory could not be opened: "
         f"{error.strerror or error}",

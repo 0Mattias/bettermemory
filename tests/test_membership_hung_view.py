@@ -14,10 +14,18 @@ stat blocks until released) and checks, from another connection while the
 stat is blocked, that the store's write lock can be taken, and that the
 write completes while the stat still blocks. The repositories are real,
 built with git under ``tmp_path``.
+
+A declared folder is read the same way (review M D2): a folder project's
+part declared before 9.0.0rc14 kept its folder as the cwd was spelled,
+and the resolution read that spelling as a view records it inside its
+transaction. It is read before the transaction now, bounded, and no
+filesystem read of a declaration's folder runs while the store's write
+lock is held, at a resolution or at the declaration itself (H5).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sqlite3
@@ -31,11 +39,18 @@ from typing import Any
 
 import pytest
 
-from bettermemory import location, location_git
+from bettermemory import (
+    location,
+    location_git,
+    membership,
+    membership_declare,
+    membership_resolve,
+    project_file,
+)
 from bettermemory.config import Config, StorageConfig
 from bettermemory.location import path_liveness, resolve_caller
 from bettermemory.machine import open_machine
-from bettermemory.membership import Membership
+from bettermemory.membership import Declaration, Membership
 from bettermemory.membership_migrate import UNREACHABLE, migrate
 from bettermemory.origin import Origin
 from bettermemory.store import Store
@@ -281,3 +296,164 @@ def test_the_migration_probes_a_hung_root_without_the_write_lock(
     assert roots[str(hung)].state == UNREACHABLE
     assert roots[str(fine)].state == "live"
     assert report.homed == 2
+
+
+# ---------------------------------------------------------------------------
+# A declared folder (review M D2 and H5)
+# ---------------------------------------------------------------------------
+
+
+def _folder_with_a_part(
+    tmp_path: Path, store: Store, config: Config
+) -> tuple[Path, str, str]:
+    """`Writing` a folder project and `Writing/novel` a part of it, declared
+    as `project init` below its root declares it (I31), under
+    ``tmp_path/real``; then `real` moves to `moved` and a symbolic link
+    takes its name, so the folder the declaration stored is a spelling of
+    the part's folder through a link, as a row a release before 9.0.0rc14
+    wrote from a symlinked cwd is. The part's folder now, the stored folder
+    and the part."""
+    real = tmp_path / "real"
+    outer = real / "Writing"
+    inner = outer / "novel"
+    inner.mkdir(parents=True)
+    (outer / "style.md").write_text("style\n", encoding="utf-8")
+    (inner / "ch1.md").write_text("one\n", encoding="utf-8")
+    project_file.write(outer, name="writing")
+    known = resolve_caller(store, config, str(outer)).resolution
+    assert known.checkout is not None and known.project is not None
+    model = Membership(store, location.process_machine().id)
+    written = project_file.write(inner, name="novel")
+    location.forget()
+    model.declare(
+        Declaration(
+            "init",
+            "os:tester",
+            checkout=known.checkout,
+            target=known.project,
+            file_id=written.id,
+            name="novel",
+            directory=str(inner),
+        )
+    )
+    part = model.file_binding(written.id)
+    assert part is not None and part != known.project
+    (stored,) = [
+        str(b["dir"])
+        for b in (
+            json.loads(r.payload) for r in store.membership_log(["project_file_bound"])
+        )
+        if b.get("file_id") == written.id
+    ]
+    assert stored == os.path.realpath(inner)
+    moved = tmp_path / "moved"
+    real.rename(moved)
+    try:
+        real.symlink_to(moved, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this platform makes no symbolic link here")
+    location.forget()
+    return moved / "Writing" / "novel", stored, part
+
+
+def test_a_declared_folder_is_read_before_the_resolutions_transaction(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review M D2: the part's first sight compares the declaration's
+    stored folder with the folder it stands in. Stored in another spelling
+    (through a link), it is read as a view records it before the
+    resolution's transaction, never with the store's write lock held, and
+    the part's folder resolves by the declaration's rung."""
+    store, config = lab
+    here, stored, part = _folder_with_a_part(tmp_path, store, config)
+    seen: list[tuple[str, bool]] = []
+    spied = location.view_path
+
+    def spy(path: str) -> str:
+        seen.append((path, store.in_batch))
+        return spied(path)
+
+    monkeypatch.setattr(membership_resolve, "view_path", spy)
+
+    res = resolve_caller(store, config, str(here)).resolution
+
+    assert (res.project, res.rule) == (part, "declared_folder")
+    assert (stored, False) in seen, "the stored folder was not read before"
+    assert [p for p, held in seen if held] == []
+
+
+def test_a_declared_folder_on_a_hung_path_holds_no_writer(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review M D2: a declaration's stored folder whose read hangs (a
+    hung mount under the spelling a release before 9.0.0rc14 stored) is
+    read within `PROBE_BUDGET`, the store's write lock is free while it
+    blocks, and the folder it names matches nothing."""
+    store, config = lab
+    here, stored, part = _folder_with_a_part(tmp_path, store, config)
+    hung = Hang()
+    spied = location.view_path
+
+    def blocking(path: str) -> str:
+        if path == stored:
+            hung.entered.set()
+            hung.release.wait(60)
+        return spied(path)
+
+    monkeypatch.setattr(membership_resolve, "view_path", blocking)
+    try:
+        watch = watch_lock(store.path, hung)
+        caller, elapsed = _timed(
+            lambda: resolve_caller(store, config, str(here)), watch
+        )
+    finally:
+        hung.release.set()
+
+    assert watch.entered, "the resolution never read the stored folder"
+    assert watch.lock_free, f"the write lock was held across the read: {watch.error}"
+    assert not watch.released_early, "the resolution waited on the hung read"
+    assert elapsed < PROBE_BUDGET + _MARGIN
+    assert caller.resolution.rule != "declared_folder"
+
+
+def test_a_declaration_reads_its_folder_once_before_its_transaction(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review M H5: `declare` reads its folder as a view records it before
+    its transaction; the checks inside it (`below_root`, a part's
+    question) take it as read, so no read of the folder runs with the
+    store's write lock held."""
+    store, config = lab
+    outer = tmp_path / "Writing"
+    outer.mkdir()
+    project_file.write(outer, name="writing")
+    known = resolve_caller(store, config, str(outer)).resolution
+    assert known.checkout is not None and known.project is not None
+    model = Membership(store, location.process_machine().id)
+    seen: list[tuple[str, bool]] = []
+    spied = location.view_path
+
+    def spy(path: str) -> str:
+        seen.append((path, store.in_batch))
+        return spied(path)
+
+    monkeypatch.setattr(membership, "view_path", spy)
+    monkeypatch.setattr(membership_declare, "view_path", spy)
+
+    for action in ("init", "init_new"):
+        inner = outer / action
+        inner.mkdir()
+        written = project_file.write(inner, name=action)
+        seen.clear()
+        model.declare(
+            Declaration(
+                action,
+                "os:tester",
+                checkout=known.checkout,
+                target=known.project,
+                file_id=written.id,
+                name=action,
+                directory=str(inner),
+            )
+        )
+        assert seen == [(str(inner), False)], action

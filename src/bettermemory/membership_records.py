@@ -1023,8 +1023,21 @@ def _common_by_pointer(kind: str | None, git_dir: str | None) -> str | None:
     return None
 
 
+#: The path module `_dir_key` folds with: a test swaps in ``ntpath`` to
+#: read Windows spellings on any host (`location.view_path` likewise).
+_DIR_PATHS: Any = os.path
+
+
 def _dir_key(path: str) -> str:
     """A directory as a declaration's folder is compared with a view or
     a question's folder: normalised, case folded where the platform folds
-    case."""
-    return os.path.normcase(os.path.normpath(path))
+    case. A folder from outside the capture is read as a view records it
+    first (`location.view_path`, ENG-152)."""
+    return str(_DIR_PATHS.normcase(_DIR_PATHS.normpath(path)))
+
+
+def _dir_below(here: str, root: str) -> bool:
+    """Whether the directory key `here` lies below the key `root`
+    (`_dir_key`), in the separator they were folded with."""
+    sep = str(_DIR_PATHS.sep)
+    return here.startswith(root.rstrip(sep) + sep)

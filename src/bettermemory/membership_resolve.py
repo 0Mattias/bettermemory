@@ -10,8 +10,10 @@ Each function takes the model as `self: Membership` and reaches its state
 (`_store`, `_rows`, `_remint`) and core methods through it; the class
 binds every one by name. This module lives apart from `membership.py` to
 keep each module under the package's 2,000-line bound (ENG-96). It
-imports the standard library and the records, lines and rows modules,
-and `membership` only under TYPE_CHECKING.
+imports the standard library, the records, lines and rows modules,
+`location` (for `view_path`) and `location_git` (for the bounded read of
+a declared folder, `_prefetch_declared`), and `membership` only under
+TYPE_CHECKING.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+from .location import view_path
+from .location_git import PROBE_BUDGET, bounded_reads
 from .membership_lines import (
     line_across_boundary,
     line_content_crowded,
@@ -273,10 +277,12 @@ def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolut
     asks. The liveness of the recorded views the ladder may read is read
     first, outside the transaction and bounded (`prefetch_liveness`,
     ENG-156), and enters it as values: a view on a hung mount reads
-    unreachable without holding the store's write lock."""
+    unreachable without holding the store's write lock. A declared
+    folder's stored spelling is read the same way (`_prefetch_declared`)."""
     with self.liveness_held():
         if not self._store.in_batch:
             self.prefetch_liveness(self._liveness_plan(loc))
+            _prefetch_declared(self, loc)
         with self._call():
             res = self._settle_unresolved(loc, self._resolve(loc, strict))
             rows = tuple(self._rows)
@@ -1405,10 +1411,38 @@ def _declared_folder(
     """Whether the folder at `loc` is one a declaration made a part of
     a folder project (`project init` below its root, B17): the file
     there was bound by a declaration made in this folder, and the
-    project it names has no checkout yet."""
+    project it names has no checkout yet. The declaration's folder is
+    compared as stored (from 9.0.0rc14 on, `declare` stores it as a view
+    records it: `location.view_path`, ENG-152), else in the spelling
+    `_prefetch_declared` read for it before the transaction: one a release
+    before 9.0.0rc14 kept as its cwd was spelled, maybe through a symlink
+    or a junction. Nothing here reads the filesystem, so a stored folder
+    on a hung mount holds no writer (review M D2); one whose read did not
+    answer in time matches nothing."""
     if self._checkouts_of(project_id):
         return False
     here = _dir_key(loc.root or loc.cwd)
+    live = self._live
+    for folder in _declared_dirs(self, file_id):
+        if _dir_key(folder) == here:
+            return True
+        read = live.get((_DECLARED, folder)) if live is not None else None
+        if read is not None and _dir_key(read) == here:
+            return True
+    return False
+
+
+#: The key under which `_prefetch_declared` keeps a declared folder's
+#: spelling for the span `liveness_held` opened, beside the views'
+#: liveness.
+_DECLARED = "declared_dir"
+
+
+def _declared_dirs(self: Membership, file_id: str) -> list[str]:
+    """The folders, as stored, of the declarations that bound the project
+    file `file_id` (its ``project_file_bound`` rows whose evidence is a
+    declaration)."""
+    out: list[str] = []
     for row in self._store.membership_log(["project_file_bound"]):
         if file_id not in row.payload:
             continue
@@ -1418,10 +1452,47 @@ def _declared_folder(
             and payload.get("file_id") == file_id
             and str(payload.get("evidence") or "").startswith("declaration:")
             and isinstance(payload.get("dir"), str)
-            and _dir_key(payload["dir"]) == here
         ):
-            return True
-    return False
+            out.append(payload["dir"])
+    return out
+
+
+def _prefetch_declared(self: Membership, loc: Location) -> None:
+    """Read, before the resolution's transaction, each folder a
+    declaration bound `loc`'s project file in whose stored spelling is not
+    `loc`'s, as a view records it (`location.view_path`): in turn on one
+    thread, each bounded by `PROBE_BUDGET` (`bounded_reads`, ENG-156), and
+    kept for the span `liveness_held` opened, where `_declared_folder`
+    reads it as a value (review M D2). A folder that does not answer in
+    time is not kept, so it matches nothing."""
+    live = self._live
+    f = loc.root_file
+    if live is None or f is None or loc.state == UNREADABLE:
+        return
+    here = _dir_key(loc.root or loc.cwd)
+    try:
+        bound = self._file_binding(f.id)
+        if bound is None or self._checkouts_of(bound):
+            return
+        todo = sorted(
+            {
+                d
+                for d in _declared_dirs(self, f.id)
+                if _dir_key(d) != here and (_DECLARED, d) not in live
+            }
+        )
+    except Exception:  # noqa: BLE001 - the transaction compares as stored
+        return
+    if not todo:
+        return
+
+    def job(folder: str) -> tuple[str, str, Callable[[], str]]:
+        return folder, _DECLARED, lambda: view_path(folder)
+
+    got = bounded_reads([job(d) for d in todo], PROBE_BUDGET)
+    for folder, read in zip(todo, got, strict=True):
+        if isinstance(read, str):
+            live[(_DECLARED, folder)] = read
 
 
 def _unordered(count: int) -> str:

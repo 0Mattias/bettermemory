@@ -22,7 +22,7 @@ import os
 import socket
 from typing import Any
 
-__all__ = ["INDETERMINATE", "TOKEN_VERSION", "probe"]
+__all__ = ["INDETERMINATE", "TOKEN_VERSION", "probe", "view_path"]
 
 #: The state of a location nothing could be read for; `location`'s
 #: vocabulary (``tests/test_membership_capture.py`` pins it to the model's).
@@ -49,6 +49,34 @@ def _path_state(path: str) -> tuple[str, os.stat_result | None, str]:
     return "present", st, ""
 
 
+#: The path module `view_path` reads with: a test swaps in a Windows one
+#: (``ntpath`` with its junctions) to read Windows spellings on any host.
+_VIEW_PATHS: Any = os.path
+
+
+def view_path(path: str) -> str:
+    """`path` as a view records it (ENG-152, ENG-155): absolute, each
+    symbolic link and junction on it resolved as the capture resolves a
+    cwd (``realpath``), without a trailing separator (the model's
+    `_norm`). The one spelling in which a declaration's folder, a
+    question's folder and the key of a write made where nothing could be
+    read (decision B6) meet the views the capture recorded, so a folder
+    reached through a symlinked cwd or a Windows junction names its view.
+    Where the OS cannot resolve the path it is made absolute and
+    normalised alone. Reads the links on the path (an ``lstat`` per
+    part), never what is in it."""
+    paths = _VIEW_PATHS
+    try:
+        real = str(paths.realpath(path))
+    except (OSError, ValueError):
+        try:
+            real = str(paths.normpath(paths.abspath(path)))
+        except (OSError, ValueError):
+            real = path
+    stripped = real.rstrip("/\\")
+    return stripped or real
+
+
 def _hostname() -> str | None:
     try:
         return socket.gethostname() or None
@@ -64,6 +92,9 @@ def probe(cwd: str) -> dict[str, Any]:
     out: dict[str, Any] = {"v": TOKEN_VERSION, "probe": True, "cwd": cwd}
     state, st, why = _path_state(cwd)
     if state != "present" or st is None:
+        # Keyed as a view records it, so the write it homes (B6) settles
+        # when the checkout there is resolved (ENG-155).
+        out["cwd"] = view_path(cwd)
         out["state"] = INDETERMINATE
         out["detail"] = f"cwd {state}: {why}" if why else f"cwd {state}"
         return out

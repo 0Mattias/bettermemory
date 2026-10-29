@@ -1003,6 +1003,37 @@ the candidates' testing.
   `src/bettermemory/membership_resolve.py`,
   `src/bettermemory/membership_records.py`,
   `src/bettermemory/membership_migrate.py`)
+- **A folder reached through a symlink or a junction is the folder its
+  view records.** The capture records a checkout's view at the path's
+  real spelling, every symbolic link and Windows junction on it
+  resolved; a declaration's folder (`bettermemory project init`'s cwd)
+  and the key of a write made where nothing could be read (decision B6)
+  were kept as the caller spelled them. On Windows, where the cwd keeps a
+  junction's spelling, `project init` below a repository's root through
+  a junction was refused as standing nowhere in its checkout, and a
+  part's question was never found answered (ENG-152); on any platform a
+  write through a symlinked cwd whose folder could not be read was keyed
+  at the link's spelling, which no resolution looks at, so the same
+  session's next prompt there never settled it and its record stayed in
+  a provisional project (ENG-155). `location.view_path` is now the one
+  spelling both are read in: a declaration's folder before its
+  transaction (and in the binding's evidence), the folder `below_root`
+  is asked about, a part's question and a declared folder project's
+  folder, and the cwd an indeterminate capture, a client's probe and a
+  machineless caller key a location by. A folder an earlier candidate
+  declared, kept as its cwd was spelled, is read the same way before the
+  resolution's transaction, bounded as a view's liveness is
+  (`PROBE_BUDGET`), and one that does not answer in time matches
+  nothing; one stored in the view's spelling is compared as stored, and
+  `declare` reads its folder once, before its own transaction. A
+  directory key folds case and separators with one path module, so a
+  Windows spelling in another case, with forward slashes or a trailing
+  separator, meets its view. (`src/bettermemory/_location_probe.py`,
+  `docs/internals.md`,
+  `src/bettermemory/location.py`, `src/bettermemory/membership.py`,
+  `src/bettermemory/membership_declare.py`,
+  `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_resolve.py`)
 
 #### Known limitations
 

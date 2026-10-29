@@ -21,7 +21,7 @@ import json
 from collections.abc import Callable, Collection, Sequence
 from typing import TYPE_CHECKING, Any
 
-from .location import NO_MACHINE
+from .location import NO_MACHINE, view_path
 from .membership_lines import line_unresolved
 from .membership_records import (
     ASK,
@@ -78,7 +78,13 @@ def declare(self: Membership, decl: Declaration) -> Declared:
     it to a part (decision B17); ``move`` re-homes one record;
     ``absorb`` merges the project named into the checkout's; ``unjoin``
     undoes the merge of the project named. Each is logged with the
-    principal, and a join with the user's words it rests on."""
+    principal, and a join with the user's words it rests on. The
+    declaration's ``directory`` is read as a view records it
+    (`location.view_path`, ENG-152), before the transaction: the folder
+    compared with the checkout's root and its questions' folders, and
+    kept in the binding's evidence, is the one the capture sees."""
+    if decl.directory is not None:
+        decl = dataclasses.replace(decl, directory=view_path(decl.directory))
     with self._call():
         before = {pr.id for pr in self._open_proposals()}
         project = self._declare(decl)
@@ -143,6 +149,7 @@ def _question_of(
         opened = [x for x in opened if x.kind != SUBPROJECT_CONTRADICTION]
     elif decl.action == "init_new" and below:
         assert decl.directory is not None
+        # `declare` read it as a view records it, before its transaction.
         folder = _dir_key(decl.directory)
         opened = [
             x

@@ -70,7 +70,6 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
-import os
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
@@ -82,7 +81,7 @@ from . import (
     membership_queries,
     membership_resolve,
 )
-from .location import continuity, path_liveness, path_liveness_many
+from .location import continuity, path_liveness, path_liveness_many, view_path
 from .membership_lines import (
     line_boundary_added,
     line_boundary_dropped,
@@ -210,8 +209,9 @@ from .membership_records import (
     _LIVE_STATES,
     _basename,
     _common_by_pointer,
-    _live_key,
+    _dir_below,
     _dir_key,
+    _live_key,
     _norm,
     _path_under,
     _same_number,
@@ -1405,21 +1405,28 @@ class Membership:
     _answer_unresolved = membership_declare._answer_unresolved
     _answer_import = membership_declare._answer_import
 
-    def below_root(self, k: Checkout, directory: str) -> bool | None:
+    def below_root(
+        self, k: Checkout, directory: str, *, canonical: bool = False
+    ) -> bool | None:
         """Whether `directory` lies below the root of checkout `k`, the
         root being its newest view on this machine (the one the latest
         sighting here saw; decision B17): False at the root, True below
         it, None when that view does not hold `directory` or the checkout
         was never seen here. `bettermemory project init` asks it, and a
-        declaration's ``directory`` is read by it."""
+        declaration's ``directory`` is read by it. `directory` is read as a
+        view records it (`location.view_path`, ENG-152): a cwd reached
+        through a symlink or a Windows junction is the view's folder.
+        `canonical` when the caller read it so already (`declare`, before
+        its transaction), so it is not read again under the store's write
+        lock (review M H5)."""
         views = k.views_on(self.machine)
         if not views:
             return None
-        here = _dir_key(directory)
+        here = _dir_key(directory if canonical else view_path(directory))
         root = _dir_key(views[-1].path)
         if here == root:
             return False
-        if here.startswith(root.rstrip(os.sep) + os.sep):
+        if _dir_below(here, root):
             return True
         return None
 
@@ -1429,7 +1436,7 @@ class Membership:
         other action, reads as the root's."""
         if decl.action not in _INITS or decl.directory is None:
             return False
-        below = self.below_root(k, decl.directory)
+        below = self.below_root(k, decl.directory, canonical=True)
         if below is None:
             raise ValueError(
                 f"cannot tell where {decl.directory} stands in checkout {k.id} "
