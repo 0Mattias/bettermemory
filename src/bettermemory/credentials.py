@@ -336,6 +336,32 @@ _DATETIME_SHAPE_RE = re.compile(
 )
 
 
+# A placeholder's digit suffix, with the separator before it
+# (changeme12345, your-api-key-1), stripped before the allowlist lookup.
+# The lookbehind lets a match start only where a digit run starts. The
+# plain `[-_]?\d+$` began a match at every digit of a run and read to
+# the run's end from each, so a value made of one long digit run and a
+# letter cost the square of the run, and `_looks_like_secret` judges
+# values of up to 1,024 characters for every `password=…`-style
+# assignment in a body, a search query or a prompt the recall hook
+# redacts: 425 KB of such assignments with 1,000-digit values took about
+# 1 s per pass (1.06 s in the write gate's scan, 0.95 s in the
+# redaction's), 3.7x to 4.0x the cost of half the run. Anchored, a run
+# is read from its first digit and from the separator before it and from
+# no other start: the same body takes 0.05 s and 1.9x to 2.0x at twice
+# the length (measured by hand;
+# `test_a_long_digit_run_value_is_judged_in_linear_time` pins about 3.9x
+# at four times the run under 7, where the plain pattern measures about
+# 13x, and a 200,000-digit run under 0.5 s). The strip is unchanged: the
+# plain pattern's leftmost match never starts inside a run, since the
+# run's first digit, or the separator before it, would start an earlier
+# one, and the lookbehind drops only such starts;
+# `test_the_number_suffix_strip_matches_the_plain_pattern` checks the
+# two over every short string of digits, separators, a letter and a
+# newline.
+_NUMBER_SUFFIX_RE = re.compile(r"[-_]?(?<!\d)\d+$")
+
+
 def _is_placeholder(v: str) -> bool:
     """True when `v` is a conventional placeholder, not a secret.
 
@@ -346,7 +372,7 @@ def _is_placeholder(v: str) -> bool:
     lowered = v.lower()
     if lowered in _PLACEHOLDER_VALUES:
         return True
-    if re.sub(r"[-_]?\d+$", "", lowered) in _PLACEHOLDER_VALUES:
+    if _NUMBER_SUFFIX_RE.sub("", lowered) in _PLACEHOLDER_VALUES:
         return True
     tokens = [t.rstrip("0123456789") for t in re.split(r"[-_]+", lowered)]
     return all(not t or t in _PLACEHOLDER_WORDS for t in tokens)

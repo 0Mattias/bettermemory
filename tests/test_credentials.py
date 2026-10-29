@@ -20,11 +20,16 @@ runtime value identical while leaving nothing for a content scanner to match.
 
 from __future__ import annotations
 
+import itertools
+import random
+import re
 import time
 
 import pytest
 
-from bettermemory.credentials import find_credential_markers
+from bettermemory import credentials
+from bettermemory.credentials import find_credential_markers, secret_spans
+from bettermemory.events import redact_query
 
 
 def _shaped(*parts: str) -> str:
@@ -630,3 +635,98 @@ def test_mixed_case_snake_secret_still_fires() -> None:
     secret = _shaped("hG7_qLm9_", "PzR4vXn2")
     kinds = [m.kind for m in find_credential_markers(f"db password is now {secret}")]
     assert "generic-secret-assignment" in kinds
+
+
+# ---------------------------------------------------------------------------
+# Regression: ENG-105 (the placeholder suffix strip read a run once per digit)
+# ---------------------------------------------------------------------------
+
+
+def _digit_run_assignments(digits: int) -> str:
+    """420 assignments whose values are one digit run and a letter: never a
+    secret (two distinct characters) and never a placeholder, so each one
+    reaches the suffix strip in `_is_placeholder`."""
+    return f"password=1{'1' * digits}a\n" * 420
+
+
+def test_a_long_digit_run_value_is_judged_in_linear_time() -> None:
+    """The plain `[-_]?\\d+$` began a match at every digit of a run and read
+    to the run's end from each, so a value of one long digit run cost the
+    square of the run: 425 KB of these assignments took about 1 s per pass
+    in the write gate's scan and in the query redaction. The run grows
+    fourfold here (250 to 1,000 digits, the body with it), so linear and
+    quadratic part by far more than a loaded runner's noise: the plain
+    pattern measures about 13x, the anchored one about 3.9x, and the bound
+    is 7. The two sizes are timed in turn, best of five each, so a slow
+    stretch of the machine lands on both. The direct check on one long
+    run cannot flake: anchored it takes a few milliseconds, where the
+    plain pattern spent 0.84 s on a tenth of the run."""
+    texts = {digits: _digit_run_assignments(digits) for digits in (250, 1000)}
+    best = dict.fromkeys(texts, float("inf"))
+    for _ in range(5):
+        for digits, text in texts.items():
+            started = time.perf_counter()
+            assert find_credential_markers(text) == []
+            assert secret_spans(text) == []
+            assert redact_query(text)["len"] == len(text)
+            best[digits] = min(best[digits], time.perf_counter() - started)
+    ratio = best[1000] / best[250]
+    assert ratio < 7, (
+        f"{ratio:.2f}x at four times the run: the suffix strip is quadratic"
+    )
+
+    started = time.perf_counter()
+    credentials._NUMBER_SUFFIX_RE.sub("", "1" * 200_000 + "a")
+    assert time.perf_counter() - started < 0.5
+
+
+def test_the_number_suffix_strip_matches_the_plain_pattern(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The anchored strip removes what `[-_]?\\d+$` removed: on every string
+    of up to six characters from an ASCII and an Arabic-Indic digit, both
+    separators, a letter and a newline (`$` matches before a final newline
+    too), and, through both match sites, on a fuzz of placeholder-shaped
+    assignments, where the spans and markers are the plain pattern's."""
+    plain = re.compile(r"[-_]?\d+$")
+    for length in range(7):
+        for chars in itertools.product("1\u0663-_a\n", repeat=length):
+            text = "".join(chars)
+            stripped = credentials._NUMBER_SUFFIX_RE.sub("", text)
+            assert stripped == plain.sub("", text), repr(text)
+
+    rng = random.Random(20261028)
+    words = sorted(credentials._PLACEHOLDER_WORDS | credentials._PLACEHOLDER_VALUES)
+    words += ["A1", "x9Q", "Zz7", "Tr0ub4dor"]
+    suffixes = ["", "1", "12345", "007", "\u0661\u0662"]
+    values = [
+        "".join(
+            rng.choice(words)
+            + rng.choice(["", "-", "_", "-_"])
+            + rng.choice([*suffixes, "9" * rng.randint(1, 40)])
+            for _ in range(rng.randint(1, 4))
+        )
+        for _ in range(3000)
+    ]
+    keys = ["password=", "api_key: ", "DB_PASSWORD=", "secret is "]
+    texts = [rng.choice(keys) + value for value in values]
+
+    def scan() -> list[tuple[object, object]]:
+        return [(secret_spans(t), find_credential_markers(t)) for t in texts]
+
+    anchored = scan()
+    placeholders = sum(credentials._is_placeholder(v) for v in values)
+    by_suffix = sum(
+        v.lower() not in credentials._PLACEHOLDER_VALUES
+        and credentials._NUMBER_SUFFIX_RE.sub("", v.lower())
+        in credentials._PLACEHOLDER_VALUES
+        for v in values
+    )
+    monkeypatch.setattr(credentials, "_NUMBER_SUFFIX_RE", plain)
+    assert anchored == scan()
+    # Not vacuous: the fuzz reads many values as placeholders, over a
+    # hundred of them through the suffix strip alone, and fires on many
+    # others.
+    assert placeholders > 300
+    assert by_suffix > 100
+    assert sum(1 for spans, _ in anchored if spans) > 300

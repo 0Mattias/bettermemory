@@ -347,6 +347,22 @@ the candidates' testing.
   `src/bettermemory/handlers/write.py`, `src/bettermemory/prompts.py`,
   `SECURITY.md`, `README.md`, `docs/api.md`, `docs/internals.md`,
   `docs/system_prompt.md`)
+- **A body of long digit-run assignments no longer holds the credential
+  scan for a second.** The generic `password=…` rule's value check
+  strips a placeholder's number suffix (`changeme12345`) with
+  `[-_]?\d+$`, which began a match at every digit of a run and read to
+  the run's end from each, so a value made of one long digit run cost
+  the square of the run. Every `password=`-style assignment in a memory
+  body, an episode, a search query or a prompt the recall hook redacts
+  reaches that check with a value of up to 1,024 characters: 425 KB of
+  assignments with 1,000-digit values took 1.06 s in the write gate's
+  scan and 0.95 s in the query redaction, and doubling the run cost 3.7x
+  to 4.0x. The strip now starts a match only where a digit run starts
+  and strips exactly what it did, checked over every string of up to
+  eight characters from digits, separators, a letter and a newline and
+  over every string the test suite holds: the same body takes 0.05 s in
+  each, 1.9x to 2.0x at twice the length.
+  (`src/bettermemory/credentials.py`)
 
 #### Known limitations
 
