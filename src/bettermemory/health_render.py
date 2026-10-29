@@ -4,13 +4,23 @@
 writes the report's dict as indented JSON. Both read only the report and
 the model's `_iso`. `health` re-exports both names, so callers keep
 importing them from `health`. Nothing here imports `health`.
+
+Every string the text form takes from the store or the log (an id, a
+summary, a scope, a marker, an actor's spelling, a repo or work tree) is
+printed through `history.printable`, as posture prints its fields, and
+every finished line goes through it once more, as doctor ends its report:
+the store is a file an editor can write and the log carries what a client
+stamped, so an escape sequence or a line break in one must not reach the
+terminal as one.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 
 from .health_model import HealthReport, _iso
+from .history import printable
 
 
 # ---------------------------------------------------------------------------
@@ -18,9 +28,16 @@ from .health_model import HealthReport, _iso
 # ---------------------------------------------------------------------------
 
 
+def _scopes(scopes: Iterable[str]) -> str:
+    """A row's scopes, comma-joined and escaped."""
+    return printable(",".join(scopes))
+
+
 def render_text(report: HealthReport) -> str:
     """Pretty-print the report for the CLI subcommand. Plain text — no
-    colour codes — so it pipes cleanly to a file."""
+    colour codes — so it pipes cleanly to a file. Store- and log-sourced
+    strings are escaped (`history.printable`); `render_json` is not, since
+    JSON escapes them itself."""
     lines: list[str] = []
     lines.append(
         f"Memory health — generated {_iso(report.generated_at)}, "
@@ -64,7 +81,8 @@ def render_text(report: HealthReport) -> str:
             lines.append(f"  NOT MEASURED: {coverage.reason}")
     for s in report.dead_weight[:20]:
         lines.append(
-            f"  {s.id} [retrievals={s.retrieval_count}] {','.join(s.scopes)}: {s.summary}"
+            f"  {printable(s.id)} [retrievals={s.retrieval_count}] "
+            f"{_scopes(s.scopes)}: {printable(s.summary)}"
         )
     if len(report.dead_weight) > 20:
         lines.append(f"  ... and {len(report.dead_weight) - 20} more")
@@ -77,7 +95,7 @@ def render_text(report: HealthReport) -> str:
     if not report.cold_memories:
         lines.append("  (none)")
     for s in report.cold_memories[:20]:
-        lines.append(f"  {s.id} {','.join(s.scopes)}: {s.summary}")
+        lines.append(f"  {printable(s.id)} {_scopes(s.scopes)}: {printable(s.summary)}")
     if len(report.cold_memories) > 20:
         lines.append(f"  ... and {len(report.cold_memories) - 20} more")
 
@@ -91,10 +109,10 @@ def render_text(report: HealthReport) -> str:
         # where exp=0 with non-zero auto is the "ranker keeps surfacing
         # this but the model never deliberately endorses it" pattern.
         lines.append(
-            f"  {s.id} [applied={s.applied_count} "
+            f"  {printable(s.id)} [applied={s.applied_count} "
             f"(auto={s.auto_applied_count} "
             f"exp={s.explicit_applied_count})] "
-            f"{','.join(s.scopes)}: {s.summary}"
+            f"{_scopes(s.scopes)}: {printable(s.summary)}"
         )
 
     lines.append("")
@@ -103,7 +121,8 @@ def render_text(report: HealthReport) -> str:
         lines.append("  (none)")
     for s in report.contradicted:
         lines.append(
-            f"  {s.id} [contradicted={s.contradicted_count}] {','.join(s.scopes)}: {s.summary}"
+            f"  {printable(s.id)} [contradicted={s.contradicted_count}] "
+            f"{_scopes(s.scopes)}: {printable(s.summary)}"
         )
 
     lines.append("")
@@ -113,7 +132,7 @@ def render_text(report: HealthReport) -> str:
     for m in report.marker_stats:
         rate_pct = round(m.override_rate * 100, 1)
         lines.append(
-            f"  {m.marker:<24} fires={m.fire_count}  "
+            f"  {printable(m.marker):<24} fires={m.fire_count}  "
             f"overrides={m.override_count}  rate={rate_pct}%"
         )
 
@@ -123,7 +142,7 @@ def render_text(report: HealthReport) -> str:
         lines.append("  (none)")
     for sh in report.scope_health:
         lines.append(
-            f"  {sh.scope:<28} active={sh.active:<3} dead={sh.dead:<3} "
+            f"  {printable(sh.scope):<28} active={sh.active:<3} dead={sh.dead:<3} "
             f"cold={sh.cold:<3} contradicted={sh.contradicted:<3} "
             f"applied={sh.applied_total}"
         )
@@ -136,11 +155,11 @@ def render_text(report: HealthReport) -> str:
     for sl in slices.declared:
         spellings = ""
         if sl.models:
-            spellings += f"  models={','.join(sorted(sl.models))}"
+            spellings += f"  models={printable(','.join(sorted(sl.models)))}"
         if sl.principals:
-            spellings += f"  principals={','.join(sorted(sl.principals))}"
+            spellings += f"  principals={printable(','.join(sorted(sl.principals)))}"
         lines.append(
-            f"  {(sl.client or ''):<20} memories={sl.memories:<5} "
+            f"  {printable(sl.client or ''):<20} memories={sl.memories:<5} "
             f"in-window={sl.memories_in_window:<5} events={sl.events:<6} "
             f"searches={sl.searches:<5} applies={sl.applies}{spellings}"
         )
@@ -163,7 +182,7 @@ def render_text(report: HealthReport) -> str:
     if not report.rare_scopes:
         lines.append("  (none)")
     for scope in report.rare_scopes:
-        lines.append(f"  {scope}")
+        lines.append(f"  {printable(scope)}")
 
     if report.orphan_use_events:
         lines.append("")
@@ -193,7 +212,9 @@ def render_text(report: HealthReport) -> str:
             "checkable first, then oldest):"
         )
         for s in debt.never_verified:
-            lines.append(f"    {s.id} {','.join(s.scopes)}: {s.summary}")
+            lines.append(
+                f"    {printable(s.id)} {_scopes(s.scopes)}: {printable(s.summary)}"
+            )
         if debt.never_verified_total > len(debt.never_verified):
             lines.append(
                 f"    ... and {debt.never_verified_total - len(debt.never_verified)} more"
@@ -205,7 +226,8 @@ def render_text(report: HealthReport) -> str:
         for s in debt.stale:
             verified = _iso(s.last_verified_at) or "?"
             lines.append(
-                f"    {s.id} [verified={verified}] {','.join(s.scopes)}: {s.summary}"
+                f"    {printable(s.id)} [verified={verified}] "
+                f"{_scopes(s.scopes)}: {printable(s.summary)}"
             )
         if debt.stale_total > len(debt.stale):
             lines.append(f"    ... and {debt.stale_total - len(debt.stale)} more")
@@ -221,9 +243,9 @@ def render_text(report: HealthReport) -> str:
         )
         for s in ce.rows:
             lines.append(
-                f"  {s.id} [retrievals={s.retrieval_count} "
+                f"  {printable(s.id)} [retrievals={s.retrieval_count} "
                 f"auto_applied={s.auto_applied_count}] "
-                f"{','.join(s.scopes)}: {s.summary}"
+                f"{_scopes(s.scopes)}: {printable(s.summary)}"
             )
         if ce.total > len(ce.rows):
             lines.append(f"  ... and {ce.total - len(ce.rows)} more")
@@ -268,7 +290,7 @@ def render_text(report: HealthReport) -> str:
     if cd is not None:
         lines.append("")
         lines.append(
-            f"Commit drift — anchor={cd.current_repo or '?'}  "
+            f"Commit drift — anchor={printable(cd.current_repo or '?')}  "
             f"drifted={cd.total_drifted}:"
         )
         if not cd.rows:
@@ -278,8 +300,9 @@ def render_text(report: HealthReport) -> str:
             for row in cd.rows:
                 verified = _iso(row.last_verified_at) or "?"
                 lines.append(
-                    f"    {row.id} [+{row.commits_since_verify} commits, "
-                    f"verified={verified}] {','.join(row.scopes)}: {row.summary}"
+                    f"    {printable(row.id)} [+{row.commits_since_verify} commits, "
+                    f"verified={verified}] {_scopes(row.scopes)}: "
+                    f"{printable(row.summary)}"
                 )
             if cd.total_drifted > len(cd.rows):
                 lines.append(f"    ... and {cd.total_drifted - len(cd.rows)} more")
@@ -299,14 +322,15 @@ def render_text(report: HealthReport) -> str:
         for group in xr.groups:
             state = f"{group.total_drifted} drifted" if group.total_drifted else "clean"
             lines.append(
-                f"  {group.repo} [{group.worktree_root}]: {state} of "
-                f"{group.candidates} candidate(s)"
+                f"  {printable(group.repo)} [{printable(group.worktree_root)}]: "
+                f"{state} of {group.candidates} candidate(s)"
             )
             for row in group.rows:
                 verified = _iso(row.last_verified_at) or "?"
                 lines.append(
-                    f"    {row.id} [+{row.commits_since_verify} commits, "
-                    f"verified={verified}] {','.join(row.scopes)}: {row.summary}"
+                    f"    {printable(row.id)} [+{row.commits_since_verify} commits, "
+                    f"verified={verified}] {_scopes(row.scopes)}: "
+                    f"{printable(row.summary)}"
                 )
             if group.total_drifted > len(group.rows):
                 lines.append(
@@ -314,11 +338,15 @@ def render_text(report: HealthReport) -> str:
                 )
         for skip in xr.skipped:
             lines.append(
-                f"  (skipped {skip['repo']} [{skip['worktree_root']}]: "
-                f"{skip['reason']})"
+                f"  (skipped {printable(str(skip['repo']))} "
+                f"[{printable(str(skip['worktree_root']))}]: "
+                f"{printable(str(skip['reason']))})"
             )
 
-    return "\n".join(lines) + "\n"
+    # Every line through `printable` once more, as doctor ends its report:
+    # a field above that was not escaped still cannot reach the terminal
+    # raw, and the fields that were come through unchanged.
+    return "\n".join(printable(line) for line in lines) + "\n"
 
 
 def render_json(report: HealthReport) -> str:

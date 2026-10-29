@@ -10,6 +10,15 @@ not resolve at run time (`typing.get_type_hints` raises on them; nothing
 reads them that way); `RateCI` and `EARLIER_RULES` come from
 `eval_model.py`. `eval.py` re-exports every public renderer, so
 `from bettermemory.eval import render_text` reads as before.
+
+The text renderers print every string they take from the store or the log
+(an id, a summary, a scope, a `client_model` stamp, a probe preview, a
+rule, detector or reason a row carried) through `history.printable`, as
+posture prints its fields, and `_text` passes every finished line through
+it once more, as doctor ends its report, so an escape sequence or a line
+break in one cannot reach the terminal as one, a field missed included.
+The markdown report's one log-sourced cell goes through `_md_escape_cell`,
+which escapes it for a table cell.
 """
 
 from __future__ import annotations
@@ -18,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from .eval_model import EARLIER_RULES, RateCI
 from .health import _HOOKLESS_REASON
+from .history import printable
 from .time_utils import isoformat_utc_optional
 
 if TYPE_CHECKING:
@@ -45,7 +55,9 @@ def render_text(report: EvalReport) -> str:
         if report.window_seconds is None
         else _humanize_seconds(report.window_seconds)
     )
-    scope_part = f" · scope={report.scope_filter}" if report.scope_filter else ""
+    scope_part = (
+        f" · scope={printable(report.scope_filter)}" if report.scope_filter else ""
+    )
     if report.window_end is not None:
         # An absolute --until: name both ends, since "last N" would read
         # back from now.
@@ -82,7 +94,7 @@ def render_text(report: EvalReport) -> str:
         for model in sorted(report.by_model):
             counts = report.by_model[model]
             lines.append(
-                f"  {model:<28s} audited={counts.get('audited', 0):<5d} "
+                f"  {printable(model):<28s} audited={counts.get('audited', 0):<5d} "
                 f"misses={counts.get('misses', 0):<4d} "
                 f"no_signal={counts.get('no_signal', 0)}"
             )
@@ -95,10 +107,11 @@ def render_text(report: EvalReport) -> str:
             f"{report.cold_endorsement_memories_total}"
         )
         for row in report.cold_endorsement_memories_rows[:10]:
-            scopes = ",".join(row.scopes) or "—"
+            scopes = printable(",".join(row.scopes)) or "—"
             lines.append(
-                f"  {row.id}  {scopes:<18s}  "
-                f'"{_truncate(row.summary, 50)}"  ({row.retrieval_count} retrievals)'
+                f"  {printable(row.id)}  {scopes:<18s}  "
+                f'"{printable(_truncate(row.summary, 50))}"  '
+                f"({row.retrieval_count} retrievals)"
             )
         if report.cold_endorsement_memories_total > 10:
             lines.append(f"  … plus {report.cold_endorsement_memories_total - 10} more")
@@ -113,16 +126,17 @@ def render_text(report: EvalReport) -> str:
         lines.append("")
         lines.append(f"Silent-miss candidates (last {len(report.silent_miss_recent)}):")
         for c in report.silent_miss_recent:
-            top = c.top_missed_id or "—"
-            rel = c.top_missed_relevance or "—"
+            top = printable(c.top_missed_id or "—")
+            rel = printable(c.top_missed_relevance or "—")
             lines.append(
-                f"  {_short_ts(c.ts)}  session={c.session_id[:12]}…  "
+                f"  {printable(_short_ts(c.ts))}  "
+                f"session={printable(c.session_id[:12])}…  "
                 f"missed={top} relevance={rel}"
             )
 
     if report.threshold_rule:
         lines.append("")
-        lines.append(f"Threshold rule: {report.threshold_rule}")
+        lines.append(f"Threshold rule: {printable(report.threshold_rule)}")
     lines.extend(_review_text_lines(report.review))
     lines.extend(_surface_text_lines(report.surfaces))
     if (
@@ -137,7 +151,16 @@ def render_text(report: EvalReport) -> str:
             "its retrieval aged out), or — less often — a log read mid-rotation. "
             "Re-run without --since to rule out the window edge."
         )
-    return "\n".join(lines) + "\n"
+    return _text(lines)
+
+
+def _text(lines: list[str]) -> str:
+    """The finished text: every line through `history.printable` once
+    more, as doctor ends its report, so a field a renderer did not escape
+    still cannot reach the terminal raw. `printable` writes ASCII escapes
+    and leaves a backslash alone, so the second pass changes nothing the
+    first one escaped."""
+    return "\n".join(printable(line) for line in lines) + "\n"
 
 
 def _review_text_lines(review: dict[str, Any] | None) -> list[str]:
@@ -162,16 +185,19 @@ def _review_text_lines(review: dict[str, Any] | None) -> list[str]:
         f"response_chars_p50={num(review['response_chars_p50'])} "
         f"calls_per_committed_write={num(review['calls_per_committed_write'])}",
         "  actions "
-        + " ".join(f"{name}={count}" for name, count in review["actions"].items()),
+        + " ".join(
+            f"{printable(str(name))}={count}"
+            for name, count in review["actions"].items()
+        ),
         "  filings_per_100_committed "
         + " ".join(
-            f"{name}={num(value)}"
+            f"{printable(str(name))}={num(value)}"
             for name, value in review["filings_per_100_committed"].items()
         ),
     ]
     for client, bucket in review["by_client"].items():
         lines.append(
-            f"  client {client}: issued={bucket['issued']} "
+            f"  client {printable(str(client))}: issued={bucket['issued']} "
             f"unanswered={bucket['unanswered']} "
             f"pre_answered_zero={bucket['pre_answered_zero']}"
         )
@@ -209,7 +235,7 @@ def _surface_text_lines(surfaces: dict[str, Any] | None) -> list[str]:
     holds none of the recall surface's rows."""
     if surfaces is None:
         return []
-    rules = ", ".join(surfaces["rules"]) or "none"
+    rules = printable(", ".join(surfaces["rules"])) or "none"
     lines = ["", f"Recall surfaces (rule {rules}):"]
     for surface in ("brief", "recall"):
         tally = surfaces[surface]
@@ -224,7 +250,10 @@ def _surface_text_lines(surfaces: dict[str, Any] | None) -> list[str]:
     if suppressed:
         lines.append(
             "  recall held back "
-            + " ".join(f"{reason}={count}" for reason, count in suppressed.items())
+            + " ".join(
+                f"{printable(str(reason))}={count}"
+                for reason, count in suppressed.items()
+            )
         )
     settled = surfaces["settlements"]
     segments = surfaces["segments"]
@@ -260,7 +289,7 @@ def _rule_split_text_lines(surfaces: dict[str, Any]) -> list[str]:
     for group, split in by_rule.items():
         label = group
         if group == EARLIER_RULES:
-            label = f"{group} ({', '.join(split['rules']) or 'none'})"
+            label = f"{group} ({printable(', '.join(split['rules'])) or 'none'})"
         for surface in ("brief", "recall"):
             tally = split[surface]
             lines.append(
@@ -379,7 +408,7 @@ def render_threshold_sweep_text(report: ThresholdSweepReport) -> str:
             "run with `--since all` if your recent window is empty, or "
             "wait until `memory_audit_turn` has fired a few times."
         )
-        return "\n".join(lines) + "\n"
+        return _text(lines)
     lines.append("")
     lines.append(f"{'rule':<32s} {'flagged':>7s}  {'Δ v1':>7s}  {'% v1':>6s}")
     for row in report.rows:
@@ -393,7 +422,7 @@ def render_threshold_sweep_text(report: ThresholdSweepReport) -> str:
     lines.append("Caveat: this is a *relative* sweep over events the v1 rule")
     lines.append("already flagged. Strictly looser rules replay over the")
     lines.append("turn_audited stream instead — see --widening-preview.")
-    return "\n".join(lines) + "\n"
+    return _text(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +466,7 @@ def render_widening_preview_text(report: WideningPreviewReport) -> str:
             "`turn_audited` events carrying `top_hits` (3.14+); let the "
             "Stop hook run for a while and re-check."
         )
-        return "\n".join(lines) + "\n"
+        return _text(lines)
     lines.append("")
     lines.append(f"v1 baseline (replayed)      {report.v1_baseline_flagged:>5d}")
     lines.append("")
@@ -457,7 +486,7 @@ def render_widening_preview_text(report: WideningPreviewReport) -> str:
     lines.append("blind-spot cohort. Both sides exclude shielded turns but")
     lines.append("not the project-suppression arm (see compute docstring),")
     lines.append("so absolute counts are upper bounds; the delta is the signal.")
-    return "\n".join(lines) + "\n"
+    return _text(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +520,7 @@ def render_widening_detail_text(report: WideningDetailReport) -> str:
             "`turn_audited` events carrying `top_hits` (3.14+); let the "
             "Stop hook run for a while and re-check."
         )
-        return "\n".join(lines) + "\n"
+        return _text(lines)
     for detail in report.rules:
         lines.append("")
         lines.append(
@@ -511,12 +540,13 @@ def render_widening_detail_text(report: WideningDetailReport) -> str:
             )
             scopes = ",".join(row.scopes or []) or "—"
             lines.append(
-                f"  {row.count:>4d}×  {row.memory_id}  {row.status:<10s} "
+                f"  {row.count:>4d}×  {printable(row.memory_id)}  "
+                f"{printable(row.status):<10s} "
                 f"{scores}  sessions={row.distinct_sessions}"
             )
             lines.append(
-                f"         [{_clip(scopes, 44)}] "
-                f"{_clip(row.summary or '(no summary)', 60)}"
+                f"         [{printable(_clip(scopes, 44))}] "
+                f"{printable(_clip(row.summary or '(no summary)', 60))}"
             )
         lines.append("")
         lines.append("  flagged turns (newest first):")
@@ -537,16 +567,17 @@ def render_widening_detail_text(report: WideningDetailReport) -> str:
                 else f" (+{t.probe_query_len - len(t.probe_query_preview)} chars)"
             )
             lines.append(
-                f"    {ts}  cov {cov:>6s}  v1={t.relevance_v1 or '?'}"
-                f"{marker}  → {t.top_hit_id[:10]}…"
+                f"    {printable(ts)}  cov {cov:>6s}  "
+                f"v1={printable(t.relevance_v1 or '?')}"
+                f"{marker}  → {printable(t.top_hit_id[:10])}…"
             )
-            lines.append(f'      "{_clip(preview, 70)}"{suffix}')
+            lines.append(f'      "{printable(_clip(preview, 70))}"{suffix}')
     lines.append("")
     lines.append("Label each turn: would inlining the top hit's body have")
     lines.append("helped this message? Concentration on one memory means a")
     lines.append("ranking problem, not a label problem — fix the memory or")
     lines.append("the rule, not the formula.")
-    return "\n".join(lines) + "\n"
+    return _text(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -593,8 +624,10 @@ def render_tool_usage_text(report: ToolUsageReport) -> str:
         for kind, count in sorted(
             report.unmapped_event_kinds.items(), key=lambda kv: (-kv[1], kv[0])
         ):
-            lines.append(f"  {kind:<30s} {count:>7d}")
-    return "\n".join(lines) + "\n"
+            # An unmapped kind is whatever a log row named, so it is
+            # escaped like the other renderers' log-sourced strings.
+            lines.append(f"  {printable(kind):<30s} {count:>7d}")
+    return _text(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -602,13 +635,35 @@ def render_tool_usage_text(report: ToolUsageReport) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: The characters that open markdown inline syntax or end a table cell:
+#: a backslash (it escapes what follows), the cell separator, code spans,
+#: emphasis and strikethrough, a link or an image, an autolink or inline
+#: HTML, and an entity. Each is written backslash-escaped, which CommonMark
+#: allows for every ASCII punctuation character.
+_MD_CELL_SPECIALS = frozenset("\\|`*_~[]!<>&")
+
+
 def _md_escape_cell(text: str) -> str:
-    """Escape the one character that breaks a hand-rolled markdown
-    table cell. Applied to the only non-static string the renderer
-    emits (model names, which come off logged `client_model` stamps —
-    the log is plaintext and hand-editable, so a stray ``|`` must not
-    be able to shift columns)."""
-    return text.replace("|", "\\|")
+    """`text` made inert in one markdown table cell. Applied to the only
+    non-static string the report emits (model names, which come off
+    logged `client_model` stamps; the log is plaintext and
+    hand-editable). A character that opens inline syntax or ends the
+    cell is backslash-escaped (`_MD_CELL_SPECIALS`), so a ``|`` cannot
+    shift columns, and a link or an image written in markdown syntax,
+    inline HTML or an entity cannot ride into the published report; a
+    line break and every other control or format character is written as
+    its Python escape (`history.printable`), so a newline cannot end the
+    row and start markdown of its own, and an escape sequence cannot
+    reach a terminal that prints the report. The backslashes are escaped
+    first, so the ones `printable` writes read as text.
+
+    Left as they are: a bare URL, a ``www.`` host and an email address,
+    which GFM's autolink extension still links, and an ``@name``, which
+    is a mention once the report is pasted into a GitHub issue. A
+    model name is a client's own stamp, so those carry no markup this
+    escaping would remove."""
+    escaped = "".join(f"\\{ch}" if ch in _MD_CELL_SPECIALS else ch for ch in text)
+    return printable(escaped)
 
 
 def _md_rate_cell(rate: RateCI, *, bold: bool = False) -> str:

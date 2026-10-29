@@ -118,11 +118,14 @@ def _cli_health(
 
 def _membership_section(store: Store) -> tuple[dict[str, Any], list[str]] | None:
     """The membership section of design 8.10, as JSON and as text lines;
-    None for a store an earlier build left without membership tables."""
+    None for a store an earlier build left without membership tables. The
+    text lines quote paths and checkout names from the store, so each is
+    escaped (`history.printable`) as `render_text` escapes the report's."""
+    from ..history import printable
     from .membership_cmd import health_dict, health_lines, health_model
 
     try:
         section = health_dict(health_model(store))
     except (sqlite3.Error, RuntimeError):
         return None
-    return section, health_lines(section)
+    return section, [printable(line) for line in health_lines(section)]

@@ -761,6 +761,28 @@ the candidates' testing.
   directory on disk now anchors it, a deleted file's claim too, and a
   path outside the tree is still dropped. (`src/bettermemory/origin.py`,
   `src/bettermemory/origin_gitfiles.py`)
+- **`health` and `eval` escape what the store and the log hand them,
+  and the eval report's model cell is escaped whole.** The text reports
+  printed memory summaries, scopes, actor and `client_model` stamps,
+  probe previews, session ids, repos and work trees as stored, so an
+  escape sequence in one ran in the terminal of whoever read the report
+  (a clipboard write, overwritten lines) and a line break split a line;
+  this is the class rc13 closed in the security audit, `doctor` and the
+  migrate line. The `eval --report` markdown escaped only `|` in the
+  model column, so a `client_model` stamp holding a line break left its
+  table row and wrote markdown of its own into a document meant to be
+  published. `bettermemory health` (the membership section included),
+  `bettermemory eval` (its review and recall-surface sections included),
+  `--widening-preview --detail` and `--tool-usage` now print every such
+  string through the escaping `doctor` uses, field by field and then
+  over every finished line as `doctor` ends its report, so a field
+  missed still cannot reach the terminal raw. The report's cell escaper
+  writes a backslash, a pipe and the characters that open inline
+  markdown backslash-escaped and a line break or other control
+  character as its escape; a bare URL, a `www.` host or an email
+  address in a model name still autolinks. `--json` is unchanged.
+  (`src/bettermemory/health_render.py`,
+  `src/bettermemory/eval_render.py`, `src/bettermemory/cli/health_cmd.py`)
 
 #### Known limitations
 
