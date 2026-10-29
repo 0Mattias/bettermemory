@@ -670,7 +670,11 @@ def test_removed_keys_and_loader_fallbacks_warn(env: Env) -> None:
     assert "[telemetry] max_bytes (removed in 9.0.0)" in removed
     assert "[consolidate] (removed in 9.0.0)" in removed
     assert "[behavior] endorsement_debt_ratio_threshold (removed in 9.0.0)" in removed
-    assert any("search_mode" in notice for notice in check.details["notices"])
+    notices = check.details["notices"]
+    assert any("search_mode" in notice for notice in notices)
+    # A removed key's notice is the removed list's, by its " was removed in
+    # bettermemory " wording, whatever key it names.
+    assert not any("endorsement_debt_ratio_threshold" in n for n in notices)
     assert "removed key" in check.summary
 
 

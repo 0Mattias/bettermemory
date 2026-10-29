@@ -549,10 +549,7 @@ def check_config(ctx: _Context) -> Check:
     ctx.config = loaded
     removed = removed_keys(data)
     others = [
-        message
-        for message in notices
-        if " was removed in bettermemory " not in message
-        and "endorsement_debt_ratio_threshold" not in message
+        message for message in notices if " was removed in bettermemory " not in message
     ]
     details["removed_keys"] = removed
     details["notices"] = others

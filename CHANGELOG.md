@@ -660,7 +660,7 @@ follows the candidates' testing.
   line is renamed. (`src/bettermemory/config.py`,
   `src/bettermemory/cli/config_cmd.py`, `src/bettermemory/doctor.py`,
   `tests/test_config.py`, `tests/test_config_cmd.py`,
-  `tests/test_managed_config.py`)
+  `tests/test_managed_config.py`, `tests/test_doctor.py`)
 
 - **v8-era comments, an unused module, the membership design and the
   v8 import graph.** Comments and docstrings that still described the
