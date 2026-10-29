@@ -406,10 +406,24 @@ def test_under_another_tokenizer_the_fold_leaves_the_index_text_out(
 # The fingerprint is pinned
 # ---------------------------------------------------------------------------
 
-#: `search.tokenizer_fingerprint()` as this build's tokenizer computes it.
-TOKENIZER_FINGERPRINT = (
-    "972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd"
-)
+#: Every `search.tokenizer_fingerprint()` a build of this store format
+#: has spelled the index with, oldest first, each with the schema revision
+#: whose step introduced it (`store_steps.STEPS`). A change that moves the
+#: fingerprint adds an entry, never replaces one, and ships the step its
+#: revision names: one that raises the store's minimum writer revision to
+#: that revision, so a build with the older tokenizer opens the store for
+#: reading only and never re-spells it back (CONTRIBUTING.md, "What a
+#: change raises"). Revision 1, the contract's first, is the first entry's:
+#: the fingerprint is first compared in this release, and the stores of
+#: earlier ones carry the probe digest of before, which the owner's open
+#: re-spells once.
+TOKENIZER_REVISIONS: dict[str, int] = {
+    "972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd": 1,
+}
+
+#: `search.tokenizer_fingerprint()` as this build's tokenizer computes it:
+#: the newest entry.
+TOKENIZER_FINGERPRINT = list(TOKENIZER_REVISIONS)[-1]
 
 
 def test_the_tokenizer_fingerprint_is_pinned() -> None:
@@ -431,16 +445,54 @@ def test_the_tokenizer_fingerprint_is_pinned() -> None:
     whole index under the write lock (`store_index.rebuild_index`;
     measured for ENG-100 at 0.53 s for 5,000 memories, 6.9 s for 50,000
     and 34 s for 250,000), and until then a reader's search misses the
-    rows the old tokenizer spelled. Before updating the literal: make the
+    rows the old tokenizer spelled. Before recording the value: make the
     change the schema step CONTRIBUTING.md's "What a change raises" asks
     for, measure the rebuild on it, name the change and the re-spelling in
-    the CHANGELOG; then set `TOKENIZER_FINGERPRINT` to the value this
-    assertion prints."""
+    the CHANGELOG; then add the value this assertion prints to
+    `TOKENIZER_REVISIONS` with that step's revision (the next test holds
+    the pair)."""
     computed = tokenizer_fingerprint.__wrapped__()
     assert computed == TOKENIZER_FINGERPRINT, (
         f"the tokenizer's fingerprint is now {computed}: see this test's docstring"
     )
     assert tokenizer_fingerprint() == computed
+
+
+def test_each_tokenizer_fingerprint_names_the_step_that_raised_the_writers() -> None:
+    """A fingerprint lands with a schema step that raises the store's
+    minimum writer revision to the step's own number.
+
+    Without it, two installs with different tokenizers on one store (a
+    daemon from one install, the CLI or a hook from another) re-spell it
+    back and forth at every owner's open, each time under the write lock
+    (34 s for 250,000 memories). With it, the older build reads the
+    raised minimum, opens the store for reading only (``PRAGMA
+    query_only``, `store_schema.check_versions`) and re-spells nothing
+    (`store_index.cannot_write`). So each entry of `TOKENIZER_REVISIONS`
+    names a step of this build whose `writer` is its own number, the
+    revisions rise with the entries, and the newest is at most the
+    minimum this build writes. Add an entry with a new revision; an entry
+    replaced in place, or a new one under an existing revision, defeats
+    the step."""
+    from bettermemory import store_schema, store_steps
+
+    revisions = list(TOKENIZER_REVISIONS.values())
+    assert revisions == sorted(set(revisions)), (
+        "each fingerprint has a revision of its own, rising with the entries"
+    )
+    steps = {step.number: step for step in store_steps.STEPS}
+    for fingerprint, revision in TOKENIZER_REVISIONS.items():
+        step = steps.get(revision)
+        assert step is not None, (
+            f"fingerprint {fingerprint[:16]} names revision {revision}, which no "
+            "step of this build has"
+        )
+        assert step.writer == revision, (
+            f"step {revision} ({step.name}) must raise the minimum writer revision "
+            f"to {revision}, so a build with the tokenizer before {fingerprint[:16]} "
+            "opens the store for reading only"
+        )
+    assert revisions[-1] <= store_schema.MIN_WRITER_REVISION
 
 
 @pytest.mark.parametrize(

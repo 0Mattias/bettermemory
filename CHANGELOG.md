@@ -1888,9 +1888,16 @@ follows the candidates' testing.
   moves it. Since the digest's inputs changed, each store is re-spelled
   once at its first owner's open of this build (no row's text changes),
   under the write lock: 0.53 s at 5,000 memories, 6.9 s at 50,000 and
-  34 s at 250,000 (see Known limitations).
-  (`src/bettermemory/search_lexicon.py`, `docs/internals.md`,
-  `tests/test_store_tokenizer.py`)
+  34 s at 250,000 (see Known limitations). A change that moves it is a
+  schema step raising the store's minimum writer revision, so a build
+  with the older tokenizer opens the store for reading only instead of
+  re-spelling it back: two installs of different tokenizers on one
+  store otherwise re-spelled it at every owner's open (three
+  alternations wrote six `index_rebuilt` rows). CONTRIBUTING.md's "What
+  a change raises" says so, and a test pairs each fingerprint with the
+  revision of the step that introduced it and fails until a new one has
+  its step. (`src/bettermemory/search_lexicon.py`, `CONTRIBUTING.md`,
+  `docs/internals.md`, `tests/test_store_tokenizer.py`)
 - **`doctor` and `backup verify` read every page and check the search
   index against the memories.** Nothing read a store's pages or compared
   its FTS5 index with the rows it indexes, so a torn page, or an index
