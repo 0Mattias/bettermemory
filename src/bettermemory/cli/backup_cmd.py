@@ -372,6 +372,64 @@ def _head_text(head: dict[str, Any] | None) -> str:
     return "none" if head is None else f"seq {head['seq']}"
 
 
+def _origin_text(origin: dict[str, Any] | None) -> str:
+    """An origin anchor as the report carries it (`HistoryOrigin.to_dict`):
+    its seq, and enough of its MAC, and of its key's fingerprint when it
+    names one, to tell two anchors apart."""
+    if origin is None:
+        return "none"
+    said = f"seq {origin['seq']}, mac {str(origin['mac'])[:16]}"
+    key = origin.get("key_fingerprint")
+    return said + (f", key {str(key)[:16]}" if key else "")
+
+
+def _change_text(before: str, after: str) -> str:
+    return f"{before}, unchanged" if before == after else f"{before} -> {after}"
+
+
+def _anchor_lines(
+    report: dict[str, Any], plan: dict[str, Any], *, done: bool
+) -> list[str]:
+    """The origin anchor, the key ring's binding and the replaced log's end,
+    before and after: what `--json` and the restore record carry. A
+    restore that stopped before it installed the anchor or bound the ring
+    says the one it left."""
+    lines: list[str] = []
+    origin = report["origin"] if done else plan["origin"]
+    if origin is None:
+        lines.append(
+            f"  origin anchor: {_origin_text(plan['origin']['before'])}, not changed"
+        )
+    else:
+        lines.append(
+            "  origin anchor: "
+            + _change_text(
+                _origin_text(origin["before"]), _origin_text(origin["after"])
+            )
+        )
+    binding = report["binding"] if done else plan["binding"]
+    if binding is None:
+        lines.append(
+            f"  key ring bound to: {plan['binding']['before'] or 'no file'}, not changed"
+        )
+    else:
+        lines.append(
+            "  key ring bound to: "
+            + _change_text(binding["before"] or "no file", str(binding["after"]))
+        )
+    end = plan.get("log_end_before")
+    if end is not None:
+        lines.append(
+            f"  the log it replaces ended at seq {end['seq']} (read from {end['path']})"
+        )
+    elif plan["head"]["before"] is None:
+        lines.append(
+            "  the log it replaces: no copy of the store on this host says where "
+            "it ended, so `log export` warns every cursor past the restored head"
+        )
+    return lines
+
+
 def render_restore(report: dict[str, Any]) -> str:
     """The text form of a `restore_bundle` report."""
     status = report["status"]
@@ -447,6 +505,7 @@ def render_restore(report: dict[str, Any]) -> str:
                 f"{_head_text(head['after'])}, "
                 + (f"recorded in {record}" if record else "the rewind not recorded")
             )
+        lines.extend(_anchor_lines(report, plan, done=done))
     log = report["log"]
     if log is not None:
         lines.append(f"  log verify of the restored store: {log['status']}")

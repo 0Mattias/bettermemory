@@ -500,8 +500,9 @@ external anchor taken past the restored head reads `anchor_mismatch`
 (`missing`): that is the evidence of the rewind, and the restore record
 explains it. A bundle whose store has no origin anchor leaves the store
 without one, and the next writing open anchors it again, trust on first
-use. The text output does not show the origin anchor's change; `--json`
-and the restore record carry it.
+use. The plan and the result print the origin anchor and the key ring's
+binding, before and after, as `--json` and the restore record carry
+them, and where the log the restore replaces ended.
 
 A schedule that holds up: `log verify && backup create --out <another
 disk>` daily from cron or the service manager, `backup verify` on the

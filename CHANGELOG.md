@@ -442,6 +442,25 @@ follows the candidates' testing.
   states what a daemon owes the previous release's client within a major.
   (`src/bettermemory/_daemon_client.py`, `CONTRIBUTING.md`,
   `docs/internals.md`, `tests/test_shim_versions.py`)
+- **`backup restore` prints the origin anchor and the key ring's
+  binding, before and after.** The text output named the moves, the keys
+  and the head checkpoint, and left the origin anchor and the binding to
+  `--json` and the restore record, so a restore that replaced the anchor,
+  or bound the key ring to a new file and so left the store it was bound
+  to opening for reading only, said nothing of it on a terminal. The plan
+  and the result now print `origin anchor: <before> -> <after>` (its
+  seq, the first 16 hex characters of its MAC, and of its key's
+  fingerprint when it names one; `none` for no anchor; `, unchanged` when
+  the two are the same) and `key ring bound to: <before> -> <after>` (`no
+  file` for no binding), and a restore that stopped before it got there
+  prints the one it left, `, not changed`. They also print where the log
+  the restore replaces ended (`the log it replaces ended at seq N (read
+  from <path>)`), or, with no head checkpoint and no copy of the store on
+  this host, that nothing here says, so `log export` warns every cursor
+  past the restored head. This closes the 9.0.0rc12 note that the text
+  output does not show the origin anchor a restore replaces.
+  (`src/bettermemory/cli/backup_cmd.py`, `docs/api.md`,
+  `docs/operations.md`, `tests/test_restore_text.py`)
 
 #### Fixed
 
