@@ -9,8 +9,10 @@ through one entry point: the open homes every record, and a second open of
 the migrated store writes nothing (the log's row count is unchanged).
 `serve` logs the run and prints nothing on stderr. Without a machine id
 (`location.process_machine` raises OSError) each entry point logs one
-line, opens the store as it is, and the next open migrates. Two foreground starts of the daemon on one store run
-the migration once. `bettermemory prompt-recall` with a daemon opens no
+line, opens the store as it is, and the next open migrates; a copy of the
+store beside its original opens without its key and is left as it is
+until the original is gone. Two foreground starts of the daemon on one
+store run the migration once. `bettermemory prompt-recall` with a daemon opens no
 store before it posts (design 8.9: the per-prompt path pays no migration
 check). Git runs with no user or system configuration and a fixed author.
 """
@@ -321,6 +323,34 @@ def test_each_entry_point_without_a_machine_id_opens_and_migrates_next_time(
     open_store()
     assert unhomed_count(left.path) == 0
     assert migrated_rows(left.path) == 1
+
+
+def test_each_entry_point_leaves_a_store_it_cannot_take_the_key_of(
+    left: Left,
+    entry: tuple[str, Callable[[], None]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An owner's open can still hand back a store without its key: a copy
+    of the store beside the original, whose key ring stays bound to the
+    original, opens read-only. The migration at open leaves it as it is
+    and writes nothing (`run_migration_at_open`'s `has_key` check), and
+    once the original is gone the next open takes the key and migrates."""
+    _name, open_store = entry
+    copy = tmp_path / "copy"
+    copy.mkdir()
+    shutil.copy2(left.path, copy / STORE_FILENAME)
+    monkeypatch.setenv(ENV_DIR_OVERRIDE, str(copy))
+    rows = log_rows(copy / STORE_FILENAME)
+    open_store()
+    assert unhomed_count(copy / STORE_FILENAME) == left.records
+    assert log_rows(copy / STORE_FILENAME) == rows
+    assert "membership migrated" not in capsys.readouterr().err
+    shutil.move(left.directory, tmp_path / "moved-away")
+    open_cli_context()
+    assert unhomed_count(copy / STORE_FILENAME) == 0
+    assert migrated_rows(copy / STORE_FILENAME) == 1
 
 
 def test_the_daemon_start_migrates_once_and_logs_its_totals(

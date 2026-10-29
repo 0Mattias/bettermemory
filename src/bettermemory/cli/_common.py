@@ -284,13 +284,15 @@ def run_migration_at_open(
     """`membership_migrate.ensure_migrated` at an entry point's open
     (design 8.6): the report of a run that homed records, else None.
 
-    A store opened for reading (an open without ``allow_rekey`` found no
-    key) is left as it is; the next open with its key migrates it. When this process
-    has no machine id (`location.process_machine` raises OSError: the state
-    directory could not be opened), one line is logged at `level`, the
-    store is left as it is, and the next open tries again. The hook
-    commands pass INFO, the default: Claude Code shows a hook's stderr to
-    the user, and no handler prints an INFO record in a hook process."""
+    A store opened without its key is left as it is, since the run's
+    first write would raise: the owner's open hands one back for reading
+    when it cannot claim the key ring, which is bound to another file
+    holding the same store id (a copy beside its original). The next open
+    that holds the key migrates it. When this process has no machine id
+    (`location.process_machine` raises OSError: the state directory could
+    not be opened), one line is logged at `level`, the store is left as it
+    is, and the next open tries again. `cli_context` and `serve` pass
+    WARNING; the default, INFO, is `recall_admission._open_store`'s."""
     from .. import location
     from ..membership_migrate import ensure_migrated, settle_at_open, unhomed
 

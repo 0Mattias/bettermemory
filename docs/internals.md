@@ -856,9 +856,11 @@ before it binds its port, logging one line with the totals; `bettermemory
 serve`, logged; every CLI command through `cli_context`, with one line on
 stderr.
 `bettermemory membership import` homes the records its document names
-first and runs it after. A store opened without its key is left as it
-is, and a process with no machine id logs one line and opens the store as
-it is; the next open migrates. `bettermemory membership migrate
+first and runs it after. A store the owner's open hands back without its
+key (a copy beside its original, whose key ring stays bound to the
+original, opens for reading) is left as it is, and a process with no
+machine id logs one line and opens the store as it is; the next open
+that holds the key, or has a machine id, migrates. `bettermemory membership migrate
 [--dry-run]` opens the store itself and prints the report.
 
 ### The switches
