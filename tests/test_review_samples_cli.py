@@ -426,3 +426,20 @@ async def test_grade_rows_written_as_review_grade_events(
     )
     assert code == 1
     assert len(h.events("review_grade")) == 3
+
+
+def test_the_default_transcripts_dir_follows_claude_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI reads the transcripts where Claude Code keeps them:
+    ``projects`` in its configuration directory, which `CLAUDE_CONFIG_DIR`
+    moves, read when the CLI asks."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
+    assert review_samples.default_transcripts_dir() == home / ".claude" / "projects"
+    work = tmp_path / "claude-work"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(work))
+    assert review_samples.default_transcripts_dir() == work / "projects"

@@ -23,8 +23,10 @@ prompt kind: ``owner``, ``task_notification``, ``agent_message``,
 transcript that is there is ``ungradeable``: the draw passes it over for
 the next sample of its stratum in the seeded order and lists it, so
 nothing leaves the record without a trace. The CLI finds transcripts of
-one host only, under ``~/.claude/projects``; a sample from another
-harness shows no prompt. The prompt is shown as the probe read it
+one host only, Claude Code, where it keeps them
+(`claude_paths.transcripts_dir`: ``~/.claude/projects``, or ``projects``
+under ``$CLAUDE_CONFIG_DIR``); a sample from another harness shows no
+prompt. The prompt is shown as the probe read it
 (`recall.clean_prompt`).
 
 `bettermemory recall grade` records the owner's grade of a sample's
@@ -44,6 +46,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from . import claude_paths
 from .admission import Admission, recorded_caller
 from .events import redact_query
 from .membership import PROMPT_RECALL, Membership
@@ -107,8 +110,9 @@ _RETRIEVAL_KINDS: frozenset[str] = frozenset({"search", "show"})
 
 
 def default_transcripts_dir() -> Path:
-    """Where the transcript host keeps its session transcripts."""
-    return Path.home() / ".claude" / "projects"
+    """Where the transcript host keeps its session transcripts
+    (`claude_paths.transcripts_dir`, read when called)."""
+    return claude_paths.transcripts_dir()
 
 
 def _str(value: Any) -> str | None:

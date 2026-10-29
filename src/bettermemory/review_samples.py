@@ -9,8 +9,10 @@ the write's body comes from depends on how the chain ended:
   the kinds only, never the body, from any source;
 - any other refusal: the body from the call in the host's transcripts that
   carried one of the chain's review_ids. The CLI can find transcripts of one
-  host only, under ``~/.claude/projects``, so a sample from any other host
-  carries the related set and the answers without the body.
+  host only, Claude Code, where it keeps them
+  (`claude_paths.transcripts_dir`: ``~/.claude/projects``, or ``projects``
+  under ``$CLAUDE_CONFIG_DIR``), so a sample from any other host carries
+  the related set and the answers without the body.
 
 The draw is stratified: every refusal, link and filing up to half the
 sample, then pre-answered writes up to `PRE_ANSWERED_MIN` where that many
@@ -29,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from . import claude_paths
 from . import review as _review
 from .credentials import find_credential_markers
 from .review_counters import ReviewChain, build_chains, chains_in_window
@@ -58,8 +61,9 @@ BODY_UNAVAILABLE = "unavailable"
 
 
 def default_transcripts_dir() -> Path:
-    """Where the transcript host keeps its session transcripts."""
-    return Path.home() / ".claude" / "projects"
+    """Where the transcript host keeps its session transcripts
+    (`claude_paths.transcripts_dir`, read when called)."""
+    return claude_paths.transcripts_dir()
 
 
 def _is_secret_refusal(chain: ReviewChain) -> bool:

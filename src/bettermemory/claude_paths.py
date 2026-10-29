@@ -1,5 +1,6 @@
 """Where Claude Code keeps its files on this host: one answer for `init`,
-`doctor`, `posture` and `sandbox_settings`.
+`doctor`, `posture`, `sandbox_settings` and the transcripts the review
+and recall samples read.
 
 Claude Code resolves its home-directory files from one variable.
 ``CLAUDE_CONFIG_DIR`` moves the configuration directory (``~/.claude``
@@ -29,7 +30,9 @@ stored under this path", and its settings documentation that Claude Code
 "then stores your settings, session history, and plugins there instead". A
 reader or writer that assumed ``~/.claude.json`` and
 ``~/.claude/settings.json`` patched a file that Claude Code never reads and
-checked files it ignores.
+checked files it ignores. The session history moves with the variable
+too: Claude Code keeps its transcripts in ``projects`` in the
+directory (`transcripts_dir`).
 
 The variable's value is used as written, as Claude Code uses it (its
 config home is the raw value): a ``~`` that reaches the process is not
@@ -90,6 +93,9 @@ LOCAL_SETTINGS_NAME = "settings.local.json"
 #: The directory a project keeps its settings in, and the home directory's
 #: default configuration directory.
 CLAUDE_DIR_NAME = ".claude"
+#: The directory in `config_dir` Claude Code keeps its session
+#: transcripts in, one subdirectory per project.
+PROJECTS_DIR_NAME = "projects"
 #: A project's MCP servers (the project scope).
 PROJECT_MCP_NAME = ".mcp.json"
 #: The most of a settings file or a project's ``.mcp.json`` a reader takes:
@@ -176,6 +182,12 @@ def is_global_config(path: Path) -> bool:
     return _same_path(path, global_config_path())
 
 
+def transcripts_dir() -> Path:
+    """Where Claude Code keeps its session transcripts: ``projects`` in
+    `config_dir`, so under ``$CLAUDE_CONFIG_DIR`` when it is set."""
+    return config_dir() / PROJECTS_DIR_NAME
+
+
 def user_settings_path() -> Path:
     """The user settings file, ``settings.json`` in `config_dir`."""
     return config_dir() / SETTINGS_NAME
@@ -258,6 +270,7 @@ __all__ = [
     "GLOBAL_CONFIG_NAMES",
     "LEGACY_GLOBAL_CONFIG_NAME",
     "LOCAL_SETTINGS_NAME",
+    "PROJECTS_DIR_NAME",
     "PROJECT_MCP_NAME",
     "SETTINGS_CAP_BYTES",
     "SETTINGS_NAME",
@@ -271,5 +284,6 @@ __all__ = [
     "project_settings_paths",
     "read_settings_text",
     "settings_for_mcp_config",
+    "transcripts_dir",
     "user_settings_path",
 ]

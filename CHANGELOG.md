@@ -706,6 +706,21 @@ follows the candidates' testing.
   `tests/test_v8_import_graph.py`, `tests/test_export_mirror.py`,
   `tests/test_migrate_v8.py`, `tests/test_capture_undo.py`,
   `tests/fixtures/v8/generate.py`)
+- **`review samples` and `recall review` look for transcripts where
+  Claude Code keeps them.** Both took `~/.claude/projects` as the
+  transcripts directory whatever `CLAUDE_CONFIG_DIR` said. With the
+  variable set, `review samples` found no transcript there and showed a
+  refused write's sample without its body, and `recall review` found a
+  transcript only at the path its hook row recorded. Both now read
+  `projects` in Claude Code's configuration directory
+  (`claude_paths.transcripts_dir`), which the variable moves as it moves
+  the settings and the global config; without it the directory is
+  `~/.claude/projects` as before. `--transcripts` still overrides it, and
+  its help still names the default path.
+  (`src/bettermemory/claude_paths.py`,
+  `src/bettermemory/review_samples.py`,
+  `src/bettermemory/recall_review.py`,
+  `tests/test_review_samples_cli.py`, `tests/test_recall_review.py`)
 
 #### Fixed
 
