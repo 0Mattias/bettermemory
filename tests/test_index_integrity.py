@@ -213,6 +213,27 @@ def test_index_rebuild_refuses_a_store_it_may_only_read(
     assert _rebuilt_rows(store_file, keys_dir) == []
 
 
+def test_index_rebuild_refuses_a_row_it_cannot_spell(
+    store_file: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A row whose scopes are not text, which only an editor of the file
+    writes: the rebuild is rolled back, exit 1, the reason on stderr."""
+    memory_id = _ids(store_file, keys_dir)["postgres"]
+    conn = sqlite3.connect(store_file)
+    conn.execute("UPDATE memories SET scopes_json = '[1]' WHERE id = ?", (memory_id,))
+    conn.commit()
+    conn.close()
+    code, out, err = _run_cli(["index", "rebuild"], monkeypatch, capsys)
+    assert code == 1
+    assert out == ""
+    assert "was not rebuilt" in err
+    assert "nothing changed" in err
+    assert _rebuilt_rows(store_file, keys_dir) == []
+
+
 def test_index_without_a_subcommand_prints_its_help(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

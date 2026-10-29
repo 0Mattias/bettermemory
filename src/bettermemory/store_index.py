@@ -434,9 +434,9 @@ REBUILT_FOR_REPAIR = "repair"
 _P = ParamSpec("_P")
 
 # The stores this process has said it searches under another tokenizer's
-# spelling, with the two fingerprints: said once, not at every connection
-# a reader or a daemon's worker opens.
-_DRIFT_TOLD: set[tuple[str, str, str]] = set()
+# spelling, or failed to re-spell, with the two fingerprints: said once,
+# not at every connection a reader or a daemon's worker opens.
+_DRIFT_TOLD: set[tuple[str, ...]] = set()
 _DRIFT_TOLD_LOCK = threading.Lock()
 
 
@@ -524,12 +524,17 @@ def cannot_write(store: Store) -> str | None:
     return None
 
 
-def _tell_drift(path: Path, stored: str | None, live: str, why: str) -> None:
-    told = (str(path), stored or "", live)
+def _first_told(*told: str) -> bool:
     with _DRIFT_TOLD_LOCK:
         if told in _DRIFT_TOLD:
-            return
+            return False
         _DRIFT_TOLD.add(told)
+        return True
+
+
+def _tell_drift(path: Path, stored: str | None, live: str, why: str) -> None:
+    if not _first_told(str(path), stored or "", live):
+        return
     log.warning(
         "store %s: its search index is spelled by tokenizer %s and this "
         "build's is %s; this open does not re-spell it (%s), so a search may "
@@ -547,8 +552,12 @@ def settle_tokenizer(store: Store, *, owner: bool) -> IndexRebuild | None:
     build's, and when they differ re-spell it at the owner's writing open
     (`owner`, the open's ``allow_rekey``, on a connection that may write:
     `cannot_write`), or else say so once (`_tell_drift`) and leave it.
-    The rebuild never fails the open: a store it cannot write logs why
-    and opens as it stands. Returns the rebuild, or None."""
+    The rebuild never fails the open: whatever it raises (a busy or full
+    store, or a row it cannot spell, such as scopes that are not text,
+    which only an editor of the file writes), its transaction is rolled
+    back (`Store._transaction`), the failure is said once a process,
+    naming `bettermemory index rebuild`, and the store opens as it stands.
+    Returns the rebuild, or None."""
     drift = tokenizer_drift(store.conn)
     if drift is None:
         return None
@@ -559,7 +568,9 @@ def settle_tokenizer(store: Store, *, owner: bool) -> IndexRebuild | None:
         return None
     try:
         return rebuild_index(store, reason=REBUILT_FOR_TOKENIZER)
-    except (sqlite3.Error, OSError) as exc:
+    except Exception as exc:
+        if not _first_told(str(store.path), stored or "", live, "failed"):
+            return None
         log.warning(
             "store %s: its search index is spelled by tokenizer %s and this "
             "build's is %s, and re-spelling it failed (%s); a search may miss "
@@ -580,6 +591,11 @@ def reconciles_tokenizer(open_: Callable[_P, Store]) -> Callable[_P, Store]:
     ``allow_rekey`` as the owner's word. An exception the settling raises
     closes the store before it propagates."""
 
+    # The owner's word is the caller's ``allow_rekey``, not whether the
+    # open may write: an open `store_schema.check_versions` downgrades to a
+    # reader sets ``PRAGMA query_only``, as it does whenever it downgrades,
+    # and `cannot_write` reads that. A downgrade that left query_only off
+    # would let this re-spell a store the open was told not to write.
     @functools.wraps(open_)
     def opened(*args: _P.args, **kwargs: _P.kwargs) -> Store:
         store = open_(*args, **kwargs)

@@ -1826,9 +1826,10 @@ follows the candidates' testing.
   `docs/api.md`, `tests/test_append_rekey_race.py`)
 - **A store written under another tokenizer is re-spelled at its
   owner's open.** Each memory row keeps its search-index text as the
-  tokenizer of the build that wrote it spelled it, and meta's
-  `tokenizer_fingerprint` names that tokenizer, but the fingerprint was
-  written at create and never read: a build whose token stream changed
+  tokenizer of the build that wrote it spelled it, and the
+  `store_created` log row (with a copy in meta) names that tokenizer's
+  fingerprint, but the fingerprint was written at create and never
+  read: a build whose token stream changed
   (8.x changed it four times) searched every older row by a spelling the
   row did not carry, a silent recall loss on any store large enough for
   the FTS5 prefilter. Every `Store.open` now compares the fingerprint
@@ -1839,10 +1840,15 @@ follows the candidates' testing.
   whose fingerprint differs in one write transaction under the write
   lock: every memory row's `body_fts` and `scopes_fts` from its body and
   scopes, the FTS5 table rebuilt, meta updated, and one `index_rebuilt`
-  control row, a new log kind that `log verify` and `log export` show.
-  meta is read again under the lock, so two owners' opens re-spell once;
-  a store the rebuild cannot write opens anyway, says why, and is tried
-  again at the next writing open. A read-only open, a store this build
+  control row, a new log kind that `log verify` and `log export` show,
+  which names the new fingerprint. The fingerprint compared is the one
+  the signed log names last, not meta's copy, which nothing signs, and
+  it is read again under the lock, so two owners' opens re-spell once.
+  A rebuild that fails, whatever it raises (a busy or full store, or a
+  row it cannot spell, such as scopes that are not text), is rolled
+  back and said once a process, naming `bettermemory index rebuild`,
+  and the store opens anyway; the next writing open tries again. A
+  read-only open, a store this build
   may only read (`PRAGMA query_only`) and an open that is not the
   owner's (a daemon's worker, `backup verify`'s copy of a bundle, which
   the schema steps leave alone too) re-spell nothing: each warns once a
@@ -1856,7 +1862,9 @@ follows the candidates' testing.
   without; the rebuild held the write lock 0.53 s, 0.29 s of it
   tokenizing. (`src/bettermemory/store_index.py`,
   `src/bettermemory/store.py`, `src/bettermemory/log.py`,
-  `docs/internals.md`, `docs/api.md`, `tests/test_store_tokenizer.py`)
+  `src/bettermemory/cli/index_cmd.py`, `docs/internals.md`,
+  `docs/api.md`, `tests/test_store_tokenizer.py`,
+  `tests/test_index_integrity.py`)
 - **A tokenizer change no longer reads as tampering.** The fold replays
   every memory with this build's tokenizer and compared each live row's
   stored index text with that spelling, so a store an older tokenizer

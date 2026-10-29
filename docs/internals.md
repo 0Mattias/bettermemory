@@ -1261,8 +1261,10 @@ moves neither. `log verify` never covers the FTS5 index itself: an edit
 of its shadow tables (a memory taken out of it, or an entry put in for
 text no row carries) reads ok there, on this build as on the ones before,
 and only `doctor`'s `index` check and `backup verify`'s `index_drift` see
-it (`bettermemory index rebuild` repairs it). A rebuild that cannot write
-(busy, full) is logged and the open goes on. Every other open (read-only,
+it (`bettermemory index rebuild` repairs it). A rebuild that fails,
+whatever it raises (busy, full, or a row it cannot spell, such as scopes
+that are not text), is rolled back, logged once a process naming
+`bettermemory index rebuild`, and the open goes on. Every other open (read-only,
 read-only by its versions, or not the owner's: a worker's `reopen`,
 `backup verify`'s copy) re-spells nothing, logs one warning a process
 naming both fingerprints, and searches the index as it stands, so a row

@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import shutil
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -304,11 +305,11 @@ def test_an_open_that_may_not_write_reports_the_drift_and_rebuilds_nothing(
     assert _stored(path) == (OLD_FINGERPRINT, 0)
 
 
-def test_a_store_whose_key_is_elsewhere_is_not_respelled(
+def test_an_open_without_the_stores_key_respells_nothing(
     tmp_path: Path, keys_dir: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A reader's open of a store whose key this machine does not hold:
-    no key to sign the row with, so nothing is written."""
+    """A reader's open under a keys directory that holds no key for the
+    store: no key to sign the row with, so nothing is written."""
     path, _ = _old_store(tmp_path, keys_dir)
     caplog.set_level(logging.WARNING, logger="bettermemory.store")
     with Store.open(path, keys_dir=tmp_path / "other-keys") as store:
@@ -316,6 +317,51 @@ def test_a_store_whose_key_is_elsewhere_is_not_respelled(
         assert _found(store) == {word: [] for word in BODIES}
     assert _stored(path) == (OLD_FINGERPRINT, 0)
     assert "it was opened without the store's key" in caplog.text
+
+
+def test_an_owners_open_of_a_copy_whose_key_ring_is_bound_elsewhere_respells_nothing(
+    tmp_path: Path, keys_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The key ring is bound to the store file it was made for
+    (`log.KeyRing.bind_store`), so the owner's open of a copy of that file
+    elsewhere opens without the key, as a reader, and re-spells neither
+    the copy nor the file the ring belongs to."""
+    path, _ = _old_store(tmp_path, keys_dir)
+    copy = tmp_path / "copy" / STORE_FILENAME
+    copy.parent.mkdir()
+    shutil.copyfile(path, copy)
+    caplog.set_level(logging.WARNING, logger="bettermemory.store")
+    with Store.open(copy, keys_dir=keys_dir, allow_rekey=True) as store:
+        assert not store.has_key
+        assert _found(store) == {word: [] for word in BODIES}
+    assert _stored(copy) == (OLD_FINGERPRINT, 0)
+    assert _stored(path) == (OLD_FINGERPRINT, 0)
+    told = [
+        r.getMessage() for r in caplog.records if "spelled by tokenizer" in r.message
+    ]
+    assert len(told) == 1, told
+    assert "it was opened without the store's key" in told[0]
+
+
+def test_a_row_the_rebuild_cannot_spell_leaves_every_open_going(
+    tmp_path: Path, keys_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A row whose scopes are not text (only an editor of the file writes
+    one) makes the re-spelling raise TypeError. It is rolled back, said
+    once a process naming `bettermemory index rebuild`, and every owner's
+    open goes on with the store as it was."""
+    path, ids = _old_store(tmp_path, keys_dir)
+    _edit(path, "UPDATE memories SET scopes_json = '[1]' WHERE id = ?", ids["postgres"])
+    caplog.set_level(logging.WARNING, logger="bettermemory.store")
+    for _ in range(2):
+        with Store.open(path, keys_dir=keys_dir, allow_rekey=True) as store:
+            assert store.has_key
+    failed = [
+        r.getMessage() for r in caplog.records if "re-spelling it failed" in r.message
+    ]
+    assert len(failed) == 1, failed
+    assert "bettermemory index rebuild" in failed[0]
+    assert _stored(path) == (OLD_FINGERPRINT, 0)
 
 
 # ---------------------------------------------------------------------------

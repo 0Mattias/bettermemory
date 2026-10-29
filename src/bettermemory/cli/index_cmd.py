@@ -85,7 +85,9 @@ def _rebuild(*, as_json: bool) -> None:
             _refuse(f"the store at {store.path} cannot be rebuilt here: {why}")
         try:
             rebuilt = rebuild_index(store, reason=REBUILT_FOR_REPAIR)
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, TypeError, ValueError) as exc:
+            # Busy or full, or a row it cannot spell (scopes that are not
+            # text): rolled back either way.
             _refuse(
                 f"the store at {store.path} was not rebuilt ({exc}); nothing changed"
             )
