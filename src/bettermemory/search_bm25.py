@@ -325,6 +325,95 @@ def compute_idf(
     return body_idf, scope_idf, avgdl
 
 
+def _bm25_doc_streams(
+    memory: Memory, tokens: _MemoryTokens | None, stopword_fallback: bool
+) -> tuple[list[str], dict[str, int], int, set[str]]:
+    """Read `memory`'s streams; return its body stream, TF counts, dl and scope set."""
+    # Fallback calls count TF against the unstripped stream (stopwords
+    # kept) so the fallen-back tokens are matchable at all; `dl` stays
+    # on the content stream in BOTH calls — avgdl is a content-stream
+    # statistic, and length normalisation must keep pricing the same
+    # ratio whether or not the fallback fired.
+    if tokens is not None:
+        content_tokens = tokens.content
+        body_stream = tokens.body
+    else:
+        body_stream = _expand_kebab(_lexicon.tokenize(memory.body))
+        content_tokens = _strip_stopwords(body_stream)
+    count_tokens = body_stream if stopword_fallback else content_tokens
+    body_count: dict[str, int] = {}
+    for tok in count_tokens:
+        body_count[tok] = body_count.get(tok, 0) + 1
+    dl = len(content_tokens)
+
+    if tokens is not None:
+        scope_set = tokens.scope_set
+    else:
+        scope_set = set()
+        for scope in memory.scopes:
+            scope_set.update(_scope_tokens(scope))
+    return body_stream, body_count, dl, scope_set
+
+
+def _bm25_kebab_fallback(
+    tok: str,
+    body_stream: list[str],
+    comp_count: dict[str, int] | None,
+    scope_set: set[str],
+    body_idf_map: dict[str, float],
+    scope_idf_map: dict[str, float],
+    pricing: tuple[int, float, bool, float],
+) -> tuple[int, float, bool, float, dict[str, int] | None]:
+    """Price `tok` by its kebab parts; return tf, IDFs, scope hit and the counter."""
+    tf, body_idf, scope_hit, scope_idf = pricing
+    # Conjunctive fallback for a joined query token with no
+    # direct hit — see `_kebab_parts`. ALL components must hit
+    # (preserving the 'python-frontmatter' must-not-match-plain-
+    # 'python' precision guard); tf is the min component count
+    # (the joined phrase can occur at most that often) and IDF
+    # is the min across components — the weakest component
+    # bounds how discriminating the joined phrase can be.
+    #
+    # Range the conjunction over the UNFILTERED parts and count
+    # them against the unstripped `comp_count`. Filtering the
+    # stopword parts out instead collapsed the conjunction: an
+    # 'X-to-X' compound reduced to a single-word OR ('end-to-end'
+    # -> match any 'end'), and a compound whose parts are ALL
+    # stopwords ('to-do' -> ['to','do']) emptied `parts` and
+    # skipped the fallback entirely — and 'to-do' survives
+    # `_strip_stopwords` too, so it never reached the stopword
+    # fallback either: silent zero recall in mode='bm25' for the
+    # whole X-to-X / X-by-X family. This mirrors the keyword
+    # scorer, whose fallback already ranges over unfiltered parts
+    # on an unstripped body_count.
+    parts = _kebab_parts(tok)
+    if parts:
+        if comp_count is None:
+            comp_count = {}
+            for t in body_stream:
+                comp_count[t] = comp_count.get(t, 0) + 1
+        component_hits = [comp_count.get(p, 0) for p in parts]
+        if min(component_hits) > 0:
+            tf = min(component_hits)
+            # Price body IDF off the parts that carry content-
+            # stream corpus statistics — the non-stopword ones.
+            # When EVERY part is a stopword ('to-do') there is no
+            # body IDF to read; floor at 1.0 (the same no-corpus-
+            # statistics floor scope-only and fallback matches use)
+            # rather than letting a defaulted 0.0 IDF zero the
+            # occurrence just counted.
+            content_parts = [p for p in parts if p not in _STOPWORDS]
+            body_idf = (
+                min(body_idf_map.get(p, 0.0) for p in content_parts)
+                if content_parts
+                else 1.0
+            )
+        if all(p in scope_set for p in parts):
+            scope_hit = True
+            scope_idf = min(scope_idf_map.get(p, 1.0) for p in parts)
+    return tf, body_idf, scope_hit, scope_idf, comp_count
+
+
 def score_memory_bm25(
     memory: Memory,
     query_tokens: list[str],
@@ -383,22 +472,9 @@ def score_memory_bm25(
     if not query_tokens or avgdl <= 0:
         return 0.0, []
 
-    # Fallback calls count TF against the unstripped stream (stopwords
-    # kept) so the fallen-back tokens are matchable at all; `dl` stays
-    # on the content stream in BOTH calls — avgdl is a content-stream
-    # statistic, and length normalisation must keep pricing the same
-    # ratio whether or not the fallback fired.
-    if tokens is not None:
-        content_tokens = tokens.content
-        body_stream = tokens.body
-    else:
-        body_stream = _expand_kebab(_lexicon.tokenize(memory.body))
-        content_tokens = _strip_stopwords(body_stream)
-    count_tokens = body_stream if stopword_fallback else content_tokens
-    body_count: dict[str, int] = {}
-    for tok in count_tokens:
-        body_count[tok] = body_count.get(tok, 0) + 1
-    dl = len(content_tokens)
+    body_stream, body_count, dl, scope_set = _bm25_doc_streams(
+        memory, tokens, stopword_fallback
+    )
     # Component counter for the conjunctive kebab fallback below, built
     # lazily (only when a compound query token misses directly). It reads
     # the UNSTRIPPED `body_stream` so a stopword component ('to' in
@@ -409,13 +485,6 @@ def score_memory_bm25(
     # X-to-X / X-by-X compound family. Mirrors the keyword scorer, whose
     # `body_count` is unstripped by construction.
     comp_count: dict[str, int] | None = None
-
-    if tokens is not None:
-        scope_set = tokens.scope_set
-    else:
-        scope_set = set()
-        for scope in memory.scopes:
-            scope_set.update(_scope_tokens(scope))
 
     score = 0.0
     matched: list[str] = []
@@ -443,51 +512,15 @@ def score_memory_bm25(
         # corpus statistics instead of this floor.
         scope_idf = scope_idf_map.get(tok, 1.0)
         if tf == 0 and not scope_hit:
-            # Conjunctive fallback for a joined query token with no
-            # direct hit — see `_kebab_parts`. ALL components must hit
-            # (preserving the 'python-frontmatter' must-not-match-plain-
-            # 'python' precision guard); tf is the min component count
-            # (the joined phrase can occur at most that often) and IDF
-            # is the min across components — the weakest component
-            # bounds how discriminating the joined phrase can be.
-            #
-            # Range the conjunction over the UNFILTERED parts and count
-            # them against the unstripped `comp_count`. Filtering the
-            # stopword parts out instead collapsed the conjunction: an
-            # 'X-to-X' compound reduced to a single-word OR ('end-to-end'
-            # -> match any 'end'), and a compound whose parts are ALL
-            # stopwords ('to-do' -> ['to','do']) emptied `parts` and
-            # skipped the fallback entirely — and 'to-do' survives
-            # `_strip_stopwords` too, so it never reached the stopword
-            # fallback either: silent zero recall in mode='bm25' for the
-            # whole X-to-X / X-by-X family. This mirrors the keyword
-            # scorer, whose fallback already ranges over unfiltered parts
-            # on an unstripped body_count.
-            parts = _kebab_parts(tok)
-            if parts:
-                if comp_count is None:
-                    comp_count = {}
-                    for t in body_stream:
-                        comp_count[t] = comp_count.get(t, 0) + 1
-                component_hits = [comp_count.get(p, 0) for p in parts]
-                if min(component_hits) > 0:
-                    tf = min(component_hits)
-                    # Price body IDF off the parts that carry content-
-                    # stream corpus statistics — the non-stopword ones.
-                    # When EVERY part is a stopword ('to-do') there is no
-                    # body IDF to read; floor at 1.0 (the same no-corpus-
-                    # statistics floor scope-only and fallback matches use)
-                    # rather than letting a defaulted 0.0 IDF zero the
-                    # occurrence just counted.
-                    content_parts = [p for p in parts if p not in _STOPWORDS]
-                    body_idf = (
-                        min(body_idf_map.get(p, 0.0) for p in content_parts)
-                        if content_parts
-                        else 1.0
-                    )
-                if all(p in scope_set for p in parts):
-                    scope_hit = True
-                    scope_idf = min(scope_idf_map.get(p, 1.0) for p in parts)
+            tf, body_idf, scope_hit, scope_idf, comp_count = _bm25_kebab_fallback(
+                tok,
+                body_stream,
+                comp_count,
+                scope_set,
+                body_idf_map,
+                scope_idf_map,
+                (tf, body_idf, scope_hit, scope_idf),
+            )
 
         if tf > 0:
             denom = tf + k1 * length_norm
