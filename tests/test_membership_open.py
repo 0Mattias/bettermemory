@@ -474,8 +474,8 @@ def test_prompt_recall_with_a_daemon_opens_no_store_before_it_posts(
             "started": _NOW.isoformat().replace("+00:00", "Z"),
         },
     )
-    # A daemon from before 9.0.0rc12 as the state file names it: its pid
-    # and store, and no proof (`_daemon_client.proves`).
+    # The daemon the state file names: its pid and store, and the proof
+    # of its token when asked for one (`_daemon_client.proves`).
     monkeypatch.setattr(
         _daemon_client,
         "health",
@@ -484,6 +484,7 @@ def test_prompt_recall_with_a_daemon_opens_no_store_before_it_posts(
             "version": __version__,
             "pid": os.getpid(),
             "store": str(store_path),
+            **({"proof": _daemon_client.health_proof("t", nonce)} if nonce else {}),
         },
     )
     opened = _count_opens(monkeypatch)

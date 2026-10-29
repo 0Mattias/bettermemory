@@ -160,8 +160,8 @@ def is_this_daemon(answer: dict[str, Any], state: dict[str, Any], nonce: str) ->
     the token's MAC over it, which only the process that wrote the state
     file can produce. A listener that repeats the store and the pid an
     earlier, open /health gave it is therefore not taken for this store's
-    daemon; that check alone holds only for a state file written by a
-    daemon from before the proof, which offers none."""
+    daemon, and since 9.0.0rc14 neither is a daemon from before the proof,
+    which offers none."""
     from .._daemon_client import proves
 
     return proves(state, answer, nonce)

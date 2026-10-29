@@ -1,5 +1,6 @@
-"""A client trusts only its own daemon: the ``/health`` proof, the
-pre-rc12 fallback, the listener that is not ours, the signal that needs
+"""A client trusts only its own daemon: the ``/health`` proof, no reply
+without one taken for the daemon (the pre-rc12 fallback is gone since
+9.0.0rc14), the listener that is not ours, the signal that needs
 evidence, and the owner-only state directory and log.
 
 The state file outlives a daemon that was killed or crashed, and a
@@ -72,7 +73,7 @@ def _state(port: int, store: Path | str, *, pid: int = DEAD_PID) -> dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# The proof and the pre-rc12 fallback
+# The proof, and no reply without one
 # ---------------------------------------------------------------------------
 
 
@@ -100,8 +101,7 @@ def test_a_proof_of_another_shape_fails_without_raising(proof: object) -> None:
 
 def test_a_wrong_proof_decides_alone() -> None:
     """A listener that reports the state file's pid and store but cannot
-    prove the token is not ours: the fallback is for a reply with no
-    proof at all, never for a proof that failed."""
+    prove the token is not ours."""
     answer = {
         "status": "ok",
         "pid": STATE["pid"],
@@ -112,39 +112,32 @@ def test_a_wrong_proof_decides_alone() -> None:
 
 
 @pytest.mark.parametrize(
-    ("answer", "ours"),
+    "answer",
     [
-        ({"pid": 4242, "store": "/stores/memory.sqlite"}, True),
-        ({"pid": 4243, "store": "/stores/memory.sqlite"}, False),
-        ({"pid": 4242, "store": "/stores/other.sqlite"}, False),
-        ({"pid": 4242}, False),
-        ({"store": "/stores/memory.sqlite"}, False),
-        ({"pid": "4242", "store": "/stores/memory.sqlite"}, False),
-        ({"pid": 4242.0, "store": "/stores/memory.sqlite"}, False),
+        {"pid": 4242, "store": "/stores/memory.sqlite"},
+        {"pid": 4242, "store": "/stores/memory.sqlite", "version": "9.0.0rc11"},
+        {"pid": 4243, "store": "/stores/memory.sqlite"},
+        {"pid": 4242},
+        {},
     ],
+    ids=["pid-and-store", "rc11", "another-pid", "pid-only", "bare"],
 )
-def test_a_daemon_without_a_proof_is_ours_only_with_its_store_and_pid(
-    answer: dict[str, Any], ours: bool
+@pytest.mark.parametrize("keyed", [False, True], ids=["pre-rc12-file", "proving-file"])
+def test_a_reply_without_a_proof_is_never_ours(
+    answer: dict[str, Any], keyed: bool
 ) -> None:
-    assert proves(STATE, {"status": "ok", **answer}, NONCE) is ours
-
-
-def test_no_proof_is_not_ours_where_the_state_file_says_its_daemon_proves() -> None:
-    """A daemon of 9.0.0rc12 or later writes `PROOF_STATE_KEY` into its
-    state file and answers every nonce with a proof. Its pid and store
-    are what ``/health`` tells any process without the token, so a
-    listener that repeats them with no proof is not taken for it: the
-    fallback is for the file a daemon from before the proof wrote."""
-    state = {**STATE, PROOF_STATE_KEY: 1}
-    repeated = {"status": "ok", "pid": state["pid"], "store": state["store"]}
-    assert proves(STATE, repeated, NONCE)
-    assert not proves(state, repeated, NONCE)
-    assert proves(state, {**repeated, "proof": health_proof(TOKEN, NONCE)}, NONCE)
-
-
-def test_a_boolean_is_no_pid() -> None:
-    state = {**STATE, "pid": 1}
-    assert not proves(state, {"pid": True, "store": state["store"]}, NONCE)
+    """ENG-102. ``/health`` answers the pid and the store to any process on
+    the host, so a reply without a proof is never the daemon's, whatever
+    it repeats and whatever daemon wrote the state file. Before 9.0.0rc14
+    a state file without `PROOF_STATE_KEY` (one an rc1 to rc11 daemon
+    wrote) let a reply that repeated its pid and store pass for that
+    daemon, so a listener that had read both off an open ``/health``
+    before the crash was posted the hook payloads and the token. The same
+    reply with the proof of the token is ours."""
+    state = {**STATE, PROOF_STATE_KEY: 1} if keyed else STATE
+    assert not proves(state, {"status": "ok", **answer}, NONCE)
+    proven = {"status": "ok", **answer, "proof": health_proof(TOKEN, NONCE)}
+    assert proves(state, proven, NONCE)
 
 
 def test_valid_nonces() -> None:
@@ -155,7 +148,7 @@ def test_valid_nonces() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Listeners: ours, a pre-rc12 daemon, and one that is not ours
+# Listeners: ours, and the ones that are not (a pre-rc12 daemon among them)
 # ---------------------------------------------------------------------------
 
 
@@ -331,14 +324,19 @@ def test_health_without_a_nonce_sends_none(listeners: list[_Listener]) -> None:
     assert listener.gets == ["/health"]
 
 
-def test_a_pre_rc12_daemon_of_this_store_is_kept(
+def test_a_pre_rc12_daemon_of_this_store_is_not_taken(
     tmp_path: Path, listeners: list[_Listener]
 ) -> None:
+    """A reply in the shape of a daemon from before the proof, at the port
+    of a state file without `PROOF_STATE_KEY`, repeating that file's pid
+    and store: what the pre-rc12 fallback took for the daemon, and what
+    any listener that read an open ``/health`` can send. Since 9.0.0rc14
+    it is another listener."""
     store = tmp_path / "memory.sqlite"
     listener = _listen(listeners, _pre_rc12(store))
     write_state(tmp_path / "state", _state(listener.port, store))
-    found = _daemon_client._answering(tmp_path / "state", store)
-    assert found is not None and found["port"] == listener.port
+    assert _daemon_client._answering(tmp_path / "state", store) is None
+    assert identify(_state(listener.port, store)).foreign
 
 
 def test_ensure_daemon_never_uses_a_listener_that_is_not_ours(
@@ -367,15 +365,14 @@ def test_ensure_daemon_never_uses_a_listener_that_is_not_ours(
     assert _daemon_client._answering(state_dir, store) is None
 
 
-@pytest.mark.parametrize("shape", ["proving", "pre-rc12"])
 def test_an_older_daemon_of_ours_is_still_replaced(
-    tmp_path: Path, listeners: list[_Listener], shape: str
+    tmp_path: Path, listeners: list[_Listener]
 ) -> None:
     """ENG-35's rule is unchanged for a daemon that is ours: an older one
     is asked to stop, with the token, and its state file goes."""
     store = tmp_path / "memory.sqlite"
     state_dir = tmp_path / "state"
-    ours = _proving(TOKEN, store) if shape == "proving" else _pre_rc12(store)
+    ours = _proving(TOKEN, store)
 
     def older(nonce: str | None) -> dict[str, Any]:
         return {**ours(nonce), "version": "0.0.1"}
@@ -390,6 +387,28 @@ def test_an_older_daemon_of_ours_is_still_replaced(
     )
     assert [path for path, _ in listener.posts] == ["/api/v1/admin/shutdown"]
     assert read_state(state_dir, store) is None
+
+
+def test_a_pre_rc12_daemon_is_neither_kept_nor_posted_a_shutdown(
+    tmp_path: Path, listeners: list[_Listener]
+) -> None:
+    """A daemon from before the proof, older than this client, at the port
+    of the state file it wrote: the pre-rc12 fallback took it for ours and
+    posted it the shutdown with the token. Since 9.0.0rc14 it is another
+    listener: nothing is posted to it, and the state file stays for the
+    daemon started next to overwrite."""
+    store = tmp_path / "memory.sqlite"
+    state_dir = tmp_path / "state"
+    listener = _listen(listeners, _pre_rc12(store))
+    write_state(state_dir, _state(listener.port, store))
+    assert (
+        _daemon_client.ensure_daemon(
+            state_dir, store, version=package_version(), start=False
+        )
+        is None
+    )
+    assert listener.posts == []
+    assert read_state(state_dir, store) is not None
 
 
 def _hook(
@@ -514,14 +533,67 @@ def test_a_hook_starts_a_daemon_beside_a_listener_that_does_not_speak_http(
     assert "BadStatusLine" not in err
 
 
-def test_a_hook_posts_to_a_pre_rc12_daemon_of_its_store(
+@pytest.mark.parametrize("keyed", [False, True], ids=["pre-rc12-file", "keyed-file"])
+def test_a_hook_beside_an_unproven_holder_of_the_store_gives_up_at_once(
+    tmp_path: Path,
+    listeners: list[_Listener],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    keyed: bool,
+) -> None:
+    """A daemon from before 9.0.0rc12 still running after the upgrade: its
+    state file (without `PROOF_STATE_KEY`) names a live pid that holds the
+    store's lock, and its port answers without a proof. No daemon of this
+    version can start while it runs, so the hook neither starts one nor
+    waits `START_TIMEOUT_SECONDS` for one: it posts nothing, warns once
+    with the remedy, and gives up within the proof's own timeout. A state
+    file with the key whose pid holds the lock while its port does not
+    prove itself is answered the same way."""
+    store = tmp_path / "memory.sqlite"
+    state_dir = tmp_path / "state"
+    listener = _listen(listeners, _pre_rc12(store, pid=os.getpid()))
+    state = _state(listener.port, store, pid=os.getpid())
+    if keyed:
+        state[PROOF_STATE_KEY] = 1
+    write_state(state_dir, state)
+    held = try_lock(lock_file_for(state_dir, store))
+    assert held is not None
+    caplog.set_level(logging.WARNING, logger="bettermemory._daemon_client")
+    try:
+        started = time.monotonic()
+        code, out, err = _hook(
+            monkeypatch,
+            capsys,
+            tmp_path,
+            {"session_id": "s", "prompt": SECRET_PROMPT, "cwd": str(tmp_path)},
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        release_lock(held)
+    assert code == 0
+    assert out == ""
+    assert listener.posts == []
+    assert elapsed < 2.0, elapsed
+    [warning] = [record.getMessage() for record in caplog.records]
+    assert f"is held by pid {os.getpid()}" in warning
+    assert f"Stop pid {os.getpid()}" in warning
+    assert "bettermemory service install" in warning
+    assert ("from before 9.0.0rc12" in warning) is not keyed
+    assert "no daemon could be reached or started" in err
+
+
+def test_a_hook_posts_nothing_to_a_pre_rc12_daemon_of_its_store(
     tmp_path: Path,
     listeners: list[_Listener],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A daemon from before the proof, of this version and naming this
-    state file's pid and store, is used as it was: one GET, one post."""
+    """A reply in the shape of a daemon from before the proof, of this
+    version and naming the pid and the store of a state file without
+    `PROOF_STATE_KEY`: the pre-rc12 fallback posted it the prompt and
+    printed its reply. Since 9.0.0rc14 the hook sends it nothing and
+    prints nothing it says, as for any listener that is not ours."""
     store = tmp_path / "memory.sqlite"
     listener = _listen(
         listeners,
@@ -537,12 +609,13 @@ def test_a_hook_posts_to_a_pre_rc12_daemon_of_its_store(
         monkeypatch,
         capsys,
         tmp_path,
-        {"session_id": "s", "prompt": "hello", "cwd": str(tmp_path)},
+        {"session_id": "s", "prompt": SECRET_PROMPT, "cwd": str(tmp_path)},
     )
-    assert code == 0, err
-    assert out == "INJECTED CONTEXT\n"
-    assert [path for path, _ in listener.posts] == ["/api/v1/hook/prompt"]
-    assert len(listener.gets) == 1
+    assert code == 0
+    assert out == ""
+    assert "INJECTED" not in out + err
+    assert "no daemon could be reached or started" in err
+    assert listener.posts == []
 
 
 def test_a_hook_to_its_own_daemon_makes_one_health_request_and_one_post(

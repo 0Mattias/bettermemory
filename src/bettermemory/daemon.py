@@ -1556,9 +1556,11 @@ def _serve_locked(
         "version": _version(),
         "store": str(store.path),
         "started": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        # This daemon answers ``/health?nonce=`` with a proof, so a client
-        # takes no reply without one at this port for it
-        # (`_daemon_client.proves`), whatever pid and store it repeats.
+        # This daemon answers ``/health?nonce=`` with a proof. A client of
+        # 9.0.0rc14 on takes no reply without one for any daemon
+        # (`_daemon_client.proves`) and reads no key here; the key tells
+        # an rc12 or rc13 client, installed beside this one, to do the
+        # same at this port, whatever pid and store a reply repeats.
         PROOF_STATE_KEY: 1,
     }
     write_state(state_dir, state)

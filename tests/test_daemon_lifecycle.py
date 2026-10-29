@@ -483,10 +483,12 @@ def test_the_wait_goes_on_when_the_started_child_found_the_store_held(
 # the lifespan shutdown closes the store, `serve` gives the lock back).
 # argv: the state directory, the store path, HOLD, "lock" or "nolock".
 _STOPPING_DAEMON = r"""
-import http.server, json, os, sys, threading, time
+import http.server, json, os, sys, threading, time, urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
-from bettermemory._daemon_client import lock_file_for, release_lock, try_lock, write_state
+from bettermemory._daemon_client import (
+    health_proof, lock_file_for, release_lock, try_lock, write_state,
+)
 
 state_dir, store_path = Path(sys.argv[1]), sys.argv[2]
 hold, mode = float(sys.argv[3]), sys.argv[4]
@@ -508,7 +510,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        self._json(200, {"status": "ok", "version": "0", "store": store_path, "pid": os.getpid()})
+        answer = {"status": "ok", "version": "0", "store": store_path, "pid": os.getpid()}
+        nonce = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("nonce")
+        if nonce:
+            answer["proof"] = health_proof("t" * 64, nonce[0])
+        self._json(200, answer)
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length") or 0))

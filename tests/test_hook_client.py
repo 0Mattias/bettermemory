@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import tomllib
+import urllib.parse
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -361,9 +362,10 @@ class _StaleDaemon(http.server.ThreadingHTTPServer):
     """A daemon's HTTP surface, enough for a hook: /health answers
     `version`, a shutdown request is counted, and a hook post is counted
     and answered with nothing to print. /health reports the pid and the
-    store of the state file `state` wrote and offers no proof, the shape
-    of a daemon from before 9.0.0rc12, which a client takes as the state
-    file's own (`_daemon_client.proves`)."""
+    store of the state file `state` wrote and proves the token it holds
+    (`_daemon_client.health_proof`), as a daemon does: since 9.0.0rc14 a
+    client takes no reply without the proof for its daemon
+    (`_daemon_client.proves`)."""
 
     pid = 2**22 + 4321
 
@@ -404,14 +406,17 @@ class _StaleHandler(http.server.BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802
-        body = json.dumps(
-            {
-                "status": "ok",
-                "version": self.fake.version,
-                "store": self.fake.store,
-                "pid": self.fake.pid,
-            }
-        ).encode()
+        answer: dict[str, Any] = {
+            "status": "ok",
+            "version": self.fake.version,
+            "store": self.fake.store,
+            "pid": self.fake.pid,
+        }
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        nonce = query.get(_daemon_client.HEALTH_NONCE_PARAM)
+        if nonce:
+            answer["proof"] = _daemon_client.health_proof("t" * 64, nonce[0])
+        body = json.dumps(answer).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -780,22 +785,26 @@ def test_the_wait_returns_a_daemon_that_answers_though_the_child_exited(
 
 def _answering_handler(store: str) -> type[http.server.BaseHTTPRequestHandler]:
     """A daemon of this package's version for `store` that answers /health
-    in this process: this process's pid and `store`, no proof, which a
-    client takes as the daemon a state file naming both describes."""
+    in this process: this process's pid and `store`, and the proof of the
+    token ``"t" * 64``, which a client takes as the daemon a state file
+    naming the three describes."""
 
     class _AnsweringHandler(http.server.BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             return
 
         def do_GET(self) -> None:  # noqa: N802
-            body = json.dumps(
-                {
-                    "status": "ok",
-                    "version": _daemon_client.package_version(),
-                    "store": store,
-                    "pid": os.getpid(),
-                }
-            ).encode()
+            answer: dict[str, Any] = {
+                "status": "ok",
+                "version": _daemon_client.package_version(),
+                "store": store,
+                "pid": os.getpid(),
+            }
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            nonce = query.get(_daemon_client.HEALTH_NONCE_PARAM)
+            if nonce:
+                answer["proof"] = _daemon_client.health_proof("t" * 64, nonce[0])
+            body = json.dumps(answer).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

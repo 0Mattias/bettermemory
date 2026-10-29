@@ -1501,6 +1501,33 @@ follows the candidates' testing.
   (`src/bettermemory/store_rows.py`, `src/bettermemory/store_schema.py`,
   `src/bettermemory/store_records.py`, `CONTRIBUTING.md`,
   `docs/internals.md`, `docs/api.md`, `tests/test_unknown_fields.py`)
+- **A `/health` reply without a proof is never taken for the daemon.**
+  A client still took a reply with no proof for the daemon at the port
+  of a state file written before 9.0.0rc12 (one without
+  `"health_proof"`) when it repeated that file's pid and store. `/health`
+  tells both to any local account, so a listener that read them before
+  a crash passed for the daemon and was posted the hook payloads, the
+  token and the shutdown request. `_daemon_client.proves` now decides on
+  the proof alone, whatever daemon wrote the state file, for discovery,
+  `status`, `down`, `doctor` and the service install alike; a daemon
+  still writes the key, which rc12 and rc13 clients read. The tests'
+  stand-ins for a daemon of ours prove their token, and the reply of a
+  daemon from rc1 to rc11 is pinned as another listener's: nothing is
+  posted to it, kept or stopped. Such a daemon still running after the
+  upgrade holds the store's lock, so no daemon of this version can start
+  beside it: a client that finds the state file's pid holding the lock
+  behind a port that does not prove itself now starts none and waits for
+  none, where it waited out the 8 s start timeout, and warns once,
+  naming the remedy (stop that pid, or `bettermemory service install`
+  where a service runs it); a hook gives up within the proof's half
+  second. `docs/operations.md` lists the line.
+  (`src/bettermemory/_daemon_client.py`, `src/bettermemory/daemon.py`,
+  `src/bettermemory/cli/daemon_cmd.py`, `SECURITY.md`, `docs/internals.md`,
+  `docs/operations.md`,
+  `tests/test_daemon_identity.py`, `tests/test_daemon_status_cli.py`,
+  `tests/test_hook_client.py`, `tests/test_doctor.py`,
+  `tests/test_daemon_lifecycle.py`, `tests/test_shim.py`,
+  `tests/test_membership_open.py`, `tests/test_service_units.py`)
 
 #### Known limitations
 
@@ -1705,6 +1732,19 @@ follows the candidates' testing.
   `notifications/tools/list_changed` from the shim would reach the
   session and make the restart unneeded; it needs a change to `shim.py`.
   (`src/bettermemory/_daemon_client.py`)
+- **A daemon from before 9.0.0rc12 that still runs after the upgrade is
+  not replaced.** It offers no proof, so a client takes it for another
+  listener, and while it holds the store's lock no daemon of this
+  version can start: a hook gives up at once, the shim serves the store
+  in-process, both warn once with the remedy, and `down` stops nothing
+  and names its pid. Stopping that pid (`kill`, `taskkill` on Windows),
+  or `bettermemory service install` where a service runs it, ends it,
+  and the next call starts a daemon. A client does not stop it by signal
+  itself: telling a bettermemory daemon's pid from a reused one needs
+  its command line and start time, which Windows gives no supported
+  stdlib reading of (and where a signal is a hard kill) and macOS only
+  through `ps` or a sysctl. (`src/bettermemory/_daemon_client.py`,
+  `docs/operations.md`)
 
 ### 9.0.0rc13
 

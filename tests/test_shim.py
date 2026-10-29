@@ -174,6 +174,7 @@ class _FakeDaemon(http.server.ThreadingHTTPServer):
     the test's state file names, with no proof."""
 
     shutdown_calls = 0
+    posts = 0
     pid = 2**22 + 4321
     store = ""
 
@@ -193,6 +194,7 @@ class _FakeHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
+        self.server.posts += 1  # type: ignore[attr-defined]
         if self.path == "/api/v1/admin/shutdown":
             self.server.shutdown_calls += 1  # type: ignore[attr-defined]
         self.send_response(200)
@@ -201,9 +203,15 @@ class _FakeHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(b"{}")
 
 
-async def test_shim_replaces_a_daemon_of_an_older_version(
+async def test_shim_starts_its_own_daemon_beside_a_pre_rc12_one(
     tmp_path: Path, daemon_env: dict[str, str]
 ) -> None:
+    """A daemon from before the proof (rc1 to rc11) at its state file's
+    port, older than the shim. Before 9.0.0rc14 the shim took its /health,
+    which repeats the state file's pid and store, for its own daemon's and
+    posted it the shutdown with the token. It is another listener now: the
+    shim posts it nothing, starts a daemon of its own beside it on another
+    port, and serves through that one."""
     fake = _FakeDaemon(("127.0.0.1", 0), _FakeHandler)
     fake.store = str(tmp_path / "store" / "memory.sqlite")
     thread = threading.Thread(target=fake.serve_forever, daemon=True)
@@ -229,7 +237,7 @@ async def test_shim_replaces_a_daemon_of_an_older_version(
                 assert {tool.name for tool in listed.tools} == NINE
                 # While the shim serves, for the reason given in
                 # test_shim_starts_a_daemon_when_none_answers.
-                assert fake.shutdown_calls == 1
+                assert fake.shutdown_calls == 0 and fake.posts == 0
                 state = _wait_running(tmp_path)
                 assert state["version"] == __version__
                 assert state["port"] != fake.server_address[1]

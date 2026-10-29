@@ -34,9 +34,8 @@ there and prints its reply into the model's context. So wherever a
 client decides that a daemon answers, before it posts a payload or
 signals a pid, it sends ``/health`` a fresh nonce and checks the reply's
 proof against the token in the state file (`identify`): only the daemon
-that wrote the file holds that token. A daemon from before 9.0.0rc12
-offers no proof and is taken as ours only when its state file says it
-predates the proof and it reports that file's store and pid. Anything
+that wrote the file holds that token. A reply without a proof is never
+the daemon's, whatever pid and store it repeats (`proves`). Anything
 else answering there is someone else's:
 nothing is posted to it, its pid is never signalled, and a daemon is
 started beside it, which binds another port when that one is held.
@@ -93,13 +92,13 @@ _NONCE = re.compile(r"[0-9a-fA-F]{32,128}")
 #: a health nonce can never stand for its MAC over anything else.
 _PROOF_CONTEXT = b"bettermemory-health-v1:"
 #: The key a daemon that answers the proof writes into its state file
-#: (`daemon.serve`, 9.0.0rc12 on), with the proof's version, 1. The pid and
-#: the store a daemon reports at ``/health`` are no secret: the route
-#: answers them to any process on the host, without the token. So a reply
-#: without a proof is taken for a daemon from before the proof only at the
-#: port of a state file without this key, one such a daemon wrote. At the
-#: port of a file that carries it, that reply is another listener's,
-#: whatever pid and store it repeats (`proves`).
+#: (`daemon.serve`, 9.0.0rc12 on), with the proof's version, 1. This client
+#: reads no reply without a proof as the daemon's, whatever the state file
+#: holds (`proves`): the pid and the store a daemon reports at ``/health``
+#: are no secret, since the route answers them to any process on the host
+#: without the token. The key is still written for the clients of rc12 and
+#: rc13, which take a reply without a proof for a daemon from before the
+#: proof at the port of a state file that lacks it.
 PROOF_STATE_KEY = "health_proof"
 
 #: The hook words `_entry.main` routes here. The three 8.x names are
@@ -399,38 +398,25 @@ def proves(state: Mapping[str, Any], answer: Mapping[str, Any], nonce: str) -> b
     """Whether `answer`, the ``/health`` reply to `nonce`, comes from the
     daemon `state` names.
 
-    A reply that carries a ``proof`` is decided by the proof alone: the
-    token's MAC over the nonce, compared in constant time, which only the
-    process that wrote the state file can produce. A reply without one can
-    be a daemon from before 9.0.0rc12, which offers none, only when the
-    state file was written by such a daemon (it carries no
-    `PROOF_STATE_KEY`); it is then taken as ours only when it reports the
-    state file's store and the state file's pid. The state file is the one
-    named after the caller's store (`state_file_for`), so its ``store`` is
-    the caller's store path. A listener another account left on a crashed
-    daemon's port, or another store's daemon that came up on it, fails
-    either way, even when it repeats the pid and the store an earlier
-    ``/health`` told it."""
-    if "proof" in answer:
-        proof = answer["proof"]
-        if not isinstance(proof, str):
-            return False
-        expected = health_proof(str(state["token"]), nonce)
-        # Bytes, not str: compare_digest refuses a str that is not ASCII,
-        # and the proof is whatever the listener chose to send.
-        return hmac.compare_digest(
-            proof.encode("utf-8", errors="replace"), expected.encode("ascii")
-        )
-    if PROOF_STATE_KEY in state:
-        # The daemon that wrote this file answers every nonce with a
-        # proof: a reply without one is a listener that read the pid and
-        # the store off an earlier, open ``/health``.
+    The reply is decided by its ``proof`` alone: the token's MAC over the
+    nonce, compared in constant time, which only the process holding the
+    state file's token can produce. Of `state` only the token is read. A
+    reply without a proof is never ours, whatever pid and store it
+    reports: ``/health`` answers both to any process on the host, so a
+    listener another account left on a crashed daemon's port can repeat
+    them. Before 9.0.0rc14 such a reply was taken for a daemon from before
+    the proof (rc1 to rc11) when it repeated the pid and the store of a
+    state file without `PROOF_STATE_KEY`. A daemon that old now reads as
+    another listener: nothing is posted to it, its pid is not signalled,
+    and `down` leaves it running and names its pid."""
+    proof = answer.get("proof")
+    if not isinstance(proof, str):
         return False
-    pid = answer.get("pid")
-    return (
-        type(pid) is int
-        and pid == state["pid"]
-        and answer.get("store") == state["store"]
+    expected = health_proof(str(state["token"]), nonce)
+    # Bytes, not str: compare_digest refuses a str that is not ASCII, and
+    # the proof is whatever the listener chose to send.
+    return hmac.compare_digest(
+        proof.encode("utf-8", errors="replace"), expected.encode("ascii")
     )
 
 
@@ -458,6 +444,41 @@ def identify(state: Mapping[str, Any], *, timeout: float = 0.5) -> Identified:
     if answer is None:
         return Identified(None, False)
     return Identified(answer, proves(state, answer, nonce))
+
+
+def _warn_unreplaceable(state: Mapping[str, Any]) -> None:
+    """One warning that the store is held by a process this client can
+    neither use nor replace: what answers at `state`'s port does not prove
+    itself the daemon the state file names, and the state file's pid holds
+    the store's lock, so no daemon of this version can start while it runs
+    (`ensure_daemon`). The line names the remedy: a daemon from before
+    9.0.0rc12 (a state file without `PROOF_STATE_KEY`) is stopped by its
+    pid, or replaced by `bettermemory service install` where a service
+    runs it. Nothing the listener sent is quoted. `logging` is imported
+    here, as in `_warn_foreign`."""
+    import logging
+
+    pid = state["pid"]
+    what = (
+        "a bettermemory daemon from before 9.0.0rc12, which offers no proof"
+        if PROOF_STATE_KEY not in state
+        else "a process that does not prove itself the daemon its state file names"
+    )
+    logging.getLogger(__name__).warning(
+        "the store %s is held by pid %s, and what answers at %s:%s is %s: "
+        "nothing is sent to it, and no daemon of this version can start while "
+        "it runs. Stop pid %s (`kill %s`, or `taskkill /PID %s` on Windows), "
+        "or run `bettermemory service install` if a service runs it; the next "
+        "call starts this version's daemon",
+        state["store"],
+        pid,
+        HOST,
+        state["port"],
+        what,
+        pid,
+        pid,
+        pid,
+    )
 
 
 def _warn_foreign(state: Mapping[str, Any]) -> None:
@@ -1112,7 +1133,13 @@ def ensure_daemon(
     on a crashed daemon's port or another store's daemon, is logged once
     and left alone: it is neither kept, nor asked to stop, nor signalled,
     and the daemon started next binds another port (`daemon.bind`) and
-    rewrites the state file."""
+    rewrites the state file. When the state file's pid holds the store's
+    lock as well (`_holds_lock`), as a daemon from before 9.0.0rc12 does
+    while it runs, no daemon can start for the store until that process
+    exits: nothing is started or waited for, one warning names the remedy
+    (`_warn_unreplaceable`), and the answer is None at once, so a hook
+    spends the proof's half second there, not the start's
+    `START_TIMEOUT_SECONDS`."""
     state = read_state(state_dir, store_path)
     if state is not None:
         found = identify(state, timeout=0.5)
@@ -1122,6 +1149,9 @@ def ensure_daemon(
             shutdown_daemon(state, state_dir=state_dir)
             remove_state(state_dir, store_path, pid=int(state["pid"]))
         elif found.foreign:
+            if _holds_lock(int(state["pid"]), lock_file_for(state_dir, store_path)):
+                _warn_unreplaceable(state)
+                return None
             _warn_foreign(state)
     if not start:
         return None

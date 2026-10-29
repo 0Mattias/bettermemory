@@ -60,11 +60,15 @@ the file it opens.
 One daemon per store, on 127.0.0.1, owns the store and serves every
 session and hook. The first hook or MCP client that finds none starts
 it, detached, in the state directory; a client of a newer version
-replaces an older daemon, and an older client leaves a newer one alone.
+replaces an older daemon that proves itself, and an older client leaves
+a newer one alone. A daemon from before 9.0.0rc12 offers no proof and is
+never replaced by a client (see "the store S is held by pid N" below).
 While another process holds the store's lock (a daemon still starting,
 or one busy or hung), a client starts none: it waits up to 8 s for that
 daemon to answer and prove itself, and starts one only if the lock comes
-free first. When the wait ends with the lock still held, `up` exits 1
+free first. When the state file's pid holds the lock and what answers at
+its port does not prove itself, the client waits for nothing and starts
+nothing. When the wait ends with the lock still held, `up` exits 1
 and its line (and its `--json` `error`) ends `: a process holds the
 store's lock (a daemon starting, busy or hung) and none answered within
 8 s`. A daemon reads the config and the managed config at its
@@ -199,9 +203,30 @@ What the daemon's log and the clients say when something is wrong:
   browser page. The daemon answers only clients on its own port.
 - **"the process answering at 127.0.0.1:<port> is not the bettermemory
   daemon its state file names (pid N, store S): nothing is sent to it".**
-  A stale state file, and another process on its port. The client starts
-  a fresh daemon on another port; find what holds the port with
-  `lsof -iTCP:<port>`.
+  A stale state file, and another process on its port: the daemon
+  stopped without removing the file (a crash, a kill) and something took
+  its port. The store's lock is free, so the client starts a fresh daemon
+  on another port; find what holds the port with `lsof -iTCP:<port>`.
+- **"the store S is held by pid N, and what answers at 127.0.0.1:<port>
+  is a bettermemory daemon from before 9.0.0rc12, which offers no proof:
+  nothing is sent to it, and no daemon of this version can start while
+  it runs. Stop pid N ...".** A daemon of an older install still runs
+  after the upgrade. It holds the store's lock and cannot prove itself,
+  so a client neither uses it nor stops it, and no daemon of this version
+  can start beside it: a hook gives up at once with this line, the shim
+  serves the store in-process, and `bettermemory down` stops nothing (it
+  posts nothing to, and signals nothing behind, a port that answers
+  without the proof). Stop the pid
+  (`kill N`; `taskkill /PID N` on Windows), or, where a service
+  (launchd, systemd) runs the old daemon, run `bettermemory service
+  install`, which reloads the unit with this install; the next call
+  starts this version's daemon. Before 9.0.0rc14 a client took such a
+  daemon for its own and replaced it by posting it the shutdown with the
+  token, which handed the token to whatever held the port. The same line
+  with "a process that does not prove itself the daemon its state file
+  names" is a state file of this version whose pid holds the lock while
+  its port answers without the proof: find what holds the port with
+  `lsof -iTCP:<port>` and stop it.
 - **"a process holds the store's lock (a daemon starting, busy or hung)
   and none answered within 8 s".** A shim found no daemon answering, and
   started none, since another process holds the store's lock: no second

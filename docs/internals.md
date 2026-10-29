@@ -895,6 +895,21 @@ instantiates the MCP SDK server and binds the nine tools. `server.py`
 is a re-export shim kept for callers that import `build_server` from
 there. `__main__.py` covers `python -m bettermemory`.
 
+**The daemon's proof.** `GET /health?nonce=<32 to 128 hex>` answers
+`proof`, hex(HMAC-SHA256(token, `bettermemory-health-v1:` + nonce))
+under the bearer token in the daemon's state file
+(`_daemon_client.health_proof`, which `daemon.build_app` computes);
+without a nonce `/health` answers as it always did. A client sends a
+fresh nonce (`secrets.token_hex(16)`) and recomputes the proof from the
+state file's token (`_daemon_client.proves`): only the process that
+wrote the file holds the token, so a reply with the right proof is that
+daemon's, and a reply without one is never the daemon's, whatever pid
+and store it repeats (since 9.0.0rc14; a daemon from before rc12 offers
+none and reads as another listener). Discovery runs it at every lookup
+(`identify`, through `_answering`, `wait_for_daemon` and
+`ensure_daemon`), and so do `status`, `down`, `doctor` and the service
+install.
+
 **Request.** Every tool handler lives in `handlers/<tool>.py` beside its
 `DESC_` description constant; `handlers/admin.py` and
 `handlers/episode.py` are the two dispatchers, one function per former

@@ -17,6 +17,7 @@ import socket
 import subprocess
 import sys
 import threading
+import urllib.parse
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -110,9 +111,12 @@ def _held(state_dir: Path, store: Path) -> Iterator[None]:
 
 
 @contextmanager
-def _listener(answer: dict[str, Any]) -> Iterator[tuple[int, list[str]]]:
+def _listener(
+    answer: dict[str, Any], *, token: str | None = None
+) -> Iterator[tuple[int, list[str]]]:
     """A local HTTP server answering /health with `answer`; the paths of
-    the POSTs it received."""
+    the POSTs it received. With `token`, a /health that asks for a proof
+    gets the proof of `token` beside `answer`, as a daemon answers it."""
     posts: list[str] = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -128,6 +132,11 @@ def _listener(answer: dict[str, Any]) -> Iterator[tuple[int, list[str]]]:
             self.wfile.write(body)
 
         def do_GET(self) -> None:
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            nonce = query.get(_daemon_client.HEALTH_NONCE_PARAM)
+            if token is not None and nonce:
+                self._reply({**answer, "proof": health_proof(token, nonce[0])})
+                return
             self._reply(answer)
 
         def do_POST(self) -> None:
@@ -214,19 +223,23 @@ def _replying(reply: bytes) -> Iterator[tuple[int, list[bytes]]]:
 # ---------------------------------------------------------------------------
 
 
-def test_this_daemon_is_the_one_reporting_the_state_files_store_and_pid() -> None:
-    # A state file from before the proof: the store and the pid decide.
+def test_this_daemon_is_the_one_that_proves_the_state_files_token() -> None:
+    """The proof decides, for a state file written before the proof (no
+    `PROOF_STATE_KEY`) as for one written after: a reply that repeats the
+    state file's store and pid without the token's MAC over the nonce is
+    not this store's daemon (9.0.0rc14; before, a state file without the
+    key let the store and the pid decide)."""
     nonce = "0" * 32
     state = {"store": "/s/memory.sqlite", "pid": 7, "token": "t"}
-    assert is_this_daemon({"store": "/s/memory.sqlite", "pid": 7}, state, nonce)
-    assert not is_this_daemon({"store": "/other/memory.sqlite", "pid": 7}, state, nonce)
-    assert not is_this_daemon({"store": "/s/memory.sqlite", "pid": 8}, state, nonce)
-    assert not is_this_daemon({"status": "ok"}, state, nonce)
-    # A state file whose daemon proves: the store and the pid are not enough.
-    proving = {**state, PROOF_STATE_KEY: 1}
-    assert not is_this_daemon({"store": "/s/memory.sqlite", "pid": 7}, proving, nonce)
-    answer = {"store": "/s/memory.sqlite", "pid": 7, "proof": health_proof("t", nonce)}
-    assert is_this_daemon(answer, proving, nonce)
+    for written in (state, {**state, PROOF_STATE_KEY: 1}):
+        repeated = {"store": "/s/memory.sqlite", "pid": 7}
+        assert not is_this_daemon(repeated, written, nonce)
+        assert not is_this_daemon({"status": "ok"}, written, nonce)
+        answer = {**repeated, "proof": health_proof("t", nonce)}
+        assert is_this_daemon(answer, written, nonce)
+        assert not is_this_daemon(
+            {**repeated, "proof": health_proof("u", nonce)}, written, nonce
+        )
 
 
 def test_uptime_reads_the_state_files_timestamp() -> None:
@@ -594,7 +607,7 @@ def test_a_daemon_that_answers_as_itself_reads_running(
         "version": "9.9.9",
         "store_orphans": ["/s/memory.orphaned-x.sqlite"],
     }
-    with _listener(answer) as (port, _):
+    with _listener(answer, token="t" * 64) as (port, _):
         _stage(state_dir, store, pid=pid, port=port)
         assert _main(["status", "--json", "--check"], monkeypatch) == CHECK_RUNNING
         report = json.loads(capsys.readouterr().out)

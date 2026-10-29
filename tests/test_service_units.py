@@ -32,6 +32,7 @@ from bettermemory._daemon_client import (
     SHUTDOWN_TIMEOUT_SECONDS,
     UNINTERRUPTED_STEP_SECONDS,
     health,
+    health_proof,
     lock_file_for,
     log_file_for,
     read_state,
@@ -598,6 +599,7 @@ def test_install_hands_the_store_over_from_a_running_daemon(
             "status": "ok",
             "store": str(store),
             "pid": pid,
+            **({"proof": health_proof("t" * 64, nonce)} if nonce else {}),
         },
     )
     monkeypatch.setattr(_daemon_client, "shutdown_daemon", stopped)
@@ -640,6 +642,7 @@ def test_install_reports_a_daemon_that_would_not_hand_over(
             "status": "ok",
             "store": str(store),
             "pid": pid,
+            **({"proof": health_proof("t" * 64, nonce)} if nonce else {}),
         },
     )
     monkeypatch.setattr(_daemon_client, "shutdown_daemon", lambda state, **kw: False)

@@ -19,8 +19,9 @@ import shutil
 import sqlite3
 import sys
 import threading
+import urllib.parse
 from collections import namedtuple
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -171,14 +172,43 @@ def _held_lock(env: Env) -> Iterator[None]:
         _daemon_client.release_lock(handle)
 
 
+#: The token `_state` writes, the one a stand-in for the daemon it names
+#: proves (`_answers`, `_health_stub`).
+_TOKEN = "t" * 32
+
+
+def _answers(body: dict[str, Any]) -> Callable[..., dict[str, Any]]:
+    """`_daemon_client.health` as the daemon `_state` names answers it:
+    `body`, with the proof of `_TOKEN` over the nonce when one is asked
+    for. Since 9.0.0rc14 a reply without the proof is no daemon's
+    (`_daemon_client.proves`), so a stand-in for the daemon proves."""
+
+    def health(
+        port: int, timeout: float = 1.0, nonce: str | None = None
+    ) -> dict[str, Any]:
+        answer = dict(body)
+        if nonce is not None:
+            answer["proof"] = _daemon_client.health_proof(_TOKEN, nonce)
+        return answer
+
+    return health
+
+
 @contextmanager
-def _health_stub(body: dict[str, Any]) -> Iterator[int]:
+def _health_stub(body: dict[str, Any], *, proves: bool = False) -> Iterator[int]:
     """A listener on 127.0.0.1 that answers every GET with `body`: the
-    real `_daemon_client.health` call, over the wire."""
+    real `_daemon_client.health` call, over the wire. With `proves`, a
+    GET that asks for a proof gets the proof of `_TOKEN` beside `body`,
+    as the daemon `_state` names answers it."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - the stdlib's name
-            data = json.dumps(body).encode("utf-8")
+            answer = dict(body)
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            nonce = query.get(_daemon_client.HEALTH_NONCE_PARAM)
+            if proves and nonce:
+                answer["proof"] = _daemon_client.health_proof(_TOKEN, nonce[0])
+            data = json.dumps(answer).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
@@ -1026,12 +1056,14 @@ def test_a_daemon_that_writes_its_state_file_during_the_wait_is_ok(
     monkeypatch.setattr(
         _daemon_client,
         "health",
-        lambda port, timeout=1.0, nonce=None: {
-            "status": "ok",
-            "version": _daemon_client.package_version(),
-            "store": str(store_path),
-            "pid": 4242,
-        },
+        _answers(
+            {
+                "status": "ok",
+                "version": _daemon_client.package_version(),
+                "store": str(store_path),
+                "pid": 4242,
+            }
+        ),
     )
     started = threading.Timer(0.2, lambda: _state(env, pid=4242))
     with _held_lock(env):
@@ -1116,7 +1148,7 @@ def test_a_running_daemon_of_this_version_is_ok(env: Env) -> None:
         "store": str(store_path),
         "pid": 4242,
     }
-    with _health_stub(body) as port:
+    with _health_stub(body, proves=True) as port:
         _state(env, port=port, pid=4242)
         check = env.checks()["daemon"]
     assert check.status == "ok"
@@ -1225,12 +1257,14 @@ def test_version_skew_warns(
     monkeypatch.setattr(
         _daemon_client,
         "health",
-        lambda port, timeout=1.0, nonce=None: {
-            "status": "ok",
-            "version": theirs,
-            "store": str(store_path),
-            "pid": _DEAD_PID,
-        },
+        _answers(
+            {
+                "status": "ok",
+                "version": theirs,
+                "store": str(store_path),
+                "pid": _DEAD_PID,
+            }
+        ),
     )
     _state(env)
     check = env.checks()["daemon"]
