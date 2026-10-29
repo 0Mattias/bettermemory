@@ -836,9 +836,13 @@ def test_a_readers_open_of_a_second_file_signs_nothing_with_the_bound_key(
         assert bound.log_verify()["status"] == "ok"
 
     # A ring from before bindings is no claim, and a reader writes none.
+    # The bound store wrote after the copy was taken, so the copy's log
+    # does not reach the ring's head: it reads unclaimed, and a reader of
+    # it opens without the key too (ENG-93 item 6).
     KeyRing(keys, store_id).binding_path().unlink()
     with Store.open(copy, keys_dir=keys, allow_rekey=False) as twin:
-        assert twin.has_key
+        assert not twin.has_key
+        assert twin.key_state.state == "unclaimed"
     assert not KeyRing(keys, store_id).binding_path().exists()
 
 

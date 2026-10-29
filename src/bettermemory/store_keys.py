@@ -1,8 +1,10 @@
 """The key checks a store open makes, and the key ring's binding to one file.
 
-A store file's key is in one of five states (`key_state`, `KeyState`):
-present, unreadable, missing, foreign, or bound elsewhere (the key ring
-belongs to another store file that still holds the store id). `Store.open`,
+A store file's key is in one of six states (`key_state`, `KeyState`):
+present, unreadable, missing, foreign, bound elsewhere (the key ring
+belongs to another store file that still holds the store id), or
+unclaimed (the ring is bound to no file and records a history this file
+does not carry, `_unclaimed_fit`). `Store.open`,
 doctor's `key` check and posture's `key.match` finding all read it through
 `key_state`, and all three say it in its words (`KeyState.summary`,
 `KeyState.remedy`). The owner's opener claims the ring for its file
@@ -28,6 +30,7 @@ from __future__ import annotations
 import errno
 import logging
 import os
+import shutil
 import sqlite3
 import stat
 import threading
@@ -55,6 +58,7 @@ from .log import (
 from .store_schema import (
     StoreRefusedError,
     admit_store,
+    connect_read_only,
     read_store_meta,
     resolve_keys_dir,
 )
@@ -389,19 +393,23 @@ def _claim_key_ring(
 # The key's state (ENG-174)
 # ---------------------------------------------------------------------------
 
-#: The five states of a store file's key, as `key_state` reads them.
+#: The six states of a store file's key, as `key_state` reads them.
 KEY_PRESENT = "present"
 KEY_UNREADABLE = "unreadable"
 KEY_MISSING = "missing"
 KEY_FOREIGN = "foreign"
 KEY_BOUND_ELSEWHERE = "bound_elsewhere"
+KEY_UNCLAIMED = "unclaimed"
 KEY_STATES = (
     KEY_PRESENT,
     KEY_UNREADABLE,
     KEY_MISSING,
     KEY_FOREIGN,
     KEY_BOUND_ELSEWHERE,
+    KEY_UNCLAIMED,
 )
+#: How long `_fit_read_only` waits on a lock, as a CLI open does.
+_FIT_READ_TIMEOUT = 5.0
 
 
 @dataclass(frozen=True)
@@ -410,16 +418,18 @@ class KeyState:
     reader says it in (`summary`, `remedy`): `Store.open` keeps it
     (`Store.key_state`) and refuses a write in them (`refusal`); doctor's
     ``key`` check and posture's ``key.match`` finding render them. Only
-    ``present`` signs. A reader opens the other four for reading only;
+    ``present`` signs. A reader opens the other five for reading only;
     the owner's opener fails on an unreadable key, writes nothing to a
-    file whose ring is bound elsewhere, and rekeys a missing or foreign
-    key (or keeps a foreign one that signs a segment of the log).
+    file whose ring is bound elsewhere or unclaimed, and rekeys a missing
+    or foreign key (or keeps a foreign one that signs a segment of the
+    log).
 
     ``expected`` is the fingerprint the store's meta records, ``key`` the
     ring's current key (never in the repr), ``error`` why it could not be
     read, ``bound_to`` the store file the ring belongs to when that is
-    another, and ``unread`` why that file could not be read to tell
-    whether it still holds the store."""
+    another, ``unread`` why that file could not be read to tell whether
+    it still holds the store, and ``unfit`` how this file fails to carry
+    the history of a ring bound to none (unclaimed)."""
 
     state: str
     keyring: KeyRing
@@ -429,10 +439,24 @@ class KeyState:
     error: KeyUnreadableError | None = None
     bound_to: Path | None = None
     unread: str | None = None
+    unfit: RingFit | None = None
 
     @property
     def key_path(self) -> Path:
         return self.keyring.current_path()
+
+    @property
+    def withheld(self) -> Path | None:
+        """What keeps the ring from this file whatever its key is, for
+        `Store.open`, which then opens it for reading only and keeps that
+        answer for its worker connections (`Store.reopen`): the store file
+        the ring is bound to (bound elsewhere), or the ring's binding file,
+        which names no store yet (unclaimed). None in the other states."""
+        if self.state == KEY_BOUND_ELSEWHERE:
+            return self.bound_to
+        if self.state == KEY_UNCLAIMED:
+            return self.keyring.binding_path()
+        return None
 
     @property
     def held(self) -> str | None:
@@ -467,6 +491,15 @@ class KeyState:
                 "a segment of the log, and otherwise retires it, writes a new key "
                 "and rekeys the log"
             )
+        if self.state == KEY_UNCLAIMED:
+            why = None if self.unfit is None else self.unfit.reason()
+            return (
+                f"the key ring under {self.keyring.keys_dir} is bound to no store "
+                "file yet and holds a history this file does not carry"
+                + ("" if why is None else f" ({why})")
+                + ": it is bound only to the file that carries it, so every "
+                "open of this file is read-only, and nothing is rekeyed or written"
+            )
         return self._bound()[0]
 
     @property
@@ -490,6 +523,15 @@ class KeyState:
             return (
                 "find the key whose fingerprint the store records and put it "
                 "back; `bettermemory log verify` shows which segments verify"
+            )
+        if self.state == KEY_UNCLAIMED:
+            return (
+                "open the store this key ring belongs to first, whose first "
+                "writing open binds the ring to it; if this file is that store "
+                "and its history was replaced on purpose (copied over from "
+                "another machine, or an older copy put back), `bettermemory log "
+                "accept-history --yes` accepts it on the record and binds the key "
+                "ring to this file"
             )
         return self._bound()[1]
 
@@ -532,6 +574,9 @@ class KeyState:
         if self.bound_to is not None:
             out["bound_to"] = str(self.bound_to)
             out["binding_path"] = str(self.keyring.binding_path())
+        if self.unfit is not None:
+            out["binding_path"] = str(self.keyring.binding_path())
+            out["ring_fit"] = self.unfit.to_dict()
         return out
 
 
@@ -542,6 +587,7 @@ def key_state(
     *,
     claim: bool = False,
     warn: bool = True,
+    conn: sqlite3.Connection | None = None,
 ) -> KeyState:
     """The state of the key for the store file ``store_file``, whose meta
     records the fingerprint ``expected``: the one reading `Store.open`,
@@ -560,12 +606,20 @@ def key_state(
        (`_key_ring_elsewhere`). Read whatever the key is: a copy carries
        its original's fingerprint, so its key matches, and every open of
        it is read-only.
-    3. missing: no key file.
-    4. foreign: a key whose fingerprint is not ``expected``.
-    5. present: the key ``expected`` names.
+    3. unclaimed: the key ring is bound to no store file and records a
+       history (an origin anchor or a head) that this file does not carry
+       (`_unclaimed_fit`), so neither the owner's opener nor a reader binds
+       or signs with it: a copy that borrowed the id, where a ring from
+       before 9.0.0rc13 was bound to whichever file opened first. Read
+       before the claim, which would bind the ring.
+    4. missing: no key file.
+    5. foreign: a key whose fingerprint is not ``expected``.
+    6. present: the key ``expected`` names.
 
     ``warn`` says an unreadable key and the binding in the log, as an open
-    does; doctor and posture read quietly and render the state."""
+    does; doctor and posture read quietly and render the state. ``conn``
+    is the open's connection to the file, which the unclaimed check reads
+    its log through; without one it opens a read-only one."""
     try:
         key = keyring.load_current()
     except KeyUnreadableError as exc:
@@ -574,6 +628,14 @@ def key_state(
         if warn:
             log.warning("store %s opens without its key: %s", store_file, exc)
         return KeyState(KEY_UNREADABLE, keyring, store_file, expected, error=exc)
+    unfit = _unclaimed_fit(keyring, store_file, conn, key)
+    if unfit is not None:
+        unclaimed = KeyState(
+            KEY_UNCLAIMED, keyring, store_file, expected, key=key, unfit=unfit
+        )
+        if warn:
+            _warn_unclaimed(unclaimed)
+        return unclaimed
     reads = _claim_key_ring if claim else _key_ring_elsewhere
     other, unread = reads(keyring, store_file, keyring.store_id, warn=warn)
     if other is not None:
@@ -703,11 +765,90 @@ def ring_fit(
 ) -> RingFit:
     """How the store file open on ``conn`` meets ``keyring``'s origin anchor
     and head (`RingFit`): `key adopt` binds the ring only to a file that
-    fits. ``current_key``, a key the caller already holds, is tried first
-    against the anchored row."""
+    fits, and an owner's open binds a ring bound to no file only to one
+    that fits (`_unclaimed_fit`). ``current_key``, a key the caller already
+    holds, is tried first against the anchored row."""
     origin = check_origin(conn, keyring=keyring, current_key=current_key)
     head = keyring.read_head()
     return RingFit(origin, head, head_status(head, conn), last_row(conn))
+
+
+def _fit_read_only(
+    store_file: Path, keyring: KeyRing, key: bytes | None
+) -> RingFit | None:
+    """`ring_fit` of the store file at ``store_file``, read through a
+    read-only connection of its own (`store_schema.connect_read_only`),
+    for a caller that has none open (posture's read of the key); None
+    when the file cannot be read so."""
+    try:
+        conn, scratch = connect_read_only(store_file, timeout=_FIT_READ_TIMEOUT)
+    except (sqlite3.Error, OSError, ValueError):
+        return None
+    try:
+        return ring_fit(conn, keyring, current_key=key)
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _unclaimed_fit(
+    keyring: KeyRing,
+    store_file: Path,
+    conn: sqlite3.Connection | None,
+    key: bytes | None,
+) -> RingFit | None:
+    """How ``store_file`` fails to fit a key ring that is bound to no store
+    file and records a history (an origin anchor or a head), or None when
+    the ring is bound, records none, or the file fits (ENG-93 item 6).
+
+    A ring from before 9.0.0rc13 has no binding, and its first owner's
+    open after the upgrade bound it to whichever file it opened: a file
+    that borrowed the store's id (a repository's ``./.claude-memory/``
+    opened before the home store) took the ring, retired the home store's
+    key and moved its head past the home log. The ring is now bound only
+    to the file that carries its history, the rule `key adopt` binds by
+    (`ring_fit`): its row at the anchor's seq carries the anchor's MAC and
+    its log reaches the head. Any other file reads ``unclaimed``. A ring
+    with neither anchor nor head records nothing to tell a file by, and
+    the first owner's open binds it as before. A binding that cannot be
+    read is not this rule's: `_claim_key_ring` keeps it, as it keeps a
+    ring bound to a file it cannot read, and the open goes on.
+
+    ``conn`` is the open's own connection; without one the file is read
+    through a read-only connection (`_fit_read_only`), and a file that
+    cannot be read so is not called unclaimed here: its open says why."""
+    try:
+        if keyring.read_binding() is not None:
+            return None
+    except OSError:
+        return None
+    if keyring.read_origin() is None and keyring.read_head() is None:
+        return None
+    if conn is None:
+        fit = _fit_read_only(store_file, keyring, key)
+    else:
+        try:
+            fit = ring_fit(conn, keyring, current_key=key)
+        except sqlite3.Error:
+            return None
+    return None if fit is None or fit.fits else fit
+
+
+def _warn_unclaimed(state: KeyState) -> None:
+    """Say in the log that the key ring is bound to no store file and this
+    file does not carry its history: a warning the first time this process
+    opens the file so, the same line at DEBUG after, keyed with the
+    binding's path in the guard `_warn_bound_elsewhere` keeps."""
+    guard_key = (_resolved_for_guard(state.store_file), state.keyring.binding_path())
+    with _BOUND_ELSEWHERE_LOCK:
+        first = guard_key not in _BOUND_ELSEWHERE_WARNED
+        _BOUND_ELSEWHERE_WARNED.add(guard_key)
+    level = logging.WARNING if first else logging.DEBUG
+    remedy = _sentence(state.remedy or "")
+    log.log(level, "store %s: %s. %s", state.store_file, state.summary, remedy)
 
 
 def _signing_key(

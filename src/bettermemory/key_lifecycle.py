@@ -88,6 +88,7 @@ from .store_keys import (
     KEY_FOREIGN,
     KEY_MISSING,
     KEY_PRESENT,
+    KEY_UNCLAIMED,
     KEY_UNREADABLE,
     KeyState,
     _signs_a_segment,
@@ -376,7 +377,7 @@ def export_keys(
             store_id = store.store_id
     except (ValueError, sqlite3.Error, OSError) as exc:
         return _refused(report, _open_error(exc))
-    if state.state in (KEY_UNREADABLE, KEY_BOUND_ELSEWHERE):
+    if state.state in (KEY_UNREADABLE, KEY_BOUND_ELSEWHERE, KEY_UNCLAIMED):
         return _refused(report, _state_refusal(state))
     keys, unread = _held_keys(ring)
     if unread:
@@ -533,7 +534,7 @@ def import_keys(
             f"{source} holds a key of store {claimed}, and the store at "
             f"{store_file} is store {store_id}: import it into that store",
         )
-    if state.state in (KEY_UNREADABLE, KEY_BOUND_ELSEWHERE):
+    if state.state in (KEY_UNREADABLE, KEY_BOUND_ELSEWHERE, KEY_UNCLAIMED):
         return _refused(report, _state_refusal(state))
     held = {fp for fp, _, _ in _held_keys(ring)[0]}
     plan: list[dict[str, Any]] = []

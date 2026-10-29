@@ -322,8 +322,8 @@ store file: `<store_id>.path`, `{"path": "<resolved store file>"}`,
 written `0600` and atomically under `<store_id>.path.lock`
 (`log.KeyRing.bind_store`). `Store.create` writes it; the owner's opener
 (`allow_rekey=True`) claims it before any rekey decision, writing it
-when the ring has none (trust on first use, for a ring from before
-bindings) or when the bound file no longer holds this store id; and
+when the ring has none and this file carries the ring's history (below)
+or when the bound file no longer holds this store id; and
 `backup restore` rebinds it to the file it restores
 (`KeyRing.rebind_store`), on the record. A reader never writes it.
 
@@ -369,8 +369,24 @@ bindings) or when the bound file no longer holds this store id; and
   a warning and goes on as before rings were bound, the file kept. One
   that does not parse, or holds a relative path, is no binding and is
   replaced.
+- A ring with no binding (one from before 9.0.0rc13) is bound only to a
+  file that carries its history (since 9.0.0rc14,
+  `store_keys._unclaimed_fit`): the row at the origin anchor's seq
+  carries the anchor's MAC (and verifies under the anchor's key while
+  this host holds it) and the log reaches the head, the rule `key adopt`
+  binds by (`store_keys.ring_fit`). Any other file with the id reads
+  `unclaimed`, read before the claim: the owner's open binds nothing,
+  rekeys nothing and opens as a reader with writes refused, as do its
+  worker connections (`KeyState.withheld`), and a reader with the key
+  opens without it too; a WARNING names the reason and the remedy (open
+  the ring's store first, or `log accept-history --yes` for a store whose
+  history was replaced on purpose), once per process for the pair of
+  the file and the binding path. A ring with neither an anchor nor a head
+  is bound on first use, as before. Without a connection (`security
+  audit`) the file is read through a read-only one.
 - Cost: every open after the first reads one small file and takes no
-  lock.
+  lock; an open of a file whose ring has no binding reads the anchored
+  row and the head's row.
 
 **A key that cannot be read** (9.0.0rc13). `KeyRing.load_current`
 answers None only when the key file is not there. A file that is there
@@ -1507,10 +1523,10 @@ records the pinned `section.key` names, which `config show` labels
 - The origin anchor is trust on first use for a store made before
   9.0.0rc12: an edit made before its first writing open under rc12 is
   not caught by the anchor.
-- The key ring's binding is trust on first use for a ring from before
-  9.0.0rc13: the first owner's open after the upgrade binds it to the
-  file it opens, which may be a second file that borrowed the store's
-  id (Provenance, above).
+- A ring from before 9.0.0rc13 is bound to a file that carries its
+  history, and a byte-for-byte copy taken since the store last wrote
+  carries it as the store does: the first owner's open of either binds
+  the ring (Provenance, above).
 - A restore holds off every writing open through `store._connect`
   (`restore_lock.py`); on Windows, and on a mount where `flock` cannot
   lock a directory, an opener holds the lock only for its check, and a

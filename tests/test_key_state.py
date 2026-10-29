@@ -1,10 +1,11 @@
 """One key state, read the same way by `Store.open`, doctor and posture (ENG-174).
 
-A store file's key is in one of five states: present (it matches the
+A store file's key is in one of six states: present (it matches the
 fingerprint the store records), unreadable (there, and this account cannot
-read it), missing, foreign (another key), or bound elsewhere (the key
-ring belongs to another store file that still holds the id, so every
-owner's open of this one is read-only). `store_keys.key_state` answers it
+read it), missing, foreign (another key), bound elsewhere (the key ring
+belongs to another store file that still holds the id, so every owner's
+open of this one is read-only), or unclaimed (the ring is bound to no
+file and records a history this one does not carry, ENG-93 item 6). `store_keys.key_state` answers it
 and words it; `Store.open` keeps the answer (`Store.key_state`, and the
 refusal of a write), doctor's `key` check renders it and posture's
 `key.match` finding renders it, each with the same summary and remedy.
@@ -37,7 +38,14 @@ from bettermemory.store import STORE_FILENAME, Store
 
 from .conftest import set_git_discovery_ceiling
 
-STATES = ("present", "unreadable", "missing", "foreign", "bound_elsewhere")
+STATES = (
+    "present",
+    "unreadable",
+    "missing",
+    "foreign",
+    "bound_elsewhere",
+    "unclaimed",
+)
 
 
 @dataclass
@@ -116,6 +124,16 @@ def _case(state: str, tmp_path: Path, keys: Path) -> Case:
         copy.mkdir(parents=True)
         shutil.copy(case.original, copy / STORE_FILENAME)
         case.store_file = copy / STORE_FILENAME
+    elif state == "unclaimed":
+        # A copy taken before the original wrote again, and a ring left
+        # unbound, as a release before rc13 left it.
+        copy = (tmp_path / "repo" / ".claude-memory").resolve()
+        copy.mkdir(parents=True)
+        shutil.copy(case.original, copy / STORE_FILENAME)
+        with Store.open(case.original, allow_rekey=True) as original_store:
+            original_store.put_memory(_memory("the original writes on"))
+        case.keyring.binding_path().unlink()
+        case.store_file = copy / STORE_FILENAME
     return case
 
 
@@ -165,7 +183,7 @@ def test_store_open_keeps_the_state_and_refuses_writes_in_its_words(
         with pytest.raises(RuntimeError, match="open for reading only") as refused:
             store.put_memory(_memory("refused"))
         assert expected.summary in str(refused.value)
-    if state == "bound_elsewhere":
+    if state in ("bound_elsewhere", "unclaimed"):
         with Store.open(case.store_file, allow_rekey=True) as owner:
             assert owner.key_state.state == state
             assert owner.key_state.summary == expected.summary

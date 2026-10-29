@@ -2544,6 +2544,32 @@ follows the candidates' testing.
   name it had, so a daemon and a client of the release before still find
   each other. (`src/bettermemory/_daemon_client.py`,
   `docs/operations.md`, `tests/test_daemon_lock_spelling.py`)
+- **A key ring from before rc13 binds only to the file that carries its
+  history (ENG-93).** This closes the rc13 Known limitation "The key
+  ring's binding is trust on first use on upgrade". Such a ring has an
+  origin anchor and a head but no `<store_id>.path`, and the first
+  owner's open after the upgrade bound it to whichever file it opened: a
+  file that borrowed the store's id (a repository's `./.claude-memory/`
+  opened before the home store) took the ring as in rc12, and the home
+  store read `tampered` and opened for reading only. `store_keys.key_state`
+  now reads a sixth state before the claim, `unclaimed`
+  (`_unclaimed_fit`): the ring is bound to no file, records a history,
+  and this file does not carry it by the rule `key adopt` binds by
+  (`ring_fit`: the row at the anchor's seq carries the anchor's MAC, and
+  the log reaches the head). The owner's opener binds nothing, rekeys
+  nothing and opens such a file as a reader with writes refused, as do
+  its worker connections (`KeyState.withheld`); a reader with the key
+  opens without it; doctor's `key` check and the audit's `key.match`
+  finding say it in the same words, whose remedy names opening the
+  ring's store first, or `log accept-history --yes` for a store whose
+  history was replaced on purpose. `key export` and `key import` refuse
+  it. A ring with neither an anchor nor a head is bound on first use, as
+  before, and a binding that cannot be read is kept, as a bound file
+  that cannot be read keeps the ring. (`src/bettermemory/store_keys.py`,
+  `src/bettermemory/store.py`, `src/bettermemory/key_lifecycle.py`,
+  `SECURITY.md`, `docs/internals.md`, `docs/api.md`,
+  `tests/test_keyring_upgrade_binding.py`, `tests/test_key_state.py`,
+  `tests/test_keyring_binding.py`)
 
 #### Known limitations
 
@@ -2556,15 +2582,12 @@ follows the candidates' testing.
   through a symbolic link or in a case the volume does not hold names
   other files than this release's daemon does.
   (`src/bettermemory/_daemon_client.py`)
-- **The key ring's binding is trust on first use on upgrade.** A ring
-  from before rc13 has no `<store_id>.path`, and the first owner's open
-  after the upgrade binds it to the file it opens. When that is a file
-  that borrowed the store's id (a repository's `./.claude-memory/`
-  opened before the home store), it takes the ring as in rc12: the home
-  store's key is retired, the head moves past the home log, which reads
-  `tampered` (`tail_deleted`), and the home store opens for reading
-  only. `[storage] cwd_store = false` closes the repository route, and
-  a ring already bound is not taken this way.
+- **A byte-for-byte copy taken since the store last wrote carries its
+  ring's history.** A ring from before rc13 is bound to the file whose
+  row at the anchor's seq carries the anchor's MAC and whose log reaches
+  the head, and such a copy is one: the first owner's open of either
+  binds the ring, and the other reads bound elsewhere from then on.
+  (`src/bettermemory/store_keys.py`)
 - **An rc12 anchor whose key is lost before rc13 names it reads
   tampered.** An origin anchor written before rc13 names no key, and the
   first writing open that sees a held key verify its row names it. When

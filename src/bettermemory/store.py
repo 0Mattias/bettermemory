@@ -413,9 +413,9 @@ class Store:
     # the key ring belongs to another store file (`_bound_elsewhere`).
     # None otherwise; `_key` is the one key a mutation signs with.
     _read_key: bytes | None
-    # The store file the key ring is bound to when it is not this one and
-    # still holds this store id (`_claim_key_ring`): this connection then
-    # writes nothing, and says why. None otherwise.
+    # What keeps the key ring from this file (`KeyState.withheld`): the
+    # store file it is bound to, or its binding file when the ring is bound
+    # to none and this file lacks its history. Writes nothing; None else.
     _bound_elsewhere: Path | None
     # The key's state as this connection's open read it (`key_state`),
     # present once it holds a key to sign with; None only inside `_adopt`.
@@ -721,8 +721,8 @@ class Store:
             # open writes nothing to it or with it. A reader asks the same,
             # writing no binding, since a reader whose key matches would
             # sign with it too (`store_keys.key_state`).
-            state = key_state(keyring, path, expected, claim=allow_rekey)
-            key, elsewhere = state.key, state.bound_to
+            state = key_state(keyring, path, expected, claim=allow_rekey, conn=conn)
+            key, elsewhere = state.key, state.withheld
             matches = key is not None and fingerprint(key) == expected
             if state.state == KEY_PRESENT:
                 store = cls._bind(
