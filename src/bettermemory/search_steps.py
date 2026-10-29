@@ -32,12 +32,14 @@ def _check_mode(mode: str) -> None:
     """Refuse a `mode` other than keyword, bm25 or hybrid; return nothing."""
     # Runtime guard against unknown modes. The `SearchMode` Literal pins
     # this at the type-checker layer, but the handler accepts an opaque
-    # string from MCP and Python doesn't enforce Literals at call time;
-    # without this check, a typo like `mode="emantic"` would fall through
-    # the if/elif chain into the `else` branch and silently run hybrid.
-    # Raising here makes the failure mode loud at the dispatch boundary
-    # regardless of where the bad string came from (handler, CLI, future
-    # programmatic client).
+    # string from MCP and Python doesn't enforce Literals at call time.
+    # Without this check, a typo like `mode="emantic"` would only be caught
+    # after the candidates were filtered and tokenized, when
+    # `search._rank_candidates` hands every mode but hybrid to
+    # `search._rank_single_leg`, which refuses anything but keyword and bm25.
+    # Raising here makes the failure mode loud at the dispatch boundary,
+    # before any candidate is read, regardless of where the bad string came
+    # from (handler, CLI, future programmatic client).
     if mode not in ("keyword", "bm25", "hybrid"):
         raise ValueError(
             f"unknown search mode {mode!r}; must be one of: keyword, bm25, hybrid"

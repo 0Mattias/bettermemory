@@ -1376,7 +1376,7 @@ def _rank_single_leg(
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
         if track_legs:
             lexical_ids = {memory.id for memory, _, _ in scored}
-    else:
+    elif mode == "bm25":
         scored = _score_bm25(
             candidates,
             query_tokens,
@@ -1389,6 +1389,13 @@ def _rank_single_leg(
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
         if track_legs:
             lexical_ids = {memory.id for memory, _, _ in scored}
+    else:
+        # Unreachable behind `search_steps._check_mode`: `_rank_candidates`
+        # sends hybrid elsewhere and nothing else gets past the check. A mode
+        # that did would be refused here rather than ranked as another one.
+        raise ValueError(
+            f"unknown single-leg search mode {mode!r}; must be keyword or bm25"
+        )
     return scored, lexical_ids
 
 
