@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from . import _caches, githead
+from ._response_depends import _load_depends_targets, _resolve_depends
 from .credentials import CredentialMatch
 from .durability import TransientMatch
 from .events import _event_id_items
@@ -140,7 +141,7 @@ SIMILAR_HITS_SHOWN = 5
 # (git's configuration outside the repository's config file, a history
 # rewritten under an unchanged head, a change within one tick of the
 # filesystem's clock that reuses an inode number, and the rest) is listed
-# on `ResponseBuilder.attach_commit_drift_counts`. The values are frozen,
+# on `_DriftPass`. The values are frozen,
 # so a hit can share one without a later hit's edit reaching it. Bounded
 # LRU; the lock makes each look-up-and-touch and each merge-and-evict
 # atomic, and the resolution runs outside it. Registered with `_caches`,
@@ -229,8 +230,9 @@ class _DriftPass:
     `ResponseBuilder.attach_commit_drift_counts` runs one per search and
     `verdict.resolve_verdicts` / `verdict.memoised_verdicts` one per call,
     so `memory_search`'s hits and `memory_show` read one memo through one
-    key. The cost and the key's coverage are the
-    search's, set out on `attach_commit_drift_counts`.
+    key. A search's cold cost is set out on `attach_commit_drift_counts`;
+    the memo, its key and what it keeps are set out below, as a search's
+    hits meet them.
 
     `caller_repo` is the caller's `origin.repo`; `cwd` its directory;
     `admission` what the pass reads under (`admission.DriftScope`: the
@@ -250,6 +252,104 @@ class _DriftPass:
     resolution reaches (the whole-history log, the walks, the config and
     index readers) is too, so passes on several threads, a search's and a
     worker thread's, can run at once.
+
+    WARM, the count is zero for every hit the memo holds. A hit it does
+    not hold pays its cold cost on every search: one the key cannot
+    settle (below), and one whose git work fails every time (the next
+    paragraph). Each hit's resolution is memoised (`_DRIFT_MEMO`) on
+    exactly its inputs: the root, the head, the caller's directory, the
+    anchors, the declared claims, the verify instant and
+    `verified_head`; for a hit with a governed claim, the attribute
+    files its patch stream reads (the ``.gitattributes`` on each
+    governed file's path, ``info/attributes``, the global attributes
+    file and the repository's ``config``); and for every hit, the files
+    beside the history its git reads (`origin.walk_files_signature`: the
+    repository's ``config`` and, under ``extensions.worktreeConfig``,
+    its ``config.worktree``, where ``log.follow`` reaches a
+    single-pathspec log and ``log.showRoot`` the walk, the working
+    tree's ``.gitmodules``, where a submodule's ``ignore`` reaches the
+    walk, and the index's ``.gitmodules`` entry where git reads it,
+    unmerged or where the working tree has none; the walk memo keys on
+    them too). A file is keyed on its mtime, ctime, size, inode and
+    mode, or its absence, so a write, a replacement, a creation, a
+    removal or a chmod changes the key; the index's entry is keyed on
+    its mode and object, read from the index in-process
+    (`origin._index_gitmodules`, once per state of the index). A
+    governed path that is a directory or a pattern, a ``config`` that
+    names an attributes file or tree, sets ``log.follow`` (the patch
+    stream would read the attributes of a rename source's path; the
+    file is read as git reads it, so ``push.followTags`` or a branch
+    named ``follow-up`` is no such config), holds a NUL byte or is
+    refused by git, an index the reader does not read exactly (split, of
+    an unknown version, a SHA-256 repository's, or GIT_INDEX_FILE set),
+    and a file that cannot be stamped keep a hit out of the memo. A
+    commit moves the head and so every key; a new stamp, a rewritten
+    body, a changed claim or an edited attributes file changes its own
+    row's, and an edited ``config`` or ``.gitmodules`` every row's, in
+    the working tree or in the index where git reads it. A write to the
+    index that leaves ``.gitmodules`` as it was (``git add`` of another
+    file, a ``git status`` that refreshes the index) changes no key.
+
+    A failure is never memoised, at a cost. A value is not kept when
+    any git process its resolution ran failed, whether git exited
+    non-zero or could not run (the fallback taken on a failure is what
+    the uncached code answers on that call and not the next), and no
+    memo keeps a walk that came back None. A hit whose walk,
+    path-filtered log or patch stream fails on every search (a stamp
+    naming a commit the repository lacks, a walk that times out, a
+    textconv driver that fails, a partial clone whose promisor remote
+    is offline) therefore resolves again on every search and forks
+    what a cold search forks for it. The other way round, a memoised
+    hit serves the value computed when git answered, so a failure that
+    strikes a later search (an object made unreadable after the value
+    was kept) is not observed on that hit, where the uncached code
+    would take the fallback.
+
+    Nothing is kept from a search during which the head or a keyed file
+    moved, even to move back before the search ended. At the end the
+    root and the head are read from the files again, and
+    `githead.signature` (HEAD, the loose refs HEAD's chain reads,
+    ``packed-refs`` and ``config``, which git rewrites through a lock
+    file and a rename, leaving a new inode and ctime) must read as it
+    did before the first resolution; the keyed files are stamped again;
+    the directories that hold them (each directory of a keyed
+    ``.gitattributes`` chain, ``info`` in the common directory, the
+    global attributes file's directory, the root) must keep the (mtime,
+    ctime) read when their files were keyed, which a file created and
+    removed meanwhile moves; and so must the index file, so a search
+    during which git wrote the index, which could move its
+    ``.gitmodules`` entry and back, keeps nothing. Where the files do
+    not settle the root and the head, ``git rev-parse --show-toplevel
+    HEAD`` answers them and neither memo is used: that shape pays ``2 +
+    ...`` on every search, with the walks memoised as before where
+    `githead` reads the repository at the root, and kept for the one
+    search where it does not (off POSIX, under GIT_DIR).
+
+    What the key and the checks do not see, read from the memo until
+    the head moves: the working tree's symbolic links on an anchor's
+    path and the home directory ``~`` expands to
+    (`origin.resolve_repo_pathspecs` reads both); git's configuration
+    outside the repository's ``config`` and ``config.worktree`` (the
+    global and system files, a file an include names, the environment, and
+    what they set: a ``core.attributesFile`` naming a file other than
+    the default, ``log.follow``, ``log.showRoot``, a diff driver, the
+    program a textconv runs); the system attributes file; a history
+    rewritten under an unchanged head (a deepened shallow clone, a
+    replace ref, a graft); and a change that leaves every stamped field
+    and every held directory as it was: a file rewritten, or a head
+    moved and moved back, within one tick of the filesystem's clock
+    with the inode number reused; a ``config`` created and removed
+    during a search in a repository that has none, whose directory no
+    check holds; and a ``config`` that is a symbolic link
+    whose target's directory is swapped for another and back during a
+    search, which leaves the file the link names with its old stamp. A
+    repository whose refs `githead` cannot read (the reftable format)
+    is not settled from the files, so no per-hit memo is used there.
+    While files are created and removed steadily in a held directory
+    (the root, a keyed ``.gitattributes`` chain's directories, the
+    global attributes file's nearest existing ancestor), the search
+    that held it keeps nothing, and every such search pays its cold
+    cost (`origin._hold_directory`).
     """
 
     def __init__(self, cwd: Path, caller_repo: str, admission: DriftScope) -> None:
@@ -1074,103 +1174,9 @@ class ResponseBuilder:
         — and the untethered gate (no anchors, no declared claims) keeps
         that shape at zero extra forks.
 
-        WARM, the count is zero for every hit the memo holds. A hit it does
-        not hold pays its cold cost on every search: one the key cannot
-        settle (below), and one whose git work fails every time (the next
-        paragraph). Each hit's resolution is memoised (`_DRIFT_MEMO`) on
-        exactly its inputs: the root, the head, the caller's directory, the
-        anchors, the declared claims, the verify instant and
-        `verified_head`; for a hit with a governed claim, the attribute
-        files its patch stream reads (the ``.gitattributes`` on each
-        governed file's path, ``info/attributes``, the global attributes
-        file and the repository's ``config``); and for every hit, the files
-        beside the history its git reads (`origin.walk_files_signature`: the
-        repository's ``config`` and, under ``extensions.worktreeConfig``,
-        its ``config.worktree``, where ``log.follow`` reaches a
-        single-pathspec log and ``log.showRoot`` the walk, the working
-        tree's ``.gitmodules``, where a submodule's ``ignore`` reaches the
-        walk, and the index's ``.gitmodules`` entry where git reads it,
-        unmerged or where the working tree has none; the walk memo keys on
-        them too). A file is keyed on its mtime, ctime, size, inode and
-        mode, or its absence, so a write, a replacement, a creation, a
-        removal or a chmod changes the key; the index's entry is keyed on
-        its mode and object, read from the index in-process
-        (`origin._index_gitmodules`, once per state of the index). A
-        governed path that is a directory or a pattern, a ``config`` that
-        names an attributes file or tree, sets ``log.follow`` (the patch
-        stream would read the attributes of a rename source's path; the
-        file is read as git reads it, so ``push.followTags`` or a branch
-        named ``follow-up`` is no such config), holds a NUL byte or is
-        refused by git, an index the reader does not read exactly (split, of
-        an unknown version, a SHA-256 repository's, or GIT_INDEX_FILE set),
-        and a file that cannot be stamped keep a hit out of the memo. A
-        commit moves the head and so every key; a new stamp, a rewritten
-        body, a changed claim or an edited attributes file changes its own
-        row's, and an edited ``config`` or ``.gitmodules`` every row's, in
-        the working tree or in the index where git reads it. A write to the
-        index that leaves ``.gitmodules`` as it was (``git add`` of another
-        file, a ``git status`` that refreshes the index) changes no key.
-
-        A failure is never memoised, at a cost. A value is not kept when
-        any git process its resolution ran failed, whether git exited
-        non-zero or could not run (the fallback taken on a failure is what
-        the uncached code answers on that call and not the next), and no
-        memo keeps a walk that came back None. A hit whose walk,
-        path-filtered log or patch stream fails on every search (a stamp
-        naming a commit the repository lacks, a walk that times out, a
-        textconv driver that fails, a partial clone whose promisor remote
-        is offline) therefore resolves again on every search and forks
-        what a cold search forks for it. The other way round, a memoised
-        hit serves the value computed when git answered, so a failure that
-        strikes a later search (an object made unreadable after the value
-        was kept) is not observed on that hit, where the uncached code
-        would take the fallback.
-
-        Nothing is kept from a search during which the head or a keyed file
-        moved, even to move back before the search ended. At the end the
-        root and the head are read from the files again, and
-        `githead.signature` (HEAD, the loose refs HEAD's chain reads,
-        ``packed-refs`` and ``config``, which git rewrites through a lock
-        file and a rename, leaving a new inode and ctime) must read as it
-        did before the first resolution; the keyed files are stamped again;
-        the directories that hold them (each directory of a keyed
-        ``.gitattributes`` chain, ``info`` in the common directory, the
-        global attributes file's directory, the root) must keep the (mtime,
-        ctime) read when their files were keyed, which a file created and
-        removed meanwhile moves; and so must the index file, so a search
-        during which git wrote the index, which could move its
-        ``.gitmodules`` entry and back, keeps nothing. Where the files do
-        not settle the root and the head, ``git rev-parse --show-toplevel
-        HEAD`` answers them and neither memo is used: that shape pays ``2 +
-        ...`` on every search, with the walks memoised as before where
-        `githead` reads the repository at the root, and kept for the one
-        search where it does not (off POSIX, under GIT_DIR).
-
-        What the key and the checks do not see, read from the memo until
-        the head moves: the working tree's symbolic links on an anchor's
-        path and the home directory ``~`` expands to
-        (`origin.resolve_repo_pathspecs` reads both); git's configuration
-        outside the repository's ``config`` and ``config.worktree`` (the
-        global and system files, a file an include names, the environment, and
-        what they set: a ``core.attributesFile`` naming a file other than
-        the default, ``log.follow``, ``log.showRoot``, a diff driver, the
-        program a textconv runs); the system attributes file; a history
-        rewritten under an unchanged head (a deepened shallow clone, a
-        replace ref, a graft); and a change that leaves every stamped field
-        and every held directory as it was: a file rewritten, or a head
-        moved and moved back, within one tick of the filesystem's clock
-        with the inode number reused; a ``config`` created and removed
-        during a search in a repository that has none, whose directory no
-        check holds; and a ``config`` that is a symbolic link
-        whose target's directory is swapped for another and back during a
-        search, which leaves the file the link names with its old stamp. A
-        repository whose refs `githead` cannot read (the reftable format)
-        is not settled from the files, so no per-hit memo is used there.
-        While files are created and removed steadily in a held directory
-        (the root, a keyed ``.gitattributes`` chain's directories, the
-        global attributes file's nearest existing ancestor), the search
-        that held it keeps nothing, and every such search pays its cold
-        cost (`origin._hold_directory`).
+        WARM, the memo and its key, what a failure keeps out of it, the
+        checks that keep nothing from a search during which the head or a
+        keyed file moved, and what the key does not see: `_DriftPass`.
         ``tests/test_server_commit_drift.py::test_commit_drift_count_git_cost_shape``,
         its quiescent sibling and its reachability sibling pin that
         arithmetic, cold and warm; ``tests/test_commit_drift_cache.py``
@@ -1212,28 +1218,9 @@ class ResponseBuilder:
         accurate about their own surface; don't reconcile this paragraph
         into the other's wording.
         """
-        if caller_origin.repo is None or caller_origin.cwd is None:
+        drift = _open_drift_pass(caller_origin, admission, hits)
+        if drift is None:
             return
-        if admission is None:
-            # No admission, no pass: no record's drift is counted for a
-            # caller that admitted none.
-            return
-        # The repo root and the head, from the repository's files (the
-        # pass reads them as it opens). They key the whole-history log and
-        # the per-hit memo; where the files do not settle them, both run
-        # uncached, from git.
-        admission.prime(h.id for h in hits)
-        drift = _DriftPass(Path(caller_origin.cwd), caller_origin.repo, admission)
-        if drift.timestamps() is None:
-            return
-        # Resolve the repo root ONCE for the whole search (the per-hit
-        # anchor resolution would otherwise pay a `git rev-parse` fork+exec
-        # per hit) and the head with it: the reachable walks are keyed on
-        # it. From git where the files did not settle them. None is
-        # tolerated (the resolver re-derives; a hit with an anchor then
-        # counts in author-date space), but with `commit_author_timestamps`
-        # having just answered, git is demonstrably reachable here.
-        drift.located()
         # Build the id → memory side-map from the in-memory `memories`
         # list (already loaded by the caller for the search itself),
         # avoiding a second store round-trip per hit. The full record is
@@ -1259,48 +1246,7 @@ class ResponseBuilder:
                 # anchors all escape this repo or are phantoms. Omit the
                 # field entirely.
                 continue
-            # Additive, claim-carrying hits only; mirrors
-            # `CommitDriftStatus.to_dict`'s claim_drift block so both
-            # display surfaces speak the same sub-dict. Built fresh per
-            # hit: the resolution it is read from may be shared.
-            if resolved.claims_checked:
-                hit_dict["claim_drift"] = {
-                    "checked": resolved.claims_checked,
-                    "drifted": list(resolved.claims_drifted),
-                }
-            count = resolved.count
-            hit_dict["commit_drift_count"] = count
-            hit_dict["commit_drift_basis"] = resolved.basis
-            # Recompute the verdict now that we have the commit-drift
-            # contribution. `hit_to_dict` initialised it without that
-            # input; the upgrade only fires for hits where the count was
-            # actually applicable.
-            verification_dict = hit_dict["verification"]
-            verification_status = verification_dict["status"]
-            # Call the shared primitive rather than restating the
-            # ladder. This site used to re-implement it against the
-            # same two module-level constants, guarded only by a pair
-            # of "mirror the gate in verify.py" comments — which is
-            # exactly the arrangement that let a semantic change reach
-            # one surface and not the other, so `memory_search`'s top
-            # hit could report a different verdict than `memory_show`
-            # for the same memory. `count` is a real measured integer
-            # here (the `resolved is None` branch above already
-            # `continue`d), so the stale-demotion arm gets the input it
-            # needs rather than a None that would read as "couldn't
-            # ask".
-            hit_dict["staleness_verdict"] = verdict_from_signals(
-                status=verification_status,
-                # Read off the HIT, not the dict. The dict's
-                # `path_drift_missing` is the full-set triage count and
-                # would re-broaden the escalation this recompute is
-                # supposed to mirror; the claim-anchored subset only
-                # reaches the dict when it is non-empty (additive key),
-                # so the hit is the one source that always has it. The
-                # zip above already pairs them.
-                path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
-                commit_drift_count=count,
-            )
+            _stamp_hit_drift(hit_dict, hit, resolved)
         drift.store()
 
     def attach_depends_on_resolved(  # type: ignore[no-untyped-def]
@@ -1380,9 +1326,6 @@ class ResponseBuilder:
         Default `None` for back-compat: when omitted, behaviour is
         identical to before (silent prefilter-miss skip).
         """
-        from .models import first_summary_line
-        from .store import MemoryNotFoundError, TombstonedError
-
         # Build the id → memory side-map once. The caller (`search.py`)
         # has already paid the load cost for ranking; reuse it here.
         memory_by_id = {m.id: m for m in memories}
@@ -1404,60 +1347,14 @@ class ResponseBuilder:
         # missing so the resolved list mirrors the pre-existing
         # "silently skip" semantics of the prefilter-miss branch.
         if store is not None:
-            missing_target_ids: list[str] = []
-            seen: set[str] = set()
-            for hit in hits:
-                source = memory_by_id.get(hit.id)
-                if source is None or not source.links:
-                    continue
-                for link in source.links:
-                    if link.type.value != "depends_on":
-                        continue
-                    tid = link.target_id
-                    if tid in memory_by_id or tid in seen:
-                        continue
-                    seen.add(tid)
-                    missing_target_ids.append(tid)
-                    if len(missing_target_ids) >= max_total:
-                        break
-                if len(missing_target_ids) >= max_total:
-                    break
-            if admission is not None:
-                admission.prime(missing_target_ids)
-            for tid in missing_target_ids:
-                try:
-                    target = store.load_one(tid)
-                except (MemoryNotFoundError, TombstonedError, OSError):
-                    # Same silent-skip semantics as the existing
-                    # prefilter-miss branch below: a deleted or
-                    # tombstoned target is best-effort dropped from
-                    # auto-pull. The link still exists on disk for
-                    # explicit `memory_show` investigation.
-                    #
-                    # OSError is in the set because `store.load_one` →
-                    # `frontmatter.load(path)` reads the target's backing
-                    # file and does not guard OSError itself; a transient
-                    # read failure (EIO, a flaky network mount) on a
-                    # depends-on target would otherwise propagate out of
-                    # `attach_depends_on_resolved` and abort an
-                    # otherwise-successful `memory_search`. Dropping the
-                    # unreadable target from the auto-pull mirrors the
-                    # missing/tombstoned skip and matches the OSError guard
-                    # already on the `expand_top` body load in
-                    # `handlers/search.py`.
-                    continue
-                # Apply the caller's scope/origin filter at load time
-                # — must mirror the per-target check below so a
-                # targeted load can't sneak a session-disabled or
-                # cross-project target into the side-map. Without
-                # this, the targeted-load path would reintroduce the
-                # exact scope leak the per-target check (bf92912)
-                # closed for the prefilter path.
-                if excluded and (set(target.scopes) & excluded):
-                    continue
-                if admission is not None and not admission.admits_id(target.id):
-                    continue
-                memory_by_id[tid] = target
+            memory_by_id = _load_depends_targets(
+                hits,
+                memory_by_id,
+                store,
+                max_total=max_total,
+                admission=admission,
+                excluded=excluded,
+            )
 
         if admission is not None:
             admission.prime(
@@ -1480,40 +1377,15 @@ class ResponseBuilder:
             if not depends_links:
                 continue
 
-            resolved: list[dict[str, Any]] = []
-            for link in depends_links:
-                if len(resolved) >= max_per_hit or total >= max_total:
-                    break
-                target = memory_by_id.get(link.target_id)
-                if target is None:
-                    # Not in the loaded candidate set (the target may be
-                    # outside the search's auto-scope, just not in the
-                    # FTS5 prefilter, or — when `store` was supplied —
-                    # dropped by the targeted-load filter above as
-                    # tombstoned / scope-excluded / cross-project).
-                    # Skip silently — the link still exists on disk
-                    # and `memory_show` will surface it; auto-pull is
-                    # a best-effort surface.
-                    continue
-                # Re-apply the caller's scope filter to the resolved
-                # target. The side-map is built from the pre-filter
-                # loader output (so we can find targets by id at all),
-                # but a depended-on memory in a session-disabled scope
-                # or a different project under auto_scope must not
-                # leak in via the dependency edge.
-                if excluded and (set(target.scopes) & excluded):
-                    continue
-                if admission is not None and not admission.admits_id(target.id):
-                    continue
-                resolved.append(
-                    {
-                        "id": target.id,
-                        "scopes": list(target.scopes),
-                        "summary": first_summary_line(target.body),
-                        "link_note": link.note,
-                    }
-                )
-                total += 1
+            resolved, total = _resolve_depends(
+                depends_links,
+                memory_by_id,
+                total,
+                max_per_hit=max_per_hit,
+                max_total=max_total,
+                admission=admission,
+                excluded=excluded,
+            )
 
             if resolved:
                 hit_dict["depends_on_resolved"] = resolved
@@ -1792,6 +1664,83 @@ class ResponseBuilder:
 
             if entries:
                 hit_dict["recent_negative_outcomes"] = entries
+
+
+def _open_drift_pass(
+    caller_origin: Origin, admission: DriftScope | None, hits: list[MemoryHit]
+) -> _DriftPass | None:
+    """Take the caller and admission; return the search's opened drift pass, or None."""
+    if caller_origin.repo is None or caller_origin.cwd is None:
+        return None
+    if admission is None:
+        # No admission, no pass: no record's drift is counted for a
+        # caller that admitted none.
+        return None
+    # The repo root and the head, from the repository's files (the
+    # pass reads them as it opens). They key the whole-history log and
+    # the per-hit memo; where the files do not settle them, both run
+    # uncached, from git.
+    admission.prime(h.id for h in hits)
+    drift = _DriftPass(Path(caller_origin.cwd), caller_origin.repo, admission)
+    if drift.timestamps() is None:
+        return None
+    # Resolve the repo root ONCE for the whole search (the per-hit
+    # anchor resolution would otherwise pay a `git rev-parse` fork+exec
+    # per hit) and the head with it: the reachable walks are keyed on
+    # it. From git where the files did not settle them. None is
+    # tolerated (the resolver re-derives; a hit with an anchor then
+    # counts in author-date space), but with `commit_author_timestamps`
+    # having just answered, git is demonstrably reachable here.
+    drift.located()
+    return drift
+
+
+def _stamp_hit_drift(
+    hit_dict: dict[str, Any], hit: MemoryHit, resolved: ResolvedCommitDrift
+) -> None:
+    """Take one hit and its resolved drift; stamp `hit_dict` with them, return None."""
+    # Additive, claim-carrying hits only; mirrors
+    # `CommitDriftStatus.to_dict`'s claim_drift block so both
+    # display surfaces speak the same sub-dict. Built fresh per
+    # hit: the resolution it is read from may be shared.
+    if resolved.claims_checked:
+        hit_dict["claim_drift"] = {
+            "checked": resolved.claims_checked,
+            "drifted": list(resolved.claims_drifted),
+        }
+    count = resolved.count
+    hit_dict["commit_drift_count"] = count
+    hit_dict["commit_drift_basis"] = resolved.basis
+    # Recompute the verdict now that we have the commit-drift
+    # contribution. `hit_to_dict` initialised it without that
+    # input; the upgrade only fires for hits where the count was
+    # actually applicable.
+    verification_dict = hit_dict["verification"]
+    verification_status = verification_dict["status"]
+    # Call the shared primitive rather than restating the
+    # ladder. This site used to re-implement it against the
+    # same two module-level constants, guarded only by a pair
+    # of "mirror the gate in verify.py" comments — which is
+    # exactly the arrangement that let a semantic change reach
+    # one surface and not the other, so `memory_search`'s top
+    # hit could report a different verdict than `memory_show`
+    # for the same memory. `count` is a real measured integer
+    # here (`attach_commit_drift_counts` skips a `resolved` of
+    # None before calling this), so the stale-demotion arm gets
+    # the input it needs rather than a None that would read as
+    # "couldn't ask".
+    hit_dict["staleness_verdict"] = verdict_from_signals(
+        status=verification_status,
+        # Read off the HIT, not the dict. The dict's
+        # `path_drift_missing` is the full-set triage count and
+        # would re-broaden the escalation this recompute is
+        # supposed to mirror; the claim-anchored subset only
+        # reaches the dict when it is non-empty (additive key),
+        # so the hit is the one source that always has it. The
+        # caller's zip already pairs them.
+        path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
+        commit_drift_count=count,
+    )
 
 
 def _resolve_hit_drift(
