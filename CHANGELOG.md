@@ -2307,6 +2307,35 @@ follows the candidates' testing.
   and `backup` still read the live file `immutable=1`.
   (`src/bettermemory/backup.py`, `SECURITY.md`,
   `tests/test_restore_crash_wal.py`, `tests/test_sqlite_uri.py`)
+- **`backup create --out` into a bundle is refused.** A `--out` naming a
+  directory that was already a backup bundle wrote the new bundle inside
+  it, so the old bundle held files its manifest does not list; the store
+  side of the same mistake (`BETTERMEMORY_DIR` naming a bundle) was
+  refused already. A `DIR` that is a bundle, or is directly inside one,
+  read as spelled and resolved (a symbolic link to a bundle too) with the
+  manifest test the openers' refusal uses, is now refused before anything
+  is created: `<DIR> is a backup bundle or is in one (<manifest>), and a
+  bundle written under it would leave that bundle holding files its
+  manifest does not list: name a directory outside every bundle with
+  --out`, exit 1. The directory that holds bundles is not one, and a new
+  bundle still goes beside the others there. (ENG-93 item 2;
+  `src/bettermemory/backup.py`, `docs/api.md`, `docs/operations.md`,
+  `tests/test_backup_create_guards.py`)
+- **`backup create` names a key file it cannot read.** A key file that
+  was there and could not be read (a permission, a directory in its
+  place, a link to a volume not mounted) was read as no key, so the
+  bundle came out unsigned with a warning that no key matched the
+  store's fingerprint, and `--include-key` refused in the same words.
+  Both now name the file and what the read said, in the words the
+  owner's open uses: `the key file <path> is there and cannot be read
+  (<reason>): the manifest is not signed, ...; make it readable and run
+  the backup again`, and `--include-key: the key file <path> is there
+  and cannot be read (<reason>); make it readable and run the backup
+  again`, exit 1. A retired key's unreadable file is named the same way
+  in the `--include-key` warning. Without `--include-key` the bundle is
+  still written, unsigned, as for a key that is not held. (ENG-93 item 3;
+  `src/bettermemory/backup.py`, `docs/api.md`,
+  `tests/test_backup_create_guards.py`)
 
 #### Known limitations
 

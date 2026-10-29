@@ -527,7 +527,14 @@ def create_backup(
     directory, ``backups`` beside the store file, is inside the bundle,
     which would then hold more than its manifest lists. A bundle is kept
     by copying its directory as it is; its store is backed up from a copy
-    of the file made outside it, as the refusal says."""
+    of the file made outside it, as the refusal says. An `out_dir` that is
+    itself a bundle, or a directory in one, is refused before anything is
+    created for the same reason (`_bundle_at`).
+
+    A key file that is there and cannot be read is named, with what the
+    read said (`_unreadable_key_files`), in the warning of an unsigned
+    bundle and in the `include_key` refusal: read as no key, it was
+    reported as no key matching the store's fingerprint."""
     from . import __version__
     from . import store as _store
 
@@ -539,6 +546,14 @@ def create_backup(
         raise BackupError(refusal)
     keys_root = Path(keys_dir) if keys_dir is not None else _store.resolve_keys_dir()
     parent = Path(out_dir) if out_dir is not None else default_backups_dir(store_file)
+    within = _bundle_at(parent)
+    if within is not None:
+        raise BackupError(
+            f"{parent} is a backup bundle or is in one ({within}), and a bundle "
+            "written under it would leave that bundle holding files its "
+            "manifest does not list: name a directory outside every bundle "
+            "with --out"
+        )
     moment = now if now is not None else datetime.now(timezone.utc)
     created_at = isoformat_utc(moment.astimezone(timezone.utc))
     warnings: list[str] = []
@@ -555,8 +570,17 @@ def create_backup(
         live = KeyRing(keys_root, facts.store_id)
         held = {fp: live.key_for_fingerprint(fp) for fp in facts.key_fingerprints}
         current_key = held.get(facts.key_fingerprint)
+        unreadable = _unreadable_key_files(
+            live, facts.key_fingerprint, [fp for fp, key in held.items() if key is None]
+        )
+        current_unreadable = unreadable.get(facts.key_fingerprint)
         written = [snapshot]
         if include_key:
+            if current_unreadable is not None:
+                raise BackupError(
+                    f"--include-key: {current_unreadable}; make it readable and "
+                    "run the backup again"
+                )
             if current_key is None:
                 raise BackupError(
                     f"--include-key: no key under {keys_root} matches the "
@@ -565,9 +589,14 @@ def create_backup(
             ring = KeyRing(bundle, facts.store_id)
             for fp, key in held.items():
                 if key is None:
+                    why = unreadable.get(fp)
                     warnings.append(
-                        f"the retired key {fp[:16]} is not under {keys_root}; "
-                        "its segment of the log verifies only where it is held"
+                        (
+                            f"the retired key {fp[:16]}: {why}"
+                            if why is not None
+                            else f"the retired key {fp[:16]} is not under {keys_root}"
+                        )
+                        + "; its segment of the log verifies only where it is held"
                     )
                     continue
                 path = (
@@ -616,6 +645,12 @@ def create_backup(
             )
         if current_key is not None:
             manifest["mac"] = manifest_mac(current_key, manifest)
+        elif current_unreadable is not None:
+            warnings.append(
+                f"{current_unreadable}: the manifest is not signed, and `backup "
+                "verify` reads the bundle as unverifiable; make it readable and "
+                "run the backup again"
+            )
         else:
             warnings.append(
                 f"no key under {keys_root} matches the store's fingerprint "
@@ -661,6 +696,62 @@ def _hex_digest(value: object) -> bool:
     """A lowercase SHA-256 hex digest, the shape of every hash, fingerprint
     and MAC a manifest holds (`_HEX_DIGEST_RE`)."""
     return isinstance(value, str) and _HEX_DIGEST_RE.fullmatch(value) is not None
+
+
+def _bundle_at(directory: Path) -> Path | None:
+    """The manifest of the backup bundle `directory` is, or is directly
+    in, or None: a directory `create_backup` must not write a bundle under,
+    since the bundle there would then hold files its manifest does not
+    list. Checked as spelled and resolved, with the manifest test the
+    openers' refusal uses (`_may_be_bundle_manifest`)."""
+    candidates = [directory]
+    with contextlib.suppress(OSError, RuntimeError):
+        candidates.append(directory.resolve())
+    for candidate in candidates:
+        for place in (candidate, candidate.parent):
+            manifest = place / MANIFEST_NAME
+            try:
+                if manifest.is_file() and _may_be_bundle_manifest(manifest):
+                    return manifest
+            except OSError:
+                continue
+    return None
+
+
+def _unreadable_key_files(
+    ring: KeyRing, current: str, missing: Sequence[str]
+) -> dict[str, str]:
+    """For each fingerprint in `missing` (no key with it was read), why: the
+    key file that should hold it is there and cannot be read, in the words
+    the owner's open uses for the current key (`KeyRing.load_current`).
+    A fingerprint whose file is simply absent, or holds another key, is
+    left out. `KeyRing.key_for_fingerprint` reads every failure as no key,
+    so `create_backup` reported an unreadable key file (a permission, a
+    directory in its place, a volume not mounted under a link) as no key
+    matching the store's fingerprint."""
+    found: dict[str, str] = {}
+    for fp in missing:
+        if fp == current:
+            try:
+                ring.load_current()
+            except KeyUnreadableError as exc:
+                found[fp] = (
+                    f"the key file {exc.path} is there and cannot be read ({exc.reason})"
+                )
+                continue
+        path = ring.retired_path(fp)
+        try:
+            path.read_bytes()
+        except FileNotFoundError:
+            if path.is_symlink():
+                found[fp] = (
+                    f"the key file {path} is there and cannot be read (a "
+                    "symbolic link to a file that is not there)"
+                )
+        except OSError as exc:
+            reason = exc.strerror or str(exc) or type(exc).__name__
+            found[fp] = f"the key file {path} is there and cannot be read ({reason})"
+    return found
 
 
 def bundle_manifest_beside(path: Path) -> Path | None:
