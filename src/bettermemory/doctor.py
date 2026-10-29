@@ -680,8 +680,21 @@ def _open_remedy(path: Path, exc: Exception) -> str:
     is damaged; a lock held past the busy timeout, a file or directory
     this user cannot open, and an I/O error are not, and restoring a copy
     over a sound store would lose every write since the copy."""
+    from .store_schema import StoreVersionError
+
     if "this build reads up to" in str(exc):
         return "upgrade bettermemory: a newer release wrote this store"
+    if isinstance(exc, StoreVersionError) and exc.needed is not None:
+        return (
+            f"open it with a bettermemory build that reads schema revision "
+            f"{exc.needed} or later (meta's {exc.key}), or run `bettermemory "
+            "backup restore` under that build; doctor leaves the file as it is"
+        )
+    if isinstance(exc, StoreVersionError) and exc.key is not None:
+        return (
+            f"set meta's {exc.key} back to a whole number, or restore the store "
+            "from a backup taken before the edit; doctor leaves the file as it is"
+        )
     if isinstance(exc, (sqlite3.OperationalError, OSError)):
         return (
             f"check that {path} and its directory are readable and writable by "

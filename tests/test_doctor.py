@@ -827,6 +827,36 @@ def test_the_open_remedy_restores_only_a_damaged_store(
     assert "doctor leaves the file as it is" in (check.remedy or "")
 
 
+def test_a_store_that_needs_a_later_reader_names_the_revision(env: Env) -> None:
+    """A version refusal is not damage: the remedy names the build that
+    reads the store, never a restore from a copy over a sound store."""
+    path = env.make_store()
+    conn = sqlite3.connect(path)
+    with conn:
+        conn.execute("UPDATE meta SET value = '99' WHERE key = 'min_reader_revision'")
+    conn.close()
+    check = env.checks()["store"]
+    assert check.status == "fail"
+    remedy = check.remedy or ""
+    assert "reads schema revision 99 or later (meta's min_reader_revision)" in remedy
+    assert "`bettermemory backup restore` under that build" in remedy
+    assert "restore the store from a copy" not in remedy
+    assert "doctor leaves the file as it is" in remedy
+
+
+def test_a_store_with_an_unreadable_version_key_names_the_key(env: Env) -> None:
+    path = env.make_store()
+    conn = sqlite3.connect(path)
+    with conn:
+        conn.execute("UPDATE meta SET value = 'x' WHERE key = 'schema_revision'")
+    conn.close()
+    check = env.checks()["store"]
+    assert check.status == "fail"
+    remedy = check.remedy or ""
+    assert "set meta's schema_revision back to a whole number" in remedy
+    assert "restore the store from a copy" not in remedy
+
+
 def test_a_healthy_store_and_key(env: Env) -> None:
     path = env.make_store()
     with Store.open(path) as store:

@@ -1097,6 +1097,31 @@ log row that produced it, which is what the provenance label reads. The
 membership tables (the section above), the `standing` table among them,
 are folded by the same log.
 
+The `meta` table also says which builds may read and write the store
+(ENG-107; CONTRIBUTING.md has the contract): `schema_version`, the major
+line's format; `schema_revision`, what the store holds within it;
+`min_reader_revision` and `min_writer_revision`, the lowest revisions that
+may read and write it; and `engine_version`, the newest build that opened it
+to write. Every open checks them (`store_schema.check_versions`, one call
+in `Store.open` after the store id and the schema version have passed). A
+build below the reader minimum refuses the store with `StoreVersionError`.
+A build below the writer minimum opens it for reading only: the connection
+is set `PRAGMA query_only`, so every write, `BEGIN IMMEDIATE` included,
+fails with SQLite's `attempt to write a readonly database` as on read-only
+media, and the owner's open goes on as a reader's (no rekey, no key ring
+claim, no origin anchor), with one warning per process. A tool's read
+on such a store resolves its caller in a transaction rolled back at its
+end (`store_schema.writes_rolled_back`, from
+`handlers/_shared.caller_anchoring`), with the checkout token's write
+off, so the membership rows and events a resolution writes are never
+kept, and a write through a tool is refused in words
+(`_handlers._read_only`). Otherwise the
+owner's open raises the revision and the minimums to this build's where
+lower or missing and names this build in `engine_version` when it is the
+newest, in one `BEGIN IMMEDIATE` taken only when something changes; a
+store that cannot be written then is left as it is, and the next writing
+open records them.
+
 The store resolves to `$BETTERMEMORY_DIR` if set, else
 `[storage] directory` in `config.toml` if set, else `./.claude-memory/`
 if it exists (unless `[storage] cwd_store = false`), else
@@ -1306,6 +1331,15 @@ records the pinned `section.key` names, which `config show` labels
   id (Provenance, above).
 - A restore is guarded against the daemon and the spawn lock only;
   close every session before `backup restore --yes`.
+- The store's version keys are only what the file says. `meta` is not
+  covered by the log's MACs, so an editor of the file can raise a minimum
+  to keep builds out, or lower one. Builds from before the contract
+  (9.0.0rc13 and earlier) read none of the revision keys and write a store
+  whatever its minimums say. A store opened for reading only by its
+  version keeps its key bound, so a write fails with SQLite's
+  `attempt to write a readonly database` (which an MCP client receives as
+  the SDK's bare tool error), and a daemon whose start-up membership
+  migration finds work on it exits.
 - One writer at a time. SQLite serialises writers; a second server
   process on the same store waits on the busy timeout rather than
   interleaving.

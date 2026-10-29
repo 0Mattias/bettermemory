@@ -328,11 +328,26 @@ def _refusals_as_tool_errors(
             raise RefusedError(_absent_text(exc)) from exc
         except sqlite3.OperationalError as exc:
             refusal = store_refusal(exc)
-            if refusal is None:
-                raise
-            raise refusal from exc
+            if refusal is not None:
+                raise refusal from exc
+            if _read_only(exc):
+                raise RefusedError(
+                    "the store is open for reading only, so this call wrote "
+                    f"nothing ({exc}): a later bettermemory raised the schema "
+                    "revision a writer needs (meta's min_writer_revision), or "
+                    "the store's file cannot be written; upgrade bettermemory, "
+                    "or make the file writable"
+                ) from exc
+            raise
 
     return wrapper
+
+
+def _read_only(exc: sqlite3.OperationalError) -> bool:
+    """Whether `exc` is SQLite's refusal to write a database it opened for
+    reading only (``SQLITE_READONLY`` and its extended codes)."""
+    code = getattr(exc, "sqlite_errorcode", None)
+    return isinstance(code, int) and code & 0xFF == sqlite3.SQLITE_READONLY
 
 
 class ToolHandlers:

@@ -128,6 +128,31 @@ Forbidden within a major:
 
 Within a major, all changes to the store schema are **additive only**: new nullable columns, new tables, new log kinds, never a renamed or removed column, never a re-defined one. A reader from a later minor opens a store written by an earlier minor without a migration step, and a reader from an earlier minor opens one written by a later minor as long as the later minor only added what the earlier reader ignores. A log kind added in a later minor is folded by an earlier reader as a telemetry row, which is the rule that keeps the chain verifiable across minors.
 
+### Store versions: who may read and who may write
+
+Two builds of one major meet on one store: the daemon keeps a newer daemon running beside an older client, and an older CLI writes the store directly. So a store records which builds may read it and which may write it, and every open checks (`store_schema.check_versions`). The vocabulary is two integers and a package version, each with one job; all four live in the store's `meta`:
+
+- `schema_version` (`SCHEMA_VERSION`): the major line's format. It moves only with a major release, and every build refuses a store whose value is above its own, including the builds from before this contract.
+- `schema_revision` (`SCHEMA_REVISION`, 1 in 9.0): what the store holds within that format. A change to what a build writes raises it.
+- `min_reader_revision` and `min_writer_revision`: the lowest revision that may read the store, and the lowest that may write it. `MIN_READER_REVISION` and `MIN_WRITER_REVISION` are what a store a build creates carries.
+- `engine_version`: the package version of the newest build that opened the store to write, in release order (`_daemon_client.version_key`, a local `+...` part left off). It names a build in messages; nothing gates on it.
+
+The rule every open applies, in this order:
+
+1. A build whose `SCHEMA_REVISION` is below `min_reader_revision` refuses the store (`StoreVersionError`, a `ValueError`), naming the newest writer.
+2. A build whose `SCHEMA_REVISION` is below `min_writer_revision` opens the store for reading only: its connection refuses every write as on read-only media, and the owner's open neither rekeys, binds the key ring nor anchors. Its reads still answer: a tool resolves its caller in a transaction that is rolled back (`store_schema.writes_rolled_back`), and a write through a tool is refused in words.
+3. Otherwise the owner's open (the daemon, the CLI, the hooks and the migrations open through it) raises `schema_revision` and the minimums to its own where they are lower or missing, never lowers one, and names itself in `engine_version` when it comes later. A reader's open writes none of them.
+
+A store from before the contract (9.0.0rc13 and earlier) carries no revision and no minimums; they read as 0, so every build opens it, and its first writing open records them. A value that is not a whole number refuses the open: `meta` is not authenticated, and guessing would admit a build the store's writer kept out or keep out one it admitted.
+
+What a change raises, decided by who could be misled by it:
+
+- A change older readers and writers both leave alone (a table or an index only newer builds read and write) raises `schema_revision` only.
+- A change older writers would leave stale (a column or table every write must keep up, a value derived from fields an older writer edits) also raises `min_writer_revision` to the new revision: older builds still read the store and open it for reading only.
+- A change older readers would misread (a renamed, removed or redefined column, a changed fold for an existing log kind, a new log kind that mutates a table older builds fold, which their `log verify` would then read as tampered) also raises `min_reader_revision`. Within a major that is not allowed: it is a major release, which moves `SCHEMA_VERSION` too, so the builds from before this contract refuse the store as well.
+
+The builds from before this contract read none of the three revision keys: they open and write a store whatever its minimums say, and only `schema_version` keeps them out.
+
 ### Deprecation cycle
 
 When a tool, Python API, config key, parameter, or field is destined for removal at the next major bump:

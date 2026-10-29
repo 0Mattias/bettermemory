@@ -24,6 +24,7 @@ Nothing here compares a recorded worktree with the caller's directory.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -432,12 +433,25 @@ def caller_anchoring(store: Store, config: Config) -> tuple[Anchoring, Caller]:
     3.6), and the caller they are read for: the caller resolved at
     `request_cwd` (`location.resolve_caller`, with the harness session it
     carries, decision B6) and an `Anchoring` over the model that resolved
-    it, from which each record's anchor follows."""
-    from .. import location
+    it, from which each record's anchor follows.
 
-    caller = location.resolve_caller(
-        store, config, request_cwd(), session=identity.current_harness_session()
-    )
+    On a store open for reading only by its versions the resolution runs
+    in a transaction that is rolled back (`store_schema.writes_rolled_back`),
+    with the checkout token's write off, so a read answers as on a store
+    this build may write and leaves the store and the checkout as they
+    were."""
+    from .. import location
+    from ..store_schema import writes_rolled_back
+
+    with writes_rolled_back(store) as rolled_back:
+        if rolled_back:
+            config = dataclasses.replace(
+                config,
+                membership=dataclasses.replace(config.membership, write_token=False),
+            )
+        caller = location.resolve_caller(
+            store, config, request_cwd(), session=identity.current_harness_session()
+        )
     return Anchoring(caller.model, caller.resolution), caller
 
 

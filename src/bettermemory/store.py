@@ -170,6 +170,7 @@ from .store_schema import (
     TrustRow,
     UnmigratedV8DirectoryError as UnmigratedV8DirectoryError,
     _add_membership_tables as _add_membership_tables,
+    check_versions,
     holds_v8_files as holds_v8_files,
     orphan_names as orphan_names,
     orphan_order as orphan_order,
@@ -177,6 +178,7 @@ from .store_schema import (
     refuse_unmigrated_v8 as refuse_unmigrated_v8,
     resolve_keys_dir as resolve_keys_dir,
     store_path,
+    version_meta,
 )
 from .store_rows import (
     _MEMORY_COLUMNS as _MEMORY_COLUMNS,
@@ -540,6 +542,7 @@ class Store:
             meta = {
                 "store_id": store_id,
                 "schema_version": str(SCHEMA_VERSION),
+                **version_meta(),
                 "tokenizer_fingerprint": tokenizer_fingerprint(),
                 "engine_version": __version__,
                 "key_fingerprint": fingerprint(key),
@@ -660,6 +663,7 @@ class Store:
                 raise ValueError(
                     f"{path} is schema {schema}; this build reads up to {SCHEMA_VERSION}"
                 )
+            allow_rekey = check_versions(conn, path, meta, allow_rekey).writing
             _add_membership_tables(conn, path, meta)
             keyring = KeyRing(
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),

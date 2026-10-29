@@ -331,6 +331,36 @@ the candidates' testing.
   rc13 review raised this (ENG-93 item 12), and it is closed.
   (`src/bettermemory/audit_export.py`, `src/bettermemory/anchor.py`,
   `src/bettermemory/log.py`, `tests/test_bytes_compare.py`)
+- **A store says which builds may read it and which may write it, and
+  every open checks.** The daemon keeps a newer daemon running beside an
+  older client and an older CLI writes the store directly, so two builds
+  of one major meet on one store, and until now only `schema_version`,
+  which moves with a major, could keep one out. `meta` gains
+  `schema_revision`, `min_reader_revision` and `min_writer_revision`
+  (whole numbers, 1 for this release), and `engine_version` names the
+  newest build that opened the store to write, where it named the one
+  that created it. An open below the reader minimum is refused with
+  `StoreVersionError` (a `ValueError`) naming the revision it needs and the
+  newest writer. One below the writer minimum opens for reading only: the
+  connection is set `PRAGMA query_only`, so every write fails as on
+  read-only media, and the owner's open writes no key, `rekey` row,
+  binding or anchor. Its reads still answer, over MCP as elsewhere: a
+  tool resolves its caller in a transaction it rolls back, and a write
+  through a tool is refused saying the store is open for reading only.
+  `bettermemory doctor` names the revision a refused store needs and the
+  build to open it with, where it advised a restore from a copy. The
+  owner's open otherwise raises the revision and the minimums to its own
+  where lower or missing, never lowering one, in a transaction taken only
+  when something changes. A store an earlier
+  candidate created carries none of the three and gets them at its first
+  writing open. The check is `store_schema.check_versions`, one call in
+  `Store.open`, and CONTRIBUTING.md's compatibility contract states the
+  rule, with what a change to the store raises.
+  (`src/bettermemory/store_schema.py`, `src/bettermemory/store.py`,
+  `src/bettermemory/handlers/_shared.py`, `src/bettermemory/_handlers.py`,
+  `src/bettermemory/doctor.py`, `CONTRIBUTING.md`, `docs/internals.md`,
+  `docs/api.md`, `docs/operations.md`, `docs/release.md`,
+  `tests/test_store_versions.py`, `tests/test_doctor.py`)
 
 #### Fixed
 
@@ -1542,6 +1572,24 @@ the candidates' testing.
   last-write time moves when Group Policy deletes the value, as
   Microsoft documents it does, has not been measured on Windows.
   (`src/bettermemory/managed.py`)
+- **The store's version keys are only what the file says.** `meta` is
+  not covered by the log's MACs: an editor of the file can raise a
+  minimum to keep builds out, or lower one. The candidates before this
+  one read none of the revision keys and write a store whatever its
+  minimums say; only `schema_version` keeps them out. A store opened for
+  reading only by its version keeps its key bound: a write through a
+  tool is refused in words, a CLI command's write fails with SQLite's
+  `attempt to write a readonly database`, a read's telemetry is not
+  recorded (one warning per event), and a daemon whose start-up
+  membership migration finds work on such a store exits. A store open
+  for reading only because its key is not held still fails a tool's
+  read whose caller resolution writes. The versions are checked when a
+  store is opened: a writer already open when another build raises
+  `min_writer_revision` (a running daemon, a long CLI run) keeps writing
+  until it opens the store again. `bettermemory down`, or
+  `bettermemory service install` run again after an upgrade, which stops
+  the daemon serving the store and starts the new build's, ends it.
+  (`src/bettermemory/store_schema.py`, `src/bettermemory/store.py`)
 
 ### 9.0.0rc13
 

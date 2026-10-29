@@ -84,6 +84,27 @@ does not answer is kept while its process holds the store's lock, so a
 starting or busy daemon is never hidden, and removed once that process
 is gone.
 
+### A store another release wrote
+
+A store records the schema revision a build must read to open it and
+the one it must write to change it (`min_reader_revision` and
+`min_writer_revision` in its `meta`; CONTRIBUTING.md, "Store
+versions"). A build below the reader minimum refuses the store: every
+command, the daemon and the in-process server fail their open with
+`StoreVersionError`, whose line names the revision needed, the key and
+the newest build that wrote the store, and `bettermemory doctor` names
+the build to open it with. Upgrade bettermemory, or run `bettermemory
+backup restore` under a build that reads it. A build below the writer
+minimum opens the store for reading only and logs one warning saying
+so: searches, shows, `log verify` and `export` work, and every write
+is refused. The versions are checked when the store is opened, so a
+daemon that was running when a later release raised the writer
+minimum keeps writing until it restarts: after installing a later
+release, stop the old daemon (`bettermemory down`; a supervised one is
+replaced by running `bettermemory service install` again). A version
+key that does not read as a whole number refuses the open naming the
+key: set it back, or restore a bundle taken before the edit.
+
 ### Running it as a service
 
 `bettermemory service install` writes a launchd LaunchAgent on macOS
