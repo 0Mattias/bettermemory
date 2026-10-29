@@ -844,6 +844,29 @@ def test_search_mode_falls_back_loudly_on_an_unknown_value(
     )
 
 
+@pytest.mark.parametrize(
+    ("line", "shown"),
+    [
+        ('search_mode = "serantic"', 'search_mode = "serantic" is not one of'),
+        ("search_mode = 5", "search_mode = 5 is not one of"),
+        ('prompt_recall = "sometimes"', 'prompt_recall = "sometimes" is not one of'),
+        ('prompt_recall = ["on"]', 'prompt_recall = ["on"] is not one of'),
+    ],
+)
+def test_a_fallback_prints_the_line_as_config_toml_writes_it(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, line: str, shown: str
+) -> None:
+    """`toml_spelling`, as every other loader message: the value in double
+    quotes or bare, never Python's repr, and the fallback the same way."""
+    (tmp_path / "config.toml").write_text(f"[behavior]\n{line}\n", encoding="utf-8")
+    caplog.set_level("WARNING", logger="bettermemory.config")
+    load_config(tmp_path / "config.toml")
+    messages = [r.getMessage() for r in caplog.records if shown in r.getMessage()]
+    assert len(messages) == 1, [r.getMessage() for r in caplog.records]
+    assert "'" not in messages[0].split(" is not one of ")[0]
+    assert 'falling back to "' in messages[0]
+
+
 def test_search_mode_absent_and_valid_values_are_untouched(tmp_path: Path) -> None:
     """No warning and no rewriting on the happy paths — otherwise the
     fallback's warning becomes noise every load and stops being read."""

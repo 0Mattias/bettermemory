@@ -2769,11 +2769,14 @@ follows the candidates' testing.
 - **The loader prints a misplaced value as TOML, as `config check`
   does.** The warning for a `[daemon]`, `[capture]` or `[membership]`
   section written as a scalar, the error for any other section written
-  as one, and the error for a key given a value of the wrong type (a
-  table where a number belongs, say) printed the value as Python writes
-  it: `daemon = 'x'`, `[policy] = True`, `port = {'a': 1}`. They print it
-  as config.toml writes it: `daemon = "x"`, `[policy] = true`,
-  `port = {a = 1}`. The spelling is `config.toml_spelling`, the renderer
+  as one, the error for a key given a value of the wrong type (a table
+  where a number belongs, say), and the warning for a `[behavior]
+  search_mode` or `prompt_recall` that names no mode and falls back
+  printed the value as Python writes it: `daemon = 'x'`,
+  `[policy] = True`, `port = {'a': 1}`, `search_mode = 'semantic'`. They
+  print it as config.toml writes it: `daemon = "x"`, `[policy] = true`,
+  `port = {a = 1}`, `search_mode = "semantic"`, and the fallback the same
+  way (`falling back to "hybrid"`). The spelling is `config.toml_spelling`, the renderer
   `bettermemory config check` used for its own findings, moved into the
   loader so both share it; it now also writes a table inline and the
   infinities as `inf`, where it wrote JSON. (`src/bettermemory/config.py`,

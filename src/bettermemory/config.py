@@ -932,11 +932,11 @@ def _coerce_search_mode(value: object, *, config_path: ConfigSource | None) -> s
     import logging
 
     logging.getLogger("bettermemory.config").warning(
-        "[behavior] search_mode = %r is not one of %s%s; falling back to "
-        "'hybrid' (keyword + BM25 fused). The pre-4.0 'semantic' mode was "
+        "[behavior] search_mode = %s is not one of %s%s; falling back to "
+        '"hybrid" (keyword + BM25 fused). The pre-4.0 "semantic" mode was '
         "removed with the embedding lane — delete the line to silence "
         "this; nothing else will report it.",
-        value,
+        toml_spelling(value),
         ", ".join(_SEARCH_MODES),
         f" (in {config_path})" if config_path is not None else "",
     )
@@ -986,8 +986,8 @@ def _coerce_prompt_recall(value: object, *, config_path: ConfigSource | None) ->
     import logging
 
     logging.getLogger("bettermemory.config").warning(
-        "[behavior] prompt_recall = %r is not one of %s%s; falling back to 'project'.",
-        value,
+        '[behavior] prompt_recall = %s is not one of %s%s; falling back to "project".',
+        toml_spelling(value),
         ", ".join(PROMPT_RECALL_MODES),
         f" (in {config_path})" if config_path is not None else "",
     )
