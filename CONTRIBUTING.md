@@ -124,7 +124,7 @@ Forbidden within a major:
 
 ### On-disk format (`store.SCHEMA_VERSION`)
 
-`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/store.py`, recorded in the store's `meta` table beside the tokenizer and engine fingerprints. The 9.0 store is one SQLite file whose tables are the fold of a hash-chained log; `models.SCHEMA_VERSION`, the frontmatter version every 1.x through 8.x memory file carried, stays at 1 for the frozen v8 readers and the mirror, which still read and write those files.
+`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/store_schema.py` (re-exported by `store.py`), recorded in the store's `meta` table beside the tokenizer and engine fingerprints. The 9.0 store is one SQLite file whose tables are the fold of a hash-chained log; `models.SCHEMA_VERSION`, the frontmatter version every 1.x through 8.x memory file carried, stays at 1 for the frozen v8 readers and the mirror, which still read and write those files.
 
 Within a major, all changes to the store schema are **additive only**: new nullable columns, new tables, new log kinds, never a renamed or removed column, never a re-defined one. A reader from a later minor opens a store written by an earlier minor without a migration step, and a reader from an earlier minor opens one written by a later minor as long as the later minor only added what the earlier reader ignores. A log kind added in a later minor is folded by an earlier reader as a telemetry row, which is the rule that keeps the chain verifiable across minors.
 

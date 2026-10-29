@@ -689,7 +689,7 @@ a merge is one project row.
 ### The rows
 
 Each is a control row of its own, written whatever the telemetry setting
-(`MEMBERSHIP_EVENT_KINDS` in `store.py`):
+(`MEMBERSHIP_EVENT_KINDS` in `store_schema.py`):
 
 - `resolution_indeterminate`: nothing could be read at the caller's
   location (L8).
