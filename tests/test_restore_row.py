@@ -144,6 +144,51 @@ def test_a_restored_store_this_build_reads_only_gets_no_row(
     assert len(json.loads(record.read_text())["restores"]) == 1
 
 
+def test_a_bundle_whose_store_needs_a_later_writer_is_refused(
+    tmp_path: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A bundle whose store asks for a writer at a later schema revision
+    than this build's (ENG-107's ``min_writer_revision``) is refused before
+    anything moves, with the upgrade line: restored, it would open for
+    reading only here, and the restore could not write its row."""
+    import hashlib
+    import sqlite3
+
+    from bettermemory.store_schema import SCHEMA_REVISION
+
+    store_file = tmp_path / "store" / STORE_FILENAME
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(store_file.parent))
+    with Store.create(store_file) as created:
+        created.put_memory(_memory("written by a later build"))
+    later = SCHEMA_REVISION + 1
+    with sqlite3.connect(store_file) as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            [("min_writer_revision", str(later)), ("engine_version", "99.0.0")],
+        )
+    conn.close()
+    bundle = Path(create_backup(store_file)["bundle"])
+    before = hashlib.sha256(store_file.read_bytes()).hexdigest()
+    report = restore_bundle(bundle, store_file, apply=True)
+    assert report["status"] == "refused"
+    detail = str(report["detail"])
+    assert f"needs a writer at schema revision {later} or later" in detail
+    assert "(its newest writer was bettermemory 99.0.0)" in detail
+    assert f"writes revision {SCHEMA_REVISION}: upgrade bettermemory" in detail
+    assert report["verify"]["min_writer_revision"] == later  # type: ignore[index]
+    assert report["moved_aside"] == [] and report["record"] is None
+    assert hashlib.sha256(store_file.read_bytes()).hexdigest() == before
+    with Store.open(store_file, read_only=True) as opened:
+        assert not restore_record_path(keys_dir, opened.store_id).exists()
+    argv = ["backup", "restore", str(bundle), "--yes"]
+    assert _run_cli(argv, monkeypatch) == 1
+    captured = capsys.readouterr()
+    assert "upgrade bettermemory to restore it" in captured.out + captured.err
+
+
 def test_log_export_ships_the_row_as_a_verified_control_row(
     restored: tuple[Path, dict[str, object], str, int, int],
     monkeypatch: pytest.MonkeyPatch,

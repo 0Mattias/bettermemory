@@ -2263,6 +2263,16 @@ follows the candidates' testing.
   `src/bettermemory/store.py`, `src/bettermemory/backup.py`,
   `src/bettermemory/cli/backup_cmd.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_lock.py`)
+- **A restore refuses a bundle this build could only read.** A bundle
+  whose store needs a writer at a later schema revision than the
+  restoring build's (ENG-107's `min_writer_revision`) was restored and
+  then opened for reading only, so the restore wrote no
+  `store_restored` row and could not check its own work. It is now
+  refused before anything moves, exit 1, with the line naming the
+  revision it needs, its newest writer and this build, and saying to
+  upgrade bettermemory to restore it; `backup verify` reports
+  `min_writer_revision` and `engine_version`.
+  (`src/bettermemory/backup.py`, `tests/test_restore_row.py`)
 - **`backup create` admits a store before it copies it.** The copy's
   meta was read with nothing admitting the store first, so one whose
   `meta` is an endless view hung `backup create` (a scheduled backup
@@ -2764,11 +2774,12 @@ follows the candidates' testing.
   is opened to append the `store_restored` row; a failure in between
   reports the restore failed and keeps the restore lock's record, and
   running the restore again writes both.
-- **A restored store this build reads only gets no `store_restored`
-  row.** A store restored under a build that has a schema step waiting
-  on it opens for reading only and writes nothing, so the restore
-  appends no row; the record beside the head keeps the entry, and the
-  writing open that later runs the step does not add one.
+- **A restored store waiting on a schema step gets no `store_restored`
+  row.** A store restored under a build that has a step waiting on it
+  opens for reading only and writes nothing, so the restore appends no
+  row; the record beside the head keeps the entry, and the writing open
+  that later runs the step does not add one. (A bundle that needs a
+  later writer than the restoring build is refused instead.)
 
 ### 9.0.0rc13
 

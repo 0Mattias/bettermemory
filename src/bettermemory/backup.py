@@ -405,6 +405,10 @@ class SnapshotFacts:
     head: Head
     key_fingerprints: tuple[str, ...]
     counts: dict[str, int] = field(default_factory=dict)
+    #: meta's ``min_writer_revision`` (0 when absent or not a whole
+    #: number) and ``engine_version`` (the newest build that wrote it).
+    min_writer: int = 0
+    engine: str | None = None
 
 
 def _segment_fingerprints(conn: sqlite3.Connection, final: str) -> tuple[str, ...]:
@@ -435,6 +439,7 @@ def _snapshot_facts(path: Path) -> SnapshotFacts:
     """The store id, key fingerprints, head and row counts of the store file
     at `path`, read without `Store.open`, which would change the file."""
     from .store import FOLDED_TABLES, MEMBERSHIP_TABLES
+    from .store_schema import ENGINE_VERSION_KEY, MIN_WRITER_KEY
 
     with _read_only(path) as conn:
         meta = {
@@ -470,6 +475,7 @@ def _snapshot_facts(path: Path) -> SnapshotFacts:
             for table in ("log", "meta", *FOLDED_TABLES, *MEMBERSHIP_TABLES)
             if table in present
         }
+        writer = meta.get(MIN_WRITER_KEY, "")
         return SnapshotFacts(
             store_id=store_id,
             key_fingerprint=final,
@@ -477,6 +483,8 @@ def _snapshot_facts(path: Path) -> SnapshotFacts:
             head=Head(seq=row.seq, mac=row.mac, ts=row.ts),
             key_fingerprints=_segment_fingerprints(conn, final),
             counts=counts,
+            min_writer=int(writer) if writer.isdigit() and len(writer) < 10 else 0,
+            engine=meta.get(ENGINE_VERSION_KEY) or None,
         )
 
 
@@ -980,6 +988,8 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
         "manifest_mac": None,
         "keys": [],
         "log": None,
+        "min_writer_revision": None,
+        "engine_version": None,
         "problems": problems,
     }
     try:
@@ -1064,6 +1074,8 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
             problems.append({"problem": "snapshot_unreadable", "detail": str(exc)})
             report["status"] = _verdict(problems, None)
             return report
+        report["min_writer_revision"] = facts.min_writer
+        report["engine_version"] = facts.engine
         for claim, found in (
             ("store_id", facts.store_id),
             ("key_fingerprint", facts.key_fingerprint),
@@ -1373,6 +1385,34 @@ def _origin_dict(origin: HistoryOrigin | None) -> dict[str, Any] | None:
 def _path_str(path: Path | None) -> str | None:
     """A key ring's binding as a report and the rewind record carry it."""
     return None if path is None else str(path)
+
+
+def _later_writer_refusal(verification: Mapping[str, Any]) -> str | None:
+    """Why a restore of the verified bundle is refused when its store needs
+    a writer at a later schema revision than this build's (ENG-107): this
+    build would open the restored store for reading only, so it could not
+    append its ``store_restored`` row, and the store would stand on this
+    host as a restore no log records. None when this build writes it."""
+    from . import __version__
+    from .history import printable
+    from .store_schema import SCHEMA_REVISION
+
+    needed = verification.get("min_writer_revision")
+    if type(needed) is not int or needed <= SCHEMA_REVISION:
+        return None
+    engine = verification.get("engine_version")
+    newest = (
+        f" (its newest writer was bettermemory {printable(engine)})"
+        if isinstance(engine, str) and engine
+        else ""
+    )
+    return (
+        f"the bundle's store needs a writer at schema revision {needed} or "
+        f"later{newest}, and this build, bettermemory {__version__}, writes "
+        f"revision {SCHEMA_REVISION}: upgrade bettermemory to restore it (this "
+        "build would open the restored store for reading only, and could not "
+        "record the restore on its log)"
+    )
 
 
 def _append_restore_row(
@@ -1699,6 +1739,10 @@ def restore_bundle(
                     f"`bettermemory backup verify {bundle}` for the report"
                 )
             )
+            return report
+        later = _later_writer_refusal(verification)
+        if later is not None:
+            report["detail"] = later
             return report
         trusted_key = _self_signed_fingerprint(verification) if self_signed else None
         store_id = str(verification["store_id"])

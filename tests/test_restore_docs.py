@@ -78,7 +78,7 @@ def test_the_residuals_are_rc14_known_limitations() -> None:
         "warns every cursor past the restored head.",
         "A restore that fails between its record and its row leaves an entry "
         "with no row.",
-        "A restored store this build reads only gets no `store_restored` row.",
+        "A restored store waiting on a schema step gets no `store_restored` row.",
     ):
         assert residual in known, residual
 
@@ -92,6 +92,7 @@ def test_the_limitations_the_fold_closed_are_gone() -> None:
         "The probe does not see an idle connection to a rollback-journal store.",
         "`backup create` still reads a store through a connection of its own.",
         "`backup create --out` checks the named directory and its parent only.",
+        "A restored store this build reads only gets no `store_restored` row.",
     ):
         assert closed not in known, closed
 

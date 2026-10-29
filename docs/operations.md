@@ -477,8 +477,10 @@ To restore:
    in-process fallback, a hook, a CLI command); once it runs, every
    writing open is refused until it ends (the restore lock, below).
 2. `bettermemory backup restore BUNDLE` verifies the bundle (it refuses
-   one that does not verify, and one signed only by a key it carries
-   unless `--trust-bundle-key` is given) and prints the plan: the files
+   one that does not verify, one signed only by a key it carries
+   unless `--trust-bundle-key` is given, and one whose store needs a
+   later bettermemory to write it: upgrade, then restore) and prints
+   the plan: the files
    it moves aside, the keys it installs, the head checkpoint before and
    after. Without `--yes` it changes nothing and exits 3.
 3. `bettermemory backup restore BUNDLE --yes` takes the store's restore
