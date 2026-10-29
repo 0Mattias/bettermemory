@@ -685,6 +685,15 @@ the candidates' testing.
   lost a binding. It now passes `--no-color` and pins
   `diff.interHunkContext=0`.
   (`src/bettermemory/_git.py`, `src/bettermemory/origin.py`)
+- **`capture review` and `capture sample` read a malformed undo row as
+  nothing.** Both read each `capture_undo` row with a bare
+  `json.loads(...).get("memory_ids")`, so a payload that was not an
+  object, or ids that were not a list of strings (a number, an object
+  among them), raised out of the command. They now read the rows through
+  `capture.undone_ids`, as `capture.undone_hashes` reads the hashes:
+  what is malformed contributes nothing, and the well-formed ids still
+  count. (`src/bettermemory/capture.py`,
+  `src/bettermemory/capture_review.py`)
 
 #### Known limitations
 

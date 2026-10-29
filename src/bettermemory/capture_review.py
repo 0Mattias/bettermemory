@@ -24,7 +24,6 @@ which `grade_tally` counts per ISO week.
 
 from __future__ import annotations
 
-import json
 import random
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -84,9 +83,7 @@ def review(store: Store, *, now: datetime | None = None) -> dict[str, Any]:
     when = now or utcnow()
     closed = cap.closes(store)
     members = cap.members(store)
-    undone: set[str] = set()
-    for row in store.capture_rows({CAPTURE_UNDO}):
-        undone.update(json.loads(row.payload).get("memory_ids") or [])
+    undone = cap.undone_ids(store)
     refused = refusals_by_batch(store.iter_events())
     rows: list[dict[str, Any]] = []
     for batch in cap.batches(store):
@@ -344,9 +341,7 @@ CAPTURE_GRADE = "capture_grade"
 def live_members(store: Store) -> list[tuple[cap.Member, Memory]]:
     """Each captured memory still active and not undone, with its record,
     in log order."""
-    undone: set[str] = set()
-    for row in store.capture_rows({CAPTURE_UNDO}):
-        undone.update(json.loads(row.payload).get("memory_ids") or [])
+    undone = cap.undone_ids(store)
     out: list[tuple[cap.Member, Memory]] = []
     seen: set[str] = set()
     for member in cap.members(store):

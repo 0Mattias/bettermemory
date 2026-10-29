@@ -7,11 +7,14 @@ verifies. A member someone has since relied on is not undone silently.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from bettermemory import capture, capture_review
+from bettermemory.log import CAPTURE_UNDO, LogRow
 from bettermemory.mirror import MIRROR_MARKER, write_mirror
 from bettermemory.models import LinkType, MemoryLink
 from bettermemory.v8 import TOMBSTONE_DIR
@@ -273,3 +276,33 @@ async def test_review_lists_outcomes_members_refusals_and_undos(
     assert doc["undos"] == 1
     text = capture_review.render_review(doc)
     assert batch.batch in text and "2 undone" in text
+
+
+async def test_review_and_sample_read_a_malformed_undo_row_as_nothing(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-185: `review` and `live_members` read each undo row with a bare
+    `json.loads(...).get("memory_ids")`, so a payload that is not an object,
+    or ids that are not a list of strings, raised out of `capture review`
+    and `capture sample`. They read the rows as `capture.undone_hashes`
+    does: what is malformed contributes nothing, and a well-formed id
+    still counts."""
+    batch, ids = await _captured(world)
+    world.store.record_capture(CAPTURE_UNDO, {"batch": batch.batch, "memory_ids": 5})
+    world.store.record_capture(
+        CAPTURE_UNDO, {"batch": batch.batch, "memory_ids": [{"id": ids[0]}, ids[1]]}
+    )
+    real_rows = world.store.capture_rows
+
+    def with_a_list_payload(kinds: Any, **kwargs: Any) -> Iterator[LogRow]:
+        yield from real_rows(kinds, **kwargs)
+        if CAPTURE_UNDO in kinds:
+            yield LogRow(
+                10**9, "2026-10-28T00:00:00Z", None, CAPTURE_UNDO, "[]", "", ""
+            )
+
+    monkeypatch.setattr(world.store, "capture_rows", with_a_list_payload)
+    (row,) = capture_review.review(world.store)["batches"]
+    assert (row["members"], row["undone"]) == (2, 1)
+    live = capture_review.live_members(world.store)
+    assert [member.memory_id for member, _ in live] == [ids[0]]

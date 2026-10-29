@@ -703,6 +703,18 @@ def undone_hashes(store: Store) -> frozenset[str]:
     return frozenset(out)
 
 
+def undone_ids(store: Store) -> frozenset[str]:
+    """Every member id a capture undo reverted, read as `undone_hashes`
+    reads the hashes: a payload that is not an object, or ids that are not
+    a list of strings, contribute nothing."""
+    out: set[str] = set()
+    for row in store.capture_rows({CAPTURE_UNDO}):
+        ids = _payload(row).get("memory_ids")
+        if isinstance(ids, list):
+            out.update(i for i in ids if isinstance(i, str))
+    return frozenset(out)
+
+
 def watermark(store: Store, session_id: str) -> int:
     """The transcript offset `session_id` is captured to: the furthest
     watermark of its settled batches, 0 when none settled."""
@@ -801,5 +813,6 @@ __all__ = [
     "relations_rows",
     "token_of",
     "undone_hashes",
+    "undone_ids",
     "watermark",
 ]
