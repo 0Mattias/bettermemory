@@ -658,10 +658,11 @@ def search_miss_fields(
     :func:`turn_audited_fields` — see that docstring for the
     drift-prevention rationale.
 
-    Carries ``recent_retrieval_count`` so ``eval._silent_miss_from_event``
-    can render it: the 2.6.4 audit found that consumer reading the
-    field off the ``search_miss`` event while every producer emitted
-    it on ``turn_audited`` only — the eval column was always blank.
+    Carries ``recent_retrieval_count`` so
+    ``eval_model._silent_miss_from_event`` can render it: the 2.6.4
+    audit found that consumer reading the field off the ``search_miss``
+    event while every producer emitted it on ``turn_audited`` only —
+    the eval column was always blank.
 
     ``event_id`` is a stable per-event ULID stamped at emission time.
     Surfaced so ``memory_acknowledge_miss`` can reference one specific

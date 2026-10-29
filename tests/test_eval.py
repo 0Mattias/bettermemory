@@ -1173,7 +1173,7 @@ class TestColdEndorsementMemories:
         5 → 30 recalibration landed on health first and the two
         surfaces published materially different buckets. This pin turns
         the next recalibration into a test failure instead of drift —
-        the name is cited from the constant's comment in eval.py."""
+        the name is cited from the constant's comment in eval_model.py."""
         from bettermemory.health import _COLD_ENDORSEMENT_MIN_RETRIEVALS
 
         assert DEFAULT_ENDORSEMENT_MIN_RETRIEVALS == _COLD_ENDORSEMENT_MIN_RETRIEVALS
@@ -1772,10 +1772,10 @@ async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
 
     1. ``builder._register_tools`` — one ``mcp.tool(name=...)`` call per
        tool, surfaced at runtime via ``mcp.list_tools()``.
-    2. ``eval._TOOL_EVENT_KIND_TO_TOOL`` values plus
-       ``eval.TOOLS_WITHOUT_TELEMETRY`` — drives ``compute_tool_usage``'s
-       per-tool row set so a consumer can iterate every tool without a
-       missing-key guard.
+    2. ``eval_model._TOOL_EVENT_KIND_TO_TOOL`` values plus
+       ``eval_model.TOOLS_WITHOUT_TELEMETRY`` — drives
+       ``compute_tool_usage``'s per-tool row set so a consumer can
+       iterate every tool without a missing-key guard.
 
     Both must enumerate the same set, or:
 
@@ -1805,7 +1805,7 @@ async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
         f"Only in eval map: {sorted(eval_side - registered)}; "
         f"only on server: {sorted(registered - eval_side)}. "
         "Update _TOOL_EVENT_KIND_TO_TOOL / TOOLS_WITHOUT_TELEMETRY in "
-        "eval.py, or add the missing mcp.tool(...) registration in "
+        "eval_model.py, or add the missing mcp.tool(...) registration in "
         "builder._register_tools, to bring the two surfaces back in sync."
     )
     assert len(registered) == _EXPECTED_TOOL_COUNT, (
@@ -3273,11 +3273,11 @@ def _admin_roster_forks(
     that reads as a copy of the admin roster.
 
     The predicate — names at least one admin-only kind AND no in-session
-    kind — is what separates a fork from the two legitimate rosters in
-    eval.py: `_KNOWN_SIDE_EFFECT_KINDS` is the superset (it carries
+    kind — is what separates a fork from the two legitimate rosters:
+    `_KNOWN_SIDE_EFFECT_KINDS` (eval_model.py) is the superset (it carries
     `search_miss`, an in-session kind, so it fails the second clause) and
-    `ADMIN_RECORDED_EVENT_KINDS` itself is a set-difference expression,
-    not a literal, so it is never a candidate.
+    `ADMIN_RECORDED_EVENT_KINDS` (eval.py) itself is a set-difference
+    expression, not a literal, so it is never a candidate.
     """
     found: list[tuple[str, str, frozenset[str]]] = []
     for node in ast.walk(ast.parse(source)):

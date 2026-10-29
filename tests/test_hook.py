@@ -582,7 +582,7 @@ def test_main_runs_audit_and_logs_turn_audited(
     # Pre-2.6.4 the hook emitted `turn_audited` without `session_id` /
     # `lookback_seconds` / `probe_mode`, and `search_miss` with
     # `top_hit_ids=[strings]` instead of `top_hits=[dicts]`. That
-    # silently broke `eval.py:_silent_miss_from_event` for the
+    # silently broke `eval_model.py:_silent_miss_from_event` for the
     # primary production source. The fields below MUST exist with
     # the canonical shape the in-process handler also writes — if
     # any disappears, the silent-miss eval renderer regresses.

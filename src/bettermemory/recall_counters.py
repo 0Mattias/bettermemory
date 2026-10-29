@@ -395,7 +395,7 @@ def compute_surface_report(
     log written before the surface reports exactly as it did.
 
     `pick`, when given, picks the shows the two surfaces' counts are
-    taken over (`eval.surface_rule_split`, the split on each show's rule,
+    taken over (`eval_model.surface_rule_split`, the split on each show's rule,
     design 8.11). Every row still joins its conversation and every show
     still ends the follow-ups of the id's earlier show, so the counts of
     disjoint picks add up to the unpicked section; whether the section is
