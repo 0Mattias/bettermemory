@@ -1124,7 +1124,7 @@ class ResponseBuilder:
         names come from the repository's files
         (`origin.toplevel_and_head_from_files`), with no process. Paid once
         per search regardless of how many hits there are, and memoised per
-        (root, head): `commit_author_timestamps` (``git log --format=%aI
+        (root, head): `commit_author_timestamps` (``git log --format=%at
         <head>``). Paid per hit: a `bisect_right` against the
         sorted timestamp list and `commit_drift_anchor_paths` (both pure
         CPU), and a handful of stats of the attribute files for a hit with a

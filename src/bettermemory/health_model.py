@@ -895,7 +895,7 @@ class CommitDriftDebt:
 
 
 # Cap on distinct foreign worktrees a single health run walks git in.
-# Each walked root costs one full `git log --format=%aI` plus the
+# Each walked root costs one full `git log --format=%at` plus the
 # per-drifting-row narrowing calls, each under the drift legs' 5 s
 # timeout — an unbounded estate would turn the deep report into a
 # multi-second git crawl. Cheap skips (missing directory, moved repo)

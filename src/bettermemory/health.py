@@ -1293,7 +1293,7 @@ def _compute_commit_drift_debt(
     well-defined for an empty store; commit drift only has meaning when
     there's something to be drifted *from*.
 
-    Counted via one `git log --format=%aI` call + bisect — independent
+    Counted via one `git log --format=%at` call + bisect — independent
     of memory count.
 
     Every candidate is counted in the caller's checkout, where
