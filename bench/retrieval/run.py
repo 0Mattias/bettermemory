@@ -293,11 +293,18 @@ def _provenance() -> dict[str, object]:
     }
 
 
+def scratch_keys(root: Path) -> Path:
+    """The keys directory of the store this bench builds at `root`: inside
+    `root` and removed with it, never the user's keys directory (ENG-106).
+    Every open of that store passes it, or the open would rekey."""
+    return Path(root) / "keys"
+
+
 def build_store(
     root: Path, corpus_path: Path, *, pad_to: int | None
 ) -> tuple[dict[str, str], int]:
     """Write the corpus into `root`. Returns (slug -> memory id, corpus size)."""
-    store = Store(root)
+    store = Store(root, keys_dir=scratch_keys(root))
     slug_to_id: dict[str, str] = {}
     n = 0
     for row in _read_jsonl(corpus_path):
@@ -1018,7 +1025,7 @@ def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="bm-retrieval-"))
     try:
         slug_to_id, corpus_n = build_store(root, corpus_path, pad_to=args.pad_to)
-        store = Store(root)
+        store = Store(root, keys_dir=scratch_keys(root))
         # Both arms start from this one store: the off arm gets the whole
         # thing up front, the on arm lets production choose per query.
         memories = store.load_all()

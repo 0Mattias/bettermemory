@@ -157,6 +157,13 @@ def deterministic_id(slug: str, ordinal: int) -> str:
     return _encode_crockford(ts_ms & ((1 << 48) - 1), 10) + _encode_crockford(rand, 16)
 
 
+def scratch_keys(root: Path) -> Path:
+    """The keys directory of the store this bench builds at `root`: inside
+    `root` and removed with it, never the user's keys directory (ENG-106).
+    Every open of that store passes it, or the open would rekey."""
+    return Path(root) / "keys"
+
+
 def build_store(root: Path, corpus_path: Path) -> dict[str, str]:
     """Write the corpus into a fresh store at `root` with deterministic
     ids and stamps, one `put_memory` per document in corpus order, so the
@@ -166,7 +173,7 @@ def build_store(root: Path, corpus_path: Path) -> dict[str, str]:
     if root.exists() and any(root.iterdir()):
         raise SystemExit(f"refusing to build into a non-empty directory: {root}")
     ids: dict[str, str] = {}
-    with Store(root) as store:
+    with Store(root, keys_dir=scratch_keys(root)) as store:
         for ordinal, row in enumerate(_read_jsonl(corpus_path)):
             created = BASE_CREATED + timedelta(seconds=ordinal)
             memory = Memory(
@@ -296,7 +303,7 @@ def run_public(
     limit: int | None = None,
 ) -> dict[str, Any]:
     slug_to_id = build_store(root, corpus_path)
-    store = Store(root)
+    store = Store(root, keys_dir=scratch_keys(root))
     full = store.load_all()
     questions = _read_jsonl(questions_path)
     if limit is not None:

@@ -127,7 +127,9 @@ def _run_size(n: int, *, search_repeats: int, load_repeats: int) -> dict[str, An
     metadata. Creates and tears down its own tmp directory."""
     bench_dir = Path(tempfile.mkdtemp(prefix=f"bm-bench-{n}-"))
     try:
-        store = Store(bench_dir)
+        # The key goes under the bench directory and is removed with it,
+        # never under the user's keys directory (ENG-106).
+        store = Store(bench_dir, keys_dir=bench_dir / "keys")
 
         # Populate — separately timed so we can report write throughput too.
         t0 = time.perf_counter()

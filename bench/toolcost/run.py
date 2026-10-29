@@ -115,6 +115,12 @@ def probe_tools(
             # sandbox daemon's record outside the sandbox.
             "XDG_STATE_HOME": str(Path(sandbox) / ".local" / "state"),
             "XDG_CACHE_HOME": str(Path(sandbox) / ".cache"),
+            # And the keys directory: the store the shim's daemon creates
+            # keeps its key there, and on Windows `platformdirs` resolves
+            # the config directory from the user's profile, not HOME, so
+            # without this the key landed in the user's keys directory
+            # (ENG-106).
+            "BETTERMEMORY_KEYS_DIR": str(Path(sandbox) / "keys"),
             **(env or {}),
         }
         return _probe(command, child_env=child_env, cwd=cwd, timeout=timeout)

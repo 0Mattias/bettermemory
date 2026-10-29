@@ -1371,14 +1371,26 @@ def extract_copy(tgz: Path, dest: Path) -> Path:
     return dest
 
 
-def import_copy(v8_root: Path, store_dir: Path) -> dict[str, Any]:
-    """`migrate_v8.migrate` in this process, into `store_dir`."""
+def import_copy(
+    v8_root: Path, store_dir: Path, *, keys_dir: Path | None = None
+) -> dict[str, Any]:
+    """`migrate_v8.migrate` in this process, into `store_dir`, with its key
+    under `keys_dir`: by default the scratch keys directory the arms point
+    `BETTERMEMORY_KEYS_DIR` at, else `keys` beside `store_dir`; never the
+    user's keys directory, which the migration would otherwise write its
+    new store's key into (ENG-106)."""
+    from bettermemory.config import KEYS_DIR_ENV
     from bettermemory.migrate_v8 import migrate as migrate_v8
     from bettermemory.store import STORE_FILENAME
 
+    if keys_dir is None:
+        scratch_keys = os.environ.get(KEYS_DIR_ENV)
+        keys_dir = Path(scratch_keys) if scratch_keys else store_dir.parent / "keys"
     store_dir.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    report = migrate_v8(v8_root, store_dir / STORE_FILENAME).to_dict()
+    report = migrate_v8(
+        v8_root, store_dir / STORE_FILENAME, keys_dir=keys_dir
+    ).to_dict()
     report["seconds"] = round(time.perf_counter() - started, 2)
     return report
 

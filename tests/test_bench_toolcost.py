@@ -180,13 +180,13 @@ def test_probing_the_shim_leaves_no_daemon_and_no_sandbox(
     # Overrides only: `env` is laid over the sandbox's HOME, so a whole
     # environment here would hand the child the real HOME back. The
     # sandbox decides the store, the state directory and the keys,
-    # whatever the environment running the suite names (empty is unset),
-    # and the working directory has no project store.
+    # whatever the environment running the suite names (empty is unset;
+    # the keys directory is the sandbox's own variable, which an override
+    # here would replace), and the working directory has no project store.
     env = {
         "PYTHONPATH": shielded_child_env()["PYTHONPATH"],
         "BETTERMEMORY_DIR": "",
         "BETTERMEMORY_STATE_DIR": "",
-        "BETTERMEMORY_KEYS_DIR": "",
     }
     workdir = tmp_path / "cwd"
     workdir.mkdir()
@@ -233,7 +233,8 @@ def test_the_child_env_carries_no_runner_bettermemory_variable(
 ) -> None:
     """A runner with another daemon's home and port exported: the probe's
     child sees none of them, so the sandbox shim cannot reuse that daemon,
-    nor the clean-up stop it."""
+    nor the clean-up stop it. The one bettermemory variable it carries is
+    the sandbox's keys directory (ENG-106)."""
     other = tmp_path / "other-daemon"
     monkeypatch.setenv("BETTERMEMORY_HOME", str(other))
     monkeypatch.setenv("BETTERMEMORY_PORT", "48211")
@@ -244,10 +245,13 @@ def test_the_child_env_carries_no_runner_bettermemory_variable(
     seen = _capture_child_env(monkeypatch)
     toolcost.probe_tools([sys.executable, "-m", "bettermemory"], timeout=5)
     (child_env,) = seen
-    assert [key for key in child_env if key.startswith("BETTERMEMORY_")] == []
+    assert [key for key in child_env if key.startswith("BETTERMEMORY_")] == [
+        "BETTERMEMORY_KEYS_DIR"
+    ]
     assert not any(str(other) in value for value in child_env.values())
     assert "48211" not in child_env.values()
     assert Path(child_env["HOME"]).name.startswith("toolcost-home-")
+    assert Path(child_env["BETTERMEMORY_KEYS_DIR"]).parent == Path(child_env["HOME"])
 
 
 def test_the_specs_own_bettermemory_variables_still_apply(

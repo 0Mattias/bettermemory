@@ -2466,6 +2466,29 @@ follows the candidates' testing.
   held still gives an unsigned bundle, with a warning. (ENG-93 item 3;
   `src/bettermemory/backup.py`, `docs/api.md`,
   `tests/test_backup_create_guards.py`)
+- **Benches keep their scratch stores' keys out of the user's keys
+  directory (ENG-106).** The storage, retrieval and parity benches, the
+  latency bench's v8 import, the capture benches' in-process world and
+  the toolcost probe's sandboxed shim created stores without naming a
+  keys directory, so every run left a key, with its head, origin and
+  binding files, in the user's config directory for a store its scratch
+  directory took with it; hundreds had gathered. Each now keeps the key
+  in a `keys` directory its scratch directory removes: the storage bench
+  inside its temporary directory, the retrieval and parity benches
+  beside the store they build (`scratch_keys`, which their second open
+  passes too, or it would rekey), the latency import in the scratch keys
+  directory the arms name (`BETTERMEMORY_KEYS_DIR`) or beside its store,
+  and the toolcost probe in its sandbox, whose child now carries that
+  one bettermemory variable (on Windows `platformdirs` reads the user's
+  profile, not `HOME`). The capture world refuses to start before
+  `scratch_env` names a scratch keys directory. A test runs each bench's
+  store-creating entry point under a fake home with no keys directory
+  named and finds the user's keys directory still absent; the swarm,
+  integrity and migration harnesses, which already named one, are
+  pinned beside them. (`bench/storage.py`, `bench/retrieval/run.py`,
+  `bench/parity/run.py`, `bench/daemon/latency.py`,
+  `bench/capture/_common.py`, `bench/toolcost/run.py`,
+  `tests/test_bench_keys.py`, `tests/test_bench_toolcost.py`)
 
 #### Known limitations
 

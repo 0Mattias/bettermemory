@@ -67,9 +67,14 @@ class World:
         from bettermemory.session import SessionState
         from bettermemory.store import Store
 
+        keys = os.environ.get("BETTERMEMORY_KEYS_DIR")
+        if not keys:
+            # A store opened here without `scratch_env` would keep its key
+            # under the user's keys directory (ENG-106).
+            raise SystemExit("World needs scratch_env first: no scratch keys directory")
         self.root = root
         self.config = Config(storage=StorageConfig(directory=str(root)))
-        self.store = Store(root)
+        self.store = Store(root, keys_dir=Path(keys))
         self.state = SessionState()
         self.server = build_server(
             config=self.config,
