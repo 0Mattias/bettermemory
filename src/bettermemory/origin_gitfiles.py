@@ -2,6 +2,7 @@
 
 The config reader (`_config_variable_names`, memoised per file state in
 `_config_facts`), the root spelled as git prints it (`_spelled_as_git`),
+the root of a repository git refused to read (`refused_worktree_root`),
 the decoder of git's C-quoted patch headers, the index's ``.gitmodules``
 entry, and the file signatures the drift memos key on
 (`attribute_files_signature`, `gitattributes_signature`,
@@ -236,6 +237,39 @@ def _spelled_as_git(root: Path) -> Path | None:
     finally:
         os.close(fd)
     return Path(os.fsdecode(raw.split(b"\0", 1)[0]))
+
+
+def refused_worktree_root(cwd: Path) -> tuple[str | None, bool]:
+    """``(worktree_root, indeterminate)`` for `cwd` where ``git rev-parse
+    --show-toplevel`` exited non-zero, read from the files as
+    `githead.locate` reads them.
+
+    A non-zero exit is git's "not a git repository", and also its refusal
+    of a repository it will not read: one another account owns (a
+    dev-container bind mount, an SMB or NFS share with mapped ids, a
+    colleague's shared tree) while ``safe.directory`` does not name it, an
+    extension or a config file git does not accept. `locate` reads the
+    ``.git`` entry without git's ownership check, since reading the
+    repository's files runs nothing its configuration names. Where it
+    finds no entry the exit is the answer, ``(None, False)``. Where it
+    finds one, git did not answer, and the result is indeterminate: the
+    root is the directory holding the entry, spelled as git prints a root
+    (`_spelled_as_git`) and resolved as the probe resolves git's, unless
+    the repository's configuration could move the working tree
+    (`_config_moves_worktree`) or the spelling cannot be read, and then
+    None."""
+    found = githead.locate(cwd)
+    if found is None:
+        return None, False
+    if _config_moves_worktree(found):
+        return None, True
+    spelled = _spelled_as_git(found.worktree_root)
+    if spelled is None:
+        return None, True
+    try:
+        return str(spelled.resolve()), True
+    except OSError:
+        return str(spelled), True
 
 
 # The single-character escapes git's `quote_c_style` emits inside a

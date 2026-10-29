@@ -73,6 +73,7 @@ from .origin_gitfiles import (
     attribute_files_signature,
     directories_held,
     gitattributes_signature,
+    refused_worktree_root,
     walk_files_signature,
 )
 from .origin_gitfiles import (
@@ -148,23 +149,42 @@ class Origin(BaseModel):
     # for how `repos_match` consumes them.
     _repo_url_alternates: tuple[str, ...] = PrivateAttr(default=())
 
-    # Whether `capture()` could run git AT ALL. `repo` and `worktree_root`
+    # Whether git ANSWERED `capture()`'s probes. `repo` and `worktree_root`
     # are null both when git looked and said "not a repository" and when
     # git could not be asked — no binary on PATH, a timeout, an OSError
     # from the spawn — and the two mean opposite things to every consumer
     # that keys a shield on them: the first is a caller standing nowhere,
     # the second is a caller standing somewhere this process cannot see.
+    # A repository git refuses to read (dubious ownership, an extension it
+    # does not know) is the second kind too, though its `worktree_root` is
+    # read from the files (`origin_gitfiles.refused_worktree_root`): git
+    # named no remote and no branch there, so `repo` and `branch` are null
+    # for want of an answer, not for want of a remote.
     # PRIVATE like the alternates above: never serialized into frontmatter
     # or an event payload; a fact about this capture, not about a memory.
     _git_indeterminate: bool = PrivateAttr(default=False)
 
     @property
     def git_indeterminate(self) -> bool:
-        """True when this origin's null `repo` / `worktree_root` are the
-        product of git not answering rather than of git answering "no".
-        Consumers that would open a scope boundary on a null must treat
-        this as "could not tell" and hold the boundary instead."""
+        """True when this origin's null `repo` / `worktree_root` (and
+        `branch`) are the product of git not answering rather than of git
+        answering "no": git could not run, or it refused to read the
+        repository the files place the caller in, whose root `worktree_root`
+        then carries where the files settle it. Consumers that would open a
+        scope boundary on a null must treat this as "could not tell" and
+        hold the boundary instead."""
         return self._git_indeterminate
+
+    # The first line git wrote when it refused the repository the files
+    # place the caller in (ENG-175), for a refusal that names why; None
+    # wherever git answered or could not run. PRIVATE, as above.
+    _git_refusal: str | None = PrivateAttr(default=None)
+
+    @property
+    def git_refusal(self) -> str | None:
+        """Why git refused the repository this origin stands in, as git
+        said it; None where it did not refuse."""
+        return self._git_refusal
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +208,11 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     only channel any explicit-cwd caller in this tree stands in for.
     If git isn't on PATH or the directory isn't a repo, `repo` and
     `branch` come back null; `cwd` is always populated when the directory
-    exists.
+    exists. Where git refuses to read a repository the files place the
+    directory in (another account's checkout with ``safe.directory``
+    unset), `worktree_root` is read from the files, `repo` and `branch`
+    stay null, no further probe runs, and the origin is indeterminate
+    (`Origin.git_indeterminate`).
 
     `worktree_root` is captured whenever we're inside any git checkout —
     it is the FIRST probe (`rev-parse --show-toplevel` fails exactly when
@@ -219,12 +243,13 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     field, private attributes included. A capture is kept only when every
     probe ran and the signature read the same before and after them, which
     a HEAD moved away and back while they ran does not (git rewrote HEAD).
-    A first probe that ran and exited non-zero is an answer, "not a
-    repository", and is kept for the lifetime like any other. The lifetime
-    is ten minutes, so what the signature does not see (a remote changed
-    outside the repository's config file, among the rest
-    `ORIGIN_CACHE_SECONDS` lists) can be answered from a capture up to ten
-    minutes old.
+    A first probe that ran and exited non-zero where the files hold no
+    repository either is an answer, "not a repository", and is kept for the
+    lifetime like any other; where they hold one, git refused it, and the
+    indeterminate capture is not kept. The lifetime is ten minutes, so what
+    the signature does not see (a remote changed outside the repository's
+    config file, among the rest `ORIGIN_CACHE_SECONDS` lists) can be
+    answered from a capture up to ten minutes old.
     """
     if cwd is None:
         declared = identity.workspace_declaration()
@@ -256,16 +281,20 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     ):
         cached = entry.origin
         worktree_root, indeterminate = cached.worktree_root, cached.git_indeterminate
+        refusal = None  # a refused capture is indeterminate, never kept
         repo_url, repo_url_alternates = cached.repo, entry.alternates
         branch = cached.branch
     else:
         unanswered = _UNANSWERED.count
-        worktree_root, indeterminate = _probe_worktree_root(resolved)
+        worktree_root, indeterminate, refusal = _probe_worktree_root(resolved)
         repo_url = None
         repo_url_alternates = ()
-        if worktree_root:
+        # A root read from the files of a repository git refused comes back
+        # indeterminate: git refuses the remote and the branch there too.
+        answered = worktree_root is not None and not indeterminate
+        if answered:
             repo_url, repo_url_alternates = _git_remote_url_and_alternates(resolved)
-        branch = _git_branch(resolved) if worktree_root else None
+        branch = _git_branch(resolved) if answered else None
         # Kept only when every probe ran and nothing the signature covers
         # moved while they ran. A probe git could not run for may answer on
         # the next call, and a change undone before the next call would
@@ -286,6 +315,7 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     # The first probe is the one that decides whether git ran; the two
     # gated on it cannot fail differently once it has answered.
     origin._git_indeterminate = indeterminate
+    origin._git_refusal = refusal
     if repo_url is not None:
         # Register the remote's other official spellings (raw multi-URL
         # values, unexpanded insteadOf aliases) so `repos_match` can keep
@@ -353,8 +383,8 @@ def capture_caller(cwd: Path | None = None) -> Origin:
 #: other than macOS whose filesystem ignores case or normalisation (the
 #: signature then holds the resolved path, which keeps the caller's
 #: spelling); whether git can run; and a capture whose first probe ran and
-#: exited non-zero, kept as "not a repository" after a failure that clears
-#: on its own.
+#: exited non-zero where the files hold no repository, kept as "not a
+#: repository" after a failure that clears on its own.
 ORIGIN_CACHE_SECONDS = 600.0
 
 # The most directories the cache holds; past it the oldest capture goes.
@@ -472,11 +502,12 @@ def _capture_signature(start: Path) -> githead.Signature:
 # configuration outside the repository's config files, such a rename on
 # another platform's case-ignoring filesystem) holds for at most the
 # lifetime, ten minutes, and so does a capture whose first probe ran and
-# exited non-zero: `_probe_worktree_root` reads that exit as "not a
-# repository", an answer, and a failure that clears (an unreadable file, a
-# lock) exits non-zero as well. Keyed by directory, never by process. The
-# lock serialises the store, the eviction and the clear; a lookup is one
-# dict read.
+# exited non-zero where the files hold no repository: `_probe_worktree_root`
+# reads that exit as "not a repository", an answer, and a failure that
+# clears (an unreadable file, a lock) exits non-zero as well. Where the
+# files hold one, git refused it, and that capture is indeterminate and
+# never kept. Keyed by directory, never by process. The lock serialises the
+# store, the eviction and the clear; a lookup is one dict read.
 _ORIGIN_CACHE: dict[str, _OriginEntry] = {}
 _ORIGIN_CACHE_LOCK = threading.Lock()
 
@@ -894,8 +925,8 @@ def _git_branch(cwd: Path) -> str | None:
     return _git(cwd, "symbolic-ref", "--short", "HEAD")
 
 
-def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool]:
-    """``(worktree_root, indeterminate)`` for `cwd`.
+def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool, str | None]:
+    """``(worktree_root, indeterminate, refusal)`` for `cwd`.
 
     `rev-parse --show-toplevel` returns the absolute path of the working
     tree root — for a primary checkout, the repo root; for a worktree
@@ -907,23 +938,41 @@ def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool]:
     symlink form still compares equal to a caller that resolves the
     other.
 
-    `indeterminate` is True only when git could not RUN — the answer is
-    then unknown, not "no". Git exiting non-zero ("not a git repository")
-    is the measured no this probe has always reported as None.
+    `indeterminate` is True when git could not RUN — the answer is then
+    unknown, not "no" — and when git exited non-zero while the files hold
+    a repository there (`origin_gitfiles.refused_worktree_root`: git
+    refused it, for another account's ownership with ``safe.directory``
+    unset among the rest; the root then comes from the files where they
+    settle it). Git exiting non-zero where the files hold no repository
+    either ("not a git repository") is the measured no this probe has
+    always reported as None. `refusal` is the first line git wrote when
+    it refused, None otherwise.
     """
     result = _git_result(cwd, "rev-parse", "--show-toplevel")
     if result is None:
-        return None, True
+        return None, True, None
     if result.returncode != 0:
         _git_runner.log_nonzero_exit(("rev-parse", "--show-toplevel"), result, cwd)
-        return None, False
+        root, refused = refused_worktree_root(cwd)
+        if not refused:
+            return root, False, None
+        lines = (result.stderr or "").strip().splitlines()
+        reason = lines[0] if lines else f"exit {result.returncode}"
+        log.info(
+            "git refused the repository holding %s (%s); its root is read "
+            "from the files (%s) and the origin is indeterminate",
+            cwd,
+            reason,
+            root,
+        )
+        return root, True, reason
     raw = result.stdout.strip()
     if not raw:
-        return None, False
+        return None, False, None
     try:
-        return str(Path(raw).resolve()), False
+        return str(Path(raw).resolve()), False, None
     except OSError:
-        return raw, False
+        return raw, False, None
 
 
 def _git_worktree_root(cwd: Path) -> str | None:

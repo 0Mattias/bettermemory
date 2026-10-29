@@ -304,6 +304,7 @@ def _validate_declared_claims(
     worktree_root: str | None,
     surface: str,
     anchor_rule: str | None = None,
+    refusal: str | None = None,
 ) -> list[str]:
     """Type-check, parse, and oracle-check a declared `claims` list.
 
@@ -321,6 +322,9 @@ def _validate_declared_claims(
     root comes from, and the message says which one was missing.
     `anchor_rule` is the rule of the record's claim anchor when the root
     is its live view (design 3.6), named in the refusal when there is none.
+    `refusal` is what git said when it refused the repository the caller
+    stands in (`Origin.git_refusal`), named in the refusal instead of "not
+    inside a git worktree".
     """
     from pathlib import Path
 
@@ -334,6 +338,13 @@ def _validate_declared_claims(
             remedy = (
                 " (the memory's checkout is not visible from this machine:"
                 f" {anchor_rule}). Verify from its checkout, or drop the claims."
+            )
+        elif surface == "memory_write" and refusal is not None:
+            remedy = (
+                " (the caller is inside a git repository, but git refused to"
+                f" read it: {refusal}). Write as the account that owns it, or"
+                " add it to safe.directory if you trust its configuration (git"
+                " then runs what that configuration names), or drop the claims."
             )
         elif surface == "memory_write":
             remedy = (

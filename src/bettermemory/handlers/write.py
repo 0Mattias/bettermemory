@@ -401,6 +401,7 @@ async def memory_write(
             claims,
             worktree_root=origin.worktree_root if origin else None,
             surface="memory_write",
+            refusal=origin.git_refusal if origin else None,
         )
 
     # A declared `supersedes` list is checked here, ahead of the gates,

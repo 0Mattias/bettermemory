@@ -580,6 +580,25 @@ the candidates' testing.
   tracked file. When `git check-ignore` gave no answer, an ignored store
   got the same warning. Either case is now a skip that names the question
   and why it went unanswered. (`src/bettermemory/posture.py`)
+- **A caller in a repository git refuses to read keeps its worktree
+  root.** Git refuses a checkout another account owns while
+  `safe.directory` does not name it (a dev-container bind mount, an SMB or
+  NFS home with mapped ids, a colleague's shared tree), and the origin
+  capture read that exit as "not a repository": the caller stood nowhere,
+  determinately, while membership's location capture placed it in the
+  repository, and `memory_write` with claims was refused "the caller is
+  not inside a git worktree". Git's non-zero exit now means "no
+  repository" only where the repository's files hold none
+  (`githead.locate`). Where they hold one, the root is read from them
+  (none where the repository's config could move the working tree), the
+  origin is indeterminate with git's reason logged, and the remote and
+  branch probes, which git refuses too, are not run, so the capture still
+  runs one git process. A claim write there is checked against that root;
+  where no root is known, the refusal quotes git's instead of "not inside
+  a git worktree" and says what trusting the repository through
+  `safe.directory` means. (`src/bettermemory/origin.py`,
+  `src/bettermemory/origin_gitfiles.py`,
+  `src/bettermemory/handlers/_shared.py`)
 
 #### Known limitations
 
