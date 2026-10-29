@@ -2134,6 +2134,28 @@ follows the candidates' testing.
   `tests/test_audit_rows.py`, `tests/test_hygiene_log.py`,
   `tests/test_server_events.py`, `tests/test_capture_batch.py`,
   `tests/test_recall_prompt.py`, `tests/test_recall_state.py`)
+- **A hook's state rows end before the harness kills the hook
+  (ENG-108).** Claude Code kills a hook at the timeout the plugin's
+  hooks.json gives it, 10 s for the prompt, and a state row tried twice
+  under the 5 s busy timeout failed after about 11 s: the hook was gone
+  before the daemon answered, a row that landed late recorded a recall
+  the model never saw, and a brief that failed said nothing but a stderr
+  line reading `HTTP Error 500`. The three timeouts now live in one place
+  the hook and the manifest share
+  (`_daemon_client.HOOK_HARNESS_TIMEOUT_SECONDS`, pinned to hooks.json),
+  and each hook body runs under its budget
+  (`_daemon_client.hook_budget_seconds`: the timeout, capped at the
+  client's 15 s wait, less 2 s; 8 s for the prompt): no row is tried past
+  it (`Store.record_event`'s `deadline`), and the body's other writes
+  wait at most that long. The brief and the recall still fail closed,
+  and the hook's one stderr line is the daemon's account: `StoreBusy:
+  the store was busy, so the recall was not shown: another writer held
+  it past this hook's time; run bettermemory doctor`.
+  (`src/bettermemory/events.py`, `src/bettermemory/store_events.py`,
+  `src/bettermemory/_daemon_client.py`, `src/bettermemory/recall.py`,
+  `src/bettermemory/hook.py`, `plugin/hooks/hooks.json`,
+  `docs/operations.md`, `docs/internals.md`, `tests/test_hook_budget.py`,
+  `tests/test_telemetry_docs.py`)
 
 #### Known limitations
 
@@ -2475,6 +2497,12 @@ follows the candidates' testing.
   or claim excerpt, `health`'s silent misses no query preview and its
   resolution timeline no notes, and a standing change's row no quoted
   words, since no state row keeps free text with telemetry off.
+- **A hook body's other writes wait the whole budget each.** The
+  deadline bounds every event row a hook body records, and caps the
+  connection's busy timeout at the budget for the body; a write other
+  than an event row (the membership resolution's) waits up to that cap,
+  so two of them under a held lock outlast it. The daemon's queue before
+  a body starts is not counted.
 - **Health counts the marker fires and overrides of `memory_write`
   only.** `memory_update`'s `transient_warning` and its
   `markers_acknowledged` are audit rows now, but the override rate does

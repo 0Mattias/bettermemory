@@ -123,6 +123,7 @@ from .config import Config, load_config
 from .events import (
     HARNESS_STAMPED_KINDS,
     Recorder,
+    hook_body,
     redact_query,
     suppressed,
 )
@@ -315,6 +316,7 @@ def audit_transcript(
     )
 
 
+@hook_body("stop")
 def run_audit(
     *,
     user_message: str | None,

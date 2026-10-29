@@ -69,6 +69,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, NamedTuple, TypeGuard
 
 STATE_DIR_ENV = "BETTERMEMORY_STATE_DIR"
@@ -137,6 +138,27 @@ STORE_FILENAME = "memory.sqlite"
 
 START_TIMEOUT_SECONDS = 8.0
 HOOK_TIMEOUT_SECONDS = 15.0
+#: The timeout the plugin's hooks.json gives each hook (`HOOK_EVENTS`), in
+#: seconds: Claude Code kills the hook's process at it. The one place the
+#: manifest and the hook share; tests/test_plugin.py pins the manifest to
+#: it, and `hook_budget_seconds` reads it.
+HOOK_HARNESS_TIMEOUT_SECONDS: Mapping[str, float] = MappingProxyType(
+    {"session-start": 20.0, "stop": 30.0, "prompt": 10.0}
+)
+#: What a hook body leaves of its harness timeout for this client's start
+#: (uvx, the daemon's proof) and the reply's way back, in seconds.
+HOOK_MARGIN_SECONDS = 2.0
+
+
+def hook_budget_seconds(event: str) -> float:
+    """The seconds a hook body for `event` has for its store rows, from its
+    start: the harness's timeout for the hook (`HOOK_HARNESS_TIMEOUT_SECONDS`)
+    or this client's wait for the daemon's reply (`HOOK_TIMEOUT_SECONDS`),
+    the shorter, less `HOOK_MARGIN_SECONDS`. 8 s for the prompt hook."""
+    harness = HOOK_HARNESS_TIMEOUT_SECONDS.get(event, HOOK_TIMEOUT_SECONDS)
+    return max(0.0, min(harness, HOOK_TIMEOUT_SECONDS) - HOOK_MARGIN_SECONDS)
+
+
 #: How long `shutdown_daemon` waits for a daemon to release the store
 #: after the shutdown endpoint answered, before it falls back to a
 #: signal, and how long it then waits again: the part of a stop the daemon
@@ -1525,6 +1547,21 @@ def _membership_rounds(
     return reply
 
 
+def _failure(exc: Exception) -> str:
+    """What a failed hook says on its one stderr line: the daemon's own
+    account when its reply carries one (the hook body's error, as
+    `events.StoreBusy` words a busy store), else the exception."""
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+        except (OSError, ValueError, AttributeError):
+            body = None
+        said = body.get("error") if isinstance(body, dict) else None
+        if isinstance(said, str) and said:
+            return said
+    return f"{exc.__class__.__name__}: {exc}"
+
+
 def _blackhole_stdout() -> None:
     try:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
@@ -1575,10 +1612,7 @@ def hook_main(argv: list[str]) -> int:
         )
         reply = _membership_rounds(state, event, payload, reply)
     except Exception as exc:  # noqa: BLE001 - the hook contract is exit 0
-        print(
-            f"bettermemory hook {event}: {exc.__class__.__name__}: {exc}",
-            file=sys.stderr,
-        )
+        print(f"bettermemory hook {event}: {_failure(exc)}", file=sys.stderr)
         return 0
     # A hook's JSON for the harness (the Stop's capture instruction) is
     # printed even under --quiet, and alone: Claude Code reads stdout as
@@ -1608,6 +1642,8 @@ __all__ = [
     "LOCK_WAIT_SECONDS",
     "NotProven",
     "HOOK_EVENTS",
+    "HOOK_HARNESS_TIMEOUT_SECONDS",
+    "HOOK_MARGIN_SECONDS",
     "HOOK_WORDS",
     "HOST",
     "Identified",
@@ -1624,6 +1660,7 @@ __all__ = [
     "health",
     "health_proof",
     "held_lock_reason",
+    "hook_budget_seconds",
     "hook_main",
     "identify",
     "lock_file_for",

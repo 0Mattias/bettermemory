@@ -119,3 +119,4 @@ def test_the_shipped_config_and_the_hook_note_agree() -> None:
     ]
     assert "refuses to inject" not in note
     assert "recorded with telemetry off too" in note
+    assert "HOOK_HARNESS_TIMEOUT_SECONDS" in note

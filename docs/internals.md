@@ -117,7 +117,8 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   state, recorded with telemetry off too, then with only the fields
   their readers read (since 9.0.0rc14; operations.md lists them), so the
   brief and the recall show with telemetry off; a row that cannot land
-  fails the hook, and nothing it would have recorded is shown.
+  before the hook's budget (its hooks.json timeout less a margin) fails
+  the hook, and nothing it would have recorded is shown.
   `[behavior] prompt_recall` takes `project` (default), `everywhere` or
   `off`; `session_brief = false` turns the brief off.
 - Claims about the user commit like any fact but carry the

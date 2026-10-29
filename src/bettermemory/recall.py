@@ -99,7 +99,12 @@ from .audit import (
     recall_held_fields,
 )
 from .config import Config, load_config
-from .events import HARNESS_SESSION_FIELD, Recorder, redact_query
+from .events import (
+    HARNESS_SESSION_FIELD,
+    Recorder,
+    hook_body,
+    redact_query,
+)
 from .models import Memory, generate_ulid, utcnow
 from .origin import Origin
 from .owner_prompt import PROMPT_CUT_CHARS, owner_text, probe_text
@@ -682,6 +687,7 @@ def _attribute_compaction(
     ).record("segment_opened", **fields)
 
 
+@hook_body("session-start")
 def session_brief(
     *,
     session_id: str | None,
@@ -1292,6 +1298,7 @@ def _seen_in_log(
     return seen
 
 
+@hook_body("prompt")
 def prompt_recall(
     *,
     prompt: str,

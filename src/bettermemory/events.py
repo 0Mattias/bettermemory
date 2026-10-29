@@ -23,7 +23,8 @@ measurement never fails the tool call it describes. A state or audit row
 is not best-effort: a write that meets another writer's lock is tried
 again (`STATE_WRITE_ATTEMPTS`), and a failure that remains is logged and
 raised, so a tool call answers ``store_busy`` and a hook fails with its
-one stderr line rather than the row going missing in silence. Query
+one stderr line rather than the row going missing in silence; inside a
+hook no try outlasts the hook's deadline (`within_hook_budget`). Query
 text is never stored verbatim: `query` and `probe_query` are redacted to
 a hash, a short preview and a length, with known secret shapes stripped
 first, before the row is signed; with telemetry off the one query a
@@ -35,13 +36,16 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import enum
+import functools
 import hashlib
 import logging
 import re
-from collections.abc import Iterator, Mapping
+import sqlite3
+import time
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 from . import identity
 from .credentials import secret_spans
@@ -50,6 +54,9 @@ if TYPE_CHECKING:
     from .store import Store
 
 log = logging.getLogger("bettermemory.events")
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 
 # Fields whose values are model/user-typed free text and may carry
@@ -390,7 +397,9 @@ STATE_KINDS: frozenset[str] = frozenset(STATE_FIELDS)
 #: holds (SQLITE_BUSY or SQLITE_LOCKED) before the failure is raised: the
 #: first try and one more. Each try waits for the lock up to the
 #: connection's busy timeout (`Store.set_busy_timeout`, 5 s for each
-#: role). A row recorded inside another call's transaction is tried once: that
+#: role), and inside a hook no later than the hook's deadline
+#: (`within_hook_budget`), which falls before the harness kills the hook.
+#: A row recorded inside another call's transaction is tried once: that
 #: transaction already holds the lock.
 STATE_WRITE_ATTEMPTS = 2
 
@@ -529,6 +538,104 @@ def suppressed() -> Iterator[None]:
         yield
     finally:
         _SUPPRESSED.reset(token)
+
+
+# A hook's deadline (ENG-108). Claude Code kills a hook at the timeout the
+# plugin's hooks.json gives it (10 s for the prompt), and a state row tried
+# twice under a 5 s busy timeout outlasted that: the hook was gone before
+# the daemon answered, and a row landing late recorded a recall the model
+# never saw. Inside a hook body every row is tried no later than the
+# deadline (`Store.record_event`), and a state row another writer kept out
+# is the hook's failure, named for what it did not do.
+_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "bettermemory_events_deadline", default=None
+)
+
+#: What a hook does not do when its state row cannot land, by hook event
+#: (`_daemon_client.HOOK_EVENTS`).
+_NOT_DONE: Mapping[str, str] = MappingProxyType(
+    {
+        "session-start": "the brief was not shown",
+        "prompt": "the recall was not shown",
+        "stop": "the turn was not audited",
+    }
+)
+
+
+class StoreBusy(RuntimeError):
+    """A hook body's state row met another writer's lock until the hook's
+    deadline (`within_hook_budget`): the hook showed nothing, as a row
+    that cannot land shows nothing, and says so in the one line its
+    client prints."""
+
+
+def deadline() -> float | None:
+    """The `time.monotonic()` reading by which the current hook body's
+    rows are tried, or None outside one (a tool call waits its busy
+    timeout on each try)."""
+    return _DEADLINE.get()
+
+
+def _store_busy(exc: BaseException) -> bool:
+    code = getattr(exc, "sqlite_errorcode", None)
+    return (
+        isinstance(exc, sqlite3.OperationalError)
+        and isinstance(code, int)
+        and code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+    )
+
+
+@contextlib.contextmanager
+def within_hook_budget(event: str, store: Store | None = None) -> Iterator[None]:
+    """Run a hook body for `event` (`_daemon_client.HOOK_EVENTS`) under its
+    deadline: its budget (`_daemon_client.hook_budget_seconds`: the
+    harness's timeout for the hook as hooks.json gives it, less a margin)
+    from now, or an earlier deadline already set. Every row is tried no
+    later than the deadline (`Store.record_event`), and the body's other
+    writes on `store` wait the budget at most, not the busy timeout. A busy
+    store that keeps a row out raises `StoreBusy`, whose text says the
+    store was busy, what the hook did not do, and to run ``bettermemory
+    doctor``."""
+    from ._daemon_client import hook_budget_seconds
+
+    budget = hook_budget_seconds(event)
+    at = time.monotonic() + budget
+    held = _DEADLINE.get()
+    token = _DEADLINE.set(at if held is None else min(held, at))
+    waited = store.busy_timeout if store is not None else None
+    if store is not None and waited is not None and waited > budget:
+        store.set_busy_timeout(budget)
+    try:
+        yield
+    except Exception as exc:
+        if not _store_busy(exc):
+            raise
+        raise StoreBusy(
+            f"the store was busy, so {_NOT_DONE.get(event, 'nothing was shown')}: "
+            "another writer held it past this hook's time; run "
+            "`bettermemory doctor`"
+        ) from exc
+    finally:
+        _DEADLINE.reset(token)
+        if store is not None and waited is not None and waited > budget:
+            store.set_busy_timeout(waited)
+
+
+def hook_body(event: str) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+    """Decorate the body of the `event` hook: it runs `within_hook_budget`
+    over the store it is passed as ``store=``."""
+
+    def wrap(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+        @functools.wraps(fn)
+        def body(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            given = kwargs.get("store")
+            store = cast("Store", given) if hasattr(given, "set_busy_timeout") else None
+            with within_hook_budget(event, store):
+                return fn(*args, **kwargs)
+
+        return body
+
+    return wrap
 
 
 #: The marker the second pass splices in for a span the five patterns
@@ -682,8 +789,9 @@ class Recorder:
         It is tried `STATE_WRITE_ATTEMPTS` times against a busy store, and
         a failure that remains is logged and raised; a store open for
         reading only records nothing, with one warning, as before
-        (`Store.record_event`). Inside `suppressed` nothing is
-        recorded."""
+        (`Store.record_event`). Inside a hook body no try outlasts the
+        hook's deadline (`within_hook_budget`). Inside `suppressed`
+        nothing is recorded."""
         if _SUPPRESSED.get():
             return
         # Off means no measurement, not no state and no trail.
@@ -713,9 +821,15 @@ class Recorder:
         session = (
             fields.pop("session") if "session" in fields else self.session_for_request()
         )
+        # A hook body's rows are tried no later than its deadline; a tool
+        # call's are not bounded beyond the busy timeout.
+        at = _DEADLINE.get()
+        bounded: dict[str, Any] = {} if at is None else {"deadline": at}
         if not state:
             try:
-                self.store.record_event(kind, session=session, actor=actor, **fields)
+                self.store.record_event(
+                    kind, session=session, actor=actor, **bounded, **fields
+                )
             except Exception as exc:  # noqa: BLE001 - measurement never fails the call
                 log.warning("event %s not recorded: %s", kind, exc)
             return
@@ -728,6 +842,7 @@ class Recorder:
                 actor=actor,
                 best_effort=False,
                 attempts=STATE_WRITE_ATTEMPTS,
+                **bounded,
                 **fields,
             )
         except Exception as exc:
@@ -793,10 +908,14 @@ __all__ = [
     "STATE_STAMP_FIELDS",
     "STATE_WRITE_ATTEMPTS",
     "KeptFields",
+    "StoreBusy",
+    "deadline",
+    "hook_body",
     "is_audit_row",
     "prunable",
     "redact_query",
     "row_class",
     "state_fields",
     "suppressed",
+    "within_hook_budget",
 ]

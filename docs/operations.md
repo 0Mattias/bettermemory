@@ -658,7 +658,14 @@ timeout (5 seconds), and a failure that remains fails the call:
   fail that call, a call of another tool, the same way.
 - A hook shows nothing, writes one line on its stderr and leaves a
   WARNING in the daemon's log, so nothing is shown that the log does not
-  hold.
+  hold. A hook's body runs under its budget: the timeout `hooks.json`
+  gives it (20 s for the brief, 10 s for the prompt, 30 s for the Stop),
+  capped at the client's 15 s wait, less 2 seconds. No row is tried past
+  it, and the body's other writes wait at most that long. The brief and
+  the recall fail closed: a store held past the budget shows nothing, and
+  the line reads `bettermemory hook prompt: StoreBusy: the store was
+  busy, so the recall was not shown: another writer held it past this
+  hook's time; run bettermemory doctor`.
 
 **Measurement** is every kind no product module reads: `recall_held`,
 the grades (`recall_grade`, `review_grade`, `capture_grade`), the

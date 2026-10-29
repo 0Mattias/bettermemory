@@ -15,6 +15,7 @@ only for type checking.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
@@ -155,6 +156,34 @@ def _busy(exc: BaseException) -> bool:
     return _primary_code(exc) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 
 
+def _time_left(deadline: float | None) -> bool:
+    """Whether another try fits before `deadline`: its pause and some
+    wait for the lock. Always, without one."""
+    if deadline is None:
+        return True
+    return deadline - time.monotonic() > EVENT_RETRY_PAUSE_SECONDS
+
+
+@contextlib.contextmanager
+def _waiting_until(store: Store, deadline: float | None) -> Iterator[None]:
+    """Bound the connection's wait for the lock by `deadline` for the block,
+    then give back the busy timeout it had. A connection inside another
+    call's transaction already holds the lock and is left alone."""
+    if deadline is None or store._tx_depth:
+        yield
+        return
+    held = store.busy_timeout
+    left = max(0.0, deadline - time.monotonic())
+    if left >= held:
+        yield
+        return
+    store.set_busy_timeout(left)
+    try:
+        yield
+    finally:
+        store.set_busy_timeout(held)
+
+
 def record_event(
     self: Store,
     kind: str,
@@ -163,6 +192,7 @@ def record_event(
     actor: Actor | Mapping[str, Any] | None = None,
     best_effort: bool = True,
     attempts: int = 1,
+    deadline: float | None = None,
     **fields: Any,
 ) -> LogRow | None:
     """One telemetry row. ``query`` and ``probe_query`` are redacted to
@@ -173,7 +203,11 @@ def record_event(
     another writer's lock refused (`_busy`) is tried up to ``attempts``
     times in all, `EVENT_RETRY_PAUSE_SECONDS` apart, and once only inside
     another call's transaction, which already holds the lock (a busy
-    there is not the lock's to give). A store open for reading only (its
+    there is not the lock's to give). With a ``deadline`` (a
+    `time.monotonic()` reading: a hook body's, `events.within_hook_budget`)
+    no try waits for the lock past it, and none is begun once it has
+    passed but the first, which takes the lock only if it is free. A
+    store open for reading only (its
     key not held here, `Store.key_state`, or opened read-only by its
     versions, SQLITE_READONLY) records no row of any class, with one
     warning, and its reads go on. A kind that names a mutation or a
@@ -193,10 +227,10 @@ def record_event(
     tries = 1 if self._tx_depth else max(1, attempts)
     for attempt in range(1, tries + 1):
         try:
-            with self._transaction() as tx:
+            with _waiting_until(self, deadline), self._transaction() as tx:
                 return self._append(tx, kind, payload, session=session)
         except (sqlite3.Error, OSError, RuntimeError) as exc:
-            if attempt < tries and _busy(exc):
+            if attempt < tries and _busy(exc) and _time_left(deadline):
                 log.info(
                     "event %s: the store was busy (%s); try %d of %d",
                     kind,
