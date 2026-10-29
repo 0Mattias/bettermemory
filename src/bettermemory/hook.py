@@ -55,7 +55,7 @@ disable can shield a real miss until the new server's first in-process
 tool call flips the anchor. The bias is conservative (over-suppress)
 and self-correcting.
 
-Residual divergence (two cases, opposite directions):
+Residual divergence:
 - Concurrent sessions: the anchor prefers the latest in-process event
   stamped with THIS hook's `worktree_root`, so a concurrent session in
   a DIFFERENT worktree no longer hijacks it — that hijack flipped the
@@ -74,14 +74,12 @@ Residual divergence (two cases, opposite directions):
   (legacy events, server outside a git checkout) fall back to
   latest-any session matching, where both directions are still
   possible.
-- Rotation bound: the event read is window-aware (`iter_events_window`
-  prepends the newest rotated segment when the active log doesn't cover
-  the attribution window), so a single mid-window rotation no longer
-  hides this turn's `search` / `scope_disable` events. The residual
-  loss needs TWO rotations inside one window — a `scope_disable` that
-  rotates beyond the newest segment while its session is still live is
-  lost and the shielded miss RE-FIRES — biases toward *over-flagging*.
-Both are narrow and match the single-active-server deployment.
+The case is narrow and matches the single-active-server deployment.
+8.x had a second, opposite case, the rotation bound: its log rotated,
+and two rotations inside one window could archive a live session's
+`scope_disable` and re-fire the shielded miss. The store's log does
+not rotate; the Stop reads its window's rows through
+`Store.events_since`.
 
 Failure mode: the hook must never block the turn end. Every error
 path is caught and exit code is forced to 0 so a parser hiccup or
@@ -589,20 +587,14 @@ def _audit_turn(
 
 def _stop_window(store: Store) -> list[dict[str, Any]]:
     """Take the store; return its events over the widest window the Stop reads."""
-    # Window-aware read: rotation archives the ENTIRE active log at a
-    # moment independent of turn boundaries, so a turn that straddles a
-    # rotation would lose its own `search` / `scope_disable` events
-    # from a plain active-log read and re-fire as a false miss.
-    # `iter_events_window` prepends the newest rotated segment whenever
-    # the active log doesn't cover the requested window, so every
-    # consumer of `recent` below (the retrieval shield, the disabled-
-    # scope replay, the pending-retrieval attribution) sees the full
-    # window across a single rotation. The request asks for the WIDEST
-    # window any consumer needs — the re-audit dedup's
-    # `REAUDIT_DEDUP_WINDOW_SECONDS` — which is a coverage request, not
-    # a filter: the reader yields the whole active log either way, and
-    # every time-scoped consumer (the retrieval shield, the attribution
-    # pass) applies its own narrower cutoff internally.
+    # One read of the log rows stamped within the WIDEST window any
+    # consumer of `recent` in the Stop needs (the retrieval shield, the
+    # disabled-scope replay, the pending-retrieval attribution, the
+    # re-audit dedup): the re-audit dedup's `REAUDIT_DEDUP_WINDOW_SECONDS`.
+    # `Store.events_since` reads from the window's floor on, and every
+    # time-scoped consumer applies its own narrower cutoff to the rows.
+    # (8.x read a log that rotation archived whole, so its reader
+    # prepended the newest rotated segment; the store keeps every row.)
     return list(
         store.events_since(_utcnow() - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS))
     )

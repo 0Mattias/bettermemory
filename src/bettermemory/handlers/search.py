@@ -782,9 +782,10 @@ def _attach_hit_relations(
     # same junk; cheap to compute, high signal-to-noise. Skip when
     # the hit list is empty (nothing to annotate). Loading events
     # lazily here rather than at handler construction time keeps
-    # the cost off searches that produce no hits. Window-aware read
-    # (`iter_events_window`), so the annotation doesn't lose a
-    # just-archived negative outcome to a rotation. This is the one
+    # the cost off searches that produce no hits. The store's log does
+    # not rotate, so the read needs no window-aware reader like 8.x's
+    # `iter_events_window`, which kept a rotation from archiving away a
+    # just-recorded negative outcome. This is the one
     # event read a search pays, and the store's event window memo serves
     # it: the lookback only moves forward, so a search reads the rows
     # appended since the last one rather than the whole log
