@@ -29,8 +29,8 @@ the names callers import from it: `search_lexicon` (the tokenizer and the
 FTS index text), `search_bm25` (the keyword and BM25 scorers),
 `search_lane` (the conversational lane's temporal reading and the per-hit
 labels) and `search_dedup` (the write-time dedup). A fifth,
-`search_steps`, holds the query-side steps of `search` that read nothing
-this module holds.
+`search_steps`, holds the query-side steps of `search`; its docstring says
+which of the names it calls a patch must target there and which here.
 """
 
 from __future__ import annotations
@@ -53,7 +53,6 @@ from .search_bm25 import (
     CorpusStats as CorpusStats,
     _MemoryTokens as _MemoryTokens,
     _filler_floor_stats as _filler_floor_stats,
-    _merge_corpus_stats as _merge_corpus_stats,
     _scope_tokens as _scope_tokens,
     compute_idf as compute_idf,
     score_memory as score_memory,
@@ -79,7 +78,6 @@ from .search_lane import (
     _V2_HIGH_MATCHED_FLOOR as _V2_HIGH_MATCHED_FLOOR,
     _TemporalReading as _TemporalReading,
     _conv_scaffold_terms as _conv_scaffold_terms,
-    _matched_leg as _matched_leg,
     _memory_anchor_day as _memory_anchor_day,
     _relevance_label as _relevance_label,
     _relevance_label_v2 as _relevance_label_v2,

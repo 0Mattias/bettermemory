@@ -1,4 +1,4 @@
-"""The steps of `search.search` that read nothing `search.py` holds.
+"""The query-side steps of `search.search`.
 
 `_check_mode` refuses an unknown mode; `_record_matched_legs` fills the
 caller's `matched_leg_out` for the trimmed hits; `_query_tokens`
@@ -14,7 +14,17 @@ constants) or that call the scorers `search.py` holds stay there, beside
 `search`. This module lives apart from `search.py` to keep each module
 under the 1,900-line watch line below the package's 2,000-line bound
 (ENG-97); from the family it imports `search_lexicon`, `search_bm25` and
-`search_lane`, never `search`, and `search.py` imports it.
+`search_lane` at module level, and `search.py` imports it.
+
+Where to patch. `_strip_stopwords` and `_kebab_parts` are read through
+`search` at call time (`search` is loaded whenever a step here runs, and
+is imported only inside the steps that read it), so a patch on `search`
+reaches the query stream here and the body stream in `search.py` alike.
+`_filler_floor_stats`, `_merge_corpus_stats`, `_scaffold_floor_stats`
+and `_matched_leg` are bound here at import and called only here, so a
+patch on them must target this module; `search` still re-exports the two
+of them tests import from it, and a patch on that re-export reaches no
+call.
 """
 
 from __future__ import annotations
@@ -25,7 +35,6 @@ from . import search_lexicon as _lexicon
 from .models import Memory
 from .search_bm25 import CorpusStats, _filler_floor_stats, _merge_corpus_stats
 from .search_lane import _matched_leg, _scaffold_floor_stats
-from .search_lexicon import _kebab_parts, _strip_stopwords
 
 
 def _check_mode(mode: str) -> None:
@@ -71,6 +80,8 @@ def _record_matched_legs(
 
 def _query_tokens(query: str, allow_empty_query: bool) -> tuple[list[str], bool]:
     """Tokenize `query` minus stopwords; return the tokens and the fallback flag."""
+    from . import search as _search
+
     raw_tokens = _lexicon.tokenize(query)
     # Strip stopwords from the query — bodies stay unfiltered. If stripping
     # EMPTIES a non-empty token list ("what is the" — or a lone term some
@@ -86,7 +97,7 @@ def _query_tokens(query: str, allow_empty_query: bool) -> tuple[list[str], bool]
     # memory at score 0, and browse mode keeps its recency-ordered
     # semantics for both empty and stopword-only queries — see
     # `search`'s `allow_empty_query`.
-    query_tokens = _strip_stopwords(raw_tokens)
+    query_tokens = _search._strip_stopwords(raw_tokens)
     stopword_fallback = False
     if not query_tokens and raw_tokens and not allow_empty_query:
         query_tokens = raw_tokens
@@ -100,6 +111,8 @@ def _fetch_corpus_stats(
     query_tokens: list[str],
 ) -> CorpusStats | None:
     """Ask the provider for the query's terms and parts; return the corpus stats."""
+    from . import search as _search
+
     # Corpus-wide document frequencies for the BM25 rankers, resolved from
     # the SAME terms the scorer will look up: every query token plus the
     # `_kebab_parts` components of each joined one. The conjunctive
@@ -116,7 +129,7 @@ def _fetch_corpus_stats(
     if corpus_stats_provider is not None and mode in ("bm25", "hybrid"):
         fetch_terms = list(query_tokens)
         for tok in query_tokens:
-            fetch_terms.extend(_kebab_parts(tok))
+            fetch_terms.extend(_search._kebab_parts(tok))
         corpus_stats = corpus_stats_provider(list(dict.fromkeys(fetch_terms)))
     return corpus_stats
 
@@ -156,6 +169,8 @@ def _expansion_corpus_stats(
     exp_terms: list[str],
 ) -> CorpusStats | None:
     """Fetch the synthesized terms' stats; return them merged onto `hybrid_stats`."""
+    from . import search as _search
+
     exp_stats = hybrid_stats
     if corpus_stats_provider is not None:
         # Above the threshold the floored query-term
@@ -175,7 +190,7 @@ def _expansion_corpus_stats(
         # exists to correct.
         exp_fetch = list(exp_terms)
         for term in exp_terms:
-            exp_fetch.extend(_kebab_parts(term))
+            exp_fetch.extend(_search._kebab_parts(term))
         exp_stats = _merge_corpus_stats(
             hybrid_stats,
             corpus_stats_provider(list(dict.fromkeys(exp_fetch))),
