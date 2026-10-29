@@ -30,6 +30,8 @@ import pytest
 import bettermemory
 from bettermemory import hook, sessions
 
+from .conftest import shielded_child_env
+
 PACKAGE = "bettermemory"
 SOURCE = Path(bettermemory.__file__).resolve().parent
 
@@ -331,6 +333,7 @@ def test_importing_a_module_loads_none_of_the_others(
         capture_output=True,
         text=True,
         timeout=60,
+        env=shielded_child_env(),
     )
     assert result.returncode == 0, result.stderr
 

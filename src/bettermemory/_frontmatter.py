@@ -9,8 +9,9 @@ them is shorter than the docstring explaining why we vendor.
 Bonus: we avoid the upstream foot-gun where `frontmatter.load(path,
 Loader=yaml.SafeLoader)` silently swallows the `Loader` kwarg into
 "default metadata" instead of using it. Here we always use pure-Python
-`yaml.SafeLoader` / `yaml.SafeDumper` (see store.py for why C-extension
-yaml is avoided).
+`yaml.SafeLoader` / `yaml.SafeDumper`, never the C extension's classes:
+`CSafeDumper` raised `EmitterError: expected SCALAR` under coverage
+instrumentation filtered to one submodule, and the pure-Python ones do not.
 
 On-disk format (matches what python-frontmatter produced, so existing
 memory files keep loading):
@@ -181,8 +182,8 @@ def loads(text: str) -> Post:
 
     # Translate the yaml package's exception hierarchy into ValueError
     # at the parser boundary. `yaml.YAMLError` inherits from `Exception`,
-    # NOT from `ValueError`, so downstream callers in `store.py` that
-    # catch `(ValueError, KeyError, OSError)` to skip malformed files
+    # NOT from `ValueError`, so downstream callers that skip a malformed
+    # file on `ValueError` (the v8 walks in `v8.py`; `store.py`'s, once)
     # would otherwise crash on a single corrupt file — torn writes from
     # `sync pull`, hand-edit typos, partial-write recovery. The
     # frontmatter module owns the YAML boundary, so the translation
@@ -532,7 +533,7 @@ def dumps(
     # store's malformed-file skip silently drops the record from every read
     # surface (load_all / load_one / search / health) while the write reported
     # committed. The byte count here matches exactly what `bounded_read` will
-    # measure on read: store.py / episodes.py both persist
+    # measure on read: the mirror (`mirror.py`) persists
     # `dumps(post).encode("utf-8")`, i.e. this same string. Catching it at the
     # one chokepoint every persist routes through turns that silent permanent
     # data loss into a clean ValueError for body+frontmatter combined and ALL

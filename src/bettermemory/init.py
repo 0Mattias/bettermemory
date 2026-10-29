@@ -356,7 +356,8 @@ def hermes_snippet_text(snippet: Mapping[str, Any]) -> str:
 def _dump_yaml_block(data: Mapping[str, Any], *, indent: int = 0, step: int = 2) -> str:
     """Render `data` as block-style YAML, every non-blank line shifted right
     by `indent` columns and nested mappings stepping in by `step`. The
-    pure-Python SafeDumper the store also uses (store.py says why),
+    pure-Python SafeDumper the frontmatter codec also uses (`_frontmatter`
+    says why),
     insertion order kept, no line wrapping so a long binary path stays on
     one line; an empty list or map still renders inline (`[]`, `{}`),
     which is the shape Hermes's own examples use."""

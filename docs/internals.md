@@ -905,6 +905,20 @@ not. A cue-less divergence is
 filed in the conflicts queue (`conflicts.py`). A write that passes lands
 in `store.py` as one signed log row and one table row in one
 transaction, with `log.py` signing the row and keeping the chain.
+`store.py` is the `Store` class, with its open, its connections and
+transactions, the admission readers and the status; it re-exports
+what a caller imports from its family and binds the family's method
+groups by name: `store_schema.py` the vocabulary, the table texts,
+the errors and the paths a store opens by, `store_rows.py` the row
+codecs and `_apply_mutation`, `store_keys.py` the key checks an open
+makes and the key ring's binding, `store_records.py` the record,
+standing-answer and tombstone methods, `store_journal.py` the
+episode journal, `store_tables.py` verifications, conflicts, imports
+and quarantine, `store_membership.py` the membership tables' rows,
+`store_events.py` the telemetry rows, the event reads and the log's
+refold and verification, `store_provenance.py` the provenance labels
+and the trust reads, and `store_index.py` the reads behind search
+and the document frequency memo.
 `origin.py` stamps where the write happened.
 
 **Read path.** `handlers/search.py` and `handlers/show.py` read the

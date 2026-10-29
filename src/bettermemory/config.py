@@ -1027,13 +1027,12 @@ def default_config_path() -> Path:
 # user upgrading from 3.1.x with the old key in their TOML silently lost
 # the threshold (fell back to the 0.0 default). This shim accepts the
 # old key, maps it to the new field, and emits a one-shot per-(path,key)
-# deprecation warning. Once-per-process matches the divergence-warning
-# guard in store.py: a long-lived server (`bettermemory serve`) that
-# rereads config on signal shouldn't spam the log on every reload, but
-# two distinct config paths in the same process each get their own
-# warning. Drop this shim no earlier than 3.4.x — long enough that any
-# 3.1.x user has seen the deprecation warning at least once. The
-# removed-key notice below shares the set, keyed `<key>+removed`.
+# deprecation warning. Once per process: a long-lived server
+# (`bettermemory serve`) that rereads config on signal shouldn't spam the
+# log on every reload, but two distinct config paths in the same process
+# each get their own warning. Drop this shim no earlier than 3.4.x — long
+# enough that any 3.1.x user has seen the deprecation warning at least
+# once. The removed-key notice below shares the set, keyed `<key>+removed`.
 _DEPRECATED_KEY_WARNED_PATHS: set[tuple[ConfigSource, str]] = set()
 
 
@@ -1254,8 +1253,7 @@ def _apply_legacy_endorsement_debt_alias(
     4. Neither present -> no-op.
 
     The (config_path, key) key on the warned-set lets a process serving
-    multiple memory directories surface each config's drift separately,
-    matching the `_DIVERGENCE_WARNED_ROOTS` discipline in store.py.
+    multiple memory directories surface each config's drift separately.
     Best-effort key resolution (`_resolved_for_guard`): resolving collapses
     symlinks so two `load_config` calls naming the same file via
     different paths share one warning; a path that cannot be resolved

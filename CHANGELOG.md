@@ -110,6 +110,47 @@ the candidates' testing.
   scan now reads every `eval*.py`. (`src/bettermemory/eval.py`,
   `src/bettermemory/eval_model.py`, `src/bettermemory/eval_render.py`,
   `tests/test_eval.py`, `docs/eval.md`)
+- **`store.py` is split into eleven modules, with no import path changed.**
+  `store.py` was 6,481 lines, over the 2,000-line bound for a module. The
+  vocabulary, the table texts, the errors and the paths a store opens by
+  move to `store_schema.py`, the row codecs and `_apply_mutation` to
+  `store_rows.py`, and the key checks and the key ring's binding to
+  `store_keys.py`. The `Store` methods move by area to `store_records.py`
+  (records, standing answers, tombstones and the corroboration check),
+  `store_journal.py` (the episode journal), `store_tables.py`
+  (verifications, conflicts, imports, quarantine), `store_membership.py`,
+  `store_events.py` (the telemetry rows, the event reads with their window
+  memo, and the log's reads, refold and verification),
+  `store_provenance.py` and `store_index.py` (the search seams and the
+  document frequency memo), each as a function `Store` binds by name, so a
+  call or a patch of a `Store` method reaches it as before. `store.py`
+  (1,926 lines) keeps `Store` with its open, its connections and
+  transactions, the admission readers and the status, and re-exports
+  every name a caller imports from it, as the same object. The code moved
+  unchanged but for two names that would shadow a function beside them:
+  `Store.get_many` and `Store.load_many` call their argument `ids` (every
+  caller passes it by position), and `mark_verified` calls its change set
+  `changes`. No module beside `store.py` imports it at run time, and each
+  one that logs logs as `bettermemory.store`. A test that patches a name
+  whose reader moved (the row readers, the stamp clock, the bound-elsewhere
+  guard, the event window bound, the URI helper of the binding check) now
+  patches the module that reads it, and `store` no longer binds those
+  names, so a patch left on `store` fails at once. One thing changes for
+  introspection: `typing.get_type_hints` on a method bound from a module
+  beside `store.py` raises `NameError` (106 of the 111 moved; the five
+  static methods resolve), since each imports `Store` only under
+  `TYPE_CHECKING`, and on Python 3.11 and 3.12 such a method's raw
+  `__doc__` loses the class's indentation (68 of them); nothing in the
+  package, the bench or the tools reads either.
+  (`src/bettermemory/store.py`, `src/bettermemory/store_schema.py`,
+  `src/bettermemory/store_rows.py`, `src/bettermemory/store_keys.py`,
+  `src/bettermemory/store_records.py`, `src/bettermemory/store_journal.py`,
+  `src/bettermemory/store_tables.py`, `src/bettermemory/store_membership.py`,
+  `src/bettermemory/store_events.py`, `src/bettermemory/store_provenance.py`,
+  `src/bettermemory/store_index.py`, `tests/test_store_transactions.py`,
+  `tests/test_bound_elsewhere_warning.py`, `tests/test_sqlite_uri.py`,
+  `tests/test_commit_drift_cache.py`, `tests/test_episode_volume_rollup.py`,
+  `tests/test_event_window.py`, `docs/internals.md`, `CONTRIBUTING.md`)
 - **`search.py` is split into five modules.** The ranker keeps `search()`,
   the fusion, the snippet and token caches and the conversational rerank,
   and goes from 4,305 lines to 1,686. Beside it, `search_lexicon` holds

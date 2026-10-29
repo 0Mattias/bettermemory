@@ -511,10 +511,10 @@ def flock_excl(
     cross-host ``sync push`` posture doesn't leak it as world-readable
     on POSIX hosts.
 
-    This is the SINGLE definition. ``store.py``, ``events.py``, and
-    ``sync.py`` all alias to this so a future fix to the locking
-    discipline lands in one place and not three — see the 2.6.3
-    pattern-generalization audit note.
+    This is the SINGLE definition. ``log.py`` (the key ring's head,
+    origin and binding files) and ``backup.py`` both take their locks
+    through it, so a future fix to the locking discipline lands in one
+    place — see the 2.6.3 pattern-generalization audit note.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + lock_suffix)

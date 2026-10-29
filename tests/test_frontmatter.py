@@ -2,9 +2,9 @@
 
 Originally `python-frontmatter`, vendored as `bettermemory._frontmatter` so we
 can drop the dependency (it calls deprecated `codecs.open()` on 3.14) and pin
-pure-Python YAML directly. Tests here document the contract that
-`store.py` relies on; the cross-checks against the upstream library were
-done at vendor time.
+pure-Python YAML directly. Tests here document the contract the v8 readers
+(`v8.py`) and the mirror rely on, as `store.py` once did; the cross-checks
+against the upstream library were done at vendor time.
 """
 
 from __future__ import annotations
@@ -229,8 +229,8 @@ def test_load_rejects_invalid_utf8(tmp_path) -> None:
 
 def test_loads_translates_yaml_errors_to_valueerror() -> None:
     """Regression: `yaml.YAMLError` does not inherit from `ValueError`, so
-    downstream `store.py` callers that catch `(ValueError, KeyError, OSError)`
-    to skip malformed files used to crash on a single corrupt frontmatter
+    downstream callers that skip a malformed file on `ValueError` (`store.py`'s
+    then, the v8 walks now) used to crash on a single corrupt frontmatter
     (a sync-pull truncation, hand-edit typo, partial-write recovery). The
     parse boundary lives here, so the translation belongs here too: a
     malformed YAML region must raise `ValueError` with the original
