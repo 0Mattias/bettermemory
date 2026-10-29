@@ -115,7 +115,7 @@ from pathlib import Path
 from typing import Any, Protocol, TypeVar
 
 
-from ._fsutil import ensure_owner_only_dir
+from .store_keys import prepare_store_dir
 from .identity import Actor
 from .config import STORE_FILENAME
 from .log import (
@@ -553,7 +553,7 @@ class Store:
         path = store_path(path)
         if path.exists():
             raise FileExistsError(f"a store already exists at {path}")
-        ensure_owner_only_dir(path.parent, parents=True)
+        prepare_store_dir(path, keys_dir)
         orphans = orphans_beside(path)
         conn = _connect(path)
         try:

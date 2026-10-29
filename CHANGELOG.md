@@ -2512,6 +2512,22 @@ follows the candidates' testing.
   `bench/parity/run.py`, `bench/daemon/latency.py`,
   `bench/capture/_common.py`, `bench/toolcost/run.py`,
   `tests/test_bench_keys.py`, `tests/test_bench_toolcost.py`)
+- **A new store whose keys directory is a symbolic link to nothing is
+  refused in one line (ENG-93).** A keys directory kept on a volume that
+  is not mounted right now is a link to nothing. An existing store's
+  owner's open already refused it; `Store.create` (and so
+  `open_or_create` and every command that creates a store) opened the
+  store file, wrote its schema, and then met the link at `mkdir`, which
+  raised `FileExistsError`: a traceback, and a `memory.sqlite` left with
+  a schema and no meta. `Store.create` now first asks
+  `store_keys.prepare_store_dir`, which refuses a keys directory that is
+  such a link, or lies below one, with `KeysDirUnreadableError` (a
+  `KeyUnreadableError`, so the commands, `migrate v8` and the daemon end
+  in their one line for it) naming the link and its target, before any
+  file or directory is made; then it makes the store's directory, as the
+  line it replaces did. (`src/bettermemory/store_keys.py`,
+  `src/bettermemory/store.py`, `docs/api.md`,
+  `tests/test_store_create_keys_dir.py`)
 
 #### Known limitations
 

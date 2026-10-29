@@ -13,7 +13,9 @@ of files (`_warn_bound_elsewhere`). `Store.open` also checks whether a key
 signs a segment of the log (`_signs_a_segment`), and `Store._append`
 which key a row signs with once meta has been read again under the
 write lock (`_signing_key`). Also
-`configured_strict_provenance`. It logs as `bettermemory.store`. `store`
+`configured_strict_provenance`, and `prepare_store_dir`, which refuses
+a new store whose keys directory is a symbolic link to nothing
+(`KeysDirUnreadableError`). It logs as `bettermemory.store`. `store`
 re-exports every name a caller reads; a test that patches
 `_BOUND_ELSEWHERE_WARNED` patches this module. It lives apart from
 `store.py` to keep each module under the package's 2,000-line bound
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import errno
 import logging
+import os
 import sqlite3
 import stat
 import threading
@@ -33,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ._fsutil import sqlite_file_uri
+from ._fsutil import ensure_owner_only_dir, sqlite_file_uri
 from .log import (
     Head,
     KeyRing,
@@ -46,9 +49,15 @@ from .log import (
     iter_rows,
     last_row,
     row_verifies,
+    _dangling_link,
     same_mac,
 )
-from .store_schema import StoreRefusedError, admit_store, read_store_meta
+from .store_schema import (
+    StoreRefusedError,
+    admit_store,
+    read_store_meta,
+    resolve_keys_dir,
+)
 
 log = logging.getLogger("bettermemory.store")
 
@@ -79,6 +88,47 @@ def _signs_a_segment(segments: Sequence[Segment], key: bytes) -> bool:
 # one with a server as its authority, which `Path.as_uri` once wrote for a
 # Windows UNC path (`_fsutil.sqlite_file_uri`, `_store_id_at`).
 _NOT_A_STORE_CODES = frozenset({1, 11, 26})
+
+
+class KeysDirUnreadableError(KeyUnreadableError):
+    """The keys directory a new store's key would go in, or a directory on
+    the way to it, is a symbolic link to nothing (a keys directory kept on
+    a volume that is not mounted right now). `Store.create` refuses before
+    it writes anything (`prepare_store_dir`): ``mkdir`` met the link and
+    raised `FileExistsError`, a traceback with no word of the link. A
+    `KeyUnreadableError`, so every opener that ends a command in one line
+    for an unreadable key (`cli._common.exit_if_key_unreadable`, `migrate
+    v8`, the daemon) ends it so for this."""
+
+    def __init__(self, keys_dir: Path, link: Path, reason: str) -> None:
+        if link != keys_dir:
+            reason = f"{link}, on the way to it, {reason.removeprefix('it ')}"
+        super().__init__(
+            keys_dir, FileNotFoundError(errno.ENOENT, reason), reason=reason
+        )
+        self.message = (
+            f"the keys directory {keys_dir} cannot be used ({reason}); no store "
+            "is created until it can keep the new store's key"
+        )
+        self.keys_dir = keys_dir
+
+
+def prepare_store_dir(path: Path, keys_dir: Path | str | None) -> None:
+    """Make the directory of the new store file ``path`` (owner-only), once
+    the keys directory its key will go in (``keys_dir``, else the one the
+    store reads, `store_schema.resolve_keys_dir`) is not a symbolic link to
+    nothing, nor below one: the nearest entry on its way that is there
+    decides. Raises `KeysDirUnreadableError` naming the link and its
+    target, with nothing written. `Store.create`'s first write."""
+    keys = Path(keys_dir) if keys_dir is not None else resolve_keys_dir()
+    for entry in (keys, *keys.parents):
+        if not os.path.lexists(entry):
+            continue
+        reason = _dangling_link(entry)
+        if reason is not None:
+            raise KeysDirUnreadableError(keys, entry, reason)
+        break
+    ensure_owner_only_dir(path.parent, parents=True)
 
 
 def _store_id_at(path: Path) -> str | None:
