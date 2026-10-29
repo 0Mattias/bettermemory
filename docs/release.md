@@ -91,11 +91,14 @@ pytest tests/test_plugin.py tests/test_version.py -q
 #     a fold), it ships a `bettermemory migrate <subcommand>` and the
 #     release notes say so (CONTRIBUTING.md, the compatibility
 #     contract); `bettermemory migrate v8` is the pattern. A change to
-#     what a build writes raises `store_schema.SCHEMA_REVISION`, and
-#     `MIN_WRITER_REVISION` or `MIN_READER_REVISION` with it when older
-#     writers would leave it stale or older readers would misread it
-#     (CONTRIBUTING.md, "Store versions"); the notes name the oldest
-#     build that still writes and reads the upgraded store. The daemon
+#     what a build writes is a numbered step in `store_steps.STEPS`,
+#     whose number `store_schema.SCHEMA_REVISION` takes; the step names
+#     the minimum writer and reader revisions, raised when older
+#     writers would leave it stale or older readers would misread it,
+#     and `MIN_WRITER_REVISION` and `MIN_READER_REVISION` follow
+#     (CONTRIBUTING.md, "Store versions"). A step that is not additive
+#     runs only after a verified backup; the notes name the oldest build
+#     that still writes and reads the upgraded store. The daemon
 #     needs no restart ritual: the first call from an upgraded shim or
 #     hook replaces a running daemon of an older version (a newer one
 #     is kept, so an older client never restarts it).

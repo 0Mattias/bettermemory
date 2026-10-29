@@ -34,10 +34,15 @@ the import cycle between the recall and hook modules, so the module
 split can build on it; takes every mutating store call under the write
 lock before it reads what it decides on, so two writers can no longer
 lose an update or bring a removed record back; and closes a scan on the
-recall path that a crafted body could hold for seconds. The store's
-schema gains one index, added at the first open of an older store. It
-is a release candidate like the thirteenth; the stable 9.0.0 follows
-the candidates' testing.
+recall path that a crafted body could hold for seconds. It also gives
+the store a compatibility contract between the builds of one major: the
+store records the schema revisions that may read and write it and every
+open checks them, a change to the schema runs as a numbered step, after
+a verified backup when it changes what is there, and an older build
+refuses to write back a record a later one wrote with fields it lacks.
+The store's schema gains one index, added at the first open of an older
+store. It is a release candidate like the thirteenth; the stable 9.0.0
+follows the candidates' testing.
 
 #### Changed
 
@@ -349,18 +354,43 @@ the candidates' testing.
   through a tool is refused saying the store is open for reading only.
   `bettermemory doctor` names the revision a refused store needs and the
   build to open it with, where it advised a restore from a copy. The
-  owner's open otherwise raises the revision and the minimums to its own
-  where lower or missing, never lowering one, in a transaction taken only
-  when something changes. A store an earlier
-  candidate created carries none of the three and gets them at its first
-  writing open. The check is `store_schema.check_versions`, one call in
-  `Store.open`, and CONTRIBUTING.md's compatibility contract states the
-  rule, with what a change to the store raises.
+  owner's open otherwise runs the store's schema steps (the next entry),
+  which raise the revision and the minimums, never lowering one, and
+  names its build in `engine_version` when it comes later. A store an
+  earlier candidate created carries none of the three and gets them from
+  step 1 at its first writing open. The check is
+  `store_schema.check_versions`, one call in `Store.open`, and
+  CONTRIBUTING.md's compatibility contract states the rule, with what a
+  change to the store raises.
   (`src/bettermemory/store_schema.py`, `src/bettermemory/store.py`,
   `src/bettermemory/handlers/_shared.py`, `src/bettermemory/_handlers.py`,
   `src/bettermemory/doctor.py`, `CONTRIBUTING.md`, `docs/internals.md`,
   `docs/api.md`, `docs/operations.md`, `docs/release.md`,
   `tests/test_store_versions.py`, `tests/test_doctor.py`)
+- **A change to the store's schema within a major runs as a numbered
+  step, and one that changes what is there runs only after a backup.**
+  `store_steps.STEPS` lists every step this build knows, numbered from 1;
+  `schema_revision` is the newest a store has had, and the owner's open
+  runs each step above it in order, recording its number, raising the
+  minimums to the step's own and listing it in `meta`'s `schema_steps`
+  with its build, its time and its backup. Step 1 is D9's additive step,
+  the membership tables and indexes, which `Store.open` still runs at
+  every open. An additive step is recorded after it runs, so a crash
+  between the two runs it again and finds nothing to add. A step that is
+  not additive runs under the store's write lock after
+  `backup.create_backup` writes a bundle of the store as it stands and
+  `backup.verify_bundle` reads it sound (327 ms, the median of five, on a
+  store of 5,000 memories, beside 16 ms to write it), and is applied and
+  recorded in that one transaction: a crash or an error leaves the store
+  as it was and the bundle in place, a backup that fails or does not
+  verify keeps the step from running and fails the open naming why, and
+  a reader's open of a store waiting on such a step reads the store as it
+  stands and writes nothing, so `backup verify` and `backup restore`
+  under the build that took the bundle read it. This release ships no
+  such step; the tests register one.
+  (`src/bettermemory/store_steps.py`, `src/bettermemory/store_schema.py`,
+  `src/bettermemory/store.py`, `CONTRIBUTING.md`, `docs/internals.md`,
+  `docs/api.md`, `docs/release.md`, `tests/test_store_steps.py`)
 
 #### Fixed
 
@@ -1626,6 +1656,30 @@ the candidates' testing.
   the store (an import of a later build's export) is read through the
   model and loses the field before any row exists to check.
   (`src/bettermemory/store_rows.py`)
+- **A schema step leaves no log row, and one that keeps failing keeps
+  writing bundles.** The bundle before a step that is not additive is
+  unsigned, with a warning, when the store's key is not held, and reads
+  `unverifiable`, which the runner accepts. The write lock is held while
+  the bundle is written and verified, so other writers wait for it up to
+  their busy timeout. A step that fails every time writes a full bundle
+  at every owner's open, and the hooks open often; nothing bounds them
+  yet (a new bundle could be skipped when the last attempt's holds the
+  same head). The
+  runner has no form for a step that needs foreign keys turned off or a
+  `VACUUM`, which cannot run inside its transaction. `schema_steps` in
+  `meta` is a step's only record, and `meta` is not authenticated.
+  (`src/bettermemory/store_steps.py`)
+- **A live table that lacks a column this build knows reads as
+  tampered.** The fold compares the columns this build knows that a
+  table has, so a later build's column is left out, but a store missing
+  a column this build folds still reads `tampered` in `log verify`. A
+  later 9.x's additive step that added a column to a folded table would
+  make that reachable, since a reader's open does not run the step: that
+  build's `log verify` of a store not yet opened to write, and its
+  `backup verify` of every bundle taken before the upgrade, would read
+  `tampered`. CONTRIBUTING.md rules such a step out until refold
+  compares over the columns both sides hold.
+  (`src/bettermemory/store_events.py`, `src/bettermemory/store_rows.py`)
 
 ### 9.0.0rc13
 

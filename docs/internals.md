@@ -928,7 +928,9 @@ transaction, with `log.py` signing the row and keeping the chain.
 transactions, the admission readers and the status; it re-exports
 what a caller imports from its family and binds the family's method
 groups by name: `store_schema.py` the vocabulary, the table texts,
-the errors and the paths a store opens by, `store_rows.py` the row
+the errors, the paths a store opens by and the version check,
+`store_steps.py` the numbered schema steps and their runner,
+`store_rows.py` the row
 codecs and `_apply_mutation`, `store_keys.py` the key checks an open
 makes and the key ring's binding, `store_records.py` the record,
 standing-answer and tombstone methods, `store_journal.py` the
@@ -1116,11 +1118,25 @@ end (`store_schema.writes_rolled_back`, from
 off, so the membership rows and events a resolution writes are never
 kept, and a write through a tool is refused in words
 (`_handlers._read_only`). Otherwise the
-owner's open raises the revision and the minimums to this build's where
-lower or missing and names this build in `engine_version` when it is the
-newest, in one `BEGIN IMMEDIATE` taken only when something changes; a
-store that cannot be written then is left as it is, and the next writing
-open records them.
+store's schema steps run (`store_steps.run_steps`): `STEPS` numbers every
+change to the schema within the major, and the owner's open applies each
+step above `schema_revision` in order, recording its number, raising the
+minimums to the step's own and listing it in `meta`'s `schema_steps`.
+Step 1 is the additive step of decision D9 (`_add_membership_tables`),
+recorded in a `BEGIN IMMEDIATE` of its own after it runs. A step that is
+not additive runs under the write lock after `backup.create_backup` has
+written a bundle of the store as it stands (its snapshot reads through
+its own read-only connection, which sees the store before the step) and
+`backup.verify_bundle` has read it `ok`, or `unverifiable` when the
+store's key is not held, and is applied and recorded in that one
+transaction, so a crash leaves the store as it was and the bundle beside
+it. A reader's open runs no step; while such a step is pending it sets
+`PRAGMA query_only` and reads the store as it stands, which is how
+`backup verify` and `backup restore` under the build that ran the step
+read the bundle taken before it. The owner's open then
+names this build in `engine_version` when it is the newest, in a
+`BEGIN IMMEDIATE` taken only then; a store that cannot be written is left
+as it is, and the next writing open records what is missing.
 
 A record a later build wrote may carry fields this build's models do not
 define; the models read past them (pydantic's `extra='ignore'`). Every

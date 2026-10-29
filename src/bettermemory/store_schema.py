@@ -1196,7 +1196,7 @@ def _add_membership_tables(
 
 
 class VersionVerdict(NamedTuple):
-    """What `check_versions` decided for one open. `writing`: the open goes
+    """What `check_versions` decided for one open. `writes`: the open goes
     on as the owner's writing open (``allow_rekey``); False for a reader's
     open and for a store this build may only read. `read_only`: the store's
     minimum writer revision is above this build's, and the connection
@@ -1204,7 +1204,7 @@ class VersionVerdict(NamedTuple):
     `revision`, `min_reader` and `min_writer` are the store's as the open
     read them, 0 for a key the store does not carry."""
 
-    writing: bool
+    writes: bool
     read_only: bool
     reason: str | None
     revision: int
@@ -1217,12 +1217,6 @@ class VersionVerdict(NamedTuple):
 # connection a daemon's workers reopen.
 _READ_ONLY_TOLD: set[tuple[str, int]] = set()
 
-_VERSION_KEYS = (
-    SCHEMA_REVISION_KEY,
-    MIN_READER_KEY,
-    MIN_WRITER_KEY,
-    ENGINE_VERSION_KEY,
-)
 _WHOLE = re.compile(r"[0-9]{1,9}")
 
 
@@ -1273,57 +1267,40 @@ def _release_order(version: str | None) -> tuple[int, ...] | None:
     return version_key(version.split("+", 1)[0])
 
 
-def _wanted_versions(meta: Mapping[str, str], version: str) -> dict[str, str]:
-    """The version keys a writing open by this build changes: the revision
-    and the minimums raised to this build's where they are lower or missing
-    (never lowered, and a value that is not a whole number left alone), and
-    ``engine_version`` set to `version` where `version` comes later in
-    release order than the stored one, or the stored one has no place in
-    it and `version` has."""
-    wanted: dict[str, str] = {}
-    for key, floor in (
-        (SCHEMA_REVISION_KEY, SCHEMA_REVISION),
-        (MIN_READER_KEY, MIN_READER_REVISION),
-        (MIN_WRITER_KEY, MIN_WRITER_REVISION),
-    ):
-        raw = meta.get(key)
-        if raw is None or (_WHOLE.fullmatch(raw) and int(raw) < floor):
-            wanted[key] = str(floor)
+def _newer_engine(stored: str | None, version: str) -> bool:
+    """Whether `version` names a newer build than ``engine_version``'s
+    `stored`: later in release order, or the stored one has no place in it
+    and `version` has."""
     ours = _release_order(version)
-    theirs = _release_order(meta.get(ENGINE_VERSION_KEY))
-    if ours is not None and (theirs is None or ours > theirs):
-        wanted[ENGINE_VERSION_KEY] = version
-    return wanted
+    theirs = _release_order(stored)
+    return ours is not None and (theirs is None or ours > theirs)
 
 
-def _record_versions(
+def _record_engine(
     conn: sqlite3.Connection, path: Path, meta: dict[str, str], version: str
 ) -> None:
-    """Write what `_wanted_versions` asks at a writing open, read again
-    under the write lock so two builds opening at once leave the higher of
-    each. Nothing is written when nothing is wanted, so an open of a store
-    that already records this build takes no lock. A store that cannot be
-    written now (a read-only file, or one another writer holds past the
-    busy timeout) is left as it is with one line logged; the next writing
-    open records it. `meta` gains what was written."""
-    if not _wanted_versions(meta, version):
+    """Name this build in ``engine_version`` at a writing open when it is
+    newer than the stored one (`_newer_engine`), read again under the write
+    lock so two builds opening at once leave the newer. An open of a store
+    that already names this build or a newer one takes no lock. A store
+    that cannot be written now (a read-only file, or one another writer
+    holds past the busy timeout) is left as it is with one line logged; the
+    next writing open records it. `meta` gains what was written."""
+    if not _newer_engine(meta.get(ENGINE_VERSION_KEY), version):
         return
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            current = {
-                str(row[0]): str(row[1])
-                for row in conn.execute(
-                    "SELECT key, value FROM meta WHERE key IN (?, ?, ?, ?)",
-                    _VERSION_KEYS,
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = ?", (ENGINE_VERSION_KEY,)
+            ).fetchone()
+            newer = _newer_engine(None if row is None else str(row[0]), version)
+            if newer:
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (ENGINE_VERSION_KEY, version),
                 )
-            }
-            wanted = _wanted_versions(current, version)
-            conn.executemany(
-                "INSERT INTO meta(key, value) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                list(wanted.items()),
-            )
             conn.execute("COMMIT")
         except BaseException:
             # The COMMIT is inside, as in `_add_membership_tables`.
@@ -1332,18 +1309,24 @@ def _record_versions(
             raise
     except sqlite3.OperationalError as exc:
         log.info(
-            "store %s: version keys not recorded (%s); the next writing open "
-            "records them",
+            "store %s: engine_version not recorded (%s); the next writing open "
+            "records it",
             path,
             exc,
         )
         return
-    meta.update(current)
-    meta.update(wanted)
+    if newer:
+        meta[ENGINE_VERSION_KEY] = version
+    elif row is not None:
+        meta[ENGINE_VERSION_KEY] = str(row[0])
 
 
 def check_versions(
-    conn: sqlite3.Connection, path: Path, meta: dict[str, str], writing: bool
+    conn: sqlite3.Connection,
+    path: Path,
+    meta: dict[str, str],
+    writing: bool,
+    keys_dir: Path | str | None = None,
 ) -> VersionVerdict:
     """The compatibility contract at an open (ENG-107), run by `Store.open`
     once the store id and the schema version have passed. A store whose
@@ -1353,10 +1336,16 @@ def check_versions(
     the connection is set ``PRAGMA query_only``, so every write fails as on
     read-only media, nothing is recorded, an owner's open goes on as a
     reader's (no rekey, no key ring claim, no origin anchor), and the first
-    such open in a process logs one warning saying why. Otherwise a writing
-    open (`writing`, the owner's ``allow_rekey``) records this build's
-    revision, minimums and version (`_record_versions`). The verdict's
-    `writing` is what the open goes on with."""
+    such open in a process logs one warning saying why. Otherwise the store's
+    schema steps run (`store_steps.run_steps`): at a writing open (`writing`,
+    the owner's ``allow_rekey``) each step above the store's revision is
+    applied and recorded, a step that is not additive after a backup signed
+    with a key from `keys_dir`, the opener's keys directory; a reader's open
+    applies none, and while a step that is not additive is pending it is
+    set ``PRAGMA query_only`` and reads the store as it stands. A writing
+    open then names this build in ``engine_version``
+    when it is the newest (`_record_engine`). The verdict's `writes` is
+    what the open goes on with."""
     from . import __version__
 
     revision = _stored_revision(meta, SCHEMA_REVISION_KEY, path)
@@ -1386,8 +1375,11 @@ def check_versions(
             _READ_ONLY_TOLD.add(told)
             log.warning("%s", reason)
         return VersionVerdict(False, True, reason, revision, min_reader, min_writer)
+    from .store_steps import run_steps
+
+    run_steps(conn, path, meta, writing=writing, keys_dir=keys_dir)
     if writing:
-        _record_versions(conn, path, meta, __version__)
+        _record_engine(conn, path, meta, __version__)
     return VersionVerdict(writing, False, None, revision, min_reader, min_writer)
 
 

@@ -663,7 +663,7 @@ class Store:
                 raise ValueError(
                     f"{path} is schema {schema}; this build reads up to {SCHEMA_VERSION}"
                 )
-            allow_rekey = check_versions(conn, path, meta, allow_rekey).writing
+            allow_rekey = check_versions(conn, path, meta, allow_rekey, keys_dir).writes
             _add_membership_tables(conn, path, meta)
             keyring = KeyRing(
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
