@@ -118,11 +118,15 @@ from .recall_admission import (
 )
 from .recall_brief import (
     COMPACT_MARKER_WINDOW_SECONDS,
+    HOOK_TIMEOUT_SECONDS as HOOK_TIMEOUT_SECONDS,
+    SUBAGENT_WAIT_SECONDS as SUBAGENT_WAIT_SECONDS,
     _BriefSelection,
     _delivered,
     _marker_near,
     _ranked,
     _ranked_by,
+    _session_went_on,
+    _subagent_marker_near,
     _subagent_transcript,
     _suppressed_reason,
     orphan_notice as orphan_notice,
@@ -144,6 +148,7 @@ from .recall_state import (
     STATE_MAX_SESSIONS as STATE_MAX_SESSIONS,
     SURFACE_BRIEF,
     SURFACE_RECALL,
+    WITHDRAWN_FIELD,
     _DELIVERED_PROVENANCE as _DELIVERED_PROVENANCE,
     RecallState,
     SegmentView as SegmentView,
@@ -512,6 +517,26 @@ def confirm_compaction(
     carries the subagent (`Subagent.fields`), and no Stop ever settles a
     subagent's shows, so the segment it leaves is not settled.
 
+    Claude Code raises a subagent's compaction under the session's id and
+    transcript path, and its marker lands in the subagent's own transcript,
+    never the session's (ENG-150). So a signal of the session's that its
+    transcript answers with no new marker within the window (the marker
+    the segments last opened on counts as none: it answered an earlier
+    compaction) is read against the session's subagent transcripts too,
+    by a timing rule. Once `SUBAGENT_WAIT_SECONDS` have passed since it
+    and the session's transcript shows its conversation gone on past the
+    window with no recent marker newer than the one the segments opened
+    on (`_session_went_on`; a compaction of the session's own writes its
+    marker before such a row), a subagent transcript holding a marker
+    within the window names the subagent the compaction was
+    (`_subagent_marker_near`), and the signal is taken back from the
+    session (`_attribute_compaction`). Until then the signal waits: a
+    marker of the session's own measured on 2026-10-19 landed within
+    29.2 s of its hook, but Claude Code writes it only after every
+    SessionStart hook returns, so a slower hook holds it back. The rule
+    rests on a measured order, not on anything Claude Code promises (the
+    rc14 known limitations name its failure modes).
+
     Every hook reads the segment after this: the SessionStart, the prompt
     recall and the Stop. A compact SessionStart rarely reads its own
     marker, which reaches the file after the hook has run, so the signal
@@ -522,17 +547,45 @@ def confirm_compaction(
     the ``marker`` and the ``opened_at`` of the signal, stamped
     `triggered_from` by the hook that read it. A read that finds none
     leaves the signal for the next, however late: the signal ends only on
-    a row the log holds (its confirmation, a clear, another compact), so
-    the state rebuilt from the log holds it exactly when the daemon does.
-    While a signal is pending each hook reads the transcript once more
-    (`transcript.compact_marker`, 64 MiB at most). With telemetry off
+    a row the log holds (its confirmation, a clear, another compact, or
+    its take-back for a subagent), so the state rebuilt from the log holds
+    it exactly when the daemon does. While a signal is pending each hook
+    reads the transcript once more (`transcript.compact_marker`, 64 MiB
+    at most) and, past `SUBAGENT_WAIT_SECONDS`, its tail back to the
+    newest row of the conversation; once that row is past the window, it
+    reads back to the newest marker (64 MiB at most), and then stats
+    every subagent transcript, reads the first row of each written since
+    the window opened and searches up to `SUBAGENT_TRANSCRIPTS_READ` of
+    them (64 MiB each). With telemetry off
     nothing is resolved and nothing recorded, as nothing is shown."""
     if not cfg.telemetry.enabled:
         return None
     at = state.pending_compaction(store, key, now=now)
     if at is None:
         return None
+    opened_on = state.segment(store, key, now=now).marker
     marker = _marker_near(transcript_path, at)
+    if marker is not None and marker.key == opened_on:
+        marker = None
+    if marker is None:
+        if (
+            agent is None
+            and now - at >= timedelta(seconds=SUBAGENT_WAIT_SECONDS)
+            and _session_went_on(transcript_path, at, opened_on)
+        ):
+            _attribute_compaction(
+                store=store,
+                state=state,
+                key=key,
+                transcript_path=transcript_path,
+                at=at,
+                cfg=cfg,
+                triggered_from=triggered_from,
+                now=now,
+                origin=origin,
+                cwd=cwd,
+            )
+        return None
     opened = state.resolve_compaction(key, at=at, marker=marker)
     if opened is None:
         return None
@@ -564,6 +617,66 @@ def confirm_compaction(
         **(agent.fields() if agent is not None else {}),
     )
     return opened
+
+
+def _attribute_compaction(
+    *,
+    store: Store,
+    state: RecallState,
+    key: tuple[str, str],
+    transcript_path: str | None,
+    at: datetime,
+    cfg: Config,
+    triggered_from: str,
+    now: datetime,
+    origin: Origin | None,
+    cwd: Path | None,
+) -> None:
+    """Take the session's compact signal held since `at` back for the
+    subagent whose transcript holds its marker, if one does (ENG-150).
+
+    The signal ends and the ids the compact's brief printed leave the
+    session's segment and its settled set (`RecallState.
+    attribute_compaction`): they were printed into the subagent, which
+    the session never saw. A `segment_opened` row records it under the
+    session's id, carrying the subagent (`Subagent.fields`, ``agent_from:
+    "transcript"``), the segment the compaction opened in the subagent's
+    own scope (the next one, or the one it is in when that segment
+    opened on this marker), the ``marker``, the signal's ``opened_at``,
+    the ``withdrawn`` ids and the brief's ``brief_event_id``: the
+    session's rebuild takes the same ids back on it, and the subagent's
+    scope holds them as shown in its segment. The session's segment does
+    not change, so nothing is settled."""
+    found = _subagent_marker_near(transcript_path, at)
+    if found is None:
+        return
+    agent, marker = found
+    scope = RecallState(agent_id=agent.agent_id).segment(store, key, now=now)
+    taken = state.attribute_compaction(key, at=at)
+    if taken is None:
+        return
+    withdrawn, brief_event_id = taken
+    fields: dict[str, Any] = {
+        "session_id": key[1],
+        "harness": key[0],
+        "source": "compact",
+        "segment": scope.segment if scope.marker == marker.key else scope.segment + 1,
+        "marker": marker.key,
+        "opened_at": isoformat_utc(at),
+        WITHDRAWN_FIELD: withdrawn,
+        "rule": RULE,
+        **agent.fields(),
+    }
+    if brief_event_id is not None and withdrawn:
+        fields["brief_event_id"] = brief_event_id
+    caller = origin if origin is not None else _origin.capture_caller(cwd)
+    Recorder(
+        store=store,
+        session_id=key[1],
+        enabled=cfg.telemetry.enabled,
+        worktree_root=caller.worktree_root,
+        triggered_from=triggered_from,
+    ).record("segment_opened", **fields)
 
 
 def session_brief(
@@ -698,8 +811,16 @@ def session_brief(
         agent=agent,
     )
     marker = _marker_near(marker_path, now) if opened_by == "compact" else None
+    # The brief's event is named on a compact's signal, so a later read
+    # that finds the compaction a subagent's takes its ids back (ENG-150).
+    brief_event_id = generate_ulid()
     view, opened = state.open_segment(
-        store, key, source=opened_by, now=now, marker=marker
+        store,
+        key,
+        source=opened_by,
+        now=now,
+        marker=marker,
+        event_id=brief_event_id,
     )
     if opened and cfg.telemetry.enabled and agent is None:
         settle_unused(
@@ -730,6 +851,7 @@ def session_brief(
         state=state,
         now=now,
         resolution=caller_resolution,
+        event_id=brief_event_id,
     )
     if (
         result.event_id is None
@@ -785,9 +907,11 @@ def _brief_in_segment(
     state: RecallState,
     now: datetime,
     resolution: Resolution | None = None,
+    event_id: str | None = None,
 ) -> HookResult:
     """The brief for the segment `session_brief` just opened or resumed,
-    recorded when shown; empty when nothing is.
+    recorded when shown, under `event_id` when given (the event a
+    compact's signal names); empty when nothing is.
 
     What the brief may show is the SESSION_BRIEF surface's admission for
     the caller's `resolution` (design 3.5): its own project's memories
@@ -838,6 +962,7 @@ def _brief_in_segment(
         return empty
     admission = admission_for(SESSION_BRIEF, store, resolution)
     membership = _delivery_membership(resolution, admission)
+    brief_event_id = event_id or generate_ulid()
 
     def record(
         ids: list[str],
@@ -884,6 +1009,7 @@ def _brief_in_segment(
                 "membership": admitted_nothing(admission.nothing),
                 "rc3_admitted": [],
             },
+            event_id=brief_event_id,
         )
         state.note_shown(
             key, [], delivery=False, now=now, surface=SURFACE_BRIEF, event_id=event_id
@@ -923,7 +1049,7 @@ def _brief_in_segment(
     # The cooldown decides atomically: a concurrent prompt of the same
     # session may have shown some of these ids since `view` was read, and
     # what the claim keeps is noted as shown before anything is printed.
-    event_id = generate_ulid()
+    event_id = brief_event_id
     kept_standing, kept_work, segment = state.claim_brief(
         key,
         [memory.id for memory in selection.standing],

@@ -6,8 +6,11 @@ here: the label gate (`_delivered`), the ranking by the owner's words
 (`_suppressed_reason`); `render_brief` prints them. `_marker_near`
 reads the compaction marker near a compact SessionStart,
 `_subagent_transcript` names a subagent's own transcript beside the
-session's (ENG-150), and `orphan_notice` is the data-loss line a brief
-leads with.
+session's, `_session_went_on` reads whether the session's conversation
+went on past a held compact signal with no compaction of its own, and
+`_subagent_marker_near` finds the
+subagent whose transcript holds a compaction's marker (ENG-150), and
+`orphan_notice` is the data-loss line a brief leads with.
 `_select_brief` stays in `recall`, where a test patches it. `recall`
 re-exports every name here a caller imports from it. This module lives
 apart from `recall.py` to keep each module under the package's
@@ -17,6 +20,7 @@ and `recall_admission`, never `recall`, and `recall` imports it.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -31,11 +35,12 @@ from .config import Config
 from .membership import UNRESOLVED
 from .models import Memory
 from .recall_admission import summarize
-from .recall_state import _DELIVERED_PROVENANCE
+from .recall_state import _DELIVERED_PROVENANCE, AGENT_FROM_TRANSCRIPT, Subagent
 from .search import SearchMode
 from .search import search as rank_search
 from .store import Store
-from .transcript import CompactMarker, compact_marker
+from .time_utils import parse_event_ts
+from .transcript import CompactMarker, ReverseLines, compact_marker
 
 if TYPE_CHECKING:
     from .handlers.search import SearchPool
@@ -224,6 +229,88 @@ def _marker_near(transcript_path: str | None, at: datetime) -> CompactMarker | N
     )
 
 
+#: The rows of a conversation (`_session_went_on`): what the owner and the
+#: harness submit and what the model answers, not the transcript's
+#: bookkeeping (attachments, queue operations, progress, system rows).
+_CONVERSATION_TYPES = frozenset({"user", "assistant"})
+
+
+#: A window every marker is within: `_session_went_on` reads the newest
+#: marker whenever it was stamped.
+_EVER = timedelta(days=36_500)
+#: Claude Code's default hook timeout (2.1.309: 600 s). A reactive
+#: compaction stamps its marker before its PostCompact hooks run, and its
+#: SessionStart comes after them: up to this long after the marker.
+HOOK_TIMEOUT_SECONDS = 600
+
+
+def _session_went_on(
+    transcript_path: str | None, at: datetime, opened_on: str | None
+) -> bool:
+    """Whether the session's own transcript shows its conversation gone
+    on past the window of a compact signal held since `at`, with no
+    recent compaction of its own since the one its segments last opened
+    on (`opened_on`): the newest row of the session's own thread (a
+    ``user`` or ``assistant`` row that is no sidechain's and names no
+    ``agentId``) is stamped more than `COMPACT_MARKER_WINDOW_SECONDS`
+    after `at`, and the newest ``compact_boundary`` row, by file order,
+    is `opened_on`, is stamped more than `HOOK_TIMEOUT_SECONDS` before
+    `at`, or there is none.
+
+    A compaction of the session's own writes its marker before any row
+    of its conversation stamped after it: in the local transcripts read
+    on 2026-10-28, the rows written before each of 143 boundaries were
+    all stamped before it, the latest 0.81 s before. So once the first
+    half holds, a compaction of the session's at `at` has its marker in
+    the file, as the newest, and it fails the second half: Claude Code
+    2.1.309 stamps that marker after the SessionStart hooks return on a
+    full compaction (a slow hook moves the stamp past the window, where
+    `_marker_near` cannot see it) and before the PostCompact hooks on a
+    reactive one, at most a hook timeout before its SessionStart. Until
+    the conversation goes on, a signal whose marker has not landed yet
+    stays the session's (ENG-150). A marker of the session's that no
+    segment opened on (one stamped outside the window, or a compaction
+    the hook missed) leaves every signal held up to a hook timeout after
+    its stamp to the session too, as before ENG-150. The order of the
+    writes is measured, not promised by Claude Code. Read from the
+    file's end to the newest row of the thread, then back to the newest
+    marker, `transcript.WALK_BYTES` at most each; False without a
+    transcript path, a regular file there or such a row."""
+    if not transcript_path:
+        return False
+    path = Path(transcript_path).expanduser()
+    if not path.is_file():
+        return False
+    after = at + timedelta(seconds=COMPACT_MARKER_WINDOW_SECONDS)
+    went_on = False
+    for line in ReverseLines(path):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line.decode("utf-8", errors="replace"))
+        except ValueError:
+            continue
+        if (
+            not isinstance(row, dict)
+            or row.get("type") not in _CONVERSATION_TYPES
+            or row.get("isSidechain") is True
+            or row.get("agentId")
+        ):
+            continue
+        stamp = parse_event_ts(row.get("timestamp"))
+        if stamp is not None:
+            went_on = stamp > after
+            break
+    if not went_on:
+        return False
+    newest = compact_marker(path, near=at, window=_EVER)
+    return (
+        newest is None
+        or newest.key == opened_on
+        or newest.at < at - timedelta(seconds=HOOK_TIMEOUT_SECONDS)
+    )
+
+
 # A subagent's id as Claude Code names its transcript (``agent-<id>.jsonl``,
 # seventeen hex characters on every file seen), bounded and kept to the
 # characters a file name may take as it is: an id outside it names no file.
@@ -263,6 +350,114 @@ def _subagent_transcript(transcript_path: str | None, agent_id: str) -> str | No
         if nested.is_file():
             return str(nested)
     return str(direct)
+
+
+# A held compact signal is read against the session's subagent transcripts
+# only this long after it came, which spares the reads inside the window a
+# file read: the evidence the take-back waits for, a row of the session's
+# conversation stamped past the window (`_session_went_on`), cannot be
+# there sooner. The wait alone would prove nothing. The session's own
+# marker landed within 29.2 s of its hook in all 45 compactions measured
+# on 2026-10-19, but Claude Code writes it only after every SessionStart
+# hook has returned (hook timeout 600 s), so a slower hook can hold it
+# back past this wait; the evidence, not the wait, keeps such a
+# compaction the session's.
+SUBAGENT_WAIT_SECONDS = 60
+# The most subagent transcripts one read searches for a marker: those last
+# written since the window opened and begun before it closed, the first by
+# name. Every transcript written since the window opened is opened once
+# for its first row.
+SUBAGENT_TRANSCRIPTS_READ = 64
+# What is read of a transcript's first row and of its ``.meta.json``.
+_HEAD_BYTES = 64 * 1024
+
+
+def _first_stamp(path: Path) -> datetime | None:
+    """When the transcript's first row was stamped; None when it cannot
+    be read."""
+    try:
+        with path.open("rb") as handle:
+            line = handle.readline(_HEAD_BYTES)
+        row = json.loads(line.decode("utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return None
+    return parse_event_ts(row.get("timestamp")) if isinstance(row, dict) else None
+
+
+def _agent_type(path: Path) -> str | None:
+    """The agent name Claude Code keeps beside a subagent's transcript
+    (``agent-<id>.meta.json``, its ``agentType``); None without one."""
+    meta = path.with_name(f"{path.stem}.meta.json")
+    try:
+        with meta.open("rb") as handle:
+            raw = handle.read(_HEAD_BYTES + 1)
+        if len(raw) > _HEAD_BYTES:
+            return None
+        loaded = json.loads(raw.decode("utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return None
+    name = loaded.get("agentType") if isinstance(loaded, dict) else None
+    return name if isinstance(name, str) and name else None
+
+
+def _subagent_marker_near(
+    transcript_path: str | None, at: datetime
+) -> tuple[Subagent, CompactMarker] | None:
+    """The subagent of the session whose own transcript is
+    `transcript_path` that compacted at `at`, with its compaction marker:
+    the ``compact_boundary`` stamped within `COMPACT_MARKER_WINDOW_SECONDS`
+    of `at` in one of the session's subagent transcripts
+    (``subagents/agent-<id>.jsonl``, a workflow's
+    ``subagents/workflows/<run>/agent-<id>.jsonl``), the nearest to `at`
+    when several hold one. The id is the transcript's name after
+    ``agent-``, as Claude Code names it, and the agent's name is read
+    from the ``.meta.json`` beside it.
+
+    Only transcripts alive around `at` are read: last written at or after
+    `at` less the window (a marker is written after it is stamped) and,
+    when their first row is read, begun at or before `at` plus the window,
+    `SUBAGENT_TRANSCRIPTS_READ` at most. None without a transcript path,
+    a subagents folder or such a marker."""
+    folder = _subagents_folder(transcript_path)
+    if folder is None or not folder.is_dir():
+        return None
+    window = timedelta(seconds=COMPACT_MARKER_WINDOW_SECONDS)
+    earliest = (at - window).timestamp()
+    alive: list[Path] = []
+    for path in sorted(
+        [*folder.glob("agent-*.jsonl"), *folder.glob("workflows/*/agent-*.jsonl")]
+    ):
+        try:
+            if not path.is_file() or path.stat().st_mtime < earliest:
+                continue
+        except OSError:
+            continue
+        begun = _first_stamp(path)
+        if begun is not None and begun > at + window:
+            continue
+        alive.append(path)
+        if len(alive) >= SUBAGENT_TRANSCRIPTS_READ:
+            break
+    best: tuple[timedelta, Path, CompactMarker] | None = None
+    for path in alive:
+        agent_id = path.stem[len("agent-") :]
+        if _AGENT_ID.fullmatch(agent_id) is None:
+            continue
+        marker = compact_marker(path, near=at, window=window)
+        if marker is None:
+            continue
+        distance = abs(marker.at - at)
+        if best is None or distance < best[0]:
+            best = (distance, path, marker)
+    if best is None:
+        return None
+    _, path, marker = best
+    found = Subagent(
+        agent_id=path.stem[len("agent-") :],
+        agent_type=_agent_type(path),
+        found_by=AGENT_FROM_TRANSCRIPT,
+    )
+    return found, marker
 
 
 #: The most characters a path in the orphan notice takes; a longer one

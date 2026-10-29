@@ -85,15 +85,30 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   60 seconds of it, which opens the segment at the compact
   (`recall.confirm_compaction`). A resume keeps the segment, and its
   brief omits what the segment has shown. Claude Code raises a
-  subagent's compaction as a SessionStart under the parent's session id
-  and transcript path; one whose payload names the subagent
-  (`agent_id`) is the subagent's, kept in a scope of its own (its rows
-  carry `agent_id`, its segments open on its own transcript's markers),
-  and the session's segment, signal and shows are left as they were.
-  The cooldown is rebuilt from
-  the session's own rows whenever they were stamped, so a restart, an
-  eviction after a day idle and the CLI path see the segment the daemon
-  held. Each show is recorded (`session_brief`, `prompt_recall`), a
+  subagent's compaction as a SessionStart under the session's id and
+  transcript path; one whose payload names the subagent (`agent_id`) is
+  the subagent's, kept in a scope of its own (its rows carry `agent_id`,
+  its segments open on its own transcript's markers), and the session's
+  segment, signal and shows are left as they were. Claude Code names no
+  subagent on that SessionStart today, so the hook answers it as the
+  session's: the brief goes into the subagent and the session holds the
+  signal and the brief's ids. A later read of the signal, a minute or
+  more after it, that finds no new marker of the session's within 60
+  seconds of it (the one its segments last opened on counts as none),
+  finds the session's own conversation gone on past those 60 seconds (a
+  row of its thread stamped later) with no recent marker of its own
+  newer than the one its segments opened on (a compaction of the
+  session's writes its marker before its conversation goes on), and
+  finds a marker in a subagent transcript (`<session>/subagents/agent-<id>.jsonl`, or
+  `subagents/workflows/<run>/agent-<id>.jsonl` for a workflow's agents)
+  takes the signal back for that subagent: the ids that brief printed
+  leave the session's segment, and a `segment_opened` row carrying the
+  subagent, the ids `withdrawn` and the `brief_event_id` says so. This
+  is a timing rule resting on a measured order (see the rc14 known
+  limitations). The cooldown is rebuilt from the session's own rows
+  whenever they were stamped, so a restart, an eviction after a day idle
+  and the CLI path see the segment the daemon held. Each show is
+  recorded (`session_brief`, `prompt_recall`), a
   probed prompt that delivered nothing records `recall_held` with its
   cause, and the Stop settles a shown pointer as an applied `use` naming
   its surface when the reply used it, never by the auto fallback; what a

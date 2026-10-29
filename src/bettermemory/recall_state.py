@@ -7,7 +7,8 @@ rows in the log through the transitions both share (`_restart`,
 `_reopen`, `_hold_signal`, `_replay`). A subagent of the session has a
 scope of its own (`Subagent`, ENG-150): its rows carry its ``agent_id``,
 a state scoped to it reads only those, and the session's reads none of
-them. The vocabulary the recall
+them but the row that takes a held signal back from it (`_withdraw`).
+The vocabulary the recall
 modules read lives here too: the rule, the default harness, the
 delivered provenance labels, the summary length, the state's bounds
 and kinds, and the surfaces a settlement names. `recall` re-exports
@@ -117,6 +118,10 @@ AGENT_FIELD = "agent_id"
 #: compaction's marker (``<dir>/<session>/subagents/agent-<agent_id>.jsonl``).
 AGENT_FROM_PAYLOAD = "payload"
 AGENT_FROM_TRANSCRIPT = "transcript"
+#: The field of the `segment_opened` row that takes a held compact signal
+#: back from the session for a subagent: the ids the compact's brief
+#: printed, which leave the session's segment (none when it showed none).
+WITHDRAWN_FIELD = "withdrawn"
 
 
 @dataclass(frozen=True)
@@ -160,6 +165,17 @@ def agent_of(event: Mapping[str, Any]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def taken_back(event: Mapping[str, Any]) -> bool:
+    """True for the row that took a held compact signal back from the
+    session for a subagent (`RecallState.attribute_compaction`): a
+    subagent's `segment_opened` carrying ``withdrawn``."""
+    return (
+        event.get("kind") == "segment_opened"
+        and agent_of(event) is not None
+        and isinstance(event.get(WITHDRAWN_FIELD), list)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Per-session state
 # ---------------------------------------------------------------------------
@@ -170,11 +186,15 @@ class _Signal:
     """A compact SessionStart whose marker the transcript did not hold
     yet: when it came, and what the segment had shown and delivered by
     then. When a later read finds the marker, the segment it opens holds
-    what was shown and delivered since (`_reopen`)."""
+    what was shown and delivered since (`_reopen`). `event_id` is the
+    event of the brief the SessionStart showed, if any: when the
+    compaction turns out to be a subagent's, its ids leave the segment
+    (`_withdraw`)."""
 
     at: datetime
     shown: frozenset[str]
     deliveries: int
+    event_id: str | None = None
 
 
 @dataclass
@@ -301,11 +321,29 @@ def _reopen(
     entry.deliveries -= signal.deliveries
 
 
-def _hold_signal(entry: _SessionRecall, *, at: datetime) -> None:
-    """Hold a compact SessionStart whose marker is not read yet."""
+def _hold_signal(
+    entry: _SessionRecall, *, at: datetime, event_id: str | None = None
+) -> None:
+    """Hold a compact SessionStart whose marker is not read yet, and the
+    event of the brief it showed (`event_id`)."""
     entry.signal = _Signal(
-        at=at, shown=frozenset(entry.shown), deliveries=entry.deliveries
+        at=at,
+        shown=frozenset(entry.shown),
+        deliveries=entry.deliveries,
+        event_id=event_id,
     )
+
+
+def _withdraw(entry: _SessionRecall, ids: Iterable[str]) -> None:
+    """The held compact signal was a subagent's (ENG-150): it ends, and
+    `ids`, what that compact's brief printed into the subagent, leave the
+    segment's shown and settled sets, as the session was never shown
+    them."""
+    gone = set(ids)
+    entry.signal = None
+    entry.shown -= gone
+    entry.shown_by = {k: v for k, v in entry.shown_by.items() if k not in gone}
+    entry.settled -= gone
 
 
 def _replay(entry: _SessionRecall, event: Mapping[str, Any], stamp: datetime) -> None:
@@ -317,9 +355,11 @@ def _replay(entry: _SessionRecall, event: Mapping[str, Any], stamp: datetime) ->
     compaction whose marker a later read found) opened it at that moment,
     with what was shown since the pending signal (`_reopen`); any other
     opened it at the row, with nothing shown (`_restart`). A compact row
-    carrying ``marker_absent`` holds the signal (`_hold_signal`). Then
-    the row's shows or settlement join the segment; a `segment_opened`
-    or `turn_audited` row has neither."""
+    carrying ``marker_absent`` holds the signal (`_hold_signal`), a brief
+    row naming its event. Then the row's shows or settlement join the
+    segment; a `turn_audited` row has neither, nor has a `segment_opened`
+    row but a subagent's that took a signal back from the session, whose
+    ``withdrawn`` ids are the subagent's segment's shows (ENG-150)."""
     number = event.get("segment")
     if (
         isinstance(number, int)
@@ -339,16 +379,27 @@ def _replay(entry: _SessionRecall, event: Mapping[str, Any], stamp: datetime) ->
             )
         else:
             _restart(entry, segment=number, at=opened_at or stamp, marker=marker)
-    if event.get("marker_absent") is True:
-        _hold_signal(entry, at=stamp)
     kind = event.get("kind")
-    if kind in ("segment_opened", "turn_audited"):
+    shown_event_id = event.get("event_id")
+    shown_event = shown_event_id if isinstance(shown_event_id, str) else None
+    if event.get("marker_absent") is True:
+        _hold_signal(
+            entry, at=stamp, event_id=shown_event if kind == "session_brief" else None
+        )
+    if kind == "segment_opened":
+        brief_event = event.get("brief_event_id")
+        for memory_id in _str_ids(event.get(WITHDRAWN_FIELD)):
+            entry.shown.add(memory_id)
+            entry.shown_by.setdefault(
+                memory_id,
+                (SURFACE_BRIEF, brief_event if isinstance(brief_event, str) else None),
+            )
+        return
+    if kind == "turn_audited":
         return
     if kind == "use":
         entry.settled.update(_str_ids(event.get("ids")))
         return
-    shown_event_id = event.get("event_id")
-    shown_event = shown_event_id if isinstance(shown_event_id, str) else None
     surface = _SURFACE_OF_KIND.get(str(kind), SURFACE_RECALL)
     if kind == "session_brief":
         brief_ids = _str_ids(event.get("ids"))
@@ -402,7 +453,11 @@ def rebuild_session(
 
     The scope is the session's own, or with `agent_id` that subagent's
     (ENG-150): a row carrying an ``agent_id`` is read only by the scope of
-    that subagent, and a row carrying none only by the session's."""
+    that subagent, and a row carrying none only by the session's, but
+    one: the `segment_opened` row of a held compact signal a later read
+    found to be a subagent's (it carries ``withdrawn``) ends the session's
+    signal and takes those ids out of the session's segment
+    (`_withdraw`), as the read did to the held state."""
     harness, session_id = key
     entry: _SessionRecall | None = None
     review_roots: set[str] = set()
@@ -411,6 +466,8 @@ def rebuild_session(
         if isinstance(named, str) and named != harness:
             continue
         if agent_of(event) != agent_id:
+            if agent_id is None and entry is not None and taken_back(event):
+                _withdraw(entry, _str_ids(event.get(WITHDRAWN_FIELD)))
             continue
         stamp = parse_event_ts(event.get("ts"))
         if stamp is None:
@@ -516,9 +573,11 @@ class RecallState:
         source: str,
         now: datetime,
         marker: CompactMarker | None = None,
+        event_id: str | None = None,
     ) -> tuple[SegmentView, bool]:
         """A SessionStart: the segment it leaves the session in, and
-        whether it opened that segment.
+        whether it opened that segment. `event_id` names the brief the
+        SessionStart shows, held with a compact's signal.
 
         A ``clear`` opens a new segment (nothing shown, no deliveries).
         A ``compact`` opens one when `marker`, the compaction marker the
@@ -540,7 +599,7 @@ class RecallState:
                 entry.closed = _closing_view(entry)
                 _restart(entry, segment=entry.segment + 1, at=now, marker=marker.key)
                 return _view(entry), True
-            _hold_signal(entry, at=now)
+            _hold_signal(entry, at=now, event_id=event_id)
             return _view(entry), False
 
     def pending_compaction(
@@ -548,7 +607,9 @@ class RecallState:
     ) -> datetime | None:
         """When the session's unresolved compact SessionStart came, or
         None when it holds none. A signal ends only on a row the log
-        holds: its confirmation, a clear, or another compact."""
+        holds: its confirmation, a clear, another compact, or the
+        `segment_opened` row that takes it back for a subagent
+        (`attribute_compaction`)."""
         self._entry(store, key, now)
         with self._lock:
             signal = self._held(key, now).signal
@@ -581,6 +642,27 @@ class RecallState:
                 marker=marker.key,
             )
             return _view(entry)
+
+    def attribute_compaction(
+        self, key: tuple[str, str], *, at: datetime
+    ) -> tuple[list[str], str | None] | None:
+        """The compact signal held since `at` was a subagent's (ENG-150):
+        end it and take the ids its SessionStart's brief printed out of
+        the segment (`_withdraw`); those ids, sorted, and that brief's
+        event id. None when the signal was resolved meanwhile."""
+        with self._lock:
+            entry = self._sessions.get(key)
+            if entry is None or entry.signal is None or entry.signal.at != at:
+                return None
+            signal = entry.signal
+            shown_by = (SURFACE_BRIEF, signal.event_id)
+            ids = (
+                sorted(k for k, v in entry.shown_by.items() if v == shown_by)
+                if signal.event_id is not None
+                else []
+            )
+            _withdraw(entry, ids)
+            return ids, signal.event_id
 
     def take_closed(self, key: tuple[str, str]) -> SegmentView | None:
         """The segment the session last left, once: what `open_segment` or

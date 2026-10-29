@@ -385,30 +385,49 @@ the candidates' testing.
   `src/bettermemory/handlers/write_gates.py`,
   `src/bettermemory/handlers/episode_write.py`, `SECURITY.md`,
   `docs/api.md`, `docs/internals.md`)
-- **A SessionStart whose payload names a subagent is answered in the
-  subagent's own scope.** Claude Code raises a subagent's compaction as
-  a SessionStart under the session's id and main transcript path, and
-  the hook answered it as the session's: on 2026-10-28 a 13-line brief
-  went into a subagent while the session held a compact signal no
-  marker of its own would answer and counted the brief's ids as shown
-  in its segment, which its prompt recall then held as
-  `seen_in_segment` (3 of the 14 owner compact SessionStarts since
-  rs-v6 were a subagent's). The daemon and the in-process
+- **A subagent's compaction is taken back from the session.** Claude
+  Code 2.1.296 and 2.1.309 send a subagent's compact SessionStart under
+  the session's id and transcript path with no `agent_id`, and the
+  subagent's marker lands in the subagent's own transcript after the
+  hook, never in the session's. The hook answered it as the session's:
+  on 2026-10-28 a 13-line brief went into a subagent while the session
+  held a compact signal no marker of its own would answer and counted
+  the brief's ids as shown in its segment, which its prompt recall then
+  held as `seen_in_segment` (3 of the 14 owner compact SessionStarts
+  since rs-v6 were a subagent's). The brief still goes into the
+  subagent; the session's bookkeeping is now corrected later, by a
+  timing rule. A later read of the held signal (`confirm_compaction`:
+  the prompt recall, the Stop or a SessionStart), at least 60 s after
+  it, that finds no new marker of the session's own within 60 s of it
+  (the marker its segment already opened on counts as none), finds the
+  session's conversation gone on past those 60 s (a row of its own
+  thread stamped later) with no recent marker of its own newer than the
+  one its segment opened on (a compaction of the session's writes its
+  marker before its conversation goes on), and finds a marker within
+  60 s of the signal in one of the session's subagent transcripts
+  (`subagents/agent-<id>.jsonl`, or
+  `subagents/workflows/<run>/agent-<id>.jsonl` for a workflow's agents)
+  takes the signal back for that subagent. The signal ends, the ids that
+  brief printed leave the session's segment and its settled set, and a
+  `segment_opened` row records the subagent (`agent_id`, the
+  `agentType` of the transcript's `.meta.json` as `agent_type`,
+  `agent_from: "transcript"`), the subagent's segment, the `marker`,
+  `opened_at`, the ids `withdrawn` and the `brief_event_id`, so the held
+  state and its rebuild agree. A signal no transcript answers stays
+  held as before; the rule's failure modes are under Known limitations.
+  A payload that does name the subagent is answered in the subagent's
+  own scope from the start: the daemon and the in-process
   `bettermemory session-start` now pass the payload's `agent_id` and
   `agent_type` to the brief (the hooks reference's common fields for
   the agent a hook fires in; `agent_type` alone names the main thread's
-  `--agent` and stays the session's). A SessionStart that names a
+  `--agent` and stays the session's), and a SessionStart that names a
   subagent opens its segment, holds its signal and claims its brief in
   a scope of its own, rebuilt from the session's rows that carry its
-  id, on the markers of the subagent's own transcript
-  (`<dir>/<session>/subagents/agent-<id>.jsonl`); its rows are recorded
-  under the session's id with `agent_id`, `agent_type` and
-  `agent_from`, and the session's segment, signal and shows are left as
-  they were. The brief is the existing one. This path waits for a
-  client that names the subagent: no Claude Code build read (2.1.296,
-  2.1.309) fills `agent_id` on a SessionStart, so the compaction those
-  builds send is still answered as the session's. A row without
-  `agent_id` reads as before. (`src/bettermemory/recall.py`,
+  id, on the markers of the subagent's own transcript; its rows carry
+  `agent_id`, `agent_type` and `agent_from`, and the session's segment,
+  signal and shows are left as they were. No Claude Code build read
+  fills `agent_id` on a SessionStart yet. A row without these fields
+  reads as before. (`src/bettermemory/recall.py`,
   `src/bettermemory/recall_state.py`, `src/bettermemory/recall_brief.py`,
   `src/bettermemory/daemon.py`, `src/bettermemory/cli/session_start_cmd.py`)
 
@@ -434,6 +453,36 @@ the candidates' testing.
   fingerprint>.key` makes the anchor hold and be named; without the key,
   deleting `<store_id>.origin` and `<store_id>.head` accepts the history
   on purpose.
+- **A subagent's compaction is told from the session's by timing.**
+  Claude Code 2.1.309 sends a subagent's compact SessionStart with the
+  session's id and transcript path and no `agent_id`, so the hook
+  prints the session's brief into the subagent, and the session holds
+  the brief's ids as seen until a later hook, at least 60 s after the
+  compaction, finds no new marker of the session's own within 60 s of
+  it, finds the session's conversation gone on past those 60 s with no
+  recent marker of its own newer than the one its segment opened on,
+  and finds a subagent transcript's marker within 60 s of it. The
+  session then gets the ids back; a prompt recall before that holds
+  them as seen, and a settlement already written for them stays. The
+  rule rests on an order measured, not promised: a compaction of the
+  session's own writes its marker before any row of its conversation
+  stamped after the marker (143 of 143 boundaries in the local
+  transcripts, 2026-10-28). A session compaction whose conversation
+  reached the transcript before its marker, with a subagent's marker
+  within 60 s of it, would be taken for the subagent: it would open no
+  segment and its brief's ids would be delivered again. A marker of the
+  session's own stamped more than 60 s from its hook (Claude Code
+  stamps a full compaction's after every SessionStart hook returns, a
+  reactive one's before its PostCompact hooks) opens no segment, as
+  before, and leaves to the session that signal and any other held up
+  to 10 minutes (the default hook timeout) after the marker's stamp.
+  Two compactions of one session within about a minute keep only the
+  later one's signal, so the earlier one is never taken back (8 of 111
+  subagent compactions in the local transcripts). While a signal stays
+  held once the session's conversation has gone on, every hook scans
+  the session's subagent transcripts again, searching up to 64 of them
+  taken by name, so with more alive the compacting one can be missed.
+  A subagent's own tool calls are recorded under the session.
 
 ### 9.0.0rc13
 
