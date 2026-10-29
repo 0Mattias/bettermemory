@@ -493,6 +493,20 @@ the candidates' testing.
   Windows a cloud files placeholder's reparse tag or its recall, pinned
   or unpinned attribute. The folder-name match stays as the fallback.
   (`src/bettermemory/posture.py`)
+- **`init` patches a symbolically linked client config where the link
+  points.** A `~/.claude.json` or `~/.claude/settings.json` linked into
+  place from a dotfiles repository was replaced by a detached `0600`
+  regular file: the atomic rename landed on the link's own name, so the
+  dotfiles copy kept the old content (the rc deny rules included), and
+  the next sync or a new machine silently brought it back. The JSON
+  patcher, the deny-rule removal and the Hermes patcher now resolve a
+  link once, read and write its target, and replace the target beside
+  itself in its own directory: the link stays a link, and the file keeps
+  the mode it had (a new file is still created owner-only). A link into a
+  directory init cannot write (a read-only store a dotfiles manager links
+  into) and a dangling link whose target's directory is missing are
+  refused by name, with nothing created or changed.
+  (`src/bettermemory/init.py`, `src/bettermemory/_fsutil.py`)
 
 #### Known limitations
 

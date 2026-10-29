@@ -9,6 +9,9 @@ full path.
 from __future__ import annotations
 
 import json
+import os
+import stat
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -1223,6 +1226,188 @@ def test_patch_aborts_when_target_created_under_us(tmp_path: Path) -> None:
     assert calls["n"] >= 2
     # Nothing was written over the "client's" new file.
     assert not Path(str(target)).exists()
+
+
+def _link(link: Path, target: Path) -> None:
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"this account cannot create a symbolic link here: {exc}")
+
+
+def _mode(path: Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+def test_a_symlinked_config_keeps_its_link_and_its_mode(tmp_path: Path) -> None:
+    """ENG-178 (G1). A ``~/.claude.json`` and a ``~/.claude/settings.json``
+    linked from a dotfiles directory were replaced by detached ``0600``
+    regular files: the atomic rename landed on the link's own name, so the
+    dotfiles copies kept the old content, the rc deny rules included, and
+    the next sync or a new machine brought it back. Each patcher now
+    writes through the link to its target, beside the target, and the
+    link, the target's mode and every other key stay."""
+    from bettermemory.init import (
+        DECLARATION_DENY_RULES,
+        remove_claude_code_deny_rules,
+    )
+
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    real_config = dotfiles / "claude.json"
+    real_config.write_text(
+        json.dumps({"mcpServers": {"other": {"command": "y", "args": []}}}),
+        encoding="utf-8",
+    )
+    real_settings = dotfiles / "settings.json"
+    real_settings.write_text(
+        json.dumps({"permissions": {"deny": [*DECLARATION_DENY_RULES, "Read(x)"]}}),
+        encoding="utf-8",
+    )
+    real_hermes = dotfiles / "hermes.yaml"
+    real_hermes.write_text("# mine\nmodel: m\n", encoding="utf-8")
+    if sys.platform != "win32":
+        for real in (real_config, real_settings, real_hermes):
+            os.chmod(real, 0o644)
+    home = tmp_path / "home"
+    config = home / ".claude.json"
+    settings = home / ".claude" / "settings.json"
+    hermes = home / ".hermes" / "config.yaml"
+    _link(config, real_config)
+    _link(settings, real_settings)
+    _link(hermes, real_hermes)
+
+    result = patch_client_config(config, binary="/x/bm")
+    assert result["action"] == "added"
+    removed = remove_claude_code_deny_rules(settings)
+    assert removed["action"] == "removed"
+    assert patch_hermes_config(hermes, binary="/x/bm")["action"] == "added"
+
+    for link, real in (
+        (config, real_config),
+        (settings, real_settings),
+        (hermes, real_hermes),
+    ):
+        assert link.is_symlink(), link
+        assert Path(os.path.realpath(link)) == real.resolve()
+        if sys.platform != "win32":
+            assert _mode(real) == 0o644, real
+    body = json.loads(real_config.read_text(encoding="utf-8"))
+    assert set(body["mcpServers"]) == {"other", DEFAULT_SERVER_NAME}
+    assert json.loads(real_settings.read_text(encoding="utf-8")) == {
+        "permissions": {"deny": ["Read(x)"]}
+    }
+    assert real_hermes.read_text(encoding="utf-8").startswith("# mine\nmodel: m\n")
+    assert yaml.safe_load(real_hermes.read_text(encoding="utf-8"))[HERMES_SERVERS_KEY]
+    # Nothing was left beside the links but the private lock sidecars.
+    leftovers = {p.name for p in home.rglob("*") if p.is_file() and not p.is_symlink()}
+    assert leftovers <= {
+        ".claude.json.bettermemory.lock",
+        "settings.json.bettermemory.lock",
+        "config.yaml.bettermemory.lock",
+    }
+
+
+def test_a_link_into_a_directory_init_cannot_write_is_refused_by_name(
+    tmp_path: Path,
+) -> None:
+    """ENG-178 (G1), a corner of the write through a link. A settings file
+    a dotfiles manager links into a read-only place (home-manager links
+    into the Nix store) failed with a raw ``Permission denied`` on the
+    temporary file. It is a refusal now that names the link and its target,
+    and nothing changes there."""
+    from bettermemory.init import (
+        DECLARATION_DENY_RULES,
+        remove_claude_code_deny_rules,
+    )
+
+    if sys.platform == "win32" or os.geteuid() == 0:
+        pytest.skip("POSIX directory permissions, as an account they bind")
+    store = tmp_path / "store"
+    store.mkdir()
+    real_settings = store / "settings.json"
+    body = json.dumps({"permissions": {"deny": list(DECLARATION_DENY_RULES)}})
+    real_settings.write_text(body, encoding="utf-8")
+    real_config = store / "claude.json"
+    real_config.write_text("{}", encoding="utf-8")
+    settings = tmp_path / "home" / ".claude" / "settings.json"
+    config = tmp_path / "home" / ".claude.json"
+    _link(settings, real_settings)
+    _link(config, real_config)
+    os.chmod(store, 0o555)
+    try:
+        with pytest.raises(ValueError, match="cannot write") as raised:
+            remove_claude_code_deny_rules(settings)
+        assert str(settings) in str(raised.value)
+        assert str(real_settings) in str(raised.value)
+        with pytest.raises(ValueError, match="cannot write") as raised:
+            patch_client_config(config, binary="/x/bm")
+        assert str(config) in str(raised.value)
+        assert sorted(p.name for p in store.iterdir()) == [
+            "claude.json",
+            "settings.json",
+        ]
+        assert real_settings.read_text(encoding="utf-8") == body
+        assert real_config.read_text(encoding="utf-8") == "{}"
+        assert settings.is_symlink()
+        assert config.is_symlink()
+    finally:
+        os.chmod(store, 0o755)
+
+
+def test_a_dangling_link_creates_its_target_only_in_a_directory_that_exists(
+    tmp_path: Path,
+) -> None:
+    """ENG-178 (G1), the other corner. A link to a file that is not there
+    names the file to create, and init creates it through the link when
+    its directory exists. When the directory is missing too, the write
+    made every missing directory of the target's path; it is a refusal now
+    that names the link and its target, and nothing is created."""
+    home = tmp_path / "home"
+    nowhere = tmp_path / "nowhere" / "sub" / "claude.json"
+    config = home / ".claude.json"
+    _link(config, nowhere)
+    with pytest.raises(ValueError, match="does not exist") as raised:
+        patch_client_config(config, binary="/x/bm")
+    assert str(config) in str(raised.value)
+    assert str(nowhere) in str(raised.value)
+    assert not (tmp_path / "nowhere").exists()
+    assert config.is_symlink()
+
+    there = tmp_path / "dotfiles" / "claude.json"
+    there.parent.mkdir()
+    hermes = home / ".hermes" / "config.yaml"
+    config.unlink()
+    _link(config, there)
+    _link(hermes, tmp_path / "dotfiles" / "hermes.yaml")
+    assert patch_client_config(config, binary="/x/bm")["action"] == "added"
+    assert patch_hermes_config(hermes, binary="/x/bm")["action"] == "added"
+    assert config.is_symlink() and there.is_file()
+    assert hermes.is_symlink() and (tmp_path / "dotfiles" / "hermes.yaml").is_file()
+    missing = home / ".hermes2" / "config.yaml"
+    _link(missing, tmp_path / "gone" / "hermes.yaml")
+    with pytest.raises(ValueError, match="does not exist"):
+        patch_hermes_config(missing, binary="/x/bm")
+    assert not (tmp_path / "gone").exists()
+
+
+def test_a_new_config_is_owner_only_and_an_existing_one_keeps_its_mode(
+    tmp_path: Path,
+) -> None:
+    """The write keeps the mode an existing file had and creates a new one
+    owner-only, as it always did."""
+    fresh = tmp_path / "fresh" / "config.json"
+    patch_client_config(fresh, binary="/x/bm")
+    kept = tmp_path / "kept" / "config.json"
+    kept.parent.mkdir()
+    kept.write_text("{}", encoding="utf-8")
+    if sys.platform == "win32":
+        pytest.skip("POSIX permission bits")
+    os.chmod(kept, 0o640)
+    patch_client_config(kept, binary="/x/bm")
+    assert _mode(fresh) == 0o600
+    assert _mode(kept) == 0o640
 
 
 def test_recognizer_accepts_version_pinned_uv_shapes() -> None:

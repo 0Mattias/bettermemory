@@ -38,10 +38,12 @@ exists, the data backing it never reached disk.
   compressed output in memory just to reach this helper would defeat
   the streaming). It already performs its own before-rename fchmod.
   The plain callers that pass neither mode
-  — `config.py`'s default-config writer, `init.py`'s MCP-client-config
-  writer, `cli/export.py`'s `-o` output writer, and `sync.py`'s
-  `.gitignore` writer — inherit `NamedTemporaryFile`'s 0o600 default,
-  which is strictly safe (owner-only) for these owner-scoped files.
+  — `config.py`'s default-config writer, `cli/export.py`'s `-o` output
+  writer, and `sync.py`'s `.gitignore` writer — inherit
+  `NamedTemporaryFile`'s 0o600 default, which is strictly safe
+  (owner-only) for these owner-scoped files. `init.py`'s client-config
+  writer passes `mode_before_rename` with the mode the file had, so a
+  patched config keeps its mode; a new one is created 0o600.
   `mode` has one caller, `project_file.write` with `rebind=True`,
   which passes 0o644 for a `bettermemory.toml` the user commits into
   a working tree.
@@ -219,8 +221,10 @@ def atomic_write_bytes(
       instant between rename and chmod is harmless when the bytes aren't
       private. Its caller is `project_file.write` with `rebind=True`,
       which passes 0o644 for a `bettermemory.toml` the user commits. The
-      config, init, export and sync writers pass neither mode and inherit
-      the tmp's 0o600 default (strictly safe for those owner-scoped files).
+      config, export and sync writers pass neither mode and inherit the
+      tmp's 0o600 default (strictly safe for those owner-scoped files);
+      init's client-config writer passes ``mode_before_rename`` with the
+      mode the file had, and a new config gets the 0o600 default.
     * ``mode_before_rename`` — applied via ``os.fchmod`` on the tmp file
       descriptor BEFORE the rename, plus a defensive post-rename
       ``os.chmod`` fallback. Use for privacy-critical payloads (the

@@ -32,10 +32,12 @@ required setup.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import platform
 import shutil
+import stat
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -545,6 +547,69 @@ def _heal_stale_sidecar_lockfile(target_path: Path) -> Path | None:
     return None
 
 
+def _write_target(path: Path) -> Path:
+    """The file a patcher reads and replaces for `path`: `path` itself, or,
+    when `path` is a symbolic link, the file it names, followed to the end.
+    A config kept in a dotfiles repository and linked into place is patched
+    where it lives: the atomic replace lands beside the target, in the
+    target's directory, and the link stays a link. Replacing the link's own
+    name would leave a detached regular file there, and the dotfiles copy
+    (which the next sync or a new machine installs) would keep the old
+    content. A link to a file that does not exist yet names the file to
+    create, in a directory that exists: a link whose target's directory is
+    missing is refused with ValueError, naming both, and nothing is
+    created (the write would otherwise make the directories). A directory
+    link above the file needs nothing: a replace through it lands in the
+    directory it names."""
+    if not path.is_symlink():
+        return path
+    target = Path(os.path.realpath(path))
+    if not target.exists() and not target.parent.is_dir():
+        raise ValueError(
+            f"{path} is a symbolic link to {target}, whose directory "
+            f"{target.parent} does not exist; nothing was created. Point the "
+            "link at an existing file, or remove it, then re-run init."
+        )
+    return target
+
+
+#: The errors a write into a directory this account may not write raises:
+#: no permission, or a read-only filesystem (a Nix store, a read-only mount).
+_UNWRITABLE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+
+
+def _write_config(path: Path, data: bytes, *, named: Path | None = None) -> None:
+    """Replace `path` with `data`, atomically and durably
+    (`_fsutil.atomic_write_bytes`), keeping the mode the file had: a
+    patcher edits one entry and changes nothing else about the file. A
+    new file is created owner-only (``0o600``), the helper's default.
+
+    `named` is the path the caller gave, when `path` is the target of a
+    symbolic link there (`_write_target`). A target in a directory this
+    account cannot write (a dotfiles manager that links into a read-only
+    store) is refused with ValueError naming the link and its target; the
+    temporary file is never created, so nothing changes."""
+    try:
+        mode: int | None = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        mode = None
+    try:
+        if mode is None:
+            _fsutil.atomic_write_bytes(path, data)
+        else:
+            _fsutil.atomic_write_bytes(path, data, mode_before_rename=mode)
+    except OSError as exc:
+        if named is None or named == path or exc.errno not in _UNWRITABLE_ERRNOS:
+            raise
+        raise ValueError(
+            f"{named} is a symbolic link to {path}, in a directory this "
+            f"account cannot write ({path.parent}: {exc.strerror}); nothing "
+            "was modified. Change the file where the link comes from (a "
+            "dotfiles repository, a home-manager configuration), or replace "
+            "the link with a file of its own, then re-run init."
+        ) from exc
+
+
 def patch_client_config(
     target_path: Path,
     *,
@@ -570,6 +635,9 @@ def patch_client_config(
     bettermemory`, the `uvx`+args plugin shape, a `~/.local/bin` symlink —
     all migrate; a `memory` entry pointing at a DIFFERENT binary is left
     alone in case the user is intentionally hosting two memory servers.
+
+    A config that is a symbolic link is patched where the link points,
+    and the link stays a link (`_write_target`); the file keeps its mode.
 
     Concurrency: the whole read-modify-write is held under
     `_fsutil.flock_excl` on a PRIVATE `<target>.bettermemory.lock` sidecar
@@ -622,9 +690,13 @@ def patch_client_config(
     # made our `os.open` die with EISDIR. Distinct names remove the
     # collision in both directions; interference with the client's
     # unlocked writes stays covered by the signature guard below.
+    #
+    # Everything after the lock reads and writes `real_path`: the link's
+    # target when the config is a symbolic link (`_write_target`).
+    real_path = _write_target(target_path)
     with _fsutil.flock_excl(target_path, lock_suffix=".bettermemory.lock"):
         baseline_sig: tuple[int, int] | None = None
-        if target_path.exists():
+        if real_path.exists():
             # Snapshot the on-disk signature BEFORE the read, not after. The
             # baseline must describe the exact bytes we are about to read and
             # overwrite. Capturing it after read_text() leaves an unguarded
@@ -633,9 +705,9 @@ def patch_client_config(
             # re-stat matches and we silently clobber the client's update.
             # Snapshotting first means any write after this point moves the
             # signature, so the pre-write re-stat mismatches and aborts loudly.
-            baseline_sig = _config_signature(target_path)
+            baseline_sig = _config_signature(real_path)
             try:
-                text = target_path.read_text(encoding="utf-8")
+                text = real_path.read_text(encoding="utf-8")
                 existing = json.loads(text) if text.strip() else {}
             except json.JSONDecodeError as exc:
                 raise ValueError(
@@ -761,7 +833,7 @@ def patch_client_config(
         #    clobber class the signature guard closes, on the create path.
         # 2. The file existed and its mtime/size signature moved.
         # Both arms live in `_refuse_if_moved`, shared with the YAML path.
-        _refuse_if_moved(target_path, baseline_sig)
+        _refuse_if_moved(real_path, baseline_sig)
 
         # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
         # `target_path.write_text(...)` here would truncate the file before
@@ -769,10 +841,11 @@ def patch_client_config(
         # could leave the user with an empty `~/.claude.json` — every MCP
         # server they had registered (not just bettermemory) gone. The
         # helper writes to a tmp sibling, fsyncs, atomic-renames into place,
-        # and fsyncs the parent directory.
-        _fsutil.atomic_write_bytes(
-            target_path,
+        # and fsyncs the parent directory; `_write_config` keeps the mode.
+        _write_config(
+            real_path,
             (json.dumps(existing, indent=2) + "\n").encode("utf-8"),
+            named=target_path,
         )
         result: dict[str, Any] = {
             "action": action,
@@ -844,13 +917,15 @@ def remove_claude_code_deny_rules(settings_path: Path) -> dict[str, Any]:
     write, so a write by the running client aborts with ValueError instead
     of being overwritten. A file that is not a JSON object, or whose
     `permissions.deny` is not a list, raises ValueError and is left as it
-    is."""
+    is. A settings file that is a symbolic link is edited where the link
+    points, the link and the file's mode kept (`_write_target`)."""
     if not settings_path.exists():
         return {"action": "noop", "path": str(settings_path), "removed": []}
+    real_path = _write_target(settings_path)
     with _fsutil.flock_excl(settings_path, lock_suffix=".bettermemory.lock"):
-        baseline_sig = _config_signature(settings_path)
+        baseline_sig = _config_signature(real_path)
         try:
-            text = settings_path.read_text(encoding="utf-8")
+            text = real_path.read_text(encoding="utf-8")
             existing = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError as exc:
             raise ValueError(
@@ -877,10 +952,11 @@ def remove_claude_code_deny_rules(settings_path: Path) -> dict[str, Any]:
         if not removed:
             return {"action": "noop", "path": str(settings_path), "removed": []}
         permissions["deny"] = [r for r in deny if r not in DECLARATION_DENY_RULES]
-        _refuse_if_moved(settings_path, baseline_sig)
-        _fsutil.atomic_write_bytes(
-            settings_path,
+        _refuse_if_moved(real_path, baseline_sig)
+        _write_config(
+            real_path,
             (json.dumps(existing, indent=2) + "\n").encode("utf-8"),
+            named=settings_path,
         )
         return {"action": "removed", "path": str(settings_path), "removed": removed}
 
@@ -1056,8 +1132,9 @@ def patch_hermes_config(
     """Idempotently merge the bettermemory entry into Hermes Agent's
     `config.yaml` — the YAML twin of `patch_client_config`, under the
     same discipline: the private `<target>.bettermemory.lock` flock, the
-    pre-read signature re-checked before the write, the atomic replace,
-    and the same result dict (`action` is `added`, `updated` or `noop`).
+    pre-read signature re-checked before the write, the atomic replace
+    through a symbolic link to its target with the file's mode kept, and
+    the same result dict (`action` is `added`, `updated` or `noop`).
 
     Merge semantics match the JSON path. init owns `command`, `args` and
     `env`; every other key on an existing entry (`idle_timeout_seconds`,
@@ -1085,12 +1162,14 @@ def patch_hermes_config(
     target_path.parent.mkdir(parents=True, exist_ok=True)
     healed_lock = _heal_stale_sidecar_lockfile(target_path)
 
+    # A symbolic link is patched where it points (`_write_target`).
+    real_path = _write_target(target_path)
     with _fsutil.flock_excl(target_path, lock_suffix=".bettermemory.lock"):
         baseline_sig: tuple[int, int] | None = None
         text = ""
-        if target_path.exists():
-            baseline_sig = _config_signature(target_path)
-            text = target_path.read_text(encoding="utf-8")
+        if real_path.exists():
+            baseline_sig = _config_signature(real_path)
+            text = real_path.read_text(encoding="utf-8")
         try:
             root = yaml.compose(text, Loader=yaml.SafeLoader)
             loaded = yaml.safe_load(text)
@@ -1172,8 +1251,8 @@ def patch_hermes_config(
                 f"--print-only` prints it)."
             )
 
-        _refuse_if_moved(target_path, baseline_sig)
-        _fsutil.atomic_write_bytes(target_path, new_text.encode("utf-8"))
+        _refuse_if_moved(real_path, baseline_sig)
+        _write_config(real_path, new_text.encode("utf-8"), named=target_path)
         result: dict[str, Any] = {
             "action": action,
             "path": str(target_path),
