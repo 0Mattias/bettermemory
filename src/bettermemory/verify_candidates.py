@@ -649,24 +649,8 @@ def _scan_candidates(body: str) -> list[tuple[str, bool, bool]]:
     return candidates
 
 
-def _normalize_candidate(raw: str) -> str | None:
-    """Trim trailing punctuation and validate. Returns None if the
-    candidate doesn't look like a real path.
-
-    Validation is intentionally cheap — we don't try to enforce filesystem
-    syntax beyond shape. The disk check that follows is the source of truth
-    for "does this path exist"; the validator's job is to keep prose like
-    "I/O" or "yes/no" out of the candidate set."""
-    # Length gate FIRST, before the trailing-trim loops below. Those loops
-    # rstrip one char per iteration with a full string copy each time, so a
-    # multi-KB adversarial candidate would pay O(n^2) work only to be
-    # rejected by the `len(s) > _MAX_PATH_LENGTH` check further down — the
-    # very cap meant to bound this work ran AFTER paying it. The `+ 64`
-    # headroom covers the trailing punctuation / slashes those loops strip,
-    # so a real candidate that trims down under the cap still validates.
-    if not raw or len(raw) > _MAX_PATH_LENGTH + 64:
-        return None
-
+def _trim_candidate(raw: str) -> str:
+    """Strip, unescape and de-punctuate `raw`; return the spelling the checks read."""
     # Trim leading whitespace just in case (backtick groups can carry it).
     s = raw.strip()
     # Shell-escaped spaces (`~/Google\ Drive/notes.txt`) — the form a
@@ -700,55 +684,11 @@ def _normalize_candidate(raw: str) -> str | None:
     # existing directory, and stripping avoids double-counting.
     while len(s) > 1 and s.endswith("/"):
         s = s[:-1]
+    return s
 
-    if not s or len(s) > _MAX_PATH_LENGTH:
-        return None
 
-    # The path gate (`_refused_spelling`), before any branch below can hand
-    # the spelling on to a stat: a network or device spelling is not a
-    # citation, whatever follows it.
-    if _refused_spelling(s):
-        return None
-
-    if "://" in s:
-        return None
-
-    # SSH-style remote: `user@host:path` shouldn't be treated as a path
-    # just because the part after `:` starts with `/`. The bare regex
-    # already rules out a leading `@` via the boundary, but a candidate
-    # extracted from backticks could still contain one — be explicit.
-    # The `@` must sit before the first slash: in a remote the user@host
-    # run leads, while an `@` inside a real path (homebrew kegs like
-    # `/opt/homebrew/opt/python@3.12`, systemd templates) always follows
-    # directory boundaries.
-    first_slash = s.find("/")
-    at = s.find("@")
-    colon = s.find(":")
-    if (
-        at != -1
-        and colon != -1
-        and at < colon
-        and (first_slash == -1 or at < first_slash)
-    ):
-        return None
-
-    # Code-citation line suffix (`file.py:407`, `:407-461`, `:12:5`) —
-    # the line number is not a filesystem claim; the file is. Strip it so
-    # the disk check targets the cited file: a moved file still flags
-    # drift, an existing one stops false-flagging.
-    line_suffix = _LINE_SUFFIX_RE.match(s)
-    if line_suffix:
-        s = line_suffix.group(1)
-
-    # Glob patterns (`/var/log/app/*.log`) and template placeholders
-    # (`~/.config/<app>/settings.toml`, `/opt/stacks/{service}/data`) are
-    # shape claims, not literal filesystem citations — stat'ing them
-    # literally manufactures a permanent missing-flag. Same stance as the
-    # placeholder-path skip; these characters essentially never appear in
-    # real on-disk paths.
-    if any(ch in s for ch in "*?<>{}"):
-        return None
-
+def _command_shaped(s: str) -> bool:
+    """Read the spaced candidate `s`; return True when it is a CLI line, not a path."""
     # CLI / slash-command shape: a real path with internal whitespace has
     # `/` separating each directory boundary, so the first whitespace-
     # separated chunk crosses multiple boundaries and contains multiple
@@ -798,8 +738,12 @@ def _normalize_candidate(raw: str) -> str | None:
             for p in parts[1:]
         )
         if boundaries <= 1 or arglike:
-            return None
+            return True
+    return False
 
+
+def _anchored_candidate(s: str) -> str | None:
+    """Read `s` by its anchor (home, root or drive); return it, or None if no path."""
     if s.startswith("~/"):
         if len(s) <= 2:
             return None
@@ -829,6 +773,80 @@ def _normalize_candidate(raw: str) -> str | None:
     if len(s) >= 3 and s[0].isalpha() and s[1] == ":" and s[2] in "/\\":
         return s
     return None
+
+
+def _normalize_candidate(raw: str) -> str | None:
+    """Trim trailing punctuation and validate. Returns None if the
+    candidate doesn't look like a real path.
+
+    Validation is intentionally cheap — we don't try to enforce filesystem
+    syntax beyond shape. The disk check that follows is the source of truth
+    for "does this path exist"; the validator's job is to keep prose like
+    "I/O" or "yes/no" out of the candidate set."""
+    # Length gate FIRST, before the trailing-trim loops below. Those loops
+    # rstrip one char per iteration with a full string copy each time, so a
+    # multi-KB adversarial candidate would pay O(n^2) work only to be
+    # rejected by the `len(s) > _MAX_PATH_LENGTH` check further down — the
+    # very cap meant to bound this work ran AFTER paying it. The `+ 64`
+    # headroom covers the trailing punctuation / slashes those loops strip,
+    # so a real candidate that trims down under the cap still validates.
+    if not raw or len(raw) > _MAX_PATH_LENGTH + 64:
+        return None
+
+    s = _trim_candidate(raw)
+
+    if not s or len(s) > _MAX_PATH_LENGTH:
+        return None
+
+    # The path gate (`_refused_spelling`), before any branch below can hand
+    # the spelling on to a stat: a network or device spelling is not a
+    # citation, whatever follows it.
+    if _refused_spelling(s):
+        return None
+
+    if "://" in s:
+        return None
+
+    # SSH-style remote: `user@host:path` shouldn't be treated as a path
+    # just because the part after `:` starts with `/`. The bare regex
+    # already rules out a leading `@` via the boundary, but a candidate
+    # extracted from backticks could still contain one — be explicit.
+    # The `@` must sit before the first slash: in a remote the user@host
+    # run leads, while an `@` inside a real path (homebrew kegs like
+    # `/opt/homebrew/opt/python@3.12`, systemd templates) always follows
+    # directory boundaries.
+    first_slash = s.find("/")
+    at = s.find("@")
+    colon = s.find(":")
+    if (
+        at != -1
+        and colon != -1
+        and at < colon
+        and (first_slash == -1 or at < first_slash)
+    ):
+        return None
+
+    # Code-citation line suffix (`file.py:407`, `:407-461`, `:12:5`) —
+    # the line number is not a filesystem claim; the file is. Strip it so
+    # the disk check targets the cited file: a moved file still flags
+    # drift, an existing one stops false-flagging.
+    line_suffix = _LINE_SUFFIX_RE.match(s)
+    if line_suffix:
+        s = line_suffix.group(1)
+
+    # Glob patterns (`/var/log/app/*.log`) and template placeholders
+    # (`~/.config/<app>/settings.toml`, `/opt/stacks/{service}/data`) are
+    # shape claims, not literal filesystem citations — stat'ing them
+    # literally manufactures a permanent missing-flag. Same stance as the
+    # placeholder-path skip; these characters essentially never appear in
+    # real on-disk paths.
+    if any(ch in s for ch in "*?<>{}"):
+        return None
+
+    if _command_shaped(s):
+        return None
+
+    return _anchored_candidate(s)
 
 
 def _refused_spelling(s: str) -> bool:
