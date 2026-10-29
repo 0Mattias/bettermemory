@@ -28,7 +28,9 @@ Four modules beside this one hold the parts, and this module re-exports
 the names callers import from it: `search_lexicon` (the tokenizer and the
 FTS index text), `search_bm25` (the keyword and BM25 scorers),
 `search_lane` (the conversational lane's temporal reading and the per-hit
-labels) and `search_dedup` (the write-time dedup).
+labels) and `search_dedup` (the write-time dedup). A fifth,
+`search_steps`, holds the query-side steps of `search` that read nothing
+this module holds.
 """
 
 from __future__ import annotations
@@ -101,6 +103,14 @@ from .search_lexicon import (
     tokenize as tokenize,
     tokenizer_fingerprint as tokenizer_fingerprint,
 )
+from .search_steps import (
+    _check_mode,
+    _expansion_corpus_stats,
+    _fetch_corpus_stats,
+    _hybrid_corpus_stats,
+    _query_tokens,
+    _record_matched_legs,
+)
 from .verify import PathDriftReport, detect_path_drift
 
 if TYPE_CHECKING:
@@ -128,6 +138,32 @@ SearchMode = Literal["keyword", "bm25", "hybrid"]
 # extra, down-weighted BM25 leg — engaged only when the base ranking is
 # not confident. Every constant below is measured on the gold set
 # (the retrieval-bench notes, 2026-08-09 grid), not chosen by taste.
+#
+# `search(rescue_expansion=True)`, hybrid-mode only and DEFAULT OFF,
+# runs two query-time repairs from the retrieval campaign:
+# (a) listed discourse-filler words (`expansion.QUERY_FILLER_WORDS`)
+# get a document-frequency FLOOR in the BM25 legs, so corpus-rare
+# conversational filler can't outprice real content terms; and
+# (b) when the fused base ranking's top hit covers less than
+# `_RESCUE_COVERAGE_GATE` of the query's unique tokens, one extra
+# BM25 leg over SYNTHESIZED vocabulary (inflection variants,
+# clipping full-forms, synonym group mates — `expansion.py`) joins
+# the fusion at `_RESCUE_LEG_WEIGHT`.
+#
+# Why the default is off: the lane's own preregistered held-out
+# check killed default-on. On the technical-prose gold set the
+# repairs are worth +15/+30 recall@1/@5 as-asked
+# (bench/retrieval, 2026-08-09 artifacts); on LongMemEval's
+# conversational stores the same mechanisms cost 1.65 macro@5
+# points — inflection variants of common chat verbs are
+# promiscuous matchers there, the inverse of the technical corpus
+# where expansion vocabulary is rare and discriminating. Kill
+# criterion and ablations: the LongMemEval preregistration
+# addendum 3 and the bench README. Flipping the default back on is
+# earned by a fresh preregistration on both instruments, not by an
+# operator's hunch. Since 9.0.0 there is no config key for it: the
+# product ranks with the leg off, and bench/retrieval's requery arm
+# is the one caller that turns the parameter on.
 
 # The rescue leg engages only when the fused base ranking is NOT
 # confident: top-hit coverage below this bar. Measured, not derived: on
@@ -311,6 +347,29 @@ _BASE_LEG_TRAILING_WITHHOLD = False
 # Constants below are the declaration's declared defaults; the caps and
 # the tuning protocol live in the declaration, and the finals a gate
 # read used are recorded in its artifact.
+#
+# What `search(conversational=True)` runs, default on (the L1 declaration): when
+# the query has a temporal reading, (a) temporal-SCAFFOLD tokens
+# (day/week/ago/last/many and kin — the question's syntax, not
+# its content) get a document-frequency floor in the BM25 legs
+# through the same stats seam as the filler floor, so they cannot
+# outprice content terms; and (b) date anchors break lookalike
+# ties inside the fused ranking's near-tie band — an explicit
+# window (a named month, a date, "last month" resolved against
+# `now`) boosts in-window anchors, and boosts only: the demote
+# and the earliest/latest selector were measured net-negative at
+# tuning and are dead (the record has the join).
+#
+# Why the default is on: the unit's gate read
+# (the L1 record, artifacts beside it) measured +1.27
+# LongMemEval macro-recall@5 points and +0.93 at @1 on the full
+# 500 against the paired off arm, with the dev instrument
+# byte-identical, no question type regressed, and the untouched
+# holdout half generalizing stronger than the tuning half. The
+# reference line (0.916) is NOT met — the shipped reading is
+# 0.9062, stated plainly in the record. `[behavior]
+# conversational = false` is the supported opt-out; the module
+# constants carry the tuned finals the gate ranked with.
 
 # Near-tie band for L1-T: items whose fused score is at least this
 # fraction of the top hit's participate in anchor selection. RRF scores
@@ -1221,6 +1280,412 @@ def _hybrid_fuse(
     return [(by_id[mid], fused[mid], sorted(matched_by_id[mid])) for mid in ordered_ids]
 
 
+def _browse_hits(
+    browse_candidates: list[Memory],
+    max_results: int,
+    anchoring: Anchoring | None,
+    path_drift: bool,
+) -> list[MemoryHit]:
+    """Sort the filtered candidates newest first; return them as zero-score hits."""
+    # Browse mode: the candidates passed the same filter the scored
+    # path applies; sort by `updated` desc and emit zero-score
+    # hits with no match terms. Mirrors the post-rank trim the
+    # scored branches do at the end of `search()`.
+    browse_candidates.sort(key=lambda m: (m.updated, m.id), reverse=True)
+    browsed = browse_candidates[:max_results]
+    return [
+        _build_hit(
+            memory,
+            score=0.0,
+            matched=[],
+            query_unique=0,
+            anchor=anchor,
+            path_drift=path_drift,
+        )
+        for memory, anchor in zip(
+            browsed, _claim_anchors(anchoring, browsed), strict=True
+        )
+    ]
+
+
+def _conversational_gates(
+    query: str,
+    query_tokens: list[str],
+    now: datetime,
+    *,
+    mode: SearchMode,
+    conversational: bool,
+    stopword_fallback: bool,
+) -> tuple[_TemporalReading | None, bool]:
+    """Read the query's temporal shape; return the reading and the pricing gate."""
+    # Lane L: parse the query's temporal shape once. Hybrid-only, like
+    # the rescue lane, and skipped on the stopword fallback for the same
+    # reason (the fallback's TF stream has different matched semantics).
+    # A non-temporal query leaves `conv_reading` None and every path
+    # below byte-identical to the flag being off.
+    conv_reading: _TemporalReading | None = None
+    if conversational and mode == "hybrid" and not stopword_fallback:
+        reading = _temporal_reading(query, now)
+        if reading.is_temporal:
+            conv_reading = reading
+    # L2: the PRICING gate — the repricing mechanisms' key, wider than
+    # the temporal reading when the widening constant is set. The
+    # window/selector rerank below stays keyed on `conv_reading` alone:
+    # a scaffold-shaped query has no window to boost. With
+    # `_CONV_SCAFFOLD_MIN_STEMS` None the predicate is constant-False
+    # and `conv_pricing == (conv_reading is not None)` — L1's key.
+    conv_pricing = conv_reading is not None
+    if (
+        not conv_pricing
+        and conversational
+        and mode == "hybrid"
+        and not stopword_fallback
+    ):
+        conv_pricing = _conv_scaffold_shaped(query_tokens)
+    return conv_reading, conv_pricing
+
+
+def _rank_single_leg(
+    mode: SearchMode,
+    candidates: list[Memory],
+    query_tokens: list[str],
+    *,
+    now: datetime,
+    half_life_days: float,
+    candidate_tokens: list[_MemoryTokens],
+    stopword_fallback: bool,
+    corpus_stats: CorpusStats | None,
+    track_legs: bool,
+) -> tuple[list[tuple[Memory, float, list[str]]], set[str]]:
+    """Rank by the keyword or BM25 leg alone; return the ranking and its ids."""
+    lexical_ids: set[str] = set()
+    if mode == "keyword":
+        scored = _score_keyword(
+            candidates,
+            query_tokens,
+            now=now,
+            half_life_days=half_life_days,
+            candidate_tokens=candidate_tokens,
+        )
+        # Sort by score, then created (newer wins on tie), then id as the
+        # final discriminator. Without `id` the tiebreaker is undefined for
+        # two memories that share both score and created timestamp — a real
+        # case under microsecond-tied writes or under tests that mock the
+        # clock. ULID-shaped ids are lexically time-ordered, so the final
+        # tiebreaker also gives "newer wins" semantics.
+        scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+        if track_legs:
+            lexical_ids = {memory.id for memory, _, _ in scored}
+    else:
+        scored = _score_bm25(
+            candidates,
+            query_tokens,
+            now=now,
+            half_life_days=half_life_days,
+            candidate_tokens=candidate_tokens,
+            stopword_fallback=stopword_fallback,
+            corpus_stats=corpus_stats,
+        )
+        scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+        if track_legs:
+            lexical_ids = {memory.id for memory, _, _ in scored}
+    return scored, lexical_ids
+
+
+def _keyword_scaffold(
+    query_tokens: list[str], conv_pricing: bool
+) -> frozenset[str] | None:
+    """Pick the scaffold terms the keyword leg reprices; return them, or None."""
+    # L2: the keyword leg's scaffold repricing, the fusion's other
+    # half. Engaged only for a priced query with at least one
+    # content term (an all-scaffold temporal query leaves the leg
+    # stock — the shipped behavior), and only when the weight
+    # constant is set; None is byte-identical to 6.1.0.
+    conv_scaffold: frozenset[str] | None = None
+    if conv_pricing and _CONV_KEYWORD_SCAFFOLD_WEIGHT is not None:
+        distinct_q = list(dict.fromkeys(query_tokens))
+        # Ordered stream in, dedup after — see `_conv_scaffold_shaped`.
+        scaffold_q = list(dict.fromkeys(_conv_scaffold_terms(query_tokens)))
+        if scaffold_q and len(scaffold_q) < len(distinct_q):
+            conv_scaffold = frozenset(scaffold_q)
+    return conv_scaffold
+
+
+def _rescue_fuse(
+    scored: list[tuple[Memory, float, list[str]]],
+    rankings: list[list[tuple[Memory, float, list[str]]]],
+    base_weights: list[float] | None,
+    query_tokens: list[str],
+    query_unique: int,
+    *,
+    candidates: list[Memory],
+    candidate_tokens: list[_MemoryTokens],
+    now: datetime,
+    half_life_days: float,
+    hybrid_stats: CorpusStats | None,
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None,
+    rrf_k: int,
+) -> tuple[list[tuple[Memory, float, list[str]]], set[str]]:
+    """Fuse the rescue leg in when the base top hit is unsure; return ranking, ids."""
+    expansion_ids: set[str] = set()
+    if scored:
+        top_matched = set(scored[0][2]) & set(query_tokens)
+        coverage = len(top_matched) / query_unique if query_unique else 0.0
+    else:
+        coverage = 0.0
+    if coverage < _RESCUE_COVERAGE_GATE:
+        exp_terms = _expansion_terms_impl(
+            list(dict.fromkeys(query_tokens)),
+            _EXPANSION_TABLES,
+            _stem_token,
+        )
+        if exp_terms:
+            exp_stats = _expansion_corpus_stats(
+                hybrid_stats, corpus_stats_provider, exp_terms
+            )
+            exp_leg = _score_bm25(
+                candidates,
+                exp_terms,
+                now=now,
+                half_life_days=half_life_days,
+                candidate_tokens=candidate_tokens,
+                corpus_stats=exp_stats,
+            )
+            # A leg with one word of evidence does not get to
+            # vote. RRF reads rank, not score, so a leg resting
+            # on a single coincidental match contributes exactly
+            # as much as one three synonyms agree on;
+            # withholding it is the only way the fusion can tell
+            # them apart. A withheld leg leaves `scored` as
+            # the base fusion, so the result reproduces
+            # a lane-on query whose leg found nothing — the
+            # same shape the lane already has when `exp_terms`
+            # comes back empty. The filler floor above is keyed
+            # on `rescue_expansion`, not on the leg, so it
+            # stays. See `_RESCUE_LEG_MIN_EVIDENCE`.
+            leg_weight = (
+                _leg_evidence_weight(_leg_top_evidence(exp_leg)) if exp_leg else 0.0
+            )
+            if leg_weight <= 0.0:
+                exp_leg = []
+            if exp_leg:
+                expansion_ids = {m.id for m, _, _ in exp_leg}
+                # The base pair keeps the SAME weights it fused
+                # with above — one code path, no fork (addendum
+                # 12's scope): a lane-on query must not restore
+                # a vote the base fusion just withheld.
+                scored = _hybrid_fuse(
+                    rankings + [exp_leg],
+                    rrf_k=rrf_k,
+                    weights=[*(base_weights or (1.0, 1.0)), leg_weight],
+                )
+                # `match_terms` stays a subset of the CALLER's
+                # tokens — synthesized terms explain the leg,
+                # not the caller's query, and letting them into
+                # the matched list would inflate the coverage
+                # `relevance` is computed from. An
+                # expansion-only hit therefore reads
+                # relevance="low", match_terms=[] with
+                # matched_leg="expansion" — the exact shape
+                # pure-paraphrase hits have always had.
+                qset = set(query_tokens)
+                scored = [
+                    (m, s, [t for t in matched if t in qset])
+                    for m, s, matched in scored
+                ]
+    return scored, expansion_ids
+
+
+def _rank_hybrid(
+    candidates: list[Memory],
+    query_tokens: list[str],
+    query_unique: int,
+    *,
+    now: datetime,
+    half_life_days: float,
+    candidate_tokens: list[_MemoryTokens],
+    stopword_fallback: bool,
+    corpus_stats: CorpusStats | None,
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None,
+    rescue_expansion: bool,
+    conv_pricing: bool,
+    rrf_k: int,
+    track_legs: bool,
+) -> tuple[list[tuple[Memory, float, list[str]]], set[str], set[str]]:
+    """Fuse the keyword and BM25 legs and any rescue; return ranking and leg ids."""
+    lexical_ids: set[str] = set()
+    expansion_ids: set[str] = set()
+    hybrid_stats = _hybrid_corpus_stats(
+        corpus_stats,
+        query_tokens,
+        len(candidates),
+        rescue_expansion=rescue_expansion,
+        conv_pricing=conv_pricing,
+    )
+    conv_scaffold = _keyword_scaffold(query_tokens, conv_pricing)
+    rankings: list[list[tuple[Memory, float, list[str]]]] = [
+        _score_keyword(
+            candidates,
+            query_tokens,
+            now=now,
+            half_life_days=half_life_days,
+            candidate_tokens=candidate_tokens,
+            scaffold_terms=conv_scaffold,
+            scaffold_weight=_CONV_KEYWORD_SCAFFOLD_WEIGHT or 0.0,
+        ),
+        _score_bm25(
+            candidates,
+            query_tokens,
+            now=now,
+            half_life_days=half_life_days,
+            candidate_tokens=candidate_tokens,
+            stopword_fallback=stopword_fallback,
+            corpus_stats=hybrid_stats,
+        ),
+    ]
+    # Snapshot the leg membership from the working list by name,
+    # not position, so a future ranker joining `rankings` can't
+    # silently change what "lexical" means here — the rescue leg
+    # below joins the FUSION but deliberately never this snapshot.
+    if track_legs:
+        lexical_ids = {memory.id for ranking in rankings for memory, _, _ in ranking}
+    # Round 9: a base leg whose rank-1 evidence trails its peer's is
+    # withheld. Skipped on the stopword fallback exactly as the
+    # rescue leg is — the fallback's TF stream has different matched
+    # semantics. None (every tie, and the shipped default) fuses
+    # byte-identically.
+    base_weights = None if stopword_fallback else _base_leg_weights(rankings)
+    scored = _hybrid_fuse(rankings, rrf_k=rrf_k, weights=base_weights)
+
+    # Rescue expansion: one extra, down-weighted BM25 leg over
+    # synthesized vocabulary, engaged only when the base fusion is
+    # not confident about its own top hit. Skipped on the stopword
+    # fallback (an all-filler query has no content tokens worth
+    # expanding, and the fallback already runs a special TF stream
+    # the expansion leg does not share).
+    if rescue_expansion and not stopword_fallback:
+        scored, expansion_ids = _rescue_fuse(
+            scored,
+            rankings,
+            base_weights,
+            query_tokens,
+            query_unique,
+            candidates=candidates,
+            candidate_tokens=candidate_tokens,
+            now=now,
+            half_life_days=half_life_days,
+            hybrid_stats=hybrid_stats,
+            corpus_stats_provider=corpus_stats_provider,
+            rrf_k=rrf_k,
+        )
+    return scored, lexical_ids, expansion_ids
+
+
+def _rank_candidates(
+    candidates: list[Memory],
+    query: str,
+    query_tokens: list[str],
+    query_unique: int,
+    *,
+    now: datetime,
+    mode: SearchMode,
+    half_life_days: float,
+    rrf_k: int,
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None,
+    stopword_fallback: bool,
+    rescue_expansion: bool,
+    conversational: bool,
+    track_legs: bool,
+) -> tuple[list[tuple[Memory, float, list[str]]], set[str], set[str]]:
+    """Rank the admitted `candidates` by `mode`; return the ranking and leg ids."""
+    # `matched_leg` bookkeeping. Populated only when the caller asked for
+    # it, so the default path pays nothing; the sets are the ids each leg
+    # actually SCORED, which is what makes the reported leg a statement
+    # about the run rather than about `mode`. `expansion_ids` is the one
+    # exception to the only-when-asked rule: the rescue block fills it
+    # while it has the leg in hand (a set build over an already-scored
+    # list), because re-deriving it at the trim would mean re-running
+    # the leg.
+    lexical_ids: set[str] = set()
+    expansion_ids: set[str] = set()
+
+    # Tokenize each candidate at most once per call and thread the streams
+    # through every consumer below — the keyword scorer, compute_idf, BM25,
+    # blocks otherwise re-tokenize the same
+    # bodies and scopes (6 tokenize calls per memory per hybrid search,
+    # ~88% of cumulative search time). Pure perf: see `_MemoryTokens`.
+    # A candidate whose body and scopes an earlier call tokenised is
+    # served from `_memory_tokens`' cache and not tokenised again.
+    candidate_tokens = [_memory_tokens(m) for m in candidates]
+    conv_reading, conv_pricing = _conversational_gates(
+        query,
+        query_tokens,
+        now,
+        mode=mode,
+        conversational=conversational,
+        stopword_fallback=stopword_fallback,
+    )
+    corpus_stats = _fetch_corpus_stats(corpus_stats_provider, mode, query_tokens)
+
+    if mode == "hybrid":
+        scored, lexical_ids, expansion_ids = _rank_hybrid(
+            candidates,
+            query_tokens,
+            query_unique,
+            now=now,
+            half_life_days=half_life_days,
+            candidate_tokens=candidate_tokens,
+            stopword_fallback=stopword_fallback,
+            corpus_stats=corpus_stats,
+            corpus_stats_provider=corpus_stats_provider,
+            rescue_expansion=rescue_expansion,
+            conv_pricing=conv_pricing,
+            rrf_k=rrf_k,
+            track_legs=track_legs,
+        )
+    else:
+        scored, lexical_ids = _rank_single_leg(
+            mode,
+            candidates,
+            query_tokens,
+            now=now,
+            half_life_days=half_life_days,
+            candidate_tokens=candidate_tokens,
+            stopword_fallback=stopword_fallback,
+            corpus_stats=corpus_stats,
+            track_legs=track_legs,
+        )
+
+    # Lane L's anchor selection runs last — after the rescue leg has
+    # joined or declined the fusion — so a lane-on query reorders the
+    # ranking the caller would otherwise have received, before the trim.
+    if conv_reading is not None:
+        scored = _conversational_rerank(scored, reading=conv_reading)
+
+    return scored, lexical_ids, expansion_ids
+
+
+def _ranked_hits(
+    trimmed: list[tuple[Memory, float, list[str]]],
+    anchoring: Anchoring | None,
+    query_unique: int,
+    path_drift: bool,
+) -> list[MemoryHit]:
+    """Anchor each trimmed hit's claims; return the hits `search` serves."""
+    anchors = _claim_anchors(anchoring, [memory for memory, _, _ in trimmed])
+    return [
+        _build_hit(
+            memory,
+            score,
+            matched,
+            query_unique=query_unique,
+            anchor=anchor,
+            path_drift=path_drift,
+        )
+        for (memory, score, matched), anchor in zip(trimmed, anchors, strict=True)
+    ]
+
+
 def search(
     memories: list[Memory],
     query: str,
@@ -1277,48 +1742,22 @@ def search(
       and want recency ordering rather than relevance ranking. When
       False (the default), only a truly EMPTY query returns `[]`; a
       stopword-only query is ranked on its unstripped tokens instead
-      (see the fallback note in the body), so stopword curation can
+      (see `_query_tokens`'s fallback note), so stopword curation can
       never make a non-empty query unanswerable.
     - `matched_leg_out`: optional dict the function fills with
       `{memory_id: "lexical" | "expansion"}` for the hits it
-      returns — WHICH RANKER surfaced each one. An out-parameter rather
-      than a `MemoryHit` field because the leg is a property of THIS
-      CALL's ranker configuration, not of the memory, and every other
-      consumer of `MemoryHit` (memory_show, memory_list, the detail
-      surfaces) has no legs to report; the MCP search handler is the one
-      surface where it is actionable. `None` (the default) skips the
-      bookkeeping entirely, so every existing caller is byte-stable in
-      both output and cost. Browse-mode hits get no entry — nothing
+      returns — WHICH RANKER surfaced each one (why an out-parameter:
+      `search_steps._record_matched_legs`). `None` (the default) skips
+      the bookkeeping entirely, so every existing caller is byte-stable
+      in both output and cost. Browse-mode hits get no entry — nothing
       ranked them.
-    - `rescue_expansion`: hybrid-mode only, DEFAULT OFF. When True,
-      two query-time repairs from the retrieval campaign run:
-      (a) listed discourse-filler words (`expansion.QUERY_FILLER_WORDS`)
-      get a document-frequency FLOOR in the BM25 legs, so corpus-rare
-      conversational filler can't outprice real content terms; and
-      (b) when the fused base ranking's top hit covers less than
-      `_RESCUE_COVERAGE_GATE` of the query's unique tokens, one extra
-      BM25 leg over SYNTHESIZED vocabulary (inflection variants,
-      clipping full-forms, synonym group mates — `expansion.py`) joins
-      the fusion at `_RESCUE_LEG_WEIGHT`. Hits surfaced only by that
-      leg report `matched_leg="expansion"` with `match_terms` still an
-      honest subset of the caller's own tokens (possibly empty — the
-      same shape pure-paraphrase hits always had). False (the default)
-      is the pre-5.1 two-leg behavior byte for byte.
-
-      Why the default is off: the lane's own preregistered held-out
-      check killed default-on. On the technical-prose gold set the
-      repairs are worth +15/+30 recall@1/@5 as-asked
-      (bench/retrieval, 2026-08-09 artifacts); on LongMemEval's
-      conversational stores the same mechanisms cost 1.65 macro@5
-      points — inflection variants of common chat verbs are
-      promiscuous matchers there, the inverse of the technical corpus
-      where expansion vocabulary is rare and discriminating. Kill
-      criterion and ablations: the LongMemEval preregistration
-      addendum 3 and the bench README. Flipping the default back on is
-      earned by a fresh preregistration on both instruments, not by an
-      operator's hunch. Since 9.0.0 there is no config key for it: the
-      product ranks with the leg off, and bench/retrieval's requery arm
-      is the one caller that turns the parameter on.
+    - `rescue_expansion`: hybrid-mode only, DEFAULT OFF. When True, the
+      two query-time repairs described above `_RESCUE_COVERAGE_GATE` run;
+      the notes there also say why the default is off. Hits surfaced only
+      by the expansion leg report `matched_leg="expansion"` with
+      `match_terms` still an honest subset of the caller's own tokens
+      (possibly empty — the same shape pure-paraphrase hits always had).
+      False (the default) is the pre-5.1 two-leg behavior byte for byte.
 
       `keyword` and `bm25` modes are explicit instrument choices and
       are never touched. Above the index threshold the FTS prefilter
@@ -1327,31 +1766,11 @@ def search(
       documented limit, not a silent one.
     - `conversational`: hybrid-mode only, DEFAULT ON since 6.1.0 (the
       L1 ship, owner decision 2026-08-16). The Lane L repairs for
-      conversation-shaped stores (the L1 declaration): when
-      the query has a temporal reading, (a) temporal-SCAFFOLD tokens
-      (day/week/ago/last/many and kin — the question's syntax, not
-      its content) get a document-frequency floor in the BM25 legs
-      through the same stats seam as the filler floor, so they cannot
-      outprice content terms; and (b) date anchors break lookalike
-      ties inside the fused ranking's near-tie band — an explicit
-      window (a named month, a date, "last month" resolved against
-      `now`) boosts in-window anchors, and boosts only: the demote
-      and the earliest/latest selector were measured net-negative at
-      tuning and are dead (the record has the join). A query with no
-      temporal reading is untouched byte for byte, as is every call
-      with the flag off, so `conversational=False` reproduces the
-      pre-6.1.0 ranking exactly.
-
-      Why the default is on: the unit's gate read
-      (the L1 record, artifacts beside it) measured +1.27
-      LongMemEval macro-recall@5 points and +0.93 at @1 on the full
-      500 against the paired off arm, with the dev instrument
-      byte-identical, no question type regressed, and the untouched
-      holdout half generalizing stronger than the tuning half. The
-      reference line (0.916) is NOT met — the shipped reading is
-      0.9062, stated plainly in the record. `[behavior]
-      conversational = false` is the supported opt-out; the module
-      constants carry the tuned finals the gate ranked with.
+      conversation-shaped stores (the L1 declaration) run as described
+      above `_CONV_BAND_TAU`; the notes there also say why the default
+      is on. A query with no temporal reading is untouched byte for
+      byte, as is every call with the flag off, so `conversational=False`
+      reproduces the pre-6.1.0 ranking exactly.
 
     - `anchoring`: the request's claim anchoring (`verify.Anchoring`,
       design 3.6). Each hit's path drift reads a homed record's claims at
@@ -1377,72 +1796,12 @@ def search(
     `relevance` alone answers only the first, and answers it "low" for
     every pure-paraphrase hit.
     """
-    # Runtime guard against unknown modes. The `SearchMode` Literal pins
-    # this at the type-checker layer, but the handler accepts an opaque
-    # string from MCP and Python doesn't enforce Literals at call time;
-    # without this check, a typo like `mode="emantic"` would fall through
-    # the if/elif chain into the `else` branch and silently run hybrid.
-    # Raising here makes the failure mode loud at the dispatch boundary
-    # regardless of where the bad string came from (handler, CLI, future
-    # programmatic client).
-    if mode not in ("keyword", "bm25", "hybrid"):
-        raise ValueError(
-            f"unknown search mode {mode!r}; must be one of: keyword, bm25, hybrid"
-        )
+    _check_mode(mode)
 
     now = now or datetime.now(timezone.utc)
-    raw_tokens = _lexicon.tokenize(query)
-    # Strip stopwords from the query — bodies stay unfiltered. If stripping
-    # EMPTIES a non-empty token list ("what is the" — or a lone term some
-    # future stopword addition absorbs), fall back to the unstripped
-    # tokens: stopword curation must never make a real query unanswerable,
-    # so the worst case is filler-grade ranking, not silent zero recall.
-    # The fallback flag threads into the BM25 legs below: BM25 counts TF
-    # against the stopword-STRIPPED body stream, so without the signal a
-    # fallen-back token could match scopes but never a body — silent zero
-    # recall in mode="bm25", exactly what this fallback exists to rule
-    # out (the keyword scorer's stream keeps stopwords and needs no flag).
-    # A truly empty query still returns empty rather than serving every
-    # memory at score 0, and browse mode keeps its recency-ordered
-    # semantics for both empty and stopword-only queries — see
-    # `allow_empty_query` above.
-    query_tokens = _strip_stopwords(raw_tokens)
-    stopword_fallback = False
-    if not query_tokens and raw_tokens and not allow_empty_query:
-        query_tokens = raw_tokens
-        stopword_fallback = True
-    if not query_tokens:
-        if not allow_empty_query:
-            return []
-        # Browse mode: apply the same candidate filter the scored
-        # path would, then sort by `updated` desc and emit zero-score
-        # hits with no match terms. Mirrors the post-rank trim the
-        # scored branches do at the end of `search()`.
-        browse_candidates = _filter_candidates(
-            memories,
-            scopes=scopes,
-            excluded_scopes=excluded_scopes,
-            admission=admission,
-            client_filter=client_filter,
-            model_filter=model_filter,
-        )
-        browse_candidates.sort(key=lambda m: (m.updated, m.id), reverse=True)
-        browsed = browse_candidates[:max_results]
-        return [
-            _build_hit(
-                memory,
-                score=0.0,
-                matched=[],
-                query_unique=0,
-                anchor=anchor,
-                path_drift=path_drift,
-            )
-            for memory, anchor in zip(
-                browsed, _claim_anchors(anchoring, browsed), strict=True
-            )
-        ]
-
-    query_unique = len(set(query_tokens))
+    query_tokens, stopword_fallback = _query_tokens(query, allow_empty_query)
+    if not query_tokens and not allow_empty_query:
+        return []
     candidates = _filter_candidates(
         memories,
         scopes=scopes,
@@ -1451,294 +1810,31 @@ def search(
         client_filter=client_filter,
         model_filter=model_filter,
     )
+    if not query_tokens:
+        return _browse_hits(candidates, max_results, anchoring, path_drift)
     if not candidates:
         return []
 
-    # `matched_leg` bookkeeping. Populated only when the caller asked for
-    # it, so the default path pays nothing; the sets are the ids each leg
-    # actually SCORED, which is what makes the reported leg a statement
-    # about the run rather than about `mode`. `expansion_ids` is the one
-    # exception to the only-when-asked rule: the rescue block fills it
-    # while it has the leg in hand (a set build over an already-scored
-    # list), because re-deriving it at the trim would mean re-running
-    # the leg.
-    lexical_ids: set[str] = set()
-    expansion_ids: set[str] = set()
-
-    # Tokenize each candidate at most once per call and thread the streams
-    # through every consumer below — the keyword scorer, compute_idf, BM25,
-    # blocks otherwise re-tokenize the same
-    # bodies and scopes (6 tokenize calls per memory per hybrid search,
-    # ~88% of cumulative search time). Pure perf: see `_MemoryTokens`.
-    # A candidate whose body and scopes an earlier call tokenised is
-    # served from `_memory_tokens`' cache and not tokenised again.
-    candidate_tokens = [_memory_tokens(m) for m in candidates]
-
-    # Corpus-wide document frequencies for the BM25 rankers, resolved from
-    # the SAME terms the scorer will look up: every query token plus the
-    # `_kebab_parts` components of each joined one. The conjunctive
-    # fallback prices a joined token with no direct hit off its parts (min
-    # component IDF), and `compute_idf`'s override only re-prices fetched
-    # terms — a whole-tokens-only fetch would leave those parts at the
-    # pool-collapsed IDF the provider exists to correct. That parity is
-    # the whole reason this is a provider rather than a precomputed value:
-    # the caller knowing which terms to fetch would mean re-deriving this
-    # tokenisation outside `search()`, and a hand-mirrored token pipeline is
-    # exactly the drift schema v4 removed. Only the BM25 branches consume
-    # it, so a keyword-only search never pays the lookup.
-    # Lane L: parse the query's temporal shape once. Hybrid-only, like
-    # the rescue lane, and skipped on the stopword fallback for the same
-    # reason (the fallback's TF stream has different matched semantics).
-    # A non-temporal query leaves `conv_reading` None and every path
-    # below byte-identical to the flag being off.
-    conv_reading: _TemporalReading | None = None
-    if conversational and mode == "hybrid" and not stopword_fallback:
-        reading = _temporal_reading(query, now)
-        if reading.is_temporal:
-            conv_reading = reading
-    # L2: the PRICING gate — the repricing mechanisms' key, wider than
-    # the temporal reading when the widening constant is set. The
-    # window/selector rerank below stays keyed on `conv_reading` alone:
-    # a scaffold-shaped query has no window to boost. With
-    # `_CONV_SCAFFOLD_MIN_STEMS` None the predicate is constant-False
-    # and `conv_pricing == (conv_reading is not None)` — L1's key.
-    conv_pricing = conv_reading is not None
-    if (
-        not conv_pricing
-        and conversational
-        and mode == "hybrid"
-        and not stopword_fallback
-    ):
-        conv_pricing = _conv_scaffold_shaped(query_tokens)
-
-    corpus_stats: CorpusStats | None = None
-    if corpus_stats_provider is not None and mode in ("bm25", "hybrid"):
-        fetch_terms = list(query_tokens)
-        for tok in query_tokens:
-            fetch_terms.extend(_kebab_parts(tok))
-        corpus_stats = corpus_stats_provider(list(dict.fromkeys(fetch_terms)))
-
-    if mode == "keyword":
-        scored = _score_keyword(
-            candidates,
-            query_tokens,
-            now=now,
-            half_life_days=half_life_days,
-            candidate_tokens=candidate_tokens,
-        )
-        # Sort by score, then created (newer wins on tie), then id as the
-        # final discriminator. Without `id` the tiebreaker is undefined for
-        # two memories that share both score and created timestamp — a real
-        # case under microsecond-tied writes or under tests that mock the
-        # clock. ULID-shaped ids are lexically time-ordered, so the final
-        # tiebreaker also gives "newer wins" semantics.
-        scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
-        if matched_leg_out is not None:
-            lexical_ids = {memory.id for memory, _, _ in scored}
-    elif mode == "bm25":
-        scored = _score_bm25(
-            candidates,
-            query_tokens,
-            now=now,
-            half_life_days=half_life_days,
-            candidate_tokens=candidate_tokens,
-            stopword_fallback=stopword_fallback,
-            corpus_stats=corpus_stats,
-        )
-        scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
-        if matched_leg_out is not None:
-            lexical_ids = {memory.id for memory, _, _ in scored}
-    else:  # mode == "hybrid"
-        # The filler df-floor applies to the BM25 legs of the default
-        # hybrid path only — `bm25` and `keyword` modes are explicit
-        # instrument choices and stay pure. With `rescue_expansion`
-        # off, the raw stats pass through and the branch is
-        # byte-identical to pre-5.1.
-        hybrid_stats = (
-            _filler_floor_stats(corpus_stats, query_tokens, len(candidates))
-            if rescue_expansion
-            else corpus_stats
-        )
-        # Lane L's scaffold floor composes AFTER the filler floor: both
-        # only ever raise a term's df, they touch disjoint classes, and
-        # the pricing gate is required — no priced reading, no
-        # repricing. (L1 keyed this on the temporal reading; L2's gate
-        # subsumes it and is identical while the widening ships dark.)
-        if conv_pricing:
-            hybrid_stats = _scaffold_floor_stats(
-                hybrid_stats, query_tokens, len(candidates)
-            )
-        # L2: the keyword leg's scaffold repricing, the fusion's other
-        # half. Engaged only for a priced query with at least one
-        # content term (an all-scaffold temporal query leaves the leg
-        # stock — the shipped behavior), and only when the weight
-        # constant is set; None is byte-identical to 6.1.0.
-        conv_scaffold: frozenset[str] | None = None
-        if conv_pricing and _CONV_KEYWORD_SCAFFOLD_WEIGHT is not None:
-            distinct_q = list(dict.fromkeys(query_tokens))
-            # Ordered stream in, dedup after — see `_conv_scaffold_shaped`.
-            scaffold_q = list(dict.fromkeys(_conv_scaffold_terms(query_tokens)))
-            if scaffold_q and len(scaffold_q) < len(distinct_q):
-                conv_scaffold = frozenset(scaffold_q)
-        rankings: list[list[tuple[Memory, float, list[str]]]] = [
-            _score_keyword(
-                candidates,
-                query_tokens,
-                now=now,
-                half_life_days=half_life_days,
-                candidate_tokens=candidate_tokens,
-                scaffold_terms=conv_scaffold,
-                scaffold_weight=_CONV_KEYWORD_SCAFFOLD_WEIGHT or 0.0,
-            ),
-            _score_bm25(
-                candidates,
-                query_tokens,
-                now=now,
-                half_life_days=half_life_days,
-                candidate_tokens=candidate_tokens,
-                stopword_fallback=stopword_fallback,
-                corpus_stats=hybrid_stats,
-            ),
-        ]
-        # Snapshot the leg membership from the working list by name,
-        # not position, so a future ranker joining `rankings` can't
-        # silently change what "lexical" means here — the rescue leg
-        # below joins the FUSION but deliberately never this snapshot.
-        if matched_leg_out is not None:
-            lexical_ids = {
-                memory.id for ranking in rankings for memory, _, _ in ranking
-            }
-        # Round 9: a base leg whose rank-1 evidence trails its peer's is
-        # withheld. Skipped on the stopword fallback exactly as the
-        # rescue leg is — the fallback's TF stream has different matched
-        # semantics. None (every tie, and the shipped default) fuses
-        # byte-identically.
-        base_weights = None if stopword_fallback else _base_leg_weights(rankings)
-        scored = _hybrid_fuse(rankings, rrf_k=rrf_k, weights=base_weights)
-
-        # Rescue expansion: one extra, down-weighted BM25 leg over
-        # synthesized vocabulary, engaged only when the base fusion is
-        # not confident about its own top hit. Skipped on the stopword
-        # fallback (an all-filler query has no content tokens worth
-        # expanding, and the fallback already runs a special TF stream
-        # the expansion leg does not share).
-        if rescue_expansion and not stopword_fallback:
-            if scored:
-                top_matched = set(scored[0][2]) & set(query_tokens)
-                coverage = len(top_matched) / query_unique if query_unique else 0.0
-            else:
-                coverage = 0.0
-            if coverage < _RESCUE_COVERAGE_GATE:
-                exp_terms = _expansion_terms_impl(
-                    list(dict.fromkeys(query_tokens)),
-                    _EXPANSION_TABLES,
-                    _stem_token,
-                )
-                if exp_terms:
-                    exp_stats = hybrid_stats
-                    if corpus_stats_provider is not None:
-                        # Above the threshold the floored query-term
-                        # stats say nothing about the synthesized
-                        # terms; fetch those too so a store-rare
-                        # synonym prices off the store, not the slice.
-                        #
-                        # Same terms-to-fetch rule as the base fetch
-                        # above, and for the same reason: a synthesized
-                        # term can itself be joined — `morph_variants`
-                        # rewrites the tail of a kebab token, so
-                        # "split-testing" emits "split-test" — and
-                        # `_score_bm25`'s conjunctive fallback prices a
-                        # joined term with no direct hit off its parts.
-                        # Fetching whole terms only would leave those
-                        # parts at the pool-collapsed IDF the provider
-                        # exists to correct.
-                        exp_fetch = list(exp_terms)
-                        for term in exp_terms:
-                            exp_fetch.extend(_kebab_parts(term))
-                        exp_stats = _merge_corpus_stats(
-                            hybrid_stats,
-                            corpus_stats_provider(list(dict.fromkeys(exp_fetch))),
-                        )
-                    exp_leg = _score_bm25(
-                        candidates,
-                        exp_terms,
-                        now=now,
-                        half_life_days=half_life_days,
-                        candidate_tokens=candidate_tokens,
-                        corpus_stats=exp_stats,
-                    )
-                    # A leg with one word of evidence does not get to
-                    # vote. RRF reads rank, not score, so a leg resting
-                    # on a single coincidental match contributes exactly
-                    # as much as one three synonyms agree on;
-                    # withholding it is the only way the fusion can tell
-                    # them apart. A withheld leg leaves `scored` as
-                    # the base fusion, so the result reproduces
-                    # a lane-on query whose leg found nothing — the
-                    # same shape the lane already has when `exp_terms`
-                    # comes back empty. The filler floor above is keyed
-                    # on `rescue_expansion`, not on the leg, so it
-                    # stays. See `_RESCUE_LEG_MIN_EVIDENCE`.
-                    leg_weight = (
-                        _leg_evidence_weight(_leg_top_evidence(exp_leg))
-                        if exp_leg
-                        else 0.0
-                    )
-                    if leg_weight <= 0.0:
-                        exp_leg = []
-                    if exp_leg:
-                        expansion_ids = {m.id for m, _, _ in exp_leg}
-                        # The base pair keeps the SAME weights it fused
-                        # with above — one code path, no fork (addendum
-                        # 12's scope): a lane-on query must not restore
-                        # a vote the base fusion just withheld.
-                        scored = _hybrid_fuse(
-                            rankings + [exp_leg],
-                            rrf_k=rrf_k,
-                            weights=[*(base_weights or (1.0, 1.0)), leg_weight],
-                        )
-                        # `match_terms` stays a subset of the CALLER's
-                        # tokens — synthesized terms explain the leg,
-                        # not the caller's query, and letting them into
-                        # the matched list would inflate the coverage
-                        # `relevance` is computed from. An
-                        # expansion-only hit therefore reads
-                        # relevance="low", match_terms=[] with
-                        # matched_leg="expansion" — the exact shape
-                        # pure-paraphrase hits have always had.
-                        qset = set(query_tokens)
-                        scored = [
-                            (m, s, [t for t in matched if t in qset])
-                            for m, s, matched in scored
-                        ]
-
-    # Lane L's anchor selection runs last — after the rescue leg has
-    # joined or declined the fusion — so a lane-on query reorders the
-    # ranking the caller would otherwise have received, before the trim.
-    if conv_reading is not None:
-        scored = _conversational_rerank(scored, reading=conv_reading)
-
+    query_unique = len(set(query_tokens))
+    scored, lexical_ids, expansion_ids = _rank_candidates(
+        candidates,
+        query,
+        query_tokens,
+        query_unique,
+        now=now,
+        mode=mode,
+        half_life_days=half_life_days,
+        rrf_k=rrf_k,
+        corpus_stats_provider=corpus_stats_provider,
+        stopword_fallback=stopword_fallback,
+        rescue_expansion=rescue_expansion,
+        conversational=conversational,
+        track_legs=matched_leg_out is not None,
+    )
     trimmed = scored[:max_results]
     if matched_leg_out is not None:
-        for memory, _, _ in trimmed:
-            leg = _matched_leg(
-                lexical=memory.id in lexical_ids,
-                expansion=memory.id in expansion_ids,
-            )
-            if leg:
-                matched_leg_out[memory.id] = leg
-    anchors = _claim_anchors(anchoring, [memory for memory, _, _ in trimmed])
-    return [
-        _build_hit(
-            memory,
-            score,
-            matched,
-            query_unique=query_unique,
-            anchor=anchor,
-            path_drift=path_drift,
-        )
-        for (memory, score, matched), anchor in zip(trimmed, anchors, strict=True)
-    ]
+        _record_matched_legs(trimmed, lexical_ids, expansion_ids, matched_leg_out)
+    return _ranked_hits(trimmed, anchoring, query_unique, path_drift)
 
 
 def _claim_anchors(
