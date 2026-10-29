@@ -10,8 +10,9 @@ whose text the folder's name chose. Each value is now written through
 print through, so every line stays one line.
 
 The repositories are real, built with git under ``tmp_path``. NTFS refuses
-control characters in a name, so on Windows the directory carries U+2028
-only; elsewhere it carries a newline, U+2028 and an escape.
+control characters and a colon in a name, so on Windows the directory
+carries U+2028 and the forged words without their colon; elsewhere it
+carries a newline, U+2028, an escape and the colon.
 """
 
 from __future__ import annotations
@@ -35,10 +36,12 @@ from bettermemory.store import Store
 from .test_membership_security import _git, neutral_git, project_file
 
 #: What a hostile directory name carries: a forged line after a newline,
-#: one after a line separator, and a terminal escape.
+#: one after a line separator, and a terminal escape. NTFS refuses the
+#: newline, the escape and the colon, so on Windows the name carries the
+#: line separator and the forged words without their colon.
 FORGED = "bettermemory: forged"
 HOSTILE = (
-    f"a {FORGED} 2"
+    f"a {FORGED.replace(':', '')} 2"
     if sys.platform == "win32"
     else f"a\n{FORGED} 1 {FORGED} 2\x1b[31mred"
 )
@@ -121,7 +124,8 @@ def test_a_directory_name_with_line_breaks_renders_on_one_line(
     tmp_path: Path, lab: tuple[Store, Config]
 ) -> None:
     """A workspace folder and a repository below it, each named with a
-    newline, U+2028 and an escape (U+2028 alone on Windows): the session's
+    newline, U+2028 and an escape (U+2028 and no colon on Windows): the
+    session's
     first output has one line per line written, none of them starting
     with the text the names carry, and the names are kept as written."""
     store, config = lab

@@ -2620,11 +2620,17 @@ def test_b17_the_model_decides_where_an_init_was_made(world: World) -> None:
     root = world.see(repo)
     assert root.checkout is not None and root.project is not None
     k = world.model.checkout(root.checkout)
-    assert world.model.below_root(k, "/w/mono") is False
-    assert world.model.below_root(k, "/w/mono/") is False
-    assert world.model.below_root(k, "/w/mono/packages/api") is True
-    assert world.model.below_root(k, "/w/mono-two") is None
-    assert world.model.below_root(k, "/w") is None
+    # The world's paths are synthetic (no drive on Windows), so they are
+    # read as views record them; test_membership_view_path reads real ones.
+
+    def below(directory: str) -> bool | None:
+        return world.model.below_root(k, directory, canonical=True)
+
+    assert below("/w/mono") is False
+    assert below("/w/mono/") is False
+    assert below("/w/mono/packages/api") is True
+    assert below("/w/mono-two") is None
+    assert below("/w") is None
     fid = _file_id()
     done = world.model.declare(
         Declaration(

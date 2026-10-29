@@ -3558,12 +3558,13 @@ def test_b24_a_write_the_daemon_cannot_read_takes_its_sessions_checkout(
     lab.write("h1", h)
     base = tmp_path / "no-such-mount"
     mount = str(base / "workspaces" / "proj")
+    src = os.path.join(mount, "src")
     box = Container(h, mount, _container_machine(lab, "container-a"))
     stood = box.post(lab, session="s-box")
     assert stood.outcome == SILENT and stood.checkout is not None
     assert lab.model().checkout(stood.checkout).machine != lab.identity.id
     seq = _last_seq(lab)
-    res = lab.write("c1", f"{mount}/src", session="s-box")
+    res = lab.write("c1", src, session="s-box")
     assert (res.outcome, res.rule) == (SILENT, "session_resolved")
     assert (res.checkout, res.project, res.chain) == (
         stood.checkout,
@@ -3576,14 +3577,14 @@ def test_b24_a_write_the_daemon_cannot_read_takes_its_sessions_checkout(
         "checkout": stood.checkout,
         "project": stood.project,
         "session": "s-box",
-        "path": f"{mount}/src",
+        "path": src,
     }
     home = lab.model().home(lab.records["c1"].id)
     assert home is not None and not home.unresolved
     assert (home.project, home.checkout) == (stood.project, stood.checkout)
     assert lab.admitted(stood) == ["c1", "h1"]
 
-    other = lab.write("c2", f"{mount}/src", session="s-other")
+    other = lab.write("c2", src, session="s-other")
     assert (other.outcome, other.project) == (INDETERMINATE, None)
     stray = lab.model().home(lab.records["c2"].id)
     assert stray is not None and stray.unresolved
