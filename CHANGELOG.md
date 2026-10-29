@@ -2752,7 +2752,12 @@ follows the candidates' testing.
   design the membership code cites by number is in the repository as
   `docs/membership-design.md`, redacted, with
   `tests/test_design_citations.py` holding every `design N.N` and
-  `decision Dn` or `Bn` citation to a section or decision it holds; and
+  `decision Dn` or `Bn` citation in src, tests, docs and the root
+  CHANGELOG, CONTRIBUTING and README to a section with text or an
+  appendix entry the document holds, every item of a list
+  (`design 3.5, 8.2`, `design 2.1, decision D13`) and across a wrapped
+  comment, and the document's own `section N.N` references to its
+  sections; and
   `tests/test_v8_import_graph.py` pins that no module but `v8.py`,
   `migrate_v8.py` and `cli/migrate.py` (which exists only for `migrate
   v8`) imports the first two, apart from `mirror.py`, which imports
