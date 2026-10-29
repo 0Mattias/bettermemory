@@ -120,6 +120,7 @@ them out of the takeaway summary surface.
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -174,6 +175,319 @@ DESC_EPISODE_HANDOFF = (
     "last two DID journal, so a `note` never means 'wrote no journal'. "
     "`episodes` MAY be non-empty: the walk rewinds to an older takeaway."
 )
+
+
+@dataclass
+class _HandoffPick:
+    """The session a handoff surfaces, the episodes it emits and its note flags."""
+
+    session_id: str | None
+    # Note flags: the immediately-prior session of the checkout was
+    # floor-only (a crash-after-entry OR a clean read-only tick), or its
+    # real takeaways are all hidden and nothing older is visible.
+    note_floor_only: bool = False
+    note_all_hidden: bool = False
+    # The immediately-prior session of the checkout journaled nothing at
+    # all (decision B22): no floor, no takeaway, only its rows here.
+    note_zero_episode: bool = False
+    inherited_from: str | None = None
+    # The episodes of the adopted session the auto path emits (None: every
+    # episode of the named session, the explicit path).
+    chosen: set[str] | None = None
+
+
+def _write_entry_floor(deps: ToolHandlers, caller: Caller) -> None:
+    """Take the caller; return None, after writing the current session's floor if it has none."""
+    from .. import _handlers as _h
+
+    # ---- E2: floor-write at handoff entry -------------------------------
+    #
+    # Write a session-tag floor episode for the CURRENT session BEFORE
+    # recording the handoff event. The /loop pattern is:
+    #
+    #   tick T:   episode_handoff()  (reads T-1's journal, records event)
+    #             ... model does work ...
+    #             episode_write(takeaway=...)  (writes T's journal)
+    #   tick T+1: episode_handoff()  (reads T's journal, records event)
+    #
+    # If tick T crashes between handoff and episode_write (model
+    # timeout, OOM, Ctrl-C, power loss), T has an event recorded but
+    # ZERO journal files, and nothing ties T to its checkout: T+1's
+    # handoff would walk past T and adopt T-1, dropping T's history.
+    #
+    # The fix: at handoff ENTRY, write a tiny floor episode tagged
+    # with the current session_id and homed to the caller's checkout.
+    # Even if T crashes immediately after, T+1's handoff sees the floor
+    # as an episode of its checkout and adopts T correctly.
+    #
+    # Idempotent: a session that calls episode_handoff twice in the
+    # same process (e.g., a /loop subagent that re-handshakes) only
+    # gets one floor — the second call sees a non-empty
+    # `list_by_session` and skips the write. A session that wrote a
+    # real takeaway via episode_write before the second handoff
+    # also skips (real takeaway → list is non-empty → floor would
+    # be redundant noise).
+    #
+    # Ordering invariant — the floor write MUST happen BEFORE the
+    # handoff event is recorded (`deps.recorder.record(...)` at the
+    # bottom of `episode_handoff`). A crash between the two leaves a
+    # floor and no event: harmless, TTL-pruned in 30 days, and the next
+    # tick adopts it as the floor-only prior session it is.
+    #
+    # The floor write itself raises if it fails (disk full, etc.) —
+    # propagate to the MCP caller rather than silently degrading
+    # the durability contract.
+    handoff_origin = _h.capture_origin()
+    _maybe_write_session_floor(deps, handoff_origin, caller)
+
+
+def _auto_pick(
+    deps: ToolHandlers, caller: Caller, excluded_scopes: set[str]
+) -> _HandoffPick:
+    """Take the caller and its hidden scopes; return the prior session the walk resolves."""
+    from ..membership import EpisodeRef
+
+    pick = _HandoffPick(session_id=None)
+    own_session = deps.recorder.session_for_request()
+    candidates = {
+        ep.id: ep for ep in deps.store.iter_episodes() if ep.session_id != own_session
+    }
+
+    def visible_real(ep: Any) -> bool:
+        return not ep.is_floor and not (
+            excluded_scopes and (set(ep.scopes) & excluded_scopes)
+        )
+
+    refs = [EpisodeRef(ep.id, ep.session_id, ep.created) for ep in candidates.values()]
+    res = caller.resolution
+    newest = caller.model.handoff(res, refs)
+    # The newest prior session that stood in this checkout and
+    # journaled nothing (decision B22), and whether it is newer than
+    # the newest session that journaled here: then it is the
+    # immediately-prior session the note names.
+    quiet: tuple[str, datetime] | None = None
+    if res.checkout is not None:
+        homes = caller.model.homes(list(candidates))
+        here = [
+            candidates[i].created
+            for i, home in homes.items()
+            if home.checkout == res.checkout
+        ]
+        own = {own_session}
+        own_harness = identity.current_harness_session()
+        if own_harness is not None:
+            own.add(own_harness)
+        quiet = _quiet_session(
+            deps.store,
+            checkout=res.checkout,
+            exclude=own,
+            journaled={ep.session_id for ep in candidates.values()},
+            episodes_here=here,
+        )
+    newest_at = max((candidates[i].created for i in newest.episodes), default=None)
+    quiet_first = quiet is not None and (newest_at is None or quiet[1] > newest_at)
+    if newest.rule == "own_checkout" and newest.session_id is not None:
+        adopted = caller.model.handoff(
+            res, [r for r in refs if visible_real(candidates[r.id])]
+        )
+        prior = [candidates[i] for i in newest.episodes]
+        if adopted.rule == "own_checkout" and adopted.session_id is not None:
+            # Rewound past newer sessions with nothing visible, or the
+            # immediately-prior session itself.
+            pick.session_id = adopted.session_id
+            pick.chosen = set(adopted.episodes)
+            if quiet_first:
+                pick.note_zero_episode = True
+            elif adopted.session_id != newest.session_id and all(
+                ep.is_floor for ep in prior
+            ):
+                pick.note_floor_only = True
+        elif quiet is not None and quiet_first:
+            # Nothing visible anywhere, and the immediately-prior
+            # session journaled nothing: surface it with its note.
+            pick.session_id = quiet[0]
+            pick.chosen = set()
+            pick.note_zero_episode = True
+        else:
+            # Nothing visible anywhere: surface the immediately-prior
+            # session with the note naming why it shows nothing.
+            pick.session_id = newest.session_id
+            pick.chosen = set(newest.episodes)
+            if all(ep.is_floor for ep in prior):
+                pick.note_floor_only = True
+            else:
+                pick.note_all_hidden = True
+    elif newest.session_id is not None:
+        # A primary checkout with no episode of its own: the newest
+        # session of a non-live primary checkout of its project.
+        pick.session_id = newest.session_id
+        pick.chosen = set(newest.episodes)
+        pick.inherited_from = newest.label
+    elif quiet is not None:
+        # No session journaled in this checkout and none is inherited;
+        # the newest that stood here journaled nothing (decision B22).
+        pick.session_id = quiet[0]
+        pick.chosen = set()
+        pick.note_zero_episode = True
+    return pick
+
+
+def _emit_episodes(
+    deps: ToolHandlers,
+    pick: _HandoffPick,
+    *,
+    prior_session_id: str | None,
+    excluded_scopes: set[str],
+    max_episodes: int,
+    include_bodies: bool,
+) -> list[dict[str, Any]]:
+    """Take the pick; return the rows the handoff emits, setting its floor-only flag."""
+    episodes: list[dict[str, Any]] = []
+    resolved_session_id = pick.session_id
+    chosen = pick.chosen
+    # `note_floor_only` may already be True from the auto-resolution walk
+    # (the immediately-prior session of the checkout was floor-only, whether or
+    # not we then rewound to an older real session). The explicit-
+    # `prior_session_id` path bypasses that walk, so we derive the
+    # floor-only determination for a named session below.
+    if resolved_session_id is not None:
+        # An explicit `prior_session_id` flows in verbatim (the
+        # auto-resolution branch above only ever assigns a session_id
+        # that already round-tripped through `list_by_session`). A
+        # caller-supplied id — e.g. a child agent passed a mistyped or
+        # path-shaped parent id — can fail `_session_dir`'s
+        # `[A-Za-z0-9_-]` validator with a ValueError. On the /loop
+        # iteration-entry hot path that should degrade to the graceful
+        # `episodes: []` shape, not surface a raw ValueError, matching
+        # how the auto-resolution walk (above) and `episode_search`
+        # handle an invalid session_id. The validator fails closed, so
+        # this is not a traversal — just a loud-vs-quiet failure-mode
+        # choice, and quiet is what every other episode read does.
+        try:
+            all_eps = deps.store.episodes_by_session(resolved_session_id)
+        except ValueError:
+            all_eps = []
+        # Explicit-`prior_session_id` path only: the walk never ran, so
+        # if the caller named a floor-only session, surface the same
+        # honest note. (The auto path already set `note_floor_only` when
+        # the immediately-prior session was floor-only, and in the rewind
+        # case `resolved_session_id` is the OLDER real session — deriving
+        # from it here would wrongly clear the flag, so we gate on
+        # `prior_session_id is not None`.)
+        if prior_session_id is not None:
+            any_real_takeaway = any(not ep.is_floor for ep in all_eps)
+            if all_eps and not any_real_takeaway:
+                pick.note_floor_only = True
+        # Filter floors from the emit stream — they carry no takeaway
+        # and the marker body is a placeholder, not content the model
+        # should reason over as "what the prior session concluded". The
+        # auto path emits the adopted session's episodes of the checkout
+        # `Membership.handoff` named.
+        if chosen is not None:
+            all_eps = [ep for ep in all_eps if ep.id in chosen]
+        all_eps = [ep for ep in all_eps if not ep.is_floor]
+        # Apply the same scope-hide filter to the emit stream. This
+        # matters in two cases the auto-resolution walk doesn't reach:
+        #  - Caller passed `prior_session_id` explicitly, bypassing
+        #    the candidate-walk filter — the bodies themselves are
+        #    still gated.
+        #  - Auto-resolved session mixed visible and hidden episodes;
+        #    only the visible ones should be surfaced.
+        if excluded_scopes:
+            all_eps = [ep for ep in all_eps if not (set(ep.scopes) & excluded_scopes)]
+        # Oldest first within the recent slice: take the LAST
+        # `max_episodes`, which is the most recent chunk. This matches
+        # the way a reader expects "the prior session's recent
+        # takeaways" — chronological within the surfaced window.
+        recent = all_eps[-max_episodes:]
+        labels = deps.store.episode_provenance([ep.id for ep in recent])
+        for ep in recent:
+            label = labels.get(ep.id, UNACCOUNTED)
+            # `body` is present only on request and never for an
+            # unaccounted episode: the takeaway and the scopes travel
+            # with the label beside them, the body stays on disk for the
+            # explicit read (`episode_search(ids=[...])`). Omitted, not
+            # emptied, so a caller branches on `"body" in row`.
+            deliver_body = include_bodies and label != UNACCOUNTED
+            episodes.append(
+                {
+                    "id": ep.id,
+                    "created": ep.created.isoformat().replace("+00:00", "Z"),
+                    "takeaway": ep.takeaway,
+                    **({"body": ep.body.strip()} if deliver_body else {}),
+                    "scopes": ep.scopes,
+                    "provenance": label,
+                }
+            )
+    return episodes
+
+
+def _handoff_result(
+    pick: _HandoffPick, episodes: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Take the pick and its emitted rows; return the handoff's response with any note."""
+    result: dict[str, Any] = {
+        "prior_session_id": pick.session_id,
+        "episodes": episodes,
+    }
+    if pick.inherited_from is not None:
+        # Run-state taken from another checkout of the project (design
+        # 3.6): said, never silent.
+        result["inherited_from"] = pick.inherited_from
+    # Additive surface key, only present when the immediately-prior
+    # session left no takeaway. A caller that doesn't know about the field sees
+    # the same shape as before. `episodes` may be NON-empty here: the walk
+    # rewound past the empty session to an older real takeaway, and the note
+    # flags that the most recent session left nothing. The empty shapes get
+    # distinct text because their on-disk cause differs.
+    if pick.note_floor_only:
+        # Floor-only: a real `is_floor` marker exists on disk (the session
+        # called episode_handoff, which writes the entry floor). Genuinely
+        # ambiguous between (a) a crash after entry but before
+        # episode_write and (b) a clean read-only tick that ran
+        # episode_handoff with no takeaway — the on-disk shape is
+        # identical, so surface both readings rather than the misleading
+        # bare "crashed" claim.
+        result["note"] = (
+            "The immediately-preceding session recorded no takeaway "
+            "before it ended: it called episode_handoff (which wrote "
+            "the session-tag floor that anchored it in this checkout) "
+            "but no episode_write followed — either it crashed before "
+            "the takeaway, or it was a clean read-only tick with "
+            "nothing to record. Any takeaways above (if present) come "
+            "from an older session in this checkout that the handoff "
+            "rewound to."
+        )
+    elif pick.note_zero_episode:
+        # Zero-episode: no floor and no takeaway; the session is this
+        # checkout's by its rows (decision B22), so the note claims no
+        # floor and no episode_handoff call.
+        result["note"] = (
+            "The immediately-preceding session in this checkout recorded "
+            "activity but journaled no takeaway and left no handoff floor: "
+            "it may have been a tick that never called the handoff, or it "
+            "crashed before journaling. Any takeaways above (if present) "
+            "come from an older session in this checkout that the handoff "
+            "rewound to."
+        )
+    elif pick.note_all_hidden:
+        # Scope-hidden terminal shape: the immediately-prior session
+        # HAS real takeaways, but every one of them is in a scope this
+        # session disabled, and no older visible takeaway exists either. The
+        # floor-only text would be a lie here (the
+        # session journaled fine), and returning no note would be
+        # indistinguishable from "prior session wrote nothing". `episodes` is
+        # always [] on this branch — the emit-step scope filter hides the
+        # same episodes the walk could not surface.
+        result["note"] = (
+            "The immediately-preceding session in this checkout recorded "
+            "takeaways, but every one of them is in a scope this session "
+            "has disabled (memory_admin disable_scope), so none can be shown. "
+            "The prior session was not empty and this is not the first "
+            "handoff in this checkout; re-enable the scope with "
+            "memory_admin(action='enable_scope') to surface its takeaways."
+        )
+    return result
 
 
 async def episode_handoff(
@@ -236,9 +550,6 @@ async def episode_handoff(
     caller passing one in is explicit consent that they own the
     cross-checkout concern.
     """
-    from .. import _handlers as _h
-    from ..membership import EpisodeRef
-
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
 
@@ -249,46 +560,7 @@ async def episode_handoff(
     # The caller, resolved once (design 3.1): the floor is homed by it and
     # the handoff keys on its checkout.
     _anchoring, caller = caller_anchoring(deps.store, deps.config)
-
-    # ---- E2: floor-write at handoff entry -------------------------------
-    #
-    # Write a session-tag floor episode for the CURRENT session BEFORE
-    # recording the handoff event. The /loop pattern is:
-    #
-    #   tick T:   episode_handoff()  (reads T-1's journal, records event)
-    #             ... model does work ...
-    #             episode_write(takeaway=...)  (writes T's journal)
-    #   tick T+1: episode_handoff()  (reads T's journal, records event)
-    #
-    # If tick T crashes between handoff and episode_write (model
-    # timeout, OOM, Ctrl-C, power loss), T has an event recorded but
-    # ZERO journal files, and nothing ties T to its checkout: T+1's
-    # handoff would walk past T and adopt T-1, dropping T's history.
-    #
-    # The fix: at handoff ENTRY, write a tiny floor episode tagged
-    # with the current session_id and homed to the caller's checkout.
-    # Even if T crashes immediately after, T+1's handoff sees the floor
-    # as an episode of its checkout and adopts T correctly.
-    #
-    # Idempotent: a session that calls episode_handoff twice in the
-    # same process (e.g., a /loop subagent that re-handshakes) only
-    # gets one floor — the second call sees a non-empty
-    # `list_by_session` and skips the write. A session that wrote a
-    # real takeaway via episode_write before the second handoff
-    # also skips (real takeaway → list is non-empty → floor would
-    # be redundant noise).
-    #
-    # Ordering invariant — the floor write MUST happen BEFORE the
-    # handoff event is recorded (`deps.recorder.record(...)` at the
-    # bottom of this function). A crash between the two leaves a
-    # floor and no event: harmless, TTL-pruned in 30 days, and the next
-    # tick adopts it as the floor-only prior session it is.
-    #
-    # The floor write itself raises if it fails (disk full, etc.) —
-    # propagate to the MCP caller rather than silently degrading
-    # the durability contract.
-    handoff_origin = _h.capture_origin()
-    _maybe_write_session_floor(deps, handoff_origin, caller)
+    _write_entry_floor(deps, caller)
 
     # Session-disabled scopes hide episodes uniformly across the read
     # surface, the same contract `memory_search` / `memory_list` honor. For
@@ -299,182 +571,19 @@ async def episode_handoff(
     # still respects the filter on the emit step.
     excluded_scopes: set[str] = set(state.disabled_scopes)
 
-    # Note flags: the immediately-prior session of the checkout was
-    # floor-only (a crash-after-entry OR a clean read-only tick), or its
-    # real takeaways are all hidden and nothing older is visible.
-    note_floor_only = False
-    note_all_hidden = False
-    # The immediately-prior session of the checkout journaled nothing at
-    # all (decision B22): no floor, no takeaway, only its rows here.
-    note_zero_episode = False
-    inherited_from: str | None = None
-    # The episodes of the adopted session the auto path emits (None: every
-    # episode of the named session, the explicit path).
-    chosen: set[str] | None = None
-
-    resolved_session_id: str | None = prior_session_id
-    if resolved_session_id is None:
-        own_session = deps.recorder.session_for_request()
-        candidates = {
-            ep.id: ep
-            for ep in deps.store.iter_episodes()
-            if ep.session_id != own_session
-        }
-
-        def visible_real(ep: Any) -> bool:
-            return not ep.is_floor and not (
-                excluded_scopes and (set(ep.scopes) & excluded_scopes)
-            )
-
-        refs = [
-            EpisodeRef(ep.id, ep.session_id, ep.created) for ep in candidates.values()
-        ]
-        res = caller.resolution
-        newest = caller.model.handoff(res, refs)
-        # The newest prior session that stood in this checkout and
-        # journaled nothing (decision B22), and whether it is newer than
-        # the newest session that journaled here: then it is the
-        # immediately-prior session the note names.
-        quiet: tuple[str, datetime] | None = None
-        if res.checkout is not None:
-            homes = caller.model.homes(list(candidates))
-            here = [
-                candidates[i].created
-                for i, home in homes.items()
-                if home.checkout == res.checkout
-            ]
-            own = {own_session}
-            own_harness = identity.current_harness_session()
-            if own_harness is not None:
-                own.add(own_harness)
-            quiet = _quiet_session(
-                deps.store,
-                checkout=res.checkout,
-                exclude=own,
-                journaled={ep.session_id for ep in candidates.values()},
-                episodes_here=here,
-            )
-        newest_at = max((candidates[i].created for i in newest.episodes), default=None)
-        quiet_first = quiet is not None and (newest_at is None or quiet[1] > newest_at)
-        if newest.rule == "own_checkout" and newest.session_id is not None:
-            adopted = caller.model.handoff(
-                res, [r for r in refs if visible_real(candidates[r.id])]
-            )
-            prior = [candidates[i] for i in newest.episodes]
-            if adopted.rule == "own_checkout" and adopted.session_id is not None:
-                # Rewound past newer sessions with nothing visible, or the
-                # immediately-prior session itself.
-                resolved_session_id = adopted.session_id
-                chosen = set(adopted.episodes)
-                if quiet_first:
-                    note_zero_episode = True
-                elif adopted.session_id != newest.session_id and all(
-                    ep.is_floor for ep in prior
-                ):
-                    note_floor_only = True
-            elif quiet is not None and quiet_first:
-                # Nothing visible anywhere, and the immediately-prior
-                # session journaled nothing: surface it with its note.
-                resolved_session_id = quiet[0]
-                chosen = set()
-                note_zero_episode = True
-            else:
-                # Nothing visible anywhere: surface the immediately-prior
-                # session with the note naming why it shows nothing.
-                resolved_session_id = newest.session_id
-                chosen = set(newest.episodes)
-                if all(ep.is_floor for ep in prior):
-                    note_floor_only = True
-                else:
-                    note_all_hidden = True
-        elif newest.session_id is not None:
-            # A primary checkout with no episode of its own: the newest
-            # session of a non-live primary checkout of its project.
-            resolved_session_id = newest.session_id
-            chosen = set(newest.episodes)
-            inherited_from = newest.label
-        elif quiet is not None:
-            # No session journaled in this checkout and none is inherited;
-            # the newest that stood here journaled nothing (decision B22).
-            resolved_session_id = quiet[0]
-            chosen = set()
-            note_zero_episode = True
-
-    episodes: list[dict[str, Any]] = []
-    # `note_floor_only` may already be True from the auto-resolution walk
-    # (the immediately-prior session of the checkout was floor-only, whether or
-    # not we then rewound to an older real session). The explicit-
-    # `prior_session_id` path bypasses that walk, so we derive the
-    # floor-only determination for a named session below.
-    if resolved_session_id is not None:
-        # An explicit `prior_session_id` flows in verbatim (the
-        # auto-resolution branch above only ever assigns a session_id
-        # that already round-tripped through `list_by_session`). A
-        # caller-supplied id — e.g. a child agent passed a mistyped or
-        # path-shaped parent id — can fail `_session_dir`'s
-        # `[A-Za-z0-9_-]` validator with a ValueError. On the /loop
-        # iteration-entry hot path that should degrade to the graceful
-        # `episodes: []` shape, not surface a raw ValueError, matching
-        # how the auto-resolution walk (above) and `episode_search`
-        # handle an invalid session_id. The validator fails closed, so
-        # this is not a traversal — just a loud-vs-quiet failure-mode
-        # choice, and quiet is what every other episode read does.
-        try:
-            all_eps = deps.store.episodes_by_session(resolved_session_id)
-        except ValueError:
-            all_eps = []
-        # Explicit-`prior_session_id` path only: the walk never ran, so
-        # if the caller named a floor-only session, surface the same
-        # honest note. (The auto path already set `note_floor_only` when
-        # the immediately-prior session was floor-only, and in the rewind
-        # case `resolved_session_id` is the OLDER real session — deriving
-        # from it here would wrongly clear the flag, so we gate on
-        # `prior_session_id is not None`.)
-        if prior_session_id is not None:
-            any_real_takeaway = any(not ep.is_floor for ep in all_eps)
-            if all_eps and not any_real_takeaway:
-                note_floor_only = True
-        # Filter floors from the emit stream — they carry no takeaway
-        # and the marker body is a placeholder, not content the model
-        # should reason over as "what the prior session concluded". The
-        # auto path emits the adopted session's episodes of the checkout
-        # `Membership.handoff` named.
-        if chosen is not None:
-            all_eps = [ep for ep in all_eps if ep.id in chosen]
-        all_eps = [ep for ep in all_eps if not ep.is_floor]
-        # Apply the same scope-hide filter to the emit stream. This
-        # matters in two cases the auto-resolution walk doesn't reach:
-        #  - Caller passed `prior_session_id` explicitly, bypassing
-        #    the candidate-walk filter — the bodies themselves are
-        #    still gated.
-        #  - Auto-resolved session mixed visible and hidden episodes;
-        #    only the visible ones should be surfaced.
-        if excluded_scopes:
-            all_eps = [ep for ep in all_eps if not (set(ep.scopes) & excluded_scopes)]
-        # Oldest first within the recent slice: take the LAST
-        # `max_episodes`, which is the most recent chunk. This matches
-        # the way a reader expects "the prior session's recent
-        # takeaways" — chronological within the surfaced window.
-        recent = all_eps[-max_episodes:]
-        labels = deps.store.episode_provenance([ep.id for ep in recent])
-        for ep in recent:
-            label = labels.get(ep.id, UNACCOUNTED)
-            # `body` is present only on request and never for an
-            # unaccounted episode: the takeaway and the scopes travel
-            # with the label beside them, the body stays on disk for the
-            # explicit read (`episode_search(ids=[...])`). Omitted, not
-            # emptied, so a caller branches on `"body" in row`.
-            deliver_body = include_bodies and label != UNACCOUNTED
-            episodes.append(
-                {
-                    "id": ep.id,
-                    "created": ep.created.isoformat().replace("+00:00", "Z"),
-                    "takeaway": ep.takeaway,
-                    **({"body": ep.body.strip()} if deliver_body else {}),
-                    "scopes": ep.scopes,
-                    "provenance": label,
-                }
-            )
+    pick = (
+        _HandoffPick(session_id=prior_session_id)
+        if prior_session_id is not None
+        else _auto_pick(deps, caller, excluded_scopes)
+    )
+    episodes = _emit_episodes(
+        deps,
+        pick,
+        prior_session_id=prior_session_id,
+        excluded_scopes=excluded_scopes,
+        max_episodes=max_episodes,
+        include_bodies=include_bodies,
+    )
 
     # The conversation this server session serves, when the request named
     # it: a later handoff reads it to know this conversation journaled
@@ -482,75 +591,14 @@ async def episode_handoff(
     harness = identity.current_harness_session()
     deps.recorder.record(
         "episode_handoff",
-        prior_session_id=resolved_session_id,
+        prior_session_id=pick.session_id,
         max_episodes=max_episodes,
         include_bodies=include_bodies,
         returned=len(episodes),
-        prior_crashed_pre_takeaway=note_floor_only,
+        prior_crashed_pre_takeaway=pick.note_floor_only,
         **({HARNESS_SESSION_FIELD: harness} if harness is not None else {}),
     )
-    result: dict[str, Any] = {
-        "prior_session_id": resolved_session_id,
-        "episodes": episodes,
-    }
-    if inherited_from is not None:
-        # Run-state taken from another checkout of the project (design
-        # 3.6): said, never silent.
-        result["inherited_from"] = inherited_from
-    # Additive surface key, only present when the immediately-prior
-    # session left no takeaway. A caller that doesn't know about the field sees
-    # the same shape as before. `episodes` may be NON-empty here: the walk
-    # rewound past the empty session to an older real takeaway, and the note
-    # flags that the most recent session left nothing. The empty shapes get
-    # distinct text because their on-disk cause differs.
-    if note_floor_only:
-        # Floor-only: a real `is_floor` marker exists on disk (the session
-        # called episode_handoff, which writes the entry floor). Genuinely
-        # ambiguous between (a) a crash after entry but before
-        # episode_write and (b) a clean read-only tick that ran
-        # episode_handoff with no takeaway — the on-disk shape is
-        # identical, so surface both readings rather than the misleading
-        # bare "crashed" claim.
-        result["note"] = (
-            "The immediately-preceding session recorded no takeaway "
-            "before it ended: it called episode_handoff (which wrote "
-            "the session-tag floor that anchored it in this checkout) "
-            "but no episode_write followed — either it crashed before "
-            "the takeaway, or it was a clean read-only tick with "
-            "nothing to record. Any takeaways above (if present) come "
-            "from an older session in this checkout that the handoff "
-            "rewound to."
-        )
-    elif note_zero_episode:
-        # Zero-episode: no floor and no takeaway; the session is this
-        # checkout's by its rows (decision B22), so the note claims no
-        # floor and no episode_handoff call.
-        result["note"] = (
-            "The immediately-preceding session in this checkout recorded "
-            "activity but journaled no takeaway and left no handoff floor: "
-            "it may have been a tick that never called the handoff, or it "
-            "crashed before journaling. Any takeaways above (if present) "
-            "come from an older session in this checkout that the handoff "
-            "rewound to."
-        )
-    elif note_all_hidden:
-        # Scope-hidden terminal shape: the immediately-prior session
-        # HAS real takeaways, but every one of them is in a scope this
-        # session disabled, and no older visible takeaway exists either. The
-        # floor-only text would be a lie here (the
-        # session journaled fine), and returning no note would be
-        # indistinguishable from "prior session wrote nothing". `episodes` is
-        # always [] on this branch — the emit-step scope filter hides the
-        # same episodes the walk could not surface.
-        result["note"] = (
-            "The immediately-preceding session in this checkout recorded "
-            "takeaways, but every one of them is in a scope this session "
-            "has disabled (memory_admin disable_scope), so none can be shown. "
-            "The prior session was not empty and this is not the first "
-            "handoff in this checkout; re-enable the scope with "
-            "memory_admin(action='enable_scope') to surface its takeaways."
-        )
-    return result
+    return _handoff_result(pick, episodes)
 
 
 def _quiet_session(
