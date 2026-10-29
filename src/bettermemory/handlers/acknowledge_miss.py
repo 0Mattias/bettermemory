@@ -9,7 +9,7 @@ that gap: `memory_acknowledge_miss(event_id, reason)` emits one
 `miss_ack` event referencing the original `search_miss`. The
 `compute_health` / `curation_counts` rollups drop matching events
 from both `miss_total` and `unique_miss_memories` (the ack-filter
-sits alongside the tombstone filter; see `health.py:_silent_miss_stats`).
+sits alongside the tombstone filter; see `health_stats.py:_silent_miss_stats`).
 
 How event_ids reach the model: `compute_health` surfaces a bounded
 `recent_silent_misses` list on every `memory_health` call, each entry
