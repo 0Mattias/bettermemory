@@ -51,6 +51,11 @@ RECALL_FAMILY: tuple[str, ...] = (
 #: split out of `recall` are held to the same edges as `recall`.
 FORBIDDEN: dict[str, frozenset[str]] = {
     **{module: frozenset({"bettermemory.hook"}) for module in RECALL_FAMILY},
+    # `recall` imports `recall_prompt`, which reads the family's other
+    # members and never `recall` itself, not even inside a function.
+    "bettermemory.recall_prompt": frozenset(
+        {"bettermemory.hook", "bettermemory.recall"}
+    ),
     "bettermemory.sessions": frozenset({*RECALL_FAMILY, "bettermemory.hook"}),
 }
 
@@ -294,8 +299,9 @@ def test_the_graph_holds_the_edges_the_shim_is_built_on(edges: list[Edge]) -> No
 
 
 def test_recall_and_sessions_do_not_import_the_hook_shim(edges: list[Edge]) -> None:
-    """No import of any kind runs from `recall` to `hook`, or from
-    `sessions` to `recall` or `hook`."""
+    """No import of any kind runs from the recall family to `hook`, from
+    `recall_prompt` to `recall`, or from `sessions` to the family or
+    `hook`."""
     found = [
         f"{edge.source}:{edge.line} -> {edge.target}"
         for edge in edges
