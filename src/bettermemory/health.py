@@ -48,7 +48,7 @@ import os
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 from .events import _event_id_list
 from .models import Category, Memory, first_summary_line
@@ -123,6 +123,9 @@ from .health_stats import (
 )
 from .health_render import render_json, render_text
 
+if TYPE_CHECKING:
+    from .admission import DriftScope
+
 
 # `_event_id_list` moved to `events.py` (imported above) so memory_health,
 # memory_search's endorsement tally, and the negative-outcomes attach all
@@ -153,13 +156,22 @@ def compute_health(
     hook_telemetry_events: int | None = None,
     typo_scope_exceptions: Iterable[str] | None = None,
     anchoring: Anchoring | None = None,
+    admission: DriftScope | None = None,
 ) -> HealthReport:
     """Build a `HealthReport` from active memories + the event stream.
 
-    `anchoring` reads each homed record's commit leg where design 3.6
-    resolves its cited commit (`verify.ClaimAnchor.commit_root`), in
-    `commit_drift_debt` and `cross_repo_drift`; a record with no home row,
-    and every record without it, is read as before.
+    `admission` decides whose commit drift `commit_drift_debt` counts, as
+    it decides it for `memory_show` and `memory_search`
+    (`DriftScope.drift_counts`: a home the caller's LINKS admission
+    admits, and not global), and the count is taken in the caller's
+    checkout as `memory_show` takes it; without it every record whose
+    origin repo matches the caller's is a candidate. `anchoring` reads
+    `cross_repo_drift`'s homed groups where design 3.6 resolves their
+    cited commit (`verify.ClaimAnchor.commit_root`); a record with no home
+    row, and every record without it, is read as before.
+    `memory_admin(health)` passes both, resolved for the request's
+    caller; `bettermemory health` passes neither, since resolving the
+    caller registers the checkout and the CLI report writes nothing.
 
     `events` is expected to be in chronological order — the function
     relies on that for "last_*" timestamps. `iter_all_events` returns
@@ -554,7 +566,7 @@ def compute_health(
         claims_by_id=claims_by_id,
         verified_head_by_id=verified_head_by_id,
         caller_origin=caller_origin,
-        anchoring=anchoring,
+        admission=admission,
     )
 
     cross_repo_drift = _compute_cross_repo_drift(
@@ -1004,7 +1016,7 @@ def _compute_commit_drift_debt(
     claims_by_id: dict[str, tuple[str, ...]] | None = None,
     verified_head_by_id: dict[str, str | None] | None = None,
     caller_origin: Origin | None,
-    anchoring: Anchoring | None = None,
+    admission: DriftScope | None = None,
 ) -> CommitDriftDebt | None:
     """Build the optional commit-drift rollup, or None when not applicable.
 
@@ -1026,10 +1038,22 @@ def _compute_commit_drift_debt(
     Counted via one `git log --format=%aI` call + bisect — independent
     of memory count.
 
-    With `anchoring`, a homed candidate is counted where design 3.6
-    resolves its cited commit (`_drift_rows_by_root`): in its home
-    checkout's live view, else in the caller's checkout when it holds the
-    commit; with neither it is `unconfirmed`, not counted.
+    Every candidate is counted in the caller's checkout, where
+    `memory_show` counts a record's commit leg (`_response._DriftPass.
+    lookup`). `_drift_rows_by_root` can count a homed one at its home
+    checkout's `commit_root` (design 3.6), but `memory_show` does not, so
+    from a linked worktree the two would disagree both ways: a commit
+    made in the home checkout only would be listed here and not shown
+    there, and one made in the caller's only would be shown and not
+    listed. It runs without the anchoring until the show path reads the
+    commit leg at the home too.
+
+    With `admission`, a record is a candidate only where the caller's
+    admission counts its commit drift (`DriftScope.drift_counts`), the
+    gate `memory_show` and `memory_search` read their commit leg under
+    (`_response._DriftPass.lookup`): a record with no home row, a home
+    the caller's surface does not admit, or a global one has no commit
+    leg there, so it is not listed here as drifted either.
     """
     if caller_origin is None:
         return None
@@ -1056,6 +1080,8 @@ def _compute_commit_drift_debt(
     # `verify.resolve_commit_drift_count`; measured 100% false-positive
     # on the dogfood store before this gate).
     candidates: list[MemoryStats] = []
+    if admission is not None:
+        admission.prime(list(by_id))
     for stats in by_id.values():
         origin_repo = origin_repo_by_id.get(stats.id)
         if origin_repo is None:
@@ -1063,6 +1089,8 @@ def _compute_commit_drift_debt(
         if not repos_match(origin_repo, caller_origin.repo):
             continue
         if stats.last_verified_at is None:
+            continue
+        if admission is not None and not admission.drift_counts(stats.id):
             continue
         if not anchor_paths_by_id.get(stats.id) and not (
             claims_by_id and claims_by_id.get(stats.id)
@@ -1081,7 +1109,8 @@ def _compute_commit_drift_debt(
         anchor_paths_by_id=anchor_paths_by_id,
         claims_by_id=claims_by_id,
         verified_head_by_id=verified_head_by_id,
-        anchoring=anchoring,
+        # Counted where `memory_show` counts it: see the docstring.
+        anchoring=None,
     )
 
     if not rows:
@@ -1795,6 +1824,8 @@ def report_for_store(
     caller_origin: Origin | None = None,
     now: datetime | None = None,
     typo_scope_exceptions: Iterable[str] | None = None,
+    anchoring: Anchoring | None = None,
+    admission: DriftScope | None = None,
 ) -> HealthReport:
     """Load the store's memories, walk its log, return the report. The
     entry point both production surfaces use: `memory_admin(health)` and
@@ -1803,7 +1834,13 @@ def report_for_store(
     `typo_scope_exceptions` suppresses `fix_typo_scopes` for scopes the
     owner confirmed are not typos; left None it reads `[scopes]
     typo_exceptions` from the loaded config. `caller_origin`, if given,
-    drives the cwd-aware `commit_drift_debt` rollup.
+    drives the cwd-aware `commit_drift_debt` rollup. `admission`, the
+    request caller's LINKS admission (`handlers._shared.caller_anchoring`,
+    as `memory_show` reads it), makes that rollup count a record's commit
+    drift only where `memory_show` counts it; `anchoring`, the same
+    caller's, reads `cross_repo_drift`'s homed groups where design 3.6
+    reads their cited commit. `memory_admin(health)` passes both;
+    `bettermemory health` passes neither, so it writes nothing.
 
     The dead-weight honesty gate is armed here rather than in
     `compute_health`'s default: every caller looking at a real store goes
@@ -1832,6 +1869,8 @@ def report_for_store(
         tombstoned_ids=tombstoned_ids,
         hook_telemetry_events=0,
         typo_scope_exceptions=typo_scope_exceptions,
+        anchoring=anchoring,
+        admission=admission,
     )
     report.provenance = provenance_debt(store, memories)
     report.recommendations = _compute_recommendations(report)

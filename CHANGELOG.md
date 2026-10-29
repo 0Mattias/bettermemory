@@ -783,6 +783,24 @@ the candidates' testing.
   address in a model name still autolinks. `--json` is unchanged.
   (`src/bettermemory/health_render.py`,
   `src/bettermemory/eval_render.py`, `src/bettermemory/cli/health_cmd.py`)
+- **The health tool lists a record as commit-drifted only where
+  `memory_show` shows it drifted.** `memory_admin(health)` built the
+  report with no admission, so `commit_drift_debt` took every verified
+  record whose origin repo matched the caller's, a record with no home
+  row included, while `memory_show` and `memory_search` count commit
+  drift only for a record whose home the caller's admission admits. The
+  `verify_drifted` recommendation could name records whose `memory_show`
+  carried no commit drift at all. The tool now resolves the request's
+  caller as `memory_show` does and passes its admission, so
+  `commit_drift_debt` takes a record only where that admission counts
+  its drift, and counts it in the caller's checkout as `memory_show`
+  does, from a linked worktree too. The caller's anchoring reads
+  `cross_repo_drift`'s homed groups where design 3.6 resolves their
+  cited commit. `bettermemory health` keeps the origin-repo reading:
+  resolving the caller registers the checkout (a token under
+  `.git/info`, a provisional project and their log rows), and the CLI
+  report writes nothing. (`src/bettermemory/health.py`,
+  `src/bettermemory/handlers/health.py`)
 
 #### Known limitations
 

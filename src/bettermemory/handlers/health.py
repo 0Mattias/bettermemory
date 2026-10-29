@@ -14,7 +14,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from ..health import report_for_store
-from ._shared import Context, _advance_turn
+from ._shared import Context, _advance_turn, caller_anchoring
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -148,9 +148,20 @@ async def memory_health(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     from .. import _handlers as _h
+    from ..admission import Admission
+    from ..membership import LINKS
 
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
+    # The caller resolved once, as `memory_show` resolves it (the tool
+    # runs inside a session, as most handlers that resolve it do). Its
+    # LINKS admission decides whose commit drift `commit_drift_debt`
+    # counts, as it decides it for `memory_show`, and the count is taken
+    # in the caller's checkout as `memory_show` takes it; its anchoring
+    # reads `cross_repo_drift`'s homed groups where design 3.6 resolves
+    # their cited commit. `bettermemory health` resolves no caller: it
+    # writes nothing (`cli.health_cmd._cli_health`).
+    anchoring, caller = caller_anchoring(deps.store, deps.config)
     # Falling through to the configured default lets the tool stay
     # ergonomic for the common case (don't pass anything, get the
     # tuned threshold) while still allowing a per-call override
@@ -174,6 +185,8 @@ async def memory_health(
         # rollup populates when the server is running inside a repo
         # whose memories live in this store.
         caller_origin=_h.capture_origin(),
+        anchoring=anchoring,
+        admission=Admission.of(LINKS, caller),
     )
     out = report.to_dict()
     out["membership"] = _membership(deps.store)

@@ -72,7 +72,15 @@ def _cli_health(
     top_k: int,
     min_applied: int | None = None,
 ) -> None:
-    """`bettermemory health` — print the aggregate report."""
+    """`bettermemory health` — print the aggregate report.
+
+    It writes nothing. Resolving the caller the way `memory_admin(health)`
+    does (`handlers._shared.caller_anchoring`) registers the checkout: a
+    token under `.git/info`, a provisional project and their log rows. So
+    the CLI passes no anchoring and no admission, and its
+    `commit_drift_debt` keeps the origin-repo reading: every verified,
+    claim-anchored record whose origin repo matches the caller's, a record
+    with no home row included."""
     from ..health import render_text
 
     ctx = cli_context()
