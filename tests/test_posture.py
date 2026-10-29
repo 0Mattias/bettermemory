@@ -243,19 +243,18 @@ def test_meta_read_waits_as_a_cli_command_waits(
     assert waits == [0.25]
 
 
-def test_meta_read_refuses_a_wal_without_its_shm(layout: Layout) -> None:
+def test_meta_read_of_a_wal_without_its_shm_creates_nothing(layout: Layout) -> None:
     """A ``-wal`` that arrived without its ``-shm`` (a copy that brought one
-    and not the other): a read-only open would create the ``-shm``, and an
-    immutable one would miss the WAL's pages, so the read is refused and
-    the audit says why instead of writing a file."""
+    and not the other): a read-only open in place would create the
+    ``-shm``, and an immutable one would miss the WAL's pages, so the read
+    goes through a private copy of both (`store_schema.connect_read_only`),
+    as the read-only commands' does, and nothing is added beside the
+    store. It was refused before the audit shared that open."""
     wal = layout.store_dir / (STORE_FILENAME + "-wal")
     wal.write_bytes(b"\0" * 32)
     names = sorted(p.name for p in layout.store_dir.iterdir())
-    with pytest.raises(sqlite3.Error, match="without"):
-        posture.read_meta(layout.store_file)
-    finding = _by_id(audit(), "key.match")
-    assert finding.status == "warn"
-    assert "-shm" in finding.summary
+    assert posture.read_meta(layout.store_file)["store_id"] == layout.store_id
+    assert _by_id(audit(), "key.match").status == "ok"
     assert sorted(p.name for p in layout.store_dir.iterdir()) == names
 
 

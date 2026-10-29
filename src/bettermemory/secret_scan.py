@@ -77,16 +77,17 @@ since. A record with no such event (telemetry off, an imported v8 record,
 an episode, a conflict row) is `null`: the log cannot say.
 
 Read-only. The CLI opens the store with `Store.open(...,
-allow_rekey=False)`, as `log verify` and `export` do: a scan must never
-write a rekey row into the log it is reading, and a store copied from
-another machine scans without its key. Nothing here writes a row, a key
-or a record. Opening a store file does what every opener does to it: a
-file saved in rollback-journal mode (a backup bundle's snapshot) is
-switched to WAL, which changes its bytes, so a file inside a backup
-bundle (spelled through a symlink too) is refused with the instruction
-to scan a copy, and so is a `--store` file with other names (hard
-links), which may be a bundle's under a name no manifest sits beside: a
-bundle stays one `backup verify` passes.
+read_only=True)`, as `log verify` and `stats` do: a scan must never
+write a rekey row into the log it is reading, a store copied from
+another machine scans without its key, and the open writes nothing to
+the file or beside it (`store_schema.connect_read_only`: no WAL
+switch, no chmod, no added table, no ``-wal`` or ``-shm`` left behind).
+Nothing here writes a row, a key or a record. A file inside a backup
+bundle (spelled through a symlink too) is still refused with the
+instruction to scan a copy, and so is a `--store` file with other names
+(hard links), which may be a bundle's under a name no manifest sits
+beside: a bundle is checked with `backup verify`, and every other
+command refuses it the same way.
 
 Not covered, and said in every report: freed pages and earlier page
 images in the file and its WAL, the full-text index's token pages, saved
@@ -780,21 +781,21 @@ def run_scan(args: argparse.Namespace) -> None:
         _fail(f"no bettermemory 9 store at {path}")
     from .backup import bundle_refusal
 
-    # Opening a store switches its journal mode to WAL, which rewrites the
-    # header of a file saved in rollback mode: a bundle's snapshot would
-    # then fail its signed hash, and `backup verify` and `backup restore`
-    # would refuse the bundle. Checked through a symlink too, and, for a
-    # `--store` file, through a hard link: a hard link to a bundle's
-    # snapshot is the snapshot under a name no manifest sits beside, and
-    # the scan's open would change the file under every name it has.
+    # A bundle's snapshot is refused as every command refuses it: a
+    # writing command's open switches its journal mode, which rewrites
+    # the header, and the bundle would then fail its signed hash. Checked
+    # through a symlink too, and, for a `--store` file, through a hard
+    # link: a hard link to a bundle's snapshot is the snapshot under a
+    # name no manifest sits beside.
     refusal = bundle_refusal(path, named=store_arg is not None)
     if refusal is not None:
         _fail(refusal)
-    # `allow_rekey=False`: a scan reads; it must not write a rekey row
-    # into the log it is scanning, nor a key beside a copied store.
+    # `read_only`: a scan reads; it must not write a rekey row into the
+    # log it is scanning, a key beside a copied store, or a byte of the
+    # file (`store_schema.connect_read_only`).
     try:
-        store = Store.open(path, allow_rekey=False)
-    except (ValueError, sqlite3.DatabaseError) as exc:
+        store = Store.open(path, read_only=True)
+    except (ValueError, sqlite3.DatabaseError, OSError) as exc:
         _fail(f"cannot read the store at {path}: {exc}")
     # A store whose header opens can still fail on a page the scan reads
     # (a damaged copy). That is a store the scan cannot read, exit 2: an

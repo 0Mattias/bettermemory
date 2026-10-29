@@ -129,7 +129,7 @@ def _history(
     # would match rows that have nothing to do with any one record.
     if not is_valid_ulid(record_id):
         parser.error(f"{record_id!r} is not a record id (a 26-character ULID)")
-    # The config without its first-run write. `allow_rekey=False`: reading
+    # The config without its first-run write. A read-only open: reading
     # a history must not write a rekey row, as `log verify` must not.
     # Without the key the rows are listed and their MACs reported as
     # unverifiable. A config or a store file that cannot be read exits 2,

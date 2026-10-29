@@ -5,8 +5,9 @@ for a SIEM (`bettermemory.audit_export`); `log anchor` takes one of those
 anchors (`bettermemory.anchor`).
 
 Every command here is read-only: the store opens with
-``allow_rekey=False``, so a missing key is reported and never replaced,
-and nothing is written into the log being read."""
+``read_only=True``, so a missing key is reported and never replaced,
+and nothing is written into the log being read, nor to the file or
+beside it (`store_schema.connect_read_only`)."""
 
 from __future__ import annotations
 
@@ -206,7 +207,7 @@ def run(
 
 
 def _open_read_only(parser: argparse.ArgumentParser, *, exit_code: int = 2) -> Store:
-    """The resolved store, opened for reading. `allow_rekey=False`: a
+    """The resolved store, opened read-only (`read_only=True`): a
     command that reads the log must not write a rekey row into it. A
     missing key is then reported, not fixed. The config is read without
     its first-run write, and a config or a store file that cannot be read

@@ -103,9 +103,11 @@ import logging
 import math
 import os
 import secrets
+import shutil
 import sqlite3
 import threading
 import time
+import weakref
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
@@ -157,6 +159,7 @@ from .store_schema import (
     UNACCOUNTED,
     StoreRefusedError as StoreRefusedError,
     admit_store as admit_store,
+    connect_read_only as connect_read_only,
     read_store_meta as read_store_meta,
     _MEMBERSHIP_SPECS as _MEMBERSHIP_SPECS,
     _STORE_ID_PATTERN,
@@ -414,6 +417,11 @@ class Store:
     # The key's state as this connection's open read it (`key_state`),
     # present once it holds a key to sign with; None only inside `_adopt`.
     _key_state: KeyState | None
+    # Opened by `open(..., read_only=True)`, and the private copy's
+    # directory it reads from (`connect_read_only`), removed by `close`
+    # or, left open, when the store is collected or at exit (`_keep_copy`).
+    _read_only: bool
+    _scratch: Path | None
     _store_id: str
     _last_appended: LogRow | None
     # How many `_transaction` entries are open on this connection: 0 when
@@ -490,6 +498,8 @@ class Store:
         self._read_key = None
         self._bound_elsewhere = None
         self._key_state = None
+        self._read_only = False
+        self._scratch = None
         self._store_id = store_id
         self._last_appended = None
         self._tx_depth = 0
@@ -606,6 +616,7 @@ class Store:
         keys_dir: Path | str | None = None,
         allow_rekey: bool = False,
         strict_provenance: bool | None = None,
+        read_only: bool = False,
     ) -> Store:
         """An existing store. Without ``allow_rekey`` (the default) a store
         whose key under the key directory is missing or foreign opens for
@@ -657,11 +668,25 @@ class Store:
 
         ``strict_provenance`` is ``[security] strict_provenance`` for this
         connection; None (the default) reads it from the config the first
-        time a row needs it (`strict_provenance`)."""
+        time a row needs it (`strict_provenance`).
+
+        ``read_only`` (the read-only commands: `log verify`, `log export`,
+        `log anchor`, `stats`, `memory history`, `doctor`, `security scan`)
+        opens a reader that writes nothing to the file or beside it
+        (`store_schema.connect_read_only`): no WAL switch, no chmod, no
+        additive schema step (a reader finds a missing table empty), no
+        ``-wal`` or ``-shm`` left behind, and every write fails in
+        SQLite. It never rekeys, so it takes no ``allow_rekey``."""
+        if read_only and allow_rekey:
+            raise ValueError("a read-only open never rekeys")
         path = store_path(path)
         if not path.is_file():
             raise FileNotFoundError(f"no store at {path}")
-        conn = _connect(path)
+        scratch: Path | None = None
+        if read_only:
+            conn, scratch = connect_read_only(path, timeout=CLI_BUSY_TIMEOUT_SECONDS)
+        else:
+            conn = _connect(path)
         try:
             meta = read_store_meta(conn, path)
             store_id = meta.get("store_id")
@@ -680,7 +705,8 @@ class Store:
                     f"{path} is schema {schema}; this build reads up to {SCHEMA_VERSION}"
                 )
             allow_rekey = check_versions(conn, path, meta, allow_rekey, keys_dir).writes
-            _add_membership_tables(conn, path, meta)
+            if not read_only:
+                _add_membership_tables(conn, path, meta)
             keyring = KeyRing(
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
                 store_id,
@@ -703,6 +729,7 @@ class Store:
                     store_id,
                     strict_provenance=strict_provenance,
                 )
+                store._keep_copy(read_only, scratch)
                 if allow_rekey:
                     store._close_foreign_tail()
                     store._settle_origin()
@@ -718,6 +745,7 @@ class Store:
                 )
                 reader._bound_elsewhere = elsewhere
                 reader._key_state = state
+                reader._keep_copy(read_only, scratch)
                 # Meta's fingerprint is only what the file says. When this
                 # machine has a history of the store (its key ring holds
                 # an origin anchor for it, or its key signs a segment of
@@ -793,6 +821,8 @@ class Store:
             return store
         except Exception:
             conn.close()
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
             raise
 
     @classmethod
@@ -1062,8 +1092,17 @@ class Store:
             return
         self._settle_origin()
 
+    def _keep_copy(self, read_only: bool, scratch: Path | None) -> None:
+        # A full copy of the store must not outlive a store never closed.
+        self._read_only, self._scratch = read_only, scratch
+        if scratch is not None:
+            weakref.finalize(self, shutil.rmtree, scratch, True)
+
     def close(self) -> None:
         self._conn.close()
+        if self._scratch is not None:
+            shutil.rmtree(self._scratch, ignore_errors=True)
+            self._scratch = None
 
     @property
     def busy_timeout(self) -> float:
@@ -1811,6 +1850,7 @@ class Store:
             keys_dir=self._keyring.keys_dir,
             allow_rekey=False,
             strict_provenance=self._strict_provenance,
+            read_only=self._read_only,
         )
         try:
             other.set_busy_timeout(wait)

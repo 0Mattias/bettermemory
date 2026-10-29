@@ -75,9 +75,14 @@ def read_only_store_path(
 def open_read_only(
     parser: argparse.ArgumentParser, path: Path, *, exit_code: int = 2
 ) -> Store:
-    """The store at `path`, opened for reading: ``allow_rekey=False``, so
-    a missing key is reported, never replaced, and no rekey row is
-    written. No file at `path` is a usage error; a file that is not a
+    """The store at `path`, opened for reading: ``read_only=True``, so
+    a missing key is reported, never replaced, no rekey row is written,
+    and nothing is written to the file or beside it
+    (`store_schema.connect_read_only`: no WAL switch, no chmod, no added
+    table, no ``-wal`` or ``-shm`` left behind; a closed WAL-mode store
+    is read from a private copy). A file every opener refuses
+    (`store.StoreRefusedError`) is refused here in the same words. No
+    file at `path` is a usage error; a file that is not a
     store this build reads (not a database, no meta table, a store id or
     schema it refuses), or one in a directory this account cannot search,
     ends the command with the reason and `exit_code` rather than a
@@ -88,9 +93,9 @@ def open_read_only(
 
     A file inside a backup bundle (`BETTERMEMORY_DIR` naming the bundle)
     is refused the same way (`backup.bundle_refusal`, which says to copy
-    the file out first): opening it switches its journal mode, which
-    rewrites the snapshot's header, and the bundle would then fail its
-    signed hash; `backup verify` checks a bundle on a copy."""
+    the file out first), as every command refuses it: this open leaves
+    the snapshot as it is, but a bundle is checked with `backup verify`,
+    and a writing command's open would rewrite the snapshot's header."""
     from ..backup import bundle_refusal
 
     try:
@@ -105,8 +110,8 @@ def open_read_only(
     if refusal is not None:
         _refuse(parser, refusal, exit_code)
     try:
-        return Store.open(path, allow_rekey=False)
-    except (ValueError, sqlite3.DatabaseError) as exc:
+        return Store.open(path, read_only=True)
+    except (ValueError, sqlite3.DatabaseError, OSError) as exc:
         _refuse(parser, f"cannot read the store at {path}: {exc}", exit_code)
 
 

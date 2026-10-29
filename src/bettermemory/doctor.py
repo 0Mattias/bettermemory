@@ -15,8 +15,8 @@ would hide the fault it was run for, so this module reads only:
 
 - the config is parsed only when the file exists, and `load_config` is
   never reached for a missing one (it would write the default);
-- the store opens with `Store.open(..., allow_rekey=False)`, as
-  `log verify` and `export` open it: a store without its key is reported,
+- the store opens with `Store.open(..., read_only=True)`, as
+  `log verify` and `stats` open it: a store without its key is reported,
   never rekeyed, and no store is created where none exists; a store file
   inside a backup bundle is not opened at all (its open would change the
   snapshot and fail the bundle's hash) and fails the `store` check;
@@ -24,14 +24,13 @@ would hide the fault it was run for, so this module reads only:
   read, never removed, and no daemon is started or stopped;
 - client and Claude Code settings files are read, never patched.
 
-The side effects that remain come with `Store.open` and SQLite's WAL
-mode, and `log verify` has the same ones: the open creates the `-wal`
-and `-shm` siblings and the last close removes them again, checkpointing
-any WAL a crashed writer left into the store file as it goes; `_connect`
-keeps the store file owner-only; and a store an earlier 9.0 build
-created gains the membership tables `Store.open` adds at every open (the
-daemon's first open adds them too). None of them changes what the store
-holds.
+The read-only open writes nothing to the store file or beside it
+(`store_schema.connect_read_only`, 9.0.0rc14): no WAL switch, no chmod,
+no membership tables added to a store an earlier build created, and no
+`-wal` or `-shm` left behind. A closed WAL-mode store is read from a
+private copy, removed when the check closes it; one a daemon has open
+is read in place through the `-shm` it shares with the daemon, as any
+reader reads it.
 
 Each check answers `ok`, `warn` or `fail` with a one-line summary, a
 one-line remedy when it is not `ok`, and a details mapping for `--json`.
@@ -852,7 +851,7 @@ def check_store(ctx: _Context) -> list[Check]:
     if bundle is not None:
         return bundle
     try:
-        store = Store.open(path, allow_rekey=False)
+        store = Store.open(path, read_only=True)
     except (ValueError, sqlite3.Error, OSError) as exc:
         return [
             Check(

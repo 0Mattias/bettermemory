@@ -24,12 +24,11 @@ What the audit is not:
   through `store._connect`, which sets WAL mode and chmods the store file and
   its siblings to ``0o600``, and runs the additive membership schema step.
   The audit reads the two meta values it needs (the store id and the key
-  fingerprint) through a SQLite URI of its own: ``immutable=1`` when no
-  ``-wal`` file exists, since then the main file holds every committed page
-  and nothing else is created; ``mode=ro`` when one exists, which a live
-  daemon keeps, so the read sees the WAL's pages and creates nothing either
-  (the ``-shm`` is there with it). The log itself is `bettermemory log
-  verify`'s to check; the audit points at it.
+  fingerprint) through the read-only commands' open
+  (`store_schema.connect_read_only`), which reads the file in place with
+  ``mode=ro`` where that creates nothing, and a closed WAL-mode store from
+  a private copy, never the live file with ``immutable=1``. The log itself
+  is `bettermemory log verify`'s to check; the audit points at it.
 * **Not a network client.** The daemon check reads the state file and the
   pid, nothing more: this build binds 127.0.0.1 and no other address
   (`daemon.serve`'s ``host``, `_daemon_client.HOST`), and the state file
@@ -68,6 +67,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import sqlite3
 import stat
@@ -79,7 +79,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _daemon_client, claude_paths, githead, sandbox_settings
-from ._fsutil import sqlite_file_uri
 from ._git import run_git
 from .config import (
     ENV_DIR_OVERRIDE,
@@ -496,18 +495,17 @@ def _presence(path: Path) -> tuple[bool, str | None]:
 
 
 def read_meta(store_file: Path) -> dict[str, str]:
-    """The store's meta table, read without writing a byte.
-
-    ``immutable=1`` when the store has no ``-wal`` file: every committed page
-    is then in the main file, and an immutable open creates no ``-wal`` or
-    ``-shm`` beside it (a plain read-only open of a WAL-mode file does, and
-    leaves them). ``mode=ro`` when a ``-wal`` exists with its ``-shm``, as
-    under a running daemon or after one crashed, so the read sees the pages
-    still in the WAL. A ``-wal`` without its ``-shm`` (a copy that brought
-    the one and not the other) is refused: a read-only open there creates
-    the ``-shm``, and an immutable one would miss the WAL's pages, a rekey's
-    new fingerprint among them. Raises ``sqlite3.Error`` on a file that is
-    not a store, and on that refusal. A lock held over the read is waited
+    """The store's meta table, read without writing a byte to the file or
+    beside it, through the read-only commands' open
+    (`store_schema.connect_read_only`): ``mode=ro`` in place for a file in
+    rollback-journal mode and for one whose ``-wal`` and ``-shm`` are both
+    there (a running daemon, or one that crashed), so the read sees the
+    WAL's pages; a closed WAL-mode store, and a ``-wal`` that arrived
+    without its ``-shm``, from a private copy removed after the read. The
+    live file is never read ``immutable=1``, which a daemon's checkpoint
+    during the read could tear (review of ENG-104, M4). Raises
+    ``sqlite3.Error`` on a file that is not a store, and `OSError` when the
+    file cannot be read or copied. A lock held over the read is waited
     for as any CLI command waits (`store.CLI_BUSY_TIMEOUT_SECONDS`, whose
     evidence is stated there): the audit is one.
 
@@ -517,29 +515,16 @@ def read_meta(store_file: Path) -> dict[str, str]:
     repository's store hang this read for good) raises
     `store.StoreRefusedError` before meta is read, and meta is read under
     the admission deadline (`store_schema.read_store_meta`)."""
-    from .store import CLI_BUSY_TIMEOUT_SECONDS, admit_store, read_store_meta
+    from .store import CLI_BUSY_TIMEOUT_SECONDS, connect_read_only, read_store_meta
 
     resolved = store_file.resolve()
-    wal, shm = _sibling(resolved, "-wal"), _sibling(resolved, "-shm")
-    if not os.path.exists(wal):
-        query = "immutable=1"
-    elif os.path.exists(shm):
-        query = "mode=ro"
-    else:
-        raise sqlite3.OperationalError(
-            f"{wal.name} is there without {shm.name}, and reading it read-only "
-            f"would create {shm.name}"
-        )
-    conn = sqlite3.connect(
-        f"{sqlite_file_uri(resolved)}?{query}",
-        uri=True,
-        timeout=CLI_BUSY_TIMEOUT_SECONDS,
-    )
+    conn, scratch = connect_read_only(resolved, timeout=CLI_BUSY_TIMEOUT_SECONDS)
     try:
-        admit_store(conn, resolved)
         return read_store_meta(conn, resolved)
     finally:
         conn.close()
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _meta_or_error(
@@ -566,7 +551,7 @@ def _meta_or_error(
             # before the check (`admit_store`).
             return None, str(cause), None
         return None, str(exc), exc
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, OSError) as exc:
         return None, str(exc), None
 
 

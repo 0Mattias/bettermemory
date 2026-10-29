@@ -10,8 +10,9 @@ other command shows, is the report's ``store`` section.
 Why not `health`: the health report goes through `cli_context`, which
 creates, migrates and rekeys a store, and it computes commit and
 cross-repo drift through git, so it is slow and opinionated. This report
-opens the store read-only (``Store.open(..., allow_rekey=False)``, as
-`log verify` does), never runs git, and is aggregate SQL only: no row's
+opens the store read-only (``Store.open(..., read_only=True)``, as
+`log verify` does, so not a byte of the file or beside it changes),
+never runs git, and is aggregate SQL only: no row's
 MAC is checked and no body is read beyond the journal's byte count, so
 its cost grows with the number of rows a ``GROUP BY`` walks, not with an
 HMAC per row. Provenance is therefore not here; `log verify` and the
@@ -108,7 +109,7 @@ def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> Non
     """Dispatch handler for ``bettermemory stats``."""
     from ._common import open_read_only, read_only_store_path
 
-    # The config without its first-run write; `allow_rekey=False`: a
+    # The config without its first-run write; a read-only open: a
     # report must not write a rekey row. Without the key every count is
     # still read; only `key_present` says so. A config or a store file
     # that cannot be read exits 2 with the reason.

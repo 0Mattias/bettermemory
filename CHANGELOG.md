@@ -1660,6 +1660,43 @@ follows the candidates' testing.
   `SECURITY.md`, `docs/api.md`, `docs/operations.md`,
   `tests/test_key_state.py`, `tests/test_doctor.py`,
   `tests/test_keyring_binding.py`)
+- **The read-only commands leave the store file as it was.** `log
+  verify`, `log export`, `log anchor`, `stats`, `memory history`,
+  `doctor` and `security scan --store` opened the store as every opener
+  did, only without a rekey: the open switched a rollback-journal file to
+  WAL (header bytes 18 and 19 from `01 01` to `02 02`), made it
+  owner-only (0640 became 0600), added the membership tables an earlier
+  build's store lacks, and created the `-wal` and `-shm` its close then
+  removed. They now open with `Store.open(..., read_only=True)`, through
+  `store_schema.connect_read_only`: SQLite's `mode=ro` in place where
+  that creates nothing (a rollback-journal file without a `-wal`, and a
+  store a daemon has open, with its `-wal` and `-shm`), and otherwise,
+  for a closed WAL-mode store that `mode=ro` would leave a `-wal` and
+  `-shm` beside, a private copy (`tempfile.mkdtemp`, owner-only, the
+  copy 0600) read `immutable=1`, taken again when the file changes while
+  it is copied and removed when the store closes (or, left open, when
+  the store is collected or the process exits). `immutable=1` is never
+  used on the store file itself. `security audit`'s meta read
+  (`posture.read_meta`) goes through the same open: it read the live
+  file `immutable=1` when it had no `-wal`, and refused a `-wal` without
+  its `-shm`, which it now reads from the copy. The read-only open skips
+  the additive schema step (a reader finds a missing table empty), every
+  write through it fails in SQLite, and it never rekeys (`allow_rekey`
+  with it is a `ValueError`). It admits the file through `admit_store`,
+  so a store every opener refuses is refused in the same
+  `StoreRefusedError` words.
+  Measured on this tree (100 opens each): the open costs 0.79 ms at the
+  median on a fresh closed store and 1.30 ms on one of 2,000 memories
+  (3.4 MB), the copy included, against 0.72 ms for the old open; in place
+  it costs about 0.7 ms. (`src/bettermemory/store_schema.py`,
+  `src/bettermemory/store.py`, `src/bettermemory/cli/_common.py`,
+  `src/bettermemory/secret_scan.py`, `src/bettermemory/doctor.py`,
+  `src/bettermemory/cli/log_cmd.py`, `src/bettermemory/cli/stats_cmd.py`,
+  `src/bettermemory/cli/memory_move_cmd.py`, `src/bettermemory/history.py`,
+  `src/bettermemory/posture.py`, `src/bettermemory/_fsutil.py`,
+  `SECURITY.md`, `docs/api.md`, `docs/operations.md`,
+  `tests/test_read_only_open.py`, `tests/test_posture.py`,
+  `tests/test_sqlite_uri.py`)
 
 #### Known limitations
 
@@ -1910,6 +1947,35 @@ follows the candidates' testing.
 - **A lock wait comes before the deadline.** The deadline counts from a
   statement's first progress callback, so a wait for another
   connection's lock is bounded by the 5 s busy timeout, not by it.
+- **A read-only command reads a closed store from a whole copy.** The
+  copy costs time and space in proportion to the file (0.6 ms more on a
+  3.4 MB store), sits in the user's temporary directory while the
+  command runs, and is left there, owner-only, only when the process is
+  killed before it closes the store (a finalizer removes it from a
+  store dropped unclosed and at exit). `security audit` reads its meta
+  from the same copy. A store a daemon has open is read in
+  place through its `-shm`, which every reader of a WAL database writes
+  its read marks into.
+- **Not every reader opens read-only yet.** `export`, `membership
+  export`, `session-start`, `migrate v8 --dry-run` and `backup`'s own
+  checks still open the store through the writing opener without a
+  rekey, and so still switch a rollback-journal file to WAL and add the
+  membership tables; their modules were outside this change. The
+  read-only commands still refuse a backup bundle's snapshot, which their
+  open would leave as it is, as every other command does.
+- **The key ring's binding check and `backup` still read the live file
+  `immutable=1`.** `store_keys._store_id_at` reads a bound store file
+  that has no `-wal` and `-shm` with `immutable=1`, and falls back to it
+  after `mode=ro`; `backup._current_store_id` and `backup._log_end` read
+  the store that way too. A daemon that opens and checkpoints the file
+  during such a read can hand it a torn page: for the binding check that
+  reads as SQLITE_CORRUPT, so as no store, and releases the ring. Moving
+  them onto the read-only open reaches into `backup.py` and the binding
+  check's refusal rules, outside this change.
+- **A rollback-journal store with a hot journal is not read.** A crash in
+  the middle of a write leaves a `-journal` that only a writing open can
+  roll back, so the read-only commands report the store unreadable until
+  one has opened it.
 
 ### 9.0.0rc13
 

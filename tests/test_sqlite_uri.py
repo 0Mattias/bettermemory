@@ -33,7 +33,7 @@ import pytest
 from bettermemory import backup, posture
 from bettermemory import daemon as daemon_module
 from bettermemory import store as store_module
-from bettermemory import store_keys
+from bettermemory import store_keys, store_schema
 from bettermemory._fsutil import sqlite_file_uri
 from bettermemory.store import CREATED_AFTER_ORPHANS, STORE_FILENAME, Store
 
@@ -286,7 +286,7 @@ def _run_site(site: str, path: Path, store_id: str) -> None:
 
 SITES: dict[str, ModuleType] = {
     "store": store_keys,
-    "posture": posture,
+    "posture": store_schema,
     "backup": backup,
     "daemon": daemon_module,
 }
@@ -317,7 +317,9 @@ def test_every_query_opener_names_its_file_through_the_helper(
     audit's meta read, the backup's read-only reads and the daemon's
     store-moved check each build their URI with `sqlite_file_uri`, for
     the file they were given. Each runs after a read through the helper,
-    as the Windows tests below run it."""
+    as the Windows tests below run it. The audit reads through the
+    read-only commands' open (`store_schema.connect_read_only`), which
+    names the private copy it reads a closed store from."""
     path, store_id = _created_store((tmp_path / "store").resolve())
     seen: list[PurePath] = []
 
@@ -327,7 +329,12 @@ def test_every_query_opener_names_its_file_through_the_helper(
 
     monkeypatch.setattr(SITES[site], "sqlite_file_uri", recording)
     _read_then_run_site(site, path, path, store_id)
-    assert seen and set(seen) == {path}
+    assert seen
+    for target in seen:
+        copied = site == "posture" and target.parent.name.startswith(
+            "bettermemory-read-"
+        )
+        assert target == path or (copied and target.name == STORE_FILENAME), target
 
 
 def _admin_share_path(path: Path) -> Path:

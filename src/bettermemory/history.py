@@ -50,7 +50,8 @@ show the link going), one query for the rekey rows, and one HMAC per row
 reported. A history is read
 interactively, so the scan is affordable; nothing here runs on a hook
 path. The store is opened read-only by the caller
-(``Store.open(..., allow_rekey=False)``) and nothing here writes.
+(``Store.open(..., read_only=True)``, which writes nothing to the file
+or beside it) and nothing here writes.
 
 Every query runs inside one read transaction (`read_snapshot`). The
 daemon keeps writing while a history is read, and the scans and the

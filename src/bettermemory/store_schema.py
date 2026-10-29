@@ -9,12 +9,13 @@ texts with the additive step that brings an older store up to them, the
 store's errors, the compatibility contract's versions and the check every
 open makes of them (`check_versions`, ENG-107), the paths a store opens
 by (`store_path`, the saved orphans, the v8 directory check,
-`resolve_keys_dir`), and the check every opener of an existing store
-file runs before it reads a value from it (`admit_store`,
-`read_store_meta`, `StoreRefusedError`). `store` re-exports every name a
-caller reads. It lives apart from `store.py` to keep each module under
-the package's 2,000-line bound (ENG-96), at the bottom of the store
-family: it imports no other store module.
+`resolve_keys_dir`), the check every opener of an existing store file
+runs before it reads a value from it (`admit_store`, `read_store_meta`,
+`StoreRefusedError`), and the read-only commands' connection, which
+writes nothing to the file or beside it (`connect_read_only`). `store`
+re-exports every name a caller reads. It lives apart from `store.py` to
+keep each module under the package's 2,000-line bound (ENG-96), at the
+bottom of the store family: it imports no other store module.
 """
 
 from __future__ import annotations
@@ -26,7 +27,9 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import sqlite3
+import tempfile
 import time
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -35,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from . import log as _chain
+from ._fsutil import sqlite_file_uri
 from .config import KEYS_DIR_ENV, STORE_FILENAME
 from .log import CONTROL_KINDS
 from .models import Memory, TombstonedMemory
@@ -1752,3 +1756,138 @@ def read_store_meta(conn: sqlite3.Connection, path: Path) -> dict[str, str]:
     with _deadline(conn, path, "meta table"):
         rows = conn.execute("SELECT key, value FROM meta").fetchall()
     return {str(row[0]): str(row[1]) for row in rows}
+
+
+# ---------------------------------------------------------------------------
+# Reading a store file without writing to it (ENG-104)
+# ---------------------------------------------------------------------------
+
+#: How many times a read-only open looks at a store file again when the
+#: file changed while it was copied (`connect_read_only`).
+_SNAPSHOT_TRIES = 3
+
+#: The database header's file-format bytes (offsets 18 and 19): 1 for a
+#: rollback journal, 2 for WAL.
+_WAL_FORMAT = 2
+
+
+def _beside(path: Path, suffix: str) -> Path:
+    return path.with_name(path.name + suffix)
+
+
+def _says_wal(path: Path) -> bool:
+    """Whether the database header of the file at ``path`` says WAL, read
+    with a plain read of its first bytes. A file too short for a header
+    reads as a rollback journal: SQLite reads it as an empty database and
+    creates nothing beside it."""
+    with open(path, "rb") as handle:
+        header = handle.read(20)
+    return len(header) == 20 and _WAL_FORMAT in (header[18], header[19])
+
+
+def _stamp(path: Path) -> tuple[int, int, int] | None:
+    """What says the file at ``path`` changed: its inode, size and
+    modification time, or None when there is none."""
+    try:
+        status = path.stat()
+    except FileNotFoundError:
+        return None
+    return (status.st_ino, status.st_size, status.st_mtime_ns)
+
+
+def _copy_owner_only(source: Path, target: Path) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    with (
+        open(source, "rb") as read,
+        os.fdopen(os.open(target, flags, 0o600), "wb") as out,
+    ):
+        shutil.copyfileobj(read, out, 1 << 20)
+
+
+def _snapshot(path: Path) -> tuple[Path, Path, bool] | None:
+    """A private copy of the store file at ``path``, and of its ``-wal``
+    when there is one: the directory (``mkdtemp``, owner-only), the copied
+    file, and whether a ``-wal`` came with it. None when either file
+    changed while it was copied (`_stamp` before and after); the caller
+    looks at the file again."""
+    wal = _beside(path, "-wal")
+    before = (_stamp(path), _stamp(wal))
+    directory = Path(tempfile.mkdtemp(prefix="bettermemory-read-"))
+    try:
+        copy = directory / path.name
+        _copy_owner_only(path, copy)
+        if before[1] is not None:
+            _copy_owner_only(wal, _beside(copy, "-wal"))
+    except FileNotFoundError:
+        shutil.rmtree(directory, ignore_errors=True)
+        return None
+    except BaseException:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+    if (_stamp(path), _stamp(wal)) != before:
+        shutil.rmtree(directory, ignore_errors=True)
+        return None
+    return directory, copy, before[1] is not None
+
+
+def connect_read_only(
+    path: Path, *, timeout: float
+) -> tuple[sqlite3.Connection, Path | None]:
+    """A connection that reads the store file at ``path`` and writes
+    nothing to it or beside it, admitted as every opener admits a store
+    file (`admit_store`, so a refusal is the one `StoreRefusedError` the
+    writing opener gives), and the scratch directory to remove when it
+    closes, or None. The read-only commands open through it
+    (`Store.open` with ``read_only``).
+
+    SQLite's ``mode=ro`` reads the file in place where that creates
+    nothing: a file in rollback-journal mode with no ``-wal`` (a backup
+    bundle's snapshot, a store an older tool saved), and a store whose
+    ``-wal`` and ``-shm`` are both there (a daemon has it open, or crashed
+    with it open), which it reads as any reader does, through the
+    ``-shm`` it shares with the writer. A WAL-mode file without them, a
+    closed store, is read from a private copy instead: ``mode=ro`` there
+    would create both and leave them, and ``immutable=1`` on a file a
+    daemon may open at any moment could read pages a checkpoint is
+    writing. The copy is the file's state as of its last checkpoint, plus
+    a ``-wal`` without its ``-shm`` when there is one; it is taken again
+    when the file changed while it was copied, and refused with an
+    `sqlite3.OperationalError` after `_SNAPSHOT_TRIES` attempts. It sits
+    in a directory of its own (``tempfile.mkdtemp``, owner-only, the copy
+    ``0600``) and is read ``immutable=1``, or ``mode=ro`` when a ``-wal``
+    came with it."""
+    resolved = path.resolve()
+    for _ in range(_SNAPSHOT_TRIES):
+        wal, shm = _beside(resolved, "-wal"), _beside(resolved, "-shm")
+        scratch: Path | None = None
+        target, query = resolved, "mode=ro"
+        live = wal.exists() and shm.exists()
+        if not live and (wal.exists() or _says_wal(resolved)):
+            taken = _snapshot(resolved)
+            if taken is None:
+                continue
+            scratch, target, has_wal = taken
+            query = "mode=ro" if has_wal else "mode=ro&immutable=1"
+        try:
+            conn = sqlite3.connect(
+                f"{sqlite_file_uri(target)}?{query}",
+                uri=True,
+                timeout=timeout,
+                isolation_level=None,
+            )
+        except BaseException:
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+            raise
+        try:
+            admit_store(conn, path)
+            conn.row_factory = sqlite3.Row
+        except BaseException:
+            conn.close()
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+            raise
+        return conn, scratch
+    raise sqlite3.OperationalError(
+        f"{path} changed every time it was copied to be read; run the command again"
+    )

@@ -360,10 +360,11 @@ segment under a key the keys directory holds into one under a key only
 the bundle carries, which is this host's snapshot rekeyed by whoever
 wrote the bundle, reads `tampered` (`foreign_segment`), as the live store
 reads that shape, and nothing restores it. Every command that would open
-a bundle's `memory.sqlite` as a store refuses it, since opening a store
+a bundle's `memory.sqlite` as a store refuses it, since a writing open
 switches its journal mode, which changes the file's bytes, and the
 bundle would then fail its hash (`security audit` reads it without
-changing it): a store file with a bundle's
+changing it, and so, since 9.0.0rc14, do the read-only commands, which
+refuse it all the same): a store file with a bundle's
 `manifest.json` beside it, through a symbolic link too, is refused
 before it is opened, with a message that says to copy `memory.sqlite`
 out of the bundle to a directory of its own first and point the command
