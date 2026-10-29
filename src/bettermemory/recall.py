@@ -86,6 +86,7 @@ from collections import OrderedDict, deque
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -777,31 +778,85 @@ def session_brief(
         store = _open_store(cfg)
         if store is None:
             return empty
-    caller_resolution: Resolution | Exchange | None = resolution
-    if caller_resolution is None:
-        caller_resolution = _resolve_caller(
-            store=store,
-            cfg=cfg,
-            cwd=cwd,
-            origin=origin,
-            posted=posted,
-            session_id=str(session_id),
-        )
+    caller_resolution = _caller_resolution(
+        resolution,
+        store=store,
+        cfg=cfg,
+        cwd=cwd,
+        origin=origin,
+        posted=posted,
+        session_id=str(session_id),
+    )
     if isinstance(caller_resolution, Exchange):
         return HookResult(
             stdout="",
             surface="session_brief",
             membership={"ask": caller_resolution.to_reply()},
         )
-    lines = membership_lines(store, caller_resolution)
-    waiting = standing_line(store, caller_resolution)
-    if waiting:
-        lines.append(waiting)
+    lines = _brief_lead_lines(store, caller_resolution)
     state = state if state is not None else RecallState()
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))
     opened_by = source if source in _SESSION_SOURCES else "startup"
     agent = Subagent.from_payload(agent_id, agent_type)
+    state, view, opened, brief_event_id = _open_brief_segment(
+        store,
+        cfg,
+        state,
+        key,
+        opened_by=opened_by,
+        agent=agent,
+        transcript_path=transcript_path,
+        cwd=cwd,
+        origin=origin,
+        now=now,
+    )
+    compaction = _segment_compaction(opened_by, opened, view, agent)
+    result = _brief_in_segment(
+        key=key,
+        view=view,
+        opened_by=opened_by,
+        compaction=compaction,
+        transcript_path=transcript_path,
+        cwd=cwd,
+        origin=origin,
+        cfg=cfg,
+        store=store,
+        state=state,
+        now=now,
+        resolution=caller_resolution,
+        event_id=brief_event_id,
+    )
+    if result.event_id is None and opened_by in _NEW_SEGMENT_SOURCES:
+        _record_segment_opened(
+            store, cfg, key, origin, cwd, opened_by, view.segment, compaction
+        )
+    return _lead_brief(result, lines, store, caller_resolution)
+
+
+def _brief_lead_lines(store: Store, resolution: Resolution | None) -> list[str]:
+    """Take the caller's resolution; return its membership and standing lines."""
+    lines = membership_lines(store, resolution)
+    waiting = standing_line(store, resolution)
+    if waiting:
+        lines.append(waiting)
+    return lines
+
+
+def _open_brief_segment(
+    store: Store,
+    cfg: Config,
+    state: RecallState,
+    key: tuple[str, str],
+    *,
+    opened_by: str,
+    agent: Subagent | None,
+    transcript_path: str | None,
+    cwd: Path | None,
+    origin: Origin | None,
+    now: datetime,
+) -> tuple[RecallState, SegmentView, bool, str]:
+    """Take the SessionStart; return (scope's state, segment, opened, brief's id)."""
     marker_path = transcript_path
     if agent is not None:
         # A subagent's SessionStart (ENG-150): its own scope, read from the
@@ -844,47 +899,61 @@ def session_brief(
             triggered_from="session_hook",
             telemetry=cfg.telemetry.enabled,
         )
+    return state, view, opened, brief_event_id
+
+
+def _segment_compaction(
+    opened_by: str, opened: bool, view: SegmentView, agent: Subagent | None
+) -> dict[str, Any]:
+    """Take how the segment opened; return the compact's and subagent's row fields."""
     compaction: dict[str, Any] = {}
     if opened_by == "compact":
         compaction = {"marker": view.marker} if opened else {"marker_absent": True}
     if agent is not None:
         compaction.update(agent.fields())
-    result = _brief_in_segment(
-        key=key,
-        view=view,
-        opened_by=opened_by,
-        compaction=compaction,
-        transcript_path=transcript_path,
-        cwd=cwd,
-        origin=origin,
-        cfg=cfg,
+    return compaction
+
+
+def _record_segment_opened(
+    store: Store,
+    cfg: Config,
+    key: tuple[str, str],
+    origin: Origin | None,
+    cwd: Path | None,
+    opened_by: str,
+    segment: int,
+    compaction: Mapping[str, Any],
+) -> None:
+    """Take a segment no brief recorded; record its `segment_opened` row."""
+    # No brief carried the segment's number, or the compact's marker
+    # or its absence, to the log: record them alone, or a restarted
+    # daemon and the in-process path (which rebuilds on every call)
+    # would never see the clear or the compact.
+    caller = origin if origin is not None else _origin.capture_caller(cwd)
+    Recorder(
         store=store,
-        state=state,
-        now=now,
-        resolution=caller_resolution,
-        event_id=brief_event_id,
+        session_id=key[1],
+        enabled=cfg.telemetry.enabled,
+        worktree_root=caller.worktree_root,
+        triggered_from="session_hook",
+    ).record(
+        "segment_opened",
+        session_id=key[1],
+        harness=key[0],
+        source=opened_by,
+        segment=segment,
+        rule=RULE,
+        **compaction,
     )
-    if result.event_id is None and opened_by in _NEW_SEGMENT_SOURCES:
-        # No brief carried the segment's number, or the compact's marker
-        # or its absence, to the log: record them alone, or a restarted
-        # daemon and the in-process path (which rebuilds on every call)
-        # would never see the clear or the compact.
-        caller = origin if origin is not None else _origin.capture_caller(cwd)
-        Recorder(
-            store=store,
-            session_id=key[1],
-            enabled=cfg.telemetry.enabled,
-            worktree_root=caller.worktree_root,
-            triggered_from="session_hook",
-        ).record(
-            "segment_opened",
-            session_id=key[1],
-            harness=key[0],
-            source=opened_by,
-            segment=view.segment,
-            rule=RULE,
-            **compaction,
-        )
+
+
+def _lead_brief(
+    result: HookResult,
+    lines: list[str],
+    store: Store,
+    resolution: Resolution | None,
+) -> HookResult:
+    """Take the brief's result; return it led by its lines and the orphan notice."""
     lead = "\n".join(lines)
     if lead:
         stdout = f"{lead}\n{result.stdout}" if result.stdout else lead
@@ -893,7 +962,7 @@ def session_brief(
     if notice:
         stdout = f"{notice}\n{result.stdout}" if result.stdout else notice
         result = replace(result, stdout=stdout, chars=len(stdout))
-    if caller_resolution is not None and caller_resolution.remint_token:
+    if resolution is not None and resolution.remint_token:
         # The checkout's token is the client's to re-mint, in its own
         # namespace (design 3.3, E21 g).
         result = replace(result, membership={"remint": True})
@@ -970,43 +1039,18 @@ def _brief_in_segment(
     admission = admission_for(SESSION_BRIEF, store, resolution)
     membership = _delivery_membership(resolution, admission)
     brief_event_id = event_id or generate_ulid()
-
-    def record(
-        ids: list[str],
-        *,
-        chars: int,
-        extra: Mapping[str, Any],
-        event_id: str | None = None,
-        segment: int | None = None,
-    ) -> str:
-        identity.bind_transcript(session_id=key[1], model=None, client=key[0])
-        if event_id is None:
-            event_id = generate_ulid()
-        recorder = Recorder(
-            store=store,
-            session_id=key[1],
-            enabled=cfg.telemetry.enabled,
-            worktree_root=caller.worktree_root,
-            triggered_from="session_hook",
-        )
-        fields: dict[str, Any] = {
-            "event_id": event_id,
-            "session_id": key[1],
-            "harness": key[0],
-            "source": opened_by,
-            "segment": view.segment if segment is None else segment,
-            "ids": ids,
-            "chars": chars,
-            **extra,
-            **membership,
-            "rule": RULE,
-            **compaction,
-        }
-        if transcript_path:
-            fields["transcript_path"] = transcript_path
-        recorder.record("session_brief", **fields)
-        return event_id
-
+    record = partial(
+        _record_brief,
+        store=store,
+        cfg=cfg,
+        key=key,
+        caller=caller,
+        opened_by=opened_by,
+        view_segment=view.segment,
+        membership=membership,
+        compaction=compaction,
+        transcript_path=transcript_path,
+    )
     if admission.nothing is not None:
         event_id = record(
             [],
@@ -1033,19 +1077,104 @@ def _brief_in_segment(
     )
     selection = _select_brief(store, admission=admission, probe=probe, cfg=cfg, now=now)
     if not selection.standing and not selection.work:
-        if selection.suppressed and resolution is not None:
-            store.record_membership(
-                "recall_suppressed",
-                {
-                    "surface": SESSION_BRIEF,
-                    "checkout": resolution.checkout,
-                    "caller_rule": resolution.rule,
-                    "suppressed": [dict(entry) for entry in selection.suppressed],
-                    "candidates": selection.candidates,
-                },
-                session=key[1],
-            )
+        _note_brief_suppressed(store, key[1], resolution, selection)
         return empty
+    return _print_brief(
+        store,
+        state,
+        key,
+        selection,
+        now=now,
+        event_id=brief_event_id,
+        probe=probe,
+        caller=caller,
+        record=record,
+        empty=empty,
+    )
+
+
+def _record_brief(
+    ids: list[str],
+    *,
+    chars: int,
+    extra: Mapping[str, Any],
+    event_id: str | None = None,
+    segment: int | None = None,
+    store: Store,
+    cfg: Config,
+    key: tuple[str, str],
+    caller: Origin,
+    opened_by: str,
+    view_segment: int,
+    membership: Mapping[str, Any],
+    compaction: Mapping[str, Any],
+    transcript_path: str | None,
+) -> str:
+    """Take a brief's ids and its segment's context; record its row, return its id."""
+    identity.bind_transcript(session_id=key[1], model=None, client=key[0])
+    if event_id is None:
+        event_id = generate_ulid()
+    recorder = Recorder(
+        store=store,
+        session_id=key[1],
+        enabled=cfg.telemetry.enabled,
+        worktree_root=caller.worktree_root,
+        triggered_from="session_hook",
+    )
+    fields: dict[str, Any] = {
+        "event_id": event_id,
+        "session_id": key[1],
+        "harness": key[0],
+        "source": opened_by,
+        "segment": view_segment if segment is None else segment,
+        "ids": ids,
+        "chars": chars,
+        **extra,
+        **membership,
+        "rule": RULE,
+        **compaction,
+    }
+    if transcript_path:
+        fields["transcript_path"] = transcript_path
+    recorder.record("session_brief", **fields)
+    return event_id
+
+
+def _note_brief_suppressed(
+    store: Store,
+    session: str,
+    resolution: Resolution | None,
+    selection: _BriefSelection,
+) -> None:
+    """Take an empty selection; record `recall_suppressed` when it withheld records."""
+    if selection.suppressed and resolution is not None:
+        store.record_membership(
+            "recall_suppressed",
+            {
+                "surface": SESSION_BRIEF,
+                "checkout": resolution.checkout,
+                "caller_rule": resolution.rule,
+                "suppressed": [dict(entry) for entry in selection.suppressed],
+                "candidates": selection.candidates,
+            },
+            session=session,
+        )
+
+
+def _print_brief(
+    store: Store,
+    state: RecallState,
+    key: tuple[str, str],
+    selection: _BriefSelection,
+    *,
+    now: datetime,
+    event_id: str,
+    probe: str,
+    caller: Origin,
+    record: partial[str],
+    empty: HookResult,
+) -> HookResult:
+    """Take the brief's selection; return it claimed, printed and recorded, or empty."""
     # The one store read before the print comes first, so that between
     # the claim and the row only pure functions and the recorder run: ids
     # the claim noted as shown are never left without their row by a read
@@ -1058,7 +1187,6 @@ def _brief_in_segment(
     # The cooldown decides atomically: a concurrent prompt of the same
     # session may have shown some of these ids since `view` was read, and
     # what the claim keeps is noted as shown before anything is printed.
-    event_id = brief_event_id
     kept_standing, kept_work, segment = state.claim_brief(
         key,
         [memory.id for memory in selection.standing],
