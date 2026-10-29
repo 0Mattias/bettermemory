@@ -144,6 +144,23 @@ def add_subparser(
     restore.add_argument(
         "--json", action="store_true", help="Emit the result as JSON instead of text."
     )
+
+    text = (
+        "Remove the record a restore that did not finish left beside the "
+        "store (<store>.restore-lock): while it is there, every writing open "
+        "of the store is refused, since the store may be part restored. "
+        "Running the restore again finishes it instead. Without --yes prints "
+        "the record and changes nothing. "
+        "Exit 0 when there is nothing to clear or it was cleared, 1 while a "
+        "restore holds the lock, 2 on a usage error, 3 when --yes was not given."
+    )
+    unlock = backup_sub.add_parser("unlock", help=text, description=text)
+    unlock.add_argument(
+        "--yes", action="store_true", help="Clear the lock; without it, show it."
+    )
+    unlock.add_argument(
+        "--json", action="store_true", help="Emit the result as JSON instead of text."
+    )
     return parser
 
 
@@ -159,6 +176,8 @@ def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> Non
         _verify(args, parser=sub_parser)
     elif command == "restore":
         _restore(args, parser=sub_parser)
+    elif command == "unlock":
+        _unlock(args, parser=sub_parser)
     else:
         sub_parser.error(f"unknown backup command: {command!r}")
 
@@ -389,6 +408,13 @@ def render_restore(report: dict[str, Any]) -> str:
                 f"  trusting the bundle's own key {plan['trusted_bundle_key'][:16]} "
                 "(--trust-bundle-key)"
             )
+        if plan.get("unfinished_restore") is not None:
+            from ..restore_lock import describe
+
+            lines.append(
+                "  a restore of this store did not finish, or is running "
+                f"({describe(plan['unfinished_restore'])}); this one takes it over"
+            )
         # A plan says what would happen; a restore that ran, finished or
         # not, says what did, so a failure part way never reads as a key
         # installed or a head rewound that was not.
@@ -425,3 +451,49 @@ def render_restore(report: dict[str, Any]) -> str:
     if log is not None:
         lines.append(f"  log verify of the restored store: {log['status']}")
     return _text(lines)
+
+
+# ---------------------------------------------------------------------------
+# unlock
+# ---------------------------------------------------------------------------
+
+
+def _unlock(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> None:
+    from ..restore_lock import UNLOCK_EXIT, unlock
+
+    try:
+        report = unlock(_store_file(parser), apply=args.yes)
+    except OSError as exc:
+        sys.stderr.write(_text([f"bettermemory backup unlock: {exc}"]))
+        raise SystemExit(1) from None
+    if args.json:
+        _emit_json(report)
+    else:
+        sys.stdout.write(render_unlock(report))
+    raise SystemExit(UNLOCK_EXIT[report["status"]])
+
+
+def render_unlock(report: dict[str, Any]) -> str:
+    """The text form of a `restore_lock.unlock` report."""
+    from ..restore_lock import describe
+
+    lock = report["lock"]
+    marker = report["marker"]
+    record = "" if marker is None else f" ({describe(marker)})"
+    line = {
+        "clear": f"nothing to clear: {lock} records no restore",
+        "held": (
+            f"a restore holds {lock} now{record}; let it finish, or run this "
+            "again once it has stopped"
+        ),
+        "planned": (
+            f"{lock} records a restore that did not finish{record}; run again "
+            "with --yes to clear it and open the store as it stands, or run "
+            "that restore again to finish it"
+        ),
+        "cleared": (
+            f"cleared {lock}, a restore that did not finish{record}; the store "
+            "opens as it stands"
+        ),
+    }[report["status"]]
+    return _text([f"bettermemory backup unlock: {line}"])

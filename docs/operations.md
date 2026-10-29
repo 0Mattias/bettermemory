@@ -19,6 +19,7 @@ nothing. `bettermemory security audit` grades the modes and owners.
 | --- | --- | --- | --- |
 | The store directory | `~/.claude-memory` | `BETTERMEMORY_DIR`, then `[storage] directory`, then `./.claude-memory` in the working directory unless `[storage] cwd_store = false` | `0700` |
 | `memory.sqlite`, `-wal`, `-shm` | the store directory | | `0600` |
+| `memory.sqlite.restore-lock` | the store directory: the record `backup restore --yes` keeps while it runs, removed when it finishes; left by a restore that did not finish (the restore lock itself is a lock on the directory, and makes no file) | | `0600` |
 | `config.toml` | `~/Library/Application Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux | the platform's config directory | written once by the first command that loads it, every setting commented out; never rewritten |
 | The keys directory | `keys/` under the config directory | `BETTERMEMORY_KEYS_DIR` | `0700` |
 | `<store_id>.key` | the keys directory | | `0600` |
@@ -461,7 +462,12 @@ To restore:
    unless `--trust-bundle-key` is given) and prints the plan: the files
    it moves aside, the keys it installs, the head checkpoint before and
    after. Without `--yes` it changes nothing and exits 3.
-3. `bettermemory backup restore BUNDLE --yes` moves `memory.sqlite`,
+3. `bettermemory backup restore BUNDLE --yes` takes the store's restore
+   lock (on the store directory; its record is
+   `memory.sqlite.restore-lock`), refuses while any process has
+   the store open, which it reads off SQLite's own locks, and from then
+   on every writing open of the store is refused until it is done. It
+   moves `memory.sqlite`,
    `-wal` and `-shm` aside as `memory.sqlite.pre-restore-<UTC stamp>`
    (never deleted), copies the bundle's database in and checks it against
    the signed hash, installs the keys the bundle needs (a key that was
@@ -470,6 +476,13 @@ To restore:
    ring to the restored file, appends the rewind and the binding before
    and after to `<store_id>.backup_restore.json`, and runs `log verify`
    on the result. Exit 0 only when that verifies.
+
+A restore that is killed, or fails after it swapped the store file in,
+leaves its record, `memory.sqlite.restore-lock`: every writing open then
+refuses the store, which may be part restored, naming the bundle and the
+step it reached. Run the same restore again to finish it, or
+`bettermemory backup unlock --yes` to keep the store as it stands
+(without `--yes` it shows the record).
 
 A restore into another store directory, while the store the bundle was
 taken from is still there, moves the key ring's binding to the restored

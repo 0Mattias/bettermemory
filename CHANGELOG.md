@@ -2162,6 +2162,46 @@ follows the candidates' testing.
   overrides and that a refusal sent again before its override counts as
   two fires.
   (`src/bettermemory/health_render.py`, `tests/test_health_render.py`)
+- **A restore holds the store against every writing opener.** `backup
+  restore --yes` took the daemon's lock and the spawn lock only, so
+  `serve`, the shim's in-process fallback, the CLI's writing commands and
+  the in-process hooks could open the store while its file was swapped
+  and its keys and head rewound, write into the file moved aside and push
+  the head past the restored log. The restore now takes a restore lock,
+  `flock` on the store file's directory, for its whole length, and is
+  refused while any process has the store
+  open, which SQLite's own locks prove: it opens the store in exclusive
+  locking mode, and every open connection's shared lock refuses that.
+  Every writing open takes the lock shared first thing in
+  `store._connect`, before SQLite opens the file, and holds it until the
+  connection has read the store, so a writer either finished opening
+  before the restore's check, which then sees it, or is refused: in one
+  line, exit 1, as a store file the opener does not admit
+  (`RestoreLockedError`, a `StoreRefusedError`), after waiting at most 2
+  seconds; a restore's length grows with the store, and a writer that
+  waited would write into a store rewound under it. A writing open makes
+  no file: the directory is what every spelling of the store's path
+  reaches and the swap leaves in place. While it holds the lock the
+  restore keeps a record (its process, start, bundle and step) in
+  `<store>.restore-lock` beside the store, owner-only; a restore that
+  finishes, or fails before the store file is replaced, removes it, and
+  one that is killed or fails after leaves it (as does one that took
+  over an earlier restore's record and then fails),
+  so every writing open refuses the part-restored store, naming the
+  bundle to restore again or the new `bettermemory backup unlock --yes`,
+  which removes the record and opens the store as it stands (without
+  `--yes` it shows the record, exit 3). A restore run again takes the
+  record over (`lock.unfinished` in its report) and the plan names it.
+  The restore's probe connection checkpoints a crash's `-wal` into the
+  store file as it closes, so the store moved aside holds those rows in
+  its one file. Windows cannot lock a directory: there the record file,
+  made only by a restore, is the lock, an opener checks it when it is
+  there and only for its check, and Windows' refusal to rename an open
+  file stays the backstop.
+  `store.py` gains one line. (`src/bettermemory/restore_lock.py`,
+  `src/bettermemory/store.py`, `src/bettermemory/backup.py`,
+  `src/bettermemory/cli/backup_cmd.py`, `docs/api.md`,
+  `docs/operations.md`, `tests/test_restore_lock.py`)
 
 #### Known limitations
 

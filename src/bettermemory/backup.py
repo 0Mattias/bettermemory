@@ -74,7 +74,11 @@ anything holds either, so no daemon serves mid-restore and no hook, `up` or
 newly started shim spawns one (each spawns through `ensure_daemon`, under the spawn lock); it
 verifies the bundle and refuses one that does not verify, save a
 ``self_signed`` one the caller said to trust (``trust_bundle_key``);
-without ``apply`` it stops there with the plan.
+without ``apply`` it stops there with the plan. With it, it takes the
+store's restore lock (`restore_lock`), which every writing open respects
+from then on, and refuses while any process has the store open
+(`restore_lock.probe`: `serve`, the shim's in-process fallback, a CLI
+command or a hook, none of which takes the daemon locks).
 Then it copies the snapshot into a temporary file beside the store, moves
 the store file and its ``-wal`` and ``-shm`` aside as
 ``<store>.pre-restore-<UTC stamp>`` (with ``-wal`` and ``-shm`` suffixes,
@@ -98,14 +102,14 @@ it, which is why the orphan notice's manual steps delete ``-wal`` and
 ``-shm`` first; here they are moved aside with their store and the swap
 refuses to put a file in place while any of the three names is taken.
 
-Not defended: a process that opens the store without either lock while the
-restore runs. The in-process server (`bettermemory serve`, and the shim's
-fallback when no daemon can be reached), the CLI's writing commands and a
-running shim's reconnect (which spawns a daemon directly; that daemon opens
-the store before it finds the lock taken, and exits) all can. The refusal
-text says to close every session and run `bettermemory down` first, as the
-orphan notice does, and the swap refuses to land on a path something
-reopened meanwhile.
+The restore lock is held until the restore returns. A restore that
+finished, or failed before the store file was replaced, removes its
+marker; one that failed after leaves it, as does one that took over the
+marker of an earlier restore that did not finish and then failed, and
+every writing open refuses the part-restored store until a restore
+finishes or `backup unlock` removes it (`restore_lock.unlock`). A writer
+that opens without `store._connect` is not held off; none in this
+package does.
 """
 
 from __future__ import annotations
@@ -135,6 +139,7 @@ from ._fsutil import (
     replace_atomic,
     sqlite_file_uri,
 )
+from . import restore_lock
 from .config import STORE_FILENAME
 from .log import (
     REKEY,
@@ -1342,6 +1347,65 @@ def _daemon_locks(state_dir: Path, store_file: Path) -> Iterator[str | None]:
             client.release_lock(handle)
 
 
+def _take_restore_lock(
+    store_file: Path, bundle: Path, report: dict[str, Any]
+) -> restore_lock.RestoreLock | None:
+    """The store's restore lock, held, with no process holding the store
+    open (`restore_lock.probe`), or None with ``detail`` saying why: the
+    lock is held (another restore, or an opener that kept it), it cannot
+    be made, or a process has the store open. Every writing open is
+    refused from here until the lock is released (`restore_lock`)."""
+    lock = restore_lock.lock_path(store_file)
+    try:
+        ensure_owner_only_dir(store_file.parent, parents=True)
+        held = restore_lock.acquire(store_file)
+    except OSError as exc:
+        report["detail"] = f"the restore lock {lock} cannot be taken: {exc}"
+        return None
+    if held is None:
+        report["detail"] = (
+            f"another restore of {store_file} is running, or a process is "
+            f"opening the store (it holds {lock}); run the restore again when "
+            "it has finished"
+        )
+        return None
+    report["lock"] = {"path": str(lock), "unfinished": held.previous, "kept": False}
+    try:
+        held.mark(
+            bundle=str(bundle), stage="checking that no process has the store open"
+        )
+        reason = restore_lock.probe(store_file)
+    except BaseException:
+        held.release(clear=held.previous is None)
+        raise
+    if reason is not None:
+        # A marker taken over stays: the store is still part restored.
+        held.release(clear=held.previous is None)
+        report["detail"] = reason
+        return None
+    return held
+
+
+def _release_restore_lock(
+    held: restore_lock.RestoreLock, report: dict[str, Any], swapped: list[bool]
+) -> None:
+    """Give the restore lock back. Its marker is removed when the restore
+    finished, or failed before the store file was replaced on a store no
+    unfinished restore had left part restored; otherwise it stays, and
+    every writing open refuses the part-restored store until a restore
+    finishes or `backup unlock` removes it, which ``detail`` says."""
+    keep = report["status"] != RESTORED and (swapped[0] or held.previous is not None)
+    held.release(clear=not keep)
+    report["lock"]["kept"] = keep
+    if keep:
+        report["detail"] = (
+            f"{report['detail'] or 'the restore did not finish'}; writing opens "
+            f"of {held.store_file} are refused "
+            f"until it is finished: run the restore again, or keep the store as "
+            "it stands with `bettermemory backup unlock --yes`"
+        )
+
+
 def restore_bundle(
     bundle: Path,
     store_file: Path,
@@ -1355,9 +1419,14 @@ def restore_bundle(
     """Restore the bundle at `bundle` over the store at `store_file` and
     return the report; ``status`` is ``restored``, ``planned`` (`apply`
     false: the plan, nothing changed), ``refused`` (a daemon holds the
-    store, or the bundle does not verify) or ``failed`` (a step raised, or
-    the restored store does not verify; ``detail`` and ``moved_aside`` say
-    what is where). `keys_dir` and `state_dir` default to the ones the
+    store, a process has it open, another restore holds its lock, or the
+    bundle does not verify) or ``failed`` (a step raised, or the restored
+    store does not verify; ``detail`` and ``moved_aside`` say what is
+    where, and ``lock`` whether writing opens stay refused). The plan's
+    ``unfinished_restore`` is the marker a restore that did not finish
+    left on the store's lock, which this one takes over; ``lock`` is
+    ``{path, unfinished, kept}`` once the lock was taken. `keys_dir` and
+    `state_dir` default to the ones the
     store and its daemon resolve. See the module docstring for the order
     and why.
 
@@ -1392,6 +1461,7 @@ def restore_bundle(
         "binding": None,
         "record": None,
         "log": None,
+        "lock": None,
     }
     # A store resolved inside a bundle (`BETTERMEMORY_DIR` naming one) is
     # that bundle's snapshot: the restore would move it aside and copy
@@ -1404,7 +1474,10 @@ def restore_bundle(
             "into a store directory outside every bundle"
         )
         return report
-    with _daemon_locks(state_root, store_file) as reason:
+    with (
+        _daemon_locks(state_root, store_file) as reason,
+        contextlib.ExitStack() as stack,
+    ):
         if reason is not None:
             report["detail"] = reason
             return report
@@ -1474,10 +1547,16 @@ def restore_bundle(
             "binding": {"before": binding_before, "after": binding_after},
             "record": str(record),
             "trusted_bundle_key": trusted_key,
+            "unfinished_restore": restore_lock.read_marker(store_file),
         }
         if not apply:
             report["status"] = PLANNED
             return report
+        held = _take_restore_lock(store_file, bundle, report)
+        if held is None:
+            return report
+        swapped = [False]
+        stack.callback(_release_restore_lock, held, report, swapped)
         report["status"] = FAILED
         moved: list[dict[str, str]] = report["moved_aside"]
         try:
@@ -1504,11 +1583,16 @@ def restore_bundle(
                     raise BackupError(
                         f"{bundle / SNAPSHOT_NAME} changed after it was verified"
                     )
-                _swap_in(prepared, store_file, aside, moved)
+                held.mark(stage="moving the store aside")
+                try:
+                    _swap_in(prepared, store_file, aside, moved)
+                finally:
+                    swapped[0] = bool(moved) or not prepared.exists()
             finally:
                 with contextlib.suppress(OSError):
                     if prepared.exists():
                         prepared.unlink()
+            held.mark(stage="installing the keys and rewinding the head")
             _install_keys(live, bundle_ring, actions)
             report["keys_installed"] = list(actions)
             replaced = _rewind_head(live, head)
@@ -1552,6 +1636,7 @@ def restore_bundle(
                 stamp,
             )
             report["record"] = str(record)
+            held.mark(stage="verifying the restored store")
             restored = _store.Store.open(
                 store_file, keys_dir=keys_root, allow_rekey=False
             )

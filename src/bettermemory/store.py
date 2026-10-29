@@ -363,6 +363,7 @@ def _connect(path: Path) -> sqlite3.Connection:
     `Store.set_busy_timeout`), foreign keys on, autocommit off so every
     write is an explicit transaction, and owner-only modes on the file and
     its WAL siblings."""
+    _held = __import__("bettermemory.restore_lock").restore_lock.admit(path)
     conn = sqlite3.connect(
         str(path), timeout=CLI_BUSY_TIMEOUT_SECONDS, isolation_level=None
     )
