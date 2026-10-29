@@ -79,6 +79,19 @@ the candidates' testing.
   readers the hook client already loads, and the hook client's import
   allow-list names it. (`src/bettermemory/location.py`,
   `src/bettermemory/location_git.py`, `tests/test_membership_capture.py`)
+- **`health.py` is split into four modules, with no import path changed.**
+  The report model (the dataclasses, caps and shared predicates) moves to
+  `health_model.py`, the event-log accumulator, the recommendations and
+  the rollup helpers to `health_stats.py`, and the text and JSON
+  renderers to `health_render.py`. `compute_health`, the cross-repo and
+  commit-drift rollups, the curation counts and `report_for_store` stay
+  in `health.py`, which goes from 4,776 lines to 1,861. Every function
+  and class moves unchanged, and `health` re-exports every public name
+  and every private name read outside the family, so
+  `from bettermemory.health import ...` resolves as before; the report
+  and the CLI output do not change. (`src/bettermemory/health.py`,
+  `src/bettermemory/health_model.py`, `src/bettermemory/health_stats.py`,
+  `src/bettermemory/health_render.py`)
 
 #### Fixed
 

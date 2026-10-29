@@ -2,10 +2,11 @@
 
 `health.compute_health` builds a `HealthReport` from these types. The
 shared predicates (`_is_dead_weight`, `is_hook_telemetry_event`,
-`applied_tier`) are read by health's rollups and, through `health`, by
-`eval.py`. `health` re-exports every public name here and every private
-one a caller outside the family reads, so callers keep importing from
-`health`. Nothing here imports `health`.
+`applied_tier`) are read by health's rollups, and the public ones by the
+modules that import them through `health`. `health` re-exports every
+public name here and every private one a caller outside the family
+reads, so callers keep importing from `health`. Nothing here imports
+`health`.
 """
 
 from __future__ import annotations
