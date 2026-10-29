@@ -4,13 +4,14 @@ The column codecs (`_iso`, `_dt`, `_json_text` ...), the memory and
 tombstone column lists and their upserts, the row writers and readers
 (`_write_memory_row`, `_row_to_memory`, `_row_to_tombstone`,
 `_row_to_episode` ...), `_apply_mutation`, which the live write path
-(`Store._mutate`) and the fold (`Store.refold`) both apply a row through,
-the membership row values and keys, the fold's table reader, the event a
-telemetry row reads as, and `body_sha256`. `store` re-exports every name a
-caller reads. A store module that reads one of these names imports it from
-here, so a test patches it on the reader's module, never on this one. It
-lives apart from `store.py` to keep each module under the package's
-2,000-line bound (ENG-96); from the family it imports `store_schema` alone.
+(`store._mutate`) and the fold (`store_events.refold`) each apply a row
+through by their own binding of it, the membership row values and keys,
+the fold's table reader, the event a telemetry row reads as, and
+`body_sha256`. `store` re-exports every name a caller reads. A store
+module that reads one of these names imports it from here, so a test
+patches it on the reader's module, never on this one. It lives apart
+from `store.py` to keep each module under the package's 2,000-line bound
+(ENG-96); from the family it imports `store_schema` alone.
 """
 
 from __future__ import annotations

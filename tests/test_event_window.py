@@ -24,6 +24,7 @@ import pytest
 
 from bettermemory import _caches
 from bettermemory import store as store_module
+from bettermemory import store_events
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.server import build_server
@@ -138,7 +139,7 @@ def test_a_warm_window_reads_only_the_rows_after_its_head(memory_dir: Path) -> N
 def test_the_window_memo_is_bounded_and_registered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(store_module, "EVENT_WINDOW_STORES", 2)
+    monkeypatch.setattr(store_events, "EVENT_WINDOW_STORES", 2)
     stores = [Store(tmp_path / f"store{i}") for i in range(3)]
     for s in stores:
         _import(s, T - timedelta(minutes=1))
