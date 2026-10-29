@@ -134,6 +134,7 @@ from .membership_records import (
     NEW,
     OPEN as OPEN,
     OTHER_MACHINE,
+    OTHER_MACHINE_SKIP,
     OTHER_PROJECT,
     OTHER_TENANT,
     OUTSIDE,
@@ -1450,18 +1451,28 @@ class Membership:
 
     def _give_token(self, k: Checkout) -> None:
         """A token of its own for the checkout, so copies made from here on
-        are told apart from the line it separated from."""
+        are told apart from the line it separated from. The writer writes
+        it now, in the namespace that holds the checkout (this process's,
+        or a client's answer in its own: `location.AnsweredToken`), and
+        the token and its ``token_reminted`` row are written in this
+        transaction, with the resolution or declaration that asked
+        (ENG-153). With no writer, or one that cannot write now (a client
+        that cannot be asked), the caller re-mints after the reply
+        (`Resolution.remint_token`); a writer asked for another machine's
+        checkout (`OTHER_MACHINE_SKIP`, a declaration about a container's
+        checkout made on the host) leaves it to that checkout's next
+        sighting there. Until then its status says its token is superseded
+        and every sighting asks again (decision B15)."""
         if k.git_dir is None or k.kind == BARE:
             return
-        if self._token_writer is None:
-            # The caller writes it (`Resolution.remint_token`); until it
-            # does, the checkout's status says its token is superseded
-            # and every sighting asks again (decision B15).
+        written = None if self._token_writer is None else self._token_writer(k)
+        if written is None or written[1] == OTHER_MACHINE_SKIP:
             if k.token_status != SUPERSEDED:
                 self._put_checkout(dataclasses.replace(k, token_status=SUPERSEDED))
-            self._remint = k.id
+            if written is None:
+                self._remint = k.id
             return
-        token, status = self._token_writer(k)
+        token, status = written
         if token:
             self._put_checkout(dataclasses.replace(k, token=token, token_status=status))
         elif k.token_status == SUPERSEDED:

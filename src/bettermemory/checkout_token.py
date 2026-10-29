@@ -166,6 +166,12 @@ def mint() -> str:
     return random_crockford(TOKEN_LENGTH)
 
 
+def valid(token: object) -> bool:
+    """Whether `token` is a token's value as `mint` makes one: what a
+    client's answer of the token it re-minted must hold (ENG-153)."""
+    return isinstance(token, str) and _TOKEN_RE.fullmatch(token) is not None
+
+
 def token_path(git_dir: str | os.PathLike[str]) -> Path:
     """`<git_dir>/info/bettermemory`."""
     return Path(git_dir) / "info" / TOKEN_NAME

@@ -882,8 +882,13 @@ _COMMANDS: Mapping[str, str] = {
 _INITS = frozenset(_COMMANDS)
 
 #: Writes a checkout a token of its own (a declared separation, a
-#: superseded token); returns the token or None, and the status.
-TokenWriter = Callable[[Checkout], tuple[str | None, str]]
+#: superseded token) inside the transaction that asks for it (ENG-153);
+#: returns the token or None, and the status, or None where it cannot
+#: write now (the caller re-mints: `Resolution.remint_token`).
+TokenWriter = Callable[[Checkout], "tuple[str | None, str] | None"]
+#: The status of a token writer asked for a checkout of another machine:
+#: its token is re-minted at its next sighting there.
+OTHER_MACHINE_SKIP = "skipped:other_machine"
 
 
 # ---------------------------------------------------------------------------

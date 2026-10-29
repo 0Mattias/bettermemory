@@ -1048,6 +1048,27 @@ the candidates' testing.
   document naming the witness; `bettermemory membership import` exits 2
   and writes nothing. (`src/bettermemory/membership_records.py`,
   `src/bettermemory/membership_migrate.py`)
+- **A checkout token's re-mint is written with the resolution that asks
+  for it.** When history outranks a checkout token (a copy carrying
+  another line's token) or a declaration separates a checkout, the
+  checkout is given a token of its own. The resolutions the hooks, the
+  MCP server and the CLI run had no token writer: the store marked the
+  token superseded and the caller re-minted after the transaction,
+  in-process in a second transaction, and a hook client in another
+  namespace (a container) after the final reply, reporting nothing back.
+  The store kept the old token, so the container's next prompt, its
+  repository read with no birth time, failed the token's continuity: a
+  second checkout of the same git directory was registered and its first
+  sight was decided, and asked, again (ENG-153). The token is now
+  written inside the resolution's transaction by the namespace that
+  holds it: this process's, or the client's, asked in the witness
+  exchange (`location.AnsweredToken`, answered by `location.answer`) and
+  recorded with the resolution in its one reply. A declaration made on
+  the host about a container's checkout leaves it superseded, and the
+  container's next prompt re-mints it the same way; Known limitations
+  names the windows left. (`src/bettermemory/location.py`,
+  `src/bettermemory/membership.py`, `src/bettermemory/membership_records.py`,
+  `src/bettermemory/checkout_token.py`)
 
 #### Known limitations
 
@@ -1135,6 +1156,20 @@ the candidates' testing.
   distinct views on one dropped share time out the first prompt after
   the outage (ENG-156). A budget per resolution, or stalled paths
   grouped by mount, is filed.
+- **A re-minted checkout token can still run ahead of the store.** The
+  re-mint is written in the resolution's transaction (ENG-153), and
+  three windows are left. A hook client before 9.0.0rc14 cannot answer
+  the witness exchange's token question: it costs one more round (the
+  re-mint asked and answered without it) and the client re-mints after
+  the final reply as before, so the store keeps the old token until a
+  later sighting. An exchange that runs out of rounds after the client
+  wrote the new token leaves the token file ahead of the store. And the
+  in-process writer writes the token file inside the transaction, so an
+  error or a crash between that write and the commit rolls the store
+  back with the file already new: a first sight heals at its next
+  sighting (one new checkout, then silent, no duplicate, with birth time
+  and without); the re-mint of a checkout already recorded as superseded
+  on another machine was not exercised.
 
 ### 9.0.0rc13
 

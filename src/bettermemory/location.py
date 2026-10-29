@@ -169,6 +169,7 @@ __all__ = [
     "WALK_LIMIT",
     "AnsweredHistory",
     "AnsweredLiveness",
+    "AnsweredToken",
     "Caller",
     "Capture",
     "Exchange",
@@ -950,6 +951,34 @@ class AnsweredHistory:
         raise NeedWitnesses({"blobs": [sha]})
 
 
+class AnsweredToken:
+    """The `membership.TokenWriter` of a caller the daemon cannot write
+    for (ENG-153): the checkout token the client re-minted in its own
+    namespace when asked (`answer`, ``remint``), which the resolution
+    records in its one transaction and reply. A client not yet asked is
+    asked (`NeedWitnesses`); one that answered without saying it can
+    re-mint (a client before 9.0.0rc14) re-mints after the final reply as
+    it did (None: `Resolution.remint_token`). `posted` says whether the
+    client has answered any question in this exchange."""
+
+    def __init__(self, answers: Mapping[str, Any], *, posted: bool) -> None:
+        self._answers = answers
+        self._posted = posted
+
+    def __call__(self, checkout: Checkout) -> tuple[str | None, str] | None:
+        got = self._answers.get("remint")
+        if isinstance(got, Mapping):
+            token = got.get("token")
+            status = got.get("status")
+            return (
+                token if checkout_token.valid(token) else None,
+                status if isinstance(status, str) and status else "failed:io",
+            )
+        if self._posted and not self._answers.get("remint_ok"):
+            return None
+        raise NeedWitnesses({"remint": True})
+
+
 class AnsweredLiveness:
     """The `membership.Liveness` of a caller the daemon cannot read: each
     view's state as the client answered it (`view_state` in its own
@@ -1219,8 +1248,15 @@ def answer(
     the question names (`reachable_among`, one bounded traversal, and only
     when the question asks it: ENG-151), the blob sample of HEAD and the
     asked commits, and the state of the named views, all read from its
-    own files."""
+    own files. Asked to re-mint its checkout token (``remint``, ENG-153),
+    it writes a fresh one under the question's policy, once per exchange,
+    and answers the token and status, which the daemon records in the
+    resolution's transaction (`AnsweredToken`); ``remint_ok`` says it
+    answers that question."""
     out: dict[str, Any] = {k: v for k, v in answers.items()}
+    out["remint_ok"] = True
+    if question.get("remint") and "remint" not in out:
+        out["remint"] = _remint_here(cap, policy=bool(question.get("write_token")))
     history = (
         RepositoryHistory(cap.common_dir)
         if cap.common_dir and cap.state == REPO
@@ -1276,6 +1312,15 @@ def answer(
             )
     out["views"] = views
     return out
+
+
+def _remint_here(cap: Capture, *, policy: bool) -> dict[str, Any]:
+    """The client's re-mint of the checkout token of its capture, as it
+    answers it."""
+    if not cap.git_dir:
+        return {"token": None, "status": "skipped:no_git_dir"}
+    wrote = checkout_token.remint(cap.git_dir, policy=policy, bare=cap.kind == BARE)
+    return {"token": wrote.token, "status": wrote.status}
 
 
 @dataclass(frozen=True)
@@ -1456,10 +1501,17 @@ def _model(
     identity: MachineIdentity,
     session: str | None,
     liveness: Any = None,
+    token_writer: Any = None,
 ) -> Membership:
     from .membership import Membership
 
-    model = Membership(store, identity.id, liveness=liveness, session=session)
+    model = Membership(
+        store,
+        identity.id,
+        liveness=liveness,
+        token_writer=token_writer,
+        session=session,
+    )
     _recorded(store, model, identity)
     return model
 
@@ -1620,7 +1672,6 @@ def _caller(
             identity = process_machine()
         except OSError as exc:
             return _machineless(store, config, cwd, session, exc, stand)
-    model = _model(store, identity, session)
     errors: tuple[str, ...] = ()
     if cwd is None:
         loc: Location = _Location(
@@ -1638,18 +1689,25 @@ def _caller(
         loc = to_location(
             cap, machine=identity.id, session=session, history=_history_of(cap)
         )
+    wrote: list[str | None] = []
+    git_dir, bare = loc.git_dir, loc.kind == BARE
+
+    def write_token(k: Checkout) -> tuple[str | None, str] | None:
+        # The caller's own checkout token, in this namespace, inside the
+        # resolution's transaction (ENG-153).
+        if not git_dir:
+            return None
+        made = checkout_token.remint(
+            git_dir, policy=config.membership.write_token, bare=bare
+        )
+        wrote.append(made.token)
+        return made.token, made.status
+
+    model = _model(store, identity, session, token_writer=write_token)
     with _location_lock(loc):
         res = _resolved(model, loc, config, stand)
-        if res.remint_token and res.checkout is not None and loc.git_dir:
-            wrote = checkout_token.remint(
-                loc.git_dir,
-                policy=config.membership.write_token,
-                bare=loc.kind == BARE,
-            )
-            model.token_written(res.checkout, wrote.token, wrote.status)
-            if where is not None:
-                forget(where)
-            res = dataclasses.replace(res, remint_token=False)
+    if wrote and where is not None:
+        forget(where)
     return Caller(loc, _with_file_errors(res, errors), model)
 
 
@@ -1793,8 +1851,11 @@ def resolve_hook(
     client's namespace is not this one: the daemon asks for the location
     token and the client's machine, then resolves from the token with the
     client answering each question of its repository (an `Exchange`
-    names the next one); a re-mint is the client's to make
-    (`Resolution.remint_token` stays set). Each resolution is kept as the
+    names the next one); a re-mint is the client's to make, asked in the
+    exchange and recorded in the resolution's transaction
+    (`AnsweredToken`, ENG-153), or after the final reply for a client
+    that cannot be asked (`Resolution.remint_token` stays set). Each
+    resolution is kept as the
     session's latest for the process's lifetime (decision B24), until the
     session is forgotten (`forget_session`) or crowded out."""
     raw = posted.get("location") if posted is not None else None
@@ -1841,9 +1902,15 @@ def resolve_hook(
     identity = _identity_from(posted.get("machine") if posted is not None else None)
     if cap is None or identity is None:
         return Exchange({"location": True, "machine": True, "write_token": policy})
-    answers = posted.get("answers") if posted is not None else None
-    answers = answers if isinstance(answers, Mapping) else {}
-    model = _model(store, identity, session, liveness=AnsweredLiveness(answers))
+    given = posted.get("answers") if posted is not None else None
+    answers: Mapping[str, Any] = given if isinstance(given, Mapping) else {}
+    model = _model(
+        store,
+        identity,
+        session,
+        liveness=AnsweredLiveness(answers),
+        token_writer=AnsweredToken(answers, posted=isinstance(given, Mapping)),
+    )
     loc = to_location(
         cap, machine=identity.id, session=session, history=AnsweredHistory(answers)
     )
