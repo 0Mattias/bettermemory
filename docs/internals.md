@@ -929,7 +929,10 @@ is a re-export shim kept for callers that import `build_server` from
 there. `__main__.py` covers `python -m bettermemory`, and `__init__.py`
 gives `__version__`, read from the `_version.py` every build and editable
 install writes (it is not tracked), and the package's few top-level
-names. `cli/_common.py` holds what the subcommands share.
+names. `cli/__init__.py` is the command's `main`: it builds the root
+parser, has each subcommand module register its subparser in the order
+`bettermemory --help` lists them, and dispatches on the command;
+`cli/_common.py` holds what the subcommands share.
 
 **The daemon's proof.** `GET /health?nonce=<32 to 128 hex>` answers
 `proof`, hex(HMAC-SHA256(token, `bettermemory-health-v1:` + nonce))
@@ -990,7 +993,10 @@ membership question, a project joined or unjoined),
 change to a standing memory, which reads the user's words for it
 (`said`) for every door that makes one. `handlers/_shared.py` holds
 what all of them reach for (payload validation, use-token settlement,
-the turn counter).
+the turn counter). `handlers/__init__.py` gathers the nine served
+tools' handler functions and `DESC_*` constants; `_handlers.py` reads
+them from the package, and `builder._register_tools` takes the
+descriptions from `_handlers`.
 `_handlers.py` is the facade that wires those functions onto one class.
 `identity.py` resolves who is calling and from where (the declared
 client, model and transport session, the attested OAuth principal, and
