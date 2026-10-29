@@ -707,3 +707,87 @@ def test_a_read_only_command_is_refused_while_a_restore_runs(
         timeout=_CHILD_SECONDS,
     )
     assert after.returncode == 0, after.stdout + after.stderr
+
+
+# ---------------------------------------------------------------------------
+# The console's hooks, through the hook client
+# ---------------------------------------------------------------------------
+
+
+def _files(directory: Path) -> dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in sorted(directory.iterdir()) if p.is_file()}
+
+
+def _console_hook(
+    child_env: dict[str, str], event: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        _bettermemory("hook", event, "--session-id", "s1"),
+        env=child_env,
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=_CHILD_SECONDS,
+    )
+
+
+def test_a_console_hook_refuses_a_restore_that_did_not_finish(
+    bundle: Path, store_file: Path, child_env: dict[str, str], tmp_path: Path
+) -> None:
+    """`bettermemory hook session-start` after a restore died: exit 0 as a
+    hook must, nothing for the model, the refusal every writing open gets
+    as the one stderr line, and no daemon started to exit on it."""
+    crashed = subprocess.run(
+        [sys.executable, "-c", _CRASHED_RESTORE, str(store_file), str(bundle)],
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=_CHILD_SECONDS,
+    )
+    assert crashed.returncode == 0, crashed.stderr
+    before = _files(store_file.parent)
+    hook = _console_hook(child_env, "session-start")
+    assert hook.returncode == 0
+    assert hook.stdout == ""
+    [line] = hook.stderr.splitlines()
+    assert line.startswith(
+        f"bettermemory hook session-start: {store_file} is not opened: "
+        "a restore of it did not finish"
+    )
+    assert "bettermemory backup unlock --yes" in line
+    assert not list((tmp_path / "state").glob("daemon-*")), "a daemon was started"
+    assert _files(store_file.parent) == before
+
+
+def test_a_console_hook_refuses_a_running_restore_without_waiting(
+    store_file: Path, child_env: dict[str, str], tmp_path: Path
+) -> None:
+    """A restore holds what `backup restore` holds: the spawn and daemon
+    locks and the restore lock. The hook used to wait out its 8 s for the
+    spawn lock and end with "no daemon could be reached or started"; it
+    now says the restore runs, at once, and starts nothing."""
+    from bettermemory import _daemon_client, restore_lock
+
+    state_dir = tmp_path / "state"
+    with _daemon_client.daemon_locks(
+        state_dir, [store_file.resolve()], command="backup restore"
+    ) as reason:
+        assert reason is None, reason
+        held = restore_lock.acquire(store_file, wait=0)
+        assert held is not None
+        try:
+            held.mark(bundle=str(tmp_path / "bundle"), stage="verifying the bundle")
+            started = time.monotonic()
+            hook = _console_hook(child_env, "prompt")
+            took = time.monotonic() - started
+        finally:
+            held.release(clear=True)
+    assert hook.returncode == 0
+    assert hook.stdout == ""
+    [line] = hook.stderr.splitlines()
+    assert line.startswith(
+        f"bettermemory hook prompt: {store_file} is not opened: "
+        "a restore of it is running"
+    )
+    assert took < _daemon_client.START_TIMEOUT_SECONDS, took
+    assert not list(state_dir.glob("daemon-*.log")), "a daemon was started"

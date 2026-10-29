@@ -25,7 +25,7 @@ from typing import Any, cast
 
 import pytest
 
-from bettermemory import _daemon_client, config
+from bettermemory import _daemon_client, _store_refusal, config
 from bettermemory._daemon_client import write_state
 from bettermemory.location import resolve_here
 from bettermemory.machine import open_machine
@@ -162,15 +162,18 @@ def test_hook_exits_0_when_no_daemon_can_be_reached_or_started(tmp_path: Path) -
 
 
 #: Every bettermemory module a hook process loads when the daemon's reply
-#: asks nothing: the package, the entry, the client, the version file and
-#: the namespace probe (design 8.1). A module joins this list only by a
-#: decision to make every hook pay for it.
+#: asks nothing: the package, the entry, the client, the version file, the
+#: namespace probe (design 8.1) and the store refusals (`_store_refusal`,
+#: code every hook runs, split from the client for the package's
+#: 2,000-line bound). A module joins this list only by a decision to make
+#: every hook pay for it.
 _HOOK_MODULES = frozenset(
     {
         "bettermemory",
         "bettermemory._daemon_client",
         "bettermemory._entry",
         "bettermemory._location_probe",
+        "bettermemory._store_refusal",
         "bettermemory._version",
     }
 )
@@ -911,3 +914,221 @@ def test_a_daemon_started_from_an_attended_shell_never_inherits_the_mark(
     monkeypatch.setenv(_daemon_client.ATTENDED_ENV, "1")
     env = _daemon_client.daemon_env_for(tmp_path / "store.db")
     assert _daemon_client.ATTENDED_ENV not in env
+
+
+# ---------------------------------------------------------------------------
+# The stores a hook refuses before it starts a daemon: the client's reading,
+# standard library only, against the modules it copies
+# ---------------------------------------------------------------------------
+
+
+def test_the_refusal_constants_are_the_store_sides() -> None:
+    from bettermemory import backup, history, restore_lock
+
+    assert _store_refusal.BUNDLE_MANIFEST_NAME == backup.MANIFEST_NAME
+    assert _store_refusal.BUNDLE_FORMAT == backup.BUNDLE_FORMAT
+    assert _store_refusal.BUNDLE_MANIFEST_CAP == backup._MANIFEST_CAP_BYTES
+    assert _store_refusal.RESTORE_LOCK_SUFFIX == restore_lock.LOCK_SUFFIX
+    assert _store_refusal.RESTORE_MARKER_CAP == restore_lock._MARKER_CAP_BYTES
+    assert _store_refusal.RESTORE_LOCK_BYTE == restore_lock._WINDOWS_LOCK_OFFSET
+    assert _store_refusal._LOCK_HELD_ERRNOS == restore_lock._RETRY_ERRNOS
+    assert _store_refusal._UNPRINTABLE == history._UNPRINTABLE
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["plain", "a\ttab", "a\nbreak", "esc\x1b[2J", "bidi‮", "sep ", "soft­"],
+)
+def test_the_client_makes_a_line_printable_as_history_does(text: str) -> None:
+    from bettermemory import history
+
+    assert _store_refusal.printable(text) == history.printable(text)
+
+
+#: Each layout `_bundle_layout` builds, and whether the store side refuses it.
+_BUNDLE_LAYOUTS = {
+    "plain store": False,
+    "missing directory": False,
+    "bundle manifest": True,
+    "another tool's manifest": False,
+    "manifest of another shape": False,
+    "manifest that does not parse": True,
+    "manifest past the cap": True,
+    "manifest that is a directory": False,
+    "path through a link to the bundle": True,
+    "link to the bundle's file": True,
+    "hard link": True,
+}
+
+
+def _bundle_layout(tmp_path: Path, layout: str) -> Path:
+    """A store path in the shape `layout` names, for both readings."""
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    store = bundle / _daemon_client.STORE_FILENAME
+    store.write_bytes(b"not read")
+    manifest = bundle / _store_refusal.BUNDLE_MANIFEST_NAME
+    if layout == "plain store":
+        return store
+    if layout == "missing directory":
+        return tmp_path / "nowhere" / _daemon_client.STORE_FILENAME
+    if layout == "another tool's manifest":
+        manifest.write_text(json.dumps({"format": "another.tool"}), encoding="utf-8")
+    elif layout == "manifest of another shape":
+        manifest.write_text("[1, 2]", encoding="utf-8")
+    elif layout == "manifest that does not parse":
+        manifest.write_text("{not json", encoding="utf-8")
+    elif layout == "manifest past the cap":
+        manifest.write_bytes(b" " * (_store_refusal.BUNDLE_MANIFEST_CAP + 1))
+    elif layout == "manifest that is a directory":
+        manifest.mkdir()
+    else:
+        manifest.write_text(
+            json.dumps({"format": _store_refusal.BUNDLE_FORMAT}), encoding="utf-8"
+        )
+    if layout == "path through a link to the bundle":
+        linked = tmp_path / "linked"
+        try:
+            linked.symlink_to(bundle, target_is_directory=True)
+        except OSError:
+            pytest.skip("this account cannot create the link")
+        return linked / store.name
+    if layout == "link to the bundle's file":
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        try:
+            (elsewhere / store.name).symlink_to(store)
+        except OSError:
+            pytest.skip("this account cannot create the link")
+        return elsewhere / store.name
+    if layout == "hard link":
+        manifest.unlink()
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        try:
+            (elsewhere / store.name).hardlink_to(store)
+        except OSError:
+            pytest.skip("this account cannot create the link")
+        return elsewhere / store.name
+    return store
+
+
+@pytest.mark.parametrize("layout", sorted(_BUNDLE_LAYOUTS))
+def test_the_client_refuses_a_bundle_as_backup_does(
+    tmp_path: Path, layout: str
+) -> None:
+    """`_store_refusal.bundle_refusal` and `backup.bundle_refusal` give the
+    same answer, word for word, for each layout."""
+    from bettermemory import backup
+
+    path = _bundle_layout(tmp_path, layout)
+    refusal = _store_refusal.bundle_refusal(path)
+    assert refusal == backup.bundle_refusal(path)
+    assert (refusal is not None) is _BUNDLE_LAYOUTS[layout]
+
+
+def _store_side_refusal(store_file: Path) -> str | None:
+    """What a writing open of the store is refused with now, as the store
+    side words it (`restore_lock.RestoreLockedError`)."""
+    from bettermemory import restore_lock
+
+    state, record = restore_lock.restore_state(store_file)
+    if state == restore_lock.CLEAR:
+        return None
+    return str(
+        restore_lock.RestoreLockedError(
+            store_file,
+            restore_lock.lock_path(store_file),
+            record,
+            running=state == restore_lock.RUNNING,
+        )
+    )
+
+
+def _assert_the_readings_agree(store_file: Path, state: str) -> None:
+    from bettermemory import restore_lock
+
+    assert _store_refusal.restore_state(store_file) == restore_lock.restore_state(
+        store_file
+    )
+    assert _store_refusal.restore_state(store_file)[0] == state
+    refusal = _store_refusal.restore_refusal(store_file)
+    assert refusal == _store_side_refusal(store_file)
+    assert (refusal is None) is (state == "clear")
+
+
+@pytest.mark.parametrize(
+    "record",
+    [None, "", "not json", "[1]", {"bundle": "/bundles/b1", "stage": "moving"}],
+    ids=["no record", "empty", "not json", "a list", "a record"],
+)
+def test_the_client_reads_a_restore_that_did_not_finish_as_the_lock_does(
+    tmp_path: Path, record: object
+) -> None:
+    from bettermemory import restore_lock
+
+    store_file = tmp_path / "store" / _daemon_client.STORE_FILENAME
+    store_file.parent.mkdir()
+    marker = restore_lock.lock_path(store_file)
+    if isinstance(record, dict):
+        held = restore_lock.acquire(store_file, wait=0)
+        assert held is not None
+        held.mark(**record)
+        held.release(clear=False)
+    elif isinstance(record, str):
+        marker.write_text(record, encoding="utf-8")
+    expected = "clear" if record is None or record == "" else "unfinished"
+    _assert_the_readings_agree(store_file, expected)
+
+
+def test_the_client_reads_a_running_restore_as_the_lock_does(tmp_path: Path) -> None:
+    """A restore holds the lock on another thread, as another process
+    would: both readings say running, and the refusal is the same line."""
+    from bettermemory import restore_lock
+
+    store_file = tmp_path / "store" / _daemon_client.STORE_FILENAME
+    store_file.parent.mkdir()
+    holding = threading.Event()
+    finish = threading.Event()
+
+    def restore() -> None:
+        held = restore_lock.acquire(store_file, wait=0)
+        assert held is not None
+        held.mark(bundle="/bundles/b1", stage="verifying the bundle")
+        holding.set()
+        finish.wait(30)
+        held.release(clear=True)
+
+    thread = threading.Thread(target=restore)
+    thread.start()
+    try:
+        assert holding.wait(30)
+        _assert_the_readings_agree(store_file, "running")
+    finally:
+        finish.set()
+        thread.join(30)
+    _assert_the_readings_agree(store_file, "clear")
+
+
+def test_a_refused_store_ends_the_hook_before_a_daemon_is_started(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """In process: the refusal is the one stderr line, nothing is printed
+    for the model, and `ensure_daemon` is never called."""
+    import io
+
+    store_file = _bundle_layout(tmp_path, "bundle manifest")
+    monkeypatch.setattr(_daemon_client, "resolved_store_path", lambda: store_file)
+
+    def never(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a daemon was started for a refused store")
+
+    monkeypatch.setattr(_daemon_client, "ensure_daemon", never)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"{}")))
+    assert _daemon_client.hook_main(["hook", "session-start"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.splitlines() == [
+        "bettermemory hook session-start: "
+        + _store_refusal.printable(_store_refusal.bundle_refusal(store_file) or "")
+    ]

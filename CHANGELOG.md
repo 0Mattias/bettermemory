@@ -608,7 +608,8 @@ follows the candidates' testing.
   `src/bettermemory/audit_export.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_row.py`,
   `tests/test_backup.py`)
-- **The hook words have one implementation, the hook client.**
+- **The hook words have one implementation, the hook client, and it
+  refuses what the store's open refuses before it starts a daemon.**
   `bettermemory session-start`, `audit-turn` and `prompt-recall`, the 8.x
   names an installed hooks.json may still run, go to the hook client
   from the console, as `bettermemory hook session-start|stop|prompt`
@@ -620,15 +621,33 @@ follows the candidates' testing.
   the four words to the hook client before its parser runs
   (`_entry.route_hook_word`), so `bettermemory.server:main` reaches the
   daemon as the console does, and `bettermemory --help` lists `hook`
-  without the three aliases. The bodies carried a bundle and
-  restore-record check the console's hooks never ran; Known limitations
-  says what a hook does during a restore. `hook.main`,
-  `hook.prompt_main` and `hook.run_prompt_recall`, which the bodies
-  called, stay for the tests that drive the audit and the recall in
-  process. (`src/bettermemory/_entry.py`,
+  without the three aliases. The bodies carried two checks the
+  console's hooks never ran, and the hook client now makes both before
+  it starts a daemon, with the standard library alone
+  (`_store_refusal`, a module of its own beside the client): a store
+  inside a backup bundle (or a store file with other names, hard links),
+  and a store a restore holds or did not finish. Either ends the hook,
+  exit 0, with nothing for the model and the refusal the store's open
+  would give as its one stderr line, and no daemon is started. A hook
+  during a restore no longer waits 8 s on the restore's spawn lock to
+  report that no daemon could be reached, and a hook on a bundle, or
+  after a restore that did not finish, no longer starts a daemon that
+  exits on the store.
+  `restore_lock.writes_refused`, which nothing called, is removed.
+  `hook.main` and `hook.prompt_main`, which the bodies called, and
+  `hook.run_prompt_recall`, which `prompt_main` hands the prompt to,
+  stay for the tests that drive the audit and the recall in process.
+  (`src/bettermemory/_entry.py`, `src/bettermemory/_daemon_client.py`,
+  `src/bettermemory/_store_refusal.py`,
   `src/bettermemory/cli/__init__.py`, `src/bettermemory/cli/_common.py`,
+  `src/bettermemory/cli/audit_turn_cmd.py`,
+  `src/bettermemory/cli/session_start_cmd.py` and
+  `src/bettermemory/cli/prompt_recall_cmd.py` (removed),
+  `src/bettermemory/cli/log_cmd.py`, `src/bettermemory/restore_lock.py`,
   `src/bettermemory/hook.py`, `docs/api.md`, `docs/internals.md`,
-  `tests/test_hook_words.py`, `tests/test_cli_smoke.py`)
+  `tests/test_hook_words.py`, `tests/test_hook_client.py`,
+  `tests/test_bundle_guard.py`, `tests/test_key_unreadable_cli.py`,
+  `tests/test_restore_lock.py`, `tests/test_cli_smoke.py`)
 - **`[behavior] endorsement_debt_ratio_threshold` is a removed key.**
   3.2.0 renamed it `cold_endorsement_ratio_threshold`, and the loader
   went on reading the old name as the new one behind a deprecation
@@ -2462,8 +2481,13 @@ follows the candidates' testing.
   is running; try again when it has finished`, exit 75 (EX_TEMPFAIL),
   apart from `log verify`'s 1. A record a restore that did not finish
   left refuses no read: the store is read as it stands, which is what
-  to check before `backup unlock --yes`.
-  (`src/bettermemory/restore_lock.py`,
+  to check before `backup unlock --yes`. Every hook reads the lock and
+  the record too, in the hook client before it starts a daemon, and
+  ends, exit 0, with the refusal a writing open would get, instead of
+  starting a daemon that exits on it.
+  (`src/bettermemory/_daemon_client.py`,
+  `src/bettermemory/_store_refusal.py`,
+  `src/bettermemory/restore_lock.py`,
   `src/bettermemory/cli/_common.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_lock.py`)
 - **A store reached through a hard link to a bundle's snapshot is
@@ -3113,13 +3137,6 @@ follows the candidates' testing.
   row; the record beside the head keeps the entry, and the writing open
   that later runs the step does not add one. (A bundle that needs a
   later writer than the restoring build is refused instead.)
-- **A hook run during a restore starts a daemon the restore refuses.**
-  The hook client reads no restore record: while a restore runs, or
-  after one that did not finish, each hook starts a daemon whose open
-  refuses the store, the daemon exits 1, and the hook ends, exit 0, with
-  one stderr line quoting the refusal from the daemon's log. The check
-  that ends a hook first (`restore_lock.writes_refused`) ran only in the
-  in-process hook bodies, which no console command reached.
 
 ### 9.0.0rc13
 

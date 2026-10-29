@@ -18,6 +18,15 @@ repository from its own files (`_membership_rounds`, design 8.7).
 `machine` are imported only in that exchange: a hook whose reply asks
 nothing loads none of them.
 
+Before it starts a daemon, a hook refuses the store every opener refuses
+before it opens one: a store inside a backup bundle (`backup.bundle_
+refusal`) and a store a restore holds or did not finish (`restore_lock.
+restore_state`), each read here from the files with the standard
+library, so no daemon is spawned only to exit on it (`_store_refusal`,
+a module of its own to keep this one under the package's 2,000-line
+bound). `tests/test_hook_client.py` holds both readings equal to the
+modules they copy.
+
 One daemon per store. The state file is named after the store it serves
 (`daemon-<sha256(store path)[:16]>.json` under the state directory), so a
 project with its own `.claude-memory` gets its own daemon and the CLI,
@@ -1693,7 +1702,9 @@ def _blackhole_stdout() -> None:
 def hook_main(argv: list[str]) -> int:
     """`bettermemory hook <event>` and its three aliases. Always returns 0:
     a hook must never break the harness's turn; a failure is one stderr
-    line and no stdout."""
+    line and no stdout. A store whose open would refuse it
+    (`_store_refusal.store_refusal`) ends the hook in that line before any
+    daemon is started."""
     event, flags, quiet = _parse_hook_argv(argv)
     if event is None:
         print(
@@ -1712,6 +1723,12 @@ def hook_main(argv: list[str]) -> int:
         if os.environ.get(ATTENDED_ENV) == "1":
             payload["attended"] = "1"
         store_path = resolved_store_path()
+        from ._store_refusal import printable, store_refusal
+
+        refusal = store_refusal(store_path)
+        if refusal is not None:
+            print(f"bettermemory hook {event}: {printable(refusal)}", file=sys.stderr)
+            return 0
         state = ensure_daemon(
             resolve_state_dir(),
             store_path,

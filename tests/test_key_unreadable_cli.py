@@ -451,3 +451,51 @@ def test_the_daemon_logs_one_line_and_up_quotes_it(
     # `up` quotes the log's last line, cut at `_last_log_line`'s bound.
     assert said[0][:200] in line
     unreadable.assert_nothing_rekeyed()
+
+
+def test_the_console_session_start_hook_says_so_in_one_line(
+    unreadable: Unreadable, tmp_path: Path
+) -> None:
+    """`bettermemory hook session-start`: the daemon the hook client starts
+    exits on the key, and the hook ends, exit 0 as a hook must, with
+    nothing for the model and that daemon's line quoted as its one stderr
+    line. The store's bytes are as they were and nothing is rekeyed."""
+    home = tmp_path / "home"
+    state_dir = tmp_path / "state"
+    env = shielded_child_env()
+    env.update(
+        HOME=str(home),
+        USERPROFILE=str(home),
+        XDG_CONFIG_HOME=str(home / ".config"),
+        APPDATA=str(home / "AppData" / "Roaming"),
+        BETTERMEMORY_STATE_DIR=str(state_dir),
+    )
+    before = unreadable.path.read_bytes()
+    try:
+        hook = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "bettermemory",
+                "hook",
+                "session-start",
+                "--session-id",
+                "s1",
+            ],
+            env=env,
+            input="{}",
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    finally:
+        for state_file in state_dir.glob("daemon-*.json"):
+            state = _daemon_client.read_state_file(state_file)
+            if state is not None:
+                _daemon_client.shutdown_daemon(state, state_dir=state_dir, timeout=10)
+    assert hook.returncode == 0, hook.stderr
+    assert hook.stdout == ""
+    line = _assert_the_line(hook.stderr, unreadable)
+    assert line.startswith("bettermemory hook session-start: ")
+    assert unreadable.path.read_bytes() == before
+    unreadable.assert_nothing_rekeyed()

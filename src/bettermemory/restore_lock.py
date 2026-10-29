@@ -737,7 +737,11 @@ def restore_state(
     its record; ``(CLEAR, None)`` otherwise, a store directory that does
     not open included (no restore by this account could lock it). `doctor`
     reads it: a store's read-only open never meets the refusal every
-    writing open of such a store gets."""
+    writing open of such a store gets. The hook client reads the same
+    with the standard library alone before it starts a daemon
+    (`_store_refusal.restore_state`, `_store_refusal.restore_refusal`);
+    tests/test_hook_client.py holds the two readings and their refusal
+    equal."""
     try:
         target = _take(
             store_file, create=False, shared=True, wait=wait, mine=_this_thread_holds
@@ -767,20 +771,6 @@ def check_reader(store_file: Path) -> None:
     is what an operator checks before `backup unlock --yes`."""
     if restore_state(store_file, wait=OPEN_WAIT_SECONDS)[0] == RUNNING:
         raise RestoreRunningError(store_file)
-
-
-def writes_refused(store_file: Path) -> str | None:
-    """The refusal a writing open of the store would get now, read without
-    opening it or waiting (`restore_state`), or None: what a hook says
-    before it starts a daemon whose open would end in it."""
-    state, record = restore_state(store_file)
-    if state == CLEAR:
-        return None
-    return str(
-        RestoreLockedError(
-            Path(store_file), lock_path(store_file), record, running=state == RUNNING
-        )
-    )
 
 
 def state_finding(store_file: Path) -> tuple[str, str, str | None, dict[str, Any]]:
@@ -843,5 +833,4 @@ __all__ = [
     "restore_state",
     "state_finding",
     "unlock",
-    "writes_refused",
 ]

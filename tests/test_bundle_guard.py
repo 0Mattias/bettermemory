@@ -17,6 +17,7 @@ beside a store.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +35,8 @@ from bettermemory.backup import (
 from bettermemory.cli import _common
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.store import STORE_FILENAME, Store
+
+from .conftest import shielded_child_env
 
 
 def _memory(body: str) -> Memory:
@@ -458,3 +461,52 @@ def test_a_manifest_that_may_be_a_bundles_counts(
 
 def test_a_store_with_one_name_is_not_refused_when_named(store_file: Path) -> None:
     assert bundle_refusal(store_file, named=True) is None
+
+
+# ---------------------------------------------------------------------------
+# The console's hooks, through the hook client
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("event", ["session-start", "prompt", "stop"])
+@pytest.mark.parametrize("where", ["bundle", "hard link"])
+def test_a_console_hook_refuses_a_bundle_before_it_starts_a_daemon(
+    bundle: Path,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    event: str,
+    where: str,
+) -> None:
+    """`bettermemory hook <event>` with its store in a bundle, or a hard
+    link to a bundle's snapshot: exit 0 as a hook must, nothing for the
+    model, the refusal as the one stderr line, no daemon started, and the
+    bundle's bytes as they were."""
+    store_dir = bundle if where == "bundle" else request.getfixturevalue("linked_dir")
+    before = _tree(bundle)
+    home = tmp_path / "home"
+    state_dir = tmp_path / "state"
+    env = shielded_child_env()
+    env.update(
+        HOME=str(home),
+        USERPROFILE=str(home),
+        XDG_CONFIG_HOME=str(home / ".config"),
+        APPDATA=str(home / "AppData" / "Roaming"),
+        BETTERMEMORY_STATE_DIR=str(state_dir),
+        BETTERMEMORY_DIR=str(store_dir),
+    )
+    done = subprocess.run(
+        [sys.executable, "-m", "bettermemory", "hook", event, "--session-id", "s1"],
+        env=env,
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0
+    assert done.stdout == ""
+    [line] = done.stderr.splitlines()
+    assert line.startswith(f"bettermemory hook {event}: ")
+    said = "backup bundle" if where == "bundle" else "has other names (hard links)"
+    assert said in line
+    assert not list(state_dir.glob("daemon-*")), "a daemon was started"
+    _assert_untouched(bundle, before)
