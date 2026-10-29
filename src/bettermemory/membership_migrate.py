@@ -538,6 +538,70 @@ class _Probe:
     capture: location.Capture | None = None
 
 
+def _move_targets(
+    root: str,
+    moves: Counter[tuple[str, str]],
+    decided: Mapping[str, _Decision],
+    live_paths: Mapping[str, str],
+) -> dict[str, int]:
+    """Count the records moved from `root` into each live checkout; takes the moves, the roots decided so far and the live paths, and returns the counts by checkout."""
+    targets: dict[str, int] = defaultdict(int)
+    for (a, b), n in moves.items():
+        if a != root:
+            continue
+        d = decided.get(b)
+        if d is not None and d.state == LIVE and d.checkout is not None:
+            targets[d.checkout] += n
+        elif b in live_paths:
+            targets[live_paths[b]] += n
+    return targets
+
+
+def _commit_sets(recs: Sequence[_Record]) -> tuple[set[str], set[str]]:
+    """Gather the commits the records hold; returns the strong ones and the weak ones that are not also strong."""
+    strong: set[str] = set()
+    weak: set[str] = set()
+    for rec in recs:
+        strong |= rec.strong
+        weak |= rec.weak
+    weak -= strong
+    return strong, weak
+
+
+def _remote_keys(recs: Sequence[_Record], root: str) -> set[str]:
+    """Read the remote key each record's origin names for `root`; returns the keys found."""
+    keys = {
+        k
+        for k in (location.remote_key(_text(rec.origin, "repo"), root) for rec in recs)
+        if k
+    }
+    return keys
+
+
+def _held_counts(
+    by_strong: dict[str, dict[str, set[str]]], by_weak: dict[str, dict[str, set[str]]]
+) -> dict[str, int]:
+    """Count the commits each live checkout holds in both holder maps; returns the counts by checkout."""
+    held: dict[str, int] = defaultdict(int)
+    for found in (by_strong, by_weak):
+        for per in found.values():
+            for kid, got in per.items():
+                held[kid] += len(got)
+    return held
+
+
+def _held_anywhere(
+    by_strong: dict[str, dict[str, set[str]]], by_weak: dict[str, dict[str, set[str]]]
+) -> set[str]:
+    """Collect every commit a live checkout holds in either holder map; returns them."""
+    held_anywhere: set[str] = set()
+    for found in (by_strong, by_weak):
+        for per in found.values():
+            for got in per.values():
+                held_anywhere |= got
+    return held_anywhere
+
+
 class _Run:
     """One migration over one store, inside the caller's transaction."""
 
@@ -1041,15 +1105,7 @@ class _Run:
             return
         live = self._live_set()
         live_paths = {_norm(x.path): x.checkout for x in live.values()}
-        targets: dict[str, int] = defaultdict(int)
-        for (a, b), n in moves.items():
-            if a != root:
-                continue
-            d = self.decided.get(b)
-            if d is not None and d.state == LIVE and d.checkout is not None:
-                targets[d.checkout] += n
-            elif b in live_paths:
-                targets[live_paths[b]] += n
+        targets = _move_targets(root, moves, self.decided, live_paths)
         if len(targets) == 1:
             ((kid, moved),) = targets.items()
             self._prior_view(kid, root, first, last, moved)
@@ -1061,19 +1117,8 @@ class _Run:
                 "rehome",
             )
             return
-        strong: set[str] = set()
-        weak: set[str] = set()
-        for rec in recs:
-            strong |= rec.strong
-            weak |= rec.weak
-        weak -= strong
-        keys = {
-            k
-            for k in (
-                location.remote_key(_text(rec.origin, "repo"), root) for rec in recs
-            )
-            if k
-        }
+        strong, weak = _commit_sets(recs)
+        keys = _remote_keys(recs, root)
         remotes = self._remotes()
 
         def holders(commits: set[str]) -> dict[str, dict[str, set[str]]]:
@@ -1101,11 +1146,7 @@ class _Run:
             for x in live.values()
             if _basename(x.path) == _basename(root)
         }
-        held: dict[str, int] = defaultdict(int)
-        for found in (by_strong, by_weak):
-            for per in found.values():
-                for kid, got in per.items():
-                    held[kid] += len(got)
+        held = _held_counts(by_strong, by_weak)
         chosen: str | None = None
         rule = "none"
         if len(comp_s) == 1:
@@ -1137,11 +1178,7 @@ class _Run:
                 reason="migration_no_live_checkout",
                 provisional="ambiguous_lineage" if rule == "ambiguous" else None,
             )
-            held_anywhere: set[str] = set()
-            for found in (by_strong, by_weak):
-                for per in found.values():
-                    for got in per.values():
-                        held_anywhere |= got
+            held_anywhere = _held_anywhere(by_strong, by_weak)
             # A witness row carries a full id only (B19): an abbreviation
             # no live repository resolves names no object to record.
             for sha in sorted(strong - held_anywhere):
