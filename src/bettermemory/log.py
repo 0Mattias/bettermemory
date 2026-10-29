@@ -83,9 +83,9 @@ falls back to the rule without an anchor, and putting the key back makes
 the anchor hold again. A store with no anchor keeps the rule above.
 Copying a store file over this machine's copy again, from the machine it
 came from, changes the history at the anchor and reads as
-``origin_mismatch`` too: deleting ``<store_id>.origin`` and
-``<store_id>.head`` accepts the replaced history, and trusts the file
-again on purpose.
+``origin_mismatch`` too: `bettermemory log accept-history --yes`
+(`key_lifecycle.accept_history`) accepts the replaced history on the
+record, and trusts the file again on purpose.
 
 The store binding. The key ring is found by the store id, a value the
 store file carries, so two store files with one id (a copy of the store

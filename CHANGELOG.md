@@ -2570,6 +2570,28 @@ follows the candidates' testing.
   `SECURITY.md`, `docs/internals.md`, `docs/api.md`,
   `tests/test_keyring_upgrade_binding.py`, `tests/test_key_state.py`,
   `tests/test_keyring_binding.py`)
+- **The recovery runbook and the refusals name the `key` and
+  `accept-history` commands, never a key-ring file to place or delete by
+  hand (ENG-93).** This closes the rc13 Known limitation "An rc12 anchor
+  whose key is lost before rc13 names it reads tampered": the reading is
+  as it was (nothing tells a lost key from a rewrite), and the recovery
+  is `bettermemory key import` of the old key, or without it `bettermemory
+  log accept-history --yes`, each on the record, where it was filing a
+  key file or deleting `<store_id>.origin` and `<store_id>.head` by hand.
+  A store copied with its keys directory to another path on this host,
+  whose copy opened for reading only until `<store_id>.path` was deleted,
+  is handed the ring by `bettermemory key adopt --yes`. The bound
+  elsewhere remedy names `key adopt --yes` (and the binding file it
+  rewrites) instead of the file to delete; the missing and foreign key
+  remedies name `key import`; `log verify`'s help names `key import` and
+  `log accept-history`. `docs/installation.md`'s troubleshooting,
+  `docs/operations.md`'s monitoring entries (with a new one for head
+  `tail_deleted`) and keys backup, `SECURITY.md` and `docs/internals.md`
+  say the same. (`src/bettermemory/store_keys.py`,
+  `src/bettermemory/log.py`, `src/bettermemory/cli/log_cmd.py`,
+  `docs/installation.md`, `docs/operations.md`, `SECURITY.md`,
+  `docs/internals.md`, `tests/test_key_runbook.py`,
+  `tests/test_key_state.py`, `tests/test_posture.py`)
 
 #### Known limitations
 
@@ -2588,17 +2610,6 @@ follows the candidates' testing.
   the head, and such a copy is one: the first owner's open of either
   binds the ring, and the other reads bound elsewhere from then on.
   (`src/bettermemory/store_keys.py`)
-- **An rc12 anchor whose key is lost before rc13 names it reads
-  tampered.** An origin anchor written before rc13 names no key, and the
-  first writing open that sees a held key verify its row names it. When
-  the key that signed the row was lost before that open, nothing tells
-  the loss from a rewrite: the origin reads `origin_mismatch` (reason
-  `signature`), `log verify` reads `tampered`, and every segment whose key
-  is not held reads `unaccounted`, where rc12 moved the anchor to the
-  `rekey` row. Filing the old key back as `<store_id>.<first 16 hex of its
-  fingerprint>.key` makes the anchor hold and be named; without the key,
-  deleting `<store_id>.origin` and `<store_id>.head` accepts the history
-  on purpose.
 - **A subagent's compaction is told from the session's by timing.**
   Claude Code 2.1.309 sends a subagent's compact SessionStart with the
   session's id and transcript path and no `agent_id`, so the hook

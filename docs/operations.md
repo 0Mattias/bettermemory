@@ -46,7 +46,9 @@ back it up on its own (below). The `.head.lock`, `.origin.lock` and
 
 The key ring is bound to one store file, `<store_id>.path`, written by
 the store's creation, by the first owner's open of a ring that has none
-(a ring from before 9.0.0rc13), and by `backup restore`. A second file
+(a ring from before 9.0.0rc13; since 9.0.0rc14 only of a file that
+carries the ring's history, and any other file reads `unclaimed`), by
+`backup restore`, `key adopt --yes` and `log accept-history --yes`. A second file
 with the same store id, a copy of the store in another directory say,
 opens for reading only while the bound file still holds that id (or
 cannot be read to tell): it writes nothing to the key ring, refuses
@@ -56,8 +58,13 @@ reports `key.match` high in the same words ("bound elsewhere"). To move a store,
 open of it rebinds the ring, since the old path no longer holds the
 store. Two files with one store id cannot both be written on one host:
 to hand the ring to the other one, move or remove the bound file, or
-delete `<store_id>.path` so that the next owner's open binds the ring to
-the file it opens.
+run `bettermemory key adopt --yes` with `BETTERMEMORY_DIR` naming the
+other file's directory, which binds the ring to it on the record (a
+`key_adopted` row in its log). A store copied with its keys directory
+to another path on this host is the same case. No file in the keys
+directory is placed or deleted by hand: `bettermemory key` shows,
+exports, imports, adopts and rotates the ring, and `log accept-history`
+accepts a replaced history, each on the record.
 
 Every opener admits a store file before it reads a value from it (since
 9.0.0rc14): a file whose schema holds what could run SQL of its own on
@@ -361,35 +368,43 @@ What the daemon's log and the clients say when something is wrong:
   this file is read-only".** `doctor` and `security audit` say the
   same for the file (since 9.0.0rc14). Two store
   files carry one store id, and the key ring is bound to the other one
-  (Files and modes, above). Move or remove one of them, or delete the
-  `<store_id>.path` the message names. A process logs it once for each
+  (Files and modes, above). Move or remove one of them, or run
+  `bettermemory key adopt --yes` against the one to keep. A process logs
+  it once for each
   pair of files, and every later open of the pair at DEBUG, so one
   daemon logs it once however many worker connections open the store.
 - **`log verify` reports `foreign_segment`.** Rows signed by a key this
   host does not hold come after its own. Either someone wrote into the
   store file without the key, or the store was moved away and back, or
   opened once under another `BETTERMEMORY_KEYS_DIR`; in those two cases,
-  filing the other key in the keys directory as
-  `<store_id>.<first 16 hex characters of its fingerprint>.key` restores
-  `ok`.
+  `bettermemory key import FILE` with the other key (a `key export` of
+  the keys directory that holds it) files it as a retired key, on the
+  record, and `log verify` reads `ok`.
 - **`log verify` reports `origin_mismatch`.** The row where this host's
   history of the store begins is gone, carries another MAC or does not
   verify under the key that signed it, which this host still holds.
   Either the history was rewritten, or the store file was copied over
   this host's copy again from the machine it came from. In the second
-  case, restoring a bundle or deleting
-  `<store_id>.origin` and `<store_id>.head` accepts the replaced history,
-  and trusts the file again on purpose. One more cause reads the same,
-  reason `signature`: an anchor written before 9.0.0rc13 names no key,
-  and when that key file was lost before a 9.0.0rc13 writing open could
-  name it, the loss cannot be told from a rewrite. Filing the old key
-  back, as below, makes it hold again.
+  case, restoring a bundle or `bettermemory log accept-history --yes`
+  accepts the replaced history on the record (a `history_accepted` row,
+  and an entry in the rewind record a `log export` cursor is checked
+  against), and trusts the file again on purpose. One more cause reads
+  the same, reason `signature`: an anchor written before 9.0.0rc13 names
+  no key, and when that key file was lost before a 9.0.0rc13 writing open
+  could name it, the loss cannot be told from a rewrite. `bettermemory
+  key import` of the old key makes it hold again; without the key, `log
+  accept-history --yes` accepts the history as it stands.
 - **`log verify` reports `origin unverifiable`.** The key that signed
   the row where this host's history begins is no longer in the keys
   directory: its key file was lost, and the store was rekeyed since. The
-  anchor stays where it was; filing the old key in the keys directory as
-  `<store_id>.<first 16 hex characters of its fingerprint>.key` makes it
-  hold again, and `log verify` reads `ok`.
+  anchor stays where it was; `bettermemory key import FILE` with the old
+  key files it as a retired key, the anchor holds again, and `log
+  verify` reads `ok`.
+- **`log verify` reports head `tail_deleted`.** An older copy of the
+  store file was put back by hand, so the head names a row its log does
+  not hold. `bettermemory backup restore` puts a bundle back on the
+  record; for a copy put back on purpose, `bettermemory log
+  accept-history --yes` rewinds the head on the record.
 
 ## Backup and restore
 
@@ -467,7 +482,9 @@ it is.
 **Keep the keys apart from the bundles.** Without `--include-key` a
 bundle holds no key, and verifies and restores only where the keys
 directory holds it. Back the keys directory up separately, to a place
-the bundles' readers cannot reach. A bundle made with `--include-key`
+the bundles' readers cannot reach; `bettermemory key export FILE` writes
+one store's keys to one owner-only file for that, and `bettermemory key
+import FILE` files them back. A bundle made with `--include-key`
 carries the store's key and any retired keys its log names, and anyone
 holding it can sign rows as the store. On a machine whose keys directory
 does not hold that key it verifies `unverifiable` (`self_signed`) and

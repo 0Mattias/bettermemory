@@ -1474,7 +1474,7 @@ def test_cli_text(
     layout.keyring.current_path().unlink()
     assert _run_cli(["security", "audit"], monkeypatch) == 1
     out = capsys.readouterr().out
-    assert "fix: restore" in out
+    assert "fix: file the store's key back with `bettermemory key import FILE`" in out
 
 
 def test_the_text_report_escapes_what_a_finding_quotes() -> None:

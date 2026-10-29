@@ -335,8 +335,8 @@ its fix.
   pointers cannot be checked here (under `[security] strict_provenance
   = true` they read `unaccounted` instead), and `bettermemory log
   verify` reports the store `unverifiable`. If the old key turns up,
-  file it in the keys directory as
-  `<store_id>.<first 16 hex characters of its fingerprint>.key`.
+  `bettermemory key import FILE` files it back as a retired key, on the
+  record (FILE is a `bettermemory key export` or the key file itself).
 - **The daemon does not start, and its log says the key file "is there
   and cannot be read"**: the key file, or a symbolic link to it or to
   the keys directory, cannot be read (a permission, a volume not
@@ -346,10 +346,17 @@ its fix.
   to the store at" another path**: two store files carry one store id (a
   copy of the store in another directory, say), and the key ring is
   bound to the other one, whose key, head and anchor it keeps. Move or
-  remove one of the two, or delete the `<store_id>.path` file the
-  message names, so that the next writing open binds the key ring to
-  the file it opens. [operations.md](operations.md#files-and-modes) has
-  the binding.
+  remove one of the two, or run `bettermemory key adopt --yes` with
+  `BETTERMEMORY_DIR` naming the directory of the file to keep, which
+  binds the key ring to it on the record; the other then opens for
+  reading only. [operations.md](operations.md#files-and-modes) has the
+  binding.
+- **A store "opens for reading only" because the key ring "is bound to
+  no store file yet and holds a history this file does not carry"**: a
+  key ring from before 9.0.0rc13 is bound only to the file that carries
+  its history. Open that store first, which binds the ring to it; if
+  this file is that store and its history was replaced on purpose,
+  `bettermemory log accept-history --yes` accepts it on the record.
 - **`bettermemory log verify` reports `tampered`**: a log row fails its
   MAC, the chain is broken, or a table holds a row no log row produced.
   `--json` names the rows. Nothing repairs a tampered store in place;
@@ -358,9 +365,10 @@ its fix.
   this machine does not hold come after its own history. Either
   something wrote into the store file without the key, or the store was
   moved away and back, or opened once under another
-  `BETTERMEMORY_KEYS_DIR`; in those two cases, filing the other key in
-  the keys directory restores `ok`
-  ([operations.md](operations.md#monitoring) has the file name).
+  `BETTERMEMORY_KEYS_DIR`; in those two cases, `bettermemory key import`
+  of the other key (a `key export` of the keys directory that holds it)
+  files it as a retired key and restores `ok`
+  ([operations.md](operations.md#monitoring)).
 - **`log verify` reports `origin_mismatch`**: the row where this
   machine's history of the store begins is gone or changed. A store file
   copied over the existing one from another machine reads this too; the

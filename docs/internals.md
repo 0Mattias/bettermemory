@@ -287,7 +287,7 @@ M and verify under a held key:
   and no held key verifies the row, so nothing here can tell a rewrite
   from the lost key. The status reads `unverifiable`, never `tampered`,
   and the segments split as they do without an anchor; filing the key
-  back makes the anchor hold again.
+  back (`bettermemory key import`) makes the anchor hold again.
 - `absent`: no anchor (a store from before rc12, or one only read here
   so far), which is no finding; the rules above apply without it.
 
@@ -299,22 +299,23 @@ row sits below seq 1 reads `unaccounted`. No store writes such a row.
 opened once under another `BETTERMEMORY_KEYS_DIR`, carries B's segment
 after A's anchored history: foreign, so B's rows read `unaccounted` and
 `log verify` exits 1. Filing B's key in A's keys directory as a retired
-key restores `ok`. A store file copied over this host's copy again from
-the machine it came from, with the same store id, changes the history at
-the anchor and reads `origin_mismatch`: `bettermemory backup restore` of
-a bundle, or deleting `<store_id>.origin` and `<store_id>.head`, accepts
-the replaced history and trusts the file again on purpose. A copied
+key (`bettermemory key import` of a `key export` taken on B) restores
+`ok`. A store file copied over this host's copy again from the machine
+it came from, with the same store id, changes the history at the anchor
+and reads `origin_mismatch`: `bettermemory backup restore` of a bundle,
+or `bettermemory log accept-history --yes`, accepts the replaced history
+on the record and trusts the file again on purpose. A copied
 store's own history comes before its takeover row and keeps its labels.
 A lost key file leaves the rows it signed leading and the origin
 `unverifiable`, so `log verify` reads `unverifiable`; the anchor stays
-on its row, and filing the old key back as a retired key reads `ok`
-again. The exception is an anchor written before rc13 whose key was
+on its row, and filing the old key back as a retired key (`key
+import`) reads `ok` again. The exception is an anchor written before rc13 whose key was
 lost before a writing open could name it: it names no key, so the loss
 reads as the rewrite (`mismatch`, reason `signature`), `log verify`
 reads `tampered` and every segment that is not held reads as foreign.
-Filing the old key back makes it hold and the next writing open names
-it; without the key, deleting `<store_id>.origin` and `<store_id>.head`
-accepts the history on purpose.
+Filing the old key back (`key import`) makes it hold and the next
+writing open names it; without the key, `log accept-history --yes`
+accepts the history on purpose, on the record.
 
 **The key ring's binding** (9.0.0rc13). The key ring is found by the
 store id in `meta`, which any file can carry, so it is also bound to one
@@ -355,7 +356,8 @@ or when the bound file no longer holds this store id; and
   writes no anchor. It opens as a reader with writes refused, even when
   its key matches, and so do its worker connections (`reopen`); a
   WARNING on the `bettermemory.store` logger names both files and the
-  remedy (move or remove one store, or delete `<store_id>.path`). The
+  remedy (move or remove one store, or `bettermemory key adopt --yes`
+  against the other, on the record). The
   WARNING comes once per process for each (store file, bound file)
   pair, both resolved (`store_keys._BOUND_ELSEWHERE_WARNED`, tested and
   added under one lock, since worker connections open at once), and

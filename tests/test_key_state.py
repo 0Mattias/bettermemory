@@ -159,7 +159,8 @@ def test_the_function_reads_each_state(
         assert "bound elsewhere" in read.summary
         assert str(case.original) in read.summary
         assert read.remedy is not None
-        assert str(case.keyring.binding_path()) in read.remedy
+        assert "bettermemory key adopt --yes" in read.remedy
+        assert "delete" not in read.remedy
     if state == "unreadable":
         assert read.error is not None
 
@@ -233,7 +234,9 @@ def test_a_copy_bound_to_its_original_reads_bound_elsewhere_everywhere(
     """The review's case: store A created, copied to B, B opened. Doctor
     said "not this store's (c8c8..., expected c8c8...)" and "restore the
     key", and posture said ok. Each now says the ring is bound elsewhere,
-    names A and the binding file to delete, and posture is not ok."""
+    names A and `key adopt`, which rebinds the ring on the record (the
+    binding file it rewrites named, none to delete), and posture is not
+    ok."""
     case = _case("bound_elsewhere", tmp_path, keys_dir)
     binding = str(case.keyring.binding_path())
     ctx = doctor._Context(cwd=tmp_path, directory=case.store_file.parent)
@@ -244,6 +247,7 @@ def test_a_copy_bound_to_its_original_reads_bound_elsewhere_everywhere(
     assert "not this store's" not in key_check.summary
     assert key_check.remedy is not None
     assert binding in key_check.remedy and "restore" not in key_check.remedy
+    assert "key adopt --yes" in key_check.remedy and "delete" not in key_check.remedy
     monkeypatch.setenv(_config.ENV_DIR_OVERRIDE, str(case.store_file.parent))
     [finding] = [f for f in posture.audit().findings if f.id == "key.match"]
     assert finding.status == "high"

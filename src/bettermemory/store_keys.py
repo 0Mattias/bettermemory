@@ -289,8 +289,9 @@ def _bound_words(
         "read-only, and nothing is rekeyed or written"
     )
     remedy = (
-        f"move or remove one of the two stores, or delete {keyring.binding_path()} "
-        "to bind the key ring to this one"
+        "move or remove one of the two stores, or run `bettermemory key adopt "
+        "--yes` with BETTERMEMORY_DIR naming this file's directory, which binds "
+        f"the key ring to this one on the record (it rewrites {keyring.binding_path()})"
     )
     return summary, remedy
 
@@ -514,15 +515,17 @@ class KeyState:
             )
         if self.state == KEY_MISSING:
             return (
-                f"restore {self.key_path.name} into {self.keyring.keys_dir} from "
-                "where it was kept, or point BETTERMEMORY_KEYS_DIR at the "
-                "directory that holds it, before anything opens the store for "
-                "writing"
+                "file the store's key back with `bettermemory key import FILE` "
+                "(a `bettermemory key export` of the keys directory that held it, "
+                f"or its key file {self.key_path.name} from where it was kept), or "
+                "point BETTERMEMORY_KEYS_DIR at the directory that holds it, before "
+                "anything opens the store for writing"
             )
         if self.state == KEY_FOREIGN:
             return (
-                "find the key whose fingerprint the store records and put it "
-                "back; `bettermemory log verify` shows which segments verify"
+                "file the key whose fingerprint the store records back with "
+                "`bettermemory key import FILE`; `bettermemory log verify` shows "
+                "which segments verify"
             )
         if self.state == KEY_UNCLAIMED:
             return (
