@@ -197,6 +197,36 @@ the candidates' testing.
   `src/bettermemory/handlers/write_gates.py`,
   `src/bettermemory/handlers/update.py`, `tests/test_server.py`,
   `tests/test_update_user_claim_gate.py`, `docs/internals.md`)
+- **`membership.py` is split into eight modules, with no import path
+  changed.** `membership.py` was 5,497 lines, over the 2,000-line bound
+  for a module. The vocabulary, the records, `relation`, `admitted` and
+  the path helpers move to `membership_records.py`, the L1 to L10 lines to
+  `membership_lines.py` and the row conversions to `membership_rows.py`.
+  The `Membership` class keeps its state and its core (machines, projects,
+  evidence, checkouts, history, proposals and `why`) and binds four method
+  groups by name: the ladder from `membership_resolve.py`, the
+  declarations and the writes made where nothing could be read from
+  `membership_declare.py`, homes, surfaces, run-state, anchoring and
+  health from `membership_queries.py`, and export and import from
+  `membership_portable.py`. Each group's functions take the model as
+  `self`, so a call, a class-level patch and a test reach them as before,
+  and no module of the family imports `membership` at run time.
+  `membership.py` goes to 1,717 lines and re-exports every name a caller
+  imports from `bettermemory.membership`, as the same object; the code
+  moved unchanged, so every resolution, line and row reads as before. One
+  thing changes for introspection: `typing.get_type_hints` on a bound
+  method raises `NameError`, since each child imports `Membership` only
+  under `TYPE_CHECKING`, and on Python 3.11 and 3.12 a bound method's raw
+  `__doc__` loses the class's indentation; nothing in the package, the
+  bench or the tools reads either.
+  (`src/bettermemory/membership.py`,
+  `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_lines.py`,
+  `src/bettermemory/membership_rows.py`,
+  `src/bettermemory/membership_resolve.py`,
+  `src/bettermemory/membership_declare.py`,
+  `src/bettermemory/membership_queries.py`,
+  `src/bettermemory/membership_portable.py`, `docs/internals.md`)
 
 #### Fixed
 

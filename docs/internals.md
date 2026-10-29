@@ -386,10 +386,11 @@ at write time) is a different question, and an open one.
 ## Membership
 
 Which project a memory belongs to, and so which sessions it is delivered
-to, is decided by the checkout it was written in (`membership.py`). A
-**checkout** is one git directory on one machine, recognised by its
-filesystem object, or a plain folder with a project file (a folder
-checkout). A **project** is the set of checkouts one body of evidence ties
+to, is decided by the checkout it was written in (`membership.py` and
+the family it binds). A **checkout** is one git directory on one
+machine, recognised by its filesystem object, or a plain folder with a
+project file (a folder checkout). A **project** is the set of checkouts
+one body of evidence ties
 together. A **machine** is one OS user on one host, VM or container. Every
 memory and episode has one **home**: the checkout it was written in and
 that checkout's project, or `global` for a write outside any repository
@@ -964,13 +965,19 @@ the stretch since its last capture and how the batch settles;
 relations answered at once; `capture_review.py` is `bettermemory
 capture` (`cli/capture_cmd.py`): review, undo, sample and grade.
 
-**Membership.** `membership.py` is the model: the ladder, the
-questions and their lines, `relation` and the surface table, run-state
-and anchoring, `why` and health. `location.py` captures where a caller
-stands, from files, and resolves it under a per-location lock, and
-`location_git.py` holds its readers: git's discovery and config, the
-`Capture` model and its token codec, the HEAD, ref, stamp and manifest
-readers and the history reader;
+**Membership.** `membership.py` is the model: the `Membership` class
+over the store, with `why`, and its family, whose records, lines and
+rows it re-exports and whose method groups it binds by name:
+`membership_resolve.py` the ladder, `membership_declare.py` the
+declarations and the writes made where nothing could be read,
+`membership_lines.py` the questions' lines, `membership_records.py` the
+records, `relation` and the surface table, `membership_rows.py` their
+table rows, `membership_queries.py` run-state and anchoring, homes and
+health, and `membership_portable.py` export and import. `location.py`
+captures where a caller stands, from files, and resolves it under a
+per-location lock, and `location_git.py` holds its readers: git's
+discovery and config, the `Capture` model and its token codec, the
+HEAD, ref, stamp and manifest readers and the history reader;
 `gitobjects.py` reads commits and blobs from the repository's object
 files; `checkout_token.py` and `project_file.py` read and write the two
 files; `machine.py` is the machine id and the store id; `admission.py`
