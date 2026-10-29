@@ -14,6 +14,7 @@ inspecting current contents and triggering a manual cleanup pass.
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from typing import Any
 
@@ -190,7 +191,20 @@ def _cli_episodes_prune(*, ttl_days: int, dry_run: bool, json_out: bool) -> None
         sys.stdout.write("(Dry run — re-run without --dry-run to apply.)\n")
         return
 
-    pruned = ep_store.prune_episode_sessions(ttl_days=ttl_days)
+    # The prune commits in chunks (`Store.prune_episode_sessions`). One
+    # that fails part way keeps what its earlier chunks pruned, and the
+    # sessions it pruned are not returned, so the count is unknown; the
+    # sessions left are still past the TTL, and running it again prunes
+    # them.
+    try:
+        pruned = ep_store.prune_episode_sessions(ttl_days=ttl_days)
+    except sqlite3.Error as exc:
+        sys.stderr.write(
+            f"bettermemory episodes prune: stopped part way ({exc}). The "
+            f"sessions pruned before it stopped stay pruned; how many is not "
+            f"known. Run it again to prune the rest.\n"
+        )
+        raise SystemExit(1) from exc
     if json_out:
         sys.stdout.write(
             _json.dumps({"deleted": pruned, "ttl_days": ttl_days}, indent=2) + "\n"

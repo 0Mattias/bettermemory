@@ -18,10 +18,16 @@ one that entered outside the store: ``unaccounted``, the label
 ``provenance_for`` reports for it. ``log_verify`` merges that fold with
 the chain report from ``bettermemory.log``.
 
-Transactions. Each mutating method runs ``BEGIN IMMEDIATE``, changes the
-table, appends its log rows and commits, then moves the head checkpoint
-forward. A failure anywhere rolls the table change and the rows back
-together.
+Transactions. Each mutating method takes the write lock (``BEGIN
+IMMEDIATE``) before it reads what it decides on, so the read, every check
+and the write are one transaction, then changes the table, appends its log
+rows, commits and moves the head checkpoint forward. A failure anywhere,
+the commit's included, rolls the table change and the rows back together
+and leaves the connection outside any transaction. A mutating call made
+inside another's transaction, or inside a ``batch``, joins it under a
+savepoint (``Store._transaction``). A long run of writes commits in chunks
+of bounded length (``Store._in_chunks``), so no writer, another process
+included, waits on it past its busy timeout.
 
 Keys. ``create`` writes the store's key under the keys directory
 (``log.default_keys_dir`` unless the caller names one) and records only
@@ -77,12 +83,13 @@ import secrets
 import sqlite3
 import stat
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, NamedTuple, Protocol
+from typing import Any, NamedTuple, Protocol, TypeVar, overload
 
 from pydantic import ValidationError
 
@@ -285,6 +292,14 @@ MEMBERSHIP_EVENT_KINDS = frozenset(
 MEMBERSHIP_MUTATION_KINDS = frozenset(
     f"{table}_{op}" for table in _MEMBERSHIP_MUTATION_TABLES for op in ("put", "delete")
 )
+
+# The mutation kinds that change a record: a memory, a tombstone, an
+# episode, a verification, a conflict, an import or a quarantined file. A
+# write transaction that commits one counts in `Store.commits`; one that
+# commits only telemetry or membership rows does not, since every tool
+# call writes those before its own write (the caller's resolution, the
+# turn's events) and a retry writes them again to no harm.
+RECORD_MUTATION_KINDS = MUTATION_KINDS - MEMBERSHIP_MUTATION_KINDS
 
 # Every kind the telemetry readers pass over: mutations, control rows and
 # the membership rows.
@@ -975,6 +990,20 @@ CREATE TABLE IF NOT EXISTS standing (
 );
 """
 
+# Indexes added beside the schema without a version bump: in a new store
+# with its tables (`Store.create`), and in a store an earlier build created
+# at its first open by this one (`_add_membership_tables`). Additive the
+# same way: an earlier build opening a store that has them never reads
+# them. `log_corroborations` holds the ``memory_put`` rows by session,
+# which `Store.record_corroboration` reads under the write lock to tell
+# whether a session already corroborated a memory: without it the read
+# walked every ``memory_put`` row, measured at 1.4 ms over 10,000 rows and
+# 7.7 ms over 50,000 (scratch run on this tree), growing with the log.
+ADDITIVE_SCHEMA = """
+CREATE INDEX IF NOT EXISTS log_corroborations ON log(session)
+    WHERE kind = 'memory_put';
+"""
+
 
 class MemoryNotFoundError(KeyError):
     """No active memory with that id."""
@@ -1014,12 +1043,137 @@ class NotFoundError(KeyError):
 # ---------------------------------------------------------------------------
 
 
+# How long a connection's statements wait for another writer's lock before
+# they fail with SQLITE_BUSY, in seconds, by the role the connection plays
+# (`Store.set_busy_timeout`). None of the three is measured yet; each is
+# the 5.0 s every 9.x connection has opened with. What would set each is
+# how long one write transaction holds the lock in use (BEGIN IMMEDIATE to
+# COMMIT, logged per transaction with the writer's role): a role's timeout
+# belongs above the tail of that distribution, the longest chunk of the
+# CLI's long runs (`CHUNK_HOLD_SECONDS`) included, so a waiter never gives
+# up on a healthy writer.
+#
+# The CLI's: every opener that names no other role (`_connect`), the CLI's
+# commands, the in-process hook path and the daemon's own connection.
+CLI_BUSY_TIMEOUT_SECONDS = 5.0
+# A hook body's, on the daemon's hook workers. A hook's reply is waited for
+# under `_daemon_client.HOOK_TIMEOUT_SECONDS` (15 s), so beside the hold
+# times what would set it is how many write transactions one hook body
+# runs (logged per hook): that count times this has to stay under the
+# client's wait.
+HOOK_BUSY_TIMEOUT_SECONDS = 5.0
+# A tool body's, on the daemon's tool workers and in the stdio server; past
+# it the call answers ``store_busy`` (`_handlers.RetryableRefusal`).
+TOOL_BUSY_TIMEOUT_SECONDS = 5.0
+
+# How long one chunk of a long write run goes on taking items under the
+# write lock before it commits (`Store._in_chunks`), in seconds; the item
+# that crosses it and the commit come on top. Measured on this tree
+# (scratch run, Apple silicon, WAL with synchronous NORMAL): one
+# transaction per `put_memory` cost 0.56 to 0.64 ms an item against 0.10
+# to 0.11 ms inside one transaction, about 0.5 ms a commit, so chunks of
+# 0.1 s add about half a percent to the run.
+CHUNK_HOLD_SECONDS = 0.1
+# How long a long write run sleeps between two chunks with the write lock
+# free (`Store._yield_between_chunks`), in seconds. SQLite's lock is not
+# queued: a writer that finds it held sleeps in its busy handler and tries
+# again, up to 100 ms apart once it has waited a third of a second, and it
+# takes the lock only when a try lands between a chunk's COMMIT and the
+# next chunk's BEGIN IMMEDIATE. Without a gap of its own that window is
+# only what happens between two chunks (the head checkpoint's write).
+# Measured on this tree (scratch run, Apple silicon): a prune of 90,000
+# tombstones with two processes writing beside it, twice at each yield.
+# With no yield the writers' worst waits were 0.60 to 1.16 s (p99 up to
+# 0.83 s) and the prune took 11.1 to 11.9 s. At 0.05 s the worst wait was
+# 0.15 to 0.17 s, a thirtieth of the 5 s busy timeout, and the prune took
+# 13.0 to 16.0 s while the writers landed about twice as many writes. At
+# 0.025 s the worst wait was 0.30 s; at 0.1 s it was 0.17 s, no better,
+# and the prune took 17.2 to 20.3 s. No write failed in any run.
+CHUNK_YIELD_SECONDS = 0.05
+
+# The payload field a corroboration's ``memory_put`` row carries beside
+# the record, naming the memory it corroborates
+# (`Store.record_corroboration`). The fold reads only the record; the mark
+# is what tells a corroboration from an edit in the log.
+CORROBORATION_MARK = "corroboration"
+
+# How `Store.record_corroboration` asks whether a session already
+# corroborated a memory: a ``memory_put`` row of that session whose payload
+# names the memory under `CORROBORATION_MARK`, read through the
+# ``log_corroborations`` index (`ADDITIVE_SCHEMA`). One text, so the test
+# that reads its query plan reads the query the store runs.
+CORROBORATION_CHECK_SQL = (
+    "SELECT 1 FROM log WHERE kind = 'memory_put' AND session = ? "
+    "AND instr(payload, ?) > 0 LIMIT 1"
+)
+
+# What a write the store could not take is answered with at the tool
+# boundary (`retryable_code`): the code a client branches on.
+STORE_BUSY = "store_busy"
+STORE_FULL = "store_full"
+
+# The SQLite primary result codes that mean the store, not the call, was in
+# the way: another connection held the lock past the busy timeout
+# (SQLITE_BUSY) or a table lock (SQLITE_LOCKED), or the disk or the
+# database is full (SQLITE_FULL). The call's transaction was rolled back,
+# and the same call can succeed once the lock or the space is free.
+_RETRYABLE_CODES: dict[int, str] = {
+    sqlite3.SQLITE_BUSY: STORE_BUSY,
+    sqlite3.SQLITE_LOCKED: STORE_BUSY,
+    sqlite3.SQLITE_FULL: STORE_FULL,
+}
+
+_T = TypeVar("_T")
+
+# Whether a connection found inside a transaction nothing owned has been
+# logged in this process (`note_residue`): the first is, later ones are
+# not, so a store that keeps failing its rollbacks does not flood the log.
+_residue_logged = False
+_residue_lock = threading.Lock()
+
+
+def note_residue(connection: str, then: str) -> None:
+    """Log, once per process, that `connection` was found inside a
+    transaction no call owned (one a failed rollback left open, holding
+    the write lock against every other writer) and what was done about it
+    (`then`). The store's own recovery (`Store._transaction`) and the
+    daemon's worker reconnect (`daemon._Workers`) say it in these words."""
+    global _residue_logged
+    with _residue_lock:
+        if _residue_logged:
+            return
+        _residue_logged = True
+    log.warning("%s was left inside a transaction; %s", connection, then)
+
+
+def error_code_name(exc: BaseException) -> str:
+    """The SQLite result code an error carries, by name (``SQLITE_BUSY``),
+    for a log line; the error's class name when it carries none."""
+    name = getattr(exc, "sqlite_errorname", None)
+    return name if isinstance(name, str) and name else type(exc).__name__
+
+
+def retryable_code(exc: BaseException) -> str | None:
+    """`STORE_BUSY` or `STORE_FULL` when `exc` is SQLite saying the store
+    was busy, locked or full, read from its result code (an extended code
+    reads as its primary one); None for every other error."""
+    if not isinstance(exc, sqlite3.OperationalError):
+        return None
+    code = getattr(exc, "sqlite_errorcode", None)
+    if not isinstance(code, int):
+        return None
+    return _RETRYABLE_CODES.get(code & 0xFF)
+
+
 def _connect(path: Path) -> sqlite3.Connection:
     """The one way a store file is opened: the page size for a new file,
-    WAL, synchronous NORMAL, a 5-second busy timeout, foreign keys on,
-    autocommit off so every write is an explicit transaction, and
+    WAL, synchronous NORMAL, the CLI's busy timeout (a connection opened
+    for another role sets its own, `Store.set_busy_timeout`), foreign keys
+    on, autocommit off so every write is an explicit transaction, and
     owner-only modes on the file and its WAL siblings."""
-    conn = sqlite3.connect(str(path), timeout=5.0, isolation_level=None)
+    conn = sqlite3.connect(
+        str(path), timeout=CLI_BUSY_TIMEOUT_SECONDS, isolation_level=None
+    )
     try:
         # A no-op on an existing store: the page size is fixed once the
         # file holds a table, and WAL mode fixes it for good.
@@ -1982,6 +2136,10 @@ _MEMBERSHIP_STATEMENTS = tuple(
     statement.strip() for statement in MEMBERSHIP_SCHEMA.split(";") if statement.strip()
 )
 _MEMBERSHIP_OBJECTS = frozenset(re.findall(r"IF NOT EXISTS (\w+)", MEMBERSHIP_SCHEMA))
+_ADDITIVE_STATEMENTS = tuple(
+    statement.strip() for statement in ADDITIVE_SCHEMA.split(";") if statement.strip()
+)
+_ADDITIVE_OBJECTS = frozenset(re.findall(r"IF NOT EXISTS (\w+)", ADDITIVE_SCHEMA))
 
 
 def _add_membership_tables(
@@ -1994,10 +2152,12 @@ def _add_membership_tables(
     lock (``BEGIN IMMEDIATE``), so two processes opening one store at once
     create the tables once, and every statement is ``IF NOT EXISTS``. A
     store file that cannot be written (a read-only copy) is left as it
-    is, said in the log; its membership reads then find no tables, and
-    the fold reads a missing table as empty. ``meta`` gains the minted
+    is, and the log names what it lacks; its membership reads then find
+    no tables, and the fold reads a missing table as empty. ``meta`` gains the minted
     store id. A table an earlier build of these tables created without an
-    optional column gains it (``ALTER TABLE ... ADD COLUMN``)."""
+    optional column gains it (``ALTER TABLE ... ADD COLUMN``). The indexes
+    of `ADDITIVE_SCHEMA` are added in the same step; on a read-only store
+    their readers fall back to the table walk they replace."""
     master = {
         str(row[0]): str(row[1] or "")
         for row in conn.execute(
@@ -2013,17 +2173,23 @@ def _add_membership_tables(
             for column in spec.optional
         )
     ]
-    if (
-        _MEMBERSHIP_OBJECTS <= set(master)
-        and meta.get(MEMBERSHIP_STORE_ID)
-        and not lacking
-    ):
+    wanted = [
+        *sorted((_MEMBERSHIP_OBJECTS | _ADDITIVE_OBJECTS) - set(master)),
+        *([] if meta.get(MEMBERSHIP_STORE_ID) else ["the store id"]),
+        *(
+            f"{spec.table}.{column}"
+            for spec in lacking
+            for column in spec.optional
+            if not re.search(rf"\b{column}\b", master[spec.table])
+        ),
+    ]
+    if not wanted:
         return
     minted = secrets.token_hex(16)
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            for statement in _MEMBERSHIP_STATEMENTS:
+            for statement in (*_MEMBERSHIP_STATEMENTS, *_ADDITIVE_STATEMENTS):
                 conn.execute(statement)
             for spec in lacking:
                 have = {
@@ -2039,14 +2205,17 @@ def _add_membership_tables(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES (?, ?)",
                 (MEMBERSHIP_STORE_ID, minted),
             )
+            conn.execute("COMMIT")
         except BaseException:
-            conn.execute("ROLLBACK")
+            # The COMMIT is inside: one that fails leaves no transaction
+            # open on the connection the store goes on to use.
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
             raise
-        conn.execute("COMMIT")
     except sqlite3.OperationalError as exc:
         if "readonly" not in str(exc).replace(" ", "").lower():
             raise
-        log.warning("store %s is read-only; membership tables not added", path)
+        log.warning("store %s is read-only; not added: %s", path, ", ".join(wanted))
         return
     row = conn.execute(
         "SELECT value FROM meta WHERE key = ?", (MEMBERSHIP_STORE_ID,)
@@ -2364,7 +2533,24 @@ class Store:
     _bound_elsewhere: Path | None
     _store_id: str
     _last_appended: LogRow | None
-    _in_batch: bool
+    # How many `_transaction` entries are open on this connection: 0 when
+    # none, 1 for the owner of the write transaction, more for the calls
+    # nested in it. The one record of who owns the transaction.
+    _tx_depth: int
+    # Whether the write transaction open on this connection has changed a
+    # record (`RECORD_MUTATION_KINDS`); a nested write that fails puts it
+    # back to what it was (`_joined`).
+    _tx_records: bool
+    # How many write transactions this connection has committed that
+    # changed a record. The tool boundary reads it before and after a call
+    # (`_handlers._kept_or_retryable`): a store error after the count moved
+    # is one the call met after its write was kept.
+    commits: int
+    # The busy timeout this connection was opened or last set with, in
+    # seconds (`set_busy_timeout`): kept beside the connection so `reopen`,
+    # which runs on another thread, reads it without touching a connection
+    # SQLite binds to the thread that opened it.
+    _busy_timeout: float
     _unaccounted_memory_ids: set[str]
     # (id, log_mac) pairs whose pointer into the log verified; a row gets
     # a new MAC on every mutation, so a stale entry never matches.
@@ -2421,7 +2607,11 @@ class Store:
         self._bound_elsewhere = None
         self._store_id = store_id
         self._last_appended = None
-        self._in_batch = False
+        self._tx_depth = 0
+        self._tx_records = False
+        self.commits = 0
+        # What `_connect` opened every connection with.
+        self._busy_timeout = CLI_BUSY_TIMEOUT_SECONDS
         self._unaccounted_memory_ids = set()
         self._pointer_cache = {}
         self._segments = None
@@ -2467,6 +2657,7 @@ class Store:
         try:
             conn.executescript(SCHEMA)
             conn.executescript(MEMBERSHIP_SCHEMA)
+            conn.executescript(ADDITIVE_SCHEMA)
             store_id = secrets.token_hex(16)
             keyring = KeyRing(
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
@@ -2988,6 +3179,24 @@ class Store:
     def close(self) -> None:
         self._conn.close()
 
+    @property
+    def busy_timeout(self) -> float:
+        """How long this connection's statements wait for another writer's
+        lock, in seconds: the value it was opened or last set with
+        (`set_busy_timeout`), read from any thread."""
+        return self._busy_timeout
+
+    def set_busy_timeout(self, seconds: float) -> None:
+        """Set how long this connection's statements wait for another
+        writer's lock before they fail with SQLITE_BUSY: its role's value,
+        set by whoever opened it for that role (the daemon's workers)."""
+        if not math.isfinite(seconds) or seconds < 0:
+            raise ValueError(
+                f"a busy timeout is a finite number of seconds, got {seconds!r}"
+            )
+        self._conn.execute(f"PRAGMA busy_timeout = {int(seconds * 1000)}")
+        self._busy_timeout = seconds
+
     def __enter__(self) -> Store:
         return self
 
@@ -3081,51 +3290,170 @@ class Store:
 
     @contextlib.contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
-        """One mutating method's transaction. Inside a ``batch`` the
-        batch owns the transaction and the head write, and this yields
-        the connection as it is."""
+        """One public call's reads and writes as one unit, on this store's
+        connection.
+
+        The outermost entry owns the write transaction: it takes the write
+        lock (``BEGIN IMMEDIATE``) before the call reads anything, so every
+        check the call makes is made on what it then writes over, and it
+        commits at the end. A failure anywhere, the ``COMMIT`` itself
+        included (a busy, full or failing disk), rolls back while the
+        connection is still in the transaction and leaves this store owning
+        nothing, so the next call begins its own. A nested entry (a
+        mutating call inside another's, or inside a `batch`) joins the
+        owner's transaction under a savepoint: what it writes commits with
+        the owner, and its own failure takes back only what it wrote, so a
+        caller that catches it goes on from where it stood.
+
+        Ownership is this store's depth counter, never the connection's
+        ``in_transaction``: a transaction a failed rollback left open would
+        read as one to join. The owner finds such a residue at its entry
+        and rolls it back first (`_clear_residue`). The head checkpoint
+        moves once, after the owner's commit, to the last row that commit
+        holds, and a commit that changed a record counts in `commits`."""
         conn = self._conn
-        if self._in_batch:
-            yield conn
+        if self._tx_depth:
+            yield from self._joined(conn)
             return
+        if conn.in_transaction:
+            self._clear_residue(conn)
         self._last_appended = None
+        self._tx_records = False
+        # BEGIN before the depth is set: a BEGIN that fails (the busy wait
+        # against another writer ran out) leaves this store owning nothing,
+        # and the next call begins its own transaction.
         conn.execute("BEGIN IMMEDIATE")
+        self._tx_depth = 1
         try:
             yield conn
+            self._require_open(conn)
+            conn.execute("COMMIT")
         except BaseException:
-            conn.execute("ROLLBACK")
+            self._roll_back(conn)
             raise
-        conn.execute("COMMIT")
+        finally:
+            self._tx_depth = 0
+        if self._tx_records:
+            self.commits += 1
         self._move_head()
+
+    def _clear_residue(self, conn: sqlite3.Connection) -> None:
+        """Roll back a transaction no call on this store owns: with no
+        entry open (depth 0), one the connection is still inside is what a
+        failed rollback left (`_roll_back`), and it holds the write lock
+        against every other writer. Logged once per process
+        (`note_residue`). A rollback that fails again raises, and the call
+        that found the residue fails with it."""
+        note_residue(f"the connection to store {self._path}", "it was rolled back")
+        conn.execute("ROLLBACK")
+
+    def _joined(self, conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+        """The nested entry of `_transaction`: a savepoint inside the
+        owner's transaction, released on success and rolled back to on
+        failure, with the last appended row put back to what it was so the
+        head never names a row the rollback took away."""
+        self._require_open(conn)
+        name = f"nested_{self._tx_depth}"
+        appended = self._last_appended
+        records = self._tx_records
+        conn.execute(f"SAVEPOINT {name}")
+        self._tx_depth += 1
+        try:
+            yield conn
+            conn.execute(f"RELEASE {name}")
+        except BaseException:
+            self._last_appended = appended
+            self._tx_records = records
+            if conn.in_transaction:
+                try:
+                    conn.execute(f"ROLLBACK TO {name}")
+                    conn.execute(f"RELEASE {name}")
+                except sqlite3.Error as exc:
+                    log.warning(
+                        "store %s: a nested write could not be taken back (%s); "
+                        "the owner's transaction is rolled back with it",
+                        self._path,
+                        exc,
+                    )
+                    self._roll_back(conn)
+            raise
+        finally:
+            self._tx_depth -= 1
+
+    def _require_open(self, conn: sqlite3.Connection) -> None:
+        """Refuse to go on in a transaction SQLite has already rolled back.
+        An error inside one (a full disk, an I/O error, an interrupt) can
+        end it, and a caller that caught that error would otherwise go on
+        writing in autocommit, each statement landing on its own."""
+        if not conn.in_transaction:
+            raise sqlite3.OperationalError(
+                f"the write transaction on store {self._path} was rolled back "
+                f"by an error inside it; nothing it wrote was kept"
+            )
+
+    def _roll_back(self, conn: sqlite3.Connection) -> None:
+        """Roll back the owner's transaction while the connection is still
+        in it. One SQLite has already rolled back needs nothing. A rollback
+        that fails is logged and the caller's own error goes on: the
+        connection then holds a transaction nobody owns, which the next
+        call on it rolls back first (`_clear_residue`), the daemon's
+        workers close and reopen before their next job (`daemon._Workers`)
+        and a process that ends closes."""
+        if not conn.in_transaction:
+            return
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error as exc:
+            log.warning("store %s: rollback failed: %s", self._path, exc)
 
     @contextlib.contextmanager
     def batch(self) -> Iterator[Store]:
         """One transaction around many mutations: everything put or
         deleted inside the block commits together or not at all, and the
         head checkpoint moves once, at the commit. A migration runs in
-        one, so a failure part way leaves the store as it was. Batches
-        do not nest."""
-        if self._in_batch:
-            raise RuntimeError(f"a batch is already open on store {self._path}")
-        conn = self._conn
-        self._last_appended = None
-        # BEGIN first, then the flag: a BEGIN that fails (the busy wait
-        # against another writer ran out) must leave the store as it
-        # was. With the flag set first and only the body guarded, that
-        # failure left _in_batch set for the store's lifetime: every
-        # later mutation ran in autocommit, the head never moved, and
-        # every later batch was refused as already open.
-        conn.execute("BEGIN IMMEDIATE")
-        self._in_batch = True
-        try:
+        one, so a failure part way leaves the store as it was. A batch
+        opened while a transaction is already open on this store joins it
+        (`_transaction`), as a mutating call does."""
+        with self._transaction():
             yield self
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        finally:
-            self._in_batch = False
-        conn.execute("COMMIT")
-        self._move_head()
+
+    def _in_chunks(self, items: Sequence[_T], apply: Callable[[_T], None]) -> None:
+        """Apply `apply` to each of `items` in write transactions (chunks)
+        of their own, so a long run (a prune, a scope rename over every
+        record) leaves other writers, the daemon's hooks and tools among
+        them, a way in. A chunk takes items until `CHUNK_HOLD_SECONDS`
+        have passed, commits, and the run sleeps `CHUNK_YIELD_SECONDS`
+        with the lock free before the next (`_yield_between_chunks`).
+        `apply` decides each item again under its chunk's lock, since
+        another writer may change it between chunks. No items takes no
+        lock. Inside a transaction a caller already holds, every item goes
+        into that one.
+
+        A chunk that fails rolls back alone: the chunks before it stay
+        committed, and the items after it are not tried. What `apply`
+        decides on is still in the store for those, so running the same
+        call again finishes the run."""
+        if self._tx_depth:
+            for item in items:
+                apply(item)
+            return
+        done = 0
+        while done < len(items):
+            with self._transaction():
+                started = time.monotonic()
+                while done < len(items):
+                    apply(items[done])
+                    done += 1
+                    if time.monotonic() - started >= CHUNK_HOLD_SECONDS:
+                        break
+            if done < len(items):
+                self._yield_between_chunks()
+
+    def _yield_between_chunks(self) -> None:
+        """The pause between two chunks of `_in_chunks`, the write lock
+        free, so a writer waiting in its busy handler takes it
+        (`CHUNK_YIELD_SECONDS`)."""
+        time.sleep(CHUNK_YIELD_SECONDS)
 
     def _move_head(self) -> None:
         appended = self._last_appended
@@ -3180,6 +3508,8 @@ class Store:
         row's MAC."""
         row = self._append(conn, kind, payload, session=session)
         _apply_mutation(conn, kind, payload, log_mac=row.mac)
+        if kind in RECORD_MUTATION_KINDS:
+            self._tx_records = True
         return row
 
     def _home_row(
@@ -3237,35 +3567,75 @@ class Store:
         homes table as it is. ``standing`` (unit RS-F7 part 1) writes the
         record's ``standing`` row for this body in the same transaction;
         None leaves the row as it is, and a row naming another body is
-        read as no answer (`standing.py`)."""
+        read as no answer (`standing.py`).
+
+        Refuses an id that holds a tombstone (TombstonedError): a removed
+        record comes back only through `restore`, which takes the tombstone
+        away in the same transaction, so no id is ever active and removed
+        at once. The tombstone, the row's label and name and the write are
+        read and written under one write lock (`_transaction`)."""
         if provenance is not None and provenance not in _WRITABLE_PROVENANCE:
             raise ValueError(
                 f"provenance must be one of {sorted(_WRITABLE_PROVENANCE)}, got {provenance!r}"
             )
-        existing = self._conn.execute(
+        standing_row = (
+            None if standing is None else self._standing_row(memory, standing)
+        )
+        with self._transaction() as tx:
+            self._put_memory(
+                tx,
+                memory,
+                provenance=provenance,
+                filename=filename,
+                session=session,
+                home=home,
+                standing_row=standing_row,
+            )
+        return memory
+
+    def _put_memory(
+        self,
+        tx: sqlite3.Connection,
+        memory: Memory,
+        *,
+        provenance: str | None,
+        filename: str | None,
+        session: str | None,
+        home: RecordHome | None = None,
+        standing_row: Mapping[str, Any] | None = None,
+        marks: Mapping[str, Any] | None = None,
+    ) -> None:
+        """`put_memory`'s write, inside the caller's transaction. `marks`
+        are payload fields beside the record that say what kind of put
+        this is (`CORROBORATION_MARK`); the fold reads only the record."""
+        removed = tx.execute(
+            "SELECT removed_reason FROM tombstones WHERE id = ?", (memory.id,)
+        ).fetchone()
+        if removed is not None:
+            raise TombstonedError(
+                f"memory {memory.id} was removed: {removed['removed_reason']}; "
+                f"restore it to bring it back"
+            )
+        existing = tx.execute(
             "SELECT provenance, filename FROM memories WHERE id = ?", (memory.id,)
         ).fetchone()
         if existing is not None:
             provenance = provenance or str(existing["provenance"])
             filename = filename if filename is not None else existing["filename"]
         payload = {
+            **(marks or {}),
             "memory": memory.model_dump(mode="json"),
             "provenance": provenance or LOCAL,
             "filename": filename,
         }
-        standing_row = (
-            None if standing is None else self._standing_row(memory, standing)
-        )
-        with self._transaction() as tx:
-            home_row = self._home_row(memory.id, "memory", home)
-            self._mutate(tx, "memory_put", payload, session=session)
-            if home_row is not None:
-                self._mutate(tx, "home_put", {"home": home_row}, session=session)
-            if standing_row is not None:
-                self._mutate(
-                    tx, "standing_put", {"standing": standing_row}, session=session
-                )
-        return memory
+        home_row = self._home_row(memory.id, "memory", home)
+        self._mutate(tx, "memory_put", payload, session=session)
+        if home_row is not None:
+            self._mutate(tx, "home_put", {"home": home_row}, session=session)
+        if standing_row is not None:
+            self._mutate(
+                tx, "standing_put", {"standing": dict(standing_row)}, session=session
+            )
 
     @staticmethod
     def _standing_row(memory: Memory, answer: StandingAnswer) -> dict[str, Any]:
@@ -3299,9 +3669,10 @@ class Store:
     ) -> dict[str, Any]:
         """Write the standing answer for the active record's current body
         and return the row. Raises NotFoundError for a record that is not
-        active."""
-        row = self._standing_row(self.get_memory(record_id), answer)
+        active. The body the answer names is read under the write lock, so
+        it is the body the record has when the row lands."""
         with self._transaction() as tx:
+            row = self._standing_row(self.get_memory(record_id), answer)
             self._mutate(tx, "standing_put", {"standing": row}, session=session)
         return row
 
@@ -3442,32 +3813,45 @@ class Store:
         session: str | None = None,
         now: datetime | None = None,
     ) -> TombstonedMemory:
-        row = self._conn.execute(
-            "SELECT * FROM memories WHERE id = ?", (memory_id,)
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(memory_id)
-        memory = _row_to_memory(row)
-        removed = now or datetime.now(timezone.utc)
-        dead = TombstonedMemory(
-            **{
-                name: getattr(memory, name)
-                for name in TombstonedMemory.model_fields
-                if name not in ("removed", "removed_reason", "removed_session")
-            },
-            removed=removed,
-            removed_reason=reason,
-            removed_session=session,
-        )
-        payload = {
-            "tombstone": dead.model_dump(mode="json"),
-            "provenance": str(row["provenance"]),
-            "filename": row["filename"],
-            "links": json.loads(row["links_json"]),
-            "corroborations": int(row["corroborations"]),
-            "last_corroborated": row["last_corroborated"],
-        }
+        """Move the active record to the tombstones, with what its row
+        keeps beside it. The record is read under the write lock, so the
+        tombstone keeps the record as it stands when it is removed, an
+        update that landed first included. An id another writer removed
+        first raises TombstonedError with its reason; one the store does
+        not hold, NotFoundError."""
         with self._transaction() as tx:
+            row = tx.execute(
+                "SELECT * FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                gone = tx.execute(
+                    "SELECT removed_reason FROM tombstones WHERE id = ?", (memory_id,)
+                ).fetchone()
+                if gone is not None:
+                    raise TombstonedError(
+                        f"memory {memory_id} was removed: {gone['removed_reason']}"
+                    )
+                raise NotFoundError(memory_id)
+            memory = _row_to_memory(row)
+            removed = now or datetime.now(timezone.utc)
+            dead = TombstonedMemory(
+                **{
+                    name: getattr(memory, name)
+                    for name in TombstonedMemory.model_fields
+                    if name not in ("removed", "removed_reason", "removed_session")
+                },
+                removed=removed,
+                removed_reason=reason,
+                removed_session=session,
+            )
+            payload = {
+                "tombstone": dead.model_dump(mode="json"),
+                "provenance": str(row["provenance"]),
+                "filename": row["filename"],
+                "links": json.loads(row["links_json"]),
+                "corroborations": int(row["corroborations"]),
+                "last_corroborated": row["last_corroborated"],
+            }
             self._mutate(tx, "memory_delete", {"id": memory_id}, session=session)
             self._mutate(tx, "tombstone_put", payload, session=session)
         return dead
@@ -3494,28 +3878,27 @@ class Store:
             raise ValueError(
                 f"provenance must be one of {sorted(_WRITABLE_PROVENANCE)}, got {provenance!r}"
             )
-        if self.has_memory(dead.id):
-            raise ValueError(f"{dead.id} is active; tombstone it instead")
-        existing = self._conn.execute(
-            "SELECT provenance, filename FROM tombstones WHERE id = ?", (dead.id,)
-        ).fetchone()
-        if existing is not None:
-            provenance = provenance or str(existing["provenance"])
-            filename = filename if filename is not None else existing["filename"]
-        payload = {
-            "tombstone": dead.model_dump(mode="json"),
-            "provenance": provenance or LOCAL,
-            "filename": filename,
-            "links": [
-                MemoryLink.model_validate(link).model_dump(
-                    mode="json", exclude_none=True
-                )
-                for link in links
-            ],
-            "corroborations": int(corroborations),
-            "last_corroborated": _iso_opt(last_corroborated),
-        }
+        link_rows = [
+            MemoryLink.model_validate(link).model_dump(mode="json", exclude_none=True)
+            for link in links
+        ]
         with self._transaction() as tx:
+            if self.has_memory(dead.id):
+                raise ValueError(f"{dead.id} is active; tombstone it instead")
+            existing = tx.execute(
+                "SELECT provenance, filename FROM tombstones WHERE id = ?", (dead.id,)
+            ).fetchone()
+            if existing is not None:
+                provenance = provenance or str(existing["provenance"])
+                filename = filename if filename is not None else existing["filename"]
+            payload = {
+                "tombstone": dead.model_dump(mode="json"),
+                "provenance": provenance or LOCAL,
+                "filename": filename,
+                "links": link_rows,
+                "corroborations": int(corroborations),
+                "last_corroborated": _iso_opt(last_corroborated),
+            }
             self._mutate(tx, "tombstone_put", payload, session=session)
         return dead
 
@@ -3566,46 +3949,53 @@ class Store:
 
     def restore(self, memory_id: str, *, session: str | None = None) -> Memory:
         """Bring a tombstoned record back as an active one, labelled
-        ``local``: this store's own code path put it back."""
-        row = self._conn.execute(
-            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
-        ).fetchone()
-        if row is None:
-            raise NotFoundError(memory_id)
-        dead = _row_to_tombstone(row)
-        memory = Memory(
-            **{
-                name: getattr(dead, name)
-                for name in Memory.model_fields
-                if name not in ("links", "corroborations", "last_corroborated")
-            },
-            links=[
-                MemoryLink.model_validate(entry)
-                for entry in json.loads(row["links_json"])
-            ],
-            corroborations=int(row["corroborations"]),
-            last_corroborated=_dt_opt(row["last_corroborated"]),
-        )
-        payload = {
-            "memory": memory.model_dump(mode="json"),
-            "provenance": LOCAL,
-            "filename": row["filename"],
-        }
+        ``local``: this store's own code path put it back. The tombstone
+        is read under the write lock, so a restore never brings back a
+        record another writer pruned or restored meanwhile."""
         with self._transaction() as tx:
+            row = tx.execute(
+                "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                raise NotFoundError(memory_id)
+            dead = _row_to_tombstone(row)
+            memory = Memory(
+                **{
+                    name: getattr(dead, name)
+                    for name in Memory.model_fields
+                    if name not in ("links", "corroborations", "last_corroborated")
+                },
+                links=[
+                    MemoryLink.model_validate(entry)
+                    for entry in json.loads(row["links_json"])
+                ],
+                corroborations=int(row["corroborations"]),
+                last_corroborated=_dt_opt(row["last_corroborated"]),
+            )
+            payload = {
+                "memory": memory.model_dump(mode="json"),
+                "provenance": LOCAL,
+                "filename": row["filename"],
+            }
             self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
             self._mutate(tx, "memory_put", payload, session=session)
         return memory
 
     def delete_tombstone(self, memory_id: str, *, session: str | None = None) -> None:
-        if (
-            self._conn.execute(
-                "SELECT 1 FROM tombstones WHERE id = ?", (memory_id,)
-            ).fetchone()
-            is None
-        ):
-            raise NotFoundError(memory_id)
         with self._transaction() as tx:
+            self._require_row(tx, "tombstones", "id", memory_id)
             self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
+
+    @staticmethod
+    def _require_row(tx: sqlite3.Connection, table: str, column: str, key: str) -> None:
+        """NotFoundError unless `table` holds a row whose `column` is `key`,
+        read inside the caller's transaction: a delete's existence check
+        and its write under one lock."""
+        found = tx.execute(
+            f"SELECT 1 FROM {table} WHERE {column} = ?", (key,)
+        ).fetchone()
+        if found is None:
+            raise NotFoundError(key)
 
     # -- episodes -----------------------------------------------------------
 
@@ -3649,14 +4039,8 @@ class Store:
         return int(self._conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0])
 
     def delete_episode(self, episode_id: str, *, session: str | None = None) -> None:
-        if (
-            self._conn.execute(
-                "SELECT 1 FROM episodes WHERE id = ?", (episode_id,)
-            ).fetchone()
-            is None
-        ):
-            raise NotFoundError(episode_id)
         with self._transaction() as tx:
+            self._require_row(tx, "episodes", "id", episode_id)
             self._mutate(tx, "episode_delete", {"id": episode_id}, session=session)
 
     # -- verifications ------------------------------------------------------
@@ -3713,14 +4097,14 @@ class Store:
         machine_id: str | None = None,
         session: str | None = None,
     ) -> None:
-        found = self._conn.execute(
-            "SELECT 1 FROM verifications WHERE memory_id = ? "
-            "AND COALESCE(machine_id, '') = COALESCE(?, '')",
-            (memory_id, machine_id),
-        ).fetchone()
-        if found is None:
-            raise NotFoundError((memory_id, machine_id))
         with self._transaction() as tx:
+            found = tx.execute(
+                "SELECT 1 FROM verifications WHERE memory_id = ? "
+                "AND COALESCE(machine_id, '') = COALESCE(?, '')",
+                (memory_id, machine_id),
+            ).fetchone()
+            if found is None:
+                raise NotFoundError((memory_id, machine_id))
             self._mutate(
                 tx,
                 "verification_delete",
@@ -3749,14 +4133,8 @@ class Store:
         ]
 
     def delete_conflict(self, conflict_id: str, *, session: str | None = None) -> None:
-        if (
-            self._conn.execute(
-                "SELECT 1 FROM conflicts WHERE id = ?", (conflict_id,)
-            ).fetchone()
-            is None
-        ):
-            raise NotFoundError(conflict_id)
         with self._transaction() as tx:
+            self._require_row(tx, "conflicts", "id", conflict_id)
             self._mutate(tx, "conflict_delete", {"id": conflict_id}, session=session)
 
     def put_import(
@@ -3786,14 +4164,8 @@ class Store:
         ]
 
     def delete_import(self, source: str, *, session: str | None = None) -> None:
-        if (
-            self._conn.execute(
-                "SELECT 1 FROM imports WHERE source = ?", (source,)
-            ).fetchone()
-            is None
-        ):
-            raise NotFoundError(source)
         with self._transaction() as tx:
+            self._require_row(tx, "imports", "source", source)
             self._mutate(tx, "import_delete", {"source": source}, session=session)
 
     def put_quarantine(
@@ -3829,14 +4201,8 @@ class Store:
         ]
 
     def delete_quarantine(self, name: str, *, session: str | None = None) -> None:
-        if (
-            self._conn.execute(
-                "SELECT 1 FROM quarantine WHERE name = ?", (name,)
-            ).fetchone()
-            is None
-        ):
-            raise NotFoundError(name)
         with self._transaction() as tx:
+            self._require_row(tx, "quarantine", "name", name)
             self._mutate(tx, "quarantine_delete", {"name": name}, session=session)
 
     # -- membership (design 8.5) --------------------------------------------
@@ -3849,8 +4215,10 @@ class Store:
 
     @property
     def in_batch(self) -> bool:
-        """Whether a `batch` is open on this store."""
-        return self._in_batch
+        """Whether a write transaction is open on this store: a `batch`,
+        or a mutating call's own (`_transaction`). Whatever is written
+        now commits with it."""
+        return bool(self._tx_depth)
 
     @property
     def membership_store_id(self) -> str:
@@ -4045,10 +4413,11 @@ class Store:
         """A new store id after a fork (design 8.7): the meta value
         replaced and a ``store_forked`` row naming the old and new ids,
         the record that showed the fork and where it came from, in one
-        transaction. Returns ``(old, new)``."""
-        old = self.membership_store_id
+        transaction, the old id read under its write lock. Returns
+        ``(old, new)``."""
         new = secrets.token_hex(16)
         with self._transaction() as tx:
+            old = self.membership_store_id
             tx.execute(
                 "UPDATE meta SET value = ? WHERE key = ?", (new, MEMBERSHIP_STORE_ID)
             )
@@ -4598,30 +4967,37 @@ class Store:
         undo a verify that landed in between); a content edit leaves it
         False and resets them on purpose. The corroboration rollup is
         store-owned and always carried over. ``standing`` writes the
-        edited body's standing answer in the same transaction."""
-        current = self._active_or_raise(memory.id)
-        if not force and current.updated != memory.updated:
-            raise ConcurrentUpdateError(memory.id, current.updated)
-        carried: dict[str, object] = {
-            "updated": utcnow(),
-            "corroborations": current.corroborations,
-            "last_corroborated": current.last_corroborated,
-        }
-        if preserve_verification:
-            carried.update(
-                {
-                    "last_verified_at": current.last_verified_at,
-                    "verified_paths": list(current.verified_paths),
-                    "verified_commits": list(current.verified_commits),
-                    "verified_versions": list(current.verified_versions),
-                    "verified_absent_paths": list(current.verified_absent_paths),
-                    "claims": list(current.claims),
-                    "verified_head": current.verified_head,
-                }
-            )
-        new_memory = memory.model_copy(update=carried)
-        Memory.model_validate(new_memory.model_dump())
-        return self.put_memory(new_memory, session=session, standing=standing)
+        edited body's standing answer in the same transaction.
+
+        The stored record is read, compared and replaced under one write
+        lock (`_transaction`): of two updates built on one snapshot exactly
+        one lands and the other raises ConcurrentUpdateError, and an update
+        that races a removal either lands before it or finds the record
+        removed (TombstonedError), never bringing it back."""
+        with self._transaction():
+            current = self._active_or_raise(memory.id)
+            if not force and current.updated != memory.updated:
+                raise ConcurrentUpdateError(memory.id, current.updated)
+            carried: dict[str, object] = {
+                "updated": utcnow(),
+                "corroborations": current.corroborations,
+                "last_corroborated": current.last_corroborated,
+            }
+            if preserve_verification:
+                carried.update(
+                    {
+                        "last_verified_at": current.last_verified_at,
+                        "verified_paths": list(current.verified_paths),
+                        "verified_commits": list(current.verified_commits),
+                        "verified_versions": list(current.verified_versions),
+                        "verified_absent_paths": list(current.verified_absent_paths),
+                        "claims": list(current.claims),
+                        "verified_head": current.verified_head,
+                    }
+                )
+            new_memory = memory.model_copy(update=carried)
+            Memory.model_validate(new_memory.model_dump())
+            return self.put_memory(new_memory, session=session, standing=standing)
 
     def mark_verified(
         self,
@@ -4641,9 +5017,11 @@ class Store:
         """Stamp `last_verified_at` now and replace whichever attestation
         lists the caller passed (None leaves a list as it is; `verified_head`
         is always written). Writes the record and this host's verification
-        row in one transaction. With `check_expected`, a stored stamp or
-        `updated` that differs from the caller's snapshot raises
-        ConcurrentUpdateError."""
+        row in one transaction, whose write lock is taken before the record
+        is read: the stamp lands on the record as it stands, and a record
+        removed meanwhile raises TombstonedError. With `check_expected`, a
+        stored stamp or `updated` that differs from the caller's snapshot
+        raises ConcurrentUpdateError."""
         if verified_head is not None:
             verified_head = verified_head.strip().lower()
             if not is_full_commit_sha(verified_head):
@@ -4651,64 +5029,109 @@ class Store:
                     "verified_head must be a full commit hash (40 or 64 hex "
                     f"characters), got {verified_head!r}"
                 )
-        existing = self._active_or_raise(memory_id)
-        if check_expected and (
-            existing.last_verified_at != expected_last_verified_at
-            or (expected_updated is not None and existing.updated != expected_updated)
-        ):
-            raise ConcurrentUpdateError(memory_id, existing.updated)
-        verified_now = utcnow()
-        update: dict[str, object] = {"last_verified_at": verified_now}
-        if verified_paths is not None:
-            update["verified_paths"] = list(verified_paths)
-        if verified_commits is not None:
-            update["verified_commits"] = list(verified_commits)
-        if verified_versions is not None:
-            update["verified_versions"] = list(verified_versions)
-        if verified_absent_paths is not None:
-            update["verified_absent_paths"] = list(verified_absent_paths)
-        if claims is not None:
-            update["claims"] = list(claims)
-        update["verified_head"] = verified_head
-        new_memory = existing.model_copy(update=update)
-        Memory.model_validate(new_memory.model_dump())
-        row = self._conn.execute(
-            "SELECT provenance, filename FROM memories WHERE id = ?", (memory_id,)
-        ).fetchone()
-        payload = {
-            "memory": new_memory.model_dump(mode="json"),
-            "provenance": str(row["provenance"]),
-            "filename": row["filename"],
-        }
-        stamp = {
-            "memory_id": memory_id,
-            "machine_id": None,
-            "verified_at": _iso(verified_now),
-            "verified_head": verified_head,
-            "verified_paths": list(new_memory.verified_paths),
-            "verified_commits": list(new_memory.verified_commits),
-            "verified_versions": list(new_memory.verified_versions),
-            "verified_absent_paths": list(new_memory.verified_absent_paths),
-        }
         with self._transaction() as tx:
+            existing = self._active_or_raise(memory_id)
+            if check_expected and (
+                existing.last_verified_at != expected_last_verified_at
+                or (
+                    expected_updated is not None
+                    and existing.updated != expected_updated
+                )
+            ):
+                raise ConcurrentUpdateError(memory_id, existing.updated)
+            verified_now = utcnow()
+            update: dict[str, object] = {"last_verified_at": verified_now}
+            if verified_paths is not None:
+                update["verified_paths"] = list(verified_paths)
+            if verified_commits is not None:
+                update["verified_commits"] = list(verified_commits)
+            if verified_versions is not None:
+                update["verified_versions"] = list(verified_versions)
+            if verified_absent_paths is not None:
+                update["verified_absent_paths"] = list(verified_absent_paths)
+            if claims is not None:
+                update["claims"] = list(claims)
+            update["verified_head"] = verified_head
+            new_memory = existing.model_copy(update=update)
+            Memory.model_validate(new_memory.model_dump())
+            row = tx.execute(
+                "SELECT provenance, filename FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            payload = {
+                "memory": new_memory.model_dump(mode="json"),
+                "provenance": str(row["provenance"]),
+                "filename": row["filename"],
+            }
+            stamp = {
+                "memory_id": memory_id,
+                "machine_id": None,
+                "verified_at": _iso(verified_now),
+                "verified_head": verified_head,
+                "verified_paths": list(new_memory.verified_paths),
+                "verified_commits": list(new_memory.verified_commits),
+                "verified_versions": list(new_memory.verified_versions),
+                "verified_absent_paths": list(new_memory.verified_absent_paths),
+            }
             self._mutate(tx, "memory_put", payload, session=session)
             self._mutate(tx, "verification_put", stamp, session=session)
         return new_memory
 
+    @overload
+    def record_corroboration(
+        self, memory_id: str, *, session: None = None
+    ) -> Memory: ...
+
+    @overload
+    def record_corroboration(
+        self, memory_id: str, *, session: str
+    ) -> Memory | None: ...
+
     def record_corroboration(
         self, memory_id: str, *, session: str | None = None
-    ) -> Memory:
+    ) -> Memory | None:
         """Bump the corroboration rollup without touching `updated`: a
         dedup-rejected write is the stored claim recurring, evidence it
-        still holds, not a rewrite."""
-        existing = self._active_or_raise(memory_id)
-        bumped = existing.model_copy(
-            update={
-                "corroborations": existing.corroborations + 1,
-                "last_corroborated": utcnow(),
-            }
+        still holds, not a rewrite.
+
+        With a `session`, once per memory and session: a session that has
+        already corroborated the memory gets None and nothing is written.
+        The check reads the log for this session's corroboration rows
+        (``CORROBORATION_MARK``, through the ``log_corroborations``
+        index), and the check and the write are one transaction under the
+        write lock, so parallel calls of one session, on the daemon's tool
+        workers or from another process, corroborate once. Without a
+        session every call corroborates."""
+        with self._transaction() as tx:
+            existing = self._active_or_raise(memory_id)
+            if session is not None and self._corroborated(tx, memory_id, session):
+                return None
+            bumped = existing.model_copy(
+                update={
+                    "corroborations": existing.corroborations + 1,
+                    "last_corroborated": utcnow(),
+                }
+            )
+            self._put_memory(
+                tx,
+                bumped,
+                provenance=None,
+                filename=None,
+                session=session,
+                marks={CORROBORATION_MARK: memory_id},
+            )
+        return bumped
+
+    @staticmethod
+    def _corroborated(tx: sqlite3.Connection, memory_id: str, session: str) -> bool:
+        """Whether `session` has a corroboration row for `memory_id` in the
+        log: a ``memory_put`` row of that session whose payload names the
+        memory under ``CORROBORATION_MARK``. A body's own quotes are escaped
+        in the payload text, so only the mark itself matches."""
+        needle = canonical_payload({CORROBORATION_MARK: memory_id})[1:-1]
+        return (
+            tx.execute(CORROBORATION_CHECK_SQL, (session, needle)).fetchone()
+            is not None
         )
-        return self.put_memory(bumped, session=session)
 
     def _active_or_raise(self, memory_id: str) -> Memory:
         """The active record, or the v8 errors: TombstonedError for a
@@ -4827,51 +5250,52 @@ class Store:
     ) -> Memory:
         """`restore`, minus the trust fields the caller found no longer
         hold on this machine (the restore handler's trust strip). Raises
-        NotTombstonedError for an active id."""
+        NotTombstonedError for an active id. The record and its tombstone
+        are read under the write lock, as `restore` reads them."""
         if not is_valid_ulid(memory_id):
             raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
-        if self.has_memory(memory_id):
-            raise NotTombstonedError(
-                f"memory {memory_id} is active; nothing to restore"
-            )
-        row = self._conn.execute(
-            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
-        ).fetchone()
-        if row is None:
-            raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
-        dead = _row_to_tombstone(row)
-        fields: dict[str, Any] = {
-            name: getattr(dead, name)
-            for name in Memory.model_fields
-            if name not in ("links", "corroborations", "last_corroborated")
-        }
-        gone_claims = set(drop_claims)
-        if gone_claims:
-            fields["claims"] = [c for c in dead.claims if c not in gone_claims]
-        gone_paths = set(drop_verified_paths)
-        if gone_paths:
-            fields["verified_paths"] = [
-                v for v in dead.verified_paths if v not in gone_paths
-            ]
-        if clear_verification:
-            fields["last_verified_at"] = None
-        if drop_verified_head:
-            fields["verified_head"] = None
-        memory = Memory(
-            **fields,
-            links=[
-                MemoryLink.model_validate(entry)
-                for entry in json.loads(row["links_json"])
-            ],
-            corroborations=int(row["corroborations"]),
-            last_corroborated=_dt_opt(row["last_corroborated"]),
-        )
-        payload = {
-            "memory": memory.model_dump(mode="json"),
-            "provenance": LOCAL,
-            "filename": row["filename"],
-        }
         with self._transaction() as tx:
+            if self.has_memory(memory_id):
+                raise NotTombstonedError(
+                    f"memory {memory_id} is active; nothing to restore"
+                )
+            row = tx.execute(
+                "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
+            dead = _row_to_tombstone(row)
+            fields: dict[str, Any] = {
+                name: getattr(dead, name)
+                for name in Memory.model_fields
+                if name not in ("links", "corroborations", "last_corroborated")
+            }
+            gone_claims = set(drop_claims)
+            if gone_claims:
+                fields["claims"] = [c for c in dead.claims if c not in gone_claims]
+            gone_paths = set(drop_verified_paths)
+            if gone_paths:
+                fields["verified_paths"] = [
+                    v for v in dead.verified_paths if v not in gone_paths
+                ]
+            if clear_verification:
+                fields["last_verified_at"] = None
+            if drop_verified_head:
+                fields["verified_head"] = None
+            memory = Memory(
+                **fields,
+                links=[
+                    MemoryLink.model_validate(entry)
+                    for entry in json.loads(row["links_json"])
+                ],
+                corroborations=int(row["corroborations"]),
+                last_corroborated=_dt_opt(row["last_corroborated"]),
+            )
+            payload = {
+                "memory": memory.model_dump(mode="json"),
+                "provenance": LOCAL,
+                "filename": row["filename"],
+            }
             self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
             self._mutate(tx, "memory_put", payload, session=session)
         return memory
@@ -4887,44 +5311,81 @@ class Store:
         """Replace scope `old` with `new` on every record carrying it, the
         list deduplicated in place; active records get a fresh `updated`.
         Returns the ids changed under `active` and `tombstoned`; `failed`
-        is present only when a record could not be rewritten."""
+        is present only when a record could not be rewritten, and what it
+        tried to write is taken back (`_transaction`'s savepoint).
+
+        The records are rewritten in chunks (`_in_chunks`), so a rename
+        over a large store never holds the write lock past
+        `CHUNK_HOLD_SECONDS` at a time; each record is read again under
+        its chunk's lock and rewritten from what it holds then. A run cut
+        short leaves the rest carrying `old`, and running it again renames
+        those."""
         result: dict[str, list[Any]] = {"active": [], "tombstoned": []}
         if old == new:
             return result
         failed: list[dict[str, str]] = []
-        with self.batch():
-            for memory in self.load_all():
-                renamed = _scopes_after_rename(memory.scopes, old, new)
-                if renamed is None:
-                    continue
-                refreshed = memory.model_copy(
-                    update={"scopes": renamed, "updated": utcnow()}
-                )
-                try:
-                    self.put_memory(refreshed, session=session)
-                except (ValueError, ValidationError) as exc:
-                    failed.append({"id": memory.id, "reason": str(exc)})
-                    continue
-                result["active"].append(memory.id)
-            if include_tombstones:
-                for tomb_row in list(self.iter_tombstone_rows()):
-                    dead = tomb_row.tombstone
-                    renamed = _scopes_after_rename(dead.scopes, old, new)
-                    if renamed is None:
-                        continue
-                    payload = {
-                        "tombstone": dead.model_copy(
-                            update={"scopes": renamed}
-                        ).model_dump(mode="json"),
-                        "provenance": tomb_row.provenance,
-                        "filename": tomb_row.filename,
-                        "links": tomb_row.links,
-                        "corroborations": tomb_row.corroborations,
-                        "last_corroborated": _iso_opt(tomb_row.last_corroborated),
-                    }
-                    with self._transaction() as tx:
-                        self._mutate(tx, "tombstone_put", payload, session=session)
-                    result["tombstoned"].append(dead.id)
+
+        def rename_active(memory_id: str) -> None:
+            row = self._conn.execute(
+                "SELECT * FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                return
+            memory = _row_to_memory(row)
+            renamed = _scopes_after_rename(memory.scopes, old, new)
+            if renamed is None:
+                return
+            refreshed = memory.model_copy(
+                update={"scopes": renamed, "updated": utcnow()}
+            )
+            try:
+                self.put_memory(refreshed, session=session)
+            except (ValueError, ValidationError) as exc:
+                failed.append({"id": memory.id, "reason": str(exc)})
+                return
+            result["active"].append(memory.id)
+
+        def rename_removed(memory_id: str) -> None:
+            raw = self._conn.execute(
+                "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if raw is None:
+                return
+            dead = _row_to_tombstone(raw)
+            renamed = _scopes_after_rename(dead.scopes, old, new)
+            if renamed is None:
+                return
+            payload = {
+                "tombstone": dead.model_copy(update={"scopes": renamed}).model_dump(
+                    mode="json"
+                ),
+                "provenance": str(raw["provenance"]),
+                "filename": raw["filename"],
+                "links": list(_load_json(raw["links_json"], [])),
+                "corroborations": int(raw["corroborations"]),
+                "last_corroborated": raw["last_corroborated"],
+            }
+            with self._transaction() as tx:
+                self._mutate(tx, "tombstone_put", payload, session=session)
+            result["tombstoned"].append(dead.id)
+
+        self._in_chunks(
+            [
+                memory.id
+                for memory in self.iter_memories()
+                if _scopes_after_rename(memory.scopes, old, new) is not None
+            ],
+            rename_active,
+        )
+        if include_tombstones:
+            self._in_chunks(
+                [
+                    dead.id
+                    for dead in self.iter_tombstones()
+                    if _scopes_after_rename(dead.scopes, old, new) is not None
+                ],
+                rename_removed,
+            )
         if failed:
             result["failed"] = failed
         return result
@@ -4937,21 +5398,34 @@ class Store:
         session: str | None = None,
     ) -> list[str]:
         """Delete tombstones removed longer than `older_than` ago. Returns
-        the ids pruned, oldest removal first."""
+        the ids pruned, oldest removal first. The deletes run in chunks
+        (`_in_chunks`), each tombstone's age read again under its chunk's
+        write lock, so one restored or replaced meanwhile is left alone.
+
+        A failure part way raises, and the ids are not returned: the chunks
+        committed before it stay committed (those tombstones are gone),
+        the failing chunk is rolled back, and the rest are still there.
+        Running it again with the same cutoff prunes what is left."""
         cutoff = (now or utcnow()) - older_than
-        doomed = [
+        doomed = sorted(
             (dead.removed, dead.id)
             for dead in self.iter_tombstones()
             if dead.removed < cutoff
-        ]
-        doomed.sort()
-        with self.batch():
-            for _, memory_id in doomed:
-                with self._transaction() as tx:
-                    self._mutate(
-                        tx, "tombstone_delete", {"id": memory_id}, session=session
-                    )
-        return [memory_id for _, memory_id in doomed]
+        )
+        pruned: list[str] = []
+
+        def prune(memory_id: str) -> None:
+            raw = self._conn.execute(
+                "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if raw is None or _row_to_tombstone(raw).removed >= cutoff:
+                return
+            with self._transaction() as tx:
+                self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
+            pruned.append(memory_id)
+
+        self._in_chunks([memory_id for _, memory_id in doomed], prune)
+        return pruned
 
     # -- the reads the index used to serve ----------------------------------------
 
@@ -4975,7 +5449,7 @@ class Store:
         unique = sorted({t for t in terms if t})
         if not unique:
             return None
-        if memoised and not (self._in_batch or self._conn.in_transaction):
+        if memoised and not (self._tx_depth or self._conn.in_transaction):
             return self._memoised_document_frequencies(unique, admit)
         admitted: set[str] = set()
         for row in self._conn.execute(_ADMISSION_INPUTS):
@@ -5367,7 +5841,7 @@ class Store:
             if event is not None:
                 yield event
 
-    def reopen(self) -> Store:
+    def reopen(self, *, busy_timeout: float | None = None) -> Store:
         """Another connection to this store, for another thread: SQLite
         binds a connection to the thread that opened it, so a worker
         thread reads and records through its own. The same key directory,
@@ -5377,13 +5851,21 @@ class Store:
         memory ids a refold found unaccounted is shared, not copied, so a
         refold on either connection reaches the other, and so is
         ``strict_provenance``: a value the opener passed, or one this
-        connection already read, is the new one's too."""
+        connection already read, is the new one's too. `busy_timeout` is
+        the new connection's role's (`set_busy_timeout`); None keeps this
+        connection's."""
+        wait = self._busy_timeout if busy_timeout is None else busy_timeout
         other = Store.open(
             self._path,
             keys_dir=self._keyring.keys_dir,
             allow_rekey=False,
             strict_provenance=self._strict_provenance,
         )
+        try:
+            other.set_busy_timeout(wait)
+        except BaseException:
+            other.close()
+            raise
         other._unaccounted_memory_ids = self._unaccounted_memory_ids
         if self._bound_elsewhere is not None:
             # The owner's open found the key ring bound to another store
@@ -5483,7 +5965,7 @@ class Store:
         """The telemetry rows whose stamp's first nineteen characters are at
         or after `prefix`, in log order, through the event window memo."""
         key = (str(self._path), self._store_id)
-        in_transaction = self._in_batch or self._conn.in_transaction
+        in_transaction = bool(self._tx_depth) or self._conn.in_transaction
         with _EVENT_WINDOWS_LOCK:
             window = _EVENT_WINDOWS.get(key)
             if window is not None:
@@ -5689,21 +6171,46 @@ class Store:
     ) -> list[str]:
         """Delete every episode of the sessions past the TTL, except the
         session named by `keep_session_id`. Returns the pruned session
-        ids."""
-        pruned = [
+        ids. The sessions are pruned in chunks (`_in_chunks`), each one's
+        newest episode read again under its chunk's write lock, so a
+        session that gained an episode meanwhile is kept whole. With no
+        session past the TTL it takes no lock.
+
+        A failure part way raises, and the ids are not returned: the chunks
+        committed before it stay committed (those sessions are gone), the
+        failing chunk is rolled back, and the rest are still there.
+        Running it again prunes what is left."""
+        if ttl_days <= 0:
+            return []
+        cutoff = _iso((now or utcnow()) - timedelta(days=ttl_days))
+        candidates = [
             sid
             for sid in self.prunable_episode_sessions(ttl_days=ttl_days, now=now)
             if sid != keep_session_id
         ]
-        if not pruned:
-            return []
-        with self.batch():
-            for sid in pruned:
-                for episode in self.iter_episodes(session_id=sid):
-                    with self._transaction() as tx:
-                        self._mutate(
-                            tx, "episode_delete", {"id": episode.id}, session=session
-                        )
+        pruned: list[str] = []
+
+        def prune(sid: str) -> None:
+            newest = self._conn.execute(
+                "SELECT MAX(created) FROM episodes WHERE session_id = ?", (sid,)
+            ).fetchone()[0]
+            if newest is None or str(newest) >= cutoff:
+                return
+            episode_ids = [
+                str(row[0])
+                for row in self._conn.execute(
+                    "SELECT id FROM episodes WHERE session_id = ? ORDER BY rowid",
+                    (sid,),
+                )
+            ]
+            with self._transaction() as tx:
+                for episode_id in episode_ids:
+                    self._mutate(
+                        tx, "episode_delete", {"id": episode_id}, session=session
+                    )
+            pruned.append(sid)
+
+        self._in_chunks(candidates, prune)
         return pruned
 
     def episode_provenance(self, episode_ids: Sequence[str]) -> dict[str, str]:

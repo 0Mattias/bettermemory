@@ -716,7 +716,12 @@ def test_the_clients_wait_is_the_daemons_own_bounds() -> None:
     from bettermemory import daemon, location
     from bettermemory._daemon_client import SHUTDOWN_TIMEOUT_SECONDS
 
+    from bettermemory._daemon_client import UNINTERRUPTED_STEP_SECONDS
+
     assert daemon.GRACEFUL_SHUTDOWN_SECONDS == location._GIT_TIMEOUT_SECONDS
     assert SHUTDOWN_TIMEOUT_SECONDS == (
         daemon.GRACEFUL_SHUTDOWN_SECONDS + daemon.WORKERS_CLOSE_SECONDS
     )
+    # The signal fallback waits as long again, which covers a worker's
+    # step the stop's interrupt does not reach.
+    assert SHUTDOWN_TIMEOUT_SECONDS >= UNINTERRUPTED_STEP_SECONDS

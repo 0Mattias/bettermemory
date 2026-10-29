@@ -31,9 +31,12 @@ The fourteenth candidate is the first cut under the rule that the stable
 9.0.0 ships when no feasible foreseeable work is left: from here on the
 work the plan of 2026-10-28 tracks lands in candidates. This one breaks
 the import cycle between the recall and hook modules, so the module
-split can build on it, and closes a scan on the recall path that a
-crafted body could hold for seconds. The store's schema does not move.
-It is a release candidate like the thirteenth; the stable 9.0.0 follows
+split can build on it; takes every mutating store call under the write
+lock before it reads what it decides on, so two writers can no longer
+lose an update or bring a removed record back; and closes a scan on the
+recall path that a crafted body could hold for seconds. The store's
+schema gains one index, added at the first open of an older store. It
+is a release candidate like the thirteenth; the stable 9.0.0 follows
 the candidates' testing.
 
 #### Changed
@@ -122,6 +125,62 @@ the candidates' testing.
 
 #### Fixed
 
+- **Every mutating store call takes the write lock before it reads what
+  it decides on.** `update`, `mark_verified`, `record_corroboration`,
+  `tombstone`, `restore` and `put_memory` read their snapshot in
+  autocommit and only then began the write transaction, so two daemon
+  workers, or the daemon and a CLI process, could both pass the
+  concurrent-update check and one update was lost, and an update racing
+  a removal brought the record back beside its tombstone. The read, the
+  check and the write now run under one `BEGIN IMMEDIATE`, with one
+  owner per transaction: a call nested in another's transaction or in a
+  batch joins it under a savepoint, so a nested failure takes back only
+  what it wrote and the owner commits once. Of two writes built on one
+  snapshot exactly one lands; an update or verify racing a removal never
+  brings the record back; a put never writes over a tombstone (only
+  `restore` brings a record back); and a duplicate write corroborates
+  once per session across workers and processes, decided by the store
+  under its lock and served by a new partial index on the log, which an
+  older store gains at its first open. A `COMMIT` that fails rolls back
+  instead of leaving the connection inside the transaction holding the
+  lock until the daemon restarts. Threaded and two-process tests pin
+  each case. (`src/bettermemory/store.py`,
+  `src/bettermemory/handlers/write.py`)
+- **A busy, locked or full store is a refusal that says whether the call
+  kept anything, and a daemon stop waits for every worker's connection.**
+  A tool call that meets a lock another process holds, or a full disk,
+  answers `store_busy` or `store_full (retryable)` only when it kept
+  nothing; a call whose write had already committed answers
+  `(not retryable)` and says the write stays, so a client does not make
+  it twice. The prune and the filings that follow a committed write are
+  best-effort, and a prune with nothing to do takes no lock. Removing a
+  removed or unknown id is a refusal with its reason. Long prunes and
+  scope renames commit in chunks of about 0.1 s of work, each item
+  decided again under its chunk's lock, with 0.05 s of free lock between
+  chunks, since SQLite's lock is not queued and a waiter must land in
+  the gap: with two processes writing beside a prune of 90,000
+  tombstones, the writers' worst wait fell from 1.16 s to 0.17 s, a
+  thirtieth of the 5 s busy timeout. A chunk already committed stays
+  committed when a later chunk fails, and a rerun finishes the job. A
+  connection that a failed rollback left inside a transaction is rolled
+  back by its next call, so the stdio server's one connection cannot
+  hold the write lock against every other writer; a daemon worker that
+  finds its connection left inside a transaction closes and reopens it.
+  On a stop, a forced exit included, the daemon interrupts every worker
+  still inside SQLite each round and waits for every worker connection
+  to close before it gives the store's lock back. The supervisor's stop
+  timeout rises from 40 to 60 s, which covers a worker's git call (20 s)
+  past the daemon's own 30 s bound, and its kill is the hard bound; an
+  installed service unit keeps its 40 s until `bettermemory service
+  install` writes it again. The three busy timeouts (CLI, hook worker,
+  tool worker) stay at 5.0 s and are named as unmeasured, with the
+  per-role lock-hold measurement that would set them.
+  (`src/bettermemory/store.py`, `src/bettermemory/daemon.py`,
+  `src/bettermemory/_handlers.py`, `src/bettermemory/_daemon_client.py`,
+  `src/bettermemory/service_units.py`, `src/bettermemory/handlers/write.py`,
+  `src/bettermemory/handlers/episode_write.py`,
+  `src/bettermemory/cli/serve.py`, `src/bettermemory/cli/tombstones.py`,
+  `src/bettermemory/cli/episodes.py`)
 - **A dashed run in a memory body no longer holds a daemon worker for
   seconds.** The scan that marks a domain's route so the same path in
   the body is not read as a filesystem citation began a match at every

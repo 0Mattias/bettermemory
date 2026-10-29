@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from typing import Any
 
@@ -304,7 +305,19 @@ def _cli_tombstones_prune(
         sys.stdout.write("(Dry run — re-run without --dry-run to apply.)\n")
         return
 
-    pruned_ids = store.prune_tombstones(cutoff)
+    # The prune commits in chunks (`Store.prune_tombstones`). One that
+    # fails part way keeps what its earlier chunks pruned, and the ids it
+    # pruned are not returned, so the count is unknown; the tombstones
+    # left are still past the cutoff, and running it again prunes them.
+    try:
+        pruned_ids = store.prune_tombstones(cutoff)
+    except sqlite3.Error as exc:
+        sys.stderr.write(
+            f"bettermemory tombstones prune: stopped part way ({exc}). The "
+            f"tombstones pruned before it stopped stay pruned; how many is "
+            f"not known. Run it again to prune the rest.\n"
+        )
+        raise SystemExit(1) from exc
     if json_out:
         sys.stdout.write(
             _json.dumps({"deleted": pruned_ids, "cutoff_days": days}, indent=2) + "\n"

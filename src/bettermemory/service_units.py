@@ -24,9 +24,12 @@ directory, its output appended to the daemon log `log_file_for` names
   short-lived process and one log line per attempt meanwhile.
   `service install` stops a running daemon of the store before it loads
   the unit, so that race needs a crash to happen at all;
-- the stop bound, `STOP_TIMEOUT_SECONDS`, above the daemon's own
-  (`SHUTDOWN_TIMEOUT_SECONDS`: the requests in flight plus the workers'
-  join), so the supervisor's kill never cuts a graceful stop short;
+- the stop bound, `STOP_TIMEOUT_SECONDS`, above the part of a stop the
+  daemon bounds itself (`SHUTDOWN_TIMEOUT_SECONDS`: the requests in
+  flight plus the workers' join) and the longest step a worker can be in
+  that the stop's interrupt does not reach (`UNINTERRUPTED_STEP_SECONDS`),
+  so the supervisor's kill does not cut such a stop short, and is the
+  hard bound on one that runs longer;
 - an owner-only umask, so the files the daemon creates are owner-only
   whatever the login session's umask is (`service install` creates the
   log itself, 0600, before the supervisor first appends to it);
@@ -48,7 +51,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
-from ._daemon_client import SHUTDOWN_TIMEOUT_SECONDS, STATE_DIR_ENV
+from ._daemon_client import (
+    SHUTDOWN_TIMEOUT_SECONDS,
+    STATE_DIR_ENV,
+    UNINTERRUPTED_STEP_SECONDS,
+)
 
 LAUNCHD = "launchd"
 SYSTEMD = "systemd"
@@ -60,14 +67,23 @@ LAUNCHD_LABEL = "io.github.0mattias.bettermemory"
 SYSTEMD_UNIT = "bettermemory.service"
 
 #: How long the supervisor waits, after its SIGTERM, before it kills the
-#: daemon: the daemon's own bound on a stop (`SHUTDOWN_TIMEOUT_SECONDS`,
-#: `daemon.GRACEFUL_SHUTDOWN_SECONDS` for the requests in flight plus
-#: `daemon.WORKERS_CLOSE_SECONDS` for the workers' join) and ten seconds
-#: for the store's close and the interpreter's exit. launchd's default
-#: (20 s) is shorter than the daemon's bound; systemd's is 90 s unless a
-#: distribution or an administrator lowered DefaultTimeoutStopSec, so the
-#: unit names its own either way.
-STOP_TIMEOUT_SECONDS = int(SHUTDOWN_TIMEOUT_SECONDS) + 10
+#: daemon: the part of a stop the daemon bounds itself
+#: (`SHUTDOWN_TIMEOUT_SECONDS`, `daemon.GRACEFUL_SHUTDOWN_SECONDS` for the
+#: requests in flight plus `daemon.WORKERS_CLOSE_SECONDS` for the workers'
+#: join, 30 s), then the longest step a worker's job can be in that the
+#: stop's interrupt does not reach (`UNINTERRUPTED_STEP_SECONDS`, a git
+#: call's 20 s), and ten seconds for the store's close and the
+#: interpreter's exit: 60 s. It was 40 s, the step left out, so a stop that
+#: found a job inside a git call could be killed before its workers ended.
+#: The kill is the hard bound: a job that runs past it is ended with the
+#: process, the OS drops the process's connections and its lock, and the
+#: next start takes the store over. launchd's default (20 s) is shorter
+#: than the daemon's bound; systemd's is 90 s unless a distribution or an
+#: administrator lowered DefaultTimeoutStopSec, so the unit names its own
+#: either way.
+STOP_TIMEOUT_SECONDS = (
+    int(SHUTDOWN_TIMEOUT_SECONDS) + int(UNINTERRUPTED_STEP_SECONDS) + 10
+)
 
 #: The least time between two starts of the daemon by the supervisor:
 #: launchd's ThrottleInterval and systemd's RestartSec. It spaces the

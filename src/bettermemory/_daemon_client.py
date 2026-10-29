@@ -124,12 +124,26 @@ START_TIMEOUT_SECONDS = 8.0
 HOOK_TIMEOUT_SECONDS = 15.0
 #: How long `shutdown_daemon` waits for a daemon to release the store
 #: after the shutdown endpoint answered, before it falls back to a
-#: signal: the daemon's own bounds, `daemon.GRACEFUL_SHUTDOWN_SECONDS`
-#: (20 s for the requests in flight) plus `daemon.WORKERS_CLOSE_SECONDS`
-#: (10 s for the workers' join, both pools under one deadline);
-#: tests/test_daemon_lifecycle.py pins
-#: the sum. A daemon with nothing in flight stops in milliseconds.
+#: signal, and how long it then waits again: the part of a stop the daemon
+#: bounds itself, `daemon.GRACEFUL_SHUTDOWN_SECONDS` (20 s for the
+#: requests in flight) plus `daemon.WORKERS_CLOSE_SECONDS` (10 s for the
+#: workers' join, both pools under one deadline), after which it
+#: interrupts what still runs. A job in a step the interrupt does not
+#: reach (`UNINTERRUPTED_STEP_SECONDS`) holds the stop past that, and the
+#: daemon gives the lock back only once its workers have ended; the second
+#: wait covers that step. tests/test_daemon_lifecycle.py pins the sum and
+#: the cover. A daemon with nothing in flight stops in milliseconds.
 SHUTDOWN_TIMEOUT_SECONDS = 30.0
+#: The longest step a daemon worker's job can be in, once the stop
+#: interrupts it, that the interrupt does not reach: a git call, which ends
+#: at `location._GIT_TIMEOUT_SECONDS` (20 s), longer than a wait for
+#: another writer's lock, which ends at the pool's busy timeout
+#: (`store.HOOK_BUSY_TIMEOUT_SECONDS`, `store.TOOL_BUSY_TIMEOUT_SECONDS`,
+#: 5 s). A job that goes on to another such step after it holds the stop
+#: longer; the supervisor's kill is the hard bound
+#: (`service_units.STOP_TIMEOUT_SECONDS`). tests/test_service_units.py
+#: pins it to those timeouts.
+UNINTERRUPTED_STEP_SECONDS = 20.0
 _POLL_SECONDS = 0.02
 _STDIN_CAP_BYTES = 1 << 20
 _STATE_KEYS = ("pid", "port", "token", "version", "store", "started")

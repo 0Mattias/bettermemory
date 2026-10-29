@@ -189,13 +189,6 @@ class SessionState:
     # (`memory_record_use` takes `memory_ids`), so the drain is the
     # whole lifetime.
     _expired_use_tokens: dict[str, PendingUseToken] = field(default_factory=dict)
-    # Memory ids already corroborated by a dedup-rejected write THIS
-    # session. One conversation restating the same claim five times is
-    # one recurrence, not five: the counter measures independent
-    # re-entries, so the bump is once per (memory, session). In-memory
-    # only: a server restart legitimately opens a new session, which is
-    # a new opportunity to corroborate.
-    corroborated_ids: set[str] = field(default_factory=set)
     # The lock every mutating method takes (`_locked`), re-entrant so the
     # handler layer's `_advance_turn` can hold it across the calls it
     # nests. Two tool calls of one session run at once on the daemon's

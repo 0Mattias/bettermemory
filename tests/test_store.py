@@ -925,10 +925,14 @@ def test_a_batch_commits_everything_together_and_moves_the_head_once(
     assert store.count_memories() == 2 and writes == [6, 7]
     assert store.log_verify()["status"] == "ok"
 
+    # A batch opened inside another joins it: one commit, one head move.
     with store.batch():
-        with pytest.raises(RuntimeError, match="already open"):
-            with store.batch():
-                pass
+        store.put_memory(_memory("epsilon"))
+        with store.batch():
+            store.put_memory(_memory("zeta"))
+        assert writes == [6, 7]
+    assert store.count_memories() == 4 and writes == [6, 7, 9]
+    assert store.log_verify()["status"] == "ok"
 
 
 def test_a_batch_that_cannot_begin_leaves_the_store_transactional(

@@ -545,8 +545,8 @@ async def test_hook_workers_keep_their_connections_and_close_them(
     opened: list[Store] = []
     real_reopen = Store.reopen
 
-    def reopen(self: Store) -> Store:
-        other = real_reopen(self)
+    def reopen(self: Store, **kwargs: Any) -> Store:
+        other = real_reopen(self, **kwargs)
         opened.append(other)
         return other
 
@@ -705,8 +705,8 @@ async def test_tool_workers_keep_their_connections_and_close_them(
     opened: list[tuple[str, Store]] = []
     real_reopen = Store.reopen
 
-    def reopen(self: Store) -> Store:
-        other = real_reopen(self)
+    def reopen(self: Store, **kwargs: Any) -> Store:
+        other = real_reopen(self, **kwargs)
         opened.append((threading.current_thread().name, other))
         return other
 
@@ -768,6 +768,174 @@ async def test_a_worker_runs_a_coroutine_in_its_own_context(
             await pool.run_coroutine(raises)
     finally:
         pool.close()
+
+
+async def test_a_worker_reopens_a_connection_left_inside_a_transaction(
+    daemon_store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A job that leaves its worker's connection inside a transaction (a
+    rollback that failed) holds the write lock against every other
+    writer. The worker's next job finds it before it runs: the connection
+    is closed, which rolls the transaction back and frees the lock, and a
+    fresh one opened at the pool's busy timeout. The first such residue
+    in the process is logged, later ones are not, in the words the
+    store's own recovery uses (`store.note_residue`)."""
+    import logging
+    import sqlite3
+
+    from bettermemory import store as store_module
+    from bettermemory.daemon import _Workers
+
+    monkeypatch.setattr(store_module, "_residue_logged", False)
+    pool = _Workers(daemon_store, count=1, name="probe", busy_timeout=1.5)
+
+    def leaves_a_transaction(store: Store) -> Store:
+        store.conn.execute("BEGIN IMMEDIATE")
+        return store
+
+    def looks(store: Store) -> tuple[Store, bool, float]:
+        return store, store.conn.in_transaction, store.busy_timeout
+
+    caplog.set_level(logging.WARNING, logger="bettermemory.store")
+    try:
+        first = await pool.run(leaves_a_transaction)
+        # The residue holds the lock: another connection cannot write.
+        daemon_store.set_busy_timeout(0.1)
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            daemon_store.write(content="held off by the residue", scopes=["global"])
+        second, in_transaction, timeout = await pool.run(looks)
+        assert second is not first
+        assert in_transaction is False and timeout == 1.5
+        with pytest.raises(sqlite3.ProgrammingError):
+            first.conn.execute("SELECT 1")
+        # The lock went with the closed connection.
+        daemon_store.write(content="written once it was closed", scopes=["global"])
+        await pool.run(leaves_a_transaction)
+        third, in_transaction, _ = await pool.run(looks)
+        assert third is not second and in_transaction is False
+    finally:
+        pool.close()
+    told = [r.message for r in caplog.records if "left inside" in r.message]
+    assert told == [
+        f"a probe worker's connection to {daemon_store.path} was left inside "
+        "a transaction; it was closed and a new one opened"
+    ]
+
+
+async def test_a_pools_finish_interrupts_a_job_inside_sqlite(
+    daemon_store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`finish` waits for every worker however long, interrupting a job
+    still inside SQLite until it ends: its statement fails at once, the
+    job's caller gets the error, and the worker has closed its
+    connection when `finish` returns."""
+    import asyncio
+    import sqlite3
+    import threading
+    import time
+
+    from bettermemory import daemon as daemon_module
+    from bettermemory.daemon import _Workers
+
+    monkeypatch.setattr(daemon_module, "WORKERS_CLOSE_SECONDS", 0.2)
+    pool = _Workers(daemon_store, count=1, name="probe")
+    entered = threading.Event()
+    held: list[Store] = []
+
+    def endless(store: Store) -> Any:
+        held.append(store)
+        entered.set()
+        return store.conn.execute(
+            "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) "
+            "SELECT count(*) FROM c"
+        ).fetchone()
+
+    job = asyncio.ensure_future(pool.run(endless))
+    assert await asyncio.to_thread(entered.wait, 30)
+    started = time.monotonic()
+    await asyncio.to_thread(pool.close, 0.2)
+    assert time.monotonic() - started < 5
+    with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+        await job
+    with pytest.raises(sqlite3.ProgrammingError):
+        held[0].conn.execute("SELECT 1")
+
+
+async def test_finishing_the_pools_interrupts_every_worker_each_round(
+    daemon_store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker of the first pool waits for the write lock a worker of
+    the second pool holds while its statement runs. Each round of the
+    stop's wait interrupts every living worker of both pools: the second
+    pool's statement ends, its transaction rolls back and frees the lock,
+    the first pool's worker takes it and runs into the next round's
+    interrupt. Taken one pool at a time, the waiting worker would have
+    waited out its whole busy timeout before the holder was reached."""
+    import asyncio
+    import sqlite3
+    import threading
+    import time
+
+    from bettermemory import daemon as daemon_module
+    from bettermemory.daemon import _close_pools, _Workers
+
+    endless = (
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) "
+        "SELECT count(*) FROM c"
+    )
+    monkeypatch.setattr(daemon_module, "WORKERS_CLOSE_SECONDS", 0.2)
+    waiting = _Workers(daemon_store, count=1, name="waiting", busy_timeout=30.0)
+    holding = _Workers(daemon_store, count=1, name="holding")
+    holds = threading.Event()
+    waits = threading.Event()
+
+    def hold(store: Store) -> Any:
+        with store.batch():
+            holds.set()
+            return store.conn.execute(endless).fetchone()
+
+    def wait(store: Store) -> Any:
+        waits.set()
+        with store.batch():
+            return store.conn.execute(endless).fetchone()
+
+    held = asyncio.ensure_future(holding.run(hold))
+    assert await asyncio.to_thread(holds.wait, 30)
+    waited = asyncio.ensure_future(waiting.run(wait))
+    assert await asyncio.to_thread(waits.wait, 30)
+    await asyncio.sleep(0.3)
+    started = time.monotonic()
+    await asyncio.to_thread(_close_pools, (waiting, holding))
+    assert time.monotonic() - started < 10
+    for job in (held, waited):
+        with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+            await job
+
+
+def test_the_wait_for_the_workers_outlasts_an_interrupt(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A Ctrl-C repeated while the stop waits for its workers is logged
+    and the wait goes on: the store's lock is given back only once every
+    worker has ended."""
+    import logging
+
+    from bettermemory.daemon import _wait_for_workers
+
+    calls: list[int] = []
+
+    def finish() -> None:
+        calls.append(1)
+        if len(calls) < 3:
+            raise KeyboardInterrupt
+
+    caplog.set_level(logging.WARNING, logger="bettermemory.daemon")
+    _wait_for_workers(finish)
+    assert len(calls) == 3
+    told = [r for r in caplog.records if "the store's lock is kept" in r.message]
+    assert len(told) == 2
 
 
 async def test_a_tool_body_runs_inline_without_a_pool_or_on_a_clone(

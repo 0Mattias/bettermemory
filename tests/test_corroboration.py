@@ -15,9 +15,10 @@ byte-identical — `test_rollup_never_moves_a_ranking` pins that the rollup
 has no path into any scorer. How a config still setting the key loads
 is tested in `test_config.py`.
 
-The write-handler hook is once-per-(memory, session)
-(`SessionState.corroborated_ids`) and best-effort — a telemetry bump
-must never turn a clean duplicate rejection into an error.
+The write-handler hook is once-per-(memory, session), decided by the
+store under its write lock (`Store.record_corroboration` with the
+session), and best-effort: a telemetry bump never turns a clean
+duplicate rejection into an error.
 """
 
 from __future__ import annotations

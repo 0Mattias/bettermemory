@@ -21,6 +21,7 @@ import copy
 import dataclasses
 import functools
 import logging
+import sqlite3
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, ParamSpec, TypeVar, cast
 
@@ -46,7 +47,17 @@ from .handlers._shared import (
 )
 from .origin import capture as capture_origin
 from .session import SessionSource
-from .store import DefaultStoreSource, Store, StoreSource
+from .store import (
+    STORE_FULL,
+    DefaultStoreSource,
+    MemoryNotFoundError,
+    NotFoundError,
+    NotTombstonedError,
+    Store,
+    StoreSource,
+    TombstonedError,
+    retryable_code,
+)
 
 log = logging.getLogger("bettermemory._handlers")
 
@@ -172,6 +183,91 @@ class RefusedError(ToolError, ValueError):
     """
 
 
+def _in_the_way(code: str) -> str:
+    """What a store code says stood in a call's way."""
+    if code == STORE_FULL:
+        return "the disk or the database is full, so the store could not take a write"
+    return (
+        "another process or worker held the store's write lock longer than "
+        "this call waits for it"
+    )
+
+
+class RetryableRefusal(RefusedError):
+    """A refusal the same call can succeed after: the store was in the way,
+    not the call (`store.retryable_code`), and the call had kept no write
+    (`_kept_or_retryable`). Another process or worker held the store's
+    write lock past this call's busy timeout (``store_busy``), or the disk
+    or the database is full (``store_full``). The text carries the code
+    followed by ``(retryable)``; on the wire the SDK puts ``Error executing
+    tool <name>: `` before it, so a client looks for the code in the text
+    rather than at its start. `code` and `retryable` carry the same for a
+    direct caller."""
+
+    retryable = True
+
+    def __init__(self, code: str, detail: str) -> None:
+        then = (
+            "Free disk space, then retry the call."
+            if code == STORE_FULL
+            else "Retry the call."
+        )
+        super().__init__(
+            f"{code} (retryable): {_in_the_way(code)} ({detail}). The write "
+            f"this call was making was not kept. {then}"
+        )
+        self.code = code
+
+
+class KeptWriteRefusal(RefusedError):
+    """A store that was busy, locked or full, met by a call after it had
+    already committed a write (`_kept_or_retryable`): a later step of the
+    call (a filing, a prune, a second record) could not run, and what the
+    call committed stays. Not retryable: the same call made again would
+    make its write again. The text carries the code followed by ``(not
+    retryable)``, found in the text as `RetryableRefusal`'s is."""
+
+    retryable = False
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(
+            f"{code} (not retryable): this call had committed its write to "
+            f"the store when a later step of it found that "
+            f"{_in_the_way(code)} ({detail}). What it committed stays. Do not "
+            f"retry the call, which would make the write again; read the "
+            f"store to see what it holds."
+        )
+        self.code = code
+
+
+def store_refusal(exc: BaseException) -> RetryableRefusal | None:
+    """The retryable refusal a store error is answered with at the tool
+    boundary, or None for an error that is not the store being busy,
+    locked or full (`store.retryable_code`). For an error met outside a
+    tool body (`ToolHandlers._run`), where no write was made."""
+    code = retryable_code(exc)
+    if code is None:
+        return None
+    return RetryableRefusal(code, str(exc))
+
+
+#: The store's answers that the record a call names is not there as the
+#: call needs it: removed, never written, or active where a removed one was
+#: meant. A call that read the record and lost a race to another writer
+#: (an update or a verify racing a removal) gets one from the store's own
+#: transaction; each is a refusal with its words, not a crash.
+_ABSENT = (MemoryNotFoundError, TombstonedError, NotTombstonedError, NotFoundError)
+
+
+def _absent_text(exc: KeyError) -> str:
+    """The words of one of `_ABSENT`: its message, not the quoted repr a
+    KeyError prints; a bare key (NotFoundError) is named as one."""
+    said = exc.args[0] if len(exc.args) == 1 else exc.args
+    if isinstance(exc, NotFoundError):
+        return f"no record {said} in the store"
+    return str(said)
+
+
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -183,13 +279,42 @@ _R = TypeVar("_R")
 Offload = Callable[[Callable[[Store], Coroutine[Any, Any, Any]]], Awaitable[Any]]
 
 
+async def _kept_or_retryable(
+    make: Callable[[ToolHandlers], Coroutine[Any, Any, _R]], deps: ToolHandlers
+) -> _R:
+    """Run the tool body `make` builds over `deps`, answering a store that
+    was busy, locked or full by what the body had kept. The body runs to
+    its end on `deps.store`'s connection with nothing else on it (a
+    worker's job, or inline, where the bodies await nothing that yields),
+    so the record commits that connection counts (`Store.commits`) moved
+    by this call's alone. Unmoved, nothing the call wrote was kept and the
+    same call can succeed (`RetryableRefusal`); moved, its write was kept
+    and a later step met the store (`KeptWriteRefusal`), which a retry
+    would turn into a second write."""
+    before = deps.store.commits
+    try:
+        return await make(deps)
+    except sqlite3.OperationalError as exc:
+        code = retryable_code(exc)
+        if code is None:
+            raise
+        if deps.store.commits == before:
+            raise RetryableRefusal(code, str(exc)) from exc
+        raise KeptWriteRefusal(code, str(exc)) from exc
+
+
 def _refusals_as_tool_errors(
     fn: Callable[_P, Awaitable[_R]],
 ) -> Callable[_P, Coroutine[Any, Any, _R]]:
     """Re-raise a tool method's ``ValueError`` as a ``RefusedError`` with
-    the same text. ``functools.wraps`` keeps the signature the SDK
-    introspects for the served schema, and ``str(exc)`` is the text the
-    SDK forwarded before 2.1, so the wire form does not change."""
+    the same text, and the store's answer that the record is not there as
+    the call needs it (`_ABSENT`) as one with its words, where the SDK
+    would otherwise send the client only ``Error executing tool <name>``.
+    A store that was busy, locked or full is answered inside the body's
+    run (`_kept_or_retryable`), by what the call kept; one met outside it
+    is a ``RetryableRefusal``. ``functools.wraps`` keeps the signature the
+    SDK introspects for the served schema, and ``str(exc)`` is the text
+    the SDK forwarded before 2.1, so the wire form does not change."""
 
     @functools.wraps(fn)
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -199,6 +324,13 @@ def _refusals_as_tool_errors(
             raise
         except ValueError as exc:
             raise RefusedError(str(exc)) from exc
+        except _ABSENT as exc:
+            raise RefusedError(_absent_text(exc)) from exc
+        except sqlite3.OperationalError as exc:
+            refusal = store_refusal(exc)
+            if refusal is None:
+                raise
+            raise refusal from exc
 
     return wrapper
 
@@ -283,10 +415,16 @@ class ToolHandlers:
         another session is answered meanwhile; inline, on the caller's
         loop, when the server has no pool or this bundle is a per-request
         clone bound to another store. An exception travels back as it
-        would from the inline call."""
+        would from the inline call; a store that was busy, locked or full
+        is answered by what the body kept (`_kept_or_retryable`)."""
         if self.offload is None:
-            return await make(self)
-        return cast(_R, await self.offload(lambda store: make(self.with_store(store))))
+            return await _kept_or_retryable(make, self)
+        return cast(
+            _R,
+            await self.offload(
+                lambda store: _kept_or_retryable(make, self.with_store(store))
+            ),
+        )
 
     # ---- delegations to per-tool modules --------------------------------
     #

@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -77,7 +78,12 @@ from .. import review as _review
 from .. import standing as _standing
 from .. import supersession as _supersession
 from ..session import SessionState
-from ..store import MemoryNotFoundError, StandingAnswer, TombstonedError
+from ..store import (
+    MemoryNotFoundError,
+    StandingAnswer,
+    TombstonedError,
+    error_code_name,
+)
 from ..supersession import SupersessionMatch, SupersessionReport
 from . import _guard
 from ._shared import (
@@ -817,16 +823,19 @@ def _corroborate_duplicate(
     """Record a recurrence on the memory a duplicate write matched.
 
     The counter measures INDEPENDENT re-entries of a claim, so the bump
-    is once per (memory, session) — `state.corroborated_ids` dedups
-    within the session, and only the TOP high-overlap match is credited
-    (a write that grazes three near-duplicates is one recurrence of one
-    claim, not three).
+    is once per (memory, session), and only the TOP high-overlap match is
+    credited (a write that grazes three near-duplicates is one recurrence
+    of one claim, not three). The store decides the once
+    (`Store.record_corroboration` with the session): its check and its
+    write are one transaction under the write lock, so two parallel
+    duplicate writes of one session, on two tool workers, corroborate
+    once, and the second answers `corroboration_recorded: false`.
 
     Best-effort by contract: the rejection response the model needs is
     already built, and a telemetry bump must never turn a clean
     "duplicate" answer into an error — store races (concurrent
-    tombstone) and size-cap refusals log at WARNING and drop. On
-    success the response gains `corroboration_recorded: true` +
+    tombstone), a busy store and size-cap refusals log at WARNING and
+    drop. On success the response gains `corroboration_recorded: true` +
     `corroborations` (the new total), so the model knows the recurrence
     was captured and doesn't force-write out of capture anxiety; the
     reject event gains `corroborated_id` for the audit trail.
@@ -837,15 +846,14 @@ def _corroborate_duplicate(
     top_id = matches[0].get("id")
     if not isinstance(top_id, str) or not top_id:
         return
-    if top_id in state.corroborated_ids:
-        result.response["corroboration_recorded"] = False
-        return
     try:
-        bumped = deps.store.record_corroboration(top_id)
+        bumped = deps.store.record_corroboration(top_id, session=state.session_id)
     except Exception as exc:  # noqa: BLE001 — telemetry must not break the reject
         log.warning("corroboration bump for %s failed: %s", top_id, exc)
         return
-    state.corroborated_ids.add(top_id)
+    if bumped is None:
+        result.response["corroboration_recorded"] = False
+        return
     result.response["corroboration_recorded"] = True
     result.response["corroborations"] = bumped.corroborations
     result.event_kwargs["corroborated_id"] = top_id
@@ -1915,9 +1923,10 @@ def _file_conflicts(
     deps: GateDeps, memory: Memory, matches: list[SupersessionMatch]
 ) -> list[tuple[str, SupersessionMatch]]:
     """Queue each cue-less disagreement for `memory_conflicts`.
-    Best-effort by contract: the memory is already on disk, and a
-    queue-file failure must not turn a committed write into an error —
-    it logs, and the response omits the pair."""
+    Best-effort by contract: the memory is already committed, and a filing
+    that fails, on the disk or in the store (busy, locked, full), never
+    turns a committed write into an error; it logs, and the response omits
+    the pair."""
     if not matches:
         return []
     queue = ConflictQueue(deps.store)
@@ -1937,11 +1946,12 @@ def _file_conflicts(
         )
         try:
             queue.file_pair(candidate)
-        except OSError as exc:
+        except (OSError, sqlite3.Error) as exc:
             log.warning(
-                "conflict filing for %s / %s failed: %s",
+                "conflict filing for %s / %s failed (%s: %s)",
                 memory.id,
                 match.memory_id,
+                error_code_name(exc),
                 exc,
             )
             continue
@@ -1996,8 +2006,14 @@ def _file_review_pairs(
                 deps.store.put_conflict(candidate.to_dict())
             else:
                 queue.file_pair(candidate)
-        except OSError as exc:
-            log.warning("review filing for %s / %s failed: %s", memory.id, target, exc)
+        except (OSError, sqlite3.Error) as exc:
+            log.warning(
+                "review filing for %s / %s failed (%s: %s)",
+                memory.id,
+                target,
+                error_code_name(exc),
+                exc,
+            )
             continue
         filed.append((candidate.id, target, detector))
     return filed

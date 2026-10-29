@@ -26,11 +26,14 @@ value.
 
 from __future__ import annotations
 
+import logging
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from .. import identity
 from ..credentials import find_credential_markers
 from ..events import HARNESS_SESSION_FIELD
+from ..store import error_code_name
 from ._shared import (
     Context,
     _advance_turn,
@@ -40,6 +43,8 @@ from ._shared import (
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+
+log = logging.getLogger("bettermemory.handlers.episode_write")
 
 
 #: The refusal's hint. It names the one remedy there is: the episode tool
@@ -235,12 +240,21 @@ async def episode_write(
             home=caller.home(),
         )
         caller.add_head_witness("episode")
-    # Prune old session dirs as a cheap side effect of the write path.
-    # Exempt the active session so a long-paused worktree's history
-    # survives across the pause. The prune walks one level (session
-    # dirs only) and stats one file per session — bounded by the
-    # number of sessions in the worktree's lifetime, which is small.
-    pruned = deps.store.prune_episode_sessions(keep_session_id=session_id)
+    # Prune the sessions past the TTL as a side effect of the write path,
+    # the active session exempt so a long-paused worktree's history
+    # survives the pause. Best-effort: the episode is committed, and a
+    # store that is busy or failing here leaves the old sessions for the
+    # next write to prune rather than turning a kept write into an error.
+    try:
+        pruned = deps.store.prune_episode_sessions(keep_session_id=session_id)
+    except sqlite3.Error as exc:
+        log.warning(
+            "episode %s: the prune after it did not run (%s: %s)",
+            episode.id,
+            error_code_name(exc),
+            exc,
+        )
+        pruned = []
 
     # The conversation this server session serves, when the request named
     # it: the handoff reads it to know that conversation journaled

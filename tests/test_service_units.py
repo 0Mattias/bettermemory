@@ -30,6 +30,7 @@ from bettermemory import _daemon_client, daemon, service_units as units
 from bettermemory._daemon_client import (
     DAEMON_HELD_STATUS,
     SHUTDOWN_TIMEOUT_SECONDS,
+    UNINTERRUPTED_STEP_SECONDS,
     health,
     lock_file_for,
     log_file_for,
@@ -167,12 +168,21 @@ def test_the_launchd_plist_round_trips(tmp_path: Path) -> None:
 
 
 def test_the_stop_bound_covers_the_daemons_own() -> None:
-    """The supervisor's kill comes after the daemon's own bounded stop:
-    the requests in flight, then the workers' join, and a margin for the
+    """The supervisor's kill comes after the part of a stop the daemon
+    bounds itself (the requests in flight, then the workers' join), the
+    longest step a worker can be in that the stop's interrupt does not
+    reach (a git call, longer than a busy wait), and a margin for the
     store's close and the interpreter's exit."""
+    from bettermemory import location, store
+
     own = daemon.GRACEFUL_SHUTDOWN_SECONDS + daemon.WORKERS_CLOSE_SECONDS
     assert SHUTDOWN_TIMEOUT_SECONDS == own
-    assert units.STOP_TIMEOUT_SECONDS >= own + 5
+    assert UNINTERRUPTED_STEP_SECONDS == max(
+        location._GIT_TIMEOUT_SECONDS,
+        store.HOOK_BUSY_TIMEOUT_SECONDS,
+        store.TOOL_BUSY_TIMEOUT_SECONDS,
+    )
+    assert units.STOP_TIMEOUT_SECONDS >= own + UNINTERRUPTED_STEP_SECONDS + 5
 
 
 def test_the_systemd_unit(tmp_path: Path) -> None:

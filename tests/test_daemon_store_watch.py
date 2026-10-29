@@ -1229,13 +1229,23 @@ def test_a_forced_exit_still_saves_the_removed_store(
 # ---------------------------------------------------------------------------
 
 
+#: A statement that runs until it is interrupted: what a job held inside
+#: SQLite runs (`_held_hook_under_a_forced_exit` with ``in_sqlite``).
+_ENDLESS = (
+    "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) "
+    "SELECT count(*) FROM c"
+)
+
+
 def _held_hook_under_a_forced_exit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, in_sqlite: bool = False
 ) -> dict[str, Any]:
     """A daemon on its thread with a prompt hook held on a hook worker,
-    then forced out as a second SIGINT forces uvicorn. It records the
-    worker stores, every store closed, and the stores closed by the time
-    `serve` gives the lock back."""
+    then forced out as a second SIGINT forces uvicorn. The hook is held in
+    Python until the test releases it, or, with `in_sqlite`, inside a
+    statement on the worker's connection that runs until it is
+    interrupted. It records the worker stores, every store closed, and
+    the stores closed by the time `serve` gives the lock back."""
     import uvicorn
 
     import bettermemory.recall
@@ -1255,15 +1265,18 @@ def _held_hook_under_a_forced_exit(
 
     def held(*args: Any, **kwargs: Any) -> Any:
         entered.set()
-        assert release.wait(60)
+        if in_sqlite:
+            kwargs["store"].conn.execute(_ENDLESS).fetchone()
+        else:
+            assert release.wait(60)
         return real_recall(*args, **kwargs)
 
     monkeypatch.setattr(bettermemory.recall, "prompt_recall", held)
     reopened: list[tuple[str, Store]] = []
     real_reopen = Store.reopen
 
-    def reopen(self: Store) -> Store:
-        other = real_reopen(self)
+    def reopen(self: Store, **kwargs: Any) -> Store:
+        other = real_reopen(self, **kwargs)
         reopened.append((threading.current_thread().name, other))
         return other
 
@@ -1381,37 +1394,115 @@ def test_a_forced_exit_closes_the_workers_connections_before_the_lock(
         held["thread"].join(30)
 
 
-def test_a_forced_exit_waits_for_the_workers_no_longer_than_their_bound(
+def test_a_forced_exit_interrupts_a_job_past_the_bound_and_closes_it_first(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The join is bounded: a worker job held past WORKERS_CLOSE_SECONDS
-    does not keep the daemon from giving the lock back. That job's
-    connection is the one residue; the worker closes it once the job
-    ends and it takes the stop sentinel. On Python 3.12 and later
-    `asyncio.Server.wait_closed` waits for the connections, so uvicorn's
-    own stop holds the held request's connection until
-    `timeout_graceful_shutdown` cancels its task, where 3.11's returned
-    at once: both bounds are lowered here and the exit is held under their
-    sum (about 0.7 s on 3.11 and 1.7 s on 3.13; 20.7 s with the graceful
-    bound at its 20 s, which CI measured on every 3.12 and later leg)."""
+    """A worker job still inside SQLite past WORKERS_CLOSE_SECONDS is
+    interrupted (`_finish_pools`): its statement fails at once, the job
+    ends, the worker closes its connection, and only then is the lock
+    given back, so the exit stays under its bounds with no connection
+    left open. On Python 3.12 and later `asyncio.Server.wait_closed` waits
+    for the connections, so uvicorn's own stop holds the held request's
+    connection until `timeout_graceful_shutdown` cancels its task, where
+    3.11's returned at once: both bounds are lowered here and the exit is
+    held under their sum (about 0.7 s on 3.11 and 1.7 s on 3.13; 20.7 s
+    with the graceful bound at its 20 s, which CI measured on every 3.12
+    and later leg)."""
     monkeypatch.setattr(_daemon, "GRACEFUL_SHUTDOWN_SECONDS", 1.0)
     monkeypatch.setattr(_daemon, "WORKERS_CLOSE_SECONDS", 0.5)
-    held = _held_hook_under_a_forced_exit(tmp_path, monkeypatch)
+    held = _held_hook_under_a_forced_exit(tmp_path, monkeypatch, in_sqlite=True)
     store = held["store"]
     try:
         held["thread"].join(30)
         assert not held["thread"].is_alive()
         assert held["out"]["code"] == 0
-        # The two lowered bounds and uvicorn's own stop, well under this.
+        # The two lowered bounds, uvicorn's own stop and the interrupt's
+        # cadence, well under this.
         assert time.monotonic() - held["forced"] < 10
-        assert _lock_is_free(tmp_path, store)
         worker = _hook_worker_store(held)
-        assert not _is_in(worker, held["at_release"]["closed"])
+        assert _is_in(worker, held["at_release"]["closed"])
+        assert _lock_is_free(tmp_path, store)
+    finally:
+        # A failed assertion leaves no worker held into the next test.
         held["release"].set()
-        deadline = time.monotonic() + 10
-        while not _is_in(worker, held["closed"]):
-            assert time.monotonic() < deadline, "the worker never closed its store"
-            time.sleep(0.05)
+        held["poster"].join(30)
+        held["thread"].join(30)
+
+
+def test_a_close_cut_short_still_waits_for_the_workers_before_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The workers' close fails (a Ctrl-C repeated during its wait cuts it
+    the same way): `serve` logs it, still stops the store watch, and waits
+    for the workers itself before it closes the store and gives the lock
+    back, so the lock is never given back with a worker's connection
+    open."""
+    monkeypatch.setattr(_daemon, "GRACEFUL_SHUTDOWN_SECONDS", 1.0)
+    monkeypatch.setattr(_daemon, "WORKERS_CLOSE_SECONDS", 0.5)
+
+    def cut_short(pools: Any) -> None:
+        raise RuntimeError("the close was cut short")
+
+    monkeypatch.setattr(_daemon, "_close_pools", cut_short)
+    stopped: list[bool] = []
+    real_stop = _daemon._StoreWatch.stop
+
+    def stop(self: Any, timeout: float = 1.0) -> None:
+        stopped.append(True)
+        real_stop(self, timeout)
+
+    monkeypatch.setattr(_daemon._StoreWatch, "stop", stop)
+    caplog.set_level(logging.ERROR, logger="bettermemory.daemon")
+    held = _held_hook_under_a_forced_exit(tmp_path, monkeypatch)
+    store = held["store"]
+    try:
+        time.sleep(max(0.0, held["forced"] + 4.0 - time.monotonic()))
+        assert held["thread"].is_alive()
+        assert try_lock(lock_file_for(tmp_path / "state", store.path)) is None
+        worker = _hook_worker_store(held)
+        assert not _is_in(worker, held["closed"])
+        held["release"].set()
+        held["thread"].join(30)
+        assert not held["thread"].is_alive()
+        assert held["out"]["code"] == 0
+        assert stopped
+        assert any(
+            "closing the daemon's workers was cut short" in r.message
+            for r in caplog.records
+        )
+        assert _is_in(worker, held["at_release"]["closed"])
+        assert _lock_is_free(tmp_path, store)
+    finally:
+        # A failed assertion leaves no worker held into the next test.
+        held["release"].set()
+        held["poster"].join(30)
+        held["thread"].join(30)
+
+
+def test_a_forced_exit_keeps_the_lock_while_a_job_outside_sqlite_runs_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job held outside SQLite, which no interrupt reaches, keeps the
+    daemon from giving the lock back past WORKERS_CLOSE_SECONDS: the lock
+    is never given back while a worker's connection is open. Once the job
+    ends, its worker closes the connection and the lock is given back."""
+    monkeypatch.setattr(_daemon, "GRACEFUL_SHUTDOWN_SECONDS", 1.0)
+    monkeypatch.setattr(_daemon, "WORKERS_CLOSE_SECONDS", 0.5)
+    held = _held_hook_under_a_forced_exit(tmp_path, monkeypatch)
+    store = held["store"]
+    try:
+        # Past both lowered bounds and uvicorn's own stop, with room.
+        time.sleep(max(0.0, held["forced"] + 4.0 - time.monotonic()))
+        assert held["thread"].is_alive()
+        assert try_lock(lock_file_for(tmp_path / "state", store.path)) is None
+        worker = _hook_worker_store(held)
+        assert not _is_in(worker, held["closed"])
+        held["release"].set()
+        held["thread"].join(30)
+        assert not held["thread"].is_alive()
+        assert held["out"]["code"] == 0
+        assert _is_in(worker, held["at_release"]["closed"])
+        assert _lock_is_free(tmp_path, store)
     finally:
         # A failed assertion leaves no worker held into the next test.
         held["release"].set()

@@ -17,6 +17,7 @@ from ..builder import build_server
 from ..config import Config, load_config
 from ..store import (
     STORE_FILENAME,
+    TOOL_BUSY_TIMEOUT_SECONDS,
     Store,
     UnmigratedV8DirectoryError,
     refuse_unmigrated_v8,
@@ -96,6 +97,9 @@ def run_serve(opened: Opened | None = None) -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     config, directory, store = opened if opened is not None else open_for_serve()
+    # The tool bodies run on this connection, as on the daemon's tool
+    # workers: the tool role's busy timeout.
+    store.set_busy_timeout(TOOL_BUSY_TIMEOUT_SECONDS)
     # The migration's run at open (design 8.6), logged rather than printed
     # apart: this process's stderr is the server's log.
     report = run_migration_at_open(store, config, level=logging.WARNING)

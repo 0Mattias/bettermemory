@@ -73,7 +73,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import AsyncIterator, Coroutine
+from collections.abc import AsyncIterator, Coroutine, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -107,7 +107,15 @@ from ._fsutil import (
 )
 from .builder import build_server
 from .config import Config
-from .store import CREATED_AFTER_ORPHANS, Store, orphan_names, orphan_order
+from .store import (
+    CREATED_AFTER_ORPHANS,
+    HOOK_BUSY_TIMEOUT_SECONDS,
+    TOOL_BUSY_TIMEOUT_SECONDS,
+    Store,
+    note_residue,
+    orphan_names,
+    orphan_order,
+)
 from .time_utils import parse_event_ts
 
 log = logging.getLogger("bettermemory.daemon")
@@ -398,8 +406,28 @@ TOOL_WORKERS = 4
 #: tests/test_daemon_lifecycle.py pins both relations.
 GRACEFUL_SHUTDOWN_SECONDS = 20
 #: How long the daemon's stop waits for the workers' current jobs, both
-#: pools under the one deadline (`_Workers.join`).
+#: pools under the one deadline (`_Workers.join`), before it interrupts the
+#: jobs still running (`_finish_pools`). The interrupt ends a statement
+#: inside SQLite; it does not reach a job waiting for another writer's lock
+#: (that wait ends at the pool's busy timeout) or one outside SQLite (a git
+#: call ends at `location._GIT_TIMEOUT_SECONDS`), and the stop waits for
+#: those however long they take, since the store's lock is never given back
+#: while a worker's connection is open. A stop's own length is therefore
+#: `GRACEFUL_SHUTDOWN_SECONDS` plus this plus the step a job is in that the
+#: interrupt does not reach (`_daemon_client.UNINTERRUPTED_STEP_SECONDS`)
+#: and what the job runs after it; the supervisor's kill
+#: (`service_units.STOP_TIMEOUT_SECONDS`) is the hard bound, after which
+#: the process, its connections and its lock are gone and the next start
+#: takes the store over.
 WORKERS_CLOSE_SECONDS = 10.0
+#: How often `_finish_pools` interrupts the jobs still running once
+#: `WORKERS_CLOSE_SECONDS` has passed, in seconds. SQLite's interrupt ends
+#: only a statement running when it lands, so it is repeated until the
+#: worker ends. Measured in a controlled run on this tree (scratch probe,
+#: SQLite 3.50.4): at a 0.05 s cadence, a statement begun after one
+#: interrupt ran 0.023 s before the next ended it; the cadence bounds that
+#: wait, and an interrupt is one call that returns at once.
+INTERRUPT_EVERY_SECONDS = 0.05
 
 
 async def _awaited(value: Awaitable[_T]) -> _T:
@@ -413,11 +441,16 @@ class _Workers:
     SQLite refuses a connection on any thread but the one that opened
     it, and a pool that retires idle threads (anyio's, after ten seconds)
     would reopen the store on most hooks. These threads live as long as
-    the app: each opens its connection (`Store.reopen`) on its first job,
-    keeps it, and closes it itself when `stop` asks every worker to
-    stop. The connections share the file, its WAL and its key; every
-    write is its own ``BEGIN IMMEDIATE`` transaction, the discipline a
-    CLI process writing beside the daemon already relies on.
+    the app: each opens its connection (`Store.reopen`, at the pool's busy
+    timeout) on its first job, keeps it, and closes it itself when `stop`
+    asks every worker to stop. The connections share the file, its WAL
+    and its key; every write is its own ``BEGIN IMMEDIATE`` transaction,
+    the discipline a CLI process writing beside the daemon already relies
+    on. A connection found inside a transaction at the start of a job,
+    which no call can own then (a rollback that failed), is closed, which
+    rolls the transaction back and gives up its lock, and a fresh one
+    opened (`_connection`), before the job's first read rather than at its
+    first write (`Store._transaction`).
 
     A job runs in a copy of its caller's context (`contextvars`): what
     the request's task bound on the loop, the identity middleware's
@@ -427,15 +460,23 @@ class _Workers:
     the tools, handler coroutines (`run_coroutine`): the bodies await
     nothing real, so a worker runs one to completion on a private event
     loop of its own. One pool per kind, so a hook never queues behind a
-    tool and a tool never behind a hook; the daemon's lifespan stops
-    both and joins both under one deadline (`WORKERS_CLOSE_SECONDS`)."""
+    tool and a tool never behind a hook; the daemon's stop stops both,
+    joins both under one deadline (`WORKERS_CLOSE_SECONDS`), then
+    interrupts what still runs in either and waits for every worker to end
+    (`_close_pools`), so no worker's connection is open once it returns."""
 
     def __init__(
-        self, store: Store, *, count: int = HOOK_WORKERS, name: str = "hook"
+        self,
+        store: Store,
+        *,
+        count: int = HOOK_WORKERS,
+        name: str = "hook",
+        busy_timeout: float = HOOK_BUSY_TIMEOUT_SECONDS,
     ) -> None:
         self._store = store
         self._count = count
         self._name = name
+        self._busy_timeout = busy_timeout
         self._jobs: queue.Queue[
             tuple[
                 Callable[[Store], Any],
@@ -447,9 +488,32 @@ class _Workers:
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
         self._closed = False
+        # The connection of each worker while its job runs, by thread:
+        # what `finish` interrupts. Set and cleared under `_lock`, so an
+        # interrupt never reaches a connection whose job has ended.
+        self._running: dict[threading.Thread, Store] = {}
+
+    def _connection(self, held: Store | None) -> Store:
+        """The connection the worker's next job runs on: the one it holds,
+        unless that one is inside a transaction. Between jobs no call owns
+        one, so it is a residue (a rollback that failed) that holds the
+        write lock against every other writer; the connection is closed,
+        which rolls it back, and a fresh one opened. The first residue in
+        the process is logged (`store.note_residue`)."""
+        if held is not None and (held.in_batch or held.conn.in_transaction):
+            note_residue(
+                f"a {self._name} worker's connection to {held.path}",
+                "it was closed and a new one opened",
+            )
+            held.close()
+            held = None
+        if held is None:
+            return self._store.reopen(busy_timeout=self._busy_timeout)
+        return held
 
     def _loop(self) -> None:
         held: Store | None = None
+        me = threading.current_thread()
         # The worker's own loop, made before any body runs, so a coroutine
         # a body returns is never left un-awaited for want of one.
         loop = asyncio.new_event_loop()
@@ -462,13 +526,19 @@ class _Workers:
                 if not future.set_running_or_notify_cancel():
                     continue
                 try:
-                    if held is None:
-                        held = self._store.reopen()
-                    value = context.run(body, held)
-                    if inspect.isawaitable(value):
-                        value = loop.run_until_complete(
-                            loop.create_task(_awaited(value), context=context)
-                        )
+                    current, held = held, None
+                    held = self._connection(current)
+                    with self._lock:
+                        self._running[me] = held
+                    try:
+                        value = context.run(body, held)
+                        if inspect.isawaitable(value):
+                            value = loop.run_until_complete(
+                                loop.create_task(_awaited(value), context=context)
+                            )
+                    finally:
+                        with self._lock:
+                            self._running.pop(me, None)
                     future.set_result(value)
                 except BaseException as exc:  # noqa: BLE001 - handed to the caller
                     future.set_exception(exc)
@@ -509,8 +579,11 @@ class _Workers:
 
     def stop(self) -> None:
         """Ask every worker to stop after the job it is running; each
-        closes its own connection on the way out."""
+        closes its own connection on the way out. Asking again does
+        nothing more."""
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
             threads = list(self._threads)
         for _ in threads:
@@ -525,12 +598,94 @@ class _Workers:
         for thread in threads:
             thread.join(max(0.0, deadline - time.monotonic()))
 
+    def finish(self) -> None:
+        """`_finish_pools` for this pool alone."""
+        _finish_pools((self,))
+
+    def _living(self) -> list[threading.Thread]:
+        """This pool's workers that have not ended."""
+        with self._lock:
+            return [thread for thread in self._threads if thread.is_alive()]
+
+    def _interrupt(self, thread: threading.Thread) -> None:
+        """Interrupt `thread`'s connection while its job runs, under the
+        lock its job's end takes, so the connection is still open."""
+        with self._lock:
+            running = self._running.get(thread)
+            if running is not None:
+                with contextlib.suppress(sqlite3.ProgrammingError):
+                    running.conn.interrupt()
+
     def close(self, timeout: float = WORKERS_CLOSE_SECONDS) -> None:
-        """`stop`, then `join` within `timeout`: one pool on its own. The
-        daemon's lifespan stops its two pools and joins both under one
-        deadline instead, so a stop takes `WORKERS_CLOSE_SECONDS` once."""
+        """`stop`, `join` within `timeout`, then `finish`: one pool on its
+        own. The daemon's stop does the same for its two pools under one
+        deadline (`_close_pools`), so a stop waits `WORKERS_CLOSE_SECONDS`
+        once."""
         self.stop()
         self.join(time.monotonic() + timeout)
+        self.finish()
+
+
+def _finish_pools(pools: Sequence[_Workers]) -> None:
+    """Wait for every stopped worker of `pools` to end, however long it
+    takes: when this returns, every worker has closed its connection,
+    which the daemon needs before it gives the store's lock back. Each
+    round interrupts every living worker of every pool from this thread
+    (`sqlite3.Connection.interrupt`, made to be called from another), so a
+    worker waiting for a lock another worker's statement holds is freed by
+    that statement's end in the same round, then waits
+    `INTERRUPT_EVERY_SECONDS` for them to end. A statement running when an
+    interrupt lands fails at once and its job's transaction rolls back. A
+    statement waiting for another writer's lock first runs out the pool's
+    busy timeout, and work outside SQLite (a git call, under its own
+    timeout) is not interrupted (`WORKERS_CLOSE_SECONDS`)."""
+    told = False
+    while True:
+        living = [(pool, thread) for pool in pools for thread in pool._living()]
+        if not living:
+            return
+        if not told:
+            told = True
+            log.warning(
+                "%d of the daemon's workers still run a job after the stop's "
+                "%.0f s; interrupting them",
+                len(living),
+                WORKERS_CLOSE_SECONDS,
+            )
+        for pool, thread in living:
+            pool._interrupt(thread)
+        living[0][1].join(INTERRUPT_EVERY_SECONDS)
+
+
+def _close_pools(pools: Sequence[_Workers]) -> None:
+    """Stop the daemon's worker pools and wait until every worker has
+    closed its connection: all joined under one deadline
+    (`WORKERS_CLOSE_SECONDS`), then whatever still runs in any of them
+    interrupted and waited for (`_finish_pools`). Calling it again once
+    the pools are closed returns at once."""
+    for pool in pools:
+        pool.stop()
+    deadline = time.monotonic() + WORKERS_CLOSE_SECONDS
+    for pool in pools:
+        pool.join(deadline)
+    _finish_pools(pools)
+
+
+def _wait_for_workers(finish: Callable[[], None]) -> None:
+    """Call `finish` (the app's `_finish_pools` over its pools) until it
+    returns. A KeyboardInterrupt during its wait (a Ctrl-C repeated while
+    the stop waits) is logged and the wait goes on: the store's lock is
+    given back only once no worker's connection is open, and the
+    supervisor's kill is what ends a daemon that will not wait."""
+    while True:
+        try:
+            finish()
+            return
+        except KeyboardInterrupt:
+            log.warning(
+                "interrupted while the daemon's workers end; the store's lock "
+                "is kept until they have"
+            )
 
 
 def _failed(surface: str, exc: Exception) -> Response:
@@ -576,8 +731,10 @@ def build_app(
     served_version = version if version is not None else _version()
     # Two pools over the daemon's store: the hook bodies' and the tool
     # bodies' (design: a tool body waiting on git holds no hook up).
-    workers = _Workers(store)
-    tool_workers = _Workers(store, count=TOOL_WORKERS, name="tool")
+    workers = _Workers(store, busy_timeout=HOOK_BUSY_TIMEOUT_SECONDS)
+    tool_workers = _Workers(
+        store, count=TOOL_WORKERS, name="tool", busy_timeout=TOOL_BUSY_TIMEOUT_SECONDS
+    )
     mcp = build_server(config=config, store=store, offload=tool_workers.run_coroutine)
     recall_state = _recall.RecallState()
 
@@ -790,22 +947,37 @@ def build_app(
     app.add_middleware(LocalHostMiddleware, port=port)
     served_lifespan = app.router.lifespan_context
 
+    def close_workers() -> None:
+        # Both pools stopped, then joined under one deadline: the client's
+        # wait, `_daemon_client.SHUTDOWN_TIMEOUT_SECONDS`, is the graceful
+        # bound plus WORKERS_CLOSE_SECONDS once. Then what still runs is
+        # interrupted and waited for: no worker's connection is open when
+        # this returns.
+        _close_pools((workers, tool_workers))
+
+    def finish_workers() -> None:
+        # The wait alone, for a close something cut short: the pools are
+        # stopped again (a no-op when the close got that far), so the
+        # workers end once their jobs do.
+        for pool in (workers, tool_workers):
+            pool.stop()
+        _finish_pools((workers, tool_workers))
+
     @asynccontextmanager
     async def lifespan(served: Any) -> AsyncIterator[Any]:
         try:
             async with served_lifespan(served) as state:
                 yield state
         finally:
-            # Both pools stopped, then joined under one deadline: the
-            # client's wait, `_daemon_client.SHUTDOWN_TIMEOUT_SECONDS`, is
-            # the graceful bound plus WORKERS_CLOSE_SECONDS once.
-            for pool in (workers, tool_workers):
-                pool.stop()
-            deadline = time.monotonic() + WORKERS_CLOSE_SECONDS
-            for pool in (workers, tool_workers):
-                pool.join(deadline)
+            close_workers()
 
     app.router.lifespan_context = lifespan
+    # `serve` closes the pools again on its way out, before it closes the
+    # store and gives the lock back: a loop closed without cancelling the
+    # app's tasks never ran the lifespan's close. `finish_workers` is the
+    # wait alone, for a close something cut short.
+    app.state.close_workers = close_workers
+    app.state.finish_workers = finish_workers
     return app
 
 
@@ -1183,17 +1355,20 @@ def serve(
     daemon's own handler asks the server to exit). A forced exit (a
     second SIGINT) skips the app's shutdown event, but the loop's close
     cancels the lifespan task and the app's contexts unwind on that
-    cancellation, so the hook workers are joined (`WORKERS_CLOSE_SECONDS`)
-    and the store is closed before the lock is given back; the one
-    residue is a worker job that outlives the join, whose connection
-    closes with the process microseconds after the lock frees, which the
-    WAL store tolerates. On Python 3.12 and later uvicorn's own stop first
-    waits for the requests in flight under the same graceful bound, since
-    `asyncio.Server.wait_closed` waits for their connections there, where
-    3.11's returned at once. Skipping the lock release on a forced exit was
-    considered and declined (2026-10-26): a branch in the exit path for a
-    window with no defect behind it. A stop gives the requests in flight
-    `GRACEFUL_SHUTDOWN_SECONDS`. Returns the exit status.
+    cancellation, so the workers are closed there as on any stop: joined
+    under `WORKERS_CLOSE_SECONDS`, then a job still running interrupted
+    and waited for (`_finish_pools`). The lock is never given back while
+    a worker's connection is open: the workers are closed again (a no-op
+    once done) before the store is, for a loop that closed without
+    cancelling the app's tasks, and a close something cut short (a Ctrl-C
+    repeated during its wait) is finished then (`_wait_for_workers`). A
+    stop therefore lasts past its own bounds while a job is in a step the
+    interrupt does not reach (`WORKERS_CLOSE_SECONDS`); the supervisor's
+    kill is the hard bound. On Python 3.12 and later uvicorn's own
+    stop first waits for the requests in flight under the same graceful
+    bound, since `asyncio.Server.wait_closed` waits for their connections
+    there, where 3.11's returned at once. A stop gives the requests in
+    flight `GRACEFUL_SHUTDOWN_SECONDS`. Returns the exit status.
 
     One daemon per store: before anything else it takes the store's lock
     (`_daemon_client.lock_file_for`, beside the state file) and holds it
@@ -1414,6 +1589,17 @@ def _serve_locked(
     try:
         server.run(sockets=[sock])
     finally:
+        # Every worker's connection closed before anything below: the
+        # lifespan's close has done it when the app shut down or its task
+        # was cancelled, and returns at once here; a loop closed without
+        # cancelling the app's tasks never ran it. A close cut short (a
+        # Ctrl-C repeated during its wait) is logged, the watch and the
+        # settle below still run, and the wait is finished before the
+        # store is closed and the lock given back.
+        try:
+            app.state.close_workers()
+        except BaseException:
+            log.exception("closing the daemon's workers was cut short")
         try:
             watch.stop()
             if not holder.get("settled"):
@@ -1427,9 +1613,11 @@ def _serve_locked(
         finally:
             try:
                 # `down` waits for the store's lock, which `serve` gives
-                # back once this returns: the store is closed here first,
-                # so a free lock means no handle of this daemon is open
-                # on the store's files (`_daemon_client._stopped`).
+                # back once this returns: every worker has ended and the
+                # store is closed here first, so a free lock means no
+                # handle of this daemon is open on the store's files
+                # (`_daemon_client._stopped`).
+                _wait_for_workers(app.state.finish_workers)
                 store.close()
             except Exception:
                 log.exception("closing the store %s failed", store.path)
