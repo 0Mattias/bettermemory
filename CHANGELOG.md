@@ -341,8 +341,8 @@ the candidates' testing.
   `<`, each 2.0x at twice the length. memory_write's served description
   names the gate ("each names its fix" replaces "each names its
   acknowledge flag", within the 8,000-character surface budget), as do
-  the system-prompt addendum and the README. `memory_update` does not
-  run the check yet. (`src/bettermemory/handlers/write_gates.py`,
+  the system-prompt addendum and the README.
+  (`src/bettermemory/handlers/write_gates.py`,
   `src/bettermemory/handlers/episode_write.py`,
   `src/bettermemory/handlers/write.py`, `src/bettermemory/prompts.py`,
   `SECURITY.md`, `README.md`, `docs/api.md`, `docs/internals.md`,
@@ -363,6 +363,28 @@ the candidates' testing.
   over every string the test suite holds: the same body takes 0.05 s in
   each, 1.9x to 2.0x at twice the length.
   (`src/bettermemory/credentials.py`)
+- **memory_update refuses an edited body carrying a chat-template
+  control token.** The control-token refusal above ran on `memory_write`
+  and the episode write only, so a writer could store a token by writing
+  a clean body and editing the token in, while `memory_update`'s
+  description says the write gates apply. It now runs the same check on
+  an edited body, right after its credential check:
+  `control_token_warning` in `memory_write`'s shape, with a hint of its
+  own and no acknowledge flag, and an event that records the template
+  families. A metadata-only edit does not read the body, so a record
+  stored with a token before this candidate can still be re-scoped, and
+  the edit that writes the token's bare name commits. The detector moves
+  out of `handlers/write_gates.py` into `control_tokens.py`, which
+  imports nothing from the package, so the episode write no longer
+  imports the write-gate chain to reach it. The refusal reads a body and
+  an episode's takeaway: other model-supplied text, such as `said` and
+  `memory_remove`'s `reason`, is not read, and
+  `bettermemory security scan` does not look for tokens in records
+  stored before this candidate. (`src/bettermemory/control_tokens.py`,
+  `src/bettermemory/handlers/update.py`,
+  `src/bettermemory/handlers/write_gates.py`,
+  `src/bettermemory/handlers/episode_write.py`, `SECURITY.md`,
+  `docs/api.md`, `docs/internals.md`)
 
 #### Known limitations
 

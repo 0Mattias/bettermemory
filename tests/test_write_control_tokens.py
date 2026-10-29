@@ -2,7 +2,7 @@
 
 A body that carries a model's chat-template control token (the ChatML
 `<|im_start|>` family, `<|endoftext|>`, Llama's `[INST]` and `<<SYS>>`,
-the legacy `\\n\\nHuman:` turn marker and the rest `write_gates` lists)
+the legacy `\\n\\nHuman:` turn marker and the rest `control_tokens` lists)
 is refused with `control_token_warning` and no flag passes it: a stored
 body is read back into later sessions' context, where the token can
 forge a turn boundary.
@@ -16,6 +16,8 @@ forge a turn boundary.
   flag that passes it.
 - `episode(action="write")` refuses it in the body and in the takeaway,
   after the credential gate and after the size caps.
+
+memory_update's refusal is pinned in tests/test_update_control_tokens.py.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from bettermemory import events
 from bettermemory.builder import build_server
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
-from bettermemory.handlers.write_gates import (
+from bettermemory.control_tokens import (
     _CONTROL_TOKENS,
     ControlTokenHit,
     find_control_tokens,

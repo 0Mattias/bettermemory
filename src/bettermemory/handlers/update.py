@@ -21,6 +21,10 @@ Description-edit history:
   string, so the bullet was teaching a rule the description had
   already taught. Measured: 25,869 -> 25,890 of the 26,000 lean
   ceiling, still under the 25,900 pressure line.
+- Control-token gate (ENG-105): no edit. "The write gates apply." holds
+  again once this surface refuses a chat-template control token as
+  memory_write does, and the served surface has 2 of its 8,000
+  characters left after memory_write's description named the gate.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from .. import policy as _policy
 from .. import review as _review
 from .. import standing as _standing
 from .._response import isoformat
+from ..control_tokens import find_control_tokens
 from ..credentials import find_credential_markers
 from ..durability import find_transient_markers
 from ..models import (
@@ -66,6 +71,22 @@ _STANDING_HINT = (
     "Not updated. Re-send this same call, with the same arguments and "
     "acknowledge flags, adding standing=<0 to 1>: the probability that the "
     "statement holds of the new content."
+)
+
+#: The control-token refusal's hint. No flag passes the refusal, so the
+#: hint names the remedies and no flag, as memory_write's does: the bare
+#: name for a delimited token, and for a turn marker, which has no
+#: delimiters to drop, a quoted line.
+_CONTROL_TOKEN_HINT = (
+    "Not updated: the edited body carries a chat-template control token, "
+    "named in `markers` by its template family and its bare name. A "
+    "stored body is read back into later sessions' context, where the "
+    "token can forge a turn boundary, so no flag passes this refusal. "
+    "Write the token's bare name without its delimiters (`im_start`, "
+    "`INST`) or describe the format in words. A marker of kind "
+    "`anthropic` is `Human:` or `Assistant:` opening the body or a line "
+    "after a blank line: quote the line (`> Human: ...`) or name the "
+    "speaker another way. Then send the update again."
 )
 
 DESC_MEMORY_UPDATE = (
@@ -349,14 +370,38 @@ async def memory_update(
             if credential_hits and acknowledge_credential
             else []
         )
-        # Transient-marker gate — the last of memory_write's body gates
-        # without an update mirror: a body the write path hard-refuses as
-        # transient state ("currently", "as of <date>") could be committed
-        # by EDITING an existing record. Sits after the credential gate for
-        # the reason the user-claim gate does — a secret is refused before
-        # any other gate records body-derived data (here, marker phrases)
-        # in the event log. Same markers, same escape, same hint as the
-        # write side, so the two surfaces refuse and release identically.
+        # Control-token gate — mirror `ControlTokenGate`
+        # (handlers/write_gates.py) so a chat-template control token can't
+        # reach the store by EDITING a memory rather than creating one
+        # (ENG-105). Like the gate it mirrors it takes no flag: none of the
+        # acknowledge_* parameters passes it, since a writer steered into
+        # writing the token would pass a flag as readily. After the
+        # credential gate, so a body carrying both hears about the secret
+        # first and an acknowledged secret carries no token past here; before
+        # every gate that records body-derived data in the event log. Its own
+        # event names the template families only.
+        token_hits = find_control_tokens(new_body)
+        if token_hits:
+            deps.recorder.record(
+                "update",
+                id=id,
+                status="control_token_warning",
+                control_token_kinds=list(dict.fromkeys(h.kind for h in token_hits)),
+            )
+            return {
+                "status": "control_token_warning",
+                "markers": [h.to_dict() for h in token_hits],
+                "hint": _CONTROL_TOKEN_HINT,
+            }
+        # Transient-marker gate — mirror `TransientGate`: a body the write
+        # path hard-refuses as transient state ("currently", "as of
+        # <date>") could otherwise be committed by EDITING an existing
+        # record. Sits after the credential and control-token gates for the
+        # reason the user-claim gate does — a secret or a control token is
+        # refused before any other gate records body-derived data (here,
+        # marker phrases) in the event log. Same markers, same escape, same
+        # hint as the write side, so the two surfaces refuse and release
+        # identically.
         transient_hits = find_transient_markers(new_body)
         if transient_hits and not acknowledge_transient:
             deps.recorder.record(

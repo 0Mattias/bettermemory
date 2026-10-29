@@ -869,17 +869,18 @@ on the wire. `_decorators.py` and `time_utils.py` are cross-cutting.
 call that passes an escape hatch `[policy]` forbids, then checks
 declared claims against the worktree (`claims.py`) and any declared
 `supersedes` list. It then runs the gate chain, the gates of
-`handlers/write_gates.py`: `credentials.py`
-(secret-shaped strings; its `secret_spans` is what the log's query
-redaction shares), the control-token check (a model's chat-template
-delimiters, which the episode write runs too), the capture gates on a
-capture write (the rules in `durability.py`, and a body an undo reverted
-before), `durability.py` (structural durability), the user-claim check,
-`scope_match.py` (scope mismatch against the caller's repo), and
-duplicate and tombstone dedup. `review.py` then puts the write review's
-questions to the caller. `supersession.py` decides whether the write
-replaces a stored statement; the review runs it to build its related set,
-and the commit runs it when the review did not. A cue-less divergence is
+`handlers/write_gates.py`: `credentials.py` (secret-shaped strings; its
+`secret_spans` is what the log's query redaction shares), the
+control-token check (`control_tokens.py`: a model's chat-template
+delimiters, which `memory_update` and the episode write run too), the
+capture gates on a capture write (the rules in `durability.py`, and a
+body an undo reverted before), `durability.py` (structural durability),
+the user-claim check, `scope_match.py` (scope mismatch against the
+caller's repo), and duplicate and tombstone dedup. `review.py` then
+puts the write review's questions to the caller. `supersession.py`
+decides whether the write replaces a stored statement; the review runs
+it to build its related set, and the commit runs it when the review did
+not. A cue-less divergence is
 filed in the conflicts queue (`conflicts.py`). A write that passes lands
 in `store.py` as one signed log row and one table row in one
 transaction, with `log.py` signing the row and keeping the chain.

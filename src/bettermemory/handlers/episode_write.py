@@ -25,10 +25,11 @@ value.
 
 The control-token gate applies too, after the credential gate, as on
 memory_write: a body or takeaway carrying a chat-template control token
-(`write_gates.find_control_tokens`, the detector `ControlTokenGate` runs)
-is refused in memory_write's `control_token_warning` shape, since the
-handoff reads the episode into the next session's context, where the
-token can forge a turn boundary. No flag passes it on either tool.
+(`control_tokens.find_control_tokens`, the detector `ControlTokenGate`
+and memory_update run) is refused in memory_write's
+`control_token_warning` shape, since the handoff reads the episode into
+the next session's context, where the token can forge a turn boundary.
+No flag passes it on any of the three tools.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from .. import identity
+from ..control_tokens import find_control_tokens
 from ..credentials import find_credential_markers
 from ..events import HARNESS_SESSION_FIELD
 from ..store import error_code_name
@@ -47,7 +49,6 @@ from ._shared import (
     _validate_content_size,
     _validate_scope_count,
 )
-from .write_gates import find_control_tokens
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
