@@ -1031,7 +1031,11 @@ nothing. The reply is the payload's `last_assistant_message`, else the
 turn's newest assistant text after its prompt, else none; the row
 carries `prompt_id`, `rule` and `reply_source` (`payload`, `tail`, or
 `interrupted` for a turn the owner interrupted, which the next Stop
-audits from the previous audit's row on).
+audits from the previous audit's row on), and since 9.0.0rc14
+`settled_count`, the memories the turn's audit settled as used (its
+retrievals and the shown pointers its reply used; zero for an
+interrupted turn, whose pointers stay pending). The Stop records the row
+after those settlements and before the interrupted turns' walk.
 `recall.py` is the recall surface, the session brief and the prompt
 recall, and re-exports its family: the per-session state and cooldown
 (`recall_state.py`), the caller's admission (`recall_admission.py`),

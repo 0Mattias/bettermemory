@@ -2044,6 +2044,23 @@ follows the candidates' testing.
   `src/bettermemory/health_model.py`, `tests/test_override_rate.py`,
   and `tests/test_health_render.py`, whose fire row now carries the
   status every fire has carried since the gate was written)
+- **`turn_audited` carries `settled_count` (ENG-108).** The issue asks
+  for the settled-count field "decision 2 asked for"; no decision 2 is
+  recorded on this branch, so the field is named from the issue's
+  wording. It counts the memories the turn's audit settled as used: the
+  Stop's retrieval settlement, attributed and auto, plus the shown
+  pointers its reply used, one `use` row each. A turn that settled
+  nothing (no owner prompt, no reply, nothing pending, a repeat Stop)
+  counts zero, and so does an interrupted turn's row, whose pointers stay
+  pending. The Stop now records its `turn_audited` and `search_miss`
+  rows after its settlements, so the count is theirs, and still before
+  the unanswered-review count and the interrupted turns' walk, which
+  stays last; nothing between the two read the row. A reader joins a
+  turn to its settlements without walking the `use` rows.
+  (`src/bettermemory/audit.py`, `src/bettermemory/hook.py`,
+  `src/bettermemory/recall_settle.py`, `docs/internals.md`,
+  `tests/test_settled_count.py`, and `tests/test_hook.py`, whose
+  `turn_audited` key set gains the field)
 
 #### Known limitations
 

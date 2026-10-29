@@ -449,6 +449,8 @@ def settle_interrupted(
                 prompt_id=turn.prompt_id,
                 reply_source="interrupted",
                 rule=RULE,
+                # Its pointers stay pending for the segment's later Stops.
+                settled_count=0,
             ),
         )
         settled.append(turn.prompt_id)

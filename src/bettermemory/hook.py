@@ -370,8 +370,10 @@ def run_audit(
     under-attribute real work. Inspection gets a dry run instead.
 
     After the real retrievals are settled, the recall surface's shown
-    pointers are (`recall.settle_shown`), and the reviews the session
-    left open since its previous turn are counted
+    pointers are (`recall.settle_shown`); then the turn's `turn_audited`
+    row is recorded, carrying how many memories the two settled
+    (`settled_count`), and its `search_miss`; then the reviews the
+    session left open since its previous turn are counted
     (`recall.review_unanswered`); last, the session's interrupted turns
     are audited (`recall.settle_interrupted`), best effort, so a slow walk
     delays only their rows. `state` is the daemon's recall state;
@@ -576,32 +578,6 @@ def run_audit(
         probe_query_text=user_message,
         now=utcnow(),
     )
-    recorder.record(
-        "turn_audited",
-        **turn_audited_fields(
-            report,
-            session_id=session_id,
-            probe_mode=probe_mode,
-            assistant_present=assistant_response is not None,
-            triggered_from="stop_hook",
-            repeat=repeat,
-            client_model=client_model,
-            prompt_id=prompt_id,
-            reply_source=reply_source,
-            rule=RULE,
-        ),
-    )
-    if report.is_miss and not repeat:
-        recorder.record(
-            "search_miss",
-            **search_miss_fields(
-                report,
-                session_id=session_id,
-                triggered_from="stop_hook",
-                client_model=client_model,
-                rule=RULE,
-            ),
-        )
     # Post-hoc use settlement — the turn's end is the semantically
     # correct place to decide what happened to this turn's retrievals.
     # Two tiers per pending retrieval:
@@ -629,6 +605,7 @@ def run_audit(
     )
     # A turn with no owner prompt settles nothing: its reply answered rows
     # the harness composed.
+    settled_count = 0
     if user_message is not None and assistant_response:
         settled = _emit_hook_attributions(
             store=store,
@@ -643,7 +620,7 @@ def run_audit(
         # The pointers the brief and the prompt recall showed in this
         # segment: a match is one applied `use` naming its surface; no
         # match records nothing (never the auto fallback above).
-        settle_shown(
+        shown = settle_shown(
             store=store,
             recorder=recorder,
             state=recall_state,
@@ -655,6 +632,40 @@ def run_audit(
             prompt_id=prompt_id,
             client_model=client_model,
             now=now,
+        )
+        settled_count = len(settled) + len(shown)
+
+    # The turn's own audit row, after its settlements so it carries their
+    # count (`settled_count`, ENG-108), and before the past turns' walk
+    # below, which reads it to leave this turn alone. Nothing between the
+    # two reads it: the settlements read `recent` and the live segment,
+    # and the unanswered-review window was read above.
+    recorder.record(
+        "turn_audited",
+        **turn_audited_fields(
+            report,
+            session_id=session_id,
+            probe_mode=probe_mode,
+            assistant_present=assistant_response is not None,
+            triggered_from="stop_hook",
+            repeat=repeat,
+            client_model=client_model,
+            prompt_id=prompt_id,
+            reply_source=reply_source,
+            rule=RULE,
+            settled_count=settled_count,
+        ),
+    )
+    if report.is_miss and not repeat:
+        recorder.record(
+            "search_miss",
+            **search_miss_fields(
+                report,
+                session_id=session_id,
+                triggered_from="stop_hook",
+                client_model=client_model,
+                rule=RULE,
+            ),
         )
 
     # The window opens at the previous turn; a session's first turn reads

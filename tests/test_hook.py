@@ -2390,6 +2390,8 @@ _TURN_AUDITED_KEYS = {
     "rule",
     "session",
     "session_id",
+    # ENG-108: how many memories the turn's audit settled as used.
+    "settled_count",
     "threshold_rule",
     "top_hits",
     "triggered_from",

@@ -520,6 +520,7 @@ def turn_audited_fields(
     prompt_id: str | None = None,
     reply_source: str | None = None,
     rule: str | None = None,
+    settled_count: int | None = None,
 ) -> dict[str, Any]:
     """Canonical field set for a ``turn_audited`` event.
 
@@ -577,7 +578,24 @@ def turn_audited_fields(
       from, ``"payload"`` (the Stop payload's ``last_assistant_message``)
       or ``"tail"`` (the transcript's newest assistant text), absent when
       there was no reply, so it agrees with ``assistant_present``.
+    - ``settled_count``: how many memories the audit of this turn settled
+      as used (ENG-108): the Stop's retrieval settlement, attributed and
+      auto (`hook._emit_hook_attributions`), plus the shown pointers its
+      reply used (`recall.settle_shown`), each one ``use`` row. Zero for a
+      turn that settled nothing: no owner prompt, no reply, nothing
+      pending, or an interrupted turn, whose pointers stay pending. The
+      Stop records its row after the settlements so the count is the
+      settlements' own, and a reader joins a turn to its settlements
+      without walking the ``use`` rows.
     """
+    if settled_count is not None and (
+        isinstance(settled_count, bool)
+        or not isinstance(settled_count, int)
+        or settled_count < 0
+    ):
+        raise ValueError(
+            f"settled_count must be a non-negative int or None, got {settled_count!r}"
+        )
     if triggered_from not in _VALID_TRIGGERED_FROM:
         raise ValueError(
             f"triggered_from must be one of "
@@ -622,6 +640,8 @@ def turn_audited_fields(
         fields["reply_source"] = reply_source
     if rule is not None:
         fields["rule"] = rule
+    if settled_count is not None:
+        fields["settled_count"] = settled_count
     return fields
 
 
