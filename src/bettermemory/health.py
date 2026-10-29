@@ -471,6 +471,7 @@ def _verification_debt(
 
 def _drift_rollups(
     by_id: dict[str, MemoryStats],
+    *,
     origin_repo_by_id: dict[str, str | None],
     origin_worktree_by_id: dict[str, str | None],
     anchor_paths_by_id: dict[str, tuple[str, ...]],
@@ -658,14 +659,14 @@ def _health_report(
 
     commit_drift_debt, cross_repo_drift = _drift_rollups(
         by_id,
-        census.origin_repo_by_id,
-        census.origin_worktree_by_id,
-        census.anchor_paths_by_id,
-        census.claims_by_id,
-        census.verified_head_by_id,
-        caller_origin,
-        anchoring,
-        admission,
+        origin_repo_by_id=census.origin_repo_by_id,
+        origin_worktree_by_id=census.origin_worktree_by_id,
+        anchor_paths_by_id=census.anchor_paths_by_id,
+        claims_by_id=census.claims_by_id,
+        verified_head_by_id=census.verified_head_by_id,
+        caller_origin=caller_origin,
+        anchoring=anchoring,
+        admission=admission,
     )
 
     cold_endorsement_memories = _cold_endorsement_bucket(
@@ -854,6 +855,7 @@ def compute_health(
 
 def _group_cross_repo_candidates(
     by_id: dict[str, MemoryStats],
+    *,
     origin_repo_by_id: dict[str, str | None],
     origin_worktree_by_id: dict[str, str | None],
     anchor_paths_by_id: dict[str, tuple[str, ...]],
@@ -1126,13 +1128,13 @@ def _compute_cross_repo_drift(
     """
     groups, homed, unconfirmed, unanchorable = _group_cross_repo_candidates(
         by_id,
-        origin_repo_by_id,
-        origin_worktree_by_id,
-        anchor_paths_by_id,
-        claims_by_id,
-        verified_head_by_id,
-        caller_origin,
-        anchoring,
+        origin_repo_by_id=origin_repo_by_id,
+        origin_worktree_by_id=origin_worktree_by_id,
+        anchor_paths_by_id=anchor_paths_by_id,
+        claims_by_id=claims_by_id,
+        verified_head_by_id=verified_head_by_id,
+        caller_origin=caller_origin,
+        anchoring=anchoring,
     )
     if not groups and not homed and not unconfirmed:
         # `unanchorable` alone still earns a payload. Returning None here

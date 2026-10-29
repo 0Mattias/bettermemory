@@ -719,6 +719,7 @@ def _init_proposal(
 def _print_init_plan(
     model: Membership,
     k: Checkout | None,
+    *,
     existing: ProjectFile | ProjectFileError | None,
     path: Path,
     names: str,
@@ -777,6 +778,7 @@ def _print_init_done(
     model: Membership,
     done: Declared,
     k: Checkout,
+    *,
     path: Path,
     written: ProjectFile,
     enclosing: str | None,
@@ -857,16 +859,16 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
     _print_init_plan(
         model,
         k,
-        existing,
-        path,
-        names,
-        display,
-        cwd,
-        boundary,
-        enclosing,
-        new,
-        pr,
-        kept,
+        existing=existing,
+        path=path,
+        names=names,
+        display=display,
+        cwd=cwd,
+        boundary=boundary,
+        enclosing=enclosing,
+        new=new,
+        pr=pr,
+        kept=kept,
     )
     keeps = None if part else model.canonical(kept or (k.project if k else None))
     lifted = (
@@ -925,7 +927,18 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
     )
     location.forget(cwd)
     _print_init_done(
-        ctx, model, done, k, path, written, enclosing, boundary, fence, new, pr, lifted
+        ctx,
+        model,
+        done,
+        k,
+        path=path,
+        written=written,
+        enclosing=enclosing,
+        boundary=boundary,
+        fence=fence,
+        new=new,
+        pr=pr,
+        lifted=lifted,
     )
 
 

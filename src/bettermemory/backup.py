@@ -606,12 +606,12 @@ def create_backup(
             _write_bundle_keys(
                 bundle,
                 facts,
-                held,
-                unreadable,
-                current_key,
-                keys_root,
-                warnings,
-                written,
+                held=held,
+                unreadable=unreadable,
+                current_key=current_key,
+                keys_root=keys_root,
+                warnings=warnings,
+                written=written,
             )
         head_path = KeyRing(bundle, facts.store_id).head_path()
         bundle_head = Head(seq=facts.head.seq, mac=facts.head.mac, ts=created_at)
@@ -620,13 +620,13 @@ def create_backup(
         manifest = _bundle_manifest(
             written,
             created_at,
-            store_file,
-            facts,
-            include_key,
-            live,
-            current_key,
-            keys_root,
-            warnings,
+            store_file=store_file,
+            facts=facts,
+            include_key=include_key,
+            live=live,
+            current_key=current_key,
+            keys_root=keys_root,
+            warnings=warnings,
         )
         text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
         _write_private(bundle / MANIFEST_NAME, text.encode("utf-8"))
@@ -1015,7 +1015,13 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
         scratch_ring = KeyRing(Path(scratch) / "keys", store_id)
         scratch_ring.ensure_dir()
         keys = _scratch_keys(
-            manifest, facts, live_ring, bundle_ring, scratch_ring, report, problems
+            manifest,
+            facts,
+            live_ring=live_ring,
+            bundle_ring=bundle_ring,
+            scratch_ring=scratch_ring,
+            report=report,
+            problems=problems,
         )
         _check_keys_and_signature(manifest, facts, keys, report, problems)
         _write_private(scratch_ring.head_path(), _head_bytes(head))
@@ -1505,6 +1511,7 @@ def _restore_report(bundle: Path, store_file: Path) -> dict[str, Any]:
 def _apply_restore(
     plan: _RestorePlan,
     held: restore_lock.RestoreLock,
+    *,
     swapped: list[bool],
     moved: list[dict[str, str]],
     report: dict[str, Any],
@@ -1681,12 +1688,12 @@ def restore_bundle(
         plan = _plan_restore(
             verification,
             self_signed,
-            bundle,
-            store_file,
-            keys_root,
-            moment,
-            stamp,
-            report,
+            bundle=bundle,
+            store_file=store_file,
+            keys_root=keys_root,
+            moment=moment,
+            stamp=stamp,
+            report=report,
         )
         if plan is None:
             return report
@@ -1709,15 +1716,15 @@ def restore_bundle(
             _apply_restore(
                 plan,
                 held,
-                swapped,
-                moved,
-                report,
-                verification,
-                bundle,
-                store_file,
-                keys_root,
-                log_end,
-                stamp,
+                swapped=swapped,
+                moved=moved,
+                report=report,
+                verification=verification,
+                bundle=bundle,
+                store_file=store_file,
+                keys_root=keys_root,
+                log_end=log_end,
+                stamp=stamp,
             )
         except (OSError, sqlite3.Error, BackupError, ValueError, RuntimeError) as exc:
             report["detail"] = f"{exc.__class__.__name__}: {exc}"

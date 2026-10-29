@@ -375,6 +375,7 @@ def _run_widening_mode(
 def _run_rate_mode(
     ctx: CliContext,
     now: datetime,
+    *,
     window_since: timedelta | datetime | None,
     window_until: timedelta | datetime | None,
     scope: str | None,
@@ -527,10 +528,10 @@ def _cli_eval(
     _run_rate_mode(
         ctx,
         now,
-        window_since,
-        window_until,
-        scope,
-        endorsement_min_retrievals,
-        silent_miss_limit,
-        json_out,
+        window_since=window_since,
+        window_until=window_until,
+        scope=scope,
+        endorsement_min_retrievals=endorsement_min_retrievals,
+        silent_miss_limit=silent_miss_limit,
+        json_out=json_out,
     )

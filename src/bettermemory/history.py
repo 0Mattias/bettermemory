@@ -618,6 +618,7 @@ def _record_row(
     walk: _RecordWalk,
     index: int,
     row: LogRow,
+    *,
     payload: dict[str, Any],
     base: dict[str, Any],
     adjacent: Callable[[int, int], tuple[str, dict[str, Any]] | None],
@@ -749,6 +750,7 @@ def _record_row(
 
 def _link_change_rows(
     row: LogRow,
+    *,
     payload: dict[str, Any],
     base: dict[str, Any],
     subject: str,
@@ -834,7 +836,15 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
         subject = _subject(row.kind, payload)
         if subject == record_id:
             rows.append(
-                _record_row(walk, index, row, payload, base, adjacent, verifier)
+                _record_row(
+                    walk,
+                    index,
+                    row,
+                    payload=payload,
+                    base=base,
+                    adjacent=adjacent,
+                    verifier=verifier,
+                )
             )
             continue
         if _names_as_event(row.kind, payload, record_id):
@@ -875,7 +885,13 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
             # this record it adds or drops against its version before.
             rows.extend(
                 _link_change_rows(
-                    row, payload, base, subject, record_id, links_by_source, verifier
+                    row,
+                    payload=payload,
+                    base=base,
+                    subject=subject,
+                    record_id=record_id,
+                    links_by_source=links_by_source,
+                    verifier=verifier,
                 )
             )
             continue

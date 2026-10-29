@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 def _write_bundle_keys(
     bundle: Path,
     facts: SnapshotFacts,
+    *,
     held: dict[str, bytes | None],
     unreadable: dict[str, str],
     current_key: bytes | None,
@@ -62,6 +63,7 @@ def _write_bundle_keys(
 def _bundle_manifest(
     written: list[Path],
     created_at: str,
+    *,
     store_file: Path,
     facts: SnapshotFacts,
     include_key: bool,

@@ -43,6 +43,7 @@ class _RestorePlan:
 def _plan_restore(
     verification: dict[str, Any],
     self_signed: bool,
+    *,
     bundle: Path,
     store_file: Path,
     keys_root: Path,

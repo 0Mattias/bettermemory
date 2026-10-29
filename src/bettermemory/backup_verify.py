@@ -98,6 +98,7 @@ def _check_snapshot_claims(
 def _scratch_keys(
     manifest: dict[str, Any],
     facts: SnapshotFacts,
+    *,
     live_ring: KeyRing,
     bundle_ring: KeyRing,
     scratch_ring: KeyRing,
