@@ -1184,6 +1184,21 @@ the candidates' testing.
   any of those reads.
   (`src/bettermemory/verify_candidates.py`,
   `src/bettermemory/verify_anchoring.py`, `src/bettermemory/verify.py`)
+- **A claim the drift detector cannot address counts commits on its own
+  file, on both bases.** A claimed file whose claims the `weak` tier
+  cannot address (a container literal, whose interior lines move without
+  a binding line) is kept out of the governed leg, but nothing put it in
+  the ungoverned one, which was built from the cited and attested paths
+  alone. A memory whose only anchor was such a claim read not-applicable
+  on the reachable basis, so it stayed fresh across the commit that made
+  its claim false, and on the author-date basis the governed log ran over
+  an empty pathspec list, whose "git could not answer" fell back to the
+  repository-wide count: 4 where 1 commit touched the file. Both bases
+  now build their legs in one helper that puts an unaddressable claim's
+  file in the any-touch leg, and the governed log is skipped when no
+  claim is addressable. Such a memory now counts 1 after one falsifying
+  commit and 0 after unrelated ones, on both bases.
+  (`src/bettermemory/verify.py`)
 
 #### Known limitations
 

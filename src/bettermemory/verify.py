@@ -715,10 +715,12 @@ def resolve_commit_drift(
     With no `claims` this is exactly the incumbent per-file narrowing
     (same git calls, same three-valued semantics), wrapped in a
     `ResolvedCommitDrift`. With claims, the anchor set splits into a
-    GOVERNED half (files named by at least one claim — toplevel-relative
-    by construction, since the declare-time oracle resolved them against
-    the origin worktree root) and an UNGOVERNED half (every other
-    cited/attested anchor). The ungoverned half keeps the incumbent
+    GOVERNED half (files named by at least one claim the `weak` tier can
+    address — toplevel-relative by construction, since the declare-time
+    oracle resolved them against the origin worktree root) and an
+    UNGOVERNED half (every other cited/attested anchor, and every claimed
+    file an unaddressable claim keeps out of the governed half;
+    `_claim_legs` builds both). The ungoverned half keeps the incumbent
     any-touch rule; the governed half escalates only the commits the
     claim-level `weak` tier implicates (1.1 alerts per catch at 94%
     precision on the 30-repo corpus, vs 3.4 for any-touch —
@@ -762,6 +764,45 @@ def resolve_commit_drift(
     return ResolvedCommitDrift(count)
 
 
+def _claim_legs(
+    cwd: Path,
+    anchors: Sequence[str],
+    claims: Sequence[Claim],
+    toplevel: Path | None,
+) -> tuple[list[str], list[str]] | None:
+    """The two legs of a memory's commit-drift narrowing, as pathspecs:
+    `(ungoverned, governed)`, or None when git cannot resolve the anchors.
+
+    GOVERNED is every claimed path whose claims the `weak` tier can
+    address (`governed_claim_paths`); UNGOVERNED is every other spec the
+    memory names: its cited and attested anchors resolved into the repo
+    (`resolve_repo_pathspecs`), and the claimed paths a claim the detector
+    cannot address takes out of the governed leg (a container literal),
+    which fall back to any-touch on their own path, the floor a claim is
+    never worse than. Claimed paths are toplevel-relative by construction
+    (the declare-time oracle resolved them against the origin worktree
+    root), so they are pathspecs as they stand.
+
+    The one place both bases build their legs (`_resolve_reachable`,
+    `_resolve_with_claims`), so they cannot disagree about which leg a
+    path is in (ENG-161). Before it, an unaddressable claim's path was in
+    neither leg: a claims-only memory read not-applicable on the
+    reachable basis and the repo-wide count on the author-date one."""
+    governed = governed_claim_paths(list(claims)) if claims else []
+    governed_set = set(governed)
+    specs: list[str] = []
+    if anchors:
+        resolved = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
+        if resolved is None:
+            return None
+        specs = resolved
+    claimed = claim_paths(list(claims)) if claims else []
+    ungoverned = [
+        spec for spec in dict.fromkeys((*specs, *claimed)) if spec not in governed_set
+    ]
+    return ungoverned, governed
+
+
 def _resolve_reachable(
     *,
     cwd: Path,
@@ -797,18 +838,14 @@ def _resolve_reachable(
     unfiltered = len(walk.commits)
     checked = len(claims)
     conservative = ResolvedCommitDrift(unfiltered, checked, (), BASIS_REACHABILITY)
-    governed = governed_claim_paths(list(claims)) if claims else []
-    governed_set = set(governed)
-    specs: list[str] = []
-    if anchors:
-        resolved = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
-        if resolved is None:
-            return conservative
-        specs = resolved
-    ungoverned = [s for s in specs if s not in governed_set]
+    legs = _claim_legs(cwd, anchors, claims, toplevel)
+    if legs is None:
+        return conservative
+    ungoverned, governed = legs
     if not ungoverned and not governed:
-        # Git answered: every anchor escapes this repo. The memory's
-        # claims are real but not about this repo's code.
+        # Git answered: every anchor escapes this repo, and no claim names
+        # a path in it. The memory's claims are real but not about this
+        # repo's code.
         return None
 
     escalating: set[str] = set()
@@ -867,21 +904,18 @@ def _resolve_with_claims(
     (commit drift not applicable), an exact escalating-commit count
     otherwise. The one asymmetry is deliberate: a memory whose ONLY
     anchors are its claims (`anchors` empty or all-escaping) is still
-    fully governed — the claims are the anchor, which is the entire
-    point of declaring them.
+    counted — the claims are the anchor, which is the entire point of
+    declaring them: governed where the `weak` tier can address them,
+    any-touch on their own path where it cannot (`_claim_legs`).
     """
     checked = len(claims)
     conservative = ResolvedCommitDrift(unfiltered, checked, ())
-    governed = governed_claim_paths(list(claims))
-    governed_set = set(governed)
-    ungoverned: list[str] = []
-    if anchors:
-        specs = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
-        if specs is None:
-            # Git itself couldn't answer for the ungoverned half; the
-            # governed half would fare no better. Conservative.
-            return conservative
-        ungoverned = [s for s in specs if s not in governed_set]
+    legs = _claim_legs(cwd, anchors, claims, toplevel)
+    if legs is None:
+        # Git itself couldn't answer for the ungoverned half; the
+        # governed half would fare no better. Conservative.
+        return conservative
+    ungoverned, governed = legs
     if since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
 
@@ -899,24 +933,28 @@ def _resolve_with_claims(
             escalating.update(sha for ts, sha in pairs if ts > since)
 
     drifted: list[str] = []
-    gpairs = commit_author_sha_pairs_touching_pathspecs(
-        cwd, governed, toplevel=toplevel
-    )
-    if gpairs is None:
-        return conservative
-    if gpairs:
-        every_leg_phantom = False
-        post = [sha for ts, sha in gpairs if ts > since]
-        if post:
-            drifted, implicated = _weak_tier_evaluation(
-                cwd, post, governed, claims, toplevel
-            )
-            if implicated is None:
-                # Patch stream unavailable or window too large —
-                # incumbent any-touch semantics for the governed half.
-                escalating.update(post)
-            else:
-                escalating.update(implicated)
+    if governed:
+        # Skipped when no claim is addressable: the log answers None for
+        # an empty pathspec list, which read as "git could not answer"
+        # and fell back to the repo-wide count.
+        gpairs = commit_author_sha_pairs_touching_pathspecs(
+            cwd, governed, toplevel=toplevel
+        )
+        if gpairs is None:
+            return conservative
+        if gpairs:
+            every_leg_phantom = False
+            post = [sha for ts, sha in gpairs if ts > since]
+            if post:
+                drifted, implicated = _weak_tier_evaluation(
+                    cwd, post, governed, claims, toplevel
+                )
+                if implicated is None:
+                    # Patch stream unavailable or window too large —
+                    # incumbent any-touch semantics for the governed half.
+                    escalating.update(post)
+                else:
+                    escalating.update(implicated)
 
     if every_leg_phantom:
         # No commit in this repo's history ever touched any spec on
