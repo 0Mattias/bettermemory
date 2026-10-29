@@ -15,6 +15,12 @@ tools must read it as `module.name` at call time, which a function-level
 A read counts when it runs: a name loaded outside annotations and outside
 `if TYPE_CHECKING:` blocks. A module-level `from m import n` elsewhere does
 not count, since it bound the original before the patch was placed.
+
+A name the patched module binds only by an import, as every re-export of
+the splits is, is held to a stricter reading: the module's own load counts
+only inside a function, where no parameter or local of the same name
+shadows it, since a load made as the module is imported (an alias, a
+decorator, a default) ran before any patch was placed.
 """
 
 from __future__ import annotations
@@ -493,3 +499,279 @@ def test_a_patch_on_store_reaches_the_open_steps(
     monkeypatch.setattr(store, "key_state", _spy(store.key_state, callers))
     Store.open(path, keys_dir=keys_dir).close()
     assert f"{PACKAGE}.store_open" in callers
+
+
+# ---------------------------------------------------------------------------
+# Re-exports: names a module imports only to hand them on
+# ---------------------------------------------------------------------------
+
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+_Function = ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
+_Comprehension = ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+
+
+def _locals_of(node: _Function) -> tuple[set[str], set[str]]:
+    """The names a function binds in its own scope (its parameters and the
+    names it assigns, deletes, imports, defines or catches anywhere in its
+    body, less those it declares `global` or `nonlocal`), and those of
+    them it binds by an import."""
+    args = node.args
+    bound = {a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]}
+    bound |= {a.arg for a in (args.vararg, args.kwarg) if a is not None}
+    imported: set[str] = set()
+    declared: set[str] = set()
+    stack: list[ast.AST] = (
+        list(node.body) if isinstance(node.body, list) else [node.body]
+    )
+    while stack:
+        child = stack.pop()
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(child.name)
+            continue
+        if isinstance(child, (ast.Lambda, *_COMPREHENSIONS)):
+            continue
+        if isinstance(child, ast.Name) and not isinstance(child.ctx, ast.Load):
+            bound.add(child.id)
+        elif isinstance(child, (ast.Import, ast.ImportFrom)):
+            imported |= {a.asname or a.name.split(".")[0] for a in child.names}
+        elif isinstance(child, ast.ExceptHandler) and child.name:
+            bound.add(child.name)
+        elif isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
+            bound.add(child.name)
+        elif isinstance(child, ast.MatchMapping) and child.rest:
+            bound.add(child.rest)
+        elif isinstance(child, (ast.Global, ast.Nonlocal)):
+            declared |= set(child.names)
+        stack.extend(ast.iter_child_nodes(child))
+    return (bound | imported) - declared, imported - declared
+
+
+@dataclass
+class _CallTimeReads(ast.NodeVisitor):
+    """The module-level names a module reads as one of its functions runs
+    (`names`), and the `module.name` reads its functions make (`attrs`).
+
+    Stricter than `_Reads`: a load made as the module is imported (at its
+    top level, in a class body, a decorator or a default) ran before any
+    patch, and a load of a parameter or local of the same name never
+    reaches the module's binding, so neither counts."""
+
+    bound: dict[str, str]
+    current: str
+    is_package: bool
+    names: set[str] = field(default_factory=set)
+    attrs: set[tuple[str, str]] = field(default_factory=set)
+    scopes: list[tuple[set[str], set[str]]] = field(default_factory=list)
+    functions: int = 0
+
+    def _reaches_module(self, name: str, *, local_imports: bool) -> bool:
+        """Whether a load of `name` here, as a function runs, reads the
+        module's own binding; with `local_imports`, a function's own
+        import of the name also counts, for the root of `module.name`."""
+        if self.functions == 0:
+            return False
+        for bound, imported in reversed(self.scopes):
+            if name in bound:
+                return local_imports and name in imported
+        return True
+
+    def visit_If(self, node: ast.If) -> None:
+        if not _is_type_checking(node.test):
+            self.generic_visit(node)
+            return
+        for stmt in node.orelse:
+            self.visit(stmt)
+
+    def _enter(self, node: _Function, body: list[ast.AST]) -> None:
+        for default in [*node.args.defaults, *node.args.kw_defaults]:
+            if default is not None:
+                self.visit(default)
+        self.scopes.append(_locals_of(node))
+        self.functions += 1
+        for item in body:
+            self.visit(item)
+        self.functions -= 1
+        self.scopes.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._enter(node, list(node.body))
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self._enter(node, list(node.body))
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._enter(node, [node.body])
+
+    def _comprehension(self, node: _Comprehension) -> None:
+        targets = {
+            n.id
+            for generator in node.generators
+            for n in ast.walk(generator.target)
+            if isinstance(n, ast.Name)
+        }
+        self.scopes.append((targets, set()))
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._comprehension(node)
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._comprehension(node)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._comprehension(node)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._comprehension(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self.visit(node.value)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load) and self._reaches_module(
+            node.id, local_imports=False
+        ):
+            self.names.add(node.id)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        parts = _dotted(node.value)
+        if (
+            parts is not None
+            and isinstance(node.ctx, ast.Load)
+            and self._reaches_module(parts[0], local_imports=True)
+        ):
+            module = _module_of(parts, self.bound)
+            if module is not None:
+                self.attrs.add((module, node.attr))
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        # Inside a function, `from m import n` reads m's binding of n when
+        # the function runs, so a patch placed on m.n before the call
+        # reaches it.
+        if self.functions == 0:
+            return
+        base = (
+            _resolve(self.current, node.level, node.module, self.is_package)
+            if node.level
+            else (node.module or "")
+        )
+        if base in MODULES:
+            for alias in node.names:
+                self.attrs.add((base, alias.name))
+
+
+def _call_time_reads(
+    tree: ast.Module, current: str, is_package: bool
+) -> _CallTimeReads:
+    reads = _CallTimeReads(_bindings(tree, current, is_package), current, is_package)
+    reads.visit(tree)
+    return reads
+
+
+def _only_imported(body: list[ast.stmt]) -> set[str]:
+    """The names a module's top level binds by an import as it is imported
+    (outside `if TYPE_CHECKING:`) and binds no other way."""
+    imported: set[str] = set()
+    stack = list(body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.If):
+            if not _is_type_checking(node.test):
+                stack.extend(node.body)
+            stack.extend(node.orelse)
+        elif isinstance(node, ast.Try):
+            stack.extend([*node.body, *node.orelse, *node.finalbody])
+            for handler in node.handlers:
+                stack.extend(handler.body)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            imported |= {a.asname or a.name.split(".")[0] for a in node.names}
+    defined = _bound_at_import(
+        [n for n in body if not isinstance(n, (ast.Import, ast.ImportFrom))]
+    )
+    return imported - defined
+
+
+def test_no_patch_targets_a_name_its_module_only_hands_on() -> None:
+    """A patch on `module.name`, where `module` binds `name` only by an
+    import, targets a name a function reads through `module` as it runs:
+    one of `module`'s own, as a global no parameter or local shadows, or
+    another module's, the bench's or the tools', as `module.name`. A name
+    a module imports only to re-export it is read where it is defined, or
+    by the module that took the reader in a split, and a patch on the
+    re-export replaces a binding nothing runs."""
+    hands_on: dict[str, set[str]] = {}
+    names: dict[str, set[str]] = {}
+    attrs: set[tuple[str, str]] = set()
+    for module, path in MODULES.items():
+        tree = _tree(path)
+        reads = _call_time_reads(tree, module, path.name == "__init__.py")
+        hands_on[module] = _only_imported(tree.body)
+        names[module] = reads.names
+        attrs |= reads.attrs
+    for top in READING:
+        for path in _files(top):
+            attrs |= _call_time_reads(_tree(path), top, False).attrs
+    sites = 0
+    unread: list[str] = []
+    for top in PATCHING:
+        for path in _files(top):
+            for line, module, name in _patch_sites(path):
+                if name not in hands_on[module]:
+                    continue
+                sites += 1
+                if name not in names[module] and (module, name) not in attrs:
+                    rel = path.relative_to(ROOT).as_posix()
+                    unread.append(
+                        f"{rel}:{line} patches {module}.{name}, which {module} "
+                        "imports and no function reads through it"
+                    )
+    assert sites > 0, sites
+    assert unread == [], "\n".join(unread)
+
+
+#: A module that imports two names and reads neither as a function runs:
+#: one at its top level, one in a class body, one through a parameter of
+#: the same name and one through its own import.
+_HANDS_ON = """\
+from .recall_result import HookResult as HookResult
+from .recall_state import RULE
+
+ALIAS = HookResult
+
+
+class Answer:
+    kind = RULE
+
+
+def shadowed(HookResult: object) -> object:
+    return HookResult
+
+
+def imported() -> object:
+    from .recall_result import HookResult
+
+    return HookResult
+"""
+
+
+def test_the_call_time_reader_refuses_the_loads_the_first_rule_counts() -> None:
+    current = f"{PACKAGE}.recall"
+    tree = ast.parse(_HANDS_ON)
+    assert _only_imported(tree.body) == {"HookResult", "RULE"}
+    assert {"HookResult", "RULE"} <= _reads_of_tree(tree, current).names
+    assert not {"HookResult", "RULE"} & _call_time_reads(tree, current, False).names
+    reader = ast.parse(_HANDS_ON + "\n\ndef reader() -> object:\n    return RULE\n")
+    assert "RULE" in _call_time_reads(reader, current, False).names
+
+
+def _reads_of_tree(tree: ast.Module, current: str) -> _Reads:
+    reads = _Reads(_bindings(tree, current, False), current, False)
+    reads.visit(tree)
+    return reads
