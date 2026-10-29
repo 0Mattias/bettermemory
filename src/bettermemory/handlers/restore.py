@@ -23,22 +23,6 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
-DESC_MEMORY_RESTORE = (
-    "Bring a tombstoned memory back to the active set. Strips the "
-    "removal frontmatter, moves the file out of .tombstones/, and "
-    "preserves the original `created`, `updated`, and "
-    "`last_verified_at` timestamps — the body didn't change while "
-    "it was tombstoned, so the recency boost stays honest. The trust "
-    "fields are re-checked on the way back: a stored claim the origin "
-    "tree now contradicts or an attested path that no longer exists is "
-    "dropped and `last_verified_at` cleared, reported under "
-    "`trust_stripped`. Raises "
-    "if the id is active (use memory_update for edits) or unknown. "
-    "The original removal reason and session live on in the event "
-    "log even after restore."
-)
-
-
 @dataclass(frozen=True)
 class TrustStrip:
     """What a restore left behind: the stored claims the origin tree
@@ -278,7 +262,6 @@ async def memory_restore(
 
 
 __all__ = [
-    "DESC_MEMORY_RESTORE",
     "TrustStrip",
     "memory_restore",
     "restore_with_trust_check",

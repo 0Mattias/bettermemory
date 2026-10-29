@@ -11,26 +11,6 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
-DESC_MEMORY_RENAME_SCOPE = (
-    "Replace `old_scope` with `new_scope` across active memories "
-    "(and tombstones, by default). The cheap fix for typo'd or "
-    "deprecated scopes — e.g. `projct:foo` -> `projects:foo` "
-    "after a misspell, or `infra` -> `infrastructure` after "
-    "settling on the long form. Bumps `updated` on each touched "
-    "memory; preserves `last_verified_at` (the body's claims "
-    "didn't change, only the tag did). Memories that already "
-    "carry `new_scope` get `old_scope` removed without "
-    "duplicating `new_scope`. Returns "
-    "`{active: [ids], tombstoned: [ids], failed: [{id, reason}]}` — "
-    "the first two list the records actually modified; `failed` lists "
-    "any records whose re-dump was skipped (e.g. the rename would push "
-    "the file past the size cap) so a partial run is never reported as "
-    "a clean one. Pass `include_tombstones=False` to "
-    "leave the removal audit log untouched. Use after "
-    "memory_health surfaces a typo in `rare_scopes`."
-)
-
-
 async def memory_rename_scope(
     deps: ToolHandlers,
     old_scope: str,
@@ -92,4 +72,4 @@ async def memory_rename_scope(
     }
 
 
-__all__ = ["DESC_MEMORY_RENAME_SCOPE", "memory_rename_scope"]
+__all__ = ["memory_rename_scope"]

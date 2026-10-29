@@ -85,53 +85,6 @@ _CONTROL_TOKEN_HINT = (
 )
 
 
-DESC_EPISODE_WRITE = (
-    "Append a journal-shaped entry for the current session — for "
-    "run-state, iteration takeaways, 'what we tried'. Episodes are "
-    "NOT durable facts; the durability gate that rejects transient "
-    "memory_write content (TRANSIENT_PHRASE_MARKERS) does not apply "
-    "here. Stored at <root>/episodes/<session_id>/<ulid>.md with a "
-    "default 30-day TTL.\n\n"
-    "Use this for content memory_write would reject as transient:\n"
-    "- 'iteration N tried X, fell over at step 3'\n"
-    "- 'currently blocked on Y; next step is Z'\n"
-    "- 'this branch's release plan' (state that changes weekly)\n\n"
-    "Episodes are invisible to memory_search / memory_health / "
-    "memory_list — they are a sibling tier, not a memory category. "
-    "Surface them via episode_handoff at iteration entry or "
-    "episode_search for cross-session lookup. Promote a takeaway to "
-    "durable memory via episode_promote (routes through memory_write, "
-    "durability gate fires as normal).\n\n"
-    "Parameters:\n"
-    "- `body`: free-form markdown. Required, non-empty. Capped by "
-    "`max_content_bytes` (default 1 MB).\n"
-    "- `swarm_id` (optional): cohort id for multi-agent fan-in — a "
-    "sub-agent passes the coordinator's session id so the coordinator "
-    "can gather every sub-agent's takeaways via "
-    "`episode_search(swarm_id=…)`. A cross-cutting label, not a move: "
-    "the episode still lives under this writer's own session, and it "
-    "is distinct from `episode_handoff`'s predecessor link.\n"
-    "- `takeaway` (optional): one-sentence summary. Surfaced "
-    "preferentially at episode_handoff; when None, handoff falls "
-    "back to the first line of body. Capped by "
-    "`max_takeaway_bytes` (default 4 KB).\n"
-    "- `scopes` (optional): list of scope tags. Empty list is "
-    "valid (handoff keys on session_id, not scope). Capped by "
-    "`max_scopes_per_write` (default 64).\n\n"
-    "Both caps guard one thing: takeaway and scopes serialise into "
-    "the YAML frontmatter (64 KB ceiling), so an over-cap value "
-    "corrupts the file and the episode vanishes from every read "
-    "surface despite the write returning `committed`.\n\n"
-    "A body or takeaway carrying a secret-shaped token is not written: "
-    "the reply is `credential_warning` with the detector kinds and "
-    "redacted snippets, and there is no acknowledge flag to pass. One "
-    "carrying a chat-template control token (ChatML's `im_start` "
-    "delimiter, Llama's `INST` tag and kin, with their delimiters) is not "
-    "written either: the reply is `control_token_warning`, naming each "
-    "token without its delimiters."
-)
-
-
 def _credential_refusal(
     deps: ToolHandlers, body: str, takeaway: str | None
 ) -> dict[str, Any] | None:
@@ -344,4 +297,4 @@ async def episode_write(
     }
 
 
-__all__ = ["DESC_EPISODE_WRITE", "episode_write"]
+__all__ = ["episode_write"]

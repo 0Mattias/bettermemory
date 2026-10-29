@@ -6,6 +6,7 @@ and that each action returns the keys its former tool returned.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 
@@ -225,3 +226,33 @@ async def test_admin_rejects_an_unknown_action(served: Any) -> None:
     server, _, _ = served
     with pytest.raises(Exception):
         await _call(server, "memory_admin", action="curate")
+
+
+# ---------------------------------------------------------------------------
+# descriptions
+# ---------------------------------------------------------------------------
+
+#: The handler modules whose bodies the two dispatchers route to.
+_ACTION_MODULES = (
+    "acknowledge_miss",
+    "capture_relations",
+    "conflicts",
+    "episode_handoff",
+    "episode_write",
+    "health",
+    "questions",
+    "rename_scope",
+    "restore",
+    "scope_toggle",
+    "standing",
+    "tombstones",
+)
+
+
+@pytest.mark.parametrize("name", _ACTION_MODULES)
+def test_an_action_body_keeps_no_description_of_its_own(name: str) -> None:
+    """The tool list serves `DESC_EPISODE` and `DESC_MEMORY_ADMIN`, whose
+    clauses describe every action. A description kept beside an action's
+    body is never served, so nothing holds it to what the action does."""
+    module = importlib.import_module(f"bettermemory.handlers.{name}")
+    assert [n for n in vars(module) if n.startswith("DESC_")] == []

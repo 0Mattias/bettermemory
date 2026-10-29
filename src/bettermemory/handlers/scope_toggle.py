@@ -18,17 +18,6 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
-DESC_MEMORY_SCOPE_DISABLE = (
-    "Disable a scope for the rest of this session. Subsequent "
-    "memory_search and memory_list calls will exclude memories "
-    "tagged with this scope. Useful when the user says 'this is "
-    "unrelated to project X'. Resets when the server restarts."
-)
-
-
-DESC_MEMORY_SCOPE_ENABLE = "Re-enable a previously disabled scope for this session."
-
-
 async def memory_scope_disable(
     deps: ToolHandlers, scope: str, ctx: Context | None = None
 ) -> dict[str, Any]:
@@ -52,8 +41,6 @@ async def memory_scope_enable(
 
 
 __all__ = [
-    "DESC_MEMORY_SCOPE_DISABLE",
-    "DESC_MEMORY_SCOPE_ENABLE",
     "memory_scope_disable",
     "memory_scope_enable",
 ]

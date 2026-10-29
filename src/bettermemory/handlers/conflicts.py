@@ -56,55 +56,6 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
-DESC_MEMORY_CONFLICTS = (
-    "List and arbitrate memory-vs-memory contradiction candidates the "
-    "corpus scan flagged (near-identical pairs with a negation flip or "
-    "a numeric divergence — 'port 5432' vs 'port 5433'). The server "
-    "detects mechanically; YOU judge.\n\n"
-    "Modes (mutually exclusive):\n"
-    "- default (no args): list pending candidates, both bodies "
-    "inlined, strongest similarity first.\n"
-    "- `scan=True`: run detection over the active set now and merge "
-    "new candidates into the queue (also happens automatically on "
-    "every applying memory_curate / auto-consolidate pass). Returns "
-    "the merge counters plus the pending list. One counter there — "
-    "`pending_rows_on_disk` — counts rows in the queue FILE, not "
-    "judgeable work, so it can exceed the `pending_total` beside it; "
-    "when a row's dead member is what put it above, `hint` says how "
-    "many and why the scan left them there.\n"
-    "- `resolve=<candidate_id>` + `verdict`: rule on one pair.\n"
-    "  - `verdict='contradiction'` — genuinely disagree. Writes a "
-    "`contradicts` link (a→b; pass `note` with WHY — future curators "
-    "need it), then marks the candidate confirmed. Refused when either "
-    "member is no longer active (re-scan to GC the row). Follow up "
-    "with the normal verbs: memory_verify the correct side, "
-    "memory_update / memory_remove the wrong one. The link surfaces on "
-    "both memories at retrieval either way.\n"
-    "  - `verdict='compatible'` — detector misfire (incidental "
-    "negator, added-detail number). Clears any `contradicts` link "
-    "between the pair (echoed as `links_cleared`), then dismisses; "
-    "stays dismissed unless either body later changes, which re-queues "
-    "the pair. Editing a memory's links or metadata is not a body "
-    "change and will not re-queue anything.\n\n"
-    "Judging tips: read both bodies, not the summaries. For numeric "
-    "pairs, 'compatible' is right when the numbers describe different "
-    "things (two ports of two services); 'contradiction' when they "
-    "describe the same thing at different values (one service, two "
-    "claimed ports — one memory is stale). Never resolve on similarity "
-    "alone.\n\n"
-    "Returns `{pending: [...], pending_total}` (+ `scan` counters or "
-    "the `resolved` echo). Each pending row: `{id, a, b, similarity, "
-    "method, detector}` where a/b are `{id, body, scopes, updated}`. "
-    "`pending_total` counts the candidates that are judgeable right now "
-    "(both members still active), so it exceeds the number of rows "
-    "returned only when `max_results` truncated the list. A queued row "
-    "whose member died since the last scan is in neither the list nor "
-    "the total — nor in the `curation_pending.conflicts` count "
-    "memory_scope_overview points here with — and `hint` says how many "
-    "were left out."
-)
-
-
 async def memory_conflicts(
     deps: ToolHandlers,
     scan: bool = False,

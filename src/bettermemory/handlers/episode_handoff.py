@@ -146,37 +146,6 @@ _JOURNAL_KINDS: tuple[str, ...] = ("episode_handoff", "episode_write")
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
-DESC_EPISODE_HANDOFF = (
-    "Read the most-recent journal takeaways from a prior session in "
-    "this checkout. Call this FIRST at a /loop iteration entry: it "
-    "answers 'what did the last session conclude here?' without "
-    "memory_search. Episodes are the sibling-to-memory primitive for "
-    "journal-shaped writes (see episode_write).\n\n"
-    "When `prior_session_id` is omitted the handler auto-resolves it "
-    "from the episodes written in the caller's checkout (a primary "
-    "checkout with none is offered a non-live sibling's, labelled in "
-    "`inherited_from`) and the `disabled_scopes` cascade (a session "
-    "whose only takeaways are scope-disabled is skipped; surviving "
-    "episodes are scope-filtered). Pass it explicitly to override.\n\n"
-    "Returns a dict:\n"
-    "- `prior_session_id`: the resolved session id, or None when no "
-    "prior session exists in the log.\n"
-    "- `episodes`: list of {id, created, takeaway, scopes, provenance} "
-    "dicts, oldest first, capped at `max_episodes` (default 5, cap "
-    "50). `provenance` is read from the event log: `local` (an "
-    "episode_write event names the id), `untracked` (no event could "
-    "have) or `unaccounted` (the file appeared with no event: the "
-    "planted shape). `body` is present only with `include_bodies=True` "
-    "(default False) and never for an unaccounted episode; "
-    "episode_search(ids=[...]) is the explicit read for one body.\n"
-    "- `note` (optional `str`): set ONLY when the immediately-prior "
-    "session of this checkout left nothing visible; names the cause: "
-    "floor-only, zero-episode, promoted-out, or all-scope-hidden. The "
-    "last two DID journal, so a `note` never means 'wrote no journal'. "
-    "`episodes` MAY be non-empty: the walk rewinds to an older takeaway."
-)
-
-
 @dataclass
 class _HandoffPick:
     """The session a handoff surfaces, the episodes it emits and its note flags."""
@@ -718,4 +687,4 @@ def _maybe_write_session_floor(
         )
 
 
-__all__ = ["DESC_EPISODE_HANDOFF", "episode_handoff"]
+__all__ = ["episode_handoff"]
