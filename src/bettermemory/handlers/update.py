@@ -229,9 +229,10 @@ async def memory_update(
         new_links=new_links,
     )
     merged = existing.model_copy(update=update_fields)
-    updated = _commit_update(deps, id, merged, content, standing_answer)
-    if isinstance(updated, dict):
-        return updated
+    commit = _commit_update(deps, id, merged, content, standing_answer)
+    if commit[1] is not None:
+        return commit[1]
+    updated = commit[0]
     _record_update(
         deps,
         updated,
@@ -949,8 +950,8 @@ def _commit_update(
     merged: Memory,
     content: str | None,
     standing_answer: StandingAnswer | None,
-) -> Memory | dict[str, Any]:
-    """Take the merged record; return it as committed, or the stale response."""
+) -> tuple[Memory, None] | tuple[None, dict[str, Any]]:
+    """Take the merged record; return `(committed, None)`, or `(None, stale response)`."""
     try:
         # Metadata-only edits (content is None) must not clobber a verify
         # that landed concurrently: `merged` carries this handler's pre-read
@@ -984,7 +985,7 @@ def _commit_update(
             id=exc.memory_id,
             current_updated=isoformat(exc.current_updated),
         )
-        return {
+        return None, {
             "status": "stale",
             "memory_id": exc.memory_id,
             "current_updated": isoformat(exc.current_updated),
@@ -1002,7 +1003,7 @@ def _commit_update(
         # what handlers/remove.py and handlers/restore.py do, and what
         # Store.update's docstring promises the handler boundary does.
         raise ValueError(f"failed to update memory {id}: {exc}") from exc
-    return updated
+    return updated, None
 
 
 def _record_update(

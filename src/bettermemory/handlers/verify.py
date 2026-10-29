@@ -626,10 +626,10 @@ def _stamp_or_stale(
     verified_absent_paths: list[str] | None,
     claims: list[str] | None,
     verified_head: str | None,
-) -> Memory | dict[str, Any]:
-    """Take the stamp's inputs; return the stamped record, or the stale payload on a lost CAS."""
+) -> tuple[Memory, None] | tuple[None, dict[str, Any]]:
+    """Take the stamp's inputs; return `(stamped, None)`, or `(None, stale payload)` on a lost CAS."""
     try:
-        return _stamp(
+        stamped = _stamp(
             deps,
             caller,
             snapshot,
@@ -664,7 +664,7 @@ def _stamp_or_stale(
             id=exc.memory_id,
             current_updated=isoformat(exc.current_updated),
         )
-        return {
+        return None, {
             "status": "stale",
             "memory_id": exc.memory_id,
             "current_updated": isoformat(exc.current_updated),
@@ -681,6 +681,7 @@ def _stamp_or_stale(
         # OSError — mirrors remove.py/restore.py and Store.mark_verified's
         # documented handler-boundary contract.
         raise ValueError(f"failed to verify memory {memory_id}: {exc}") from exc
+    return stamped, None
 
 
 def _verify_response(
@@ -822,9 +823,9 @@ async def memory_verify(
         claims=normalized_claims,
         verified_head=verified_head,
     )
-    if isinstance(outcome, dict):
-        return outcome
-    return _verify_response(deps, outcome, note, symbol_drift)
+    if outcome[1] is not None:
+        return outcome[1]
+    return _verify_response(deps, outcome[0], note, symbol_drift)
 
 
 __all__ = ["DESC_MEMORY_VERIFY", "memory_verify"]
