@@ -35,6 +35,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -202,6 +203,48 @@ def test_a_view_on_a_hung_path_reads_unreachable_within_the_bound(
     assert (first, second) == ("unreachable", "unreachable")
     assert waited < PROBE_BUDGET + _MARGIN
     assert waited_again < 0.25
+
+
+def test_a_read_a_waiter_gave_up_on_answers_the_next_read_at_once_by_no_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A path whose read a waiter waited its budget out on answers the
+    next `bounded_read` and `bounded_reads` of it `UNANSWERED` at once,
+    reading nothing, even while the clock shows less than the budget
+    elapsed since that read started: a wait can end a hair before the
+    clock does (Windows), and the next read then boarded a read of its
+    own and waited the budget out again (the config tip's CI run)."""
+    gate = threading.Event()
+    path = str(tmp_path / "hung")
+    reads: list[str] = []
+
+    def hung() -> str:
+        gate.wait(60)
+        return "late"
+
+    def read() -> str:
+        reads.append("read")
+        return "read"
+
+    # The module's clock stands still at the first read's start.
+    monkeypatch.setattr(location_git, "time", SimpleNamespace(monotonic=lambda: 0.0))
+    budget = 0.05
+    try:
+        first = location_git.bounded_read(path, 1, hung, budget)
+        start = time.monotonic()
+        second = location_git.bounded_read(path, 2, read, budget)
+        waited = time.monotonic() - start
+        many = location_git.bounded_reads([(path, 3, read)], budget)
+    finally:
+        gate.set()
+    deadline = time.monotonic() + 5
+    while path in location_git._FLIGHTS and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert first is location_git.UNANSWERED
+    assert second is location_git.UNANSWERED
+    assert waited < budget, waited
+    assert many == [location_git.UNANSWERED]
+    assert reads == [], "the next read of the hung path read it again"
 
 
 def test_reads_in_turn_go_on_past_a_hung_read(tmp_path: Path) -> None:

@@ -148,10 +148,12 @@ Key = tuple[str, str, str | None]
 
 @dataclass
 class _Flight:
-    """One bounded read in flight: when it started, whether it ended, and
-    its outcome (``(True, value)`` or ``(False, exception)``)."""
+    """One bounded read in flight: when it started, the longest budget a
+    waiter waited out on it (`_give_up`), whether it ended, and its outcome
+    (``(True, value)`` or ``(False, exception)``)."""
 
     started: float
+    overdue: float = 0.0
     done: threading.Event = field(default_factory=threading.Event)
     outcome: list[tuple[bool, Any]] = field(default_factory=list)
 
@@ -172,16 +174,29 @@ def _board(
 ) -> tuple[_Flight | None, bool]:
     """The flight to wait on for a read of `path` and `what`, and whether
     the caller is to run it: the one in flight, else a new one; None when
-    another read of `path` is in flight past `budget` (it is stalled)."""
+    another read of `path` is in flight past `budget` (it is stalled): by
+    the clock, or because a waiter waited that budget out on it."""
     with _FLIGHTS_LOCK:
         flights = _FLIGHTS.get(path, {})
         flight = flights.get(what)
         if flight is not None:
             return flight, False
-        if any(now - f.started >= budget for f in flights.values()):
+        if any(
+            f.overdue >= budget or now - f.started >= budget for f in flights.values()
+        ):
             return None, False
         flight = _FLIGHTS.setdefault(path, {})[what] = _Flight(now)
         return flight, True
+
+
+def _give_up(flight: _Flight, budget: float) -> None:
+    """A waiter waited `budget` out on `flight`: the board reads the flight
+    as past that budget from now on, whatever the clock says. A wait can
+    end a hair before the clock shows the budget elapsed (Windows times its
+    waits on a coarser timer than its clock), and the next read of the path
+    then boarded a read of its own and waited the budget out again."""
+    with _FLIGHTS_LOCK:
+        flight.overdue = max(flight.overdue, budget)
 
 
 def _fly(path: str, what: Any, flight: _Flight, read: Callable[[], Any]) -> None:
@@ -223,6 +238,7 @@ def bounded_read(path: str, what: Any, read: Callable[[], Any], budget: float) -
             daemon=True,
         ).start()
     if not flight.done.wait(max(0.0, flight.started + budget - now)):
+        _give_up(flight, budget)
         return UNANSWERED
     ok, value = flight.outcome[0]
     if not ok:
@@ -300,6 +316,7 @@ def _read_in_turn(
             if wait > 0:
                 continue
             stop.append(True)
+            _give_up(flight, budget)
             out[i] = UNANSWERED
             return todo[pos + 1 :]
     return []

@@ -1083,7 +1083,12 @@ follows the candidates' testing.
   projects recorded (50 liveness reads) took 6.8 to 12.2 ms over four
   runs before and 9.7 to 13.9 ms now, its write transaction 4.3 to
   7.9 ms before and 4.3 to 5.8 ms now; a known repository's steady
-  resolution reads nothing more. (`src/bettermemory/location_git.py`,
+  resolution reads nothing more. A read a waiter waited its budget out
+  on is past that budget on the board from then on, whatever the clock
+  says: a wait can end a hair before the clock shows the budget elapsed
+  (Windows times its waits on a coarser timer than its clock), and the
+  next read of that path then boarded a read of its own and waited the
+  budget out again. (`src/bettermemory/location_git.py`,
   `src/bettermemory/location.py`, `src/bettermemory/membership.py`,
   `src/bettermemory/membership_resolve.py`,
   `src/bettermemory/membership_records.py`,
