@@ -1047,6 +1047,37 @@ def test_a_daemon_that_holds_the_lock_but_does_not_answer_warns(
     assert "daemon not answering (pid 4242 holds the lock)" in check.summary
 
 
+def test_the_daemon_proof_waits_as_long_as_status_does() -> None:
+    """ENG-185 H9 (review fold H12). doctor's wait for the daemon's proof
+    is the one `bettermemory status` gives the same probe; nothing tied the
+    two values but a comment."""
+    from bettermemory.cli import daemon_cmd
+
+    assert doctor.DAEMON_PROBE_TIMEOUT_SECONDS == daemon_cmd._HEALTH_TIMEOUT_SECONDS
+
+
+def test_the_daemon_proof_waits_the_named_timeout(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-185 H9. The daemon check waited a bare 1.0 s for the daemon's
+    proof; it waits `DAEMON_PROBE_TIMEOUT_SECONDS`, whose comment ties it
+    to the wait `status` gives the same probe."""
+    waits: list[float] = []
+
+    def identify(state: Any, *, timeout: float) -> tuple[None, bool]:
+        waits.append(timeout)
+        return None, False
+
+    monkeypatch.setattr(doctor, "DAEMON_PROBE_TIMEOUT_SECONDS", 0.4)
+    monkeypatch.setattr(_daemon_client, "identify", identify)
+    monkeypatch.setattr(_daemon_client, "pid_alive", lambda pid: pid == 4242)
+    _state(env, pid=4242)
+    with _held_lock(env):
+        check = env.checks()["daemon"]
+    assert check.status == "warn"
+    assert waits == [0.4]
+
+
 def test_a_running_daemon_of_this_version_is_ok(env: Env) -> None:
     store_path = env.store_dir / STORE_FILENAME
     body = {

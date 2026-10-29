@@ -498,7 +498,11 @@ def read_meta(store_file: Path) -> dict[str, str]:
     the one and not the other) is refused: a read-only open there creates
     the ``-shm``, and an immutable one would miss the WAL's pages, a rekey's
     new fingerprint among them. Raises ``sqlite3.Error`` on a file that is
-    not a store, and on that refusal."""
+    not a store, and on that refusal. A lock held over the read is waited
+    for as any CLI command waits (`store.CLI_BUSY_TIMEOUT_SECONDS`, whose
+    evidence is stated there): the audit is one."""
+    from .store import CLI_BUSY_TIMEOUT_SECONDS
+
     resolved = store_file.resolve()
     wal, shm = _sibling(resolved, "-wal"), _sibling(resolved, "-shm")
     if not os.path.exists(wal):
@@ -511,7 +515,9 @@ def read_meta(store_file: Path) -> dict[str, str]:
             f"would create {shm.name}"
         )
     conn = sqlite3.connect(
-        f"{sqlite_file_uri(resolved)}?{query}", uri=True, timeout=5.0
+        f"{sqlite_file_uri(resolved)}?{query}",
+        uri=True,
+        timeout=CLI_BUSY_TIMEOUT_SECONDS,
     )
     try:
         rows = conn.execute("SELECT key, value FROM meta").fetchall()
@@ -753,6 +759,16 @@ def _where(store_dir: Path, store_file: Path, keys_dir: Path) -> Iterator[Findin
         )
 
 
+#: How long each of `git_finding`'s three questions to git (the toplevel,
+#: the tracked files, the ignore check) may take. Measured in this
+#: project's repository (968 index entries) on the owner's Mac, 20 runs
+#: each: 11 to 15 ms. Two seconds is over a hundred times that; a large
+#: index, a cold cache or a network filesystem is not measured, and what
+#: would set it is these three calls' time in the largest repository a
+#: store is found in.
+_GIT_TIMEOUT_SECONDS = 2.0
+
+
 def _store_content(name: str, store: str, backups: str) -> bool:
     """Whether a tracked path (relative to the working tree, in POSIX form)
     is the store's content: the store file `store`, its ``-wal`` and
@@ -791,7 +807,9 @@ def git_finding(
     the keys, which belong in no working tree at all."""
     if not os.path.isdir(directory):
         return Finding(finding_id, "ok", f"no {label} at {directory} yet")
-    top_run = run_git(["rev-parse", "--show-toplevel"], cwd=directory, timeout=2.0)
+    top_run = run_git(
+        ["rev-parse", "--show-toplevel"], cwd=directory, timeout=_GIT_TIMEOUT_SECONDS
+    )
     if top_run is None:
         return Finding(finding_id, "skip", f"git could not run; {label} not checked")
     top_text = top_run.stdout.strip()
@@ -807,7 +825,7 @@ def git_finding(
     listed = run_git(
         ["--literal-pathspecs", "ls-files", "-z", "--", relative_dir],
         cwd=top,
-        timeout=2.0,
+        timeout=_GIT_TIMEOUT_SECONDS,
     )
     tracked: list[str] = []
     if listed is not None and listed.returncode == 0:
@@ -848,7 +866,9 @@ def git_finding(
             details=details,
         )
     ignored = run_git(
-        ["check-ignore", "-q", "--", relative_probe], cwd=top, timeout=2.0
+        ["check-ignore", "-q", "--", relative_probe],
+        cwd=top,
+        timeout=_GIT_TIMEOUT_SECONDS,
     )
     details["tracked"] = False
     details["ignored"] = ignored is not None and ignored.returncode == 0
@@ -882,7 +902,9 @@ def git_finding(
 #: provider's word. Read at call time, so a test can name a settable one.
 _FILE_PROVIDER_XATTR = "com.apple.file-provider-domain-id"
 #: The most of an attribute's value read: a domain id is a reverse-DNS
-#: name and an identifier, well under this.
+#: name and an identifier, iCloud Drive's 80 bytes on the owner's
+#: ``~/Documents``; another provider's is not measured, and one over the
+#: cap is still a domain (the size query alone says the attribute is set).
 _XATTR_VALUE_CAP = 1024
 
 #: Windows cloud files (the Cloud Filter API OneDrive, iCloud for Windows

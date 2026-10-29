@@ -98,20 +98,49 @@ _RUNTIME_MODULES: tuple[str, ...] = ("mcp", "pydantic", "yaml", "platformdirs")
 #: The newest Python the classifiers in pyproject.toml name.
 _NEWEST_TESTED_PYTHON = (3, 14)
 
-#: Free space under the store below which a write can fail outright: a
-#: WAL commit, a checkpoint and the daemon's log all need room.
+#: Free space under the store below which a write can fail outright.
+#: Derived, not measured: the store keeps SQLite's default WAL
+#: autocheckpoint (1,000 pages; the store sets none) at `store.PAGE_SIZE`
+#: (8 KiB), so a WAL restarts near 8 MiB, and the checkpoint that restarts
+#: it copies those pages into the store file: about 16 MiB of new room
+#: between two checkpoints. 64 MiB is four times that, for a WAL a long
+#: reader keeps from restarting and for the daemon's log, which has no
+#: size cap and shares the filesystem when the state directory does.
 DISK_FAIL_BYTES = 64 * 1024 * 1024
-#: Free space below which the next growth spurt can reach the floor
-#: above. Twice the store's size is the room a copy of it needs (a
-#: backup, a VACUUM, a restore), whichever is larger.
+#: Free space below which the next growth can reach the floor above: this,
+#: or twice the store's size, whichever is larger. Twice the store is
+#: derived: `backup create` writes a full copy through SQLite's backup API,
+#: by default under ``backups/`` beside the store, and `restore` a full
+#: copy of a bundle's snapshot next to the store file. The 1 GiB floor is
+#: not measured; it keeps the warning for a small store,
+#: whose doubled size would warn only on a disk all but full. What would
+#: set it is the store's growth between two `doctor` runs on real hosts
+#: (the store file and its WAL, sampled daily): the floor belongs above the
+#: tail of that growth plus `DISK_FAIL_BYTES`.
 DISK_WARN_BYTES = 1024 * 1024 * 1024
 
 #: How long the daemon check waits for the state file of a process that
 #: holds the store's lock without one: an ordinary start writes it within
 #: this, and a lock still held with no file after it is the fault (or a
-#: long first-start migration, which the remedy names).
+#: long first-start migration, which the remedy names). Measured on the
+#: owner's Mac, on an empty scratch store, from the lock's acquisition to
+#: the state file's write (`daemon.serve`: the migration check, the bind,
+#: the app's build): 0.08 to 0.12 s over ten starts, 0.10 to 0.15 s over
+#: three with no bytecode cache. Two seconds is thirteen times the slowest;
+#: a slower host is not measured, and a wait that runs long costs only
+#: this check's time, where one that runs short reports a fault that is
+#: not there.
 DAEMON_START_GRACE_SECONDS = 2.0
+#: The poll inside that wait: a start the poll just missed is seen at most
+#: this much later, under half the fastest measured start.
 _GRACE_POLL_SECONDS = 0.05
+#: How long the daemon check waits for the daemon's proof (`/health`, with
+#: `_daemon_client.identify`): the wait `bettermemory status` gives the
+#: same probe (`cli.daemon_cmd._HEALTH_TIMEOUT_SECONDS`; the command
+#: layer imports this module, not the reverse, so a test pins the two
+#: equal), so the two read one daemon alike. Not measured; what would set
+#: it is the reply time of `/health` while the daemon's workers are busy.
+DAEMON_PROBE_TIMEOUT_SECONDS = 1.0
 
 #: The Claude Code hook events the plugin's hooks.json wires, and the
 #: `bettermemory hook` word each one runs.
@@ -1029,7 +1058,7 @@ def check_daemon(ctx: _Context) -> Check:
     # (`_daemon_client.identify`): a reply that repeats the state file's
     # store and pid without the token's MAC over a fresh nonce is not the
     # daemon, however it reads, and `status --check` calls it not ours.
-    answer, proven = _dc.identify(state, timeout=1.0)
+    answer, proven = _dc.identify(state, timeout=DAEMON_PROBE_TIMEOUT_SECONDS)
     if answer is None:
         if _dc.pid_alive(pid) and _lock_held(lock_path):
             return Check(

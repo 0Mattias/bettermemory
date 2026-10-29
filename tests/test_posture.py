@@ -37,7 +37,9 @@ from typing import Any
 import pytest
 
 from bettermemory import _daemon_client, claude_paths, posture, sandbox_settings
+from bettermemory import _git as _git_runner
 from bettermemory import config as _config
+from bettermemory import store as _store
 from bettermemory.config import Config
 from bettermemory.log import KeyRing
 from bettermemory.posture import Audit, Finding, audit, mode_finding, synced_root
@@ -220,6 +222,25 @@ def test_meta_read_without_wal_creates_nothing(layout: Layout) -> None:
     names = sorted(p.name for p in layout.store_dir.iterdir())
     assert posture.read_meta(layout.store_file)["store_id"] == layout.store_id
     assert sorted(p.name for p in layout.store_dir.iterdir()) == names
+
+
+def test_meta_read_waits_as_a_cli_command_waits(
+    layout: Layout, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-185 H9. The meta read waited a bare 5.0 s for a lock; it waits
+    the CLI's busy timeout, the constant whose comment states what would
+    set it, so the value and its evidence are one place."""
+    waits: list[object] = []
+    real_connect = sqlite3.connect
+
+    def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        waits.append(kwargs.get("timeout"))
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(_store, "CLI_BUSY_TIMEOUT_SECONDS", 0.25)
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    assert posture.read_meta(layout.store_file)["store_id"] == layout.store_id
+    assert waits == [0.25]
 
 
 def test_meta_read_refuses_a_wal_without_its_shm(layout: Layout) -> None:
@@ -665,6 +686,39 @@ def test_git_that_cannot_run_is_skipped(
 ) -> None:
     monkeypatch.setattr(posture, "run_git", lambda *a, **kw: None)
     assert _by_id(audit(), "store.git").status == "skip"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_each_git_question_waits_the_named_timeout(
+    tmp_path: Path, layout: Layout, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-185 H9. The audit's three questions to git waited a bare 2.0 s
+    each; they wait `_GIT_TIMEOUT_SECONDS`, whose comment carries the
+    measurement, so the value and its evidence are one place."""
+    _git_env(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    monkeypatch.delenv(_config.ENV_DIR_OVERRIDE)
+    monkeypatch.chdir(repo)
+    Store.create(repo / ".claude-memory").close()
+    waits: list[tuple[str, object]] = []
+    real_run_git = _git_runner.run_git
+
+    def recording(args: list[str], **kwargs: Any) -> Any:
+        words = [word for word in args if not word.startswith("-")]
+        waits.append((words[0], kwargs.get("timeout")))
+        return real_run_git(args, **kwargs)
+
+    monkeypatch.setattr(posture, "_GIT_TIMEOUT_SECONDS", 0.75)
+    monkeypatch.setattr(posture, "run_git", recording)
+    assert _by_id(audit(), "store.git").status == "warn"
+    assert {command for command, _ in waits} == {
+        "rev-parse",
+        "ls-files",
+        "check-ignore",
+    }
+    assert {timeout for _, timeout in waits} == {0.75}
 
 
 @pytest.mark.parametrize(
