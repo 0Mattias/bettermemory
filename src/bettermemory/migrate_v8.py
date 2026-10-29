@@ -495,7 +495,7 @@ def _put_imports(
     imported_now: str,
     session: str | None,
 ) -> None:
-    """Write the imports the store lacks, each stamped with its memory's creation where the store holds it; returns nothing."""
+    """Write the imports the store lacks, each stamped with its memory's creation where the store holds it."""
     for entry in new_imports:
         memory_id = entry["memory_id"]
         imported_at = imported_now

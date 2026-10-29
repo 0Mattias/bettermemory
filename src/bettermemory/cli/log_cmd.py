@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 def _add_verify_parser(
     log_sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    """Register ``log verify`` and its flags on the log subparsers; returns nothing."""
+    """Register ``log verify`` and its flags on the log subparsers."""
     verify_text = (
         "Verify the log: MACs, chain, head, the origin anchor and fold, and "
         "every --anchor given. The origin anchor, kept beside the key outside "
@@ -75,7 +75,7 @@ def _add_verify_parser(
 def _add_export_parser(
     log_sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    """Register ``log export`` and its flags on the log subparsers; returns nothing."""
+    """Register ``log export`` and its flags on the log subparsers."""
     export_text = (
         "Write the log as JSON Lines, one object per row in seq order, for "
         "a SIEM or an audit archive: seq, ts, kind, class, session, actor, "
@@ -152,7 +152,7 @@ def _add_export_parser(
 def _add_anchor_parser(
     log_sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    """Register ``log anchor`` and its flags on the log subparsers; returns nothing."""
+    """Register ``log anchor`` and its flags on the log subparsers."""
     anchor_text = (
         "Take an anchor of the log: the store id, the last row's seq and "
         "MAC, a SHA-256 over every row's MAC up to it, and the time. Keep it "
@@ -187,7 +187,7 @@ def _add_anchor_parser(
 def _add_accept_history_parser(
     log_sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    """Register ``log accept-history`` and its flags on the log subparsers; returns nothing."""
+    """Register ``log accept-history`` and its flags on the log subparsers."""
     accept_text = (
         "Accept the store file's history as it stands, on the record, when "
         "the origin anchor reads origin_mismatch or unverifiable or the head "

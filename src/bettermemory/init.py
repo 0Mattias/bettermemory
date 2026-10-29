@@ -886,7 +886,7 @@ def _write_patched_config(
     config_lock: _ConfigLock | None,
     existing: dict[str, Any],
 ) -> None:
-    """Re-check the config and Claude Code's lock, then write the patched JSON atomically; returns nothing."""
+    """Re-check the config and Claude Code's lock, then write the patched JSON atomically."""
     # Concurrency guard: a writer that takes no lock (another client, a
     # Claude Code that predates its lock, an editor) may have rewritten
     # the file after we read it. Re-check immediately before the atomic

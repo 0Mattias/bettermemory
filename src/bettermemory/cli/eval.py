@@ -12,7 +12,7 @@ from ._common import CliContext, cli_context
 
 
 def _add_rate_args(parser: argparse.ArgumentParser) -> None:
-    """Add the window and the rate-mode knobs to the eval parser; returns nothing."""
+    """Add the window and the rate-mode knobs to the eval parser."""
     parser.add_argument(
         "--since",
         type=str,
@@ -67,7 +67,7 @@ def _add_rate_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_mode_args(parser: argparse.ArgumentParser) -> None:
-    """Add the mode switches and the output flags to the eval parser; returns nothing."""
+    """Add the mode switches and the output flags to the eval parser."""
     parser.add_argument(
         "--tool-usage",
         action="store_true",
@@ -262,7 +262,7 @@ def _reject_eval_flags(
 def _run_report_mode(
     ctx: CliContext, since: timedelta | None, output: str | None, parser: Any
 ) -> None:
-    """Compose the markdown report and write it to stdout or ``output``; returns nothing."""
+    """Compose the markdown report and write it to stdout or ``output``."""
     from ..eval import compute_report, render_report_markdown
 
     # Report mode ignores the rate-mode knobs (`--scope`,
@@ -296,7 +296,7 @@ def _run_report_mode(
 def _run_tool_usage_mode(
     ctx: CliContext, since: timedelta | None, json_out: bool
 ) -> None:
-    """Compute and print the tool-usage rollup over the span; returns nothing."""
+    """Compute and print the tool-usage rollup over the span."""
     import json as _json
 
     from ..eval import compute_tool_usage, render_tool_usage_text
@@ -317,7 +317,7 @@ def _run_tool_usage_mode(
 
 
 def _run_sweep_mode(ctx: CliContext, since: timedelta | None, json_out: bool) -> None:
-    """Compute and print the threshold sweep over the span; returns nothing."""
+    """Compute and print the threshold sweep over the span."""
     import json as _json
 
     from ..eval import compute_threshold_sweep, render_threshold_sweep_text
@@ -335,7 +335,7 @@ def _run_sweep_mode(ctx: CliContext, since: timedelta | None, json_out: bool) ->
 def _run_widening_mode(
     ctx: CliContext, since: timedelta | None, widening_detail: bool, json_out: bool
 ) -> None:
-    """Compute and print the widening preview, or its per-turn detail; returns nothing."""
+    """Compute and print the widening preview, or its per-turn detail."""
     import json as _json
 
     from ..eval import (
@@ -383,7 +383,7 @@ def _run_rate_mode(
     silent_miss_limit: int,
     json_out: bool,
 ) -> None:
-    """Compute and print the rate trio over the window; returns nothing."""
+    """Compute and print the rate trio over the window."""
     import json as _json
 
     from ..eval import DEFAULT_ENDORSEMENT_MIN_RETRIEVALS, compute_eval, render_text

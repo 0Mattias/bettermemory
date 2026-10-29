@@ -456,7 +456,7 @@ def _dump_yaml(post: Post, max_yaml_bytes: int) -> str:
 
 
 def _check_file_cap(final: str, max_file_bytes: int) -> None:
-    """Refuse a serialised file over max_file_bytes, the size the read cap would reject; returns nothing."""
+    """Refuse a serialised file over max_file_bytes, the size the read cap would reject."""
     # Total-file cap: the `_MAX_YAML_BYTES` check in `_dump_yaml` bounds only
     # the frontmatter region, but `load` rejects the WHOLE file (frontmatter +
     # body) against `_MAX_FILE_BYTES` via `bounded_read`'s stat check. A

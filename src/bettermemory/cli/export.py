@@ -349,7 +349,7 @@ def _write_export(
     include_tombstones: bool,
     tombstoned_count: int,
 ) -> None:
-    """Write the document to ``output`` atomically, or to stdout; returns nothing."""
+    """Write the document to ``output`` atomically, or to stdout."""
     if output:
         out_path = Path(output)
         # Pre-check the parent is an existing directory. `atomic_write_bytes`

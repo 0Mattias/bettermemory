@@ -731,7 +731,7 @@ def _print_init_plan(
     pr: Proposal | None,
     kept: str | None,
 ) -> None:
-    """Print what ``project init`` is about to write and declare; returns nothing."""
+    """Print what ``project init`` is about to write and declare."""
     from ..membership import FOLDER
 
     verb = "replaces" if existing is not None else "writes"
@@ -788,7 +788,7 @@ def _print_init_done(
     pr: Proposal | None,
     lifted: bool,
 ) -> None:
-    """Print what ``project init`` wrote and what it is bound to; returns nothing."""
+    """Print what ``project init`` wrote and what it is bound to."""
     from ..membership import FOLDER
 
     if enclosing is not None:

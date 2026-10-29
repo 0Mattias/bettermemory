@@ -36,7 +36,7 @@ def _write_bundle_keys(
     warnings: list[str],
     written: list[Path],
 ) -> None:
-    """Write the held keys into the bundle for --include-key, adding to ``written`` and ``warnings``; returns nothing."""
+    """Write the held keys into the bundle for --include-key, adding to ``written`` and ``warnings``."""
     if current_key is None:
         raise _backup.BackupError(
             f"--include-key: no key under {keys_root} matches the "

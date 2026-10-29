@@ -714,7 +714,7 @@ def _failed(surface: str, exc: Exception) -> Response:
 def _add_health_route(
     mcp: MCPServer[Any], store: Store, token: str, served_version: str
 ) -> None:
-    """Register ``/health``, with the token's proof for a nonce; returns nothing."""
+    """Register ``/health``, with the token's proof for a nonce."""
 
     @_route(mcp, "/health", ["GET"])
     async def health(request: Request) -> Response:
@@ -745,7 +745,7 @@ def _add_health_route(
 def _add_session_start_route(
     mcp: MCPServer[Any], config: Config, workers: _Workers, recall_state: RecallState
 ) -> None:
-    """Register the session-start hook's endpoint, the session brief; returns nothing."""
+    """Register the session-start hook's endpoint, the session brief."""
     from . import recall as _recall
 
     @_route(mcp, "/api/v1/hook/session-start", ["POST"])
@@ -782,7 +782,7 @@ def _add_session_start_route(
 def _add_prompt_route(
     mcp: MCPServer[Any], config: Config, workers: _Workers, recall_state: RecallState
 ) -> None:
-    """Register the prompt hook's endpoint, the prompt recall; returns nothing."""
+    """Register the prompt hook's endpoint, the prompt recall."""
     from . import recall as _recall
 
     @_route(mcp, "/api/v1/hook/prompt", ["POST"])
@@ -818,7 +818,7 @@ def _add_prompt_route(
 def _add_stop_route(
     mcp: MCPServer[Any], config: Config, workers: _Workers, recall_state: RecallState
 ) -> None:
-    """Register the Stop hook's endpoint: the capture step, then the turn audit; returns nothing."""
+    """Register the Stop hook's endpoint: the capture step, then the turn audit."""
     from . import capture_hook as _capture_hook
     from . import hook as _hook
 
@@ -1558,7 +1558,7 @@ def _watch_lifespan(
 def _write_daemon_state(
     state_dir: Path, store: Store, token: str, bound_port: int, host: str
 ) -> None:
-    """Write the daemon's state file and log where it serves; returns nothing."""
+    """Write the daemon's state file and log where it serves."""
     state = {
         "pid": os.getpid(),
         "port": bound_port,
@@ -1592,7 +1592,7 @@ def _stop_serving(
     state_dir: Path,
     sock: socket.socket,
 ) -> None:
-    """Close the workers, settle and close the store, then give the state and port back; returns nothing."""
+    """Close the workers, settle and close the store, then give the state and port back."""
     # Every worker's connection closed before anything below: the
     # lifespan's close has done it when the app shut down or its task
     # was cancelled, and returns at once here; a loop closed without
