@@ -1230,7 +1230,8 @@ directories), `githead.py` (HEAD and the ref it names, read from the
 repository files), `_paths.py` (whether one recorded path lies at or
 below another), `claude_paths.py` (where Claude Code keeps its files on
 this host, the one answer `init`, `doctor`, `posture` and
-`sandbox_settings` read) and `_caches.py` (the cache registry). Nothing
+`sandbox_settings` read, and the transcripts directory `recall_review`
+and `review_samples` read) and `_caches.py` (the cache registry). Nothing
 in this group imports a handler or the store, and
 a new cross-cutting concept belongs here, not in a cycle.
 
