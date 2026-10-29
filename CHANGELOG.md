@@ -2208,14 +2208,18 @@ follows the candidates' testing.
   segment, so the rows after it verify. Each such write also reads the
   ring's current key file once. A reader's checking key
   (`can_verify`) is still the one its open read.
-- **An edit of meta's tokenizer fingerprint lets an edit of a memory's
-  index text pass a reader's `log verify` until the owner's next open.**
-  The fold leaves a memory's index text out while meta names another
-  tokenizer than this build's, and meta is not authenticated: an editor
-  of the file who changes both can hide a memory from search, and a
-  reader's `log verify` reads the store ok, until the owner's next
-  writing open re-spells every row from its body.
-  (`src/bettermemory/store_events.py`)
+- **`log verify` does not cover the search index itself.** The fold
+  compares the memory rows, their index text included, but not the FTS5
+  index built from that text: an edit of the index's shadow tables (a
+  memory taken out of it, or an entry put in for words its row does not
+  hold) reads ok in `log verify`, on this build as on the ones before.
+  `doctor`'s `index` check and `backup verify`'s `index_drift` read the
+  index against the rows and name `bettermemory index rebuild`, which
+  rebuilds it from them. The tokenizer the fold and the owner's open go
+  by is read from the signed log (the last `index_rebuilt` row, else
+  `store_created`), not from `meta`, so an edit of `meta` no longer lets
+  an edit of a row's index text pass. (`src/bettermemory/store_index.py`,
+  `src/bettermemory/store_events.py`, `docs/internals.md`)
 - **A re-spell of a large store at the daemon's start outlasts `up`'s
   wait and the hooks' busy timeout.** The owner's open re-spells a store
   whose index another tokenizer spelled under the write lock, and the

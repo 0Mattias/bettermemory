@@ -1224,11 +1224,13 @@ with a revision at or below its own; an admitted file's `meta`
 the audit read that refusal as a version refusal first: their remedy is
 the later build, not moving the file aside.
 
-The search index is spelled by a tokenizer, and `meta` names which
+The search index is spelled by a tokenizer, and the signed log names which
 (ENG-100). Each memory row keeps its index text beside its body:
 `body_fts` and `scopes_fts`, its body and its space-joined scopes as
 `search.fts_index_text` spells them, which the FTS5 table indexes, and
-`meta`'s `tokenizer_fingerprint` names that spelling
+the log's `store_created` row, then the `index_rebuilt` row of each
+re-spelling, name that spelling by its fingerprint (`meta` keeps a copy, read
+only for a log that names none: `store_index.stored_fingerprint`)
 (`search.tokenizer_fingerprint`: a digest of a probe corpus's spelling, of
 every table in `search_lexicon` and of the FTS5 table's definition, so an
 edit of a stopword list or a stem exception moves it whatever the probes
@@ -1243,19 +1245,23 @@ decorator on `Store.open`, run once the open has returned the store by
 any of its paths). When they differ, the owner's writing open
 (`allow_rekey`, on a connection that holds the key and may write)
 re-spells the store in one `BEGIN IMMEDIATE` (`store_index.rebuild_index`):
-it reads `meta` again under the lock and stops if another opener got
+it reads the log's fingerprint again under the lock and stops if another opener got
 there first, sets each row's two columns from its body and scopes (only
 the rows whose text changes are written), rebuilds the FTS5 table from
 them (`'rebuild'`), sets `meta`, and appends one `index_rebuilt` control
 row naming why, both fingerprints and the counts. No record changes, and
 the fold applies no `index_rebuilt` row. The fold (`store_events.refold`)
 spells the index text with this build's tokenizer as it replays, so it
-compares a row's `body_fts` and `scopes_fts` only while `meta` names that
+compares a row's `body_fts` and `scopes_fts` only while the log names that
 tokenizer, where an edit of the text alone reads as tampering; while
-`meta` names another, both columns are left out on both sides, and a
-tokenizer change never reads as tampering. `meta` is not authenticated,
-so an edit of its fingerprint with a row's text reads ok to a reader
-until the owner's next open re-spells the row. A rebuild that cannot write
+it names another, both columns are left out on both sides, and a
+tokenizer change never reads as tampering. The fingerprint is read from
+the MAC'd rows, not from `meta`, which nothing signs, so an edit of `meta`
+moves neither. `log verify` never covers the FTS5 index itself: an edit
+of its shadow tables (a memory taken out of it, or an entry put in for
+text no row carries) reads ok there, on this build as on the ones before,
+and only `doctor`'s `index` check and `backup verify`'s `index_drift` see
+it (`bettermemory index rebuild` repairs it). A rebuild that cannot write
 (busy, full) is logged and the open goes on. Every other open (read-only,
 read-only by its versions, or not the owner's: a worker's `reopen`,
 `backup verify`'s copy) re-spells nothing, logs one warning a process

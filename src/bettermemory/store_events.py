@@ -536,11 +536,14 @@ def refold(self: Store) -> dict[str, Any]:
 
     The replay spells each memory's index text (`INDEX_TEXT_COLUMNS`)
     with this build's tokenizer, so the live rows' text is compared only
-    while meta names that tokenizer: then an edit of the text alone reads
-    as one of the row. While meta names another (a store an older build
-    wrote, before its owner's open re-spells it,
+    while the signed log names that tokenizer (the last `index_rebuilt`
+    row, else `store_created`: `store_index.stored_fingerprint`): then an
+    edit of the text alone reads as one of the row. While it names another
+    (a store an older build wrote, before its owner's open re-spells it,
     `store_index.rebuild_index`), the two columns are left out on both
-    sides, so a tokenizer change never reads as tampering (ENG-100)."""
+    sides, so a tokenizer change never reads as tampering (ENG-100). The
+    FTS5 index itself is no table the fold compares: `doctor`'s `index`
+    check and `backup verify` read it against the rows."""
     scratch = sqlite3.connect(":memory:", isolation_level=None)
     scratch.row_factory = sqlite3.Row
     problems: list[dict[str, Any]] = []

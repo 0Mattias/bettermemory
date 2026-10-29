@@ -151,7 +151,8 @@ def _links_json(links: Iterable[MemoryLink]) -> str:
 #: tokenizer of the build that wrote the row spelled them
 #: (`search.fts_index_text`), which the FTS5 table indexes. Derived, not
 #: recorded: no log row carries it, and the fold compares it only while
-#: meta names this build's tokenizer (`store_events.refold`, ENG-100).
+#: the signed log names this build's tokenizer (`store_events.refold`,
+#: ENG-100).
 INDEX_TEXT_COLUMNS = ("body_fts", "scopes_fts")
 
 _MEMORY_COLUMNS = (
@@ -750,8 +751,8 @@ def _table_rows(
     store tampered. Reading by name also keeps the two sides aligned when
     a table holds its columns in another order than the schema's. The
     columns in `skip` are not read either: the fold passes a memory's
-    index text there while meta names another tokenizer than the one the
-    fold spells it with (`INDEX_TEXT_COLUMNS`, ENG-100)."""
+    index text there while the signed log names another tokenizer than the
+    one the fold spells it with (`INDEX_TEXT_COLUMNS`, ENG-100)."""
     have = [str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")]
     known = _known_columns().get(table)
     order = have if known is None else [c for c in known if c in have]

@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any, ParamSpec
 
 from . import _caches
 from .identity import Actor
-from .log import INDEX_REBUILT
+from .log import INDEX_REBUILT, STORE_CREATED
 from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
 from .store_schema import _PROVENANCE_BATCH, SCHEMA
 from .store_rows import _dt, _load_json
@@ -411,11 +411,12 @@ def contradicted_at(self: Store, memory_ids: Sequence[str]) -> dict[str, datetim
 # build's tokenizer spells its body and scopes (`search.fts_index_text`),
 # and the FTS5 table indexes that text, so a query matches a memory only
 # while the tokenizer that spells the query is the one that spelled the
-# row. meta's `tokenizer_fingerprint` names that tokenizer
-# (`search.tokenizer_fingerprint`, a digest of the token stream over a
-# fixed corpus), written at `Store.create`. Every open compares it with
-# this build's (`reconciles_tokenizer`). The owner's writing open re-spells
-# a store whose fingerprint differs (`rebuild_index`), in one write
+# row. The signed log names that tokenizer (`search.tokenizer_fingerprint`):
+# the `store_created` row from `Store.create`, then the `index_rebuilt`
+# row of each re-spelling (`stored_fingerprint`); meta keeps a copy. Every
+# open compares it with this build's (`reconciles_tokenizer`). The owner's
+# writing open re-spells a store whose fingerprint differs
+# (`rebuild_index`), in one write
 # transaction, as the owner's open runs a store's schema steps
 # (`store_schema.check_versions`); every other open says so once and
 # searches the index as it stands, so a memory spelled by the old
@@ -451,7 +452,8 @@ class IndexRebuild:
     `index_rebuilt` row records it: why, the tokenizer fingerprints meta
     named before (None when it named none) and after, how many memory rows
     were read and how many of them changed their index text, the row's
-    seq, and how long the write transaction ran, in seconds."""
+    seq, and how long the write transaction ran, in seconds. The
+    fingerprint before is the one the log named (`stored_fingerprint`)."""
 
     reason: str
     old_fingerprint: str | None
@@ -463,7 +465,35 @@ class IndexRebuild:
 
 
 def stored_fingerprint(conn: sqlite3.Connection) -> str | None:
-    """meta's `tokenizer_fingerprint`, or None when meta has none."""
+    """The tokenizer the store's index text is spelled by, as the signed
+    log names it last: the newest `index_rebuilt` row's `new_fingerprint`,
+    or the `store_created` row's `tokenizer_fingerprint`. Both rows are in
+    the MAC'd chain, so an edit of meta, which nothing signs, moves neither
+    the fold's comparison nor a re-spelling. meta's copy only for a log
+    that names none; None when meta has none either. Two indexed reads
+    (`log_by_kind`)."""
+    named: tuple[int, str] | None = None
+    for kind, key in (
+        (INDEX_REBUILT, "new_fingerprint"),
+        (STORE_CREATED, TOKENIZER_FINGERPRINT_KEY),
+    ):
+        row = conn.execute(
+            "SELECT seq, payload FROM log WHERE kind = ? ORDER BY seq DESC LIMIT 1",
+            (kind,),
+        ).fetchone()
+        if row is None:
+            continue
+        try:
+            payload = _load_json(row[1], None)
+        except ValueError:
+            # Not JSON: `log verify` reads the row as tampered; the open
+            # goes by the rows that name one.
+            payload = None
+        value = payload.get(key) if isinstance(payload, dict) else None
+        if isinstance(value, str) and (named is None or int(row[0]) > named[0]):
+            named = (int(row[0]), value)
+    if named is not None:
+        return named[1]
     row = conn.execute(
         "SELECT value FROM meta WHERE key = ?", (TOKENIZER_FINGERPRINT_KEY,)
     ).fetchone()
@@ -471,9 +501,10 @@ def stored_fingerprint(conn: sqlite3.Connection) -> str | None:
 
 
 def tokenizer_drift(conn: sqlite3.Connection) -> tuple[str | None, str] | None:
-    """`(stored, live)` when meta's tokenizer fingerprint is not this
-    build's (`search.tokenizer_fingerprint`), None when they agree. One
-    primary-key read of meta; the live digest is computed once a process."""
+    """`(stored, live)` when the tokenizer the log names
+    (`stored_fingerprint`) is not this build's (`search.tokenizer_fingerprint`),
+    None when they agree. Two indexed reads of the log; the live digest is
+    computed once a process."""
     stored = stored_fingerprint(conn)
     live = tokenizer_fingerprint()
     return None if stored == live else (stored, live)
@@ -573,9 +604,9 @@ def rebuild_index(store: Store, *, reason: str) -> IndexRebuild | None:
     `index_rebuilt` row records it, so `log verify` and `log export` see
     it. No record changes: the fold applies no `index_rebuilt` row.
 
-    With `reason` `REBUILT_FOR_TOKENIZER`, meta is read again under the
-    lock and a store another opener re-spelled while this one waited is
-    left alone (None). A busy, full or failing store raises
+    With `reason` `REBUILT_FOR_TOKENIZER`, the tokenizer the log names is
+    read again under the lock and a store another opener re-spelled while
+    this one waited is left alone (None). A busy, full or failing store raises
     `sqlite3.Error` with nothing written; the caller says what it means."""
     started = time.monotonic()
     with store._transaction() as tx:

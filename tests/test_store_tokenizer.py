@@ -1,8 +1,9 @@
 """The tokenizer a store's search index is spelled by (ENG-100).
 
 Each memory row keeps its index text as the tokenizer of the build that
-wrote it spelled it (`body_fts`, `scopes_fts`), and meta's
-`tokenizer_fingerprint` names that tokenizer. A store written under an
+wrote it spelled it (`body_fts`, `scopes_fts`), and the signed log names
+that tokenizer (`store_created`, then each `index_rebuilt`; meta keeps a
+copy). A store written under an
 older tokenizer is made here by spelling every token with a prefix and
 naming another fingerprint while it is written (`_old_tokenizer`), which
 is what a token stream change does to a store's index: the live
@@ -204,7 +205,7 @@ def test_a_rebuild_moves_the_document_frequency_memos_key(
 def test_a_store_another_opener_respelled_meanwhile_is_left_alone(
     tmp_path: Path, keys_dir: Path
 ) -> None:
-    """meta is read again under the write lock: two owners' opens that
+    """The log is read again under the write lock: two owners' opens that
     both found the old spelling re-spell it once."""
     path, _ = _old_store(tmp_path, keys_dir)
     with Store.open(path, keys_dir=keys_dir, allow_rekey=True) as store:
@@ -337,7 +338,7 @@ def test_a_store_another_tokenizer_spelled_verifies_before_and_after_its_rebuild
     """A reader's `log verify` (read-only, so no rebuild) of a store an
     older tokenizer spelled reads ok, every memory accounted for: the
     replay spells the index text with this build's tokenizer, and while
-    meta names another the fold leaves those columns out. After the
+    the log names another the fold leaves those columns out. After the
     owner's open re-spells it, `log verify` and a fold read ok again,
     now comparing them."""
     path, ids = _old_store(tmp_path, keys_dir)
@@ -359,7 +360,7 @@ def test_a_store_another_tokenizer_spelled_verifies_before_and_after_its_rebuild
 def test_an_edit_of_a_rows_index_text_under_this_builds_tokenizer_reads_tampered(
     tmp_path: Path, keys_dir: Path
 ) -> None:
-    """While meta names this build's tokenizer the fold compares the
+    """While the log names this build's tokenizer the fold compares the
     index text, so text that no longer spells the row's body (a memory
     hidden from search, or put in front of queries it does not answer)
     names that row unaccounted."""
@@ -376,7 +377,7 @@ def test_an_edit_of_a_rows_index_text_under_this_builds_tokenizer_reads_tampered
 def test_under_another_tokenizer_the_fold_leaves_the_index_text_out(
     tmp_path: Path, keys_dir: Path
 ) -> None:
-    """meta naming another tokenizer is the only state in which the fold
+    """The log naming another tokenizer is the only state in which the fold
     leaves the text out; an edit of the record itself still reads
     tampered, and the owner's next open re-spells the text, so an edit
     of it does not outlast that open."""
@@ -400,6 +401,32 @@ def test_under_another_tokenizer_the_fold_leaves_the_index_text_out(
         report = reader.log_verify()
     assert report["status"] == "tampered"
     assert report["unaccounted_ids"] == [ids["terraform"]]
+
+
+def test_an_edit_of_metas_fingerprint_moves_neither_the_fold_nor_the_open(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """The tokenizer the fold and the owner's open go by is the one the
+    signed log names (`store_created`, then each `index_rebuilt`), not
+    meta's copy, which nothing signs. An edit of meta's fingerprint with
+    an edit of a row's index text still reads tampered, and no open
+    re-spells the store over it."""
+    path = tmp_path / "store" / STORE_FILENAME
+    with Store.create(path, keys_dir=keys_dir) as store:
+        memory = store.write(content=BODIES["postgres"], scopes=["global"])
+    _edit(
+        path,
+        "UPDATE meta SET value = ? WHERE key = 'tokenizer_fingerprint'",
+        OLD_FINGERPRINT,
+    )
+    _edit(path, "UPDATE memories SET body_fts = 'nothing here' WHERE id = ?", memory.id)
+    with Store.open(path, read_only=True) as reader:
+        report = reader.log_verify()
+    assert report["status"] == "tampered"
+    assert report["unaccounted_ids"] == [memory.id]
+    with Store.open(path, keys_dir=keys_dir, allow_rekey=True) as store:
+        assert store_index.stored_fingerprint(store.conn) == tokenizer_fingerprint()
+    assert _stored(path) == (OLD_FINGERPRINT, 0)
 
 
 # ---------------------------------------------------------------------------
