@@ -8,9 +8,13 @@ imported from it, so no import path changes), and a patch that followed a
 name to its new reader was repointed in the same commit. This test holds
 the line for every patch site at once: the module named by a
 `monkeypatch.setattr`, `patch` or `patch.object` call must read the name
-itself at run time, or another module of the package, the bench or the
-tools must read it as `module.name` at call time, which a function-level
-`from module import name` also does.
+itself at run time, or another module of the package must read it as
+`module.name` at call time, which a function-level `from module import
+name` also does. A bench script's patch may also rest on such a read in
+the bench or the tools, which the bench runs; a test's only on one in a
+bench or tools file the test itself loads (named by its file name, as a
+`spec_from_file_location` load names it, by its dotted module or by an
+import of it), since a test runs no other.
 
 A read counts when it runs: a name loaded outside annotations and outside
 `if TYPE_CHECKING:` blocks. A module-level `from m import n` elsewhere does
@@ -21,11 +25,18 @@ the splits is, is held to a stricter reading: the module's own load counts
 only inside a function, where no parameter or local of the same name
 shadows it, since a load made as the module is imported (an alias, a
 decorator, a default) ran before any patch was placed.
+
+A known limit: a patch that names its target through a variable
+(`setattr(module, name, value)` over a list of names) is read by none of
+the rules here. Three such sites predate them, in
+tests/test_membership_capture.py, tests/test_membership_cost.py and
+tests/test_store_tokenizer.py.
 """
 
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -43,7 +54,9 @@ ROOT = SOURCE.parent.parent
 SKIP_TREES = ("bench/integrity/v1", "bench/decisions/data", "bench/decisions/results")
 #: The directories whose patches are held to this rule.
 PATCHING = ("tests", "bench")
-#: The directories whose call-time reads make a name a patch point.
+#: The directories whose call-time reads make a name a patch point for a
+#: bench script's patch, which the bench runs, or for a test's patch when
+#: the test loads the reading file (`_loaded_reads`).
 READING = ("bench", "tools")
 
 
@@ -229,6 +242,38 @@ def _patch_sites(path: Path) -> list[tuple[int, str, str]]:
     return sites
 
 
+def _outside_reads(
+    reads_of: Callable[[Path, str], set[tuple[str, str]]],
+) -> dict[Path, set[tuple[str, str]]]:
+    """The `module.name` reads each bench and tools file makes at call time."""
+    return {path: reads_of(path, top) for top in READING for path in _files(top)}
+
+
+def _loaded_reads(
+    path: Path, outside: dict[Path, set[tuple[str, str]]]
+) -> set[tuple[str, str]]:
+    """The bench and tools reads a patch placed in `path` may rest on: all
+    of them for a bench script, which the bench runs with its tools; for a
+    test, those of the files it loads, named by file name (as a
+    `spec_from_file_location` load names one), by dotted module or by an
+    import of the module's stem."""
+    if path.relative_to(ROOT).parts[0] == "bench":
+        return {read for reads in outside.values() for read in reads}
+    text = path.read_text(encoding="utf-8")
+    loaded: set[tuple[str, str]] = set()
+    for reader, reads in outside.items():
+        dotted = ".".join(reader.relative_to(ROOT).with_suffix("").parts)
+        stem = re.escape(reader.stem)
+        imported = rf"^\s*(import {stem}|from {stem} import)\b"
+        if (
+            reader.name in text
+            or dotted in text
+            or re.search(imported, text, re.MULTILINE)
+        ):
+            loaded |= reads
+    return loaded
+
+
 def test_every_patched_name_has_a_reader() -> None:
     """A patch on `module.name` in tests/ or bench/ targets a name `module`
     reads at run time, or one another module reads as `module.name` at
@@ -240,16 +285,16 @@ def test_every_patched_name_has_a_reader() -> None:
         reads = _reads_of(path, module, path.name == "__init__.py")
         names[module] = reads.names
         attrs |= reads.attrs
-    for top in READING:
-        for path in _files(top):
-            attrs |= _reads_of(path, top, False).attrs
+    outside = _outside_reads(lambda path, top: _reads_of(path, top, False).attrs)
     sites = 0
     unread: list[str] = []
     for top in PATCHING:
         for path in _files(top):
+            loaded = _loaded_reads(path, outside)
             for line, module, name in _patch_sites(path):
                 sites += 1
-                if name not in names[module] and (module, name) not in attrs:
+                read = (module, name) in attrs or (module, name) in loaded
+                if name not in names[module] and not read:
                     rel = path.relative_to(ROOT).as_posix()
                     unread.append(
                         f"{rel}:{line} patches {module}.{name}, which nothing reads"
@@ -715,18 +760,20 @@ def test_no_patch_targets_a_name_its_module_only_hands_on() -> None:
         hands_on[module] = _only_imported(tree.body)
         names[module] = reads.names
         attrs |= reads.attrs
-    for top in READING:
-        for path in _files(top):
-            attrs |= _call_time_reads(_tree(path), top, False).attrs
+    outside = _outside_reads(
+        lambda path, top: _call_time_reads(_tree(path), top, False).attrs
+    )
     sites = 0
     unread: list[str] = []
     for top in PATCHING:
         for path in _files(top):
+            loaded = _loaded_reads(path, outside)
             for line, module, name in _patch_sites(path):
                 if name not in hands_on[module]:
                     continue
                 sites += 1
-                if name not in names[module] and (module, name) not in attrs:
+                read = (module, name) in attrs or (module, name) in loaded
+                if name not in names[module] and not read:
                     rel = path.relative_to(ROOT).as_posix()
                     unread.append(
                         f"{rel}:{line} patches {module}.{name}, which {module} "
