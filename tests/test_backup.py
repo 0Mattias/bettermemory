@@ -723,16 +723,21 @@ def test_a_store_id_that_names_a_path_is_refused_everywhere(
     conn.execute("UPDATE meta SET value = ? WHERE key = 'store_id'", (escape,))
     conn.commit()
     conn.close()
-    ring = KeyRing(bundle, escape)
-    assert ring.current_path().parent.resolve() == bundle.parent.resolve()
+    # No key ring holds such an id (`log.KeyRing` refuses it), so the
+    # files are laid by hand where a ring built from it would put them.
+    with pytest.raises(ValueError, match="not a store id"):
+        KeyRing(bundle, escape)
+    planted_key = bundle / f"{escape}.key"
+    planted_head = bundle / f"{escape}.head"
+    assert planted_key.parent.resolve() == bundle.parent.resolve()
     head = bundle / f"{store_id}.head"
-    ring.head_path().write_bytes(head.read_bytes())
-    head.rename(bundle / ring.head_path().name)
-    ring.current_path().write_bytes(key)
-    laid = {ring.current_path().resolve(), ring.head_path().resolve()}
+    planted_head.write_bytes(head.read_bytes())
+    head.rename(bundle / planted_head.name)
+    planted_key.write_bytes(key)
+    laid = {planted_key.resolve(), planted_head.resolve()}
     manifest["store_id"] = escape
     del manifest["files"][head.name]
-    _rehash(bundle, manifest, STORE_FILENAME, ring.head_path().name)
+    _rehash(bundle, manifest, STORE_FILENAME, planted_head.name)
     manifest["mac"] = manifest_mac(key, manifest)
     _write_manifest(bundle, manifest)
 
@@ -754,7 +759,7 @@ def test_a_store_id_that_names_a_path_is_refused_everywhere(
     with pytest.raises(BackupError, match="not one"):
         create_backup(store_file)
     found = {p.resolve() for p in tmp_path.rglob("planted*")}
-    assert found - {(bundle / ring.head_path().name).resolve()} == laid
+    assert found - {(bundle / planted_head.name).resolve()} == laid
 
 
 # ---------------------------------------------------------------------------

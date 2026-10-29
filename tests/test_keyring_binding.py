@@ -1061,3 +1061,43 @@ def test_a_restore_binds_the_key_ring_to_the_restored_file(
         assert restored.log_verify()["status"] == "ok"
     with Store.open_or_create(old, keys_dir=keys_dir) as left:
         assert left.has_key is False
+
+
+# ---------------------------------------------------------------------------
+# The store id a ring holds (ENG-173)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../elsewhere/**/planted",
+        "../x",
+        "**",
+        "a/b",
+        "a\\b",
+        "",
+        "ab" * 15 + "a",
+        "AB" * 16,
+        "ab" * 16 + "\n",
+        "ab" * 17,
+    ],
+)
+def test_a_key_ring_holds_a_store_id_and_nothing_else(tmp_path: Path, bad: str) -> None:
+    """Every path a ring reads or writes is the keys directory joined with
+    the id, so a ring refuses any id but the 32 lowercase hex digits
+    `Store.create` writes: no caller can build one that reads, writes or
+    globs outside the keys directory."""
+    with pytest.raises(ValueError, match="not a store id"):
+        KeyRing(tmp_path / "keys", bad)
+    ring = KeyRing(tmp_path / "keys", "0f" * 16)
+    assert ring.current_path().parent == tmp_path / "keys"
+
+
+def test_the_key_ring_and_the_store_agree_on_the_store_id_shape() -> None:
+    """`store._STORE_ID_PATTERN` (what `Store.open` refuses a store by) and
+    `log.STORE_ID_PATTERN` (what a key ring holds) are one shape. The ring's
+    module holds the pattern because `store` imports `log`; until `store`
+    reads it from there, this pins the two together."""
+    assert chain.STORE_ID_PATTERN.pattern == store_module._STORE_ID_PATTERN.pattern
+    assert chain.STORE_ID_PATTERN.flags == store_module._STORE_ID_PATTERN.flags

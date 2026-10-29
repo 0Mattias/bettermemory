@@ -85,7 +85,7 @@ from .config import (
     STORE_FILENAME,
     Config,
 )
-from .log import KeyRing, KeyUnreadableError, fingerprint
+from .log import STORE_ID_PATTERN, KeyRing, KeyUnreadableError, fingerprint
 
 #: Every status a finding can carry, mildest first.
 STATUSES: tuple[str, ...] = ("ok", "info", "skip", "warn", "high")
@@ -229,7 +229,15 @@ def audit(*, cwd: Path | None = None, platform: str | None = None) -> Audit:
 
     meta, meta_error = _meta_or_error(store_file)
     store_id = (meta or {}).get("store_id")
-    keyring = KeyRing(keys_dir, store_id) if store_id else None
+    # The meta is whatever the store file says, and a ring is built for a
+    # well-formed id only (`log.KeyRing`): an id holding a path would have
+    # the ring checks read, and glob, outside the keys directory. A
+    # malformed id is the key check's one finding.
+    keyring = (
+        KeyRing(keys_dir, store_id)
+        if store_id and STORE_ID_PATTERN.fullmatch(store_id)
+        else None
+    )
 
     findings.extend(
         _modes(
@@ -343,8 +351,8 @@ def _modes(
     if keyring is not None:
         items.append(("mode.key", "key file", keyring.current_path(), False, True))
         # `<store_id>.<fingerprint prefix>.key`; the current key, with no
-        # middle part, does not match the pattern.
-        for retired in sorted(keys_dir.glob(f"{keyring.store_id}.*.key")):
+        # middle part, is not among them.
+        for retired in keyring.retired_paths():
             items.append(("mode.retired_key", "retired key", retired, False, True))
         items.append(
             ("mode.head", "head checkpoint", keyring.head_path(), False, False)
@@ -552,6 +560,26 @@ def _key(
             f"no store at {store_file} yet: nothing to check",
             path=str(store_file),
         )
+    store_id = (meta or {}).get("store_id")
+    if meta is not None and keyring is None and store_id:
+        # `Store.open` refuses this store before it reads a key, so the
+        # daemon, the hooks and the CLI serve nothing from it and nothing
+        # rekeys it; the ring is not searched by the id.
+        shown = store_id[:40]
+        return Finding(
+            "key.match",
+            "high",
+            f"the store's meta names a store id this build never writes "
+            f"({shown!r}): every opener refuses this store, and the key ring is "
+            "not searched by it",
+            path=str(store_file),
+            fix=(
+                "find out what wrote this store file; a store this build creates "
+                "carries 32 hex digits, and a repository-shipped one is not yours "
+                "to serve"
+            ),
+            details={"store_id": shown, "store_id_valid": False},
+        )
     if meta is None or keyring is None:
         why = meta_error or "the meta table names no store id"
         return Finding(
@@ -563,7 +591,7 @@ def _key(
         )
     expected = meta.get("key_fingerprint", "")
     key_path = keyring.current_path()
-    retired = sorted(keys_dir.glob(f"{keyring.store_id}.*.key"))
+    retired = keyring.retired_paths()
     details: dict[str, Any] = {
         "store_id": keyring.store_id,
         "key_fingerprint": expected,

@@ -437,6 +437,56 @@ def test_unreadable_meta_is_a_warning(layout: Layout) -> None:
     assert "meta cannot be read" in finding.summary
 
 
+def test_a_store_id_holding_a_path_is_one_finding_and_reads_nothing_outside(
+    layout: Layout, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-173. The meta is whatever the store file says. A store (one a
+    repository shipped, say) whose id is a path and a glob made the audit
+    glob outside the keys directory, report a file there as a retired key
+    and say the next owner open would rekey the log, which it never does:
+    `Store.open` refuses the store. Now the audit builds no key ring from
+    that id and says so in one finding; no pattern it globs carries the id,
+    and no finding names a path outside the store's and the keys' own."""
+    planted = layout.keys_dir.parent / "elsewhere" / "deep" / "planted.zz.key"
+    planted.parent.mkdir(parents=True)
+    planted.write_bytes(b"\x02" * 32)
+    escape = "../elsewhere/**/planted"
+    conn = sqlite3.connect(str(layout.store_file))
+    try:
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'store_id'", (escape,))
+        conn.commit()
+    finally:
+        conn.close()
+    globbed: list[str] = []
+    real_glob = Path.glob
+
+    def recording(self: Path, pattern: str, *args: Any, **kwargs: Any) -> Any:
+        globbed.append(str(pattern))
+        return real_glob(self, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "glob", recording)
+    report = audit()
+    key = _by_id(report, "key.match")
+    assert key.status == "high"
+    assert "store id this build never writes" in key.summary
+    assert key.details["store_id_valid"] is False
+    about_the_id = [f for f in report.findings if "store id" in f.summary]
+    assert about_the_id == [key]
+    ring_ids = {"mode.key", "mode.retired_key", "mode.head", "mode.origin"}
+    assert not ring_ids & _ids(report)
+    assert "mode.binding" not in _ids(report)
+    assert not [pattern for pattern in globbed if "planted" in pattern]
+    assert key.path == str(layout.store_file)
+    elsewhere = planted.parent.parent.resolve()
+    for finding in report.findings:
+        if finding.path is not None:
+            where = Path(finding.path).resolve()
+            assert where != elsewhere and elsewhere not in where.parents, (
+                finding.to_json()
+            )
+    assert planted.read_bytes() == b"\x02" * 32
+
+
 def test_no_store_yet_is_information(
     tmp_path: Path, layout: Layout, monkeypatch: pytest.MonkeyPatch
 ) -> None:

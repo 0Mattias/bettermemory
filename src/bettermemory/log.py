@@ -168,6 +168,16 @@ CONTROL_KINDS = frozenset({STORE_CREATED, REKEY, MIGRATE_V8}) | CAPTURE_KINDS
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
 
+#: The one shape of a store id: 16 random bytes in hex, what
+#: `Store.create` writes as meta's ``store_id``. The key ring names every
+#: file after the id (`KeyRing`), and meta is only what the store file
+#: says, so a ring is built for no other shape: an id holding a separator,
+#: ``..`` or a glob would have the ring read and write keys, the head and
+#: the binding wherever the id points, and its retired-key glob walk from
+#: there. ``store._STORE_ID_PATTERN``, which `Store.open` refuses a store
+#: by, must equal this one; a test pins the two together.
+STORE_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+
 # A segment whose key this machine does not hold, after one whose key it
 # does (see the module docstring): rows appended without the key to
 # history this machine signed.
@@ -406,7 +416,18 @@ class KeyRing:
     store_id: str
 
     def __post_init__(self) -> None:
+        """Refuse an id of any shape but `STORE_ID_PATTERN`'s, with
+        ValueError: every path the ring reads or writes is the keys
+        directory joined with the id, so no ring may hold an id that
+        steers one out of it."""
         self.keys_dir = Path(self.keys_dir)
+        if not isinstance(self.store_id, str) or not STORE_ID_PATTERN.fullmatch(
+            self.store_id
+        ):
+            raise ValueError(
+                f"not a store id: {str(self.store_id)[:40]!r}; a store id is 32 "
+                "lowercase hex digits, and the key ring names its files after it"
+            )
 
     def current_path(self) -> Path:
         return self.keys_dir / f"{self.store_id}.key"
@@ -476,6 +497,15 @@ class KeyRing:
             replace_atomic(self.current_path(), target)
         return key_fingerprint
 
+    def retired_paths(self) -> list[Path]:
+        """The retired key files, ``<store_id>.<prefix>.key``, in file-name
+        order; the current key, with no middle part, is not among them. A
+        keys directory that cannot be listed holds none."""
+        try:
+            return sorted(self.keys_dir.glob(f"{glob.escape(self.store_id)}.*.key"))
+        except OSError:
+            return []
+
     def key_for_fingerprint(self, key_fingerprint: str) -> bytes | None:
         """The key with this fingerprint, current or retired, or None."""
         for path in (self.current_path(), self.retired_path(key_fingerprint)):
@@ -499,12 +529,7 @@ class KeyRing:
             current = None
         if current is not None:
             keys.append(current)
-        pattern = f"{glob.escape(self.store_id)}.*.key"
-        try:
-            retired = sorted(self.keys_dir.glob(pattern))
-        except OSError:
-            retired = []
-        for path in retired:
+        for path in self.retired_paths():
             try:
                 key = path.read_bytes()
             except OSError:
@@ -1353,6 +1378,7 @@ __all__ = [
     "ORIGIN_UNVERIFIABLE",
     "REKEY",
     "STORE_CREATED",
+    "STORE_ID_PATTERN",
     "TAMPER_PROBLEMS",
     "ChainReport",
     "ChainTrust",

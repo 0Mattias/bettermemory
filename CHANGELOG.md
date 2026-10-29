@@ -433,6 +433,21 @@ the candidates' testing.
   `src/bettermemory/recall_state.py`, `src/bettermemory/recall_brief.py`,
   `src/bettermemory/recall_counters.py`, `src/bettermemory/daemon.py`,
   `src/bettermemory/cli/session_start_cmd.py`)
+- **The security audit builds no key ring from a store id this build never
+  writes.** The audit took meta's `store_id` as the store file gave it
+  and built the key ring from it, so a store whose id was a path and a
+  glob (`../elsewhere/**/planted`, one a cloned repository can ship under
+  `./.claude-memory`) had the audit glob outside the keys directory,
+  report a file there as a high "retired key", and say the next owner
+  open would rekey the log, when `Store.open` refuses that store and
+  nothing ever rekeys it. The key ring now holds a well-formed id or
+  nothing: `KeyRing` refuses any id but the 32 lowercase hex digits
+  `Store.create` writes, with the pattern in the key ring's module and a
+  test pinning it to the one `Store.open` refuses a store by, and the
+  ring lists its own retired keys. The audit reports a malformed id as
+  one high `key.match` finding ("every opener refuses this store") and
+  runs no ring check from it.
+  (`src/bettermemory/log.py`, `src/bettermemory/posture.py`)
 
 #### Known limitations
 
