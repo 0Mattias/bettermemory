@@ -721,6 +721,66 @@ def test_each_git_question_waits_the_named_timeout(
     assert {timeout for _, timeout in waits} == {0.75}
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+@pytest.mark.parametrize(
+    ("question", "tracked", "exit_code"),
+    [
+        ("ls-files", True, None),
+        ("ls-files", True, 128),
+        ("check-ignore", False, None),
+        ("check-ignore", False, 128),
+    ],
+    ids=["ls-files-timeout", "ls-files-fails", "ignore-timeout", "ignore-fails"],
+)
+def test_a_git_question_left_unanswered_is_a_skip(
+    question: str,
+    tracked: bool,
+    exit_code: int | None,
+    tmp_path: Path,
+    layout: Layout,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ENG-185, found under H9: what the git timeout's running out does.
+    A question git left unanswered (None from the runner, a timeout among
+    them, or an exit that is no answer) was read as "not tracked" or "not
+    ignored". A tracked store read as a commit away (warn, not high) when
+    ``ls-files`` went unanswered: ``check-ignore`` does not apply ignore
+    rules to a tracked file, so even one a ``.gitignore`` covers reads as
+    not ignored. An ignored store read the same warning when
+    ``check-ignore`` went unanswered. Either is a skip that names the
+    question now."""
+    _git_env(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    monkeypatch.delenv(_config.ENV_DIR_OVERRIDE)
+    monkeypatch.chdir(repo)
+    Store.create(repo / ".claude-memory").close()
+    if tracked:
+        _git(repo, "add", ".claude-memory")
+    (repo / ".gitignore").write_text(".claude-memory/\n", encoding="utf-8")
+    answered = _by_id(audit(), "store.git")
+    assert answered.status == ("high" if tracked else "info")
+    real_run_git = _git_runner.run_git
+
+    def unanswered(args: list[str], **kwargs: Any) -> Any:
+        if question not in args:
+            return real_run_git(args, **kwargs)
+        if exit_code is None:
+            return None
+        return subprocess.CompletedProcess(args, exit_code, "", "fatal: no answer")
+
+    monkeypatch.setattr(posture, "run_git", unanswered)
+    finding = _by_id(audit(), "store.git")
+    assert finding.status == "skip", finding.to_json()
+    expected = (
+        "timed out after 2 s or could not run" if exit_code is None else "exited 128"
+    )
+    assert f"`git {question}` {expected}" in finding.summary
+    assert finding.details["git"] == question
+    assert finding.details["exit"] == exit_code
+
+
 @pytest.mark.parametrize(
     ("path", "service"),
     [

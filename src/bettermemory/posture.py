@@ -71,6 +71,7 @@ import shlex
 import socket
 import sqlite3
 import stat
+import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -769,6 +770,36 @@ def _where(store_dir: Path, store_file: Path, keys_dir: Path) -> Iterator[Findin
 _GIT_TIMEOUT_SECONDS = 2.0
 
 
+def _git_unanswered(
+    finding_id: str,
+    label: str,
+    directory: Path,
+    top: Path,
+    question: str,
+    run: subprocess.CompletedProcess[str] | None,
+) -> Finding:
+    """The skip `git_finding` returns when git leaves `question` unanswered
+    for `directory` inside the working tree at `top`: None from the runner
+    (it timed out or could not run, `_git.run_git` logged which), or an
+    exit that is no answer."""
+    exit_code = None if run is None else run.returncode
+    why = (
+        f"timed out after {_GIT_TIMEOUT_SECONDS:g} s or could not run"
+        if run is None
+        else f"exited {exit_code}"
+    )
+    verb = "tracks" if question == "ls-files" else "ignores"
+    return Finding(
+        finding_id,
+        "skip",
+        f"the {label} {directory} is inside the git working tree at {top}; "
+        f"`git {question}` {why}, so whether git {verb} it is not checked",
+        path=str(directory),
+        fix="run `bettermemory security audit` again once git answers",
+        details={"worktree": str(top), "git": question, "exit": exit_code},
+    )
+
+
 def _store_content(name: str, store: str, backups: str) -> bool:
     """Whether a tracked path (relative to the working tree, in POSIX form)
     is the store's content: the store file `store`, its ``-wal`` and
@@ -804,7 +835,14 @@ def git_finding(
     content is high: the store, a copy, a bundle or the key goes wherever
     the repository goes. Not ignored is a warning: one ``git add -A`` away.
     Ignored is information for the store (``ignored_ok``) and a warning for
-    the keys, which belong in no working tree at all."""
+    the keys, which belong in no working tree at all.
+
+    A question git leaves unanswered (it timed out, could not run, or
+    failed: ``ls-files`` exits non-zero, ``check-ignore`` with neither 0,
+    ignored, nor 1, not ignored) is a skip that names it: read as "not
+    tracked" or "not ignored", it would call a tracked store a commit
+    away (``check-ignore`` applies no ignore rule to a tracked file), and
+    an ignored one the same."""
     if not os.path.isdir(directory):
         return Finding(finding_id, "ok", f"no {label} at {directory} yet")
     top_run = run_git(
@@ -827,9 +865,9 @@ def git_finding(
         cwd=top,
         timeout=_GIT_TIMEOUT_SECONDS,
     )
-    tracked: list[str] = []
-    if listed is not None and listed.returncode == 0:
-        tracked = [name for name in listed.stdout.split("\0") if name]
+    if listed is None or listed.returncode != 0:
+        return _git_unanswered(finding_id, label, directory, top, "ls-files", listed)
+    tracked = [name for name in listed.stdout.split("\0") if name]
     if store_name is None:
         content, backups = tracked, ""
     else:
@@ -870,8 +908,12 @@ def git_finding(
         cwd=top,
         timeout=_GIT_TIMEOUT_SECONDS,
     )
+    if ignored is None or ignored.returncode not in (0, 1):
+        return _git_unanswered(
+            finding_id, label, directory, top, "check-ignore", ignored
+        )
     details["tracked"] = False
-    details["ignored"] = ignored is not None and ignored.returncode == 0
+    details["ignored"] = ignored.returncode == 0
     if details["ignored"]:
         return Finding(
             finding_id,

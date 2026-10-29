@@ -568,6 +568,14 @@ the candidates' testing.
   project. (`src/bettermemory/claude_paths.py`,
   `src/bettermemory/_fsutil.py`, `src/bettermemory/doctor.py`,
   `src/bettermemory/init.py`, `src/bettermemory/posture.py`)
+- **The audit no longer reads git's silence as an answer.** When
+  `git ls-files` timed out, could not run or failed, `store.git` read the
+  store as untracked, so a tracked store was reported as "one `git add
+  -A` commits it" (a warning) instead of tracked (high), even under a
+  `.gitignore`, since `git check-ignore` applies no ignore rule to a
+  tracked file. When `git check-ignore` gave no answer, an ignored store
+  got the same warning. Either case is now a skip that names the question
+  and why it went unanswered. (`src/bettermemory/posture.py`)
 
 #### Known limitations
 
