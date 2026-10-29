@@ -51,7 +51,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parents[1]
@@ -80,7 +80,7 @@ from bettermemory.membership import (  # noqa: E402
 )
 from bettermemory.models import validate_scope  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
-from bettermemory.search import tokenizer_fingerprint  # noqa: E402
+from bettermemory.search import SearchMode, tokenizer_fingerprint  # noqa: E402
 from bettermemory.store import Store  # noqa: E402
 
 TRANSCRIPTS = Path.home() / ".claude" / "projects"
@@ -293,7 +293,9 @@ def replay(
         model_filter=spec["model"],
         max_results=width,
         half_life_days=behavior.recency_boost_half_life_days,
-        mode=mode,
+        # The call's mode passed the known-mode check in `unique_specs`, and
+        # the config's is coerced to a known one when it is read.
+        mode=cast("SearchMode", mode),
         allow_empty_query=False,
         corpus_stats_provider=pool.corpus_stats_provider,
         rescue_expansion=False,
