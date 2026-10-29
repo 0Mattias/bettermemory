@@ -909,13 +909,17 @@ class AnsweredHistory:
     def parents(self, commit: str) -> Sequence[str]:
         return self._walk_entry(commit)[1]
 
-    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
-        a, d = ancestor.lower(), descendant.lower()
-        if a == d:
-            return True
-        if a in self._ancestry_of and d in self._ancestry_of:
-            return (a, d) in self._ancestry
-        raise NeedWitnesses({"ancestry": sorted(self._ancestry_of | {a, d})})
+    def reachable_among(self, commits: Sequence[str]) -> dict[str, frozenset[str]]:
+        """The client's `reachable_among` over the commits it was asked
+        about; commits it was not asked about raise `NeedWitnesses`
+        naming them with those it was, so its next answer covers both."""
+        wanted = {c.lower() for c in commits if _FULL_HASH.fullmatch(c.lower())}
+        if not wanted <= self._ancestry_of:
+            raise NeedWitnesses({"ancestry": sorted(self._ancestry_of | wanted)})
+        return {
+            c: frozenset(d for a, d in self._ancestry if a == c and d in wanted)
+            for c in wanted
+        }
 
     def blobs(self, commit: str) -> Sequence[str]:
         sha = commit.lower()
@@ -1152,9 +1156,11 @@ def answer(
     """The client's answers to a daemon's `question` about its repository
     (design 8.7), added to the `answers` of earlier rounds: which of the
     named ids it holds, the commits of the model's rewritten-history walk
-    with their fingerprints and parents, the ancestry among the held
-    witnesses, the blob sample of HEAD and the asked commits, and the
-    state of the named views, all read from its own files."""
+    with their fingerprints and parents, the ancestry among the commits
+    the question names (`reachable_among`, one bounded traversal, and only
+    when the question asks it: ENG-151), the blob sample of HEAD and the
+    asked commits, and the state of the named views, all read from its
+    own files."""
     out: dict[str, Any] = {k: v for k, v in answers.items()}
     history = (
         RepositoryHistory(cap.common_dir)
@@ -1179,12 +1185,11 @@ def answer(
                 s = str(sha).lower()
                 walked[s] = [history.fingerprint(s), list(history.parents(s))]
             out["walk"] = walked
-        among = sorted(held | {str(x).lower() for x in question.get("ancestry") or ()})
-        among = [s for s in among if _FULL_HASH.fullmatch(s)]
-        out["ancestry_of"] = among
-        out["ancestry"] = [
-            [a, d] for a in among for d in among if a != d and history.is_ancestor(a, d)
-        ]
+        among = [str(x).lower() for x in question.get("ancestry") or ()]
+        if among:
+            reach = history.reachable_among(among)
+            out["ancestry_of"] = sorted(reach)
+            out["ancestry"] = sorted([a, d] for a, ds in reach.items() for d in ds)
         blobs = dict(out.get("blobs") or {})
         for sha in [cap.head, *(question.get("blobs") or ())]:
             if sha:
@@ -1193,6 +1198,11 @@ def answer(
         out["blobs"] = blobs
     else:
         out.setdefault("walk", {})
+        asked = {str(x).lower() for x in question.get("ancestry") or ()}
+        if asked:
+            # Nothing here to read: the commits asked about relate to none.
+            out["ancestry_of"] = sorted(s for s in asked if _FULL_HASH.fullmatch(s))
+            out["ancestry"] = []
     views = dict(out.get("views") or {})
     for v in question.get("views") or ():
         if isinstance(v, Mapping) and isinstance(v.get("path"), str):

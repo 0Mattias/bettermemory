@@ -944,6 +944,34 @@ the candidates' testing.
   `src/bettermemory/membership_rows.py`, `src/bettermemory/membership.py`,
   `src/bettermemory/membership_resolve.py`, `src/bettermemory/location.py`,
   `src/bettermemory/history.py`)
+- **Ancestry among witness commits is one bounded walk, read only when
+  a question asks it.** The rule that picks the most specific of several
+  tied projects asked, for every ordered pair of held witnesses, whether
+  one is an ancestor of the other, and each unrelated pair walked the
+  whole history with no bound, inside the resolution's write
+  transaction; a container client answered the same matrix over every
+  held id on every round of the witness exchange, asked or not. A fork
+  cloned with its upstream's remote, or a container's first sight of a
+  large repository, held the store's write lock for seconds or timed the
+  hook out (ENG-151). `reachable_among` answers it in one breadth-first
+  traversal from every witness at once, reading the parents of at most
+  `WALK_LIMIT` (512) commits; the client computes it only for the
+  commits a daemon's ancestry question names. A relation past the bound
+  reads as none, so the rule keeps every line it could not order and the
+  first sight asks rather than guess: the 512 commits are shared among
+  the tied witnesses, about 512/n below each of n, so with 128 tied
+  witnesses (64 a project) five or more commits apart the bound finds no
+  relation and the ladder asks, and the question says so (Known
+  limitations). Measured on a 20,000-commit line
+  with 64 witnesses 5 commits apart: 40.1 million parent reads and 7.4 s
+  before, 512 reads and 3.5 ms now, the same 2,016 relations; on this
+  repository (2,002 commits, 64 witnesses 5 apart, warm reader) 3.9
+  million reads and 0.86 s before, 512 reads and 3.6 ms now; with
+  witnesses 300 apart the walk stops at 512 reads where the pairs read
+  27.8 million. (`src/bettermemory/location_git.py`,
+  `src/bettermemory/membership_resolve.py`, `docs/internals.md`,
+  `src/bettermemory/location.py`, `src/bettermemory/membership.py`,
+  `src/bettermemory/membership_records.py`)
 
 #### Known limitations
 
@@ -1008,6 +1036,18 @@ the candidates' testing.
   followed, and the folder resolves as that checkout (ENG-158). git
   itself follows every such pointer; the rule bounds what bettermemory
   delivers, not what git runs there.
+- **Past the ancestry walk's bound, a tie in a long-lived project asks.**
+  The traversal that picks the most specific of several tied projects
+  reads 512 commits in all, about 512/n below each of n tied witness
+  commits: on a 20,000-commit line with 128 tied witnesses (two
+  projects), relations are found for witnesses up to four commits apart
+  and none from five, and both projects are kept. A project keeps its 16
+  first-seen witnesses, so its witnesses span its whole observed life:
+  a fork and its upstream tied at first sight, in a project used across
+  more than about 512 commits, asks where rc13 joined (after an
+  unbounded walk). Asking is the safe side; the question names the bound
+  it read (ENG-151). Reading newest witnesses first (committer date or
+  generation numbers) is filed.
 
 ### 9.0.0rc13
 

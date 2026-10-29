@@ -69,6 +69,7 @@ from bettermemory.membership import (
 )
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.store import RecordHome, Store
+from bettermemory.location_git import reachable_among
 
 _NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -112,17 +113,8 @@ class History:
         found = self.commits.get(commit)
         return () if found is None else found.parents
 
-    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
-        todo, seen = [descendant], set()
-        while todo:
-            sha = todo.pop()
-            if sha == ancestor:
-                return True
-            if sha in seen:
-                continue
-            seen.add(sha)
-            todo.extend(self.parents(sha))
-        return False
+    def reachable_among(self, commits: Sequence[str]) -> dict[str, frozenset[str]]:
+        return reachable_among(self, commits)
 
     def blobs(self, commit: str) -> Sequence[str]:
         found = self.commits.get(commit)
@@ -1794,6 +1786,7 @@ def test_rung4_several_projects_the_stronger_evidence_decides(world: World) -> N
     assert list(res.witnesses[str(pa.project)]) == [F, H, R]
     assert list(res.witnesses[str(pb.project)]) == [H, R]
     assert (res.outcome, res.rule, res.project) == (SILENT, "join:F+H+R", pa.project)
+    assert not any("commits read" in line for line in res.lines)
 
 
 def test_rung4_several_projects_the_most_specific_line_decides(world: World) -> None:
@@ -1823,6 +1816,9 @@ def test_rung4_several_projects_on_unrelated_lines_ask_once(world: World) -> Non
     assert (res.outcome, res.rule) == (ASK, "ask:several_projects")
     assert set(res.candidates) == {pa.project, pb.project}
     assert res.lines[-1].startswith("bettermemory: /w/both may be")
+    # Review M G2: the question says the most specific line was read and
+    # not decided within the walk's bound.
+    assert "descends from another's within the 512 commits read" in res.lines[-1]
     assert world.brief(res) == []
 
 

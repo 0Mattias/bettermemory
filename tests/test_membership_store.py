@@ -46,6 +46,7 @@ from bettermemory.store import (
     StandingAnswer,
     Store,
 )
+from bettermemory.location_git import reachable_among
 
 _NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
@@ -457,8 +458,8 @@ class _History:
         i = self.line.index(commit)
         return (self.line[i - 1],) if i else ()
 
-    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
-        return self.line.index(ancestor) <= self.line.index(descendant)
+    def reachable_among(self, commits: Sequence[str]) -> dict[str, frozenset[str]]:
+        return reachable_among(self, commits)
 
     def blobs(self, commit: str) -> Sequence[str]:
         return self._blobs.get(commit, [])

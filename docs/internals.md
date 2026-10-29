@@ -482,8 +482,12 @@ The first rung that answers decides (`Membership.resolve`):
    checkout is re-keyed (`checkout_rekeyed`); after `git init` in a folder
    project, O of the folder with F re-keys the folder checkout to the git
    directory. Where several projects qualify: the stronger evidence, then
-   the most specific line, else a question. With `strict = true` a join
-   resting on history without F or B asks.
+   the most specific line, else a question. The most specific line is
+   one breadth-first traversal from every tied witness commit, reading
+   `WALK_LIMIT` (512) commits in all (ENG-151), about 512/n below each of
+   n; a relation past it reads as none, so the projects it could not
+   order are kept and the question says the bound was read. With
+   `strict = true` a join resting on history without F or B asks.
 5. A contradiction, one witness, or content alone: ASK ONCE.
 6. No witness: NEW, line L2.
 

@@ -23,6 +23,7 @@ import os
 import re
 import stat
 import threading
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -1011,23 +1012,11 @@ class RepositoryHistory:
         self._parents[sha] = found
         return found
 
-    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
-        """Whether `ancestor` is `descendant` or reachable from it over
-        parent lines read from the objects; a shallow boundary ends the
-        walk as git's own walk ends it there."""
-        a, d = ancestor.lower(), descendant.lower()
-        if a == d:
-            return True
-        seen = {d}
-        todo = [d]
-        while todo:
-            for p in self.parents(todo.pop()):
-                if p == a:
-                    return True
-                if p not in seen:
-                    seen.add(p)
-                    todo.append(p)
-        return False
+    def reachable_among(self, commits: Sequence[str]) -> dict[str, frozenset[str]]:
+        """`reachable_among` over this repository's parent lines (ENG-151):
+        one bounded traversal, a shallow boundary ending it as git's own
+        walk ends there."""
+        return reachable_among(self, commits)
 
     def blobs(self, commit: str) -> Sequence[str]:
         """Up to `BLOBS_PER_WITNESS` blob ids of the commit's files (the
@@ -1062,6 +1051,51 @@ class RepositoryHistory:
                 if header is not None and header[1] >= BLOB_MIN_SIZE:
                     out.append(entry.sha)
         return sorted(out)[:BLOBS_PER_WITNESS]
+
+
+def reachable_among(
+    history: Any, commits: Sequence[str], *, limit: int = WALK_LIMIT
+) -> dict[str, frozenset[str]]:
+    """{commit: the other commits of `commits` it is reachable from}, for
+    each full commit id given (lowercase; any other id is left out): the
+    given commits each one is an ancestor of, which the most-specific rule
+    reads (`membership.Membership._most_specific`) and a client answers the
+    daemon's ancestry question with (`location.answer`).
+
+    One traversal of the parent lines from every given commit at once,
+    breadth first, each commit carrying the set of given commits that
+    reach it; the parents of a commit are read once, and of at most
+    `limit` commits (`WALK_LIMIT`, the rewritten-history walk's bound,
+    ENG-151). The pairwise walks this replaces read the whole history for
+    every pair that is not related, k(k-1) walks for k witnesses, inside
+    the resolution's write transaction. Past the bound a relation the
+    traversal did not reach reads as none: the most-specific rule then
+    keeps more candidates, and asks, never fewer."""
+    given = list(
+        dict.fromkeys(
+            c.lower() for c in commits if _FULL_HASH.fullmatch(c.lower()) is not None
+        )
+    )
+    bit = {c: 1 << i for i, c in enumerate(given)}
+    reach: dict[str, int] = dict(bit)
+    lines: dict[str, tuple[str, ...]] = {}
+    todo = deque(given)
+    while todo:
+        sha = todo.popleft()
+        parents = lines.get(sha)
+        if parents is None:
+            if len(lines) >= limit:
+                continue
+            parents = lines[sha] = tuple(p.lower() for p in history.parents(sha))
+        mask = reach[sha]
+        for p in parents:
+            old = reach.get(p, 0)
+            if old | mask != old:
+                reach[p] = old | mask
+                todo.append(p)
+    return {
+        c: frozenset(o for o in given if o != c and reach[c] & bit[o]) for c in given
+    }
 
 
 def walk(

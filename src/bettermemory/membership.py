@@ -1119,16 +1119,17 @@ class Membership:
 
     def _most_specific(self, loc: Location, held: Mapping[str, set[str]]) -> list[str]:
         """The projects whose held witnesses include one no other held
-        witness descends from: the most specific line."""
+        witness descends from: the most specific line. The ancestry is
+        one bounded traversal from every held witness at once
+        (`HistoryReader.reachable_among`, ENG-151), read inside the
+        resolution's write transaction; a relation past its bound reads
+        as none, which keeps more projects (and asks), never fewer."""
         history = loc.history
         shas = sorted(set().union(*held.values()))
         if history is None:
             return sorted(held)
-        top = {
-            s
-            for s in shas
-            if not any(o != s and history.is_ancestor(s, o) for o in shas)
-        }
+        reach = history.reachable_among(shas)
+        top = {s for s in shas if not reach.get(s.lower())}
         return sorted(p for p, ws in held.items() if ws & top)
 
     # The ladder of design 3.2 (membership_resolve.py).

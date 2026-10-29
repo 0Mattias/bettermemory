@@ -61,6 +61,7 @@ from .membership_records import (
     SUPERSEDED,
     UNREADABLE,
     UNRESOLVED,
+    WALK_LIMIT,
     WORDS,
     B,
     C,
@@ -593,6 +594,7 @@ def _first_sight(
             for p in strong
             if not (_HISTORY & cands[p]) or F in cands[p] or B in cands[p]
         ]
+    unordered = 0
     if len(strong) > 1:
         top = max(strength[p] for p in strong)
         best = [p for p in strong if strength[p] == top]
@@ -600,6 +602,8 @@ def _first_sight(
             held = {p: t.held[p] for p in best if p in t.held}
             if len(held) == len(best):
                 best = self._most_specific(loc, held)
+                if len(best) > 1 and loc.history is not None:
+                    unordered = len(set().union(*held.values()))
         if len(best) == 1:
             strong = best
     if len(strong) == 1:
@@ -612,6 +616,8 @@ def _first_sight(
             + ", ".join(WORDS[c] for c in sorted(cands[p]) if c in WORDS)
             for p in sorted(strong)
         )
+        if unordered:
+            evidence += "; " + _unordered(unordered)
         res = self._ask(
             loc,
             sorted(strong),
@@ -1292,3 +1298,16 @@ def _declared_folder(
         ):
             return True
     return False
+
+
+def _unordered(count: int) -> str:
+    """The words a several-projects question adds when the most specific
+    line was read and not decided (ENG-151, review M G2): the traversal
+    reads `WALK_LIMIT` commits in all, about ``WALK_LIMIT // count`` below
+    each of the `count` tied witness commits, so witnesses further apart
+    than that are not ordered and the ladder asks."""
+    depth = max(1, WALK_LIMIT // max(1, count))
+    return (
+        f"none of their {count} witness commits descends from another's within "
+        f"the {WALK_LIMIT} commits read (about {depth} below each)"
+    )

@@ -60,6 +60,7 @@ from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.origin import Origin
 from bettermemory.server import main as cli_main
 from bettermemory.store import RecordHome, Store
+from bettermemory.location_git import reachable_among
 
 _NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 _counter = itertools.count(1)
@@ -95,16 +96,8 @@ class History:
     def parents(self, commit: str) -> Sequence[str]:
         return self.commits.get(commit, ())
 
-    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
-        todo, seen = [descendant], set()
-        while todo:
-            sha = todo.pop()
-            if sha == ancestor:
-                return True
-            if sha not in seen:
-                seen.add(sha)
-                todo.extend(self.parents(sha))
-        return False
+    def reachable_among(self, commits: Sequence[str]) -> dict[str, frozenset[str]]:
+        return reachable_among(self, commits)
 
     def blobs(self, commit: str) -> Sequence[str]:
         return ()

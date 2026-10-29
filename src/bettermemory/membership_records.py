@@ -22,7 +22,7 @@ import ntpath
 import os
 import posixpath
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
@@ -333,9 +333,11 @@ class HistoryReader(Protocol):
     """The repository a `Location` was read from, as the ladder asks it:
     which of a batch of commits (or objects of any type) it holds, a
     commit's fingerprint (sha256 of its author and committer lines and
-    message) and parents, ancestry, and the sample of blob ids a witness
-    commit keeps. Phase 2's object reader implements it; a client that
-    reads a path the daemon cannot see answers for it."""
+    message) and parents, the ancestry among a batch of commits (one
+    bounded traversal: `location.reachable_among`, ENG-151), and the
+    sample of blob ids a witness commit keeps. Phase 2's object reader
+    implements it; a client that reads a path the daemon cannot see
+    answers for it."""
 
     def holds(self, commits: Sequence[str]) -> set[str]: ...
 
@@ -345,7 +347,10 @@ class HistoryReader(Protocol):
 
     def parents(self, commit: str) -> Sequence[str]: ...
 
-    def is_ancestor(self, ancestor: str, descendant: str) -> bool: ...
+    def reachable_among(self, commits: Sequence[str]) -> Mapping[str, Collection[str]]:
+        """{commit: the other commits of `commits` it is reachable from},
+        keyed by the full ids given, in lowercase."""
+        ...
 
     def blobs(self, commit: str) -> Sequence[str]: ...
 
