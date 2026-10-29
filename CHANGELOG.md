@@ -1791,6 +1791,39 @@ follows the candidates' testing.
   one-row `meta` key per appended row.
   (`src/bettermemory/store_keys.py`, `src/bettermemory/store.py`,
   `docs/api.md`, `tests/test_append_rekey_race.py`)
+- **A store written under another tokenizer is re-spelled at its
+  owner's open.** Each memory row keeps its search-index text as the
+  tokenizer of the build that wrote it spelled it, and meta's
+  `tokenizer_fingerprint` names that tokenizer, but the fingerprint was
+  written at create and never read: a build whose token stream changed
+  (8.x changed it four times) searched every older row by a spelling the
+  row did not carry, a silent recall loss on any store large enough for
+  the FTS5 prefilter. Every `Store.open` now compares the fingerprint
+  with this build's (`store_index.reconciles_tokenizer`, one decorator
+  line on `Store.open`, so it runs after whichever of the open's paths
+  returned the store). The owner's writing open (`allow_rekey`, which
+  the daemon, the hooks and the CLI open through) re-spells a store
+  whose fingerprint differs in one write transaction under the write
+  lock: every memory row's `body_fts` and `scopes_fts` from its body and
+  scopes, the FTS5 table rebuilt, meta updated, and one `index_rebuilt`
+  control row, a new log kind that `log verify` and `log export` show.
+  meta is read again under the lock, so two owners' opens re-spell once;
+  a store the rebuild cannot write opens anyway, says why, and is tried
+  again at the next writing open. A read-only open, a store this build
+  may only read (`PRAGMA query_only`) and an open that is not the
+  owner's (a daemon's worker, `backup verify`'s copy of a bundle, which
+  the schema steps leave alone too) re-spell nothing: each warns once a
+  process, naming both tokenizers, and searches the index as it stands.
+  The `index_rebuilt` row also keys the document frequency memo, so FTS
+  hits read before a rebuild, by this process or the daemon, are read
+  again after it. Measured on this tree (scratch run, Apple silicon,
+  5,000 synthetic memories of 20 to 80 words): the check is one meta
+  read, 2.2 us an open (the digest is computed once a process, 0.13
+  ms), and an owner's open measured 1.126 ms with it and 1.132 ms
+  without; the rebuild held the write lock 0.53 s, 0.29 s of it
+  tokenizing. (`src/bettermemory/store_index.py`,
+  `src/bettermemory/store.py`, `src/bettermemory/log.py`,
+  `docs/internals.md`, `docs/api.md`, `tests/test_store_tokenizer.py`)
 
 #### Known limitations
 

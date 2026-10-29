@@ -395,7 +395,7 @@ Each line is one object, schema `bettermemory.audit/1`:
 | `ts` | the row's stamp, UTC ISO 8601 with `Z` (an imported 8.x stamp is converted; one that does not parse is kept as stored) |
 | `session` | the row's session column, or null |
 | `kind` | the row kind (`memory_put`, `tombstone_put`, `rekey`, `search`, ...) |
-| `class` | `mutation` (a row the fold applies to a table, membership tables included), `control` (`store_created`, `rekey`, `migrate_v8` and the capture rows), `membership` (the membership observability rows) or `telemetry` |
+| `class` | `mutation` (a row the fold applies to a table, membership tables included), `control` (`store_created`, `rekey`, `migrate_v8`, `index_rebuilt` and the capture rows), `membership` (the membership observability rows) or `telemetry` |
 | `actor` | the actor block the row's payload carries (telemetry rows), or null |
 | `record_actor` | the record's declared writer on a `memory_put` or `tombstone_put`, or null; on a put written by a verify or a corroboration it is the original writer, not the caller |
 | `record_ids` | the memory, tombstone and episode ids the row names: a put's record, a delete's id, a verification's `memory_id`, a conflict's two records, an import's `memory_id`, a home or standing row's `record_id`, and the top-level `id`, `memory_id` and `record_id` of any other row; a search's returned ids stay in the payload |

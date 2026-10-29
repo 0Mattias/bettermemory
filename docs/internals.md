@@ -1224,6 +1224,33 @@ with a revision at or below its own; an admitted file's `meta`
 the audit read that refusal as a version refusal first: their remedy is
 the later build, not moving the file aside.
 
+The search index is spelled by a tokenizer, and `meta` names which
+(ENG-100). Each memory row keeps its index text beside its body:
+`body_fts` and `scopes_fts`, its body and its space-joined scopes as
+`search.fts_index_text` spells them, which the FTS5 table indexes, and
+`meta`'s `tokenizer_fingerprint` is the digest of that spelling over a
+fixed corpus (`search.tokenizer_fingerprint`). A query matches a row
+only while one tokenizer spelled both, so every open compares the
+fingerprint with this build's (`store_index.reconciles_tokenizer`, the
+decorator on `Store.open`, run once the open has returned the store by
+any of its paths). When they differ, the owner's writing open
+(`allow_rekey`, on a connection that holds the key and may write)
+re-spells the store in one `BEGIN IMMEDIATE` (`store_index.rebuild_index`):
+it reads `meta` again under the lock and stops if another opener got
+there first, sets each row's two columns from its body and scopes (only
+the rows whose text changes are written), rebuilds the FTS5 table from
+them (`'rebuild'`), sets `meta`, and appends one `index_rebuilt` control
+row naming why, both fingerprints and the counts. No record changes, and
+the fold applies no `index_rebuilt` row. A rebuild that cannot write
+(busy, full) is logged and the open goes on. Every other open (read-only,
+read-only by its versions, or not the owner's: a worker's `reopen`,
+`backup verify`'s copy) re-spells nothing, logs one warning a process
+naming both fingerprints, and searches the index as it stands, so a row
+the old tokenizer spelled may be missed until the owner's next open, as
+a reader's open runs no schema step either. The `index_rebuilt` row is
+one of the rows the document frequency memo is keyed on
+(`store_index._memory_head`).
+
 A record a later build wrote may carry fields this build's models do not
 define; the models read past them (pydantic's `extra='ignore'`). Every
 mutation of a memory or a tombstone (`store_rows._apply_mutation`: a put,

@@ -610,6 +610,7 @@ class Store:
             raise
 
     @classmethod
+    @_index.reconciles_tokenizer
     def open(
         cls,
         path: Path | str,

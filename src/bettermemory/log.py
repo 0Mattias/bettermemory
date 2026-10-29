@@ -164,6 +164,13 @@ CAPTURE_KINDS = frozenset(
     {CAPTURE_OPEN, CAPTURE_MEMBER, CAPTURE_CLOSE, CAPTURE_UNDO, CAPTURE_RELATIONS}
 )
 CONTROL_KINDS = frozenset({STORE_CREATED, REKEY, MIGRATE_V8}) | CAPTURE_KINDS
+# `index_rebuilt` (ENG-100): the store's search index was spelled again.
+# Its payload names why (`tokenizer`, an open that found the index spelled
+# by another tokenizer than this build's; `repair`, `bettermemory index
+# rebuild`), the tokenizer fingerprints before and after, and how many
+# memories it re-spelled (`store_index.rebuild_index`). It changes no record.
+INDEX_REBUILT = "index_rebuilt"
+CONTROL_KINDS = CONTROL_KINDS | {INDEX_REBUILT}
 
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
@@ -1370,6 +1377,7 @@ __all__ = [
     "CONTROL_KINDS",
     "FOREIGN_SEGMENT",
     "GENESIS_MAC",
+    "INDEX_REBUILT",
     "KEY_BYTES",
     "MIGRATE_V8",
     "ORIGIN_ABSENT",

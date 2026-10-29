@@ -11,26 +11,39 @@ the log's last memory or home row (`_memory_head`), kept and bounded by
 mask from here. It lives apart from `store.py` to keep each module under
 the package's 2,000-line bound (ENG-96); it imports `store_schema` and
 `store_rows`, and `store` only for type checking.
+
+The index's own integrity (ENG-100) is here too: the tokenizer the stored
+index text is spelled by, compared at every open with this build's
+(`reconciles_tokenizer`, the one line `Store.open` carries), and the
+re-spelling an owner's open runs when they differ (`rebuild_index`).
 """
 
 from __future__ import annotations
 
+import functools
 import json
+import logging
+import sqlite3
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ParamSpec
 
 from . import _caches
 from .identity import Actor
-from .search import fts_match_query
+from .log import INDEX_REBUILT
+from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
 from .store_schema import _PROVENANCE_BATCH
 from .store_rows import _dt, _load_json
 
 if TYPE_CHECKING:
     from .store import Store
+
+log = logging.getLogger("bettermemory.store")
 
 
 # Every memory row's admission inputs for the document frequencies: its
@@ -220,15 +233,18 @@ def inbound_links(
 
 
 def _memory_head(self: Store) -> tuple[int, str]:
-    """The log's last memory or home row, `(seq, mac)`: the key of the
-    document frequency memo. `(0, "")` on a log with none. Each MAX is
-    one probe of `log_by_kind`."""
+    """The log's last memory or home row, or `index_rebuilt` row, `(seq,
+    mac)`: the key of the document frequency memo. A rebuild re-spells
+    the index text the FTS hits are read from (`rebuild_index`), in this
+    process or another, so its row moves the key too. `(0, "")` on a log
+    with none. Each MAX is one probe of `log_by_kind`."""
     row = self._conn.execute(
         "SELECT seq, mac FROM log WHERE seq = (SELECT MAX(s) FROM ("
         "SELECT MAX(seq) AS s FROM log WHERE kind = 'memory_put' "
         "UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'memory_delete' "
         "UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'home_put' "
-        "UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'home_delete'))"
+        "UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'home_delete' "
+        f"UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = '{INDEX_REBUILT}'))"
     ).fetchone()
     if row is None:
         return 0, ""
@@ -381,3 +397,233 @@ def contradicted_at(self: Store, memory_ids: Sequence[str]) -> dict[str, datetim
                 if previous is None or stamp > previous:
                     out[memory_id] = stamp
     return out
+
+
+# -- the tokenizer the index is spelled by (ENG-100) ----------------------
+#
+# Each memory row keeps its index text (`body_fts`, `scopes_fts`) as this
+# build's tokenizer spells its body and scopes (`search.fts_index_text`),
+# and the FTS5 table indexes that text, so a query matches a memory only
+# while the tokenizer that spells the query is the one that spelled the
+# row. meta's `tokenizer_fingerprint` names that tokenizer
+# (`search.tokenizer_fingerprint`, a digest of the token stream over a
+# fixed corpus), written at `Store.create`. Every open compares it with
+# this build's (`reconciles_tokenizer`). The owner's writing open re-spells
+# a store whose fingerprint differs (`rebuild_index`), in one write
+# transaction, as the owner's open runs a store's schema steps
+# (`store_schema.check_versions`); every other open says so once and
+# searches the index as it stands, so a memory spelled by the old
+# tokenizer may not be found until the owner's next open.
+
+#: meta's key for the tokenizer the stored index text is spelled by.
+TOKENIZER_FINGERPRINT_KEY = "tokenizer_fingerprint"
+
+#: Why an index was spelled again, as its `index_rebuilt` row says: an
+#: owner's open found it spelled by another tokenizer than this build's.
+REBUILT_FOR_TOKENIZER = "tokenizer"
+
+_P = ParamSpec("_P")
+
+# The stores this process has said it searches under another tokenizer's
+# spelling, with the two fingerprints: said once, not at every connection
+# a reader or a daemon's worker opens.
+_DRIFT_TOLD: set[tuple[str, str, str]] = set()
+_DRIFT_TOLD_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_drift_told() -> None:
+    with _DRIFT_TOLD_LOCK:
+        _DRIFT_TOLD.clear()
+
+
+@dataclass(frozen=True)
+class IndexRebuild:
+    """One re-spelling of a store's index (`rebuild_index`), as its
+    `index_rebuilt` row records it: why, the tokenizer fingerprints meta
+    named before (None when it named none) and after, how many memory rows
+    were read and how many of them changed their index text, the row's
+    seq, and how long the write transaction ran, in seconds."""
+
+    reason: str
+    old_fingerprint: str | None
+    new_fingerprint: str
+    memories: int
+    respelled: int
+    seq: int
+    seconds: float
+
+
+def stored_fingerprint(conn: sqlite3.Connection) -> str | None:
+    """meta's `tokenizer_fingerprint`, or None when meta has none."""
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (TOKENIZER_FINGERPRINT_KEY,)
+    ).fetchone()
+    return None if row is None else str(row[0])
+
+
+def tokenizer_drift(conn: sqlite3.Connection) -> tuple[str | None, str] | None:
+    """`(stored, live)` when meta's tokenizer fingerprint is not this
+    build's (`search.tokenizer_fingerprint`), None when they agree. One
+    primary-key read of meta; the live digest is computed once a process."""
+    stored = stored_fingerprint(conn)
+    live = tokenizer_fingerprint()
+    return None if stored == live else (stored, live)
+
+
+def _cannot_write(store: Store) -> str | None:
+    """Why this connection may not re-spell the index, or None when it
+    may: it holds the key the log row is signed with, it was not opened
+    read-only, and its versions let it write (``PRAGMA query_only`` off,
+    `store_schema.check_versions`)."""
+    if store._read_only:
+        return "it was opened read-only"
+    if not store.has_key:
+        return "it was opened without the store's key"
+    if store.conn.execute("PRAGMA query_only").fetchone()[0]:
+        return "this build may only read the store"
+    return None
+
+
+def _tell_drift(path: Path, stored: str | None, live: str, why: str) -> None:
+    told = (str(path), stored or "", live)
+    with _DRIFT_TOLD_LOCK:
+        if told in _DRIFT_TOLD:
+            return
+        _DRIFT_TOLD.add(told)
+    log.warning(
+        "store %s: its search index is spelled by tokenizer %s and this "
+        "build's is %s; this open does not re-spell it (%s), so a search may "
+        "miss memories until the owner's next writing open does (the "
+        "daemon's start, or any writing command)",
+        path,
+        (stored or "none")[:16],
+        live[:16],
+        why,
+    )
+
+
+def settle_tokenizer(store: Store, *, owner: bool) -> IndexRebuild | None:
+    """Compare the tokenizer `store`'s index is spelled by with this
+    build's, and when they differ re-spell it at the owner's writing open
+    (`owner`, the open's ``allow_rekey``, on a connection that may write:
+    `_cannot_write`), or else say so once (`_tell_drift`) and leave it.
+    The rebuild never fails the open: a store it cannot write logs why
+    and opens as it stands. Returns the rebuild, or None."""
+    drift = tokenizer_drift(store.conn)
+    if drift is None:
+        return None
+    stored, live = drift
+    why = _cannot_write(store) or (None if owner else "not the owner's writing open")
+    if why is not None:
+        _tell_drift(store.path, stored, live, why)
+        return None
+    try:
+        return rebuild_index(store, reason=REBUILT_FOR_TOKENIZER)
+    except (sqlite3.Error, OSError) as exc:
+        log.warning(
+            "store %s: its search index is spelled by tokenizer %s and this "
+            "build's is %s, and re-spelling it failed (%s); a search may miss "
+            "memories until a later writing open re-spells it",
+            store.path,
+            (stored or "none")[:16],
+            live[:16],
+            exc,
+        )
+        return None
+
+
+def reconciles_tokenizer(open_: Callable[_P, Store]) -> Callable[_P, Store]:
+    """`Store.open`'s decorator: once the open has returned a store,
+    whichever of its paths it took (a reader's, a reclaim, a rekey), its
+    index's tokenizer is settled (`settle_tokenizer`) with the open's own
+    ``allow_rekey`` as the owner's word. An exception the settling raises
+    closes the store before it propagates."""
+
+    @functools.wraps(open_)
+    def opened(*args: _P.args, **kwargs: _P.kwargs) -> Store:
+        store = open_(*args, **kwargs)
+        try:
+            settle_tokenizer(store, owner=bool(kwargs.get("allow_rekey")))
+        except BaseException:
+            store.close()
+            raise
+        return store
+
+    return opened
+
+
+def rebuild_index(store: Store, *, reason: str) -> IndexRebuild | None:
+    """Re-spell `store`'s index with this build's tokenizer, in one write
+    transaction (`Store._transaction`, ``BEGIN IMMEDIATE``: the store's
+    write lock, held to the commit): every memory row's `body_fts` and
+    `scopes_fts` is set from its body and scopes as `search.fts_index_text`
+    spells them now (only the rows whose text changes are written), the
+    FTS5 table is rebuilt from those columns (``'rebuild'``), meta's
+    `tokenizer_fingerprint` names this build's tokenizer, and one
+    `index_rebuilt` row records it, so `log verify` and `log export` see
+    it. No record changes: the fold applies no `index_rebuilt` row.
+
+    With `reason` `REBUILT_FOR_TOKENIZER`, meta is read again under the
+    lock and a store another opener re-spelled while this one waited is
+    left alone (None). A busy, full or failing store raises
+    `sqlite3.Error` with nothing written; the caller says what it means."""
+    started = time.monotonic()
+    with store._transaction() as tx:
+        stored = stored_fingerprint(tx)
+        live = tokenizer_fingerprint()
+        if reason == REBUILT_FOR_TOKENIZER and stored == live:
+            return None
+        memories = 0
+        changed: list[tuple[str, str, int]] = []
+        for row in tx.execute(
+            "SELECT rowid, body, scopes_json, body_fts, scopes_fts FROM memories"
+        ):
+            memories += 1
+            body_fts = fts_index_text(str(row["body"]))
+            scopes_fts = fts_index_text(" ".join(_load_json(row["scopes_json"], [])))
+            if body_fts != row["body_fts"] or scopes_fts != row["scopes_fts"]:
+                changed.append((body_fts, scopes_fts, int(row["rowid"])))
+        tx.executemany(
+            "UPDATE memories SET body_fts = ?, scopes_fts = ? WHERE rowid = ?",
+            changed,
+        )
+        tx.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
+        tx.execute(
+            "INSERT INTO meta(key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (TOKENIZER_FINGERPRINT_KEY, live),
+        )
+        appended = store._append(
+            tx,
+            INDEX_REBUILT,
+            {
+                "reason": reason,
+                "old_fingerprint": stored,
+                "new_fingerprint": live,
+                "memories": memories,
+                "respelled": len(changed),
+            },
+            session=None,
+        )
+    rebuilt = IndexRebuild(
+        reason=reason,
+        old_fingerprint=stored,
+        new_fingerprint=live,
+        memories=memories,
+        respelled=len(changed),
+        seq=appended.seq,
+        seconds=time.monotonic() - started,
+    )
+    log.info(
+        "store %s: search index re-spelled (%s): tokenizer %s to %s, %d of %d "
+        "memories re-spelled in %.3f s",
+        store.path,
+        reason,
+        (stored or "none")[:16],
+        live[:16],
+        rebuilt.respelled,
+        rebuilt.memories,
+        rebuilt.seconds,
+    )
+    return rebuilt
