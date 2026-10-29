@@ -240,6 +240,35 @@ def _spelled_as_git(root: Path) -> Path | None:
     return Path(os.fsdecode(raw.split(b"\0", 1)[0]))
 
 
+def relative_to_root(candidate: Path, root: Path) -> Path:
+    """`candidate`, a resolved path, relative to the working tree `root`.
+
+    Where its spelling does not begin with the root's, the ancestor that
+    is the root's directory on disk (`os.path.samestat`) anchors it: on a
+    filesystem that ignores case or normalization (macOS's default, and
+    Windows'), ``/Users/me/documents/repo/x.py`` names a file of the tree
+    git spells ``/Users/me/Documents/repo``, and `os.path.realpath` keeps
+    the spelling it was handed. The part below that ancestor keeps the
+    caller's spelling. ValueError where no ancestor is the root or the
+    root cannot be read.
+    """
+    try:
+        return candidate.relative_to(root)
+    except ValueError:
+        pass
+    try:
+        held = root.stat()
+    except OSError:
+        raise ValueError(f"{root} cannot be read") from None
+    for parent in candidate.parents:
+        try:
+            if os.path.samestat(parent.stat(), held):
+                return candidate.relative_to(parent)
+        except OSError:
+            continue
+    raise ValueError(f"{candidate} is not in {root}")
+
+
 def refused_worktree_root(cwd: Path) -> tuple[str | None, bool]:
     """``(worktree_root, indeterminate)`` for `cwd` where ``git rev-parse
     --show-toplevel`` exited non-zero, read from the files as

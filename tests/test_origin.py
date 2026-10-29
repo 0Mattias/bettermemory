@@ -24,6 +24,7 @@ from bettermemory.origin import (
     commit_author_timestamps,
     commit_author_timestamps_touching_pathspecs,
     commit_patch_stream,
+    repo_toplevel,
     repos_match,
     resolve_repo_pathspecs,
     should_include_for_caller,
@@ -879,6 +880,37 @@ def test_resolve_repo_pathspecs_keeps_files_alongside_dropped_root(
         [str(tmp_path), "src/mod.py"],
     )
     assert resolved == ["src/mod.py"]
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_resolve_repo_pathspecs_anchors_a_root_spelled_in_another_case(
+    tmp_path: Path,
+) -> None:
+    """ENG-185: the root is git's spelling of the directory, and a claim
+    keeps its writer's, which `Path.resolve` does not change on macOS. An
+    absolute claim whose root is spelled in another case was dropped as
+    escaping the repository and read not-applicable. The ancestor that is
+    the root's directory anchors it now, a deleted file's claim too, and a
+    path outside the tree is still dropped. Skipped on a volume that holds
+    one spelling per name."""
+    repo = tmp_path / "Repo"
+    (repo / "src").mkdir(parents=True)
+    _init_repo(repo)
+    (repo / "src" / "mod.py").write_text("x = 1\n")
+    variant = tmp_path / "rEPO"
+    if not variant.exists():
+        pytest.skip("the volume holds one spelling per name")
+    toplevel = repo_toplevel(repo)
+    assert toplevel is not None
+    claims = [
+        str(variant / "src" / "mod.py"),
+        str(variant / "src" / "gone.py"),
+        str(tmp_path / "elsewhere" / "mod.py"),
+    ]
+    assert resolve_repo_pathspecs(repo, claims, toplevel=toplevel) == [
+        "src/mod.py",
+        "src/gone.py",
+    ]
 
 
 # ---------------------------------------------------------------------------

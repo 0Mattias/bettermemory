@@ -76,6 +76,7 @@ from .origin_gitfiles import (
     first_not_a_directory,
     gitattributes_signature,
     refused_worktree_root,
+    relative_to_root,
     walk_files_signature,
 )
 from .origin_gitfiles import (
@@ -1462,7 +1463,9 @@ def resolve_repo_pathspecs(
             if not candidate.is_absolute():
                 candidate = toplevel / candidate
             candidate = candidate.resolve()
-            rel = candidate.relative_to(toplevel)
+            # Anchored by the directory, not only the spelling: a path
+            # spelled in another case on macOS still names this tree.
+            rel = relative_to_root(candidate, toplevel)
         except (OSError, ValueError):
             # Unresolvable, or escapes the repo — git can't filter on
             # something outside its working tree.

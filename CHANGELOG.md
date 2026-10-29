@@ -694,6 +694,16 @@ the candidates' testing.
   what is malformed contributes nothing, and the well-formed ids still
   count. (`src/bettermemory/capture.py`,
   `src/bettermemory/capture_review.py`)
+- **A claim whose root is spelled in another case anchors on macOS.** The
+  repository root the claims resolve against is the directory as the
+  kernel spells it, and an absolute claim keeps its writer's spelling,
+  which resolving it does not change on a volume that ignores case or
+  normalization, so `/Users/me/documents/repo/x.py` for a root spelled
+  `/Users/me/Documents/repo` was dropped as escaping the repository and
+  its commit drift read not-applicable. The ancestor that is the root's
+  directory on disk now anchors it, a deleted file's claim too, and a
+  path outside the tree is still dropped. (`src/bettermemory/origin.py`,
+  `src/bettermemory/origin_gitfiles.py`)
 
 #### Known limitations
 
