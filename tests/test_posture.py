@@ -781,6 +781,75 @@ def test_a_git_question_left_unanswered_is_a_skip(
     assert finding.details["exit"] == exit_code
 
 
+def _store_in_a_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A repository holding a store directory; the directory."""
+    _git_env(tmp_path, monkeypatch)
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
+    repo = tmp_path / "shared"
+    (repo / ".claude-memory").mkdir(parents=True)
+    _git(repo, "init", "-q")
+    return repo / ".claude-memory"
+
+
+def _git_finding(directory: Path) -> Finding:
+    return posture.git_finding(
+        "store.git", "store", directory, directory / STORE_FILENAME, ignored_ok=True
+    )
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_a_store_in_a_repository_git_refuses_is_not_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-175: git refuses a repository another account owns while
+    ``safe.directory`` does not name it, and ``rev-parse`` then exits
+    non-zero as it does outside any repository, which the finding read as
+    "not in a git working tree", ok. The files hold the repository
+    (`githead.locate`): the finding is a warning that names it, quotes
+    git's refusal and says the tracking is not known."""
+    store = _store_in_a_repository(tmp_path, monkeypatch)
+    monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+    refused = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=store,
+        capture_output=True,
+        text=True,
+    )
+    if refused.returncode == 0 or "dubious ownership" not in refused.stderr:
+        pytest.skip("this git does not honour GIT_TEST_ASSUME_DIFFERENT_OWNER")
+    finding = _git_finding(store)
+    assert finding.status == "warn"
+    assert finding.details["refused"] is True
+    assert os.path.samefile(finding.details["worktree"], store.parent)
+    assert "dubious ownership" in finding.summary
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_a_refusal_is_told_from_no_repository_on_every_platform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same refusal from a runner that answers git's exit and message,
+    which holds on every platform, with a fix that asks the owner to check
+    or trusts the repository only with its configuration (review Ob, H2);
+    a directory no repository holds still reads ok on the same exit."""
+    store = _store_in_a_repository(tmp_path, monkeypatch)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    def refused(args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            ["git", *args], 128, stdout="", stderr="fatal: detected dubious ownership\n"
+        )
+
+    monkeypatch.setattr(posture, "run_git", refused)
+    finding = _git_finding(store)
+    assert (finding.status, finding.details["refused"]) == ("warn", True)
+    assert "safe.directory only if you trust its configuration" in (
+        finding.fix or ""
+    ), "the fix never tells the user to trust another account's repository outright"
+    assert _git_finding(outside).status == "ok"
+
+
 @pytest.mark.parametrize(
     ("path", "service"),
     [

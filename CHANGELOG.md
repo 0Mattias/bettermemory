@@ -596,9 +596,13 @@ the candidates' testing.
   runs one git process. A claim write there is checked against that root;
   where no root is known, the refusal quotes git's instead of "not inside
   a git worktree" and says what trusting the repository through
-  `safe.directory` means. (`src/bettermemory/origin.py`,
+  `safe.directory` means. `bettermemory security audit` read the same
+  exit as "the store is not in a git working tree", ok, for the store and
+  for the keys; where the files hold a repository it now warns, naming
+  the repository and git's refusal, that whether git tracks or ignores
+  the directory is not known. (`src/bettermemory/origin.py`,
   `src/bettermemory/origin_gitfiles.py`,
-  `src/bettermemory/handlers/_shared.py`)
+  `src/bettermemory/handlers/_shared.py`, `src/bettermemory/posture.py`)
 - **The origin cache holds on Windows.** The capture's signature came from
   githead's discovery, which declines off POSIX (git's ownership check
   there reads security descriptors) and in a repository another account
