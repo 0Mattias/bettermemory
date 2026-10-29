@@ -1870,15 +1870,27 @@ follows the candidates' testing.
   queries it does not answer) still reads tampered.
   (`src/bettermemory/store_events.py`, `src/bettermemory/store_rows.py`,
   `docs/internals.md`, `tests/test_store_tokenizer.py`)
-- **A change to the tokenizer's token stream needs a deliberate step.**
+- **A change to how the tokenizer spells the index moves its
+  fingerprint, and the fingerprint is pinned.**
   `search.tokenizer_fingerprint()` names the spelling every store's
-  index is kept in, and since the owner's open re-spells a store whose
-  fingerprint differs (above), a change to the stream costs every store
-  a rebuild under its write lock and its readers the old rows until
-  then. Nothing pinned the value; a test now does, as a literal, and its
-  docstring says what a change needs before the literal is updated: the
-  rebuild measured on the change and the change named in the CHANGELOG.
-  (`tests/test_store_tokenizer.py`)
+  index is kept in, but it digested only the spelling of a seven-line
+  probe corpus: an edit of a stopword list, `_STEM_EXCEPTIONS` or
+  `_ACRONYM_PLURALS` that changes how other words are stored ('glasses',
+  'others', 'tpus') left it as it was, so after such an edit `log verify`
+  read a store `tampered`, no open re-spelled it, and search missed the
+  memory. It now also digests every table in `search_lexicon`, read from
+  the module so a table added later is covered without an edit, and the
+  store's FTS5 table definition. A change to the tokenizer's code still
+  moves it only through a probe that exercises the change, so such a
+  change adds one. The value is pinned as a literal by a test whose
+  docstring says what a change needs; parametrized cases show that each
+  of those edits, and an edit of the FTS5 table's `tokenize` argument,
+  moves it. Since the digest's inputs changed, each store is re-spelled
+  once at its first owner's open of this build (no row's text changes),
+  under the write lock: 0.53 s at 5,000 memories, 6.9 s at 50,000 and
+  34 s at 250,000 (see Known limitations).
+  (`src/bettermemory/search_lexicon.py`, `docs/internals.md`,
+  `tests/test_store_tokenizer.py`)
 - **`doctor` and `backup verify` read every page and check the search
   index against the memories.** Nothing read a store's pages or compared
   its FTS5 index with the rows it indexes, so a torn page, or an index
@@ -2197,6 +2209,18 @@ follows the candidates' testing.
   reader's `log verify` reads the store ok, until the owner's next
   writing open re-spells every row from its body.
   (`src/bettermemory/store_events.py`)
+- **A re-spell of a large store at the daemon's start outlasts `up`'s
+  wait and the hooks' busy timeout.** The owner's open re-spells a store
+  whose index another tokenizer spelled under the write lock, and the
+  daemon's start is usually that open: measured on synthetic stores, the
+  rebuild held the lock 0.53 s at 5,000 memories, 6.86 s at 50,000 and
+  33.95 s at 250,000. From 50,000 memories it outlasts `up`'s 8 s wait
+  for the daemon (`START_TIMEOUT_SECONDS`), which then reports a start
+  timeout while the daemon goes on, and the hooks' 5 s busy timeout, so a
+  hook that writes meanwhile fails as busy. Every store pays it once at
+  its first owner's open of this build, since the fingerprint's inputs
+  changed, and again at each later change of the tokenizer.
+  (`src/bettermemory/store_index.py`)
 
 ### 9.0.0rc13
 

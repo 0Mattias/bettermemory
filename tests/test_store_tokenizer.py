@@ -22,7 +22,13 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory import log as _log, store as store_module, store_index, store_rows
+from bettermemory import (
+    log as _log,
+    search_lexicon,
+    store as store_module,
+    store_index,
+    store_rows,
+)
 from bettermemory.audit_export import CLASS_CONTROL, export_lines
 from bettermemory.search import fts_index_text, tokenizer_fingerprint
 from bettermemory.store import STORE_FILENAME, Store
@@ -402,26 +408,102 @@ def test_under_another_tokenizer_the_fold_leaves_the_index_text_out(
 
 #: `search.tokenizer_fingerprint()` as this build's tokenizer computes it.
 TOKENIZER_FINGERPRINT = (
-    "70bc8e2452b87298538b81bca1cf9039b867734e2aed1078aba4deceb6be6797"
+    "972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd"
 )
 
 
 def test_the_tokenizer_fingerprint_is_pinned() -> None:
-    """A change to the token stream the index stores is a step of its own.
+    """The spelling the store's index keeps is named, and a change to it
+    is a step of its own.
 
-    When this fails, something in `search_lexicon` changed the index-side
-    token stream (`tokenize`, its folds, stopword lists or stemmer rules,
-    the CJK segmentation, `_expand_kebab`) or the probe corpus
-    (`_FINGERPRINT_PROBES`). That is allowed, but every store's owner's
-    next open then re-spells its whole index under the write lock
-    (`store_index.rebuild_index`, about 0.5 s per 5,000 memories as
-    measured for ENG-100), and until then a reader's search misses the
-    rows the old tokenizer spelled. Before updating the literal: measure
-    the rebuild on the change, name the change and the re-spelling it
-    causes in the CHANGELOG, and make sure the change is meant; then set
-    `TOKENIZER_FINGERPRINT` to the value this assertion prints."""
+    `search.tokenizer_fingerprint()` digests the probe corpus's spelling
+    (`_FINGERPRINT_PROBES` through `fts_index_text`), every table in
+    `search_lexicon` (the stopword lists, `_STEM_EXCEPTIONS`,
+    `_ACRONYM_PLURALS`, `_SYMBOL_ALIASES`, the patterns, the fold table,
+    the probes themselves) and the store's FTS5 table definition
+    (`store_schema.SCHEMA`). This fails when any of those changes, and
+    when a code change (a stemmer rule, a fold, `_expand_kebab`) moves a
+    probe's spelling. A code change that no probe exercises does not move
+    the digest and does not fail here: such a change must add a probe
+    that it moves.
+
+    What a failure means: every store's owner's next open re-spells its
+    whole index under the write lock (`store_index.rebuild_index`;
+    measured for ENG-100 at 0.53 s for 5,000 memories, 6.9 s for 50,000
+    and 34 s for 250,000), and until then a reader's search misses the
+    rows the old tokenizer spelled. Before updating the literal: make the
+    change the schema step CONTRIBUTING.md's "What a change raises" asks
+    for, measure the rebuild on it, name the change and the re-spelling in
+    the CHANGELOG; then set `TOKENIZER_FINGERPRINT` to the value this
+    assertion prints."""
     computed = tokenizer_fingerprint.__wrapped__()
     assert computed == TOKENIZER_FINGERPRINT, (
         f"the tokenizer's fingerprint is now {computed}: see this test's docstring"
     )
     assert tokenizer_fingerprint() == computed
+
+
+@pytest.mark.parametrize(
+    ("edit", "word"),
+    [
+        # A stem exception: 'glasses' is stored whole, no longer as 'glass'.
+        ("stem_exception", "glasses"),
+        # A stopword: a stopword keeps its surface form, 'others' not 'other'.
+        ("stopword", "others"),
+        # An acronym plural: 'tpus' is stored as 'tpu'.
+        ("acronym_plural", "tpus"),
+        # One taken out: 'gpus' is stored as itself, no longer as 'gpu'.
+        ("acronym_plural_removed", "gpus"),
+    ],
+)
+def test_an_edit_of_a_spelling_table_moves_the_fingerprint(
+    edit: str, word: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each edit changes how a word no probe holds is stored, and the
+    fingerprint with it, so the pin above fails on it. Under the probe
+    digest alone none of them moved it: a store spelled before such an
+    edit read tampered in `log verify` after it, and no open re-spelled it."""
+    lexicon = search_lexicon
+    probes = " ".join(lexicon._FINGERPRINT_PROBES).split()
+    assert word not in probes
+    plurals = dict(lexicon._ACRONYM_PLURALS)
+    if edit == "acronym_plural":
+        plurals[word] = word[:-1]
+    elif edit == "acronym_plural_removed":
+        del plurals[word]
+    patches = {
+        "stem_exception": [("_STEM_EXCEPTIONS", lexicon._STEM_EXCEPTIONS | {word})],
+        "stopword": [
+            ("_STOPWORDS_EN", lexicon._STOPWORDS_EN | {word}),
+            ("_STOPWORDS", lexicon._STOPWORDS | {word}),
+        ],
+        "acronym_plural": [("_ACRONYM_PLURALS", plurals)],
+        "acronym_plural_removed": [("_ACRONYM_PLURALS", plurals)],
+    }[edit]
+    live = tokenizer_fingerprint.__wrapped__()
+    before = fts_index_text(word)
+    for name, value in patches:
+        monkeypatch.setattr(search_lexicon, name, value)
+    assert fts_index_text(word) != before
+    assert tokenizer_fingerprint.__wrapped__() != live
+    monkeypatch.undo()
+    assert tokenizer_fingerprint.__wrapped__() == live
+
+
+def test_an_edit_of_the_fts5_table_moves_the_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The FTS5 table's ``tokenize`` argument splits the stored text into
+    the index's terms, so a change to it is a change of spelling too."""
+    from bettermemory import store_schema
+
+    assert "tokenize='unicode61'" in store_schema.SCHEMA
+    live = tokenizer_fingerprint.__wrapped__()
+    monkeypatch.setattr(
+        store_schema,
+        "SCHEMA",
+        store_schema.SCHEMA.replace(
+            "tokenize='unicode61'", "tokenize='porter unicode61'"
+        ),
+    )
+    assert tokenizer_fingerprint.__wrapped__() != live

@@ -1228,8 +1228,12 @@ The search index is spelled by a tokenizer, and `meta` names which
 (ENG-100). Each memory row keeps its index text beside its body:
 `body_fts` and `scopes_fts`, its body and its space-joined scopes as
 `search.fts_index_text` spells them, which the FTS5 table indexes, and
-`meta`'s `tokenizer_fingerprint` is the digest of that spelling over a
-fixed corpus (`search.tokenizer_fingerprint`). A query matches a row
+`meta`'s `tokenizer_fingerprint` names that spelling
+(`search.tokenizer_fingerprint`: a digest of a probe corpus's spelling, of
+every table in `search_lexicon` and of the FTS5 table's definition, so an
+edit of a stopword list or a stem exception moves it whatever the probes
+spell, and a change to the code moves it only through a probe that
+exercises it). A query matches a row
 only while one tokenizer spelled both, so every open compares the
 fingerprint with this build's (`store_index.reconciles_tokenizer`, the
 decorator on `Store.open`, run once the open has returned the store by

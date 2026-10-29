@@ -2,10 +2,13 @@
 
 Folding, the stopword lists, the plural stemmer, CJK segmentation and
 `tokenize` itself, with `fts_index_text` and `fts_match_query`, which
-spell the same token stream for the store's FTS5 index. The index keeps
-this module's output on disk and `tokenizer_fingerprint` hashes it over
-a fixed probe corpus, so a change to any rule or constant here changes
-the persisted format and needs the schema bump that function describes.
+spell the same token stream for the store's FTS5 index. The store keeps
+this module's output in every memory row (`body_fts`, `scopes_fts`), and
+`tokenizer_fingerprint` names the spelling: a digest of the probe
+corpus's spelling, of every table here and of the store's FTS5 table.
+A change that moves it is a schema step that raises the store's minimum
+writer revision (CONTRIBUTING.md, "What a change raises"), and the
+owner's next open of each store re-spells its rows (`store_index`).
 
 `search.py` re-exports the names tests and other modules import from it.
 Readers in `search.py` and its other `search_*` modules call
@@ -20,6 +23,7 @@ imports it.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 from functools import lru_cache
@@ -75,7 +79,7 @@ _CONTRACTION_RE = re.compile(r"(?<=\w)['’](?:s|t|d|m|ll|re|ve)\b")
 # Each entry carries the raw surface spelling alongside the pattern (the
 # patterns themselves are NOT mechanically derivable from it — e.g. 'c++'
 # deliberately drops the trailing `(?!\w)` guard so 'C++20' still aliases).
-# Since index schema v4 the raw spelling is documentation only: the FTS
+# The raw spelling is documentation only: the FTS
 # table indexes `fts_index_text` output — the SAME normalised tokens the
 # rankers see — so a query token 'cpp' matches the indexed 'cpp' directly
 # and the old reverse map ('cpp' -> also try '"c++"', because raw bodies
@@ -492,7 +496,7 @@ def _fold_diacritics(text: str) -> str:
     share one token form.
 
     This mirrors the accent-insensitive matching of the FTS5 ``unicode61``
-    tokenizer in index.py (whose ``remove_diacritics`` defaults on),
+    tokenizer of the store's index (``remove_diacritics`` defaults on),
     closing the prefilter/ranker disagreement where the index returned a
     candidate that every Python ranker then scored 0. The NFD pass also
     normalises combining-mark *input*: a body pasted from macOS in
@@ -863,7 +867,7 @@ def _fts_phrase(term: str) -> str:
 
 
 def fts_index_text(text: str) -> str:
-    """The text the FTS5 index stores for a memory (schema v4+).
+    """The text the FTS5 index stores for a memory (`body_fts`).
 
     `' '.join(_expand_kebab(tokenize(text)))` — the exact index-side token
     stream the Python rankers score, joined so unicode61 re-derives it
@@ -878,21 +882,22 @@ def fts_index_text(text: str) -> str:
     pipeline's own output removes the second spelling authority: both
     sides of a MATCH are `tokenize` tokens.
 
-    Used by `index._upsert_memory` / `rebuild` for the
-    `body_fts` column (and for `scopes_fts` over the space-joined scope
-    list). Raw bodies stay canonical on disk and in `memories.body`; this
-    is derived-index content only.
+    Used by `store_rows` for every memory row it writes and by
+    `store_index.rebuild_index` for the `body_fts` column (and for
+    `scopes_fts` over the space-joined scope list). Raw bodies stay
+    canonical in `memories.body`; this is derived-index content only.
     """
     return " ".join(_expand_kebab(tokenize(text)))
 
 
 def fts_match_query(query: str) -> str:
-    """Build the FTS5 MATCH expression `index.query` prefilters with.
+    """Build the FTS5 MATCH expression the store's FTS5 prefilter
+    (`store_index.query_candidates`) matches with.
 
     Prefilter/ranker parity is a hard invariant (see `_fold_diacritics`):
     the FTS5 index serves the CANDIDATE set on large stores, so the
     candidate set must be a superset of what the rankers would score.
-    Since schema v4 the index stores `fts_index_text` output — the same
+    The index stores `fts_index_text` output — the same
     `tokenize` stream this builder consumes — so parity holds by
     construction and the expression stays simple: each query token is a
     quoted phrase of itself. Living next to `tokenize` (and consuming it)
@@ -929,12 +934,15 @@ def fts_match_query(query: str) -> str:
 
 
 # Fixed probe corpus for `tokenizer_fingerprint`. One entry per
-# normalisation family in the pipeline, so any behavioural change to the
-# index-side token stream — tokenize()'s folds, stopword lists, stemmer
-# rules, CJK segmentation, or `_expand_kebab`'s widening — lands in the
-# digest. The corpus is part of the fingerprint's identity: editing it
-# changes the digest exactly like a tokenizer change does and requires
-# the same `index.SCHEMA_VERSION` bump ceremony.
+# normalisation family in the pipeline, so a change to the CODE that
+# spells the index-side token stream (tokenize()'s folds, the stemmer's
+# rules, CJK segmentation, `_expand_kebab`'s widening) lands in the
+# digest when a probe exercises it: a change to code no probe exercises
+# must add one that does. A change to a TABLE (a stopword list,
+# `_STEM_EXCEPTIONS`, `_ACRONYM_PLURALS`, a pattern) lands in the digest
+# whatever the probes spell (`_spelling_tables`). The corpus is part of
+# the fingerprint's identity: editing it moves the digest exactly as a
+# tokenizer change does, and takes the same step (CONTRIBUTING.md).
 _FINGERPRINT_PROBES: tuple[str, ...] = (
     # Plural stemmer: -ies/-es/-s pairs plus the final-e/-y
     # normalisations that put both inflections on one key.
@@ -963,31 +971,93 @@ _FINGERPRINT_PROBES: tuple[str, ...] = (
 )
 
 
+def _canonical(value: object) -> object:
+    """`value` as plain JSON: a pattern as its source and flags, a set as
+    its sorted members, a mapping as its sorted pairs."""
+    if isinstance(value, re.Pattern):
+        return ["re", value.pattern, value.flags]
+    if isinstance(value, (frozenset, set)):
+        return sorted((_canonical(member) for member in value), key=repr)
+    if isinstance(value, dict):
+        return sorted(
+            ([_canonical(key), _canonical(item)] for key, item in value.items()),
+            key=repr,
+        )
+    if isinstance(value, (tuple, list)):
+        return [_canonical(item) for item in value]
+    return value
+
+
+def _spelling_tables() -> str:
+    """Every table this module spells by, and the FTS5 table the store
+    indexes the spelling with, as one canonical JSON text.
+
+    The tables are every module-level set, mapping, sequence and compiled
+    pattern here, read from the module itself rather than listed, so a
+    table added later is in the digest without a further edit: the
+    stopword lists and their union, `_STEM_EXCEPTIONS`,
+    `_ACRONYM_PLURALS`, `_SYMBOL_ALIASES`, the tokenizer's patterns,
+    `_LATIN_FOLD_TABLE` (canonical decompositions of U+0000 to U+017F,
+    which Unicode never changes) and the probe corpus. The FTS5 table's
+    definition comes from `store_schema.SCHEMA`: its ``tokenize``
+    argument splits the stored text into the index's terms. Imported here
+    rather than at the top, since the store imports this module."""
+    from .store_schema import SCHEMA
+
+    tables = {
+        name: _canonical(value)
+        for name, value in globals().items()
+        if not name.startswith("__")
+        and isinstance(value, (frozenset, set, dict, tuple, list, re.Pattern))
+    }
+    fts5 = re.search(
+        r"CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5\(.*?\);",
+        SCHEMA,
+        re.S,
+    )
+    return json.dumps(
+        {"tables": tables, "fts5": None if fts5 is None else fts5.group(0)},
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 @lru_cache(maxsize=1)
 def tokenizer_fingerprint() -> str:
-    """sha256 over `fts_index_text` applied to `_FINGERPRINT_PROBES` —
-    a stable identity for the persisted index-side token stream.
+    """The name of the spelling the store's index keeps: sha256 over
+    `fts_index_text` applied to `_FINGERPRINT_PROBES` and over
+    `_spelling_tables` (every table in this module and the store's FTS5
+    table definition).
 
-    Schema v4+ stores tokenize() output on disk (`body_fts` /
-    `scopes_fts`), so query/index parity holds only while the persisted
-    stream matches the live tokenizer — four separate post-3.12.0 fixes
-    (stopword curation, final-y normalisation, CJK index-side unigrams,
-    the NFKC fold) respelled the stream with no schema bump, leaving
-    every 3.12.0-built index stale-spelled against live queries.
-    `index._ensure_schema` stamps this digest into the index meta next
-    to `schema_version` and treats a mismatch exactly like an older
-    version (atomic wipe + rebuild-pending flag → auto-rebuild), so
-    tokenizer drift heals through the standard migration path instead
-    of silently losing recall. The pinned value lives at
-    `index.TOKENIZER_FINGERPRINT`; the regression test asserting it
-    equals this function is the ratchet that forces a deliberate
-    `SCHEMA_VERSION` bump on any stream change.
+    Each memory row keeps its index text as this module spelled it
+    (`body_fts`, `scopes_fts`), so a query matches a row only while the
+    tokenizer that spells the query spelled the row. `Store.create`
+    writes this digest to meta and to the log's ``store_created`` row,
+    and `store_index` compares the one the log names last with it at
+    every open: the owner's writing open re-spells a store another
+    tokenizer spelled (`store_index.rebuild_index`, which logs the new
+    digest in an ``index_rebuilt`` row), and the fold leaves the index
+    text out of its comparison until it has. A table edit lands in the
+    digest through `_spelling_tables`; a code edit lands in it only when
+    a probe exercises the changed rule, so such a change adds a probe.
+    Not covered: the running Python's `unicodedata` beyond the Latin fold
+    table and its `re` word class, which NFKC and the fallback fold read,
+    and SQLite's own ``unicode61`` tables.
 
-    Cached: the probe corpus is a module-level constant, so the digest
-    is process-stable, and `_ensure_schema` reads it on every index
-    connect."""
-    joined = "\n".join(fts_index_text(probe) for probe in _FINGERPRINT_PROBES)
-    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+    A change that moves the digest is a schema step raising the store's
+    minimum writer revision, so a build with the older tokenizer opens
+    the store for reading only and never re-spells it back
+    (CONTRIBUTING.md, "What a change raises"). `tests/test_store_tokenizer.py`
+    pins the digest with the revision that introduced it.
+
+    Cached: the probes and tables are module-level constants, so the
+    digest is process-stable; every store open reads it."""
+    probes = "\n".join(fts_index_text(probe) for probe in _FINGERPRINT_PROBES)
+    digest = hashlib.sha256(probes.encode("utf-8"))
+    digest.update(b"\n\0\n")
+    digest.update(_spelling_tables().encode("utf-8"))
+    return digest.hexdigest()
 
 
 def _strip_stopwords(tokens: list[str]) -> list[str]:
