@@ -656,6 +656,65 @@ def _event_ts_epoch(raw: Any) -> float | None:
     return parsed.timestamp() if parsed is not None else None
 
 
+def _scan_settled_use_events(
+    recorder: Recorder,
+    allowed_sessions: set[str],
+    pending_issued_at: dict[str, float],
+    oldest_pending_issued_at: float,
+) -> set[str]:
+    """Take our sessions and the pending mint times; return the ids a later `use` row settled."""
+    out: set[str] = set()
+    for event in recorder.store.iter_events_backward():
+        ev_ts = _event_ts_epoch(event.get("ts"))
+        if ev_ts is not None and ev_ts < oldest_pending_issued_at:
+            # Every later-yielded event has an `ev_ts` that's older
+            # still (the reader yields newest-first), so no remaining
+            # event can satisfy `ev_ts >= issued` for any pending
+            # token. Early-exit — and because the reader parses each
+            # line only as it is pulled, this also ends the JSON
+            # parsing, not just the loop.
+            break
+        if event.get("kind") != "use":
+            continue
+        # `use` events always carry `session` (the Recorder stamps it
+        # on every event); `session_id` only appears on events whose
+        # producer passed it explicitly (`turn_audited` / `search_miss`).
+        # The `or` keeps the read robust regardless — canonical-first,
+        # the discipline 70e41a4 established for llm.py.
+        session = event.get("session") or event.get("session_id")
+        if session not in allowed_sessions and not (
+            isinstance(session, str) and event.get("triggered_from") == "stop_hook"
+        ):
+            # The isinstance guard keeps the bridge on real identities:
+            # a tagged event with a missing/non-string session carries
+            # nothing to match across id spaces and never bridged under
+            # the derived-set shape either.
+            continue
+        if ev_ts is None:
+            continue
+        # Legacy fallback for `memory_ids` — same class as the 70e41a4
+        # fix. Pre-2.6.3 `use` events landed with `memory_ids=[…]`
+        # before the Recorder canonicalized to `ids=[…]`.
+        ids = event.get("ids") or event.get("memory_ids") or []
+        if not isinstance(ids, list):
+            continue
+        for mid in ids:
+            if not isinstance(mid, str):
+                continue
+            issued = pending_issued_at.get(mid)
+            if issued is None:
+                continue
+            # Tolerance: clock skew between Recorder.record() (UTC-now
+            # at log time) and PendingUseToken.issued_at (wall-clock at
+            # mint time) is well under a second. Strict `>=` keeps the
+            # invariant: the event must reflect a use attribution that
+            # happened *after* this token was minted, not an older one
+            # left over from a previous search-of-same-id cycle.
+            if ev_ts >= issued:
+                out.add(mid)
+    return out
+
+
 def _already_recorded_pending_ids(
     state: SessionState,
     recorder: Recorder,
@@ -770,7 +829,6 @@ def _already_recorded_pending_ids(
     # this cannot have recorded any of these tokens, so we can stop
     # the backward scan as soon as we cross that boundary.
     oldest_pending_issued_at = min(pending_issued_at.values())
-    out: set[str] = set()
     # `use` events under these sessions count as ours with no further
     # evidence: the in-process server session, plus any ids the caller
     # threads explicitly. The Stop hook's transcript id(s) are NOT
@@ -780,55 +838,9 @@ def _already_recorded_pending_ids(
     allowed_sessions = {recorder.session_for_request()}
     if extra_session_ids:
         allowed_sessions |= extra_session_ids
-    for event in recorder.store.iter_events_backward():
-        ev_ts = _event_ts_epoch(event.get("ts"))
-        if ev_ts is not None and ev_ts < oldest_pending_issued_at:
-            # Every later-yielded event has an `ev_ts` that's older
-            # still (the reader yields newest-first), so no remaining
-            # event can satisfy `ev_ts >= issued` for any pending
-            # token. Early-exit — and because the reader parses each
-            # line only as it is pulled, this also ends the JSON
-            # parsing, not just the loop.
-            break
-        if event.get("kind") != "use":
-            continue
-        # `use` events always carry `session` (the Recorder stamps it
-        # on every event); `session_id` only appears on events whose
-        # producer passed it explicitly (`turn_audited` / `search_miss`).
-        # The `or` keeps the read robust regardless — canonical-first,
-        # the discipline 70e41a4 established for llm.py.
-        session = event.get("session") or event.get("session_id")
-        if session not in allowed_sessions and not (
-            isinstance(session, str) and event.get("triggered_from") == "stop_hook"
-        ):
-            # The isinstance guard keeps the bridge on real identities:
-            # a tagged event with a missing/non-string session carries
-            # nothing to match across id spaces and never bridged under
-            # the derived-set shape either.
-            continue
-        if ev_ts is None:
-            continue
-        # Legacy fallback for `memory_ids` — same class as the 70e41a4
-        # fix. Pre-2.6.3 `use` events landed with `memory_ids=[…]`
-        # before the Recorder canonicalized to `ids=[…]`.
-        ids = event.get("ids") or event.get("memory_ids") or []
-        if not isinstance(ids, list):
-            continue
-        for mid in ids:
-            if not isinstance(mid, str):
-                continue
-            issued = pending_issued_at.get(mid)
-            if issued is None:
-                continue
-            # Tolerance: clock skew between Recorder.record() (UTC-now
-            # at log time) and PendingUseToken.issued_at (wall-clock at
-            # mint time) is well under a second. Strict `>=` keeps the
-            # invariant: the event must reflect a use attribution that
-            # happened *after* this token was minted, not an older one
-            # left over from a previous search-of-same-id cycle.
-            if ev_ts >= issued:
-                out.add(mid)
-    return out
+    return _scan_settled_use_events(
+        recorder, allowed_sessions, pending_issued_at, oldest_pending_issued_at
+    )
 
 
 # Legacy alias kept for any out-of-tree caller; the new name is more
