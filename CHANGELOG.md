@@ -1976,6 +1976,24 @@ follows the candidates' testing.
   `tests/test_recall_compaction.py`, `tests/test_recall_attribution.py`,
   `tests/test_hook.py`, `tests/test_server_record_use.py`,
   `tests/test_capture_relations.py`)
+- **The two classes of row are listed in one place (ENG-108).** Which
+  rows the telemetry switch turns off, which ones a busy store may drop,
+  and which ones a pruning may drop were three answers kept in step by
+  hand. `events.RowClass` now names the two classes and what each
+  promises: state (recorded whatever the switch says, not best-effort,
+  never prunable) and measurement (opt-out, best-effort, prunable at any
+  age). `events.ROW_KINDS` lists every kind the src records under one
+  of them (`MEASUREMENT_KINDS` beside `STATE_KINDS` and the audit kinds),
+  and `events.row_class` reads a row's kind and its fields, so a `write`
+  or an `update` that used an escape hatch, or a `write` that answers a
+  review, is state. The writer (`Recorder.record`, and `Recorder.records`
+  for a caller whose row costs work to build, as the recall's
+  `recall_held` row does), health's override rate and the pruning rule
+  (`events.prunable`, which ENG-82 reads when it lands) read that answer.
+  A test scans the src's recording sites, so a new kind fails until it
+  is listed under one class.
+  (`src/bettermemory/events.py`, `src/bettermemory/recall.py`,
+  `tests/test_row_classes.py`)
 
 #### Known limitations
 

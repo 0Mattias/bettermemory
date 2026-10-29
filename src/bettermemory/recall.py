@@ -1510,8 +1510,16 @@ def prompt_recall(
     )
 
     def recorded_hold(cause: str, entries: Sequence[Mapping[str, str]]) -> HookResult:
-        """Nothing delivered: the `recall_held` row says why (RS-F7 part 6)."""
-        if cfg.telemetry.enabled:
+        """Nothing delivered: the `recall_held` row says why (RS-F7 part 6),
+        a measurement row (`events.RowClass`), built only when it is
+        recorded."""
+        recorder = Recorder(
+            store=store,
+            session_id=key[1],
+            enabled=cfg.telemetry.enabled,
+            worktree_root=caller.worktree_root,
+        )
+        if recorder.records("recall_held"):
             fields = recall_held_fields(
                 report,
                 session_id=key[1],
@@ -1526,12 +1534,7 @@ def prompt_recall(
             )
             fields["admission"] = surface
             fields.update(_delivery_membership(caller_resolution, admission))
-            Recorder(
-                store=store,
-                session_id=key[1],
-                enabled=True,
-                worktree_root=caller.worktree_root,
-            ).record("recall_held", **fields)
+            recorder.record("recall_held", **fields)
         return empty
 
     if report.verdict == "no_signal":

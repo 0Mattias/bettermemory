@@ -7,11 +7,13 @@ and the worktree an event belongs to (the request's own when the caller
 declared them, else the process's), and the admin attribution a CLI
 command stamps on its writes. `enabled=False` (`[telemetry] enabled =
 false`) makes every measurement call a no-op, so handlers call
-unconditionally. Two kinds of row are recorded whatever the switch says:
-a state row (`is_state_row`: what the product reads back, the shows,
-the uses, the Stop's audit, the recall's and the review's rows), and an
-audit row (`is_audit_row`: the standing guard's row and the override
-evidence on a write or an update), the trail SECURITY.md promises.
+unconditionally. A row is one of two classes (`RowClass`, the one list
+the writer, health and a pruning read): measurement, opt-out and
+prunable; or state, recorded whatever the switch says and never pruned.
+State is what the product reads back (`STATE_KINDS`: the shows, the
+uses, the Stop's audit, the recall's and the review's rows) and the
+audit trail SECURITY.md promises (`is_audit_row`: the standing guard's
+row and the override evidence on a write or an update).
 
 A measurement row that fails to land is swallowed at WARNING:
 measurement never fails the tool call it describes. A state or audit row
@@ -29,11 +31,13 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import enum
 import hashlib
 import logging
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from . import identity
@@ -223,6 +227,95 @@ def is_state_row(kind: str, fields: Mapping[str, Any]) -> bool:
     return kind in REVIEW_ANSWER_KINDS and isinstance(fields.get(REVIEW_ID_FIELD), str)
 
 
+class RowClass(enum.Enum):
+    """The two classes of row the event log holds (ENG-108), and what
+    each promises. `row_class` puts every row in one of them; the writer
+    (`Recorder.record`), health's override rate (`health_stats`) and a
+    pruning of the log (`prunable`) read that answer and nothing else, so
+    the three cannot disagree about a row.
+
+    ``STATE``: a row the product reads back to decide what it does next
+    (`STATE_KINDS`, each with its reader), a review's answer
+    (`REVIEW_ANSWER_KINDS` with a ``review_id``), and the audit trail
+    SECURITY.md promises (`is_audit_row`: the standing guard's row, a
+    write or an update that used an escape hatch). Recorded whatever
+    `[telemetry] enabled` says, with no query preview when it is off;
+    written with `STATE_WRITE_ATTEMPTS` against a busy store and raised
+    when it cannot land, so the call that needed it fails rather than
+    the row going missing; never prunable.
+
+    ``MEASUREMENT``: a row that measures how the tools are used
+    (`MEASUREMENT_KINDS`): searches, plain writes and updates, the miss
+    telemetry, the grades, the held recalls. Opt-out: with telemetry off
+    none is recorded. Best-effort: a write that fails is logged at
+    WARNING and the call it describes goes on. Prunable at any age:
+    nothing the product does reads one back, and a reader of one (health,
+    eval, a memory's history) reports on what is there.
+    """
+
+    STATE = "state"
+    MEASUREMENT = "measurement"
+
+
+#: The kinds whose row is measurement unless its fields make it state
+#: (`row_class`): a ``write`` or an ``update`` that used an escape hatch
+#: is an audit row, and a ``write`` that answers a review is state.
+MEASUREMENT_KINDS: frozenset[str] = frozenset(
+    {
+        "answer_standing",
+        "capture_grade",
+        "conflict_scan",
+        "conflict_verdict",
+        "episode_handoff",
+        "episode_write",
+        "list_tombstones",
+        "miss_ack",
+        "recall_grade",
+        "recall_held",
+        "remove",
+        "rename_scope",
+        "restore",
+        "review_grade",
+        "search",
+        "search_miss",
+        "silent_miss_cutoff",
+        "update",
+        "use_token_expired",
+        "verify",
+        "write",
+    }
+)
+
+#: Every kind the product records, under the class its row has when its
+#: fields promote it to nothing. A kind no list names is measurement
+#: (`row_class`), the safe default for a row nothing reads back; the
+#: test that scans the recording sites (tests/test_row_classes.py)
+#: fails until a new kind is listed under one class.
+ROW_KINDS: Mapping[RowClass, frozenset[str]] = MappingProxyType(
+    {
+        RowClass.STATE: STATE_KINDS | AUDIT_KINDS,
+        RowClass.MEASUREMENT: MEASUREMENT_KINDS,
+    }
+)
+
+
+def row_class(kind: str, fields: Mapping[str, Any]) -> RowClass:
+    """The class of a `kind` row with `fields` (`RowClass`): state when
+    `is_state_row` says so, as a measurement kind's row is when it
+    carries override evidence or answers a review; measurement
+    otherwise."""
+    return RowClass.STATE if is_state_row(kind, fields) else RowClass.MEASUREMENT
+
+
+def prunable(kind: str, fields: Mapping[str, Any]) -> bool:
+    """Whether a pruning of the event log may drop a `kind` row with
+    `fields`: a measurement row may, at any age; a state row may not.
+    The pruning (ENG-82) is not on this branch; this is the rule it
+    reads, so a row the brief, the recall, the contradiction, a review
+    chain or the audit trail reads back is never the one it drops."""
+    return row_class(kind, fields) is RowClass.MEASUREMENT
+
+
 # A dry run (`hook.run_audit(dry_run=True)`, `bettermemory audit-turn
 # --dry-run`) computes everything and records nothing, of any class.
 # Telemetry off no longer does that, since state rows pass the switch.
@@ -389,10 +482,19 @@ class Recorder:
 
         return _h.capture_origin().worktree_root
 
+    def records(self, kind: str, fields: Mapping[str, Any] | None = None) -> bool:
+        """Whether `record(kind, **fields)` writes a row (`RowClass`): a
+        state row always, a measurement row with telemetry on, nothing
+        inside `suppressed`. A caller whose row costs work to build asks
+        first rather than reading the switch itself."""
+        if _SUPPRESSED.get():
+            return False
+        return self.enabled or row_class(kind, fields or {}) is RowClass.STATE
+
     def record(self, kind: str, **fields: Any) -> None:
-        """Record one `kind` row. A measurement row is a no-op with
-        telemetry off and swallowed at WARNING when it fails. A state or
-        audit row (`is_state_row`) passes the switch, is stamped and
+        """Record one `kind` row, by its class (`row_class`). A
+        measurement row is a no-op with telemetry off and swallowed at
+        WARNING when it fails. A state or audit row passes the switch, is stamped and
         signed exactly as it would be with telemetry on (less the query
         preview when it is off), is tried `STATE_WRITE_ATTEMPTS` times
         against a busy store, and a failure that remains is logged and
@@ -402,7 +504,7 @@ class Recorder:
         if _SUPPRESSED.get():
             return
         # Off means no measurement, not no state and no trail.
-        state = is_state_row(kind, fields)
+        state = row_class(kind, fields) is RowClass.STATE
         if not self.enabled and not state:
             return
         if self.attribution:
@@ -496,14 +598,19 @@ __all__ = [
     "AUDIT_KINDS",
     "HARNESS_SESSION_FIELD",
     "HARNESS_STAMPED_KINDS",
+    "MEASUREMENT_KINDS",
     "OVERRIDE_EVIDENCE_KINDS",
     "REVIEW_ANSWER_KINDS",
     "REVIEW_ID_FIELD",
+    "ROW_KINDS",
     "Recorder",
+    "RowClass",
     "STATE_KINDS",
     "STATE_WRITE_ATTEMPTS",
     "is_audit_row",
     "is_state_row",
+    "prunable",
     "redact_query",
+    "row_class",
     "suppressed",
 ]
