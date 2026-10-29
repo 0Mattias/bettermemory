@@ -149,7 +149,7 @@ _MAX_PATH_LENGTH = 512
 # the bare-path pass) is at best O(body length) and runs on every search
 # hit, so an adversarial multi-MB body — arriving via git-sync pull, a
 # hostile write, or a hand-edited .md — could peg the server per retrieval
-# even after the per-regex ReDoS bound (`_DOMAIN_ROUTE_RE`'s `{1,20}`). Real
+# with every regex linear (`_DOMAIN_ROUTE_RE` starts once per token). Real
 # memory bodies are a couple KB; 32 KiB sits comfortably above the p99 real
 # body while bounding the worst case to a fixed slice. Truncating (rather
 # than rejecting) leaves every normal body untouched and only drops path
@@ -249,20 +249,32 @@ _WELLKNOWN_ROUTE_SEGMENTS: frozenset[str] = frozenset(
 # cited alongside a URL sharing its first segment — conservative in the
 # direction this module prefers (miss a real path over chasing ghosts).
 #
-# The label repetition is bounded (`{1,20}`, not `+`) on purpose: this
-# regex is `finditer`'d over the ENTIRE raw body inside
-# `_extract_candidates`, which runs per search hit, and an unbounded `+`
-# backtracks catastrophically on a domain-shaped run that is NOT followed
-# by a slash — the `/([\w.\-]+)` tail fails, so the engine retries every
-# partition of the repeat at every start offset. A poisoned body
-# (`a.a.a…` × tens of thousands, arriving via git-sync pull, a hostile
-# write, or a hand-edited .md) otherwise pegs the whole server for
-# seconds-to-minutes; `_MAX_PATHS_PER_BODY` can't help because it caps
-# only AFTER the regex has already scanned. Twenty dot-separated labels is
-# far past any real FQDN (2-5 in practice), and the `\b[\w-]+` anchor lets
-# a match restart at a later label on the rare longer token, so the bound
-# can't drop a route the suppression logic would otherwise catch.
-_DOMAIN_ROUTE_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+){1,20}/([\w.\-]+)")
+# A match starts only where a token starts: the lookbehind bars a word
+# character, a dot or a dash before the first label, and the optional
+# leading dot lets ` .example.com/route` count. That anchor is what keeps
+# the scan linear. This regex is `finditer`'d over the ENTIRE raw body
+# inside `_extract_candidates`, which runs per search hit on a daemon
+# worker. The earlier `\b` opener let a match start at every label of a
+# dotted run and at every letter of a dashed run (`a-a-a...`), and each
+# start rescanned the rest of the token, so a 32 KiB dashed body (inside
+# `_MAX_BODY_SCAN_BYTES`) took about 9 s while holding the GIL, stalling
+# all four workers; a `{1,20}` label bound covered the dotted shape and
+# not the dashed one. A match now starts at a token only: not after a
+# word character or a dash (`(?<![\w-])`), and not at a later label of a
+# dotted run (`(?<![\w-]\.)`: such a label follows `label.`), so the
+# engine's backtracking stays inside one token, since `[\w-]` and `.`
+# are disjoint and a shorter label never opens a new partition: about
+# 1 ms on the same body and 2.0x at twice the length (measured by hand;
+# `test_domain_route_regex_linear_on_dash_runs` pins a 0.5 s ceiling). A
+# start after a run of two or more dots (`see...example.com/x`) stays
+# open, as it was under `\b`, so a route glued to such a run is still
+# found and the same path elsewhere in the body stays suppressed. The
+# label repetition is unbounded on purpose: with no restart at a later
+# label, a bound would drop the route of a domain longer than the bound,
+# and it buys nothing once the start is anchored.
+_DOMAIN_ROUTE_RE = re.compile(
+    r"(?<![\w-])(?<![\w-]\.)\.?[\w-]+(?:\.[\w-]+)+/([\w.\-]+)"
+)
 
 # Repo-relative citation: `src/bettermemory/eval.py`, `docs/ROADMAP.md`,
 # `plugin/.claude-plugin/plugin.json`, `CHANGELOG.md` — the dominant
@@ -305,8 +317,8 @@ _DOMAIN_ROUTE_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+){1,20}/([\w.\-]+)")
 #   absolute path (`/opt/claude-code/src/cli.ts` → `code/src/cli.ts`).
 #   Backticks, quotes, parens, and start-of-line stay valid openers, and a
 #   markdown bullet is unaffected (`- ` puts a space before the token).
-# - Every quantifier is bounded (same ReDoS discipline as
-#   `_DOMAIN_ROUTE_RE`): iterations are separated by a literal `/`, so
+# - Every quantifier is bounded (`_DOMAIN_ROUTE_RE` is linear by its
+#   anchored start instead): iterations are separated by a literal `/`, so
 #   backtracking is confined to one bounded segment window per start
 #   offset — linear over the (already `_MAX_BODY_SCAN_BYTES`-truncated)
 #   body.

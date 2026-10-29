@@ -31,9 +31,10 @@ The fourteenth candidate is the first cut under the rule that the stable
 9.0.0 ships when no feasible foreseeable work is left: from here on the
 work the plan of 2026-10-28 tracks lands in candidates. This one breaks
 the import cycle between the recall and hook modules, so the module
-split can build on it. The store's schema does not move. It is a
-release candidate like the thirteenth; the stable 9.0.0 follows the
-candidates' testing.
+split can build on it, and closes a scan on the recall path that a
+crafted body could hold for seconds. The store's schema does not move.
+It is a release candidate like the thirteenth; the stable 9.0.0 follows
+the candidates' testing.
 
 #### Changed
 
@@ -66,6 +67,21 @@ candidates' testing.
   `bettermemory.recall` 253 ms and 251 ms (median of three cold runs
   each). (`src/bettermemory/sessions.py`, `src/bettermemory/recall.py`,
   `src/bettermemory/hook.py`, `src/bettermemory/origin.py`)
+
+#### Fixed
+
+- **A dashed run in a memory body no longer holds a daemon worker for
+  seconds.** The scan that marks a domain's route so the same path in
+  the body is not read as a filesystem citation began a match at every
+  letter of a dashed run, and each start rescanned the rest of the token:
+  a 32 KiB body of `a-a-a...`, inside the scan cap, took about 9 s on
+  every recall that ranked it, holding the interpreter's lock so the
+  daemon's other workers waited. A match now starts once per token, so
+  the same body scans in about 1 ms and the time grows with the body's
+  length; the label bound, which guarded the dotted shape and not the
+  dashed one, is gone, so a domain of any length keeps its route. The
+  routes found are unchanged on every realistic shape.
+  (`src/bettermemory/verify.py`)
 
 #### Known limitations
 

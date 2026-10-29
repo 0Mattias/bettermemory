@@ -3009,13 +3009,14 @@ def test_smb_share_spec_rejected() -> None:
 
 def test_domain_route_regex_bounded_against_redos() -> None:
     """ReDoS guard: `_DOMAIN_ROUTE_RE` is finditer'd over the whole raw
-    body per search hit. An unbounded label repeat backtracks
-    catastrophically on a long domain-shaped run with NO trailing slash
-    (the `/segment` tail never matches). The `{1,20}` bound keeps the scan
-    linear. Assert both that the pathological body is handled correctly
-    (no phantom candidates) and that it returns well under a generous
-    wall-clock guard — the current unbounded regex takes multiple seconds
-    on this input."""
+    body per search hit. A `\\b` opener let a match start at every label
+    of a long dotted run with NO trailing slash (the `/segment` tail never
+    matches), each start rescanning the rest of the run. Anchoring each
+    match to a token start keeps the scan linear, and the `{1,20}` label
+    bound that first guarded this shape is gone (see `_DOMAIN_ROUTE_RE`).
+    Assert both that the pathological body is handled correctly (no
+    phantom candidates) and that it returns well under a generous
+    wall-clock guard; the `\\b` opener took seconds on this input."""
     import time
 
     # A ~20k-label dotted run with no slash — the pathological shape that
@@ -3025,7 +3026,7 @@ def test_domain_route_regex_bounded_against_redos() -> None:
     start = time.monotonic()
     report = detect_path_drift(body)
     elapsed = time.monotonic() - start
-    # Generous bound: fixed code runs in ~0.01s; unbounded takes ~3.7-4.7s.
+    # Generous bound: anchored, ~0.01 s; the `\b` opener took ~3.7-4.7 s.
     assert elapsed < 2.0, f"path-drift scan took {elapsed:.2f}s — regex not bounded"
     # The poison run is not a filesystem path and must not leak into the
     # report; the real path in the same body is still handled normally.
@@ -3034,13 +3035,68 @@ def test_domain_route_regex_bounded_against_redos() -> None:
     assert all("a.a.a" not in c for c in report.checked)
 
 
+def test_domain_route_regex_linear_on_dash_runs() -> None:
+    """The opener anchors a match to a token start. With the old `\\b`
+    opener a dashed run (`a-a-a...`) started a match at every letter and
+    rescanned the rest of the token from each one: about 9 s on this body,
+    which is the largest poison inside the 32 KiB scan cap, while holding
+    the GIL on a daemon worker. Anchored, the scan is about 1 ms (and 2.0x
+    at twice the length, measured by hand); the 0.5 s ceiling here is
+    generous against a loaded machine and still two orders under the
+    quadratic figure."""
+    import time
+
+    from bettermemory import verify as _verify
+
+    body = "a-" * 16000
+    start = time.monotonic()
+    routes = [m.group(1) for m in _verify._DOMAIN_ROUTE_RE.finditer(body)]
+    elapsed = time.monotonic() - start
+    assert routes == []
+    assert elapsed < 0.5, f"domain-route scan took {elapsed:.2f}s on a dashed run"
+    report = detect_path_drift(f"see /etc/hosts and then {body} in the notes")
+    assert body not in report.checked
+    assert body not in report.missing
+    assert all("a-a-a" not in c for c in (*report.checked, *report.missing))
+
+
+@pytest.mark.parametrize(
+    ("body", "routes"),
+    [
+        ("hit pypi.org/pypi/bettermemory/json then /pypi/x", {"pypi"}),
+        # Twenty-three labels: the repetition has no bound, so the route is
+        # found from the first label with no restart at a later one.
+        ("a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w/x labels", {"x"}),
+        ("trailing .example.com/route after a dot", {"route"}),
+        # A run of two or more dots opens a start, as `\b` did: the route
+        # glued to it is found, so the same path elsewhere in the body
+        # stays a route and not a filesystem citation.
+        ("see...github.com/org/repo and foo..bar.com/p", {"org", "p"}),
+        (
+            "-leading-dash.example/route and x-foo.bar/baz and (foo.bar/qux)",
+            {"route", "baz", "qux"},
+        ),
+        ("https://docs.python.org/3/library and user@host.example/path", {"3", "path"}),
+        ("v3.16.0rc1 and localhost:7397/health and ~/.config/x and a..b/c", set()),
+    ],
+)
+def test_domain_route_regex_starts_at_a_token(body: str, routes: set[str]) -> None:
+    """The anchored opener captures the same routes the `\\b` opener did on
+    every realistic shape, a route glued to a run of dots included, and
+    the unbounded repetition keeps a long domain's route where a `{1,20}`
+    bound with no restart would drop it."""
+    from bettermemory import verify as _verify
+
+    assert {m.group(1) for m in _verify._DOMAIN_ROUTE_RE.finditer(body)} == routes
+
+
 def test_domain_route_bound_preserves_route_suppression() -> None:
-    """The `{1,20}` label bound must not change route-suppression behavior
+    """The anchored opener must not change route-suppression behavior
     for realistic domains: a body citing a domain-attached route in one
     place and the same first-segment bare route in another still has the
-    bare route suppressed (empty `missing`), exactly as before the bound.
-    Correctness anchor — passes both before and after the fix; guards
-    against a future over-tightening of the bound."""
+    bare route suppressed (empty `missing`), exactly as before the anchored
+    opener. Correctness anchor — passes both before and after the fix;
+    guards against a future over-tightening of the opener."""
     body = (
         "hit `pypi.org/pypi/bettermemory/<ver>/json` (200 = live) — the "
         "top-level `/pypi/bettermemory/json` index lags ~1min"
