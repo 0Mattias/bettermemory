@@ -924,10 +924,11 @@ def _expand_top_hit(
             # Drop the body silently, the snippet still got returned.
             pass
         except OSError:
-            # Transient IO error reading the top hit's body (e.g. the
-            # backing file vanished mid-flight, a flaky network mount, or
-            # a transient EIO). The body expansion is a best-effort
-            # enrichment — skip the inline body but still return the
+            # Transient IO error reading the top hit's body (8.x read it
+            # from a file that could vanish mid-flight or sit on a flaky
+            # network mount; the store reads a row, and the guard stays
+            # for an OSError the read raises). The body expansion is a
+            # best-effort enrichment — skip the inline body but still return the
             # ranked hits the caller already has, rather than aborting the
             # whole search on one unreadable body.
             pass

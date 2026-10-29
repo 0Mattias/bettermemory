@@ -62,20 +62,20 @@ def _load_depends_targets(
             # Same silent-skip semantics as the prefilter-miss
             # branch in `_resolve_depends`: a deleted or
             # tombstoned target is best-effort dropped from
-            # auto-pull. The link still exists on disk for
+            # auto-pull. The link still exists in the store for
             # explicit `memory_show` investigation.
             #
-            # OSError is in the set because `store.load_one` →
-            # `frontmatter.load(path)` reads the target's backing
-            # file and does not guard OSError itself; a transient
-            # read failure (EIO, a flaky network mount) on a
-            # depends-on target would otherwise propagate out of
-            # `attach_depends_on_resolved` and abort an
-            # otherwise-successful `memory_search`. Dropping the
-            # unreadable target from the auto-pull mirrors the
-            # missing/tombstoned skip and matches the OSError guard
-            # already on the `expand_top` body load in
-            # `handlers/search.py`.
+            # OSError is in the set because 8.x's `store.load_one`
+            # read the target's backing file (`frontmatter.load`)
+            # without guarding OSError; a transient read failure
+            # (EIO, a flaky network mount) on a depends-on target
+            # would otherwise have propagated out of
+            # `attach_depends_on_resolved` and aborted an
+            # otherwise-successful `memory_search`. The store reads a
+            # row; the guard stays, dropping an unreadable target from
+            # the auto-pull like a missing or tombstoned one, and
+            # matching the OSError guard on the `expand_top` body load
+            # in `handlers/search.py`.
             continue
         # Apply the caller's scope/origin filter at load time
         # — must mirror the per-target check in `_resolve_depends` so a
