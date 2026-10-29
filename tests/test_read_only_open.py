@@ -211,8 +211,9 @@ def test_a_closed_wal_store_is_read_from_a_private_copy(
     try:
         copies = [p for p in scratch.rglob(STORE_FILENAME)]
         assert len(copies) == 1
-        assert stat.S_IMODE(copies[0].stat().st_mode) == 0o600
-        assert stat.S_IMODE(copies[0].parent.stat().st_mode) == 0o700
+        if sys.platform != "win32":  # no mode bits there; the user's own temp
+            assert stat.S_IMODE(copies[0].stat().st_mode) == 0o600
+            assert stat.S_IMODE(copies[0].parent.stat().st_mode) == 0o700
         assert store.path == path
         assert store.get_memory(record) is not None
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
@@ -264,21 +265,30 @@ def test_a_copy_left_open_goes_with_the_store_and_at_exit(
     copy, the whole store, in the temporary directory after the process
     exited. In a child (this suite's `close_opened_stores` holds every
     store a test opens until it ends): a store dropped unclosed takes its
-    copy with it when it is collected, and one still open at exit too."""
+    copy with it when it is collected, its connection closed first
+    (Windows refuses to remove a file a handle is open on, so the copy
+    outlived the process there), and one still open at exit too."""
     path, _, _ = _store(tmp_path, "current")
     env = shielded_child_env()
     env.update(TMPDIR=str(scratch), TMP=str(scratch), TEMP=str(scratch))
     child = (
-        "import gc, sys\n"
+        "import gc, sqlite3, sys\n"
         "from pathlib import Path\n"
         "from bettermemory.store import Store\n"
         "store, scratch = Path(sys.argv[1]), Path(sys.argv[2])\n"
         "def count(): return len(list(scratch.iterdir()))\n"
         "dropped = Store.open(store, read_only=True)\n"
+        "conn = dropped._conn\n"
         "seen = [count()]\n"
         "del dropped\n"
         "gc.collect()\n"
         "seen.append(count())\n"
+        "try:\n"
+        "    conn.execute('SELECT 1')\n"
+        "except sqlite3.ProgrammingError:\n"
+        "    seen.append('closed')\n"
+        "else:\n"
+        "    seen.append('open')\n"
         "kept = Store.open(store, read_only=True)\n"
         "seen.append(count())\n"
         "print(*seen)\n"
@@ -292,7 +302,7 @@ def test_a_copy_left_open_goes_with_the_store_and_at_exit(
         check=False,
     )
     assert done.returncode == 0, done.stderr
-    assert done.stdout.split() == ["1", "0", "1"]
+    assert done.stdout.split() == ["1", "0", "closed", "1"]
     assert list(scratch.iterdir()) == []
 
 

@@ -160,6 +160,7 @@ from .store_schema import (
     StoreRefusedError as StoreRefusedError,
     admit_store as admit_store,
     connect_read_only as connect_read_only,
+    remove_read_only_copy as remove_read_only_copy,
     read_store_meta as read_store_meta,
     _MEMBERSHIP_SPECS as _MEMBERSHIP_SPECS,
     _STORE_ID_PATTERN,
@@ -1098,7 +1099,7 @@ class Store:
         # A full copy of the store must not outlive a store never closed.
         self._read_only, self._scratch = read_only, scratch
         if scratch is not None:
-            weakref.finalize(self, shutil.rmtree, scratch, True)
+            weakref.finalize(self, remove_read_only_copy, self._conn, scratch)
 
     def close(self) -> None:
         self._conn.close()

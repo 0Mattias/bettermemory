@@ -1793,3 +1793,14 @@ def connect_read_only(
     raise sqlite3.OperationalError(
         f"{path} changed every time it was copied to be read; run the command again"
     )
+
+
+def remove_read_only_copy(conn: sqlite3.Connection, scratch: Path) -> None:
+    """Close `conn` and remove `scratch`, the private copy it reads
+    (`connect_read_only`), for a read-only store that was never closed:
+    when it is collected or at exit (`Store._keep_copy`). The connection
+    closes first: Windows refuses to remove a file a handle is open on, so
+    a copy removed under an open connection outlived the process there."""
+    with contextlib.suppress(Exception):
+        conn.close()
+    shutil.rmtree(scratch, ignore_errors=True)

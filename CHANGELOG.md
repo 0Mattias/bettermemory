@@ -1780,9 +1780,10 @@ follows the candidates' testing.
   `-shm` beside, a private copy (`tempfile.mkdtemp`, owner-only, the
   copy 0600) read `immutable=1`, taken again when the file changes while
   it is copied and removed when the store closes (or, left open, when
-  the store is collected or the process exits). `immutable=1` is never
-  used on the store file itself. `security audit`'s meta read
-  (`posture.read_meta`) goes through the same open: it read the live
+  the store is collected or the process exits, its connection closed
+  first: Windows refuses to remove a file a handle is open on).
+  `immutable=1` is never used on the store file itself. `security audit`'s
+  meta read (`posture.read_meta`) goes through the same open: it read the live
   file `immutable=1` when it had no `-wal`, and refused a `-wal` without
   its `-shm`, which it now reads from the copy. The read-only open skips
   the additive schema step (a reader finds a missing table empty), every
