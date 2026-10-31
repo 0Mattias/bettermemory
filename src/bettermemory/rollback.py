@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from .identity import actor_matches
 from .models import Memory, snippet_for
+from .standing import held_by_removal, held_lines
 
 if TYPE_CHECKING:
     from .store import Store
@@ -127,6 +128,9 @@ class RollbackReport:
     refusal_reason: str | None = None
     actions_taken: list[RollbackAction] = field(default_factory=list)
     failures: list[RollbackFailure] = field(default_factory=list)
+    # The standing memories the removed records replaced, back in force
+    # and held until a standing roster reads them (ENG-200).
+    held: list[str] = field(default_factory=list)
 
     def assert_reconciles(self) -> None:
         """Raise if the four populations do not sum to the active set.
@@ -165,6 +169,7 @@ class RollbackReport:
             "candidates": [c.to_dict() for c in self.candidates],
             "actions_taken": [a.to_dict() for a in self.actions_taken],
             "failures": [f.to_dict() for f in self.failures],
+            "held": list(self.held),
         }
 
 
@@ -288,6 +293,7 @@ def apply_rollback(
             )
         )
     report.committed = True
+    report.held = held_by_removal(store, [a.memory_id for a in report.actions_taken])
     return report
 
 
@@ -356,6 +362,7 @@ def render_text(report: RollbackReport) -> str:
         lines.append(
             "Dry run — nothing was removed. Re-run with --apply --yes to commit."
         )
+    lines.extend(held_lines(report.held))
     return "\n".join(lines) + "\n"
 
 

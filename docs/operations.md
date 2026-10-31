@@ -150,6 +150,16 @@ replaced by running `bettermemory service install` again). A version
 key that does not read as a whole number refuses the open naming the
 key: set it back, or restore a bundle taken before the edit.
 
+9.0.0rc15 runs schema step 2 (ENG-200) at the owner's first open: the
+`returned` table, and the writer minimum raised to 2. Going back to
+9.0.0rc14 or earlier after that serves the store for reading only, so
+a switch's way back is this candidate or later, or the backup taken
+before the switch, which loses the writes made since. The same open
+marks, once, the memories an earlier build brought back into force and
+logs `returned: N records an earlier build brought back into force
+marked for a standing roster read` when there were any; a backfill that
+fails logs a warning and runs again at the next owner's open.
+
 ### Running it as a service
 
 `bettermemory service install` writes a launchd LaunchAgent on macOS

@@ -34,6 +34,17 @@ roster before it is in force (ENG-112), on the write review or on
 memory_update's (`handlers.standing_review`), so answer_standing sends
 that answer to memory_update.
 
+A standing record that came back into force (ENG-200: the record that
+replaced it removed or unlinked, or itself restored) is held while the
+review is in force: the store marked it (`store_returned`) and no
+standing roster has read it since, against the rulings written while it
+was out of force among the rest (`held_ids`). A held record is out of
+force for every surface that delivers or lists one (`standing_ids`,
+`in_force`) and in force for the guard (`guarded_ids`), so it is changed
+only on the user's words, as it was before it was replaced. Its own
+memory_update reads it against the roster (`makes_standing`) and the
+commit releases it.
+
 `TAU_STANDING` is the tau round's (RS-F7 phase 2): the ENG-7 judges
 answered the question blind on a stratified seeded draw of stored
 records, and the threshold is the one on the 0.05 grid whose answers
@@ -52,9 +63,9 @@ from typing import TYPE_CHECKING, Any
 
 from . import _caches, identity
 from .in_force import in_force
-from .models import Category, snippet_window
+from .models import Category, LinkType, snippet_window
 from .review import RELATED_CAP, RELATED_TEXT_CHARS, STANDING_STATEMENT, current_tau
-from .store import StandingAnswer, body_sha256
+from .store import NotFoundError, StandingAnswer, body_sha256
 
 if TYPE_CHECKING:
     from .admission import Admission, RecordView
@@ -78,6 +89,10 @@ __all__ = [
     "batch_hint",
     "check_probability",
     "guarded_ids",
+    "held_by_removal",
+    "held_ids",
+    "held_line",
+    "held_lines",
     "is_standing",
     "makes_standing",
     "question",
@@ -232,12 +247,13 @@ def guarded_ids(store: Store, ids: Sequence[str]) -> list[str]:
     (`handlers._guard`): `standing_ids` under every record
     (`admission.EVERY_RECORD`), whatever the caller is admitted to, since
     admission decides what a surface delivers, not who may change a
-    record."""
+    record. A held record is guarded: it is the user's rule as it was
+    before it was replaced, waiting only for its read."""
     from .admission import EVERY_RECORD
 
     if not ids:
         return []
-    return standing_ids(store, EVERY_RECORD, ids)
+    return standing_ids(store, EVERY_RECORD, ids, held=True)
 
 
 def makes_standing(
@@ -254,25 +270,54 @@ def makes_standing(
     in force under every record, as `guarded_ids` reads it, and either
     its body changed or it is not standing now (its category and its
     current answer). A record the change leaves standing as it already
-    was is not a new statement; one out of force directs nothing."""
+    was is not a new statement; one out of force directs nothing. A held
+    record (`held_ids`) is one no roster has read since it came back, so
+    any change that leaves it standing reads it."""
     from .admission import EVERY_RECORD
 
     if not is_standing(category, probability):
         return False
+    forced = in_force(store, [record_id], EVERY_RECORD)[record_id]
+    if forced.history:
+        return False
+    if forced.held:
+        return True
     if not body_changed:
         current = store.standing_rows([record_id])
         if current and is_standing(
             current[0]["category"], answers(store, [record_id]).get(record_id)
         ):
             return False
-    return not in_force(store, [record_id], EVERY_RECORD)[record_id].history
+    return True
+
+
+def held_ids(store: Store, ids: Sequence[str] | None = None) -> set[str]:
+    """The records (of `ids`, when given) held out of force (ENG-200):
+    marked by the store as come back into force with no roster read
+    since (`Store.returned_rows`), standing, and the review in force.
+    Admission is not read: a surface reads it with its own."""
+    if not asking():
+        return set()
+    marked = store.returned_rows(ids)
+    if not marked:
+        return set()
+    return {
+        row["id"]
+        for row in store.standing_rows(list(marked))
+        if is_standing(row["category"], _current(store, row))
+    }
 
 
 def standing_ids(
-    store: Store, admission: RecordView, ids: Sequence[str] | None = None
+    store: Store,
+    admission: RecordView,
+    ids: Sequence[str] | None = None,
+    *,
+    held: bool = False,
 ) -> list[str]:
     """The admitted records (of `ids`, when given) that are standing and
-    in force, newest ``updated`` first."""
+    in force, newest ``updated`` first. A held record (`held_ids`) is
+    left out unless `held`, which only the guard passes."""
     if ids is not None and not ids:
         return []
     candidates: list[str] = []
@@ -288,7 +333,11 @@ def standing_ids(
     if not candidates:
         return []
     resolved = in_force(store, candidates, admission)
-    return [rid for rid in candidates if not resolved[rid].history]
+    return [
+        rid
+        for rid in candidates
+        if not resolved[rid].history and (held or not resolved[rid].held)
+    ]
 
 
 def record_text(body: str) -> str:
@@ -334,6 +383,56 @@ def backlog_line(count: int) -> str:
     return (
         f"bettermemory: {count} {noun} no standing answer. Answer them "
         f"yourself: {_CALL} shows {BATCH} at a time."
+    )
+
+
+def held_by_removal(store: Store, removed: Sequence[str]) -> list[str]:
+    """The records the removal of `removed` left held (`held_ids`): each
+    ``supersedes`` target of a removed record's tombstone, in order. A
+    record not tombstoned names none."""
+    targets: list[str] = []
+    for record_id in removed:
+        try:
+            links = store.tombstone_links(record_id)
+        except NotFoundError:
+            continue
+        targets.extend(
+            link.target_id for link in links if link.type == LinkType.SUPERSEDES
+        )
+    if not targets:
+        return []
+    held = held_ids(store, targets)
+    return [i for i in dict.fromkeys(targets) if i in held]
+
+
+def held_lines(ids: Sequence[str]) -> list[str]:
+    """A CLI report's lines naming the records it left held (`held_ids`),
+    each with the update that reads it; none for none (ENG-200)."""
+    if not ids:
+        return []
+    return [
+        f"Held out of force until an agent reads it against the standing "
+        f"roster ({len(ids)}):",
+        *(f'  memory_update(id="{i}", standing=<0 to 1>)' for i in ids),
+    ]
+
+
+def held_line(ids: Sequence[str]) -> str:
+    """The first-output line naming the held records (`held_ids`) the
+    caller is admitted to, newest first, at most `BATCH` of them by id with
+    the call that reads each, or "" for none (ENG-200)."""
+    if not ids:
+        return ""
+    shown = list(ids[:BATCH])
+    more = len(ids) - len(shown)
+    noun = "memory came" if len(ids) == 1 else "memories came"
+    verb = "is" if len(ids) == 1 else "are"
+    rest = f" ({more} more after these)" if more > 0 else ""
+    return (
+        f"bettermemory: {len(ids)} standing {noun} back into force and {verb} "
+        "held out of force until read against the standing roster: "
+        "memory_update(id, standing=<0 to 1>) on each of "
+        f"{', '.join(shown)}{rest} shows it the roster."
     )
 
 

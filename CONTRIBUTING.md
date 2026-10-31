@@ -134,7 +134,7 @@ Within a major, all changes to the store schema are **additive only**: new nulla
 Two builds of one major meet on one store: the daemon keeps a newer daemon running beside an older client, and an older CLI writes the store directly. So a store records which builds may read it and which may write it, and every open checks (`store_versions.check_versions`). The vocabulary is two integers and a package version, each with one job; all four live in the store's `meta`:
 
 - `schema_version` (`SCHEMA_VERSION`): the major line's format. It moves only with a major release, and every build refuses a store whose value is above its own, including the builds from before this contract.
-- `schema_revision` (`SCHEMA_REVISION`, 1 in 9.0): what the store holds within that format. A change to what a build writes raises it.
+- `schema_revision` (`SCHEMA_REVISION`, 2 since 9.0.0rc15): what the store holds within that format. A change to what a build writes raises it.
 - `min_reader_revision` and `min_writer_revision`: the lowest revision that may read the store, and the lowest that may write it. `MIN_READER_REVISION` and `MIN_WRITER_REVISION` are what a store a build creates carries.
 - `engine_version`: the package version of the newest build that opened the store to write, in release order (`_daemon_client.version_key`, a local `+...` part left off). It names a build in messages; nothing gates on it.
 

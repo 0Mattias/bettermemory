@@ -118,6 +118,7 @@ from .recall_admission import (
     caller_admission,
     disputed_marks,
     first_output_lines,
+    held_line,
     membership_model,
     standing_line,
     summarize,
@@ -377,8 +378,10 @@ def _select_brief(
     from the production pool over `probe` (`resolve_search_pool` under
     the admission on the pool prefilter surface, which admits more than
     the brief does, so each row is re-admitted here), the same label
-    rule, history excluded (`in_force`), an open contradiction held
-    (`_contradiction_open`; a standing record is never held, part 5).
+    rule, history and records held out of force excluded (`in_force`,
+    ENG-200), a record with an open contradiction withheld
+    (`_contradiction_open`; a standing record is never withheld for one,
+    part 5).
     Each list is ranked by the probe (`_ranked`), `BRIEF_STANDING` and
     `BRIEF_WORK` at most; a shown record another in-force record extends
     carries that record's id as its note (part 3).
@@ -421,7 +424,14 @@ def _select_brief(
             store, [memory.id for memory in [*standing, *work]], admission
         )
     if work:
-        work = [memory for memory in work if not forced[memory.id].history]
+        # History yields to its head, and a record held out of force
+        # (ENG-200) is not delivered: a held standing record is out of the
+        # standing list, so it reaches here, and is dropped.
+        work = [
+            memory
+            for memory in work
+            if not forced[memory.id].history and not forced[memory.id].held
+        ]
         contradicted = store.contradicted_at([memory.id for memory in work])
         work = [
             memory for memory in work if not _contradiction_open(memory, contradicted)
@@ -724,7 +734,9 @@ def session_brief(
     holds it), and the lines of its first output (`first_output_lines`:
     L1 to L10 and every open proposal of the checkout, design 5.4), then
     the line naming the records that wait for a standing answer
-    (`standing_line`), come right after that notice and before the brief,
+    (`standing_line`) and the one naming the standing records held out of
+    force (`held_line`, ENG-200), come right after that notice and before
+    the brief,
     with the brief's switches off as well. Where the daemon cannot read the caller's
     namespace the result carries the exchange's next question in
     ``membership`` and nothing else runs."""
@@ -795,9 +807,9 @@ def session_brief(
 def _brief_lead_lines(store: Store, resolution: Resolution | None) -> list[str]:
     """Take the caller's resolution; return its membership and standing lines."""
     lines = first_output_lines(store, resolution)
-    waiting = standing_line(store, resolution)
-    if waiting:
-        lines.append(waiting)
+    for line in (standing_line(store, resolution), held_line(store, resolution)):
+        if line:
+            lines.append(line)
     return lines
 
 
@@ -1694,7 +1706,9 @@ def _choose_hits(
     forced = in_force(
         store, [rid for rid in hit_ids if rid in admitted_here], admission
     )
-    own = {entry.id for entry in forced.values() if not entry.history}
+    own = {
+        entry.id for entry in forced.values() if not entry.history and not entry.held
+    }
     wanted = list(dict.fromkeys([*hit_ids, *(entry.id for entry in forced.values())]))
     memories = {memory.id: memory for memory in store.load_many(wanted)}
     trust = store.trust_rows(wanted)
@@ -1725,7 +1739,11 @@ def _choose_hits(
         if held is None and len(rc3_candidates) < RECALL_MAX_POINTERS:
             rc3_candidates.append(memory)
         forced_entry = forced.get(hit.id)
-        if forced_entry is not None and forced_entry.history:
+        if forced_entry is not None and forced_entry.held:
+            # The slot's record is held out of force (ENG-200): the hit
+            # itself, or the head it yields to.
+            held = "held"
+        elif forced_entry is not None and forced_entry.history:
             # The hit is history: the slot is its head's, and the head's
             # own gates decide it.
             head_id = forced_entry.id

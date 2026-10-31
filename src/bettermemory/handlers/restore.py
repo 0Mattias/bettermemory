@@ -17,6 +17,7 @@ from ..verify import (
     unverifiable_attestations,
 )
 from . import _guard
+from . import standing_review as _standing_review
 from ._shared import Context, _advance_turn, caller_anchoring, has_home
 
 if TYPE_CHECKING:
@@ -258,7 +259,11 @@ async def memory_restore(
         response["trust_stripped"] = strip.to_dict()
     if strip.any:
         response["hint"] = _TRUST_STRIPPED_HINT
-    return response
+    # A standing memory restored with nothing replacing it is held until
+    # it is read against the standing roster (ENG-200).
+    return _standing_review.with_held(
+        response, _standing_review.held_reply(deps, [memory.id])
+    )
 
 
 __all__ = [

@@ -251,7 +251,11 @@ async def memory_update(
         new_links=reviewed_links,
     )
     merged = existing.model_copy(update=update_fields)
-    commit = _commit_update(deps, id, merged, content, standing_answer)
+    # A held memory the roster read is released with the commit (ENG-200).
+    with _standing_review.releasing(deps, roster):
+        commit = _commit_update(deps, id, merged, content, standing_answer)
+        if commit[0] is not None:
+            _standing_review.release(deps, id, roster)
     if commit[1] is not None:
         return commit[1]
     updated = commit[0]
@@ -272,7 +276,24 @@ async def memory_update(
     )
     response = deps.responses.committed(updated, **extras)
     response.update(_words_written(deps, held, roster))
-    return response
+    # A supersedes link this edit dropped may bring a standing memory back
+    # into force, held until it is read (ENG-200).
+    return _standing_review.with_held(
+        response,
+        _standing_review.held_reply(deps, _dropped_supersedes(existing, updated)),
+    )
+
+
+def _dropped_supersedes(existing: Memory, updated: Memory) -> list[str]:
+    """The ``supersedes`` targets `existing` held and `updated` does not."""
+    kept = {
+        link.target_id for link in updated.links if link.type == LinkType.SUPERSEDES
+    }
+    return [
+        link.target_id
+        for link in existing.links
+        if link.type == LinkType.SUPERSEDES and link.target_id not in kept
+    ]
 
 
 def _words_written(
@@ -435,14 +456,17 @@ def _answer_standing_only(
         return early
     links = _standing_review.review_links(list(existing.links), roster)
     updated = existing
-    if links != list(existing.links):
-        merged = existing.model_copy(update={"links": links})
-        commit = _commit_update(deps, id, merged, None, standing_answer)
-        if commit[1] is not None:
-            return commit[1]
-        updated = commit[0]
-    else:
-        deps.store.put_standing(id, standing_answer)
+    # A held memory the roster read is released with the answer (ENG-200).
+    with _standing_review.releasing(deps, roster):
+        if links != list(existing.links):
+            merged = existing.model_copy(update={"links": links})
+            commit = _commit_update(deps, id, merged, None, standing_answer)
+            if commit[1] is not None:
+                return commit[1]
+            updated = commit[0]
+        else:
+            deps.store.put_standing(id, standing_answer)
+        _standing_review.release(deps, id, roster)
     extras = _standing_review.after_commit(deps, updated, roster)
     deps.recorder.record(
         "update",

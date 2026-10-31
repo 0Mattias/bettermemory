@@ -178,8 +178,9 @@ _ACTOR_RECORDS = {"memory_put": "memory", "tombstone_put": "tombstone"}
 _RECORD_KEYED = {
     "home_put": "home",
     "standing_put": "standing",
+    "returned_put": "returned",
 }
-_RECORD_KEYED_DELETES = frozenset({"home_delete", "standing_delete"})
+_RECORD_KEYED_DELETES = frozenset({"home_delete", "standing_delete", "returned_delete"})
 # The fields a telemetry or control row names a record under.
 _ID_FIELDS = ("id", "memory_id", "record_id")
 

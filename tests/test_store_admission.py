@@ -779,7 +779,12 @@ def test_an_index_that_reads_as_columns_is_held_to_what_sqlite_made(
     assert f"its index 'later_x' {named}" in str(raised.value)
 
 
-def _written_later(path: Path, *, reader: str, revision: str = "2") -> None:
+# This build's revision, and the one a later build wrote a store at.
+_OURS = store_schema.SCHEMA_REVISION
+_NEXT = _OURS + 1
+
+
+def _written_later(path: Path, *, reader: str, revision: str = str(_NEXT)) -> None:
     """Meta saying a later build (9.1.0) wrote the store at `revision`,
     with `reader` as its minimum reader, and a view this build refuses."""
     _sql(
@@ -796,13 +801,13 @@ def _written_later(path: Path, *, reader: str, revision: str = "2") -> None:
     [
         (
             "1",
-            "is at schema revision 2 (meta's schema_revision) (its newest writer "
-            "was bettermemory 9.1.0), and this build, bettermemory",
+            f"is at schema revision {_NEXT} (meta's schema_revision) (its newest "
+            "writer was bettermemory 9.1.0), and this build, bettermemory",
             "schema_revision",
         ),
         (
-            "2",
-            "needs a reader at schema revision 2 or later (meta's "
+            str(_NEXT),
+            f"needs a reader at schema revision {_NEXT} or later (meta's "
             "min_reader_revision) (its newest writer was bettermemory 9.1.0); "
             "this build, bettermemory",
             "min_reader_revision",
@@ -828,14 +833,14 @@ def test_a_refused_store_a_later_build_wrote_says_to_upgrade(
         refused = raised.value
         message = str(refused)
         assert said in message
-        assert "reads revision 1" in message
+        assert f"reads revision {_OURS}" in message
         assert "does not admit what it holds (it holds a view named 'later_view'" in (
             message
         )
         assert message.endswith(": upgrade bettermemory to open it")
         assert _REFUSED not in message
         assert isinstance(refused, store_schema.StoreVersionError)
-        assert (refused.key, refused.needed) == (key, 2)
+        assert (refused.key, refused.needed) == (key, _NEXT)
         assert isinstance(refused, store_schema.StoreRefusedError)
         assert refused.holds_meta is True and not refused.timed_out
     assert _snapshot(path) == before
@@ -843,14 +848,14 @@ def test_a_refused_store_a_later_build_wrote_says_to_upgrade(
         _in_time(lambda: _store_id_at(path))
 
 
-@pytest.mark.parametrize("revision", ["1", "0", "two", ""])
+@pytest.mark.parametrize("revision", [str(_OURS), "1", "0", "two", ""])
 def test_a_refused_store_at_this_builds_revision_keeps_the_schema_refusal(
     repo: Path, revision: str
 ) -> None:
     """A revision at or below this build's, or one that is not a whole
     number, says nothing of a later build: the admission's refusal."""
     path = repo / PROJECT_DIR_NAME / STORE_FILENAME
-    _written_later(path, reader="2", revision=revision)
+    _written_later(path, reader=str(_NEXT), revision=revision)
     with pytest.raises(ValueError, match=_REFUSED) as raised:
         _in_time(lambda: Store.open(path))
     assert "view named 'later_view'" in str(raised.value)
@@ -874,7 +879,9 @@ def test_doctor_advises_the_upgrade_for_a_store_a_later_build_wrote(
     remedy is the build to open it with, not "move it aside"."""
     path, refused = _later_refusal(repo)
     remedy = doctor._open_remedy(path, refused)
-    assert "reads schema revision 2 or later (meta's schema_revision)" in remedy
+    assert f"reads schema revision {_NEXT} or later (meta's schema_revision)" in (
+        remedy
+    )
     assert "move" not in remedy
 
 

@@ -38,11 +38,13 @@ from .. import standing as _standing
 from ..models import LinkType, MemoryLink
 from ..store import NotFoundError, TombstonedError
 from ..supersession import SupersessionMatch, SupersessionReport
+from . import standing_review as _standing_review
 from ._shared import Context
 from .write import _file_review_pairs
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..store import Store
 
 _FORMAT = "relations={<member id>: {<related id>: " + _review.LABEL_CHOICES + "}}"
 
@@ -261,6 +263,16 @@ def _apply(
     return out
 
 
+def _supersedes_of(store: Store, memory_id: str) -> set[str]:
+    """The ``supersedes`` targets of the active record, or none when it is
+    not active."""
+    try:
+        memory = store.load_one(memory_id)
+    except (NotFoundError, TombstonedError):
+        return set()
+    return {link.target_id for link in memory.links if link.type == LinkType.SUPERSEDES}
+
+
 async def capture_relations(
     deps: ToolHandlers, relations: Any, *, ctx: Context | None = None
 ) -> dict[str, Any]:
@@ -270,6 +282,9 @@ async def capture_relations(
     store = deps.store
     applied: dict[str, dict[str, Any]] = {}
     batches: dict[str, _capture.Batch] = {}
+    # The records a member's refusal or a dropped cue link stops replacing
+    # come back into force, a standing one held until read (ENG-200).
+    unlinked: list[str] = []
     with store.batch():
         filed_before = {str(c["id"]) for c in store.list_conflicts()}
         rows: dict[str, dict[str, Any]] = {}
@@ -282,7 +297,9 @@ async def capture_relations(
             answered = {**prior, **given}
             if any(i not in answered for i in pending):
                 continue
+            linked = _supersedes_of(store, member.memory_id)
             result = _apply(deps, member, answered, filed_before=filed_before)
+            unlinked += sorted(linked - _supersedes_of(store, member.memory_id))
             row["applied"][member_id] = result
             applied[member_id] = result
         for batch_id, row in rows.items():
@@ -297,7 +314,9 @@ async def capture_relations(
     response["hint"] = _LEFT_HINT if left else _DONE_HINT
     if any(r.get("action") == _review.ACTION_STANDING for r in applied.values()):
         response["hint"] += _STANDING_HINT
-    return response
+    return _standing_review.with_held(
+        response, _standing_review.held_reply(deps, unlinked)
+    )
 
 
 __all__ = ["capture_relations"]

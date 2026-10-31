@@ -48,6 +48,16 @@ _NOW = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
 #: The table the simulated step 2 adds, which no build defines.
 LATER_TABLE = "later_notes"
 
+# This build's revision and the minimums a store it creates carries, and
+# the revision a later build's step takes a store to.
+OURS = store_schema.SCHEMA_REVISION
+OURS_KEYS = [
+    str(OURS),
+    str(store_schema.MIN_READER_REVISION),
+    str(store_schema.MIN_WRITER_REVISION),
+]
+LATER = OURS + 1
+
 Apply = Callable[[sqlite3.Connection, Path, dict[str, str]], None]
 
 
@@ -72,16 +82,16 @@ def later_build(
     apply: Apply,
     *,
     additive: bool = False,
-    reader: int = 2,
-    writer: int = 2,
+    reader: int = LATER,
+    writer: int = LATER,
     version: str = "9.1.0",
 ) -> Iterator[None]:
     """A build one step ahead of this one for the length of the block: its
-    step 2 runs `apply`, and a store it creates or steps carries `reader`
-    and `writer` as its minimums."""
+    step `LATER` runs `apply`, and a store it creates or steps carries
+    `reader` and `writer` as its minimums, never lower than they were."""
     steps = runner()
     step = steps.Step(
-        number=2,
+        number=LATER,
         name="a later build's step",
         additive=additive,
         reader=reader,
@@ -90,7 +100,7 @@ def later_build(
     )
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr("bettermemory.store_steps.STEPS", (*steps.STEPS, step))
-        patch.setattr("bettermemory.store_schema.SCHEMA_REVISION", 2)
+        patch.setattr("bettermemory.store_schema.SCHEMA_REVISION", LATER)
         patch.setattr("bettermemory.store_schema.MIN_READER_REVISION", reader)
         patch.setattr("bettermemory.store_schema.MIN_WRITER_REVISION", writer)
         patch.setattr(bettermemory, "__version__", version)
@@ -186,7 +196,7 @@ def test_a_store_from_before_the_runner_has_step_one_recorded_at_a_writing_open(
 ) -> None:
     """A store an earlier candidate wrote carries no revision. A reader's
     open applies no step and records nothing; the owner's open records
-    step 1, the additive step, with no backup."""
+    every step this build knows, each additive, with no backup."""
     conn = sqlite3.connect(str(path))
     with conn:
         conn.executemany(
@@ -199,12 +209,16 @@ def test_a_store_from_before_the_runner_has_step_one_recorded_at_a_writing_open(
     with Store.open(path, allow_rekey=True) as owner:
         assert owner.count_memories() == 1
     meta = meta_of(path)
-    assert [meta.get(k) for k in _VERSION_KEYS] == ["1", "1", "1"]
-    (entry,) = steps_of(path)
-    assert entry["step"] == 1
-    assert entry["backup"] is None
-    assert entry["by"] == bettermemory.__version__
-    assert entry["name"] == runner().STEPS[0].name
+    assert [meta.get(k) for k in _VERSION_KEYS] == OURS_KEYS
+    entries = steps_of(path)
+    assert [entry["step"] for entry in entries] == [
+        step.number for step in runner().STEPS
+    ]
+    assert [entry["name"] for entry in entries] == [
+        step.name for step in runner().STEPS
+    ]
+    assert all(entry["backup"] is None for entry in entries)
+    assert all(entry["by"] == bettermemory.__version__ for entry in entries)
     assert bundles(path) == []
 
 
@@ -223,10 +237,11 @@ def test_an_additive_step_runs_once_without_a_backup(path: Path) -> None:
     assert calls == [str(path)]
     assert LATER_TABLE in tables_of(path)
     meta = meta_of(path)
-    assert [meta[k] for k in _VERSION_KEYS] == ["2", "1", "1"]
-    assert [(e["step"], e["backup"]) for e in steps_of(path)] == [(2, None)]
+    assert [meta[k] for k in _VERSION_KEYS] == [str(LATER), *OURS_KEYS[1:]]
+    assert [(e["step"], e["backup"]) for e in steps_of(path)] == [(LATER, None)]
     assert bundles(path) == []
-    # The minimums stayed at 1, so this build still writes the store.
+    # The minimums stayed where this build's are, so it still writes the
+    # store.
     with Store.open(path, allow_rekey=True) as older:
         older.put_memory(_memory("This build still writes after an additive step."))
 
@@ -240,13 +255,13 @@ def test_a_step_that_is_not_additive_runs_after_a_backup_of_the_store_before_it(
             assert newer.count_memories() == 1
     assert calls == [str(path)]
     meta = meta_of(path)
-    assert [meta[k] for k in _VERSION_KEYS] == ["2", "2", "2"]
+    assert [meta[k] for k in _VERSION_KEYS] == [str(LATER)] * 3
     assert meta["engine_version"] == "9.1.0"
     assert LATER_TABLE in tables_of(path)
 
     (bundle,) = bundles(path)
     (entry,) = steps_of(path)
-    assert (entry["step"], entry["by"]) == (2, "9.1.0")
+    assert (entry["step"], entry["by"]) == (LATER, "9.1.0")
     assert entry["backup"] == str(bundle.relative_to(path.parent))
     # The build that took the bundle verifies it: its open of the snapshot,
     # a store waiting on its step, reads it as it stands.
@@ -257,7 +272,7 @@ def test_a_step_that_is_not_additive_runs_after_a_backup_of_the_store_before_it(
     snapshot = bundle / backup.SNAPSHOT_NAME
     assert LATER_TABLE not in tables_of(snapshot)
     before = meta_of(snapshot)
-    assert [before[k] for k in _VERSION_KEYS] == ["1", "1", "1"]
+    assert [before[k] for k in _VERSION_KEYS] == OURS_KEYS
     assert SCHEMA_STEPS_KEY not in before
 
     # Idempotent: the step is recorded, so no open runs or backs it up again.
@@ -269,11 +284,11 @@ def test_a_step_that_is_not_additive_runs_after_a_backup_of_the_store_before_it(
     assert calls == [str(path)]
     assert len(bundles(path)) == 1
 
-    # This build, at revision 1, no longer reads the stepped store.
+    # This build, a revision behind, no longer reads the stepped store.
     with pytest.raises(ValueError) as refused:
         Store.open(path)
     assert type(refused.value).__name__ == "StoreVersionError"
-    assert "needs a reader at schema revision 2" in str(refused.value)
+    assert f"needs a reader at schema revision {LATER}" in str(refused.value)
 
 
 def test_a_readers_open_of_a_store_waiting_on_a_step_reads_and_writes_nothing(
@@ -316,7 +331,7 @@ def test_the_build_that_ran_a_step_restores_the_bundle_it_took(path: Path) -> No
         report = backup.restore_bundle(bundle, path, apply=True)
         assert report["status"] == backup.RESTORED, report["detail"]
         assert LATER_TABLE not in tables_of(path)
-        assert meta_of(path)[SCHEMA_REVISION_KEY] == "1"
+        assert meta_of(path)[SCHEMA_REVISION_KEY] == str(OURS)
         with Store.open(path) as reader:
             assert reader.count_memories() == 1
     # This build, which the step left behind, reads and writes it again.
@@ -367,7 +382,7 @@ def test_a_step_whose_backup_does_not_verify_does_not_run(path: Path) -> None:
             Store.open(path, allow_rekey=True)
     message = str(refused.value)
     assert type(refused.value).__name__ == "StoreVersionError"
-    assert "needs schema step 2 (a later build's step); its backup" in message
+    assert f"needs schema step {LATER} (a later build's step); its backup" in message
     assert "reads mismatched" in message
     assert "so the step did not run and the store is unchanged" in message
     assert calls == []
@@ -386,14 +401,14 @@ def test_a_step_another_process_ran_meanwhile_is_not_run_again(path: Path) -> No
     with later_build(adds_a_table(calls)):
         with Store.open(path, allow_rekey=True):
             pass
-        stale = {SCHEMA_REVISION_KEY: "1", MIN_READER_KEY: "1", MIN_WRITER_KEY: "1"}
+        stale = dict(zip(_VERSION_KEYS, OURS_KEYS, strict=True))
         conn = sqlite3.connect(str(path), isolation_level=None)
         try:
             ran = runner().run_steps(conn, path, stale, writing=True)
         finally:
             conn.close()
     assert ran == ()
-    assert stale[SCHEMA_REVISION_KEY] == "2"
+    assert stale[SCHEMA_REVISION_KEY] == str(LATER)
     assert calls == [str(path)]
     assert len(bundles(path)) == 1
 
@@ -414,18 +429,19 @@ def apply(conn, path, meta):
     os._exit(17)
 
 
+LATER = store_schema.SCHEMA_REVISION + 1
 store_steps.STEPS = (
     *store_steps.STEPS,
     store_steps.Step(
-        number=2,
+        number=LATER,
         name="a later build's step",
         additive=False,
-        reader=2,
-        writer=2,
+        reader=LATER,
+        writer=LATER,
         apply=apply,
     ),
 )
-store_schema.SCHEMA_REVISION = 2
+store_schema.SCHEMA_REVISION = LATER
 bettermemory.__version__ = "9.1.0"
 Store.open(Path(sys.argv[1]), allow_rekey=True)
 sys.exit(3)
@@ -460,7 +476,7 @@ def test_a_crash_between_the_backup_and_the_step_leaves_the_store_readable(
     with later_build(adds_a_table([])):
         assert backup.verify_bundle(bundle)["status"] == backup.OK
     meta = meta_of(path)
-    assert [meta[k] for k in _VERSION_KEYS] == ["1", "1", "1"]
+    assert [meta[k] for k in _VERSION_KEYS] == OURS_KEYS
     assert SCHEMA_STEPS_KEY not in meta
     assert LATER_TABLE not in tables_of(path)
     with Store.open(path) as reader:
@@ -477,4 +493,4 @@ def test_a_crash_between_the_backup_and_the_step_leaves_the_store_readable(
     assert len(bundles(path)) == 2
     (entry,) = steps_of(path)
     assert entry["backup"] == str(bundles(path)[1].relative_to(path.parent))
-    assert meta_of(path)[SCHEMA_REVISION_KEY] == "2"
+    assert meta_of(path)[SCHEMA_REVISION_KEY] == str(LATER)

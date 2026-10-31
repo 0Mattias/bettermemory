@@ -729,6 +729,7 @@ unaccounted.
 | `homes` | record id, kind, project, checkout, rule, decided at |
 | `proposals` | id, checkout, kind, candidates, evidence, reason, line, state, answer, answered by, signature |
 | `standing` | record id, probability, body sha256, source, answered by, answered at: a record's answer to the standing question for its current body (`standing.py`; `standing_put` rows, which a build before rc7 skips) |
+| `returned` | record id, via, returned at: a record a write brought back into force that no standing roster has read since (`store_returned.py`, ENG-200; `returned_put` and `returned_delete` rows, written by schema step 2's builds) |
 
 `checkouts.unresolved_json` is the one column added to an existing
 membership table, by `ALTER TABLE` at open where it is missing. A checkout
@@ -1296,7 +1297,16 @@ change to the schema within the major, and the owner's open applies each
 step above `schema_revision` in order, recording its number, raising the
 minimums to the step's own and listing it in `meta`'s `schema_steps`.
 Step 1 is the additive step of decision D9 (`_add_membership_tables`),
-recorded in a `BEGIN IMMEDIATE` of its own after it runs. A step that is
+recorded in a `BEGIN IMMEDIATE` of its own after it runs. Step 2
+(ENG-200, `_add_returned_marks`) is additive too: it adds the
+`returned` table and a `returned_backfill` key to `meta`, and raises the
+writer minimum to 2, since every write must keep the marks up. The key
+leaves the backfill to the owner's open, which holds the store's key
+(`store_returned.ensure_backfilled`, from the daemon's start and the
+CLI's open): it puts back the link index rows an earlier build's
+restore left out, marks each record an earlier build brought back, and
+deletes the key, in one transaction; one that fails is logged and the
+key stays for the next open. A step that is
 not additive runs under the write lock after `backup.create_backup` has
 written a bundle of the store as it stands (its snapshot reads through
 its own read-only connection, which sees the store before the step) and

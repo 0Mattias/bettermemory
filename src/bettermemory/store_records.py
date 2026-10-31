@@ -45,6 +45,7 @@ from .origin import Origin, is_full_commit_sha
 from .time_utils import isoformat_utc
 from .store_schema import (
     LOCAL,
+    UNACCOUNTED,
     _PROVENANCE_BATCH,
     _WRITABLE_PROVENANCE,
     ConcurrentUpdateError,
@@ -66,8 +67,10 @@ from .store_rows import (
     _load_json,
     _row_to_memory,
     _row_to_tombstone,
+    _unknown_record_fields,
     body_sha256,
 )
+from . import store_returned as _returned
 
 if TYPE_CHECKING:
     from .store import Store
@@ -528,14 +531,85 @@ def restore(self: Store, memory_id: str, *, session: str | None = None) -> Memor
             corroborations=int(row["corroborations"]),
             last_corroborated=_dt_opt(row["last_corroborated"]),
         )
-        payload = {
-            "memory": memory.model_dump(mode="json"),
-            "provenance": LOCAL,
-            "filename": row["filename"],
-        }
-        self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
-        self._mutate(tx, "memory_put", payload, session=session)
+        self._put_restored(tx, memory, row["filename"], session=session)
     return memory
+
+
+def _put_restored(
+    self: Store,
+    tx: sqlite3.Connection,
+    memory: Memory,
+    filename: str | None,
+    *,
+    session: str | None,
+) -> None:
+    """A restore's writes, inside its transaction: the tombstone taken
+    away and the record put back, labelled ``local``; then the index rows
+    of the links into it, which removing it dropped, put back by putting
+    each active record whose links name it again unchanged (`relink`); then
+    the record named for its ``returned`` mark, which the commit writes
+    when no active record supersedes it (ENG-200, `store_returned`). The
+    record's put follows its tombstone's delete directly, which is how the
+    history reads a restore."""
+    payload = {
+        "memory": memory.model_dump(mode="json"),
+        "provenance": LOCAL,
+        "filename": filename,
+    }
+    self._mutate(tx, "tombstone_delete", {"id": memory.id}, session=session)
+    self._mutate(tx, "memory_put", payload, session=session)
+    self._relink(tx, memory.id, session=session)
+    self._tx_returns.setdefault(memory.id, (memory.id, session))
+
+
+def _relink(
+    self: Store, tx: sqlite3.Connection, record_id: str, *, session: str | None
+) -> list[str]:
+    """Put each active record whose stored links name `record_id` again,
+    unchanged, so the fold writes the index rows of its links into it
+    (`store_returned.linking_sources`); returns the ids put."""
+    sources = _returned.linking_sources(tx, record_id)
+    return self._put_relinked(tx, dict.fromkeys(sources, record_id), session=session)
+
+
+def _put_relinked(
+    self: Store,
+    tx: sqlite3.Connection,
+    sources: Mapping[str, str],
+    *,
+    session: str | None,
+) -> list[str]:
+    """Put each active record of `sources` again, unchanged, so the fold
+    writes the index rows of its links; returns the ids put. The put
+    carries `store_returned.RELINK_MARK` with the record whose rows it
+    puts back, which the fold ignores. A record whose row the log does not
+    account for is left as it is, since putting it would sign a row that
+    entered outside the log; so is one a later build wrote, which this
+    build may not rewrite (ENG-107)."""
+    if not sources:
+        return []
+    labels = self.provenance_for(list(sources))
+    put: list[str] = []
+    for source_id, record_id in sources.items():
+        if labels.get(source_id) == UNACCOUNTED or _unknown_record_fields(
+            tx, source_id
+        ):
+            continue
+        source = tx.execute(
+            "SELECT * FROM memories WHERE id = ?", (source_id,)
+        ).fetchone()
+        if source is None:
+            continue
+        self._put_memory(
+            tx,
+            _row_to_memory(source),
+            provenance=None,
+            filename=None,
+            session=session,
+            marks={_returned.RELINK_MARK: record_id},
+        )
+        put.append(source_id)
+    return put
 
 
 def delete_tombstone(
@@ -955,13 +1029,7 @@ def restore_trimmed(
             corroborations=int(row["corroborations"]),
             last_corroborated=_dt_opt(row["last_corroborated"]),
         )
-        payload = {
-            "memory": memory.model_dump(mode="json"),
-            "provenance": LOCAL,
-            "filename": row["filename"],
-        }
-        self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
-        self._mutate(tx, "memory_put", payload, session=session)
+        self._put_restored(tx, memory, row["filename"], session=session)
     return memory
 
 

@@ -217,6 +217,7 @@ def _cli_tombstones_restore(
 
     from ..store import MemoryNotFoundError, NotTombstonedError
 
+    from .. import standing as _standing
     from ..handlers.restore import restore_with_trust_check
 
     ctx = cli_context()
@@ -239,13 +240,23 @@ def _cli_tombstones_restore(
         **strip.event_fields(),
     )
 
+    # A standing memory restored with nothing replacing it is held out of
+    # force until an agent's memory_update reads it (ENG-200).
+    held = bool(_standing.held_ids(store, [memory.id]))
     if json_out:
         payload: dict[str, Any] = {"id": memory.id, "scopes": memory.scopes}
         if strip.any:
             payload["trust_stripped"] = strip.to_dict()
+        if held:
+            payload["held"] = True
         sys.stdout.write(_json.dumps(payload, indent=2) + "\n")
         return
     sys.stdout.write(f"Restored {memory.id} [{','.join(memory.scopes)}]\n")
+    if held:
+        sys.stdout.write(
+            "  held out of force until an agent reads it against the standing "
+            f'roster: memory_update(id="{memory.id}", standing=<0 to 1>)\n'
+        )
     if strip.any:
         sys.stdout.write(
             f"  dropped {len(strip.claims)} claim(s) and "

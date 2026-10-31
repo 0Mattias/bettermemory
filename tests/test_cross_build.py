@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 
 import bettermemory
-from bettermemory import backup
+from bettermemory import backup, store_schema
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.store import STORE_FILENAME, Store
 
@@ -132,30 +132,41 @@ def running(build: Build) -> Iterator[None]:
         yield
 
 
-#: A later build whose step 2 is additive: it raises the revision only.
+#: This build's revision and the minimums a store it creates carries, as
+#: meta holds them, and the revision a later build's one step takes a
+#: store to.
+OURS = store_schema.SCHEMA_REVISION
+_READER = store_schema.MIN_READER_REVISION
+_WRITER = store_schema.MIN_WRITER_REVISION
+OURS_KEYS = [str(OURS), str(_READER), str(_WRITER)]
+NEXT = OURS + 1
+
+#: A later build whose step is additive: it raises the revision only.
 ADDITIVE = Build(
-    revision=2,
-    reader=1,
-    writer=1,
+    revision=NEXT,
+    reader=_READER,
+    writer=_WRITER,
     version=LATER,
-    steps=(("a ranking older builds ignore", True, 1, 1, _adds_a_ranking),),
+    steps=(("a ranking older builds ignore", True, _READER, _WRITER, _adds_a_ranking),),
 )
-#: A later build whose step 2 changes what is there and leaves older
+#: A later build whose step changes what is there and leaves older
 #: writers stale: it raises the writer minimum.
 NEEDS_WRITER = Build(
-    revision=2,
-    reader=1,
-    writer=2,
+    revision=NEXT,
+    reader=_READER,
+    writer=NEXT,
     version=LATER,
-    steps=(("a digest older writers leave stale", False, 1, 2, _rewrites_bodies),),
+    steps=(
+        ("a digest older writers leave stale", False, _READER, NEXT, _rewrites_bodies),
+    ),
 )
-#: A later build whose step 2 older readers would misread.
+#: A later build whose step older readers would misread.
 NEEDS_READER = Build(
-    revision=2,
-    reader=2,
-    writer=2,
+    revision=NEXT,
+    reader=NEXT,
+    writer=NEXT,
     version=LATER,
-    steps=(("a digest older readers misread", False, 2, 2, _rewrites_bodies),),
+    steps=(("a digest older readers misread", False, NEXT, NEXT, _rewrites_bodies),),
 )
 
 
@@ -218,7 +229,7 @@ def test_an_older_build_reads_and_writes_a_store_a_later_build_changed_additivel
             "UPDATE memories SET later_rank = 0.5 WHERE id = ?", (first.id,)
         )
         assert later.log_verify()["status"] == "ok"
-    assert versions_of(path) == ["2", "1", "1"]
+    assert versions_of(path) == [str(NEXT), *OURS_KEYS[1:]]
     assert meta_of(path)[ENGINE_VERSION_KEY] == LATER
 
     with Store.open(path, allow_rekey=True) as older:
@@ -230,7 +241,7 @@ def test_an_older_build_reads_and_writes_a_store_a_later_build_changed_additivel
     # Nothing the older build wrote lowered the later build's record of
     # itself, and the column it does not know kept its value (a column
     # every write must keep up would raise the writer minimum instead).
-    assert versions_of(path) == ["2", "1", "1"]
+    assert versions_of(path) == [str(NEXT), *OURS_KEYS[1:]]
     assert meta_of(path)[ENGINE_VERSION_KEY] == LATER
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
@@ -248,7 +259,7 @@ def test_an_older_build_reads_and_writes_a_store_a_later_build_changed_additivel
         )
         assert later.log_verify()["status"] == "ok"
     steps = json.loads(meta_of(path)[SCHEMA_STEPS_KEY])
-    assert [(e["step"], e["backup"]) for e in steps] == [(2, None)]
+    assert [(e["step"], e["backup"]) for e in steps] == [(NEXT, None)]
 
 
 def test_an_older_build_only_reads_a_store_that_needs_a_later_writer(
@@ -257,7 +268,7 @@ def test_an_older_build_only_reads_a_store_that_needs_a_later_writer(
     first = _written_by_this_build(path)
     with running(NEEDS_WRITER), Store.open(path, allow_rekey=True) as later:
         later.put_memory(_memory("A record the later build wrote."))
-    assert versions_of(path) == ["2", "1", "2"]
+    assert versions_of(path) == [str(NEXT), str(_READER), str(NEXT)]
     assert len(bundles(path)) == 1
     before = meta_of(path)
 
@@ -279,16 +290,16 @@ def test_an_older_build_refuses_a_store_that_needs_a_later_reader(path: Path) ->
     _written_by_this_build(path)
     with running(NEEDS_READER), Store.open(path, allow_rekey=True):
         pass
-    assert versions_of(path) == ["2", "2", "2"]
+    assert versions_of(path) == [str(NEXT)] * 3
     before = meta_of(path)
     for allow_rekey in (False, True):
         with pytest.raises(ValueError) as refused:
             Store.open(path, allow_rekey=allow_rekey)
         assert type(refused.value).__name__ == "StoreVersionError"
         message = str(refused.value)
-        assert "needs a reader at schema revision 2" in message
+        assert f"needs a reader at schema revision {NEXT}" in message
         assert f"its newest writer was bettermemory {LATER}" in message
-        assert f"this build, bettermemory {THIS}, reads revision 1" in message
+        assert f"this build, bettermemory {THIS}, reads revision {OURS}" in message
     assert meta_of(path) == before
 
 
@@ -300,7 +311,7 @@ def test_a_store_a_later_build_created_carries_its_minimums_for_an_older_build(
     same rule to it."""
     with running(NEEDS_WRITER), Store.create(path) as later:
         later.put_memory(_memory("A record the later build wrote at creation."))
-    assert versions_of(path) == ["2", "1", "2"]
+    assert versions_of(path) == [str(NEXT), str(_READER), str(NEXT)]
     assert bundles(path) == []
     with Store.open(path, allow_rekey=True) as older:
         assert older.count_memories() == 1
@@ -308,12 +319,43 @@ def test_a_store_a_later_build_created_carries_its_minimums_for_an_older_build(
             older.put_memory(_memory("A write the older build may not make."))
 
 
+def test_a_revision_1_build_only_reads_a_store_step_2_marked(path: Path) -> None:
+    """Step 2 (ENG-200) adds the ``returned`` table, which every write that
+    brings a record back into force keeps up: a build of revision 1 would
+    bring one back unmarked, so it opens the store for reading only, and
+    still reads it, its marks among the rest."""
+    written = _written_by_this_build(path)
+    with Store.open(path, allow_rekey=True) as store:
+        replacer = store.write(
+            content="The record that replaced this build's first one.",
+            scopes=["tools"],
+            links=[{"type": "supersedes", "target_id": written.id}],
+        )
+        store.tombstone(replacer.id, "it was wrong")
+        assert written.id in store.returned_rows()
+    assert versions_of(path) == OURS_KEYS
+    assert "returned" in tables_of(path)
+    earlier = runner().STEPS[:1]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("bettermemory.store_steps.STEPS", earlier)
+        patch.setattr("bettermemory.store_schema.SCHEMA_REVISION", 1)
+        patch.setattr("bettermemory.store_schema.MIN_READER_REVISION", 1)
+        patch.setattr("bettermemory.store_schema.MIN_WRITER_REVISION", 1)
+        patch.setattr(bettermemory, "__version__", "9.0.0rc14")
+        with Store.open(path, allow_rekey=True) as older:
+            assert older.get_memory(written.id).body == written.body
+            assert older.log_verify()["status"] == "ok"
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                older.tombstone(written.id, "a removal the older build may not make")
+    assert versions_of(path) == OURS_KEYS
+
+
 # --- an older store, a newer build -------------------------------------------
 
 
 def test_a_later_build_steps_a_store_this_build_wrote(path: Path) -> None:
     first = _written_by_this_build(path)
-    assert versions_of(path) == ["1", "1", "1"]
+    assert versions_of(path) == OURS_KEYS
     with running(NEEDS_WRITER):
         # A reader's open of the later build runs no step: it reads the
         # store as it stands, before the step, and writes nothing.
@@ -322,7 +364,7 @@ def test_a_later_build_steps_a_store_this_build_wrote(path: Path) -> None:
             assert early.log_verify()["status"] == "ok"
             with pytest.raises(sqlite3.OperationalError, match="readonly"):
                 early.put_memory(_edited(first, "A reader's open writes nothing."))
-        assert versions_of(path) == ["1", "1", "1"]
+        assert versions_of(path) == OURS_KEYS
         assert bundles(path) == []
         with Store.open(path, allow_rekey=True) as later:
             assert later.get_memory(first.id).body == first.body
@@ -332,16 +374,16 @@ def test_a_later_build_steps_a_store_this_build_wrote(path: Path) -> None:
         # The later build verifies the bundle it took before its step.
         (bundle,) = bundles(path)
         assert backup.verify_bundle(bundle)["status"] == backup.OK
-    assert versions_of(path) == ["2", "1", "2"]
-    assert versions_of(bundle / backup.SNAPSHOT_NAME) == ["1", "1", "1"]
+    assert versions_of(path) == [str(NEXT), str(_READER), str(NEXT)]
+    assert versions_of(bundle / backup.SNAPSHOT_NAME) == OURS_KEYS
     steps = json.loads(meta_of(path)[SCHEMA_STEPS_KEY])
-    assert [(e["step"], e["by"]) for e in steps] == [(2, LATER)]
+    assert [(e["step"], e["by"]) for e in steps] == [(NEXT, LATER)]
 
 
 def test_a_later_build_steps_a_store_from_before_the_contract(path: Path) -> None:
     """A store 9.0.0rc13 or earlier wrote carries no revision: the later
-    build's first writing open records step 1, then backs the store up and
-    runs its own step 2, in one open."""
+    build's first writing open records this build's steps, then backs the
+    store up and runs its own step, in one open."""
     first = _written_by_this_build(path)
     conn = sqlite3.connect(str(path))
     with conn:
@@ -357,21 +399,22 @@ def test_a_later_build_steps_a_store_from_before_the_contract(path: Path) -> Non
             assert later.log_verify()["status"] == "ok"
         (bundle,) = bundles(path)
         assert backup.verify_bundle(bundle)["status"] == backup.OK
-    assert versions_of(path) == ["2", "1", "2"]
+    assert versions_of(path) == [str(NEXT), str(_READER), str(NEXT)]
     steps = json.loads(meta_of(path)[SCHEMA_STEPS_KEY])
     assert [(e["step"], e["backup"]) for e in steps] == [
-        (1, None),
-        (2, str(bundle.relative_to(path.parent))),
+        *((step.number, None) for step in runner().STEPS),
+        (NEXT, str(bundle.relative_to(path.parent))),
     ]
-    # The bundle is the store as step 2 found it: step 1 recorded, not 2.
-    assert versions_of(bundle / backup.SNAPSHOT_NAME) == ["1", "1", "1"]
+    # The bundle is the store as the later step found it: this build's
+    # steps recorded, not the later one.
+    assert versions_of(bundle / backup.SNAPSHOT_NAME) == OURS_KEYS
 
     # `backup restore` under the later build puts that store back, and
     # this build, which the step left only reading, writes it again.
     with running(NEEDS_WRITER):
         report = backup.restore_bundle(bundle, path, apply=True)
         assert report["status"] == backup.RESTORED, report["detail"]
-        assert versions_of(path) == ["1", "1", "1"]
+        assert versions_of(path) == OURS_KEYS
         with Store.open(path) as reader:
             assert reader.get_memory(first.id).body == first.body
     with Store.open(path, allow_rekey=True) as older:
@@ -392,5 +435,5 @@ def test_a_later_build_leaves_a_store_an_older_build_only_reads_as_it_is(
         assert older.log_verify()["status"] == "ok"
     with Store.open(path) as reader:
         assert reader.count_memories() == 1
-    assert versions_of(path) == ["2", "1", "1"]
+    assert versions_of(path) == [str(NEXT), *OURS_KEYS[1:]]
     assert {"later_ranks", "memories"} <= tables_of(path)

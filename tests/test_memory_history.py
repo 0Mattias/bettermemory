@@ -126,6 +126,9 @@ def test_a_record_s_life_is_listed_in_log_order_with_what_each_row_did(
         ("remove", "remove"),
         ("tombstone_delete", "restored"),
         ("memory_put", "restored"),
+        # Back in force with nothing replacing it (ENG-200): marked at the
+        # commit, after the record's own rows.
+        ("returned_put", "returned"),
         ("restore", "restore"),
     ]
     seqs = [row.seq for row in history.rows]
@@ -241,8 +244,12 @@ def test_links_from_other_records_are_references_reported_once(
         ("superseded_by", {"source": new.id, "type": "supersedes"}),
         ("unlinked", {"source": new.id, "type": "supersedes"}),
     ]
-    # The rows of the other record are not this record's versions.
-    assert [row.action for row in history.rows if row.role == RECORD] == ["created"]
+    # The rows of the other record are not this record's versions; the
+    # mark of its coming back into force is this record's (ENG-200).
+    assert [row.action for row in history.rows if row.role == RECORD] == [
+        "created",
+        "returned",
+    ]
 
 
 def test_a_link_goes_when_the_record_carrying_it_is_pruned(store: Store) -> None:
@@ -258,9 +265,15 @@ def test_a_link_goes_when_the_record_carrying_it_is_pruned(store: Store) -> None
     store.tombstone(new.id, "wrong")
     store.restore(new.id)
     store.tombstone(new.id, "wrong again")
+    # The first removal brought it back into force (ENG-200), the restore
+    # took it out of force again, which drops the mark, and the second
+    # removal brought it back once more.
     assert [row.action for row in record_history(store, old.id).rows] == [
         "created",
         "superseded_by",
+        "returned",
+        "unmarked",
+        "returned",
     ]
     store.prune_tombstones(timedelta(0), now=utcnow() + timedelta(days=1))
     references = [
@@ -799,6 +812,6 @@ async def test_the_tool_calls_rows_are_read_as_events(memory_dir: Path) -> None:
     records = [row.action for row in history.rows if row.role == RECORD]
     assert records[0] == "created"
     assert "updated" in records and "verified" in records
-    assert records[-1] == "restored"
+    assert records[-2:] == ["restored", "returned"]
     assert history.exit_code == 0
     store.close()

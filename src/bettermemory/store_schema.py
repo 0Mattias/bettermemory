@@ -83,9 +83,15 @@ SCHEMA_VERSION = 1
 # - meta's ``engine_version``: the package version of the newest build that
 #   opened the store to write, in the order `_daemon_client.version_key`
 #   reads. It names a build in the open's refusal; no check gates on it.
-SCHEMA_REVISION = 1
+#
+# Revision 2 (ENG-200) adds the ``returned`` table, which every write that
+# brings a record back into force keeps up (`store_returned`): a revision 1
+# build would bring one back unmarked, so it opens the store for reading
+# only. Its kinds mutate a table revision 1 does not fold, which that
+# build's `log verify` folds as telemetry, so it still reads the store.
+SCHEMA_REVISION = 2
 MIN_READER_REVISION = 1
-MIN_WRITER_REVISION = 1
+MIN_WRITER_REVISION = 2
 
 # Set on a store's first open, before its first table and before WAL mode
 # fixes it. A record row (body, its token stream, the JSON columns) runs
@@ -159,6 +165,7 @@ MEMBERSHIP_TABLES = (
     "homes",
     "proposals",
     "standing",
+    "returned",
 )
 _MEMBERSHIP_MUTATION_TABLES = (
     "machine",
@@ -173,6 +180,7 @@ _MEMBERSHIP_MUTATION_TABLES = (
     "home",
     "proposal",
     "standing",
+    "returned",
 )
 
 _MUTATION_TABLES = (
@@ -258,6 +266,7 @@ _TABLE_KEYS: dict[str, tuple[str, ...]] = {
     "homes": ("record_id",),
     "proposals": ("id",),
     "standing": ("record_id",),
+    "returned": ("record_id",),
 }
 
 
@@ -411,6 +420,15 @@ _MEMBERSHIP_SPECS: dict[str, _MembershipTable] = {
                 "answered",
             ),
             floats=("probability",),
+        ),
+        # A record that came back into force with no standing roster read
+        # (ENG-200, `store_returned`): additive beside the record like its
+        # standing answer, and folded the same way.
+        _MembershipTable(
+            "returned",
+            "returned",
+            ("record_id",),
+            ("record_id", "via", "returned"),
         ),
     )
 }
@@ -913,6 +931,12 @@ CREATE TABLE IF NOT EXISTS standing (
     answered_by TEXT NOT NULL,
     answered TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS returned (
+    record_id TEXT PRIMARY KEY,
+    via TEXT NOT NULL,
+    returned TEXT NOT NULL
+);
 """
 
 # Indexes added beside the schema without a version bump: in a new store
@@ -1186,6 +1210,43 @@ def _add_membership_tables(
         "SELECT value FROM meta WHERE key = ?", (MEMBERSHIP_STORE_ID,)
     ).fetchone()
     meta[MEMBERSHIP_STORE_ID] = str(row[0])
+
+
+#: meta's key for the backfill step 2 leaves to the owner's open
+#: (`store_returned.ensure_backfilled`): the records an earlier build
+#: brought back into force, which the log shows and no mark holds yet.
+#: The step runs before the open claims the key ring, so it cannot write
+#: the marks' log rows itself.
+RETURNED_BACKFILL_KEY = "returned_backfill"
+
+
+def _add_returned_marks(
+    conn: sqlite3.Connection, path: Path, meta: dict[str, str]
+) -> None:
+    """Step 2 (ENG-200): the ``returned`` table where a store lacks it
+    (`_add_membership_tables`, which adds every membership object a store
+    lacks), and meta's `RETURNED_BACKFILL_KEY` set to ``pending`` once, so
+    the owner's open marks the records earlier builds brought back. A
+    store file that cannot be written is left as it is."""
+    _add_membership_tables(conn, path, meta)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO meta(key, value) VALUES (?, 'pending')",
+                (RETURNED_BACKFILL_KEY,),
+            )
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+    except sqlite3.OperationalError as exc:
+        if "readonly" not in str(exc).replace(" ", "").lower():
+            raise
+        log.warning("store %s is read-only; no backfill marked", path)
+        return
+    meta[RETURNED_BACKFILL_KEY] = "pending"
 
 
 # Admitting a store file (ENG-172)

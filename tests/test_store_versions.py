@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 import bettermemory
-from bettermemory import store_schema
+from bettermemory import store_schema, store_steps
 from bettermemory.config import Config, StorageConfig
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.server import build_server
@@ -40,6 +40,13 @@ ENGINE_VERSION_KEY = "engine_version"
 _NOW = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
 _VERSION_KEYS = (SCHEMA_REVISION_KEY, MIN_READER_KEY, MIN_WRITER_KEY)
 
+# This build's revision and the minimums a store it creates carries, and
+# the revision of a later build past it.
+OURS = store_schema.SCHEMA_REVISION
+_READER = store_schema.MIN_READER_REVISION
+_WRITER = store_schema.MIN_WRITER_REVISION
+NEXT = OURS + 1
+
 
 def _memory(body: str) -> Memory:
     return Memory(
@@ -56,13 +63,17 @@ def _memory(body: str) -> Memory:
 @contextlib.contextmanager
 def build(*, revision: int, reader: int, writer: int, version: str) -> Iterator[None]:
     """Another build for the length of the block: its schema revision, the
-    minimums a store it creates carries, and its package version."""
+    minimums a store it creates carries, and its package version. It runs
+    the steps up to its revision, as that build's own `store_steps.STEPS`
+    would."""
+    steps = tuple(step for step in store_steps.STEPS if step.number <= revision)
     with pytest.MonkeyPatch.context() as patch:
         # raising=False: on a build without the contract the names are
         # bound and read by nothing, and the test fails on what it checks.
         patch.setattr(store_schema, "SCHEMA_REVISION", revision, raising=False)
         patch.setattr(store_schema, "MIN_READER_REVISION", reader, raising=False)
         patch.setattr(store_schema, "MIN_WRITER_REVISION", writer, raising=False)
+        patch.setattr(store_steps, "STEPS", steps)
         patch.setattr(bettermemory, "__version__", version)
         yield
 
@@ -119,11 +130,11 @@ def test_a_new_store_carries_this_builds_revision_minimums_and_version(
 ) -> None:
     Store.create(path).close()
     meta = meta_of(path)
-    assert meta.get(SCHEMA_REVISION_KEY) == "1"
-    assert meta.get(MIN_READER_KEY) == "1"
-    assert meta.get(MIN_WRITER_KEY) == "1"
-    assert store_schema.SCHEMA_REVISION == 1
-    assert store_schema.MIN_READER_REVISION == store_schema.MIN_WRITER_REVISION == 1
+    assert meta.get(SCHEMA_REVISION_KEY) == str(OURS)
+    assert meta.get(MIN_READER_KEY) == str(_READER)
+    assert meta.get(MIN_WRITER_KEY) == str(_WRITER)
+    # Step 2 (ENG-200) is additive, and every write keeps its marks up.
+    assert (OURS, _READER, _WRITER) == (2, 1, 2)
     assert meta[ENGINE_VERSION_KEY] == bettermemory.__version__
 
 
@@ -207,7 +218,7 @@ def test_a_store_that_needs_a_newer_reader_is_refused(path: Path) -> None:
         assert "needs a reader at schema revision 3 or later" in text
         assert "its newest writer was bettermemory 9.4.0" in text
         assert f"this build, bettermemory {bettermemory.__version__}" in text
-        assert "reads revision 1" in text
+        assert f"reads revision {OURS}" in text
     assert log_rows(path) == rows
     assert meta_of(path) == meta
 
@@ -218,7 +229,7 @@ def test_a_store_that_needs_a_newer_writer_opens_for_reading_only(
     """Every write fails as on read-only media, through the opener's
     connection and through one `reopen` makes, and nothing is recorded:
     the log, meta and the newer build's version stay as they were."""
-    with build(revision=2, reader=1, writer=2, version="9.2.0"):
+    with build(revision=NEXT, reader=_READER, writer=NEXT, version="9.2.0"):
         with Store.create(path) as newer:
             kept = newer.put_memory(_memory("written by the newer build"))
     rows = log_rows(path)
@@ -244,7 +255,7 @@ def test_a_store_that_needs_a_newer_writer_opens_for_reading_only(
     warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     reading_only = [line for line in warned if "is open for reading only" in line]
     assert len(reading_only) == 1, warned
-    assert "needs a writer at schema revision 2 or later" in reading_only[0]
+    assert f"needs a writer at schema revision {NEXT} or later" in reading_only[0]
     assert "its newest writer was bettermemory 9.2.0" in reading_only[0]
 
 
@@ -254,7 +265,7 @@ def test_an_owners_open_below_the_writer_minimum_writes_no_key(
     """The owner's opener rekeys a store whose key is not on this machine.
     Below the writer minimum it opens as a reader instead: no key file, no
     `rekey` row, no binding or anchor is written."""
-    with build(revision=2, reader=1, writer=2, version="9.2.0"):
+    with build(revision=NEXT, reader=_READER, writer=NEXT, version="9.2.0"):
         Store.create(path).close()
     rows = log_rows(path)
     for key in list(keys_dir.glob("*.key")):
@@ -305,7 +316,7 @@ async def test_a_store_open_for_reading_only_answers_reads_through_the_server(
     )
     store.close()
     path = memory_dir / STORE_FILENAME
-    set_meta(path, **{MIN_WRITER_KEY: "2"})
+    set_meta(path, **{MIN_WRITER_KEY: str(NEXT)})
     rows = log_rows(path)
 
     store = Store(memory_dir)
@@ -328,4 +339,4 @@ async def test_a_store_open_for_reading_only_answers_reads_through_the_server(
     finally:
         store.close()
     assert log_rows(path) == rows
-    assert meta_of(path)[MIN_WRITER_KEY] == "2"
+    assert meta_of(path)[MIN_WRITER_KEY] == str(NEXT)

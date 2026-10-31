@@ -34,6 +34,7 @@ from typing import Any
 from . import capture as cap
 from .log import CAPTURE_UNDO
 from .models import Memory, utcnow
+from .standing import held_by_removal, held_lines
 from .store import NotFoundError, Store, TombstonedError
 from .time_utils import isoformat_utc, parse_event_ts
 
@@ -176,6 +177,9 @@ class UndoReport:
     skip_changed: bool = False
     refusal_reason: str | None = None
     committed: bool = False
+    # The standing memories the undone members replaced, back in force
+    # and held until a standing roster reads them (ENG-200).
+    held: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -302,6 +306,7 @@ def apply_undo(store: Store, report: UndoReport) -> UndoReport:
             store.delete_conflict(conflict_id)
         cap.record_undo(store, report.batch, report.to_undo)
     report.committed = True
+    report.held = held_by_removal(store, report.to_undo)
     return report
 
 
@@ -328,6 +333,7 @@ def render_undo(report: UndoReport) -> str:
         lines.append("Re-run with --apply to tombstone them.")
     else:
         lines.append("`bettermemory tombstones restore <id>` puts one back.")
+    lines.extend(held_lines(report.held))
     return "\n".join(lines) + "\n"
 
 

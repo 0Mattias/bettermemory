@@ -68,6 +68,7 @@ from .store_schema import (
     SCHEMA_REVISION_KEY,
     StoreVersionError,
     _add_membership_tables,
+    _add_returned_marks,
 )
 from .time_utils import isoformat_utc
 
@@ -104,7 +105,10 @@ class Step:
 #: file could not be written then gets what it lacks at a later open; on
 #: a store that has it, it reads `sqlite_master` once and writes nothing.
 #: Revision 1 is the first revision of the contract, so its minimums are
-#: 1: a build that reads them reads revision 1.
+#: 1: a build that reads them reads revision 1. Step 2 (ENG-200) adds the
+#: ``returned`` table, which a write that brings a record back into force
+#: keeps up, so a revision 1 build opens the store for reading only, and
+#: leaves meta's backfill key for the owner's open (`_add_returned_marks`).
 STEPS: tuple[Step, ...] = (
     Step(
         number=1,
@@ -113,6 +117,14 @@ STEPS: tuple[Step, ...] = (
         reader=1,
         writer=1,
         apply=_add_membership_tables,
+    ),
+    Step(
+        number=2,
+        name="the returned marks of records back in force",
+        additive=True,
+        reader=1,
+        writer=2,
+        apply=_add_returned_marks,
     ),
 )
 

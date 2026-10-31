@@ -15,6 +15,12 @@ A record that an admitted record ``extends`` stays in force, and its line
 names the newest in-force record extending it, so the newer detail is
 named wherever the older one is shown.
 
+A standing record held out of force (ENG-200, `standing.held_ids`: it
+came back into force and no standing roster has read it since) is not
+delivered: its own slot is held (``held``), it takes a record's slot as
+its head only when no record that is not held supersedes that record,
+and then that slot is held too, and it is never named as an extender.
+
 Admission is the surface's own (`admission.Admission`): a link from a
 record the caller may not be shown changes nothing, so no surface names
 an id it could not deliver. Search is unchanged: it renders
@@ -42,13 +48,16 @@ _WALKED = (LinkType.SUPERSEDES.value, LinkType.EXTENDS.value)
 class InForce:
     """One asked id as a surface delivers it: `id` is the record in force
     that takes its slot (the asked id itself, or its head when it is
-    history), `replaces` the asked id when the head took the slot, and
-    `extended_by` the newest in-force record extending `id`."""
+    history), `replaces` the asked id when the head took the slot,
+    `extended_by` the newest in-force record extending `id`, and `held`
+    whether `id` is held out of force (ENG-200), so the slot delivers
+    nothing."""
 
     asked: str
     id: str
     replaces: str | None = None
     extended_by: str | None = None
+    held: bool = False
 
     @property
     def history(self) -> bool:
@@ -63,8 +72,9 @@ def in_force(
     Walks the inbound ``supersedes`` and ``extends`` links from the asked
     ids through every admitted source, one read per step
     (`Store.inbound_links`). Of several admitted records superseding one,
-    the newest (``updated``, then id) is followed; a cycle ends the walk
-    at the record where it closes."""
+    the newest (``updated``, then id) that is not held is followed, else
+    the newest held one; a cycle ends the walk at the record where it
+    closes."""
     inbound: dict[str, list[tuple[str, str, str]]] = {}
     updated: dict[str, str] = {}
     frontier = list(dict.fromkeys(ids))
@@ -84,9 +94,19 @@ def in_force(
             if source not in inbound and admission.admits_id(source)
         ]
 
+    # Imported here: `standing` imports this module.
+    from .standing import held_ids
+
+    held = held_ids(store, [*ids, *updated]) if ids else set()
+
     def newest(candidates: Iterable[str]) -> str | None:
         ranked = sorted(set(candidates), key=lambda rid: (updated.get(rid, ""), rid))
         return ranked[-1] if ranked else None
+
+    def newest_head(candidates: Iterable[str]) -> str | None:
+        """The newest of `candidates` not held, else the newest held."""
+        pool = set(candidates)
+        return newest(pool - held) or newest(pool)
 
     def admitted_sources(record_id: str, link_type: str) -> list[str]:
         return [
@@ -99,7 +119,7 @@ def in_force(
         seen = {record_id}
         current = record_id
         while True:
-            nxt = newest(admitted_sources(current, LinkType.SUPERSEDES.value))
+            nxt = newest_head(admitted_sources(current, LinkType.SUPERSEDES.value))
             if nxt is None or nxt in seen:
                 return current
             seen.add(nxt)
@@ -115,6 +135,7 @@ def in_force(
             asked=asked,
             id=target,
             replaces=asked if target != asked else None,
-            extended_by=newest(extenders),
+            extended_by=newest(extenders - held),
+            held=target in held,
         )
     return out

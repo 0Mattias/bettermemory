@@ -292,8 +292,24 @@ def standing_line(store: Store, caller: Resolution | None) -> str:
     none, and while the question is not asked (`standing.asking`)."""
     if caller is None or not _standing.asking():
         return ""
-    waiting = _standing.backlog(store, admission_for(SEARCH_AUTO_SCOPE, store, caller))
+    admission = admission_for(SEARCH_AUTO_SCOPE, store, caller)
+    waiting = _standing.backlog(store, admission)
     return _standing.backlog_line(waiting.count)
+
+
+def held_line(store: Store, caller: Resolution | None) -> str:
+    """The first-output line naming the standing records held out of force
+    that the caller's auto-scoped search reads are admitted to, and the
+    call that reads each (`standing.held_line`, ENG-200); "" for none."""
+    if caller is None or not _standing.asking():
+        return ""
+    held = _standing.held_ids(store)
+    if not held:
+        return ""
+    admission = admission_for(SEARCH_AUTO_SCOPE, store, caller)
+    admission.prime(sorted(held))
+    rows = store.standing_rows(sorted(held))
+    return _standing.held_line([r["id"] for r in rows if admission.admits_id(r["id"])])
 
 
 def _open_store(cfg: Config) -> Store | None:

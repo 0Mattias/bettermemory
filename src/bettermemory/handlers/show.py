@@ -245,6 +245,16 @@ def _apply_show_trust_and_standing(
         and _standing.answers(deps.store, [memory.id]).get(memory.id) is None
     ):
         response["standing_question"] = _standing.question(memory.id)
+    # A standing record held out of force (ENG-200) says so, with the
+    # call that reads it against the standing roster.
+    if _standing.held_ids(deps.store, [memory.id]):
+        response["held"] = True
+        response["held_hint"] = (
+            "This standing memory came back into force and is held out of "
+            "force, not delivered and on no roster, until it is read against "
+            f'the standing roster: memory_update(id="{memory.id}", '
+            "standing=<0 to 1>) shows it the roster."
+        )
 
 
 def _links_payload(deps: ToolHandlers, memory: Any) -> dict[str, Any]:

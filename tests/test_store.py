@@ -457,7 +457,8 @@ def test_restore_brings_the_record_back_as_local(store: Store) -> None:
     assert store.count_tombstones() == 0
     assert store.provenance_for([memory.id]) == {memory.id: LOCAL}
     kinds = [r.kind for r in store.log_rows()]
-    assert kinds[-2:] == ["tombstone_delete", "memory_put"]
+    # The restore's own rows, then its mark (ENG-200).
+    assert kinds[-3:] == ["tombstone_delete", "memory_put", "returned_put"]
     with pytest.raises(NotFoundError):
         store.restore(memory.id)
     assert store.log_verify()["status"] == "ok"

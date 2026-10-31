@@ -295,9 +295,13 @@ def run_migration_at_open(
     WARNING; the default, INFO, is `recall_admission._open_store`'s."""
     from .. import location
     from ..membership_migrate import ensure_migrated, settle_at_open, unhomed
+    from ..store_returned import ensure_backfilled
 
     if not store.has_key:
         return None
+    # The records an earlier build brought back into force, marked once
+    # after step 2 (ENG-200); it needs the key, not the machine id.
+    ensure_backfilled(store)
     try:
         identity = location.process_machine()
     except OSError as exc:

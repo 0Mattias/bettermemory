@@ -113,7 +113,14 @@ import threading
 import time
 import weakref
 from collections import OrderedDict
-from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -224,6 +231,7 @@ from .store_events import (
 )
 from . import store_provenance as _provenance
 from . import store_index as _index
+from . import store_returned as _returned
 from .store_index import (
     _ADMISSION_INPUTS,
     _DOC_FREQS as _DOC_FREQS,
@@ -436,6 +444,11 @@ class Store:
     # record (`RECORD_MUTATION_KINDS`); a nested write that fails puts it
     # back to what it was (`_joined`).
     _tx_records: bool
+    # The records the open write transaction may have brought back into
+    # force, or removed with a ``returned`` mark, each with the record
+    # whose change did it: read again and marked once, at the commit
+    # (`store_returned`, ENG-200). A nested write that fails puts it back.
+    _tx_returns: dict[str, tuple[str, str | None]]
     # How many write transactions this connection has committed that
     # changed a record. The tool boundary reads it before and after a call
     # (`_handlers._kept_or_retryable`): a store error after the count moved
@@ -508,6 +521,7 @@ class Store:
         self._last_appended = None
         self._tx_depth = 0
         self._tx_records = False
+        self._tx_returns = {}
         self.commits = 0
         # What `_connect` opened every connection with.
         self._busy_timeout = CLI_BUSY_TIMEOUT_SECONDS
@@ -1139,6 +1153,7 @@ class Store:
             self._clear_residue(conn)
         self._last_appended = None
         self._tx_records = False
+        self._tx_returns = {}
         # BEGIN before the depth is set: a BEGIN that fails (the busy wait
         # against another writer ran out) leaves this store owning nothing,
         # and the next call begins its own transaction.
@@ -1147,12 +1162,14 @@ class Store:
         try:
             yield conn
             self._require_open(conn)
+            self._flush_returns(conn)
             conn.execute("COMMIT")
         except BaseException:
             self._roll_back(conn)
             raise
         finally:
             self._tx_depth = 0
+            self._tx_returns = {}
         if self._tx_records:
             self.commits += 1
         self._move_head()
@@ -1176,6 +1193,7 @@ class Store:
         name = f"nested_{self._tx_depth}"
         appended = self._last_appended
         records = self._tx_records
+        returns = dict(self._tx_returns)
         conn.execute(f"SAVEPOINT {name}")
         self._tx_depth += 1
         try:
@@ -1184,6 +1202,7 @@ class Store:
         except BaseException:
             self._last_appended = appended
             self._tx_records = records
+            self._tx_returns = returns
             if conn.in_transaction:
                 try:
                     conn.execute(f"ROLLBACK TO {name}")
@@ -1320,12 +1339,57 @@ class Store:
     ) -> LogRow:
         """Log a mutation and apply it, inside the caller's transaction.
         The row is appended first so the record it puts can carry the
-        row's MAC."""
+        row's MAC. A record put or deleted names each record it may bring
+        back into force, and itself when it is removed, for the commit to
+        mark or unmark (`_flush_returns`, ENG-200)."""
+        state = _returned.before(conn, kind, payload)
         row = self._append(conn, kind, payload, session=session)
         _apply_mutation(conn, kind, payload, log_mac=row.mac)
         if kind in RECORD_MUTATION_KINDS:
             self._tx_records = True
+        if state is not None:
+            for record_id in _returned.candidates(conn, kind, state):
+                self._tx_returns.setdefault(record_id, (state.record_id, session))
+            if not self._tx_depth:
+                self._flush_returns(conn)
         return row
+
+    def _flush_returns(self, conn: sqlite3.Connection) -> None:
+        """Write the ``returned`` rows the transaction's record writes call
+        for, once, after them (`store_returned.settle`): each named record
+        that is active and that no active record supersedes is marked, and
+        each that is no longer active, or that an active record supersedes
+        again, loses its mark. Run last, so a
+        record's own rows stay next to each other in the log, as the
+        history reads them, and each record is judged as the transaction
+        leaves it (a restore that puts a link back, say)."""
+        pending, self._tx_returns = self._tx_returns, {}
+        if not pending:
+            return
+        puts, deletes = _returned.settle(conn, pending)
+        for mark, session in puts:
+            self._mutate(conn, "returned_put", {"returned": mark}, session=session)
+        for deletion, session in deletes:
+            self._mutate(conn, "returned_delete", deletion, session=session)
+
+    def release_returned(self, record_id: str, *, session: str | None = None) -> bool:
+        """Drop the record's ``returned`` mark (`store_returned`): a
+        standing roster read it. Joins the caller's transaction, so the
+        release commits with the change that read it. Returns whether a
+        mark was there."""
+        with self._transaction() as tx:
+            if not _returned.returned_rows(self, [record_id]):
+                return False
+            self._mutate(
+                tx, "returned_delete", {"record_id": record_id}, session=session
+            )
+        return True
+
+    def returned_rows(
+        self, ids: Iterable[str] | None = None
+    ) -> dict[str, dict[str, str]]:
+        """The ``returned`` marks of `ids` (every mark when None)."""
+        return _returned.returned_rows(self, ids)
 
     def _home_row(
         self, record_id: str, kind: str, home: RecordHome | None
@@ -1365,6 +1429,9 @@ class Store:
     # Records, standing answers and tombstones (store_records.py).
     put_memory = _records.put_memory
     _put_memory = _records._put_memory
+    _put_restored = _records._put_restored
+    _relink = _records._relink
+    _put_relinked = _records._put_relinked
     _standing_row = staticmethod(_records._standing_row)
     put_standing = _records.put_standing
     standing_rows = _records.standing_rows

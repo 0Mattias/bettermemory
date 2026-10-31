@@ -859,6 +859,14 @@ def _attach_hit_relations(
             admission=links,
             excluded_scopes=excluded,
         )
+        # A standing hit held out of force (ENG-200) is flagged, so a
+        # search is not read as putting it back in force.
+        from ..standing import held_ids
+
+        held = held_ids(deps.store, [str(row["id"]) for row in out])
+        for row in out:
+            if row["id"] in held:
+                row["held"] = True
 
 
 def _expand_top_hit(

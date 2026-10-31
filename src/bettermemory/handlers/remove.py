@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .. import standing as _standing
 from ..store import MemoryNotFoundError, TombstonedError
 from . import _guard
+from . import standing_review as _standing_review
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -78,7 +80,12 @@ async def memory_remove(
             f"removal. ({exc})"
         ) from exc
     deps.recorder.record("remove", id=id, reason=reason)
-    return {"removed": id}
+    # A standing memory this one replaced comes back into force, held
+    # until it is read against the standing roster (ENG-200).
+    held = _standing.held_by_removal(deps.store, [id])
+    return _standing_review.with_held(
+        {"removed": id}, _standing_review.held_reply(deps, held)
+    )
 
 
 __all__ = ["DESC_MEMORY_REMOVE", "memory_remove"]

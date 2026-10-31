@@ -220,6 +220,11 @@ _ROWS: dict[str, dict[str, Any]] = {
         "answered_by": "test/test",
         "answered": "t0",
     },
+    "returned": {
+        "record_id": "01M5K000000000000000000000",
+        "via": "01M5K000000000000000000001",
+        "returned": "t0",
+    },
 }
 
 
@@ -247,6 +252,7 @@ def test_the_membership_tables_and_kinds() -> None:
         "homes",
         "proposals",
         "standing",
+        "returned",
     }
     assert MEMBERSHIP_MUTATION_KINDS <= MUTATION_KINDS
     assert MUTATION_KINDS - MEMBERSHIP_MUTATION_KINDS == _RC3_MUTATION_KINDS
@@ -489,6 +495,7 @@ def _populated(store: Store) -> Membership:
     assert res.home is not None
     memory = store.put_memory(_memory(), home=res.home)
     store.put_standing(memory.id, StandingAnswer(0.5, "asked", "test/test"))
+    store.put_membership("returned", {**_ROWS["returned"], "record_id": memory.id})
     store.put_membership("machine", _ROWS["machine"])
     store.put_membership(
         "project_file", {**_ROWS["project_file"], "project": res.project}

@@ -9,8 +9,14 @@ while it stays standing, a `standing` answer that makes it standing, or
 its category made ambient. `memory_admin(action="answer_standing")`
 sends an answer that would make a memory in force standing here, one
 memory at a time (`handlers.standing`). A memory out of force is not
-read: one made standing while superseded, or a standing memory restored,
-comes into force later with no roster (found work, CHANGELOG 9.0.0rc15).
+read here. One that comes back into force standing (the memory replacing
+it removed or unlinked, or itself restored, ENG-200) is held out of force
+(`standing.held_ids`) until a change through here reads it: any update
+that leaves it standing gets the roster, and the commit releases it
+(`StandingReview.releases`, `release`). So does an update that makes a
+memory that came back while it was not standing standing: its read drops
+the mark that would hold it. Each door that holds one names it in its
+reply (`held_reply`).
 
 The page, its lines and its question are the write's
 (`write._issue_roster`, `review.roster_for`): every other admitted
@@ -38,6 +44,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -67,6 +74,10 @@ __all__ = [
     "StandingReview",
     "after_commit",
     "early_response",
+    "held_reply",
+    "releasing",
+    "release",
+    "with_held",
     "review_change",
     "review_links",
 ]
@@ -81,17 +92,29 @@ UPDATE_DOOR = "memory_update"
 _LINK_CAP = 64
 
 
-def _roster_hint(review_id: str, follow_up: bool) -> str:
-    """The roster page's hint on an update: what to send back."""
-    lead = (
-        "Not updated. Standing memories came into force since your last "
-        "roster; they are listed below. Keep review.named and add any id "
-        "below the change touches. "
-        if follow_up
-        else "Not updated. This change makes the memory standing, so it is "
-        "shown every other standing memory in force, one line each, under "
-        "`roster`. "
-    )
+def _roster_hint(review_id: str, follow_up: bool, *, held: bool = False) -> str:
+    """The roster page's hint on an update: what to send back. `held`
+    leads a held memory's first page (ENG-200)."""
+    if follow_up:
+        lead = (
+            "Not updated. Standing memories came into force since your last "
+            "roster; they are listed below. Keep review.named and add any id "
+            "below the change touches. "
+        )
+    elif held:
+        lead = (
+            "Not updated. This standing memory came back into force (the "
+            "memory replacing it was removed or unlinked, or it was "
+            "restored) and is held out of force until it is read against "
+            "every other standing memory in force, one line each, under "
+            "`roster`; any change that leaves it standing reads it. "
+        )
+    else:
+        lead = (
+            "Not updated. This change makes the memory standing, so it is "
+            "shown every other standing memory in force, one line each, "
+            "under `roster`. "
+        )
     return (
         lead + "Answer `question` and re-send this same call, with the same "
         "arguments and acknowledge flags, adding "
@@ -111,6 +134,13 @@ def _full_hint(review_id: str) -> str:
     )
 
 
+_HELD_HINT = (
+    "Each memory under `held` is standing and came back into force through "
+    "this call. It is held out of force, not delivered and on no roster, "
+    "until it is read against every other standing memory in force: give "
+    "its standing answer, which shows it the roster, with "
+)
+
 _STANDING_HINT = (
     "Not updated. Each memory under `standing` directs work in its scope "
     "until it is replaced, and your answers conflict with it or replace it. "
@@ -124,7 +154,10 @@ _STANDING_HINT = (
 class StandingReview:
     """What an update's standing roster leaves: a page to return instead
     of changing anything (a roster page, a full-text page or a refusal),
-    or the decision with what its commit needs."""
+    or the decision with what its commit needs. `releases` says the
+    memory carries a ``returned`` mark (ENG-200) and this read lets its
+    commit drop it; a marked memory with no other standing memory in
+    force to list has a review of that alone."""
 
     page: dict[str, Any] | None = None
     decision: _review.ReviewDecision | None = None
@@ -132,6 +165,7 @@ class StandingReview:
     related: _review.RelatedSet | None = None
     words: _guard.Words | None = None
     rests: list[str] = field(default_factory=list)
+    releases: bool = False
 
     def fields(self) -> dict[str, Any]:
         """The update row's review fields: ids and labels, never a body.
@@ -215,9 +249,12 @@ def review_change(
     """Take an update of `memory` that leaves `body`, `category` and the
     standing answer `probability`; return None when it makes no standing
     statement (`standing.makes_standing`), the review is off, or no other
-    standing record is in force to list; else the page it is shown, or
-    the decision on its answers. Raises `review.ReviewAnswerError`, a
-    teaching error, for answers it cannot read."""
+    standing record is in force to list and the memory carries no
+    ``returned`` mark; else the page it is shown, or the decision on its
+    answers, which releases the memory once it commits: held, or marked
+    while it was not standing and made standing here. Raises
+    `review.ReviewAnswerError`, a teaching error, for answers it cannot
+    read."""
     from ..admission import Admission
     from ..membership import REVIEW_STRATA
 
@@ -231,6 +268,8 @@ def review_change(
         body_changed=body != memory.body,
     ):
         return None
+    held = memory.id in _standing.held_ids(deps.store, [memory.id])
+    marked = bool(deps.store.returned_rows([memory.id]))
     _, caller = caller_anchoring(deps.store, deps.config)
     admission = Admission.of(REVIEW_STRATA, caller)
     chain = _chain(deps, answers, memory.id)
@@ -257,12 +296,14 @@ def review_change(
                 record_id=memory.id,
             )
             return StandingReview(page=full)
-    page = _due_roster(deps, state, memory, body, related, admission, chain)
+    page = _due_roster(deps, state, memory, body, related, admission, chain, held)
     if page is not None:
         return StandingReview(page=page)
     if chain is None:
-        return None
-    return _decide(deps, caller, answers, related, body=body, tau=tau, said=said)
+        return StandingReview(releases=True) if marked else None
+    decided = _decide(deps, caller, answers, related, body=body, tau=tau, said=said)
+    decided.releases = marked
+    return decided
 
 
 def _due_roster(
@@ -273,10 +314,12 @@ def _due_roster(
     related: _review.RelatedSet,
     admission: Admission,
     chain: _review.Chain | None,
+    held: bool,
 ) -> dict[str, Any] | None:
     """The roster page due for this chain, or None: every other standing
     record in force on the first page, then only those that came into
-    force since (`write._roster_due`)."""
+    force since (`write._roster_due`). `held` leads the hint of a held
+    memory's first page."""
     candidates, due = _roster_due(
         deps,
         state,
@@ -296,7 +339,7 @@ def _due_roster(
         admission=admission,
         parent_review_id=chain.root if chain is not None else None,
         follow_up=bool(chain is not None and chain.roster),
-        hint=_roster_hint,
+        hint=lambda review_id, follow_up: _roster_hint(review_id, follow_up, held=held),
         door=UPDATE_DOOR,
         record=memory.id,
     )
@@ -401,6 +444,61 @@ def review_links(
             f"would leave this memory {len(out)}; nothing was written. Drop "
             "links it no longer needs, then re-send this call."
         )
+    return out
+
+
+def releasing(
+    deps: ToolHandlers, review: StandingReview | None
+) -> AbstractContextManager[object]:
+    """The transaction an update's commit and its `release` share: the
+    store's batch when the review releases a mark, else none, so an update
+    with nothing to release takes the write lock at its commit as before."""
+    if review is None or not review.releases:
+        return nullcontext()
+    return deps.store.batch()
+
+
+def release(deps: ToolHandlers, record_id: str, review: StandingReview | None) -> None:
+    """Release the marked memory a committed update read (ENG-200): drop
+    its ``returned`` mark. Called inside the commit's transaction, so the read
+    and the release land together."""
+    if review is None or not review.releases:
+        return
+    decision = review.decision
+    if decision is not None and decision.action != _review.ACTION_COMMIT:
+        return
+    deps.store.release_returned(record_id)
+
+
+def held_reply(deps: ToolHandlers, ids: list[str]) -> dict[str, Any]:
+    """The reply keys of a call that brought standing memories back into
+    force (ENG-200): ``held``, each of `ids` now held, as a refusal names a
+    standing memory (`standing.refusal_rows`), and the ``hint`` naming
+    the update that reads each; {} when none is held."""
+    from ..admission import Admission
+    from ..membership import REVIEW_STRATA
+
+    held = _standing.held_ids(deps.store, ids) if ids else set()
+    ordered = [i for i in dict.fromkeys(ids) if i in held]
+    if not ordered:
+        return {}
+    _, caller = caller_anchoring(deps.store, deps.config)
+    calls = ", ".join(f'memory_update(id="{i}", standing=<0 to 1>)' for i in ordered)
+    return {
+        "held": _standing.refusal_rows(
+            deps.store, ordered, Admission.of(REVIEW_STRATA, caller)
+        ),
+        "hint": _HELD_HINT + calls + ".",
+    }
+
+
+def with_held(response: dict[str, Any], reply: dict[str, Any]) -> dict[str, Any]:
+    """`response` with `held_reply`'s keys, its own hint kept first."""
+    if not reply:
+        return response
+    out = dict(response)
+    out["held"] = reply["held"]
+    out["hint"] = f"{out['hint']} {reply['hint']}" if out.get("hint") else reply["hint"]
     return out
 
 

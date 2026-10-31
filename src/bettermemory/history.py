@@ -90,6 +90,7 @@ from .log import (
     same_mac,
 )
 from .store import IMPORTED, LOCAL, UNACCOUNTED, Store
+from .store_returned import RELINK_MARK
 
 FORMAT = "bettermemory-history"
 FORMAT_VERSION = 1
@@ -507,10 +508,10 @@ def _subject(kind: str, payload: Mapping[str, Any]) -> str | None:
         named = payload.get("id")
     elif kind in ("verification_put", "verification_delete"):
         named = payload.get("memory_id")
-    elif kind in ("home_put", "standing_put"):
+    elif kind in ("home_put", "standing_put", "returned_put"):
         row = _mapping(payload.get(kind[: -len("_put")]))
         named = None if row is None else row.get("record_id")
-    elif kind in ("home_delete", "standing_delete"):
+    elif kind in ("home_delete", "standing_delete", "returned_delete"):
         named = payload.get("record_id")
     elif kind in (CAPTURE_MEMBER, "import_put"):
         named = payload.get("memory_id")
@@ -660,6 +661,11 @@ def _record_row(
         if row.kind == "memory_put":
             if before is not None and before[0] == "tombstone_delete":
                 action = "restored"
+            elif payload.get(RELINK_MARK) is not None:
+                # A restore put the record's link rows back (ENG-200):
+                # nothing in it changed.
+                action = "relinked"
+                _set(detail, restored=payload.get(RELINK_MARK))
             elif walk.previous is None:
                 action = "imported" if label == IMPORTED else "created"
             elif after is not None and after[0] == "verification_put":
@@ -723,6 +729,16 @@ def _record_row(
         )
     elif row.kind == "standing_delete":
         action = "standing_removed"
+    elif row.kind == "returned_put":
+        returned = _mapping(payload.get("returned")) or {}
+        action = "returned"
+        _set(detail, via=returned.get("via"))
+    elif row.kind == "returned_delete":
+        # A roster read releases the mark; removing the record, or a
+        # record superseding it again, drops it (ENG-200).
+        dropped = payload.get("dropped")
+        action = "unmarked" if dropped is not None else "released"
+        _set(detail, dropped=dropped)
     elif row.kind == CAPTURE_MEMBER:
         action = "captured"
         _set(

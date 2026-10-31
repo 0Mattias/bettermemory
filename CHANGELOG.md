@@ -36,9 +36,11 @@ is now shown the standing roster before it is decided, and the records
 it names are answered and decided as related ones are; so is an update
 that makes a stored memory in force standing. A standing memory that
 comes back into force (the memory replacing it unlinked or removed, or
-itself restored) is not read against the roster yet. It is a release
-candidate like the fourteenth; the stable 9.0.0 follows the
-candidates' testing.
+itself restored) is held out of force until it is read against the
+roster. The store takes its first schema step since the contract, so
+once this candidate opens a store to write, the fourteenth and earlier
+open it for reading only. It is a release candidate like the
+fourteenth; the stable 9.0.0 follows the candidates' testing.
 
 #### Changed
 
@@ -216,12 +218,9 @@ candidates' testing.
   set them, and roster answers that would take the memory past its 64
   links raise before anything is written.
 
-  Not covered: a memory made standing while out of force (an answer or
-  an edit of a superseded memory) is recorded with no roster and comes
-  into force unread when the memory replacing it is unlinked or
-  removed, and a standing memory restored comes back into force unread
-  too. Those doors bring a memory back into force rather than make a
-  statement; reading a memory as it re-enters force is found work.
+  A memory made standing while out of force (an answer or an edit of a
+  superseded memory) is recorded with no roster: it is read when it
+  comes back into force (ENG-200, below).
   (`src/bettermemory/handlers/standing_review.py`,
   `src/bettermemory/handlers/update.py`, `src/bettermemory/handlers/standing.py`,
   `src/bettermemory/handlers/_guard.py`, `src/bettermemory/handlers/show.py`,
@@ -233,6 +232,98 @@ candidates' testing.
   `docs/api.md`, `docs/internals.md`, `docs/eval.md`, `docs/operations.md`,
   `tests/test_update_roster.py`, `tests/test_standing.py`,
   `tests/test_row_classes.py`, `tests/test_tool_surface.py`)
+
+- **A standing memory that comes back into force is held until it is
+  read against the roster (ENG-200).** A memory is out of force while an
+  active memory supersedes it, and comes back in one write: the memory
+  replacing it removed (`memory_remove`, `bettermemory capture undo`,
+  `bettermemory rollback`) or unlinked (`memory_update`'s links, the
+  capture's closing call), or itself restored (`memory_admin(action=
+  "restore")`, `bettermemory tombstones restore`). The store now marks
+  every memory a write brings back: a `returned` table, the fold of new
+  `returned_put` and `returned_delete` log rows, one row per memory
+  naming `via`, the memory whose change brought it back (itself for a
+  restore). The mark is written as the write's transaction commits,
+  after its record rows, for each memory that is active and that no
+  active memory supersedes then. Removing the memory drops its mark, so
+  does a memory superseding it again (the row's `dropped` says which),
+  and a later return marks it again. While the write review is in force
+  a marked memory that is standing is held: it is not delivered (the
+  session brief, prompt recall, a slot it would take as another memory's
+  head, a record's `extended_by`), it is on no roster, and it stays
+  guarded, so removing or replacing it rests on the user's words. Each
+  call that holds one names it under `held`, as a refusal names a
+  standing memory, with a hint naming `memory_update(id="<id>",
+  standing=<0 to 1>)`; `memory_show` carries `held: true` and
+  `held_hint`, a search hit `held: true`, the CLI's restore, `capture
+  undo` and `rollback` print it (`held` in their JSON), and the session
+  brief's lead names the held memories the caller is admitted to. Any
+  `memory_update` of a held memory shows it the roster
+  (`standing.makes_standing`), whatever the call changes; the commit
+  the answers allow drops the mark in the same transaction, and a
+  conflict refuses and leaves it held. An update that makes standing a
+  memory that came back while it was not standing drops the mark the
+  same way. With no other standing memory in force to list, the update
+  commits and releases it with no page. The history names the rows
+  `returned`, `unmarked` and `released`.
+
+  A restore now also puts back the index rows of the links into the
+  restored memory. Removing a memory drops the `memory_links` rows into
+  it as well as out of it, and a restore put back only its own, so a
+  restored memory that an active memory still superseded read as in
+  force. The restore puts each active memory whose links name it again,
+  unchanged, with a `relink` field the fold ignores (`relinked` in the
+  history); a memory whose row the log does not account for is left as
+  it is. The `memory_links_cleanup` trigger is unchanged, since changing
+  it would change the fold of an existing kind.
+
+  The store takes schema step 2, additive: the `returned` table, and a
+  backfill left to the owner's next open. The backfill puts back the
+  link rows an earlier build's restore left out, then marks, in one
+  transaction, each memory an earlier build brought back: active,
+  superseded by no active memory, and named by a `supersedes` link from
+  another memory in the log or restored in it. A failed backfill is
+  logged and runs again at the next open. The step leaves the reader
+  minimum at 1 and raises the writer minimum to 2, since every write
+  must keep the marks up: once this candidate opens a store to write,
+  9.0.0rc14 and earlier open it for reading only, and going back to
+  them after a switch serves the store with writes refused. A write
+  then needs this candidate or later, or the backup taken before the
+  switch.
+
+  Why a hold the store keeps, read at the memory's own update: the live
+  log (a read-only copy of 2026-10-31, the log from 2026-09-27) holds
+  63 removals, 7 restores and 2,389 updates, 141 of which changed
+  links, and 57 `supersedes` links from 52 memories, one superseding
+  five; none of its 55 tombstones carries a `supersedes` link. On it the
+  backfill marks 5 memories, 2 of them standing. Rejected: a roster on
+  the call that brings a memory back, which costs about 110 characters
+  of tool surface against the 14 left under the 8,000 ceiling, blocks a
+  removal the user asked for until another memory is read, leaves the
+  CLI's restore, `capture undo` and `rollback` with no page to show,
+  and needs a nested answer for a removal that brings back several;
+  refusing the removal until the link is dropped by an update, which a
+  restore cannot be sent through; clearing the standing answer of a
+  memory that comes back, which delivers it unread meanwhile and does
+  nothing for an `ambient` memory, which has none.
+  (`src/bettermemory/store_returned.py`, `src/bettermemory/store.py`,
+  `src/bettermemory/store_records.py`, `src/bettermemory/store_schema.py`,
+  `src/bettermemory/store_steps.py`, `src/bettermemory/standing.py`,
+  `src/bettermemory/in_force.py`, `src/bettermemory/recall.py`,
+  `src/bettermemory/recall_admission.py`, `src/bettermemory/history.py`,
+  `src/bettermemory/audit_export.py`, `src/bettermemory/daemon.py`,
+  `src/bettermemory/capture_review.py`, `src/bettermemory/rollback.py`,
+  `src/bettermemory/cli/_common.py`, `src/bettermemory/cli/tombstones.py`,
+  `src/bettermemory/handlers/standing_review.py`,
+  `src/bettermemory/handlers/update.py`, `src/bettermemory/handlers/remove.py`,
+  `src/bettermemory/handlers/restore.py`, `src/bettermemory/handlers/show.py`,
+  `src/bettermemory/handlers/search.py`,
+  `src/bettermemory/handlers/capture_relations.py`, `docs/api.md`,
+  `docs/internals.md`, `docs/operations.md`, `CONTRIBUTING.md`,
+  `tests/test_reentry_hold.py`, `tests/test_memory_history.py`,
+  `tests/test_store_steps.py`, `tests/test_cross_build.py`,
+  `tests/test_store_admission.py`, `tests/test_store_versions.py`,
+  `tests/test_membership_store.py`, `tests/test_store.py`)
 
 ### 9.0.0rc14
 
