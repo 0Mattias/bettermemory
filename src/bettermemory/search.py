@@ -888,7 +888,9 @@ def _query_biased_snippet(body: str, matched: list[str], max_chars: int = 200) -
     `_fold_diacritics` are all length-changing, which is why the folded
     text cannot be used to locate anything in the raw one.
 
-    Only `_build_hit` calls this. `snippet_for` keeps its head-of-body
+    `_build_hit` calls this, and so does the standing roster
+    (`review.roster_for`), which windows each line on the terms the write's
+    best-matching sentence hit. `snippet_for` keeps its head-of-body
     contract for every other consumer — write-time dedup's `SimilarHit`,
     the conflict, supersession and rollback summaries — none of which
     have a query to bias toward.

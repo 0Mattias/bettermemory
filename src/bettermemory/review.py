@@ -21,6 +21,15 @@ integrity bench imports them rather than copying them:
   three constants are pinned by `constants_sha256`.
 - `parse_answers`, `check_answered_ids` and `apply_review`: the teaching
   errors and the actions, in the order the daemon applies them.
+- `roster_candidates` and `roster_for`: the standing roster (ENG-112), the
+  page a standing write is shown once its relations are answered: every
+  admitted in-force standing record outside the related set, one line
+  each (`ROSTER_TEXT_CHARS`), with `ROSTER_STATEMENT`. The writer names
+  the records the write touches (`review.named`, `check_named`), and the
+  named records join the related set in full, so the relation question,
+  the standing guard and `apply_review` read them as they read the rest.
+  The roster is not part of the related set the integrity bench reads,
+  and its constants are not sealed: its evidence is its own blind reads.
 - `TAU_UNSAFE` and `TAU_SECRET`: the thresholds, the sealed review points'
   tau (bench/integrity/v1/operating-points-review.json, fitted on v1 dev).
   While either is None no review is issued, so `memory_write` behaves as it
@@ -72,6 +81,18 @@ RELATED_TEXT_CHARS = 600
 RELATED_CONSTANTS: Mapping[str, int] = MappingProxyType(
     {"top": RELATED_TOP, "cap": RELATED_CAP, "text_chars": RELATED_TEXT_CHARS}
 )
+
+#: The most characters of one roster line's text (ENG-112): the engine's
+#: query-biased snippet of the record, windowed on the terms of the write's
+#: sentence the record ranks best against. Set by blind reads: writers
+#: given only the write and its roster, asked `ROSTER_STATEMENT`, on two
+#: replayed standing writes, one restating a ruling in other words and one
+#: breaking a ruling without naming it, whose subject sits past character
+#: 400 of its body. At 200 and at 120 every read named every target (five
+#: reads of the implicit case, two of the paraphrase); a line of the body's
+#: first 160 characters named the implicit case's ruling in none of three.
+#: 120 is the shortest length measured; a shorter line is a new read.
+ROSTER_TEXT_CHARS = 120
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +191,14 @@ SECRET_STATEMENT = (
 STANDING_STATEMENT = (
     "The statement directs future work in its scope until it is replaced: "
     "a ruling, rule or standing preference the user gave."
+)
+#: The roster's question (ENG-112), in the words the blind reads that set
+#: `ROSTER_TEXT_CHARS` asked. Outside `QUESTIONS`, which the review seals
+#: pin: the roster is a page of its own, answered with `review.named`.
+ROSTER_STATEMENT = (
+    "Name every roster record this write restates, amends, extends or "
+    "competes with, including one the write would break without saying so. "
+    "Named records are shown to you in full next."
 )
 
 
@@ -317,6 +346,17 @@ class RelatedSet:
             report=self.report,
         )
 
+    def plus(self, entries: Iterable[RelatedEntry]) -> RelatedSet:
+        """The same set with `entries` after its own, each id once: the
+        roster records a standing write named (ENG-112), past the cap."""
+        have = set(self.ids)
+        added: list[RelatedEntry] = []
+        for entry in entries:
+            if entry.id not in have:
+                have.add(entry.id)
+                added.append(entry)
+        return RelatedSet(entries=(*self.entries, *added), report=self.report)
+
 
 # A sentence ends at terminal punctuation followed by whitespace, or at a
 # line break.
@@ -349,7 +389,8 @@ def related_text(content: str, body: str) -> str:
     return snippet_window(text, start, RELATED_TEXT_CHARS - 3)
 
 
-def _entry(content: str, memory: Memory) -> RelatedEntry:
+def related_entry(content: str, memory: Memory) -> RelatedEntry:
+    """`memory` as a review of a write of `content` shows it."""
     return RelatedEntry(
         id=memory.id,
         scopes=tuple(memory.scopes),
@@ -441,9 +482,152 @@ def related_for(
                 ordered.append(memory)
 
     return RelatedSet(
-        entries=tuple(_entry(content, m) for m in ordered[:RELATED_CAP]),
+        entries=tuple(related_entry(content, m) for m in ordered[:RELATED_CAP]),
         report=report,
     )
+
+
+# ---------------------------------------------------------------------------
+# The standing roster (ENG-112)
+# ---------------------------------------------------------------------------
+#
+# A ranked leg cannot reach a ruling a write breaks without using its
+# words: on the replayed case no cap of 20 or less, over the whole write or
+# over its sentences, held it. So a standing write is shown every standing
+# record in force, one line each, and the writer, who reads the write and
+# the line, judges the relation. The line is what makes that judgement
+# possible: windowed on where the write's best-matching sentence hits the
+# record, not on the record's head.
+
+
+@dataclass(frozen=True)
+class RosterLine:
+    """One standing record as the roster shows it."""
+
+    id: str
+    updated: str
+    text: str
+
+    def to_line(self) -> str:
+        """``<id> (<updated>) <text>``, the form the blind reads read."""
+        return f"{self.id} ({self.updated}) {self.text}"
+
+
+def roster_candidates(
+    store: Store,
+    *,
+    admission: Admission,
+    excluded_scopes: AbstractSet[str] = frozenset(),
+    exclude_ids: Iterable[str] = (),
+) -> list[Memory]:
+    """The records a standing write's roster lists: the admitted in-force
+    standing records (`standing.standing_ids`) outside `excluded_scopes`
+    (the session's disabled scopes, as the related set excludes them) and
+    outside `exclude_ids` (the related set and the declared `supersedes`
+    targets, which the review shows otherwise), newest ``updated`` first."""
+    from .standing import standing_ids
+
+    skip = set(exclude_ids)
+    ids = [i for i in standing_ids(store, admission) if i not in skip]
+    if not ids:
+        return []
+    memories = [m for m in store.get_many(ids) if excluded_scopes.isdisjoint(m.scopes)]
+    memories.sort(key=lambda m: (m.updated, m.id), reverse=True)
+    return memories
+
+
+def _write_sentences(content: str) -> list[str]:
+    """The write's sentences that hold a content token, each once."""
+    parts = (p.strip() for p in _SENTENCE_BREAK_RE.split(content))
+    return list(dict.fromkeys(p for p in parts if p and raw_content_tokens(p)))
+
+
+def roster_for(
+    store: Store,
+    content: str,
+    memories: Sequence[Memory],
+    *,
+    behavior: BehaviorConfig,
+    admission: Admission,
+    excluded_scopes: AbstractSet[str] = frozenset(),
+    only: AbstractSet[str] | None = None,
+) -> list[RosterLine]:
+    """The roster lines of `memories` (from `roster_candidates`, in its
+    order) for a write of `content`, restricted to `only` when given.
+
+    Each of the write's sentences is ranked against `memories` by the
+    engine (`search.search`, every record returned, the path-drift check
+    off: the roster reads ranks and matched terms, never drift). A record's
+    line is `search._query_biased_snippet` of its body on the terms its
+    best-ranked sentence matched, cut at `ROSTER_TEXT_CHARS`, whitespace
+    folded; a record no sentence matches shows its head. On a tie of rank
+    the sentence that matched more terms wins, then the earlier one: ties
+    are common among few standing records, where a record ranks first for
+    every sentence it shares a word with, and the line belongs where it
+    shares the most. Ranking over every candidate, not over `only`, keeps a
+    line the same whichever page shows it.
+
+    A known limit: the best rank is where the record stands out among the
+    standing records, which need not be where the write breaks it. When a
+    nearer record takes the breaking sentence and a stray word of another
+    sentence is the record's alone, the line windows on that word. The
+    blind reads that set the line's form and length read this construction
+    on the replayed stores, where every target's line carried its subject;
+    another placement (by matched terms first, or by the record's own
+    score) is a new read on the same instrument."""
+    from .handlers.search import _corpus_stats_provider
+    from .models import snippet_for
+    from .search import _query_biased_snippet
+    from .search import search as run_search
+
+    excluded = set(excluded_scopes)
+    pool = list(memories)
+    best: dict[str, tuple[tuple[int, int], list[str]]] = {}
+    if pool:
+        provider = _corpus_stats_provider(
+            store,
+            scopes=None,
+            excluded=excluded,
+            admission=admission,
+            client_filter=None,
+            model_filter=None,
+        )
+        for sentence in _write_sentences(content):
+            hits = run_search(
+                pool,
+                sentence,
+                excluded_scopes=excluded,
+                admission=admission,
+                max_results=len(pool),
+                half_life_days=behavior.recency_boost_half_life_days,
+                mode=behavior.search_mode or "hybrid",  # type: ignore[arg-type]
+                corpus_stats_provider=provider,
+                rescue_expansion=False,
+                conversational=behavior.conversational,
+                path_drift=False,
+            )
+            for rank, hit in enumerate(hits):
+                key = (rank, -len(hit.match_terms))
+                if hit.id not in best or key < best[hit.id][0]:
+                    best[hit.id] = (key, list(hit.match_terms))
+    lines: list[RosterLine] = []
+    for memory in pool:
+        if only is not None and memory.id not in only:
+            continue
+        terms = best[memory.id][1] if memory.id in best else []
+        text = (
+            _query_biased_snippet(memory.body, terms, ROSTER_TEXT_CHARS)
+            if terms
+            else snippet_for(memory.body.strip(), ROSTER_TEXT_CHARS)
+        )
+        lines.append(
+            RosterLine(
+                id=memory.id,
+                updated=memory.updated.astimezone(timezone.utc).date().isoformat(),
+                text=" ".join(text.split()),
+            )
+        )
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -461,8 +645,11 @@ ANSWER_FORMAT = (
     + '}, "unsafe": <0 to 1>, "secret": <0 to 1>, "standing": <0 to 1>}'
 )
 
+#: The roster's answer, as its hint and its teaching errors write it.
+NAMED_FORMAT = '"named": [<roster id>, ...] ([] when the write touches none)'
+
 _ANSWER_KEYS = frozenset(
-    {"review_id", "relation", "unsafe", "secret", "standing", "said"}
+    {"review_id", "relation", "unsafe", "secret", "standing", "said", "named"}
 )
 
 
@@ -472,7 +659,9 @@ class ReviewAnswers:
     only for answers read elsewhere (the integrity bench's recorded
     three-question answers); `parse_answers` requires it. `said` is the
     user's own words a write that replaces a standing record rests on
-    (unit RS-F7 part 5), whitespace folded; None when not given."""
+    (unit RS-F7 part 5), whitespace folded; None when not given. `named`
+    is the answer to the standing roster (ENG-112), the roster ids in the
+    order given, each once; None when not given."""
 
     relation: Mapping[str, str]
     unsafe: float
@@ -480,6 +669,7 @@ class ReviewAnswers:
     review_id: str | None = None
     standing: float | None = None
     said: str | None = None
+    named: tuple[str, ...] | None = None
 
     def to_event(self) -> dict[str, Any]:
         """The answers as an event field: ids, labels and scores, never a
@@ -493,6 +683,8 @@ class ReviewAnswers:
             out["standing"] = self.standing
         if self.said is not None:
             out["said"] = self.said
+        if self.named is not None:
+            out["named"] = list(self.named)
         return out
 
     def is_zero_attestation(self) -> bool:
@@ -528,11 +720,12 @@ def _score(raw: Mapping[str, Any], key: str) -> float:
 def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
     """Read a call's `review` argument. None when it is absent or empty,
     which is a first call. Raises `ReviewAnswerError`, a teaching error,
-    for an unknown key, a malformed review_id, an unknown label, and a
-    score (unsafe, secret or standing) that is missing, not a number, or
-    outside 0 to 1. A missing
+    for an unknown key, a malformed review_id, an unknown label, a score
+    (unsafe, secret or standing) that is missing, not a number, or outside
+    0 to 1, and a `named` that is not a list of strings. A missing
     review_id is not an error. Ids are checked against the related set by
-    `check_answered_ids`."""
+    `check_answered_ids`, and `named` against the roster by `check_named`,
+    which reads it only once a roster was shown in the answered chain."""
     if raw is None:
         return None
     if not isinstance(raw, Mapping):
@@ -577,6 +770,14 @@ def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
             "review.said quotes the user's words as they typed them, as a "
             "string; omit it when the user said nothing about this."
         )
+    named_raw = raw.get("named")
+    if named_raw is not None and (
+        not isinstance(named_raw, (list, tuple))
+        or not all(isinstance(i, str) for i in named_raw)
+    ):
+        raise ReviewAnswerError(
+            f"review.named is a list of roster ids. Format: {NAMED_FORMAT}"
+        )
     return ReviewAnswers(
         relation=MappingProxyType(relation),
         unsafe=_score(raw, "unsafe"),
@@ -584,13 +785,15 @@ def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
         review_id=review_id,
         standing=_score(raw, "standing"),
         said=" ".join(said.split()) if said is not None else None,
+        named=tuple(dict.fromkeys(named_raw)) if named_raw is not None else None,
     )
 
 
 def check_answered_ids(answers: ReviewAnswers, allowed: Iterable[str]) -> None:
     """Raise `ReviewAnswerError` for an answered id that no review of this
     write showed: a foreign id. `allowed` is the recomputed related set
-    plus the ids the answered review chain showed."""
+    plus the ids the answered review chain showed, in full or on its
+    roster."""
     allowed_set = set(allowed)
     foreign = sorted(i for i in answers.relation if i not in allowed_set)
     if foreign:
@@ -598,6 +801,50 @@ def check_answered_ids(answers: ReviewAnswers, allowed: Iterable[str]) -> None:
             f"review.relation names ids no review of this write showed: {foreign}. "
             "Answer only the related ids the review listed."
         )
+
+
+def check_named(
+    answers: ReviewAnswers,
+    roster: AbstractSet[str],
+    *,
+    shown: AbstractSet[str],
+    required: bool = True,
+) -> tuple[str, ...]:
+    """The roster ids the answers name, once a roster was shown in the
+    answered chain; `roster` is every id its roster pages listed, `shown`
+    every id shown in full (the chain's reviews and the recomputed related
+    set). Raises `ReviewAnswerError`, a teaching error, when `named` is
+    missing while `required` (the write is still standing), names an id no
+    roster page listed, or when a roster id is answered in `relation`
+    without being named or shown: a record is answered after its full
+    text, never on its roster line. A missing `named` that is not required
+    names nothing."""
+    named = answers.named
+    if named is None:
+        if required:
+            raise ReviewAnswerError(
+                "review.named is missing: this write was shown the standing "
+                "roster. Keep every answer and add the roster ids the write "
+                "restates, amends, extends or competes with. Format: "
+                f"{NAMED_FORMAT}"
+            )
+        named = ()
+    foreign = sorted(i for i in named if i not in roster)
+    if foreign:
+        raise ReviewAnswerError(
+            f"review.named names ids the roster did not list: {foreign}. "
+            "Name only ids from the roster."
+        )
+    unnamed = sorted(
+        i for i in answers.relation if i in roster and i not in named and i not in shown
+    )
+    if unnamed:
+        raise ReviewAnswerError(
+            f"review.relation answers roster ids not named: {unnamed}. Add them "
+            "to review.named; each named record is shown in full before its "
+            "answer counts."
+        )
+    return named
 
 
 # ---------------------------------------------------------------------------
@@ -833,14 +1080,15 @@ def ulid_time(value: str) -> datetime | None:
 @dataclass(frozen=True)
 class Chain:
     """What the log says about the chain a review_id belongs to: its root,
-    every id its reviews showed, whether the log holds a review_issued row
-    for the id, and whether a write row already carries one of the chain's
-    review_ids."""
+    every id its reviews showed in full, every id its roster pages listed
+    (ENG-112), whether the log holds a review_issued row for the id, and
+    whether a write row already carries one of the chain's review_ids."""
 
     root: str
     shown: frozenset[str]
     found: bool = False
     decided: bool = False
+    roster: frozenset[str] = frozenset()
 
     @property
     def open(self) -> bool:
@@ -885,6 +1133,7 @@ def find_chain(store: Store, review_id: str) -> Chain:
                 if root_time is not None and (cutoff is None or root_time < cutoff):
                     cutoff = root_time
     shown: set[str] = set()
+    roster: set[str] = set()
     chain_ids: set[str] = {root}
     for event in rows:
         if event.get("review_id") == root or event.get("parent_review_id") == root:
@@ -894,11 +1143,15 @@ def find_chain(store: Store, review_id: str) -> Chain:
             related = event.get("related")
             if isinstance(related, list):
                 shown.update(i for i in related if isinstance(i, str))
+            listed = event.get("roster")
+            if isinstance(listed, list):
+                roster.update(i for i in listed if isinstance(i, str))
     return Chain(
         root=root,
         shown=frozenset(shown),
         found=found,
         decided=bool(chain_ids & written),
+        roster=frozenset(roster),
     )
 
 
@@ -912,6 +1165,7 @@ __all__ = [
     "DETECTOR_REVIEW",
     "DETECTOR_REVIEW_DISAGREES",
     "LABELS",
+    "NAMED_FORMAT",
     "QUESTIONS",
     "RELATED_CAP",
     "RELATED_CONSTANTS",
@@ -919,11 +1173,14 @@ __all__ = [
     "RELATED_TOP",
     "REVIEW_ISSUED",
     "REVIEW_LINK_NOTE",
+    "ROSTER_STATEMENT",
+    "ROSTER_TEXT_CHARS",
     "RelatedEntry",
     "RelatedSet",
     "ReviewAnswerError",
     "ReviewAnswers",
     "ReviewDecision",
+    "RosterLine",
     "SECRET_STATEMENT",
     "STANDING_STATEMENT",
     "TAU_SECRET",
@@ -934,15 +1191,19 @@ __all__ = [
     "apply_review",
     "canonical_json",
     "check_answered_ids",
+    "check_named",
     "constants_sha256",
     "current_tau",
     "find_chain",
     "parse_answers",
     "questions_payload",
     "questions_sha256",
+    "related_entry",
     "related_for",
     "related_text",
     "replaced_ids",
+    "roster_candidates",
+    "roster_for",
     "seal_shas",
     "tau_override",
     "tau_unset",

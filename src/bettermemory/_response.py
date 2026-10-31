@@ -916,6 +916,31 @@ class ResponseBuilder:
             "hint": hint,
         }
 
+    def roster(
+        self,
+        *,
+        review_id: str,
+        roster: list[str],
+        question: str,
+        hint: str,
+    ) -> dict[str, Any]:
+        """The standing roster page (ENG-112): nothing was written, and a
+        standing write's caller names the roster records it touches by
+        re-sending the same call with `review.named`. Each roster entry is
+        one line, ``<id> (<updated>) <text>``
+        (`review.RosterLine.to_line`): a line costs its text and no keys,
+        on a page that lists every standing record in force."""
+        return {
+            "status": "review",
+            "written": False,
+            "review": {
+                "review_id": review_id,
+                "roster": roster,
+                "question": question,
+            },
+            "hint": hint,
+        }
+
     # ---- minor row shapes ----------------------------------------------
 
     def similar_to_dict(self, hit: SimilarHit) -> dict[str, Any]:

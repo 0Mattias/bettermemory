@@ -47,6 +47,8 @@ SCORES = {"unsafe": 0.0, "secret": 0.0, "standing": 0}
 # The cue code leaves this pair alone, so whatever happens is the review's.
 BACKUP_OLD = "Nightly database backups are handled by Restic."
 BACKUP_NEW = "Backups moved to Borg for the archive volumes."
+# A third statement near the pair, for a second write in one batch.
+BACKUP_PRUNED = "Restic prunes old snapshots every Sunday on the backup host."
 # The cue code links this update ("moved to", two ports of one shape).
 PORT_OLD = "The staging API listens on port 8443 behind the gateway."
 PORT_NEW = "The staging API moved to port 9443 behind the gateway."
@@ -725,6 +727,40 @@ async def test_a_capture_write_with_no_related_set_commits_with_nothing_pending(
     assert "relations_pending" not in res
     (member,) = capture.members(world.store, batch.batch)
     assert member.review is None
+
+
+async def test_a_standing_capture_write_defers_only_when_no_roster_is_due(
+    world: World,
+) -> None:
+    """ENG-112: a standing capture write is shown the standing roster
+    before it commits. With no standing record outside its related set it
+    defers its relations as any capture write does; with one, it gets the
+    two-call review and then the roster, and commits with nothing pending."""
+    old = world.seed(BACKUP_OLD)
+    batch = world.open()
+    source = f"capture:{batch.token}"
+    deferred = await world.scored(batch, BACKUP_NEW, standing=0.9)
+    assert deferred["status"] == "committed", deferred
+    assert _pending_ids(deferred) == [old]
+
+    ruling = world.seed(LONE[1])
+    world.store.put_standing(ruling, StandingAnswer(0.9, "asked", "test/test"))
+    first = await world.scored(batch, BACKUP_PRUNED, standing=0.9)
+    assert first["status"] == "review", first
+    related = [e["id"] for e in first["review"]["related"]]
+    assert ruling not in related
+    answers = {
+        **SCORES,
+        "standing": 0.9,
+        "review_id": first["review"]["review_id"],
+        "relation": {i: "unrelated" for i in related},
+    }
+    page = await world.write(BACKUP_PRUNED, source=source, review=answers)
+    assert [line.split(" ", 1)[0] for line in page["review"]["roster"]] == [ruling]
+    named = {**answers, "review_id": page["review"]["review_id"], "named": []}
+    res = await world.write(BACKUP_PRUNED, source=source, review=named)
+    assert res["status"] == "committed", res
+    assert "relations_pending" not in res
 
 
 # ---------------------------------------------------------------------------

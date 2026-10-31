@@ -656,11 +656,17 @@ _REVIEW_RESTATES_HINT = (
 )
 
 
-def _review_hint(review_id: str, *, follow_up: bool) -> str:
+def _review_hint(review_id: str, *, follow_up: bool, named: bool = False) -> str:
     """The review response's hint: what to send back, and only here, so
     the answer format is paid for per review and not per session."""
     lead = "Not written. "
-    if follow_up:
+    if named:
+        lead += (
+            "Below in full are roster records this review now holds, named "
+            "or come into the related set: keep every answer, review.named "
+            "included, and add an answer for each id below. "
+        )
+    elif follow_up:
         lead += (
             "The related set changed since your answers: keep them and add "
             "an answer for each id below. "
@@ -688,6 +694,24 @@ def _actor_fields() -> dict[str, str]:
     }
 
 
+def _roster_hint(review_id: str, *, follow_up: bool) -> str:
+    """The roster page's hint (ENG-112): what to send back."""
+    lead = (
+        "Not written. Standing memories came into force since your last "
+        "roster; they are listed below. Keep every answer, review.named "
+        "included, and add any id below the write touches. "
+        if follow_up
+        else "Not written. This write is standing, so it is shown every "
+        "standing memory in force outside the related set, one line each, "
+        "under `roster`. "
+    )
+    return (
+        lead + "Answer `question` in `review` and re-send this same call, "
+        "with the same arguments, acknowledge flags and answers, and with "
+        f'"review_id": "{review_id}" and {_review.NAMED_FORMAT}.'
+    )
+
+
 def _record_review_issued(
     deps: ToolHandlers,
     *,
@@ -698,12 +722,14 @@ def _record_review_issued(
     response_chars: int | None,
     sent_review_id: str | None = None,
     deferred: bool = False,
+    roster_ids: list[str] | None = None,
 ) -> None:
     """The review_issued row: ids, the actor's client and model, and the
     chain fields. Never a body. `sent_review_id` is a review_id the call
     carried that the log holds no open chain for, kept for correlation.
     `deferred` marks a capture write that committed with relations pending
-    for the batch's closing call."""
+    for the batch's closing call. `roster_ids` are the ids a roster page
+    listed (ENG-112), which the chain lets the answers name."""
     fields: dict[str, Any] = {
         "review_id": review_id,
         "related": related_ids,
@@ -711,6 +737,8 @@ def _record_review_issued(
         "pre_answered": pre_answered,
         "parent_review_id": parent_review_id,
     }
+    if roster_ids is not None:
+        fields["roster"] = roster_ids
     if deferred:
         fields["deferred"] = True
     if response_chars is not None:
@@ -726,8 +754,11 @@ def _issue_review(
     *,
     parent_review_id: str | None,
     sent_review_id: str | None = None,
+    named: bool = False,
 ) -> dict[str, Any]:
-    """Write nothing; return the related statements and the questions."""
+    """Write nothing; return the related statements and the questions.
+    `named` marks the page that shows the roster records a standing write
+    named, in full."""
     review_id = generate_ulid()
     response = deps.responses.review(
         review_id=review_id,
@@ -736,6 +767,7 @@ def _issue_review(
         hint=_review_hint(
             review_id,
             follow_up=parent_review_id is not None or sent_review_id is not None,
+            named=named,
         ),
     )
     _record_review_issued(
@@ -746,6 +778,48 @@ def _issue_review(
         parent_review_id=parent_review_id,
         response_chars=len(json.dumps(response, ensure_ascii=False)),
         sent_review_id=sent_review_id,
+    )
+    return response
+
+
+def _issue_roster(
+    deps: ToolHandlers,
+    state: SessionState,
+    *,
+    content: str,
+    candidates: list[Memory],
+    due: frozenset[str],
+    admission: Admission,
+    parent_review_id: str,
+    follow_up: bool,
+) -> dict[str, Any]:
+    """Write nothing; return the standing roster's lines `due` and its
+    question. `follow_up` marks a page after an earlier roster page of the
+    chain."""
+    lines = _review.roster_for(
+        deps.store,
+        content,
+        candidates,
+        behavior=deps.config.behavior,
+        admission=admission,
+        excluded_scopes=frozenset(state.disabled_scopes),
+        only=due,
+    )
+    review_id = generate_ulid()
+    response = deps.responses.roster(
+        review_id=review_id,
+        roster=[line.to_line() for line in lines],
+        question=_review.ROSTER_STATEMENT,
+        hint=_roster_hint(review_id, follow_up=follow_up),
+    )
+    _record_review_issued(
+        deps,
+        review_id=review_id,
+        related_ids=[],
+        pre_answered=False,
+        parent_review_id=parent_review_id,
+        response_chars=len(json.dumps(response, ensure_ascii=False)),
+        roster_ids=[line.id for line in lines],
     )
     return response
 
@@ -761,19 +835,81 @@ def _review_chain(
     # store) or one a write row already answered would leave a write no
     # chain counts, so the call is handled as if it carried none: a fresh
     # root review, or a pre-answered decision, with the sent id kept on
-    # the review_issued row for correlation (DESIGN item 2).
+    # the review_issued row for correlation (DESIGN item 2). A roster id
+    # may be answered once named (`review.check_named` holds that).
     chain: _review.Chain | None = None
     stray_id: str | None = None
     allowed = set(related.ids)
     if answers.review_id is not None:
         found = _review.find_chain(deps.store, answers.review_id)
-        allowed |= found.shown
+        allowed |= found.shown | found.roster
         if found.open:
             chain = found
         else:
             stray_id = answers.review_id
     _review.check_answered_ids(answers, allowed)
     return chain, stray_id
+
+
+def _with_named(
+    answers: _review.ReviewAnswers,
+    related: _review.RelatedSet,
+    chain: _review.Chain | None,
+    *,
+    standing_write: bool,
+    content: str,
+    active: list[Memory],
+) -> tuple[_review.RelatedSet, list[str]]:
+    """Take the answers and their chain; return the related set with the roster records it holds, the unseen."""
+    # Once a roster was shown in the open chain (ENG-112), the answers name
+    # the roster records the write touches, and each joins the related set
+    # in full: the relation question, the standing guard and the decision
+    # read it as they read the rest. A roster record the chain has shown in
+    # full stays in the related set whatever a later call names, so its
+    # answer is always read: leaving it out of `named` cannot drop a
+    # conflict, and an answer left out is asked for again. A roster record
+    # in the related set the chain has not shown in full, named now or
+    # drifted into the related set, is unseen: its page comes before any
+    # decision. A record no longer active (removed since) is gone.
+    if chain is None or not chain.roster:
+        return related, []
+    named = _review.check_named(
+        answers,
+        chain.roster,
+        shown=chain.shown | set(related.ids),
+        required=standing_write,
+    )
+    by_id = {m.id: m for m in active}
+    kept = dict.fromkeys([*named, *sorted(chain.roster & chain.shown)])
+    related = related.plus(
+        _review.related_entry(content, by_id[i]) for i in kept if i in by_id
+    )
+    unseen = [i for i in related.ids if i in chain.roster and i not in chain.shown]
+    return related, unseen
+
+
+def _roster_due(
+    deps: ToolHandlers,
+    state: SessionState,
+    *,
+    related: _review.RelatedSet,
+    declared_ids: list[str],
+    admission: Admission,
+    chain: _review.Chain | None,
+) -> tuple[list[Memory], frozenset[str]]:
+    """Take a standing write's review; return the roster's records and the ids a page is due for."""
+    # Every admitted in-force standing record outside the related set and
+    # the declared targets is listed once per chain (ENG-112): the whole
+    # roster first, then only the records that came into force since, so
+    # one written by another session meanwhile is listed too.
+    candidates = _review.roster_candidates(
+        deps.store,
+        admission=admission,
+        excluded_scopes=frozenset(state.disabled_scopes),
+        exclude_ids={*related.ids, *declared_ids},
+    )
+    listed = chain.roster if chain is not None else frozenset()
+    return candidates, frozenset(m.id for m in candidates if m.id not in listed)
 
 
 def _decided_review_id(
@@ -988,6 +1124,117 @@ def _review_refusal(
     return None
 
 
+@dataclass
+class _Coverage:
+    """What a call's answers leave before a decision: the related set with
+    the roster records it holds, the related ids unanswered, whether a
+    capture write defers them, and the page to return instead of deciding,
+    if one is due."""
+
+    related: _review.RelatedSet
+    missing: list[str]
+    deferred: bool
+    page: dict[str, Any] | None = None
+
+
+def _coverage(
+    deps: ToolHandlers,
+    state: SessionState,
+    *,
+    payload: dict[str, Any],
+    answers: _review.ReviewAnswers,
+    related: _review.RelatedSet,
+    chain: _review.Chain | None,
+    stray_id: str | None,
+    tau: _review.Tau,
+    admission: Admission,
+    declared_ids: list[str],
+    active: list[Memory],
+) -> _Coverage:
+    """Take the answers and their chain; return what they cover, or the page still due."""
+    # A score at or above its threshold refuses whatever the relation
+    # answers say, so it needs no coverage; anything else is decided only
+    # when every related id is answered. A capture write that carries its
+    # scores without a review_id is the exception: it commits now, and the
+    # ids it left unanswered wait for the batch's closing call, unless it
+    # is standing and a roster is due: a standing write is shown the
+    # standing roster before it is decided (ENG-112), and the roster
+    # records it names are answered as related ids.
+    refused = answers.secret >= tau.secret or answers.unsafe >= tau.unsafe
+    standing_write = not refused and _standing.is_standing(
+        payload["category"], answers.standing
+    )
+    unseen: list[str] = []
+    if not refused:
+        related, unseen = _with_named(
+            answers,
+            related,
+            chain,
+            standing_write=standing_write,
+            content=payload["content"],
+            active=active,
+        )
+    missing = [i for i in related.ids if i not in answers.relation]
+    captured: _CaptureWrite | None = payload.get("capture")
+    deferrable = (
+        bool(missing)
+        and not refused
+        and captured is not None
+        and answers.review_id is None
+    )
+    # The roster is read only where it decides something: for a capture
+    # write that could defer, and once nothing else is left to show.
+    candidates: list[Memory] = []
+    due: frozenset[str] = frozenset()
+    if standing_write and (deferrable or not (missing or unseen)):
+        candidates, due = _roster_due(
+            deps,
+            state,
+            related=related,
+            declared_ids=declared_ids,
+            admission=admission,
+            chain=chain,
+        )
+    deferred = deferrable and not due
+    if (missing or unseen) and not refused and not deferred:
+        page = _issue_review(
+            deps,
+            related.only([*missing, *unseen]),
+            parent_review_id=chain.root if chain is not None else None,
+            sent_review_id=stray_id,
+            named=bool(unseen),
+        )
+        return _Coverage(related, missing, deferred, page)
+    if due:
+        # Answers sent outside an open chain (pre-answered, or under a
+        # stray review_id) are recorded as a pre-answered row first, and
+        # the roster page follows it in its chain, so the counters still
+        # see a pre-answered write.
+        page = _issue_roster(
+            deps,
+            state,
+            content=payload["content"],
+            candidates=candidates,
+            due=due,
+            admission=admission,
+            parent_review_id=(
+                chain.root
+                if chain is not None
+                else _decided_review_id(
+                    deps,
+                    answers,
+                    related,
+                    chain=None,
+                    stray_id=stray_id,
+                    deferred=False,
+                )
+            ),
+            follow_up=bool(chain is not None and chain.roster),
+        )
+        return _Coverage(related, missing, deferred, page)
+    return _Coverage(related, missing, deferred)
+
+
 def _reviewed_write(
     deps: ToolHandlers,
     state: SessionState,
@@ -1029,27 +1276,23 @@ def _reviewed_write(
 
     chain, stray_id = _review_chain(deps, answers, related)
 
-    # A score at or above its threshold refuses whatever the relation
-    # answers say, so it needs no coverage; anything else is decided only
-    # when every related id is answered. A capture write that carries its
-    # scores without a review_id is the exception: it commits now, and the
-    # ids it left unanswered wait for the batch's closing call.
-    refused = answers.secret >= tau.secret or answers.unsafe >= tau.unsafe
-    missing = [i for i in related.ids if i not in answers.relation]
-    captured: _CaptureWrite | None = payload.get("capture")
-    deferred = (
-        bool(missing)
-        and not refused
-        and captured is not None
-        and answers.review_id is None
+    cover = _coverage(
+        deps,
+        state,
+        payload=payload,
+        answers=answers,
+        related=related,
+        chain=chain,
+        stray_id=stray_id,
+        tau=tau,
+        admission=admission,
+        declared_ids=declared_ids,
+        active=active,
     )
-    if missing and not refused and not deferred:
-        return _issue_review(
-            deps,
-            related.only(missing),
-            parent_review_id=chain.root if chain is not None else None,
-            sent_review_id=stray_id,
-        )
+    if cover.page is not None:
+        return cover.page
+    related, missing, deferred = cover.related, cover.missing, cover.deferred
+    captured: _CaptureWrite | None = payload.get("capture")
 
     review_id = _decided_review_id(
         deps, answers, related, chain=chain, stray_id=stray_id, deferred=deferred

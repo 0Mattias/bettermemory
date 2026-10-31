@@ -235,11 +235,17 @@ owner's grades from `review_grade` events. A chain is unanswered when no
 write carrying one of its review_ids arrives within 30 minutes of its
 latest review and no closing call arrives (a call from the same session
 and client without a review_id that commits within 30 minutes and names
-every related id of the open review). A call carrying a review_id the
+every related id of the open review). A chain whose latest page is a
+standing roster page is answered only by a write carrying one of its
+review_ids. A call carrying a review_id the
 log holds no open chain for (one no review returned, or one a write
 already answered) is recorded as pre-answered, with the sent id kept on
 its `review_issued` row as `sent_review_id`, so every reviewed write is
-in some chain. A chain issued inside the window is judged from rows up
+in some chain; when such a call is a standing write with a roster due,
+the roster page follows that pre-answered row in its chain. The p50 of
+review response sizes leaves roster pages out: a roster page's size
+follows the count of standing memories in force, and stays on its own
+row's `response_chars`. A chain issued inside the window is judged from rows up
 to 30 minutes after `--until`. `--scope` does not filter the section.
 `review_counters.py` holds the computation.
 

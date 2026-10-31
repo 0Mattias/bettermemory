@@ -15,7 +15,9 @@ That call is pre-answered in the log (its own `review_issued` row has
 counted as a chain of its own. The daemon records a call whose review_id
 names no open chain (one the log does not hold, or one a write row
 already answered) the same way, so no reviewed write row falls outside
-every chain. A chain with neither is unanswered once its
+every chain. A chain whose latest row is a standing roster page (ENG-112)
+is answered only by a write carrying one of its review_ids, since no call
+without one answers a roster. A chain with neither is unanswered once its
 window has passed, and pending before that.
 
 Every count is over chains whose root was issued inside the window. A
@@ -114,6 +116,7 @@ class IssuedRow:
     related: tuple[str, ...]
     pre_answered: bool
     response_chars: int | None
+    roster: tuple[str, ...] = ()
 
     @property
     def chain_key(self) -> str:
@@ -140,6 +143,7 @@ class IssuedRow:
                 if isinstance(chars, int) and not isinstance(chars, bool)
                 else None
             ),
+            roster=_ids(event.get("roster")),
         )
 
 
@@ -418,6 +422,10 @@ def build_chains(
         if chain.decided is not None or chain.pre_answered:
             continue
         last = chain.issued[-1]
+        # A standing roster page (ENG-112) is answered by `review.named`
+        # under its review_id: no call without one answers it.
+        if last.roster:
+            continue
         for closer in closers:
             decided = closer.decided
             if closer.absorbed or decided is None:
@@ -682,12 +690,16 @@ def compute_review_report(
                 week[detector] = week.get(detector, 0) + 1
 
     # Response sizes come from the issued review rows inside the window,
-    # each counted under its own row's client and model.
+    # each counted under its own row's client and model. A standing roster
+    # page (ENG-112) is not a review page and is left out: it lists every
+    # standing record in force, and would move the p50 with that count.
     for event in rows:
         if event.get("kind") != _review.REVIEW_ISSUED:
             continue
         row = IssuedRow.from_event(event)
         if row is None or row.pre_answered or row.response_chars is None:
+            continue
+        if row.roster:
             continue
         if not _in_window(row.ts, start, end):
             continue

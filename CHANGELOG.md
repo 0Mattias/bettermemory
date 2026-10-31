@@ -25,6 +25,92 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc15
+
+The fifteenth candidate makes every standing ruling in force reach the
+review of a standing write. The related set holds the engine's top
+three for the write and the cue code's targets; a long write that
+breaks a ruling without using its words leaves that ruling outside it,
+and the write committed with the ruling never shown. A standing write
+is now shown the standing roster before it is decided, and the records
+it names are answered and decided as related ones are. It is a release
+candidate like the fourteenth; the stable 9.0.0 follows the candidates'
+testing.
+
+#### Changed
+
+- **A standing write is shown the standing roster (ENG-112).** A write
+  whose own `standing` answer is at or above `standing.TAU_STANDING`
+  (0.30), or whose category is `ambient`, gets one more `"review"` page
+  once every related id is answered: `review.roster`, every standing
+  memory in force the caller is admitted to, outside the related set,
+  the declared `supersedes` targets and the session's disabled scopes,
+  newest first, one line each (`<id> (<updated>) <text>`), and
+  `review.question`, `review.ROSTER_STATEMENT`. The caller re-sends the
+  same call with `review.named`, the roster ids the write restates,
+  amends, extends or competes with; each named memory comes back in full
+  on a follow-up review and is answered with the relation labels, so a
+  conflict with it refuses as `refused_standing`, replacing it needs
+  `said`, and `extends` links it. A memory that comes into force while
+  the chain is open, or leaves the related set, gets a roster page of
+  its own. `named` is required on every call after a roster page while
+  the write is standing and names only listed ids; a listed memory is
+  answered only once named (or come into the related set) and shown in
+  full, and once shown in full it stays in the review whatever a later
+  call names, so a conflict answered on it cannot be dropped by naming
+  it no more. A `secret` or `unsafe` refusal needs no roster answer. The
+  roster row is a `review_issued` row of the chain with `related: []`
+  and the listed ids in `roster` (kept with telemetry off, as the chain
+  needs it), and the write row's `review_answers` carries `named`. A
+  standing write sent pre-answered is recorded as pre-answered and its
+  roster page follows in that chain. In the review counters a chain
+  whose latest page is a roster page is answered only by a write
+  carrying its review_id, and roster pages are left out of the review
+  pages' size p50. A write that is not standing is reviewed as before.
+  A standing capture write defers its relations to the batch's closing
+  call only when no roster page is due; otherwise it is reviewed and
+  shown the roster before it commits.
+
+  Why a roster and not a ranked leg: the declared replay
+  (receipts `eng112-2026-10-31`) ranked the 2026-10-21 handoff write, as
+  sent, against the standing records in force then; its timelines ruling
+  ranked 24th against the whole write and 20th by the write's best
+  sentence, so no cap of 20 or less held it, and every replay of that
+  case since 2026-10-24 had measured the body the next session corrected,
+  which names the ruling by id. The 2026-10-31 recurrence's two rulings
+  ranked 9th and 3rd.
+
+  The line is the engine's query-biased snippet of the memory, windowed
+  on the terms of the write's sentence it ranks best against (a tie of
+  rank goes to the sentence matching more terms, then the earlier one),
+  at most `review.ROSTER_TEXT_CHARS` (120) characters. Blind reads set
+  it: writers given only the write and a roster, asked the roster's
+  question, named the implicit case's ruling in none of three reads of
+  head lines (the body's first 160 characters; its subject sits past
+  character 400) and in every read of windowed lines (three at 200, two
+  at 120, one of the build's own lines), and the recurrence's two
+  rulings in every read of every form. 120 is the shortest length
+  measured. On those stores a roster page is about 40,500 characters
+  (255 memories) and 24,400 (154), plus each named memory at up to 600,
+  and builds in 2.8 s and 0.3 s; nothing changes for a write that is not
+  standing. The cost grows with the standing memories in force;
+  consolidation (ENG-117) is what keeps that count small, and ENG-109's
+  scale bench reads the page at ten and a hundred times today's count.
+  A line windows where the memory ranks best among the standing memories
+  for one of the write's sentences, which need not be the sentence that
+  breaks it; the reads held every target with that placement, and
+  another placement is a new read.
+
+  The roster is not part of the related set or the questions the
+  integrity benchmark reads, so `RELATED_CONSTANTS`, `QUESTIONS` and the
+  committed review seals are unchanged; its evidence is its own blind
+  reads. (`src/bettermemory/review.py`, `src/bettermemory/handlers/write.py`,
+  `src/bettermemory/_response.py`, `src/bettermemory/events.py`,
+  `src/bettermemory/search.py`, `src/bettermemory/review_counters.py`,
+  `docs/api.md`, `docs/internals.md`, `docs/eval.md`, `docs/operations.md`,
+  `tests/test_write_roster.py`, `tests/test_capture_relations.py`,
+  `tests/_review_rows.py`, `tests/test_write_standing.py`)
+
 ### 9.0.0rc14
 
 The fourteenth candidate is the first cut under the rule that the stable

@@ -145,6 +145,11 @@ def set_tau(monkeypatch: pytest.MonkeyPatch, value: float = TAU) -> float:
     return value
 
 
+def is_roster(res: dict[str, Any]) -> bool:
+    """Whether `res` is a standing roster page (ENG-112)."""
+    return res.get("status") == "review" and "roster" in res.get("review", {})
+
+
 class Harness:
     """One in-process server over one scratch store, recorder on.
 
@@ -186,10 +191,9 @@ class Harness:
         args: dict[str, Any] = {"content": content, "scopes": ["tools"], **kwargs}
         return await call_tool(self.server, "memory_write", args)
 
-    async def answer(
+    def answers(
         self,
         first: dict[str, Any],
-        content: str,
         *,
         label: str = "unrelated",
         labels: dict[str, str] | None = None,
@@ -198,22 +202,42 @@ class Harness:
         standing: float = 0.0,
         only: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Re-send `content` answering the ids `first` showed (or `only`
-        those) with `label`, overridden per id by `labels`."""
+        """The `review` answering the ids `first` showed (or `only` those)
+        with `label`, overridden per id by `labels`."""
         assert first["status"] == "review", first
         shown = [entry["id"] for entry in first["review"]["related"]]
         ids = shown if only is None else only
-        relation = {i: (labels or {}).get(i, label) for i in ids}
-        return await self.write(
-            content,
-            review={
-                "review_id": first["review"]["review_id"],
-                "relation": relation,
-                "unsafe": unsafe,
-                "secret": secret,
-                "standing": standing,
-            },
-        )
+        return {
+            "review_id": first["review"]["review_id"],
+            "relation": {i: (labels or {}).get(i, label) for i in ids},
+            "unsafe": unsafe,
+            "secret": secret,
+            "standing": standing,
+        }
+
+    async def answer(
+        self, first: dict[str, Any], content: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Re-send `content` with `answers(first, **kwargs)`."""
+        return await self.write(content, review=self.answers(first, **kwargs))
+
+    async def name(
+        self,
+        page: dict[str, Any],
+        content: str,
+        sent: dict[str, Any],
+        named: list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Answer the roster `page`: re-send `content` (and `kwargs`) with
+        the answers `sent` under the page's review_id, naming `named`."""
+        assert is_roster(page), page
+        review_answers = {
+            **sent,
+            "review_id": page["review"]["review_id"],
+            "named": list(named or []),
+        }
+        return await self.write(content, review=review_answers, **kwargs)
 
     def related_ids(self, content: str) -> list[str]:
         """The related set the daemon computes for `content` now: the
@@ -250,9 +274,14 @@ class Harness:
         )
 
     async def reviewed_commit(self, content: str, **kwargs: Any) -> dict[str, Any]:
-        """A two-call round trip that commits."""
+        """A round trip that commits: the review answered and, for a
+        standing write a roster page comes to, that page answered naming
+        nothing."""
         first = await self.write(content)
-        res = await self.answer(first, content, **kwargs)
+        sent = self.answers(first, **kwargs)
+        res = await self.write(content, review=sent)
+        if is_roster(res):
+            res = await self.name(res, content, sent)
         assert res["status"] == "committed", res
         return res
 

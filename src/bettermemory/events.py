@@ -300,8 +300,9 @@ def _kept(*names: str, **inside: tuple[str, ...]) -> KeptFields:
 #:   session in a checkout for the episode handoff's quiet-session check.
 #: - ``episode_handoff`` and ``episode_write``: their ``harness_session``
 #:   stamp alone, which tells that check a session journaled.
-#: - ``review_issued``: ``review_id``, ``parent_review_id`` and the
-#:   ``related`` ids, a review chain (`review.find_chain`).
+#: - ``review_issued``: ``review_id``, ``parent_review_id``, the
+#:   ``related`` ids and the ``roster`` ids, a review chain
+#:   (`review.find_chain`).
 #: - ``scope_disable`` and ``scope_enable``: ``scope``, what a session
 #:   turned off (`sessions._disabled_scopes_from_events`).
 #: - ``standing_guard``, the audit row of a standing change: ``door``,
@@ -315,7 +316,7 @@ STATE_FIELDS: Mapping[str, KeptFields] = MappingProxyType(
         "prompt_recall": _kept(
             "agent_id", "checkout", "event_id", "harness", "segment", "shown_ids"
         ),
-        "review_issued": _kept("parent_review_id", "related", "review_id"),
+        "review_issued": _kept("parent_review_id", "related", "review_id", "roster"),
         "review_unanswered": _kept("harness", "root_ids"),
         "scope_disable": _kept("scope"),
         "scope_enable": _kept("scope"),

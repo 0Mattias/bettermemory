@@ -29,7 +29,14 @@ from bettermemory.recall import WORDS
 from bettermemory.store import StandingAnswer
 from bettermemory.supersession import SupersessionMatch, SupersessionReport
 
-from ._review_rows import FACTS, ORIGIN, Harness, fix_origin_and_identity, set_tau
+from ._review_rows import (
+    FACTS,
+    ORIGIN,
+    Harness,
+    fix_origin_and_identity,
+    is_roster,
+    set_tau,
+)
 
 RULE = FACTS[0]
 CONFLICTING = "The ledger app deploys from the infra folder."
@@ -79,7 +86,8 @@ async def _decide(
     """`content` decided in one call: every related id answered (by
     `labels`, else unrelated), scores 0 and the write's own standing
     answer `own`. The related set leaves out the declared targets, as the
-    daemon's does."""
+    daemon's does. A roster page a standing write comes to is answered
+    naming nothing (`Harness.name`)."""
     ids = review.related_for(
         h.store,
         content,
@@ -100,7 +108,11 @@ async def _decide(
         args["supersedes"] = supersedes
     if category is not None:
         args["category"] = category
-    return await h.write(content, **args)
+    res = await h.write(content, **args)
+    if is_roster(res):
+        rest = {k: v for k, v in args.items() if k != "review"}
+        res = await h.name(res, content, answers, **rest)
+    return res
 
 
 def _admission(h: Harness) -> Admission:

@@ -740,7 +740,7 @@ claim excerpt, note, reason or quoted word, and no transcript path.
 | `prompt_recall` | `event_id`, `shown_ids`, `segment`, `harness`, `checkout`, `agent_id` | the same |
 | `segment_opened` | `segment`, `harness`, `marker`, `marker_absent`, `opened_at`, `brief_event_id`, `withdrawn`, `agent_id` | a session's recall state |
 | `review_unanswered` | `root_ids`, `harness` | a session's recall state |
-| `review_issued` | `review_id`, `parent_review_id`, `related` | review chains |
+| `review_issued` | `review_id`, `parent_review_id`, `related`, `roster` | review chains |
 | `scope_disable`, `scope_enable` | `scope` | the scopes a session turned off |
 | `episode_handoff`, `episode_write` | the stamps alone | the episode handoff's quiet-session check |
 | `standing_guard` | `door`, `standing`, `said_checked` | the audit trail |
