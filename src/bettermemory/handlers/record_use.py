@@ -8,6 +8,12 @@ Description-edit history:
   outcomes (`ignored`, `contradicted`, `corrected`) with a 3-row
   mental model table; `applied` demoted to a one-liner. The handler
   still accepts `applied` so explicit callers keep working.
+- ENG-112 (9.0.0rc15): "hits settle as applied on their own" left the
+  description. The server instructions carry the same sentence
+  ("Retrievals settle as applied on their own."), which every session
+  reads, and its 36 characters paid for `memory_update`'s `review`
+  argument under the served surface's 8,000-character ceiling, as D1's
+  trim of the episode description's copy of an instructions sentence did.
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ if TYPE_CHECKING:
 
 
 DESC_MEMORY_RECORD_USE = (
-    "Override a retrieval's outcome; hits settle as applied on their own. "
+    "Override a retrieval's outcome. "
     "ignored: off-topic. contradicted: wrong and unfixed; flags the memory "
     "until an update or verify. corrected: drifted and fixed this turn. "
     "`claim_excerpts`: per id, the sentence it shaped."

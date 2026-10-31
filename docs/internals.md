@@ -1151,7 +1151,10 @@ write is shown (`roster_candidates`, `roster_for`, answered with
 `review.named`, whose ids the chain reads from the `roster` field of its
 `review_issued` rows) and the pure decision, with
 `handlers/write.py` as the daemon's side of it (the review response,
-the roster page, the `review_issued` row, the refusals and the commit) and
+the roster page, the `review_issued` row, the refusals and the commit),
+`handlers/standing_review.py` as the same roster on an update that
+makes a stored memory standing (`memory_update`, the door
+`answer_standing` sends such answers to) and
 `review_samples.py` and `review_counters.py` as its grading surface
 (`cli/review_cmd.py`). `capture.py` is session capture's bar, its
 instruction and its batches on the log; `capture_hook.py` is the Stop

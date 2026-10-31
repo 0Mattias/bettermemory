@@ -271,7 +271,8 @@ def _kept(*names: str, **inside: tuple[str, ...]) -> KeptFields:
 #:   show also closes a segment's opened pointer
 #:   (`recall_settle.settle_unused`).
 #: - ``write`` and ``update``: ``id`` and ``status`` (the seen gate reads
-#:   a committed one's id), a write's ``review_id`` (`review.find_chain`),
+#:   a committed one's id), a write's ``review_id`` and an update's, when
+#:   its standing roster decided it (`review.find_chain`),
 #:   the gates' detector kinds and markers (health's override rate,
 #:   `secret_scan`'s acknowledged credentials), ``forced`` and the policy
 #:   refusal's flags (the audit trail).
@@ -302,7 +303,8 @@ def _kept(*names: str, **inside: tuple[str, ...]) -> KeptFields:
 #:   stamp alone, which tells that check a session journaled.
 #: - ``review_issued``: ``review_id``, ``parent_review_id``, the
 #:   ``related`` ids and the ``roster`` ids, a review chain
-#:   (`review.find_chain`).
+#:   (`review.find_chain`), and an update's roster's ``door`` and
+#:   ``record``, which bind its chain to the memory it reviews.
 #: - ``scope_disable`` and ``scope_enable``: ``scope``, what a session
 #:   turned off (`sessions._disabled_scopes_from_events`).
 #: - ``standing_guard``, the audit row of a standing change: ``door``,
@@ -316,7 +318,9 @@ STATE_FIELDS: Mapping[str, KeptFields] = MappingProxyType(
         "prompt_recall": _kept(
             "agent_id", "checkout", "event_id", "harness", "segment", "shown_ids"
         ),
-        "review_issued": _kept("parent_review_id", "related", "review_id", "roster"),
+        "review_issued": _kept(
+            "door", "parent_review_id", "record", "related", "review_id", "roster"
+        ),
         "review_unanswered": _kept("harness", "root_ids"),
         "scope_disable": _kept("scope"),
         "scope_enable": _kept("scope"),
@@ -362,6 +366,7 @@ STATE_FIELDS: Mapping[str, KeptFields] = MappingProxyType(
             "policy_flags",
             "policy_keys",
             "policy_managed",
+            "review_id",
             "status",
         ),
         "use": _kept(

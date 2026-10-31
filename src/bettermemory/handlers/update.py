@@ -61,10 +61,12 @@ from ._shared import (
     _validate_scope_count,
 )
 from . import _guard
+from . import standing_review as _standing_review
 from .write import _find_user_claims
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..session import SessionState
 
 
 _STANDING_HINT = (
@@ -155,6 +157,7 @@ async def memory_update(
     acknowledge_truncation: bool = False,
     standing: float | None = None,
     said: str | None = None,
+    review: dict[str, Any] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
@@ -185,7 +188,9 @@ async def memory_update(
         raise ValueError(str(exc)) from exc
 
     if metadata_only and standing_answer is not None:
-        return _answer_standing_only(deps, id, existing, standing_answer, said)
+        return _answer_standing_only(
+            deps, state, id, existing, standing_answer, said=said, review=review
+        )
 
     new_scopes = _new_scopes(deps, existing, scopes)
     new_confidence = _new_confidence(existing, confidence)
@@ -206,7 +211,7 @@ async def memory_update(
     new_body = body_edit.body
     new_links = _new_links(id, existing, links)
 
-    refusal = _guard_or_ask_standing(
+    refusal, held = _guard_or_ask_standing(
         deps,
         id,
         existing,
@@ -220,19 +225,37 @@ async def memory_update(
     if refusal is not None:
         return refusal
 
+    # A change that makes a standing statement is read against the
+    # standing roster first (ENG-112, `standing_review`).
+    roster = _standing_review.review_change(
+        deps,
+        state,
+        existing,
+        body=new_body,
+        category=new_category.value if new_category is not None else None,
+        probability=_answer_for(deps, existing, new_body, standing_answer),
+        review=review,
+        said=said,
+    )
+    early = _standing_review.early_response(deps, id, roster)
+    if early is not None:
+        return early
+
+    reviewed_links = _standing_review.review_links(list(new_links), roster)
     update_fields = _update_fields(
         content,
         new_body=new_body,
         new_scopes=new_scopes,
         new_confidence=new_confidence,
         new_category=new_category,
-        new_links=new_links,
+        new_links=reviewed_links,
     )
     merged = existing.model_copy(update=update_fields)
     commit = _commit_update(deps, id, merged, content, standing_answer)
     if commit[1] is not None:
         return commit[1]
     updated = commit[0]
+    extras = _standing_review.after_commit(deps, updated, roster)
     _record_update(
         deps,
         updated,
@@ -244,8 +267,48 @@ async def memory_update(
         links=links,
         standing=standing,
         standing_answer=standing_answer,
+        review_fields=roster.fields() if roster is not None else {},
+        review_linked=reviewed_links != list(new_links),
     )
-    return deps.responses.committed(updated)
+    response = deps.responses.committed(updated, **extras)
+    response.update(_words_written(deps, held, roster))
+    return response
+
+
+def _words_written(
+    deps: ToolHandlers,
+    held: _guard.Held | None,
+    roster: _standing_review.StandingReview | None,
+) -> dict[str, Any]:
+    """Write the guard's row for the committed change (`_guard.Held`);
+    return the reply's ``said_checked: false`` when any words the change
+    rests on, the guard's or the roster's, were taken unchecked."""
+    if held is not None:
+        held.write(deps)
+    words = [
+        w
+        for w in (
+            held.words if held is not None else None,
+            roster.words if roster is not None and roster.rests else None,
+        )
+        if w is not None
+    ]
+    return {"said_checked": False} if any(not w.checked for w in words) else {}
+
+
+def _answer_for(
+    deps: ToolHandlers,
+    existing: Memory,
+    new_body: str,
+    standing_answer: StandingAnswer | None,
+) -> float | None:
+    """The standing answer for the body an edit leaves: the call's own,
+    else the record's current one when the body is unchanged, else none."""
+    if standing_answer is not None:
+        return standing_answer.probability
+    if new_body != existing.body:
+        return None
+    return _standing.answers(deps.store, [existing.id]).get(existing.id)
 
 
 class _BodyEdit(NamedTuple):
@@ -331,14 +394,19 @@ def _check_update_request(
 
 def _answer_standing_only(
     deps: ToolHandlers,
+    state: SessionState,
     id: str,
     existing: Memory,
     standing_answer: StandingAnswer,
+    *,
     said: str | None,
+    review: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Take an answer-only call; store the answer and return the response."""
     # Only the answer: its row, for the current body, and no edit. A
-    # lower answer for a guarded record rests on the user's words.
+    # lower answer for a guarded record rests on the user's words; one
+    # that makes the record standing is read against the standing roster
+    # first (ENG-112), whose update and extends answers link from it.
     records = _guarded_change(
         deps,
         existing,
@@ -348,15 +416,44 @@ def _answer_standing_only(
         new_links=list(existing.links),
         standing_answer=standing_answer,
     )
-    refusal = _guard.guard(deps, "memory_update", records, said)
+    refusal, held = _guard.check(deps, "memory_update", records, said)
     if refusal is not None:
         deps.recorder.record("update", id=id, status="refused_standing")
         return refusal
-    deps.store.put_standing(id, standing_answer)
-    deps.recorder.record(
-        "update", id=id, fields=["standing"], standing=standing_answer.probability
+    roster = _standing_review.review_change(
+        deps,
+        state,
+        existing,
+        body=existing.body,
+        category=existing.category.value if existing.category is not None else None,
+        probability=standing_answer.probability,
+        review=review,
+        said=said,
     )
-    return deps.responses.committed(existing)
+    early = _standing_review.early_response(deps, id, roster)
+    if early is not None:
+        return early
+    links = _standing_review.review_links(list(existing.links), roster)
+    updated = existing
+    if links != list(existing.links):
+        merged = existing.model_copy(update={"links": links})
+        commit = _commit_update(deps, id, merged, None, standing_answer)
+        if commit[1] is not None:
+            return commit[1]
+        updated = commit[0]
+    else:
+        deps.store.put_standing(id, standing_answer)
+    extras = _standing_review.after_commit(deps, updated, roster)
+    deps.recorder.record(
+        "update",
+        id=id,
+        fields=["standing"] if updated is existing else ["standing", "links"],
+        standing=standing_answer.probability,
+        **(roster.fields() if roster is not None else {}),
+    )
+    response = deps.responses.committed(updated, **extras)
+    response.update(_words_written(deps, held, roster))
+    return response
 
 
 def _new_scopes(
@@ -859,8 +956,10 @@ def _guard_or_ask_standing(
     new_links: list[MemoryLink],
     standing_answer: StandingAnswer | None,
     said: str | None,
-) -> dict[str, Any] | None:
-    """Take the resolved edit; return the guard's refusal or the standing question, or None."""
+) -> tuple[dict[str, Any] | None, _guard.Held | None]:
+    """Take the resolved edit; return the guard's refusal or the standing
+    question, or None, and the words the change rests on, whose row is
+    written once it commits (`_guard.check`)."""
     # A change that takes a guarded record out of force or out of standing,
     # or edits it, rests on the user's words (unit RS-F7 part 5).
     records = _guarded_change(
@@ -872,10 +971,10 @@ def _guard_or_ask_standing(
         new_links=list(new_links),
         standing_answer=standing_answer,
     )
-    refusal = _guard.guard(deps, "memory_update", records, said)
+    refusal, held = _guard.check(deps, "memory_update", records, said)
     if refusal is not None:
         deps.recorder.record("update", id=id, status="refused_standing")
-        return refusal
+        return refusal, None
 
     # An edit of the body is answered for the new body in this call while
     # the question is asked (`standing.asking`, the review's switch), so
@@ -892,8 +991,8 @@ def _guard_or_ask_standing(
                 }
             },
             "hint": _STANDING_HINT,
-        }
-    return None
+        }, None
+    return None, held
 
 
 def _update_fields(
@@ -1017,8 +1116,12 @@ def _record_update(
     links: list[dict[str, Any]] | None,
     standing: float | None,
     standing_answer: StandingAnswer | None,
+    review_fields: dict[str, Any],
+    review_linked: bool,
 ) -> None:
-    """Take the committed record and the call; record the `update` success row."""
+    """Take the committed record and the call; record the `update` success
+    row, with the standing roster's review fields when it decided it
+    (``links`` among the fields when its answers set links)."""
     fields_changed = [
         name
         for name, value in (
@@ -1031,6 +1134,8 @@ def _record_update(
         )
         if value is not None
     ]
+    if review_linked and "links" not in fields_changed:
+        fields_changed.append("links")
     deps.recorder.record(
         "update",
         id=updated.id,
@@ -1047,6 +1152,7 @@ def _record_update(
             if standing_answer is not None
             else {}
         ),
+        **review_fields,
     )
 
 

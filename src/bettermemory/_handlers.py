@@ -547,9 +547,17 @@ class ToolHandlers:
         acknowledge_truncation: bool = False,
         standing: float | None = None,
         said: str | None = None,
+        # The answers to an update's standing roster (ENG-112), served as
+        # memory_write's `review` is: an object with no null branch, its
+        # format in the roster page's hint.
+        review: dict[str, Any] = Field(default_factory=dict),
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
+        # A direct Python call that omits `review` receives the FieldInfo
+        # default itself, as memory_write's does.
+        if isinstance(review, FieldInfo):
+            review = {}
         return await deps._run(
             lambda d: _handlers_pkg.memory_update(
                 d,
@@ -565,6 +573,7 @@ class ToolHandlers:
                 acknowledge_truncation=acknowledge_truncation,
                 standing=standing,
                 said=said,
+                review=review,
                 ctx=ctx,
             )
         )

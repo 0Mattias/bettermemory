@@ -61,8 +61,7 @@ DESC_MEMORY_ADMIN = (
     "here): `answer` separate on your judgement, or join on the user's "
     "words in `said`; `target` picks among several. join_project: merge "
     "project `id` into this checkout's, on the user's words in `said`. "
-    "unjoin_project: undo it. answer_standing: `standing` {id: 0 to 1} "
-    "answers the standing question."
+    "unjoin_project: undo it. answer_standing: `standing` {id: 0 to 1}."
 )
 
 

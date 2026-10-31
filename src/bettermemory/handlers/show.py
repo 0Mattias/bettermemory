@@ -237,8 +237,9 @@ def _apply_show_trust_and_standing(
         )
     # The standing question (unit RS-F7 part 1) rides the response of a
     # record with no answer for its current body while the question is
-    # asked: the agent has it in hand, and memory_admin answer_standing
-    # takes the answer.
+    # asked: the agent has it in hand, and memory_update(standing=...)
+    # takes the answer, through the standing roster when it makes the
+    # record standing (ENG-112).
     if (
         _standing.asking()
         and _standing.answers(deps.store, [memory.id]).get(memory.id) is None

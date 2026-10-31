@@ -103,6 +103,8 @@ from .write_gates import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .._handlers import ToolHandlers
     from ..admission import Admission
     from ..location import Caller
@@ -723,13 +725,18 @@ def _record_review_issued(
     sent_review_id: str | None = None,
     deferred: bool = False,
     roster_ids: list[str] | None = None,
+    door: str | None = None,
+    record: str | None = None,
 ) -> None:
     """The review_issued row: ids, the actor's client and model, and the
     chain fields. Never a body. `sent_review_id` is a review_id the call
     carried that the log holds no open chain for, kept for correlation.
     `deferred` marks a capture write that committed with relations pending
     for the batch's closing call. `roster_ids` are the ids a roster page
-    listed (ENG-112), which the chain lets the answers name."""
+    listed (ENG-112), which the chain lets the answers name. `door` and
+    `record` mark a page of an update's standing roster
+    (`handlers.standing_review`) and the memory it reviews; a write's rows
+    carry neither."""
     fields: dict[str, Any] = {
         "review_id": review_id,
         "related": related_ids,
@@ -739,6 +746,9 @@ def _record_review_issued(
     }
     if roster_ids is not None:
         fields["roster"] = roster_ids
+    if door is not None:
+        fields["door"] = door
+        fields["record"] = record
     if deferred:
         fields["deferred"] = True
     if response_chars is not None:
@@ -790,12 +800,17 @@ def _issue_roster(
     candidates: list[Memory],
     due: frozenset[str],
     admission: Admission,
-    parent_review_id: str,
+    parent_review_id: str | None,
     follow_up: bool,
+    hint: Callable[[str, bool], str] | None = None,
+    door: str | None = None,
+    record: str | None = None,
 ) -> dict[str, Any]:
     """Write nothing; return the standing roster's lines `due` and its
     question. `follow_up` marks a page after an earlier roster page of the
-    chain."""
+    chain. An update's standing roster passes its own `hint` (review_id,
+    follow_up), its `door` and the `record` it reviews, and roots its
+    chain at its first page (`parent_review_id` None)."""
     lines = _review.roster_for(
         deps.store,
         content,
@@ -810,7 +825,11 @@ def _issue_roster(
         review_id=review_id,
         roster=[line.to_line() for line in lines],
         question=_review.ROSTER_STATEMENT,
-        hint=_roster_hint(review_id, follow_up=follow_up),
+        hint=(
+            _roster_hint(review_id, follow_up=follow_up)
+            if hint is None
+            else hint(review_id, follow_up)
+        ),
     )
     _record_review_issued(
         deps,
@@ -820,6 +839,8 @@ def _issue_roster(
         parent_review_id=parent_review_id,
         response_chars=len(json.dumps(response, ensure_ascii=False)),
         roster_ids=[line.id for line in lines],
+        door=door,
+        record=record,
     )
     return response
 
@@ -836,14 +857,16 @@ def _review_chain(
     # chain counts, so the call is handled as if it carried none: a fresh
     # root review, or a pre-answered decision, with the sent id kept on
     # the review_issued row for correlation (DESIGN item 2). A roster id
-    # may be answered once named (`review.check_named` holds that).
+    # may be answered once named (`review.check_named` holds that). An
+    # update's standing roster chain (one with a door) is never a write's.
     chain: _review.Chain | None = None
     stray_id: str | None = None
     allowed = set(related.ids)
     if answers.review_id is not None:
         found = _review.find_chain(deps.store, answers.review_id)
-        allowed |= found.shown | found.roster
-        if found.open:
+        if found.door is None:
+            allowed |= found.shown | found.roster
+        if found.open and found.door is None:
             chain = found
         else:
             stray_id = answers.review_id

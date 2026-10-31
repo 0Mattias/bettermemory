@@ -33,9 +33,12 @@ three for the write and the cue code's targets; a long write that
 breaks a ruling without using its words leaves that ruling outside it,
 and the write committed with the ruling never shown. A standing write
 is now shown the standing roster before it is decided, and the records
-it names are answered and decided as related ones are. It is a release
-candidate like the fourteenth; the stable 9.0.0 follows the candidates'
-testing.
+it names are answered and decided as related ones are; so is an update
+that makes a stored memory in force standing. A standing memory that
+comes back into force (the memory replacing it unlinked or removed, or
+itself restored) is not read against the roster yet. It is a release
+candidate like the fourteenth; the stable 9.0.0 follows the
+candidates' testing.
 
 #### Changed
 
@@ -110,6 +113,111 @@ testing.
   `docs/api.md`, `docs/internals.md`, `docs/eval.md`, `docs/operations.md`,
   `tests/test_write_roster.py`, `tests/test_capture_relations.py`,
   `tests/_review_rows.py`, `tests/test_write_standing.py`)
+
+- **An update that makes a memory standing is shown the standing roster
+  too (ENG-112).** Three doors made a stored memory standing with no
+  roster: `memory_update` with a `standing` answer, `memory_update`
+  setting the category to `ambient`, and
+  `memory_admin(action="answer_standing")`. While the write review is
+  in force, a `memory_update` that leaves its memory standing and in
+  force with a statement no roster has checked (its body edited while it
+  stays standing, a `standing` answer that makes it standing, or its
+  category made `ambient`) now writes nothing on the call that would
+  make the change and returns the standing roster instead: the page,
+  lines and question a standing write gets, listing every other
+  standing memory in force the caller is admitted to, outside the
+  session's disabled scopes, each line windowed on the body the call
+  leaves. The caller re-sends the same call with the new `review`
+  argument, `{"review_id", "named", "relation"}`. Each named memory comes
+  back in full and is answered with the relation labels, decided as a
+  write's answers are: a `conflict` with a standing memory refuses as
+  `refused_standing`; replacing one (an `update` answer) needs `said`
+  and sets a `supersedes` link between claim-sized statements or names
+  it in `update_suggested`; `extends` sets an `extends` link; a
+  `conflict` with a memory no longer standing files the pair. `restates`
+  links nothing and refuses nothing, since the memory is in the store
+  whether or not it is standing. The chain follows the write's rules for
+  named ids, full text and memories that come into force while it is
+  open. Its pages are `review_issued` rows carrying `door:
+  "memory_update"` and the memory's id in `record`, and the `update` row
+  that commits carries the review_id, which closes the chain. A
+  refusal's row does not: the memory is unchanged, so the call re-sent
+  with `said` or other answers is decided on the pages the chain already
+  showed. The three fields are kept with telemetry off, as the chain
+  reads them. A write's call cannot answer an update's chain, nor an
+  update of another memory; the write review's counters and samples
+  leave the update's rows out, and the Stop's `review_unanswered`
+  counts an update's open chain as it counts a write's. `answer_standing`
+  no longer records, while the review is in force, an answer that would
+  make a memory in force standing: it records the call's other answers,
+  returns those ids under `standing_review`, each to be answered with
+  `memory_update(id, standing=...)`, whose review shows the roster, and
+  leaves them out of the reply's `records`. An answer that keeps a
+  standing memory standing, leaves a memory not standing, or is given
+  for a memory out of force, is recorded as before, and with the review
+  off nothing changes. `memory_show`'s `standing_question` now names
+  `memory_update(id, standing=...)`, which takes any answer.
+  `memory_update` gains `review` (a plain object, as on
+  `memory_write`); to keep the served surface under its 8,000-character
+  ceiling, `memory_record_use`'s description drops its copy of the
+  instructions' sentence that retrievals settle as applied on their own,
+  and `memory_admin`'s `answer_standing` clause drops "answers the
+  standing question", which the call's own response states.
+
+  Why `memory_update`, one memory at a time: the live log from
+  9.0.0rc7's switch to this candidate's start (2026-10-25 to
+  2026-10-31, read from a read-only copy) holds 21 standing writes
+  against 19 `memory_update` body edits of a standing memory that stayed
+  standing, 5 updates and 181 `answer_standing` answers that made a
+  memory standing, and 7 category changes to `ambient` over the log's
+  life. Edits are as frequent as standing writes and amend the records
+  the roster protects, so they pay a standing write's cost. 176 of the
+  181 answers came in one hour of 2026-10-27, the store's one-time
+  backfill (924 answers in 87 calls); `answer_standing` has not been
+  called since. A raise goes through `memory_update` rather than a page
+  shared by the batch: the blind reads that set the line measured one
+  statement against its roster; a page whose lines are windowed on
+  several memories' sentences and named per memory is a reading task no
+  read measured, and it leaves the pairs among the batch's own memories
+  unread. One at a time, each memory is read against every standing
+  memory in force when it is raised, the ones raised before it
+  included. The cost is a standing write's per memory raised, about one
+  a day outside a backfill; a backfill of an existing store pays a
+  roster page per memory it answers standing, and the answers below the
+  threshold, most of a backfill (748 of the 924), are recorded in bulk
+  as before. Rejected: sending the change through
+  `memory_write(supersedes=[id])`, which gives each edit a new record
+  and loses the memory's id, links, verification and claims, and gives a
+  raise a duplicate of its own body; a roster on `answer_standing`'s
+  batch page, for the reason above.
+
+  `memory_update`'s `standing_guard` row is now written once the change
+  commits. It was written when the words read, before the change, so a
+  call that then returned the standing question, a roster page or a
+  refusal, or raised, left a row for a change that never happened, one
+  per page of a roster chain. The committed reply carries `said_checked:
+  false` when the words were taken unchecked, as `memory_write`'s does.
+  The `update` row's `fields` names `links` when the roster's answers
+  set them, and roster answers that would take the memory past its 64
+  links raise before anything is written.
+
+  Not covered: a memory made standing while out of force (an answer or
+  an edit of a superseded memory) is recorded with no roster and comes
+  into force unread when the memory replacing it is unlinked or
+  removed, and a standing memory restored comes back into force unread
+  too. Those doors bring a memory back into force rather than make a
+  statement; reading a memory as it re-enters force is found work.
+  (`src/bettermemory/handlers/standing_review.py`,
+  `src/bettermemory/handlers/update.py`, `src/bettermemory/handlers/standing.py`,
+  `src/bettermemory/handlers/_guard.py`, `src/bettermemory/handlers/show.py`,
+  `src/bettermemory/handlers/write.py`, `src/bettermemory/review.py`,
+  `src/bettermemory/standing.py`, `src/bettermemory/events.py`,
+  `src/bettermemory/review_counters.py`, `src/bettermemory/recall_settle.py`,
+  `src/bettermemory/eval_model.py`, `src/bettermemory/_handlers.py`,
+  `src/bettermemory/handlers/record_use.py`, `src/bettermemory/handlers/admin.py`,
+  `docs/api.md`, `docs/internals.md`, `docs/eval.md`, `docs/operations.md`,
+  `tests/test_update_roster.py`, `tests/test_standing.py`,
+  `tests/test_row_classes.py`, `tests/test_tool_surface.py`)
 
 ### 9.0.0rc14
 

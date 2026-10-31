@@ -216,8 +216,9 @@ async def test_memory_show_asks_a_record_with_no_answer(h: Harness) -> None:
     shown = await call_tool(h.server, "memory_show", {"id": record})
     question = shown["standing_question"]
     assert question["instructions"] == review.STANDING_STATEMENT
-    assert f'standing={{"{record}": <0 to 1>}}' in question["hint"]
-    assert 'action="answer_standing"' in question["hint"]
+    # memory_update takes any answer, through the standing roster when it
+    # makes the record standing (ENG-112).
+    assert f'memory_update(id="{record}", standing=<0 to 1>)' in question["hint"]
 
     await _answer_standing(h, {record: 0.2})
     again = await call_tool(h.server, "memory_show", {"id": record})
@@ -243,7 +244,10 @@ async def test_answer_standing_shows_the_newest_waiting_records_in_batches(
     assert [r["id"] for r in second["records"]] == list(reversed(ids[:2]))
     assert all(_rows(h)[i]["source"] == standing.SOURCE_ASKED for i in shown)
 
-    last = await _answer_standing(h, {i: 0.9 for i in ids[:2]})
+    # Answers below the threshold are recorded here in bulk; one that would
+    # make a memory standing goes to memory_update's standing roster
+    # (ENG-112, tests/test_update_roster.py).
+    last = await _answer_standing(h, {i: 0.2 for i in ids[:2]})
     assert last["waiting"] == 0
     assert "records" not in last and "question" not in last
     assert last["hint"] == standing.batch_hint(0)
@@ -288,8 +292,8 @@ async def test_answer_standing_counts_what_the_callers_search_reads(
     shown = await call_tool(h.server, "memory_show", {"id": unhomed})
     assert "standing_question" in shown
     # Any active record takes an answer.
-    await _answer_standing(h, {unhomed: 0.4})
-    assert standing.answers(h.store, [unhomed]) == {unhomed: 0.4}
+    await _answer_standing(h, {unhomed: 0.2})
+    assert standing.answers(h.store, [unhomed]) == {unhomed: 0.2}
 
 
 # ---------------------------------------------------------------------------

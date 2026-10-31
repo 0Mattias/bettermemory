@@ -43,6 +43,7 @@ _NON_LITERAL_SITES: dict[tuple[str, str], str | None] = {
     ("events.py", "kind"): None,
     ("handlers/write.py", "_review.REVIEW_ISSUED"): review.REVIEW_ISSUED,
     ("handlers/write.py", "deps"): None,
+    ("handlers/standing_review.py", "deps"): None,
 }
 
 

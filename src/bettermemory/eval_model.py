@@ -1203,8 +1203,9 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ()
 # the capture rules, written by ``bettermemory capture grade`` under a
 # throwaway CLI session. Admin-recorded by kind, like ``review_grade``.
 #
-# ``review_unanswered`` is the Stop's count of the write-review chains
-# the conversation left open since its previous turn
+# ``review_unanswered`` is the Stop's count of the review chains, a
+# write's or an update's standing roster (ENG-112), the conversation left
+# open since its previous turn
 # (`recall_settle.review_unanswered`). A hook record, not a tool call, and not
 # a retrieval kind.
 #

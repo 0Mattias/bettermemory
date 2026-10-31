@@ -30,6 +30,9 @@ integrity bench imports them rather than copying them:
   the standing guard and `apply_review` read them as they read the rest.
   The roster is not part of the related set the integrity bench reads,
   and its constants are not sealed: its evidence is its own blind reads.
+  An update that makes a stored memory standing is shown the same page
+  (`handlers/standing_review.py`), answered as `parse_update_answers`
+  reads it and decided by `apply_review` with `restates_refuses` off.
 - `TAU_UNSAFE` and `TAU_SECRET`: the thresholds, the sealed review points'
   tau (bench/integrity/v1/operating-points-review.json, fitted on v1 dev).
   While either is None no review is issued, so `memory_write` behaves as it
@@ -652,6 +655,17 @@ _ANSWER_KEYS = frozenset(
     {"review_id", "relation", "unsafe", "secret", "standing", "said", "named"}
 )
 
+#: The answers of an update's standing roster (ENG-112), as its hints and
+#: its teaching errors write them: the chain's keys alone, since an update
+#: asks neither the unsafe nor the secret question and takes its standing
+#: answer and the user's words as arguments of their own.
+UPDATE_ANSWER_FORMAT = (
+    'review={"review_id": <id>, "named": [<roster id>, ...], "relation": '
+    "{<named id>: " + LABEL_CHOICES + "}}"
+)
+
+_UPDATE_ANSWER_KEYS = frozenset({"review_id", "relation", "named"})
+
 
 @dataclass(frozen=True)
 class ReviewAnswers:
@@ -717,6 +731,51 @@ def _score(raw: Mapping[str, Any], key: str) -> float:
     return number
 
 
+def _chain_keys(
+    raw: Mapping[str, Any], fmt: str
+) -> tuple[str | None, dict[str, str], tuple[str, ...] | None]:
+    """The chain's keys of a `review` argument, read the one way both
+    doors read them: the review_id, the relation labels and `named`.
+    Raises `ReviewAnswerError` naming `fmt` for a malformed one."""
+    review_id = raw.get("review_id")
+    if review_id is not None and (
+        not isinstance(review_id, str) or not is_valid_ulid(review_id)
+    ):
+        raise ReviewAnswerError(
+            f"review.review_id must be the review_id a review returned, got "
+            f"{review_id!r}. Omit it if you have none."
+        )
+    relation_raw = raw.get("relation", {})
+    if relation_raw is None:
+        relation_raw = {}
+    if not isinstance(relation_raw, Mapping):
+        raise ReviewAnswerError(
+            f"review.relation must be an object of id to label. Format: {fmt}"
+        )
+    relation: dict[str, str] = {}
+    for memory_id, label in relation_raw.items():
+        if not isinstance(memory_id, str) or not isinstance(label, str):
+            raise ReviewAnswerError(
+                f"review.relation maps ids to labels. Format: {fmt}"
+            )
+        if label not in LABELS:
+            raise ReviewAnswerError(
+                f"review.relation[{memory_id!r}] is {label!r}, which is not a label; "
+                f"use one of {', '.join(LABELS)}."
+            )
+        relation[memory_id] = label
+    named_raw = raw.get("named")
+    if named_raw is not None and (
+        not isinstance(named_raw, (list, tuple))
+        or not all(isinstance(i, str) for i in named_raw)
+    ):
+        raise ReviewAnswerError(
+            f"review.named is a list of roster ids. Format: {NAMED_FORMAT}"
+        )
+    named = tuple(dict.fromkeys(named_raw)) if named_raw is not None else None
+    return review_id, relation, named
+
+
 def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
     """Read a call's `review` argument. None when it is absent or empty,
     which is a first call. Raises `ReviewAnswerError`, a teaching error,
@@ -737,46 +796,12 @@ def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
         raise ReviewAnswerError(
             f"review carries unknown keys {unknown}. Format: {ANSWER_FORMAT}"
         )
-    review_id = raw.get("review_id")
-    if review_id is not None and (
-        not isinstance(review_id, str) or not is_valid_ulid(review_id)
-    ):
-        raise ReviewAnswerError(
-            f"review.review_id must be the review_id a review returned, got "
-            f"{review_id!r}. Omit it if you have none."
-        )
-    relation_raw = raw.get("relation", {})
-    if relation_raw is None:
-        relation_raw = {}
-    if not isinstance(relation_raw, Mapping):
-        raise ReviewAnswerError(
-            f"review.relation must be an object of id to label. Format: {ANSWER_FORMAT}"
-        )
-    relation: dict[str, str] = {}
-    for memory_id, label in relation_raw.items():
-        if not isinstance(memory_id, str) or not isinstance(label, str):
-            raise ReviewAnswerError(
-                f"review.relation maps ids to labels. Format: {ANSWER_FORMAT}"
-            )
-        if label not in LABELS:
-            raise ReviewAnswerError(
-                f"review.relation[{memory_id!r}] is {label!r}, which is not a label; "
-                f"use one of {', '.join(LABELS)}."
-            )
-        relation[memory_id] = label
+    review_id, relation, named = _chain_keys(raw, ANSWER_FORMAT)
     said = raw.get("said")
     if said is not None and (not isinstance(said, str) or not said.strip()):
         raise ReviewAnswerError(
             "review.said quotes the user's words as they typed them, as a "
             "string; omit it when the user said nothing about this."
-        )
-    named_raw = raw.get("named")
-    if named_raw is not None and (
-        not isinstance(named_raw, (list, tuple))
-        or not all(isinstance(i, str) for i in named_raw)
-    ):
-        raise ReviewAnswerError(
-            f"review.named is a list of roster ids. Format: {NAMED_FORMAT}"
         )
     return ReviewAnswers(
         relation=MappingProxyType(relation),
@@ -785,7 +810,40 @@ def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
         review_id=review_id,
         standing=_score(raw, "standing"),
         said=" ".join(said.split()) if said is not None else None,
-        named=tuple(dict.fromkeys(named_raw)) if named_raw is not None else None,
+        named=named,
+    )
+
+
+def parse_update_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
+    """Read `memory_update`'s `review` argument, the answers to an update's
+    standing roster (ENG-112): the chain's keys alone (`UPDATE_ANSWER_FORMAT`).
+    None when it is absent or empty. The two scores an update does not ask
+    read 0, so `apply_review` refuses on neither; the standing answer and
+    the user's words are the call's own `standing` and `said`. Raises
+    `ReviewAnswerError` as `parse_answers` does, and for a key of the
+    write's review the update does not read."""
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ReviewAnswerError(
+            f"review must be an object. Format: {UPDATE_ANSWER_FORMAT}"
+        )
+    if not raw:
+        return None
+    unknown = sorted(set(raw) - _UPDATE_ANSWER_KEYS)
+    if unknown:
+        raise ReviewAnswerError(
+            f"review carries keys an update does not read: {unknown}. The "
+            "standing answer and the user's words are the call's own standing "
+            f"and said. Format: {UPDATE_ANSWER_FORMAT}"
+        )
+    review_id, relation, named = _chain_keys(raw, UPDATE_ANSWER_FORMAT)
+    return ReviewAnswers(
+        relation=MappingProxyType(relation),
+        unsafe=0.0,
+        secret=0.0,
+        review_id=review_id,
+        named=named,
     )
 
 
@@ -939,6 +997,7 @@ def apply_review(
     declared_ids: Iterable[str] = (),
     standing_ids: Iterable[str] = (),
     said: bool = False,
+    restates_refuses: bool = True,
 ) -> ReviewDecision:
     """Turn answers into the action, in this order:
 
@@ -947,7 +1006,11 @@ def apply_review(
     3. any standing record (`standing_ids`) answered conflict: refused
        (refused_standing).
     4. any related id answered restates, no related id answered update or
-       extends, and no `declared_ids`: not written (duplicate).
+       extends, and no `declared_ids`: not written (duplicate). Skipped
+       when `restates_refuses` is False: an update's standing roster
+       (ENG-112) decides on a memory the store holds whatever the answer,
+       so a restatement there is carried on the decision and refuses
+       nothing.
     5. a standing record the write would replace (`replaced_ids`: an
        update answer, a declared supersedes, a cue link left standing),
        without the user's words (`said`): refused (refused_standing,
@@ -1009,7 +1072,7 @@ def apply_review(
         answers.relation.get(memory_id) in (LABEL_UPDATE, LABEL_EXTENDS)
         for memory_id in related.ids
     )
-    if restated and not updates and not declared:
+    if restated and not updates and not declared and restates_refuses:
         return ReviewDecision(action=ACTION_RESTATES, restated=restated)
     cue_linked = set(related.cue_supersedes)
     if standing and not said:
@@ -1082,13 +1145,18 @@ class Chain:
     """What the log says about the chain a review_id belongs to: its root,
     every id its reviews showed in full, every id its roster pages listed
     (ENG-112), whether the log holds a review_issued row for the id, and
-    whether a write row already carries one of the chain's review_ids."""
+    whether a write or update row already carries one of the chain's
+    review_ids. `door` and `record` are the update's standing roster's
+    (ENG-112): ``memory_update`` and the memory it reviews; a write's
+    chain has neither, and each door takes only its own chains."""
 
     root: str
     shown: frozenset[str]
     found: bool = False
     decided: bool = False
     roster: frozenset[str] = frozenset()
+    door: str | None = None
+    record: str | None = None
 
     @property
     def open(self) -> bool:
@@ -1100,10 +1168,11 @@ class Chain:
 
 def find_chain(store: Store, review_id: str) -> Chain:
     """Read the review_issued rows of `review_id`'s chain, newest first,
-    back to a little before the root was minted, and the write rows that
-    carry one of its review_ids. A review_id the log does not hold
-    (fabricated, telemetry off, or another store) is its own root, showed
-    nothing and is not found. Reads ids only."""
+    back to a little before the root was minted, and the write and update
+    rows that carry one of its review_ids (an update carries one when its
+    standing roster decided it, ENG-112). A review_id the log does not
+    hold (fabricated, telemetry off, or another store) is its own root,
+    showed nothing and is not found. Reads ids only."""
     rows: list[dict[str, Any]] = []
     written: set[str] = set()
     cutoff = ulid_time(review_id)
@@ -1116,7 +1185,7 @@ def find_chain(store: Store, review_id: str) -> Chain:
         if cutoff is not None and ts is not None and ts < cutoff - _CHAIN_SLACK:
             break
         kind = event.get("kind")
-        if kind == "write":
+        if kind in ("write", "update"):
             sent = event.get("review_id")
             if isinstance(sent, str):
                 written.add(sent)
@@ -1135,6 +1204,8 @@ def find_chain(store: Store, review_id: str) -> Chain:
     shown: set[str] = set()
     roster: set[str] = set()
     chain_ids: set[str] = {root}
+    door: str | None = None
+    record: str | None = None
     for event in rows:
         if event.get("review_id") == root or event.get("parent_review_id") == root:
             member = event.get("review_id")
@@ -1146,12 +1217,18 @@ def find_chain(store: Store, review_id: str) -> Chain:
             listed = event.get("roster")
             if isinstance(listed, list):
                 roster.update(i for i in listed if isinstance(i, str))
+            if isinstance(event.get("door"), str):
+                door = event["door"]
+            if isinstance(event.get("record"), str):
+                record = event["record"]
     return Chain(
         root=root,
         shown=frozenset(shown),
         found=found,
         decided=bool(chain_ids & written),
         roster=frozenset(roster),
+        door=door,
+        record=record,
     )
 
 
@@ -1188,6 +1265,7 @@ __all__ = [
     "Tau",
     "UNDECLARED",
     "UNSAFE_STATEMENT",
+    "UPDATE_ANSWER_FORMAT",
     "apply_review",
     "canonical_json",
     "check_answered_ids",
@@ -1196,6 +1274,7 @@ __all__ = [
     "current_tau",
     "find_chain",
     "parse_answers",
+    "parse_update_answers",
     "questions_payload",
     "questions_sha256",
     "related_entry",

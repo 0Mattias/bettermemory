@@ -14,7 +14,10 @@ the words are taken as given and the row says so, as a join's are. The
 meaning of the words is not read: the agent chose the quote, and the
 quote is on the log. Every change the words carried is one
 ``standing_guard`` row with the door, the memories and the quote, so a
-wrong one can be found and reverted.
+wrong one can be found and reverted. A door whose call can still stop
+before its change (memory_update, whose standing question and roster
+come after the guard) reads the words with `check` and writes the row
+once the change commits (`Held`).
 
 What the guard holds out is an agent that forgets or overreaches through
 the tools. An agent that runs as the user with a shell holds the store's
@@ -34,7 +37,7 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
     from ..location import Caller
 
-__all__ = ["Words", "guard", "read_words", "record"]
+__all__ = ["Held", "Words", "check", "guard", "read_words", "record"]
 
 _HINT = (
     "Not changed: it would replace, remove, demote, re-scope or edit a "
@@ -99,26 +102,52 @@ def record(deps: ToolHandlers, door: str, records: list[str], words: Words) -> N
     )
 
 
-def guard(
+@dataclass(frozen=True)
+class Held:
+    """A change `check` let through on the user's words, whose
+    ``standing_guard`` row is written once the change commits (`write`)."""
+
+    door: str
+    records: tuple[str, ...]
+    words: Words
+
+    def write(self, deps: ToolHandlers) -> None:
+        """The row for the committed change."""
+        record(deps, self.door, list(self.records), self.words)
+
+
+def check(
     deps: ToolHandlers, door: str, records: list[str], said: str | None
-) -> dict[str, Any] | None:
-    """None when the change to `records` may go ahead: none of them is a
-    standing memory, the write review is off (`standing.asking`, under
-    which a replacing write is not guarded either), or `said` reads
-    (`read_words`), in which case the row is written. Otherwise the
-    refused_standing response, quoting the standing memories."""
+) -> tuple[dict[str, Any] | None, Held | None]:
+    """`guard` without its row: (None, None) when the change to `records`
+    may go ahead with no words (none of them is a standing memory, or the
+    write review is off, under which a replacing write is not guarded
+    either); (None, held) when `said` reads (`read_words`), the row to
+    write once the change commits; else (the refused_standing response,
+    quoting the standing memories, None)."""
     from ..admission import Admission
     from ..membership import REVIEW_STRATA
 
     guarded = _standing.guarded_ids(deps.store, records) if records else []
     if not guarded or not _standing.asking():
-        return None
+        return None, None
     _, caller = caller_anchoring(deps.store, deps.config)
     words = read_words(deps, caller, said)
     if words is not None:
-        record(deps, door, guarded, words)
-        return None
+        return None, Held(door=door, records=tuple(guarded), words=words)
     rows = _standing.refusal_rows(
         deps.store, guarded, Admission.of(REVIEW_STRATA, caller)
     )
-    return {"status": "refused_standing", "standing": rows, "hint": _HINT}
+    return {"status": "refused_standing", "standing": rows, "hint": _HINT}, None
+
+
+def guard(
+    deps: ToolHandlers, door: str, records: list[str], said: str | None
+) -> dict[str, Any] | None:
+    """None when the change to `records` may go ahead (`check`), the row
+    written when it rests on the user's words; else the refused_standing
+    response. For a door whose change follows the guard at once."""
+    refusal, held = check(deps, door, records, said)
+    if held is not None:
+        held.write(deps)
+    return refusal

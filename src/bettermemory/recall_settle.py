@@ -481,10 +481,12 @@ def review_unanswered(
     in-process sessions: the harness join first, the bridge otherwise) at
     or after `since`, takes each row's chain root (its
     ``parent_review_id``, else its own ``review_id``), and counts each
-    root `review.find_chain` reads open: no write row carries any of the
-    chain's review ids. A re-send another gate refused before the review
-    decided anything carries no review id on its write row, so its chain
-    also reads open: the count means unanswered or refused. A root is
+    root `review.find_chain` reads open: no write or update row carries
+    any of the chain's review ids. A re-send another gate refused before
+    the review decided anything carries no review id on its write row,
+    so its chain also reads open, as does an update's standing roster
+    that refused (`handlers.standing_review`): the count means unanswered
+    or refused, a write's chain or an update's. A root is
     counted once per session (`RecallState.note_review_roots`, rebuilt
     from these rows after a restart).
 

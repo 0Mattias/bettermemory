@@ -245,7 +245,9 @@ in some chain; when such a call is a standing write with a roster due,
 the roster page follows that pre-answered row in its chain. The p50 of
 review response sizes leaves roster pages out: a roster page's size
 follows the count of standing memories in force, and stays on its own
-row's `response_chars`. A chain issued inside the window is judged from rows up
+row's `response_chars`. The rows of an update's standing roster
+(`door: "memory_update"`) are not the write review's and are left out of
+the section. A chain issued inside the window is judged from rows up
 to 30 minutes after `--until`. `--scope` does not filter the section.
 `review_counters.py` holds the computation.
 
@@ -321,10 +323,10 @@ id before it; the join reads only rows before `--until`.
 
 Beside them: `settlements` by surface; `segments` (the conversations
 the surface spoke in, and the segments a compact or clear opened);
-`review_unanswered` (the Stop turns that counted open review chains, and
-the chains); and `grades`, per stratum of `bettermemory recall review`,
-the ids graded and how many were relevant, the latest grade of an id in
-a sample counting. `--scope` does not filter the section.
+`review_unanswered` (the Stop turns that counted open review chains, a
+write's or an update's, and the chains); and `grades`, per stratum of
+`bettermemory recall review`, the ids graded and how many were relevant,
+the latest grade of an id in a sample counting. `--scope` does not filter the section.
 `recall_counters.py` holds the computation. The `--report` markdown
 carries the four rates per surface and the counts, never an id, and the
 split on the rule below.

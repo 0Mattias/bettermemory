@@ -50,6 +50,12 @@ NINE = {
 # `anyOf` into one type array (`builder._fold_nullable`, the same meaning
 # in 760 fewer characters), back under the ceiling with the actions'
 # description at the floor of meaning (the question line names the call).
+# 9.0.0rc15 gave memory_update the `review` object an update's standing
+# roster is answered in (ENG-112), 55 characters; under O6
+# memory_record_use's description lost its copy of the instructions'
+# "settle as applied on their own" sentence and memory_admin's
+# answer_standing clause its "answers the standing question", which the
+# call's response states, back to 7,986.
 SESSION_BUDGET_CHARS = 8_000
 
 # The parameters D1 removed with the groundedness gate. None may return.

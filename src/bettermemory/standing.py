@@ -27,7 +27,12 @@ session's first output reads the backlog without reading every body.
 The question is asked while the write review is in force (`asking`, the
 review's own switch, `review.current_tau`): the review's fourth question,
 memory_update's, memory_show's and the first-output line go together.
-memory_admin answer_standing takes an answer whenever it is given.
+memory_admin answer_standing takes an answer whenever it is given, but
+one that makes a record standing while the review is in force
+(`makes_standing`): a standing statement is read against the standing
+roster before it is in force (ENG-112), on the write review or on
+memory_update's (`handlers.standing_review`), so answer_standing sends
+that answer to memory_update.
 
 `TAU_STANDING` is the tau round's (RS-F7 phase 2): the ENG-7 judges
 answered the question blind on a stratified seeded draw of stored
@@ -74,6 +79,7 @@ __all__ = [
     "check_probability",
     "guarded_ids",
     "is_standing",
+    "makes_standing",
     "question",
     "record_text",
     "refusal_rows",
@@ -234,6 +240,34 @@ def guarded_ids(store: Store, ids: Sequence[str]) -> list[str]:
     return standing_ids(store, EVERY_RECORD, ids)
 
 
+def makes_standing(
+    store: Store,
+    record_id: str,
+    *,
+    category: str | None,
+    probability: float | None,
+    body_changed: bool,
+) -> bool:
+    """Whether a change leaves the active record `record_id` standing with
+    a statement no standing roster has read (ENG-112): standing after it
+    (`category` and `probability`, the answer for the body it leaves),
+    in force under every record, as `guarded_ids` reads it, and either
+    its body changed or it is not standing now (its category and its
+    current answer). A record the change leaves standing as it already
+    was is not a new statement; one out of force directs nothing."""
+    from .admission import EVERY_RECORD
+
+    if not is_standing(category, probability):
+        return False
+    if not body_changed:
+        current = store.standing_rows([record_id])
+        if current and is_standing(
+            current[0]["category"], answers(store, [record_id]).get(record_id)
+        ):
+            return False
+    return not in_force(store, [record_id], EVERY_RECORD)[record_id].history
+
+
 def standing_ids(
     store: Store, admission: RecordView, ids: Sequence[str] | None = None
 ) -> list[str]:
@@ -310,8 +344,8 @@ def question(record_id: str) -> dict[str, Any]:
         "instructions": STANDING_STATEMENT,
         "hint": (
             "This memory has no standing answer. Give the probability that "
-            f'the statement holds of it: memory_admin(action="answer_standing", '
-            f'standing={{"{record_id}": <0 to 1>}}).'
+            f'the statement holds of it: memory_update(id="{record_id}", '
+            "standing=<0 to 1>)."
         ),
     }
 

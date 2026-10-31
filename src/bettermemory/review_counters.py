@@ -18,7 +18,9 @@ already answered) the same way, so no reviewed write row falls outside
 every chain. A chain whose latest row is a standing roster page (ENG-112)
 is answered only by a write carrying one of its review_ids, since no call
 without one answers a roster. A chain with neither is unanswered once its
-window has passed, and pending before that.
+window has passed, and pending before that. The rows of an update's
+standing roster (``door`` ``memory_update``) are not the write review's
+and are not read here.
 
 Every count is over chains whose root was issued inside the window. A
 chain issued inside the window is judged from rows up to `ANSWER_WINDOW`
@@ -124,9 +126,12 @@ class IssuedRow:
 
     @classmethod
     def from_event(cls, event: Mapping[str, Any]) -> IssuedRow | None:
+        """The row, or None for one that is not the write review's: no
+        review_id or time, or an update's standing roster (ENG-112), whose
+        rows carry a ``door``."""
         review_id = _str(event.get("review_id"))
         ts = parse_event_ts(event.get("ts"))
-        if review_id is None or ts is None:
+        if review_id is None or ts is None or event.get("door") is not None:
             return None
         chars = event.get("response_chars")
         return cls(
