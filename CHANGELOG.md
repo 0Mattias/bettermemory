@@ -104,6 +104,21 @@ candidates' testing.
   breaks it; the reads held every target with that placement, and
   another placement is a new read.
 
+  The placement was looked at again before this candidate and kept. The
+  two other placements, replayed on the same stores with no model call
+  (receipts `eng112-2026-10-31`, the second session's section), do not
+  beat it: windowing on the sentence that matches the most terms moves
+  219 of P6's 255 lines and 116 of R31's 154 and takes the no-terminal
+  ruling's line off its subject; windowing on the sentence with the
+  hit's highest score moves 46 and 12, leaves the timelines and
+  no-terminal lines as they are and moves the rulings record's line onto
+  the clause the write extends. That score is, in the default hybrid
+  mode, the fusion of the two legs' ranks, so it shares the placement's
+  one way to miss (a record that ranks first only for a stray word is
+  windowed on that word); on these cases a blind read of it could show
+  no more than the reads of this placement already show, every target
+  named. The placement changes on a case whose line fails a read.
+
   The roster is not part of the related set or the questions the
   integrity benchmark reads, so `RELATED_CONSTANTS`, `QUESTIONS` and the
   committed review seals are unchanged; its evidence is its own blind

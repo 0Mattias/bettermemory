@@ -570,14 +570,22 @@ def roster_for(
     shares the most. Ranking over every candidate, not over `only`, keeps a
     line the same whichever page shows it.
 
-    A known limit: the best rank is where the record stands out among the
-    standing records, which need not be where the write breaks it. When a
+    The placement is the one the blind reads validated, kept on a second
+    look (rc15). The best rank is where the record stands out among the
+    standing records, which need not be where the write breaks it: when a
     nearer record takes the breaking sentence and a stray word of another
-    sentence is the record's alone, the line windows on that word. The
-    blind reads that set the line's form and length read this construction
-    on the replayed stores, where every target's line carried its subject;
-    another placement (by matched terms first, or by the record's own
-    score) is a new read on the same instrument."""
+    sentence is the record's alone, the line windows on that word. No
+    replayed store shows that: every read of these lines named every
+    target. The two placements measured against it on the replayed stores,
+    with no model call, do not beat it: by matched terms first, 219 of P6's
+    255 lines and 116 of R31's 154 move, and one target's line leaves its
+    subject; by the hit's own score first, 46 and 12 move, and one
+    target's line moves onto its subject while the others stay as they are.
+    In the default hybrid mode that score is the fusion of the two legs'
+    ranks, the same relative quantity ordered differently among equal
+    ranks, so it windows on the stray word just as this does.
+    A placement is changed on a case whose line fails a read, and is read
+    blind before it ships."""
     from .handlers.search import _corpus_stats_provider
     from .models import snippet_for
     from .search import _query_biased_snippet
