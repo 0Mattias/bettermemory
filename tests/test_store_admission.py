@@ -37,10 +37,10 @@ directory with no ``BETTERMEMORY_DIR``, so the store is the one
 ``cwd_store`` picks, under a harness timeout (`_CHILD_TIMEOUT`): against a
 build without the check the child never returns, and the timeout ends the
 run as a failure instead of hanging the suite. Inside the child the call
-that refuses is timed and printed, and must come back well under the
-deadline (`_REFUSAL_BOUND`); the one call that does not refuse, the
-audit's read of a meta SQLite cannot parse, within the deadline itself
-(`_READ_BOUND`).
+that refuses is timed on each of `_TIMED_PASSES` passes and the fastest
+printed, which must come back well under the deadline (`_REFUSAL_BOUND`);
+the one call that does not refuse, the audit's read of a meta SQLite
+cannot parse, within the deadline itself (`_READ_BOUND`).
 """
 
 from __future__ import annotations
@@ -89,6 +89,16 @@ _CHILD_TIMEOUT = 30.0
 #: about 70 rows). A literal, so this file collects on a build without
 #: the deadline.
 _REFUSAL_BOUND = 0.5
+
+#: How many times a child makes its timed call; the fastest pass is held to
+#: the bound. The Windows runner has stalled one child's single pass by
+#: about 1.3 s, on a call that takes 5 ms here and nowhere waits: the
+#: audit's read in the rc14 release run (1.37 s), the daemon's open on two
+#: cases of the rc16 candidate's two CI attempts (1.28 s each), each time
+#: one case of fourteen. A stall of the machine lands on one pass; a
+#: refusal that costs what the bound is there to catch, the deadline's
+#: 2 s, lands on every pass, as a hang does on the first.
+_TIMED_PASSES = 3
 
 #: How long the audit's read of a meta SQLite cannot parse may take. The
 #: audit does not refuse there: SQLite reports the malformed schema and the
@@ -942,25 +952,35 @@ def test_the_owners_opener_says_to_upgrade_in_one_line(
 # ---------------------------------------------------------------------------
 
 #: Each child imports what the surface imports on first use, then times the
-#: call that meets the store and prints one JSON line: ``elapsed`` and what
-#: the surface reported.
-_IMPORTS = """
+#: call that meets the store on each of `_TIMED_PASSES` passes (`timed`) and
+#: prints one JSON line: ``elapsed``, the fastest pass, ``passes``, every
+#: pass, and what the surface reported on the first.
+_IMPORTS = f"""
 import json, time
 from pathlib import Path
 import bettermemory.backup, bettermemory.config, bettermemory.recall
 import bettermemory.store
+
+def timed(call):
+    value, passes = None, []
+    for n in range({_TIMED_PASSES}):
+        started = time.perf_counter()
+        made = call()
+        passes.append(time.perf_counter() - started)
+        value = made if n == 0 else value
+    return value, min(passes), passes
 """
 _AUDIT = (
     _IMPORTS
     + """
 from bettermemory import posture
 store = Path.cwd() / ".claude-memory" / "memory.sqlite"
-started = time.perf_counter()
-meta, error, refused = posture._meta_or_error(store)
-elapsed = time.perf_counter() - started
+(meta, error, refused), elapsed, passes = timed(
+    lambda: posture._meta_or_error(store))
 report = posture.audit(cwd=Path.cwd())
 keys = [f for f in report.findings if f.id == "key.match"]
-print(json.dumps({"elapsed": elapsed, "refused": refused is not None,
+print(json.dumps({"elapsed": elapsed, "passes": passes,
+                  "refused": refused is not None,
                   "findings": [[f.status, f.summary] for f in keys]}))
 """
 )
@@ -969,12 +989,11 @@ _DOCTOR = (
     + """
 from bettermemory import doctor
 cwd = Path.cwd()
-started = time.perf_counter()
-store, key = doctor.check_store(
-    doctor._Context(cwd=cwd, directory=cwd / ".claude-memory"))
-elapsed = time.perf_counter() - started
+(store, key), elapsed, passes = timed(lambda: doctor.check_store(
+    doctor._Context(cwd=cwd, directory=cwd / ".claude-memory")))
 checks = {c.id: c for c in doctor.run_checks(cwd=cwd)}
-print(json.dumps({"elapsed": elapsed, "store": [store.status, store.summary],
+print(json.dumps({"elapsed": elapsed, "passes": passes,
+                  "store": [store.status, store.summary],
                   "key": key.status, "run": checks["store"].status}))
 """
 )
@@ -982,13 +1001,16 @@ _DAEMON_OPEN = (
     _IMPORTS
     + """
 from bettermemory.cli._common import cli_context
-started = time.perf_counter()
-try:
-    cli_context(migrate=False)
-    outcome = "opened"
-except SystemExit as exc:
-    outcome = f"exit {exc.code}"
-print(json.dumps({"elapsed": time.perf_counter() - started, "outcome": outcome}))
+
+def daemon_open():
+    try:
+        cli_context(migrate=False)
+        return "opened"
+    except SystemExit as exc:
+        return f"exit {exc.code}"
+
+outcome, elapsed, passes = timed(daemon_open)
+print(json.dumps({"elapsed": elapsed, "passes": passes, "outcome": outcome}))
 """
 )
 
@@ -1035,7 +1057,8 @@ def _run(
 def _reported(
     code: str, repo: Path, tmp_path: Path, *, bound: float = _REFUSAL_BOUND
 ) -> dict[str, Any]:
-    """The child's report; its timed call came back within ``bound``."""
+    """The child's report; the fastest pass of its timed call came back
+    within ``bound``."""
     done = _run([sys.executable, "-c", code], cwd=repo, env=_child_env(tmp_path))
     assert done.returncode == 0, done.stderr
     reported: dict[str, Any] = json.loads(done.stdout.strip().splitlines()[-1])
