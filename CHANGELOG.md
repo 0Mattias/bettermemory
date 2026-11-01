@@ -33,7 +33,8 @@ true record out of force: a note that claims a change ("migrated on
 the same answer a real change gets, and its link retired the record it
 named. A write that states a rule now takes nothing out of force
 without the user's words. The review's related set grows to the size
-ENG-115 measured.
+ENG-115 measured, and the prompt recall probes a prompt however few
+words it has.
 
 #### Changed
 
@@ -84,6 +85,17 @@ ENG-115 measured.
   time. The tests' review page of nine long records and two short
   ones is 8,381 characters.
   (`bench/recall/results/eng115-stage1-related-2026-11-01.json`)
+- **The prompt recall probes a prompt however few words it has
+  (ENG-115, rule `rs-v7`).** The audit's content-token floor and
+  acknowledgment gate no longer hold back the prompt recall:
+  `audit.probe_for_miss` and `recall_settle._probe_message` take
+  `floor`, and the prompt recall passes False. The 12 owner prompts
+  below the floor since 2026-10-12 with a recorded checkout, ranked with
+  the floor bypassed, had 14 of 36 relevant top-three hits, 0.39 (Wilson
+  95% 0.25 to 0.55), against 122 of 300 above the floor, so the floor
+  held back pointers as useful as the ones it let through. The Stop
+  audit keeps the floor. The rows carry rule `rs-v7`.
+  (`bench/recall/results/eng115-stage1-recall-2026-11-01.json`)
 
 ### 9.0.0rc15
 

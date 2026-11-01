@@ -180,6 +180,9 @@ def _prompt_probe(
         recent=recent,
         worktree_root=turn.caller.worktree_root,
         now=turn.now,
+        # The owner's words are probed however few they are: the floor
+        # kept back pointers as often relevant as the rest (ENG-115).
+        floor=False,
     )
 
 

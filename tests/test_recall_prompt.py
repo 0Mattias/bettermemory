@@ -2,8 +2,8 @@
 
 The probe is the audit's (`recall_settle._probe_message`), unchanged, so this file
 does not re-test ranking. What it pins is delivery: the prompt the probe
-reads (pasted blocks removed, 2,000 characters), the floor and the
-acknowledgment gate, the candidate gates and their recorded reasons, up
+reads (pasted blocks removed, 2,000 characters) however thin it is,
+the candidate gates and their recorded reasons, up
 to three pointers, the block's format and its 900-character cap, the
 three `prompt_recall` modes, and the telemetry gate.
 """
@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from bettermemory import audit
 from bettermemory.config import BehaviorConfig, Config, StorageConfig, TelemetryConfig
 from bettermemory.location import Caller, resolve_caller
 from bettermemory.membership import PROMPT_RECALL, SEARCH_UNSCOPED, RecordHome
@@ -192,13 +193,19 @@ def test_the_prompt_is_cut_at_2000(world: PromptWorld) -> None:
     assert world.recall(QUERY + " " + "lorem " * 400).stdout != ""
 
 
-@pytest.mark.parametrize("prompt", ["yes", "go for it", "looks good", "sounds good"])
-def test_the_floor_and_the_acknowledgment_gate_deliver_nothing(
+@pytest.mark.parametrize(
+    "prompt", ["yes", "go for it", "looks good", "sounds good", "3.8.0"]
+)
+def test_a_prompt_below_the_audits_floor_is_probed(
     world: PromptWorld, prompt: str
 ) -> None:
-    world.write(f"{prompt} {BODY}")
-    assert world.recall(prompt).stdout == ""
-    assert world.recalls() == []
+    """rs-v7 (ENG-115): the audit's content-token floor and acknowledgment
+    gate hold nothing back here; until rs-v7 each of these prompts was a
+    ``no_signal`` and delivered nothing."""
+    assert audit._too_thin_to_probe(prompt)
+    memory = world.write(f"{prompt} {BODY}")
+    assert memory.id in world.recall(prompt).stdout
+    assert world.recalls()[-1]["shown_ids"] == [memory.id]
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +306,7 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert result.surface == "prompt_recall"
     assert result.ids == (memory.id,)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v6"
+    assert result.rule == "rs-v7"
     # The old block's promise that recording `ignored` tunes recall down
     # is gone: no ranking reads outcomes.
     assert "ignored" not in result.stdout
@@ -308,7 +315,7 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert event["event_id"] == result.event_id
     assert event["shown_ids"] == [memory.id]
     assert event["suppressed_ids"] == []
-    assert event["rule"] == "rs-v6"
+    assert event["rule"] == "rs-v7"
     assert event["checkout"] == world.home.checkout
     assert event["rc3_admitted"] == [memory.id]
     assert event["chars"] == event["injected_chars"] == len(result.stdout)

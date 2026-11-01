@@ -854,11 +854,11 @@ def test_the_section_renders_in_text_json_and_markdown() -> None:
 
 
 def _v5(row: dict[str, Any], rc3: list[str]) -> dict[str, Any]:
-    """`row` as rs-v6 writes it: the rule, the caller's checkout, the
+    """`row` as rs-v7 writes it: the rule, the caller's checkout, the
     membership rule and the rc3_admitted column."""
     return {
         **row,
-        "rule": "rs-v6",
+        "rule": "rs-v7",
         "checkout": "k_main",
         "membership_rule": "token",
         "rc3_admitted": rc3,
@@ -867,8 +867,8 @@ def _v5(row: dict[str, Any], rc3: list[str]) -> dict[str, Any]:
 
 def _mixed_rows() -> list[dict[str, Any]]:
     """One conversation across a reinstall: an rs-v4 brief and recall
-    without the rs-v6 keys, then an rs-v6 brief that delivers one id rc3
-    would not have and an rs-v6 recall that leaves out one id rc3 would
+    without the rs-v7 keys, then an rs-v7 brief that delivers one id rc3
+    would not have and an rs-v7 recall that leaves out one id rc3 would
     have delivered. Each surface re-shows an id the other rule showed."""
     return [
         {**_brief(_ts(3), [MEM_A], event_id="e1"), "rule": "rs-v4"},
@@ -881,20 +881,20 @@ def _mixed_rows() -> list[dict[str, Any]]:
 
 
 def test_the_reader_splits_mixed_rows_on_their_rule() -> None:
-    """Rows written before rs-v6 carry none of its keys and read as the
+    """Rows written before rs-v7 carry none of its keys and read as the
     earlier rules; a show's follow-ups end at the id's next show whatever
     its rule, so the groups add up to the section."""
     from bettermemory.eval import EARLIER_RULES
 
     surfaces = _surfaces(_mixed_rows())
     split = surfaces["by_rule"]
-    assert list(split) == ["rs-v6", EARLIER_RULES]
-    earlier, current = split[EARLIER_RULES], split["rs-v6"]
-    assert earlier["rules"] == ["rs-v4"] and current["rules"] == ["rs-v6"]
-    # The open before the rs-v6 brief re-showed MEM_A counts for rs-v4's.
+    assert list(split) == ["rs-v7", EARLIER_RULES]
+    earlier, current = split[EARLIER_RULES], split["rs-v7"]
+    assert earlier["rules"] == ["rs-v4"] and current["rules"] == ["rs-v7"]
+    # The open before the rs-v7 brief re-showed MEM_A counts for rs-v4's.
     assert (earlier["brief"]["shown"], earlier["brief"]["opened"]) == (1, 1)
     assert (current["brief"]["shown"], current["brief"]["opened"]) == (2, 0)
-    # The open after the rs-v6 recall re-showed MEM_B counts for it alone.
+    # The open after the rs-v7 recall re-showed MEM_B counts for it alone.
     assert (earlier["recall"]["shown"], earlier["recall"]["opened"]) == (1, 0)
     assert (current["recall"]["shown"], current["recall"]["opened"]) == (1, 1)
     assert current["recall"]["shown_opened_rate"]["rate"] == 1.0
@@ -905,7 +905,7 @@ def test_the_reader_splits_mixed_rows_on_their_rule() -> None:
                 earlier[surface][count] + current[surface][count]
                 == surfaces[surface][count]
             ), (surface, count)
-    # Only the rs-v6 rows are compared, each against its own column.
+    # Only the rs-v7 rows are compared, each against its own column.
     assert surfaces["membership_delta"] == {
         "rows": 2,
         "rows_differing": 2,
@@ -922,8 +922,8 @@ def test_a_log_of_earlier_rules_reports_an_empty_current_group() -> None:
         {**_brief(_ts(1, 5), [MEM_B], event_id="e2"), "rule": None},
     ]
     surfaces = _surfaces(events)
-    assert surfaces["by_rule"]["rs-v6"]["brief"]["deliveries"] == 0
-    assert surfaces["by_rule"]["rs-v6"]["brief"]["shown_opened_rate"]["rate"] is None
+    assert surfaces["by_rule"]["rs-v7"]["brief"]["deliveries"] == 0
+    assert surfaces["by_rule"]["rs-v7"]["brief"]["shown_opened_rate"]["rate"] is None
     # A show with no rule predates every rule.
     assert surfaces["by_rule"][EARLIER_RULES]["brief"]["deliveries"] == 2
     assert surfaces["by_rule"][EARLIER_RULES]["rules"] == ["rs-v1"]
@@ -941,10 +941,10 @@ def test_the_split_renders_in_text_json_and_markdown() -> None:
     events = legacy_log() + _mixed_rows()
     report = compute_eval(legacy_memories(), events, now=NOW, since=SINCE)
     text = render_text(report)
-    assert "Recall surfaces (rule rs-v4, rs-v6):" in text
+    assert "Recall surfaces (rule rs-v4, rs-v7):" in text
     assert "  By rule:" in text
     assert (
-        "    rs-v6 brief: deliveries=1 shown=2 opened=0 used=0 ignored=0 helped=0"
+        "    rs-v7 brief: deliveries=1 shown=2 opened=0 used=0 ignored=0 helped=0"
         in text
     )
     assert (
@@ -959,7 +959,7 @@ def test_the_split_renders_in_text_json_and_markdown() -> None:
     assert report.surfaces is not None
     assert text.index("  By rule:") < text.index(report.surfaces["note"])
     dumped = json.loads(json.dumps(report.to_dict()))["surfaces"]
-    assert dumped["by_rule"]["rs-v6"]["recall"]["opened"] == 1
+    assert dumped["by_rule"]["rs-v7"]["recall"]["opened"] == 1
     assert dumped["membership_delta"]["rc3_not_delivered"] == 1
 
     doc = compute_report(
@@ -968,7 +968,7 @@ def test_the_split_renders_in_text_json_and_markdown() -> None:
     markdown = render_report_markdown(doc)
     assert "### By rule" in markdown
     assert "| rule | surface | rate | last 30d | all time |" in markdown
-    assert "| rs-v6 | recall | `shown_opened_rate` | 1/1 = **1.00**" in markdown
+    assert "| rs-v7 | recall | `shown_opened_rate` | 1/1 = **1.00**" in markdown
     assert "| earlier | brief | `shown_opened_rate` | 1/1 = **1.00**" in markdown
     assert (
         "- membership_delta, last 30d: 2 rows compared · 2 rows differing · "

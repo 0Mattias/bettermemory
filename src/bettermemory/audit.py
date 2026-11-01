@@ -83,6 +83,7 @@ Design notes:
   pseudo-tokens), and a message whose content tokens are all
   conversational acknowledgments ("all done", "looks good" — compared
   by surface spelling, see `_ACK_TOKENS`) is gated the same way. The
+  prompt recall probes without the floor (`floor=False`, ENG-115). The
   rule version is recorded on every
   emitted event so a later calibration pass can replay historical
   logs under a new threshold without losing the audit trail.
@@ -930,6 +931,7 @@ def probe_for_miss(
     half_life_days: float = 30.0,
     conversational: bool = True,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
+    floor: bool = True,
 ) -> MissReport:
     """Decide whether the just-completed turn was a silent retrieval miss.
 
@@ -937,7 +939,8 @@ def probe_for_miss(
     asks: did the model retrieve memory this session within the last
     `lookback_seconds` (via any event in `_RETRIEVAL_EVENT_KINDS`:
     `search`, `show`, `list`, or `prompt_recall`)? The cross of those
-    two facts gives the verdict.
+    two facts gives the verdict. `floor` False skips `_too_thin_to_probe`
+    (the prompt recall's probe, ENG-115).
 
     `recent_events` is an iterable over the session's recent event log
     entries (any iterable — the function only walks it once). Callers
@@ -1034,7 +1037,7 @@ def probe_for_miss(
     now = _probe_now(now)
     if not memories or not user_message.strip():
         return _no_signal_report(now, session_id, lookback_seconds, None)
-    if _too_thin_to_probe(user_message):
+    if floor and _too_thin_to_probe(user_message):
         return _no_signal_report(now, session_id, lookback_seconds, user_message)
     memories = _created_before_shield(memories, now, creation_shield_seconds)
     hits = _probe_hits(
@@ -1098,7 +1101,17 @@ def _no_signal_report(
 
 
 def _too_thin_to_probe(user_message: str) -> bool:
-    """Take the user's message; return True when it carries too little to probe."""
+    """Take the user's message; return True when it carries too little to probe.
+
+    The audit's gate alone: the prompt recall probes without it
+    (`probe_for_miss(floor=False)`). ENG-115 graded the top three of the
+    owner prompts below it with it bypassed: 14 of 36 relevant, against
+    122 of 300 above it
+    (bench/recall/results/eng115-stage1-recall-2026-11-01.json), so it
+    held back pointers as useful as the ones it let through. The Stop
+    keeps it, since its miss rule reads the rank-1 coverage label, which
+    a one-token message always scores high.
+    """
     # Single-content-token cohort: structurally always scores "high" on
     # the v1 rule because 1/1 = 1.0 = "high" against any memory that
     # mentions the token. Bare continuations ("yes", "continue",

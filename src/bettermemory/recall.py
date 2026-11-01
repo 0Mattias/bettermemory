@@ -21,7 +21,8 @@ a tool call, on two hook moments.
   prompt the harness composed), probed through the audit's own probe
   (`_probe_message`: the production ranker, top three, over the
   pool the mode admits: the hooks' prefilter under ``"project"``, the
-  unscoped search's under ``"everywhere"``),
+  unscoped search's under ``"everywhere"``; without the audit's
+  content-token floor from rs-v7),
   and up to three of those hits delivered as pointers when they are
   relevant (medium or high), written or imported here, admitted for the
   caller (under `prompt_recall = "project"` the PROMPT_RECALL surface of
@@ -1418,14 +1419,17 @@ def prompt_recall(
     """The UserPromptSubmit surface: probe the prompt and return up to
     three pointers, or nothing.
 
-    The probe is the audit's (`_probe_message`), unchanged: the
+    The probe is the audit's (`_probe_message`) without its floor: the
     production pool (drawn under the POOL_PREFILTER admission of the same
     resolution, design 3.5, so a record no surface may deliver never takes
     a rank) and ranker over the owner's words as the one
     definition reads them (`owner_prompt.owner_text`: envelope blocks
     removed, cut at `PROMPT_CUT_CHARS`, the bytes the Stop probes and
-    hashes for the same text), the content-token floor and the
-    acknowledgment gate, top three. A prompt the harness composed and no
+    hashes for the same text), top three. Until rs-v7 the audit's
+    content-token floor and acknowledgment gate held back a prompt of
+    fewer than two content words or only acknowledgments (``no_signal``);
+    ENG-115 found the top three of those as often relevant as the rest's.
+    A prompt the harness composed and no
     human typed (a task notification, a message from another session, a
     harness tag, a prompt that is only reminder blocks) is not probed and
     records nothing, so the segment keeps its ids for the prompt the

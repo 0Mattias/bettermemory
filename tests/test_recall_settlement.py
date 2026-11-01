@@ -98,7 +98,7 @@ def test_a_prompt_below_the_floor_is_held_as_no_signal(world: PromptWorld) -> No
     assert row["cause"] == "no_signal"
     assert row["verdict"] == "no_signal"
     assert row["held"] == []
-    assert row["rule"] == "rs-v6"
+    assert row["rule"] == "rs-v7"
     assert row["triggered_from"] == "prompt_hook"
     assert (row["segment"], row["harness"]) == (0, "claude-code")
     assert row["admission"] == "prompt_recall"
@@ -241,7 +241,7 @@ def test_a_clear_settles_the_closed_segments_unused_pointers(
     (row,) = _unused(world)
     assert row["ids"] == [idle.id]
     assert (row["surface"], row["shown_event_id"]) == ("brief", startup.event_id)
-    assert (row["segment"], row["harness"], row["rule"]) == (0, "claude-code", "rs-v6")
+    assert (row["segment"], row["harness"], row["rule"]) == (0, "claude-code", "rs-v7")
     assert (row["attribution"], row["auto"]) == ("hook", False)
     assert row["triggered_from"] == "session_hook"
     assert row["session"] == SESSION
@@ -420,7 +420,7 @@ def test_the_next_stop_audits_the_interrupted_turn(
     assert interrupted["client_model"] == "claude-test"
     assert (interrupted["triggered_from"], interrupted["rule"]) == (
         "stop_hook",
-        "rs-v6",
+        "rs-v7",
     )
     # A miss the turn did not finish is not a search_miss.
     assert _rows(world, "search_miss") == []

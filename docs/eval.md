@@ -501,6 +501,22 @@ key) is split by the nearest earlier rule-carrying row, which is how
 the rules; `bettermemory eval` counts `recall_held` among the recall's
 own kinds.
 
+### Rule `rs-v7`: the prompt recall without the floor
+
+From rule `rs-v7` (ENG-115) the prompt recall probes the owner's words
+however few they are. The audit's content-token floor (fewer than two
+unique content words) and its acknowledgment gate ("looks good", "all
+done") no longer hold a prompt back, so a `recall_held` row with cause
+`no_signal` now means an empty store, an empty prompt or a probe that
+ranked nothing. ENG-115 ranked the 12 owner prompts below the floor
+since 2026-10-12 that carry a recorded checkout, with the floor bypassed,
+and graded their top three blind: 14 of 36 were relevant, 0.39 (Wilson
+95% 0.25 to 0.55), against 122 of 300 for prompts above the floor in
+Stage A
+(`bench/recall/results/eng115-stage1-recall-2026-11-01.json`). The Stop
+audit keeps the floor: its miss rule reads the rank-1 coverage label,
+which a one-word prompt always scores high. The brief is unchanged.
+
 ## Integrity benchmark
 
 `bench/integrity/` measures two things the rates above do

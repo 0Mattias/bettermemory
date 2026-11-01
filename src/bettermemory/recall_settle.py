@@ -57,6 +57,7 @@ def _probe_message(
     recent: list[dict[str, Any]],
     worktree_root: str | None = None,
     now: datetime,
+    floor: bool = True,
 ) -> MissReport:
     """The one probe both hooks run: production pool, production
     ranking inputs, `probe_for_miss`, nothing else.
@@ -83,6 +84,11 @@ def _probe_message(
     the prompt recall's `now`, the settlement's `now` for an interrupted
     turn. It dates the report (`checked_at`) and closes the creation and
     retrieval shields.
+
+    `floor` is `probe_for_miss`'s: the prompt recall passes False and
+    probes a message too thin for the audit (ENG-115), which ranks it over
+    the same pool the same way; the Stop and the settlement keep the
+    floor.
     """
     from .handlers.search import default_search_width, resolve_search_pool
 
@@ -150,6 +156,7 @@ def _probe_message(
         half_life_days=cfg.behavior.recency_boost_half_life_days,
         conversational=cfg.behavior.conversational,
         corpus_stats_provider=probe_pool.corpus_stats_provider,
+        floor=floor,
     )
 
 

@@ -301,6 +301,27 @@ def test_all_acknowledgment_message_returns_no_signal() -> None:
         assert report.probe_query == query
 
 
+def test_floor_false_probes_a_message_too_thin_for_the_audit() -> None:
+    """The prompt recall's probe (ENG-115): `floor=False` ranks a message
+    the content-token floor or the acknowledgment gate reports as
+    no_signal, over the same memories."""
+    m = _memory("yes, go push the backup strategy; all done and it looks good")
+    for query in ("yes", "go for it", "yes yes", "looks good", "all done"):
+        gated = probe_for_miss(
+            [m], query, recent_events=[], session_id="sess_x", now=_utc(2026, 5, 1)
+        )
+        probed = probe_for_miss(
+            [m],
+            query,
+            recent_events=[],
+            session_id="sess_x",
+            now=_utc(2026, 5, 1),
+            floor=False,
+        )
+        assert gated.verdict == "no_signal", query
+        assert [hit.id for hit in probed.top_hits] == [m.id], query
+
+
 def test_mixed_acknowledgment_message_passes_the_gate() -> None:
     """Control for `_ACK_TOKENS`: an acknowledgment followed by a real
     request must NOT be gated — the non-acknowledgment tokens

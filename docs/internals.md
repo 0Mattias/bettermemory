@@ -62,7 +62,9 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   recall probes the owner's words as the one definition of an owner
   prompt reads them (`owner_prompt.py`: the app's envelope blocks
   removed, reminders, pastes and artifact views, then 2,000 characters)
-  through the audit's probe and delivers its top three hits admitted for
+  through the audit's probe without its content-token floor (from
+  `rs-v7`: a prompt of one content word or only acknowledgments is
+  probed like any other) and delivers its top three hits admitted for
   the caller, unless held by provenance, an open contradiction or the
   segment; a superseded hit yields its slot to its head, marked
   `[replaces <id>]`. The recall block is cut to `RECALL_CAP_CHARS`, 900

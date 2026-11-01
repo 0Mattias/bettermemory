@@ -40,9 +40,11 @@ from .transcript import CompactMarker
 # reply_source (RS-F3).
 # rs-v4: RS-F5's one owner-prompt definition, the Stop anchored to its turn, compact on the marker
 # rs-v5: RS-F6's delivery decided by membership; the brief and recall rows carry the checkout, the membership rule and rc3_admitted
+# rs-v6: RS-F7's delivery of what is in force; the brief is standing and work; every outcome a row
+# rs-v7: ENG-115's prompt recall probes the owner's words without the audit's content-token floor
 # Every row written after a landing carries its rule, so a read of the
 # log splits on the row's rule and never on a clock.
-RULE = "rs-v6"
+RULE = "rs-v7"
 
 # The harness a hook payload names when it names none: the one whose
 # hook protocol the plugin implements.

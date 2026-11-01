@@ -236,7 +236,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert result.surface == "session_brief"
     assert result.ids == (rule.id, note.id)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v6"
+    assert result.rule == "rs-v7"
     (event,) = world.briefs()
     assert event["event_id"] == result.event_id
     assert event["ids"] == [rule.id, note.id]
@@ -249,7 +249,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert event["source"] == "startup"
     assert event["segment"] == 0
     assert event["chars"] == len(result.stdout)
-    assert event["rule"] == "rs-v6"
+    assert event["rule"] == "rs-v7"
     assert event["checkout"] == world.home.checkout
     assert event["rc3_admitted"] == [rule.id, note.id]
     assert event["triggered_from"] == "session_hook"
@@ -730,12 +730,12 @@ def test_a_resume_with_every_candidate_shown_prints_nothing_and_records_the_row(
 
     assert (resumed.stdout, resumed.ids, resumed.chars) == ("", (), 0)
     assert resumed.surface == "session_brief"
-    assert resumed.rule == "rs-v6"
+    assert resumed.rule == "rs-v7"
     assert resumed.event_id is not None and resumed.event_id != startup.event_id
     _, row = world.briefs()
     assert row["event_id"] == resumed.event_id
     assert (row["ids"], row["chars"], row["omitted"]) == ([], 0, [second.id, first.id])
-    assert (row["source"], row["segment"], row["rule"]) == ("resume", 0, "rs-v6")
+    assert (row["source"], row["segment"], row["rule"]) == ("resume", 0, "rs-v7")
     assert (row["standing"], row["work"]) == ([], [])
     assert row["session"] == "transcript-brief"
     assert row["transcript_path"] == unwritten
