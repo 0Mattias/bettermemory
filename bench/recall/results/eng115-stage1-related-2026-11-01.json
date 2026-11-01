@@ -1,0 +1,395 @@
+{
+ "kind": "eng115-stage1-1a",
+ "unit": "ENG-115",
+ "stage": "1, part 1a",
+ "question": "How many of the engine's ranked records, and how much of each record's text, must the write review show so that it sees the stored records a write relates to: RELATED_TOP, RELATED_CAP and RELATED_TEXT_CHARS measured on real writes, graded blind.",
+ "declared": "before any result was read, on the owner's yes of 2026-11-01 (\"Yes, run Stage 1\"); the owner approved the population below on 2026-11-01 (\"Yes, both\") before any grade was read",
+ "commit": "5da132df3e9b5d7b2afa38e41fc456ce343f0906",
+ "version": "9.0.0rc15",
+ "constants_at_run": {
+  "RELATED_TOP": 3,
+  "RELATED_CAP": 5,
+  "RELATED_TEXT_CHARS": 600
+ },
+ "store_snapshot": {
+  "backup_at": "2026-11-01T04:00:14.969964+00:00",
+  "sha256": "84c297484ce457654d78ada1ea5d697a8306ae31d71edc53a3ccf9226a6dda3a"
+ },
+ "harness_check": {
+  "corpus": "bench/integrity/v1/dev.json",
+  "corpus_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
+  "rule": "review.RELATED_TOP = k, RELATED_CAP = k + 2, the bench's build_states, related_hold",
+  "related_hold_by_k": {
+   "1": [
+    39,
+    44
+   ],
+   "2": [
+    41,
+    44
+   ],
+   "3": [
+    42,
+    44
+   ],
+   "4": [
+    42,
+    44
+   ],
+   "5": [
+    44,
+    44
+   ],
+   "6": [
+    44,
+    44
+   ],
+   "7": [
+    44,
+    44
+   ],
+   "8": [
+    44,
+    44
+   ],
+   "9": [
+    44,
+    44
+   ],
+   "10": [
+    44,
+    44
+   ]
+  },
+  "p0": "HIT: 42 of 44 at k = 3, as run 2 of 2026-10-23 read"
+ },
+ "replay": {
+  "method": "every mutation row of the log folded into a scratch store (bench/recall/read_rs_f7_p6.py), read just before each write's first commit row; the caller's REVIEW_STRATA admission over the folded membership; the session's disabled scopes and the write's declared supersedes excluded; search.search's clock pinned to the write's first review page",
+  "writes": {
+   "committed_since_2026-10-11": 482,
+   "without_relation_answers": 49,
+   "with_answers": 433,
+   "caller_recorded": 129,
+   "note": "no write before 2026-10-21 has a recorded caller (the membership model began recording checkouts that day), so its admission cannot be replayed"
+  },
+  "p0_ids": {
+   "window_from": "2026-10-31T20:40:24Z (rc15 live)",
+   "equal": 7,
+   "n": 7,
+   "verdict": "HIT",
+   "every_replayed_write": [
+    116,
+    129
+   ]
+  }
+ },
+ "sample": {
+  "rule": "every write with a recorded caller and at least one candidate (the owner's ruling of 2026-11-01)",
+  "writes": 129,
+  "labelled": 56,
+  "unlabelled": 73
+ },
+ "candidates": "the engine's set at RELATED_TOP = k for k = 1 to 10 (review.related_for, cue code off, RELATED_CAP = k) and the cue code's admitted targets, shuffled, under neutral labels; a standing write's roster records only counted apart",
+ "judges": {
+  "record": "openai/gpt-6.1-sol",
+  "second": "anthropic/claude-opus-5.5",
+  "settle": "google/gemini-4-argon"
+ },
+ "reasoning": {
+  "openai/gpt-6.1-sol": "low",
+  "anthropic/claude-opus-5.5": "low",
+  "google/gemini-4-argon": "low"
+ },
+ "body_chars": 4000,
+ "question_asked": "review.QUESTIONS['relation'], word for word, the instructions and the five criteria",
+ "graded": {
+  "pairs": 1293,
+  "related": 417,
+  "related_counted_apart_cue_or_roster": 29,
+  "final_by": {
+   "agreed": 976,
+   "settled": 317
+  },
+  "record_judge_labels_on_related_pairs": {
+   "extends": 272,
+   "update": 141,
+   "restates": 2,
+   "conflict": 2
+  }
+ },
+ "hold_by_k": {
+  "1": {
+   "held": 90,
+   "n": 388,
+   "share": 0.232,
+   "wilson95": [
+    0.193,
+    0.276
+   ]
+  },
+  "2": {
+   "held": 149,
+   "n": 388,
+   "share": 0.384,
+   "wilson95": [
+    0.337,
+    0.433
+   ]
+  },
+  "3": {
+   "held": 190,
+   "n": 388,
+   "share": 0.49,
+   "wilson95": [
+    0.44,
+    0.539
+   ]
+  },
+  "4": {
+   "held": 233,
+   "n": 388,
+   "share": 0.601,
+   "wilson95": [
+    0.551,
+    0.648
+   ]
+  },
+  "5": {
+   "held": 266,
+   "n": 388,
+   "share": 0.686,
+   "wilson95": [
+    0.638,
+    0.73
+   ]
+  },
+  "6": {
+   "held": 296,
+   "n": 388,
+   "share": 0.763,
+   "wilson95": [
+    0.718,
+    0.803
+   ]
+  },
+  "7": {
+   "held": 322,
+   "n": 388,
+   "share": 0.83,
+   "wilson95": [
+    0.789,
+    0.864
+   ]
+  },
+  "8": {
+   "held": 339,
+   "n": 388,
+   "share": 0.874,
+   "wilson95": [
+    0.837,
+    0.903
+   ]
+  },
+  "9": {
+   "held": 367,
+   "n": 388,
+   "share": 0.946,
+   "wilson95": [
+    0.919,
+    0.964
+   ]
+  },
+  "10": {
+   "held": 388,
+   "n": 388,
+   "share": 1.0,
+   "wilson95": [
+    0.99,
+    1.0
+   ]
+  }
+ },
+ "hold_by_stratum": {
+  "labelled": {
+   "1": [
+    36,
+    173
+   ],
+   "2": [
+    63,
+    173
+   ],
+   "3": [
+    80,
+    173
+   ],
+   "4": [
+    99,
+    173
+   ],
+   "5": [
+    113,
+    173
+   ],
+   "6": [
+    131,
+    173
+   ],
+   "7": [
+    143,
+    173
+   ],
+   "8": [
+    150,
+    173
+   ],
+   "9": [
+    163,
+    173
+   ],
+   "10": [
+    173,
+    173
+   ]
+  },
+  "unlabelled": {
+   "1": [
+    54,
+    215
+   ],
+   "2": [
+    86,
+    215
+   ],
+   "3": [
+    110,
+    215
+   ],
+   "4": [
+    134,
+    215
+   ],
+   "5": [
+    153,
+    215
+   ],
+   "6": [
+    165,
+    215
+   ],
+   "7": [
+    179,
+    215
+   ],
+   "8": [
+    189,
+    215
+   ],
+   "9": [
+    204,
+    215
+   ],
+   "10": [
+    215,
+    215
+   ]
+  }
+ },
+ "related_share_by_first_rank": {
+  "1": [
+   94,
+   129
+  ],
+  "2": [
+   63,
+   129
+  ],
+  "3": [
+   45,
+   129
+  ],
+  "4": [
+   45,
+   129
+  ],
+  "5": [
+   37,
+   129
+  ],
+  "6": [
+   32,
+   129
+  ],
+  "7": [
+   27,
+   129
+  ],
+  "8": [
+   19,
+   129
+  ],
+  "9": [
+   30,
+   129
+  ],
+  "10": [
+   23,
+   129
+  ]
+ },
+ "cue_targets_per_write": {
+  "0": 127,
+  "1": 1,
+  "2": 1
+ },
+ "window_agreement": {
+  "judge": "openai/gpt-6.1-sol, its window answer against its own full-body answer, on the related pairs",
+  "600": {
+   "same": 396,
+   "n": 417,
+   "share": 0.95,
+   "wilson95": [
+    0.924,
+    0.967
+   ]
+  },
+  "1200": {
+   "same": 400,
+   "n": 417,
+   "share": 0.959,
+   "wilson95": [
+    0.936,
+    0.974
+   ]
+  }
+ },
+ "decision": {
+  "RELATED_TOP": 9,
+  "RELATED_CAP": 9,
+  "cue_p95": 0,
+  "RELATED_TEXT_CHARS": 600,
+  "rule": "TOP: the smallest k holding at least 90% of the graded-related candidates (cue and roster counted apart); CAP: TOP plus the 95th percentile of cue targets per write; TEXT_CHARS: the smaller of 600 and 1,200 agreeing on at least 90% of pairs, else 4,000"
+ },
+ "predictions": {
+  "P0": "HIT",
+  "P1_k3_holds_at_least_90": "MISSED (0.490 [0.440, 0.539])",
+  "P2_600_changes_at_most_10": "HIT (0.950 agree [0.924, 0.967])"
+ },
+ "limits": [
+  "the denominator is the related records inside the engine's top 10: related records still appear at about one in five at ranks 9 and 10, so records past rank 10 are unseen and TOP 9 is the least that holds 90% of what was graded, not of every related record",
+  "related means any label but unrelated; 272 of the 417 related pairs were labelled extends by the record judge",
+  "in-sample: the writes of one store, 2026-10-21 to 2026-11-01"
+ ],
+ "spend_usd": {
+  "judges": 16.1462,
+  "windows": 1.2964,
+  "source": "the cost each call returned, summed over the run's response cache (the first judge attempt stopped on an OpenRouter in-flight credit refusal and its completed calls were reused, not repaid)"
+ },
+ "receipts": "~/.cache/bettermemory-v9/receipts/eng115-stage1-2026-11-01 (check_integrity.py, related.py, candidates.json, packets.json, judged.json, windows.json, analysis-1a.json)",
+ "scripts_sha256": {
+  "related.py": "8bc77d8a87350b1a6adef4fb8ee0f4e6dd4b0a9f4fcf6a6a72c60684bf3a7e76",
+  "check_integrity.py": "6c021fe4e3d9b90c9c628c5a339e6c44f95e5cff880ff65f9dc6ec8f6d0907ae",
+  "bench/recall/read_rs_f7_p6.py": "c238b300aa653d4bd6696fead1f2f7aa73464b420016730ae54cd04e853e2ab6"
+ },
+ "note": "Counts and rates only. Write text, record bodies, record ids and prompt text stay in the receipts."
+}
