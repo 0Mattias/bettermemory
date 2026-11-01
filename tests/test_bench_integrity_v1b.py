@@ -876,7 +876,7 @@ def test_review_score_takes_a_rule_and_a_table(
     ri: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     seen = _score_cli(ri, monkeypatch, tmp_path)
-    assert (seen["rule"], seen["table"]) == (ri.RULE_A2, ri.TABLE_V1)
+    assert (seen["rule"], seen["table"]) == (ri.RULE_A3, ri.TABLE_V1)
     assert seen["results_dir"] is None  # the split's own, resolved from its manifest
     seen = _score_cli(ri, monkeypatch, tmp_path, "--rule", "A2", "--table", "2")
     assert (seen["rule"], seen["table"]) == ("A2", 2)

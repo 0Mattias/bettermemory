@@ -107,40 +107,50 @@ def _guarded_change(
     new_category: Category | None,
     new_links: list[MemoryLink],
     standing_answer: StandingAnswer | None,
-) -> list[str]:
-    """The standing memories this edit changes (`standing.guarded_ids`),
-    on which it rests on the user's words (unit RS-F7 part 5): the record
+) -> tuple[list[str], list[str]]:
+    """The memories on which this edit rests on the user's words: the
+    standing memories it changes (`standing.guarded_ids`, unit RS-F7 part
+    5), and the ones rule S guards (ENG-113). The first are the record
     itself when its body is edited, a scope is dropped from it (a global
     record's scopes name the projects it is delivered in) or it is left
     not standing (a lower answer, or a category that is not standing);
     and every standing memory a ``supersedes`` link added here takes out
-    of force. Adding a scope, raising an answer and any change to a
-    memory that is not standing need no words."""
+    of force. The second are every memory such a link takes out of force
+    when the record is standing after the edit: a standing record's
+    taking anything out of force rests on the user's words, as a standing
+    write's does. Adding a scope, raising an answer and any change to a
+    memory that is not standing and adds no link need no words."""
     supersedes = LinkType.SUPERSEDES
     kept = {link.target_id for link in existing.links if link.type == supersedes}
     added = sorted(
         {link.target_id for link in new_links if link.type == supersedes} - kept
     )
     guarded = set(_standing.guarded_ids(deps.store, [existing.id, *added]))
+    edited = new_body != existing.body
+    # An edit with no answer yet is asked the standing question first and
+    # read again with its answer: whether it stands is known then.
+    stands: bool | None = None
+    if standing_answer is not None or not edited:
+        answer = (
+            standing_answer.probability
+            if standing_answer is not None
+            else _standing.answers(deps.store, [existing.id]).get(existing.id)
+        )
+        category = new_category.value if new_category is not None else None
+        stands = _standing.is_standing(category, answer)
     out: list[str] = []
     if existing.id in guarded:
-        edited = new_body != existing.body
         lost = set(existing.scopes) - set(new_scopes)
-        demoted = False
-        # An edit with no answer yet is asked the standing question first
-        # and read again with its answer: whether it stands is known then.
-        if standing_answer is not None or not edited:
-            answer = (
-                standing_answer.probability
-                if standing_answer is not None
-                else _standing.answers(deps.store, [existing.id]).get(existing.id)
-            )
-            category = new_category.value if new_category is not None else None
-            demoted = not _standing.is_standing(category, answer)
-        if edited or lost or demoted:
+        if edited or lost or stands is False:
             out.append(existing.id)
     out += [target for target in added if target in guarded]
-    return out
+    # A link to a memory the store does not hold takes nothing out of force.
+    rule_s = [
+        target
+        for target in added
+        if stands and target not in guarded and deps.store.has_memory(target)
+    ]
+    return out, rule_s
 
 
 async def memory_update(
@@ -428,7 +438,8 @@ def _answer_standing_only(
     # lower answer for a guarded record rests on the user's words; one
     # that makes the record standing is read against the standing roster
     # first (ENG-112), whose update and extends answers link from it.
-    records = _guarded_change(
+    # No link is added here, so rule S names nothing.
+    records, _ = _guarded_change(
         deps,
         existing,
         new_body=existing.body,
@@ -986,7 +997,7 @@ def _guard_or_ask_standing(
     written once it commits (`_guard.check`)."""
     # A change that takes a guarded record out of force or out of standing,
     # or edits it, rests on the user's words (unit RS-F7 part 5).
-    records = _guarded_change(
+    records, rule_s = _guarded_change(
         deps,
         existing,
         new_body=new_body,
@@ -995,9 +1006,14 @@ def _guard_or_ask_standing(
         new_links=list(new_links),
         standing_answer=standing_answer,
     )
-    refusal, held = _guard.check(deps, "memory_update", records, said)
+    refusal, held = _guard.check(deps, "memory_update", records, said, rule_s=rule_s)
     if refusal is not None:
-        deps.recorder.record("update", id=id, status="refused_standing")
+        deps.recorder.record(
+            "update",
+            id=id,
+            status="refused_standing",
+            **({"standing_write": True} if refusal.get("standing_write") else {}),
+        )
         return refusal, None
 
     # An edit of the body is answered for the new body in this call while

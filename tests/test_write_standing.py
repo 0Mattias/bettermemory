@@ -7,7 +7,8 @@ naming the record and quoting it. A write that replaces one (an update
 answer, a declared supersedes, or a cue link left standing) passes only on
 the user's own words in review.said, checked as a join's are: the quote is
 in a prompt the hook saw in the caller's checkout; where the hook saw none
-there, the words are taken as given and the reply says so.
+there, the words are taken as given and the reply says so. A write that is
+itself standing replaces any record only on those words (rule S, ENG-113).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from bettermemory import review, standing
 from bettermemory.admission import Admission
+from bettermemory.in_force import in_force
 from bettermemory.location import resolve_caller
 from bettermemory.membership import REVIEW_STRATA
 from bettermemory.models import Category, LinkType
@@ -294,20 +296,121 @@ async def test_said_is_not_read_where_no_replacement_rests_on_it(h: Harness) -> 
     assert "conflicts_filed" not in res
 
 
-async def test_a_standing_write_that_replaces_a_plain_record_needs_no_words(
+# ---------------------------------------------------------------------------
+# Rule S: a standing write replaces any record only on the user's words
+# ---------------------------------------------------------------------------
+
+#: Words a hint must not use: rule S's refusal offers said alone, never a
+#: rewrite or another answer that would get the write past it (ENG-113).
+_INVITES = (
+    "rewrite",
+    "rephrase",
+    "comply",
+    "lower",
+    "answer update",
+    "standing answer",
+)
+
+
+async def test_a_standing_write_that_replaces_a_plain_record_rests_on_said(
     h: Harness,
 ) -> None:
-    """The record it updates is not standing: the write's own standing
-    answer, or an ambient category, asks nothing of the user's words."""
+    """Rule S (ENG-113): the write's own standing answer makes it a rule
+    the user gave, so it takes a record out of force only on the user's
+    words, standing or not. Refused, the record stays in force, the refusal
+    quotes it, and the hint offers said and nothing else."""
     old = h.seed(RULE)
     _standing(h, old, 0.1)
-    done = await _decide(h, UPDATING, {old: "update"}, own=0.9)
+    refused = await _decide(h, UPDATING, {old: "update"}, own=0.9)
+    assert refused["status"] == review.ACTION_STANDING, refused
+    assert [(row["id"], row["text"]) for row in refused["standing"]] == [(old, RULE)]
+    assert refused["standing_write"] is True
+    assert "review.said" in refused["hint"]
+    assert not [w for w in _INVITES if w in refused["hint"].lower()]
+    assert [m.id for m in h.store.load_all()] == [old]
+    (row,) = [e for e in h.events("write") if e.get("status") == review.ACTION_STANDING]
+    assert (row["standing"], row["standing_write"]) == ([old], True)
+    assert h.events("standing_guard") == []
+    _heard(h, f"Please {QUOTE}.")
+    done = await _decide(h, UPDATING, {old: "update"}, own=0.9, said=QUOTE)
     assert done["status"] == "committed", done
+    assert [row["id"] for row in done["supersedes"]] == [old]
+    (guard,) = h.events("standing_guard")
+    assert (guard["door"], guard["standing"], guard["said"]) == (
+        "memory_write",
+        [old],
+        QUOTE,
+    )
+
+
+async def test_a_standing_write_replacing_a_ruling_is_offered_said_alone(
+    h: Harness,
+) -> None:
+    """A standing write that replaces a standing record is refused by both
+    rules; it states a rule, so its hint is rule S's and offers no rewrite."""
+    old = h.seed(RULE)
+    _standing(h, old)
+    refused = await _decide(h, UPDATING, {old: "update"}, own=0.9)
+    assert refused["status"] == review.ACTION_STANDING, refused
+    assert refused["standing_write"] is True
+    assert not [w for w in _INVITES if w in refused["hint"].lower()]
+    plain = await _decide(h, UPDATING, {old: "update"})
+    assert "standing_write" not in plain
+    assert "Rewrite" in plain["hint"]
+
+
+async def test_an_ambient_write_that_replaces_a_record_rests_on_said(
+    h: Harness,
+) -> None:
     other = h.seed(FACTS[1])
     changed = "Grafana dashboards for the queue moved to the platform repo."
     assert other in h.related_ids(changed)
-    ambient = await _decide(h, changed, {other: "update"}, category="ambient")
-    assert ambient["status"] == "committed", ambient
+    refused = await _decide(h, changed, {other: "update"}, category="ambient")
+    assert refused["status"] == review.ACTION_STANDING, refused
+    assert [row["id"] for row in refused["standing"]] == [other]
+    done = await _decide(
+        h, changed, {other: "update"}, category="ambient", said="grafana moved"
+    )
+    assert done["status"] == "committed", done
+    assert done["said_checked"] is False
+
+
+async def test_rule_s_reads_the_writes_own_answer_inclusively(h: Harness) -> None:
+    """At TAU_STANDING the write is standing and refused; below it the
+    same update commits and links with no words, as a fact's update does."""
+    assert standing.TAU_STANDING is not None
+    old = h.seed(RULE)
+    at = await _decide(h, UPDATING, {old: "update"}, own=standing.TAU_STANDING)
+    assert at["status"] == review.ACTION_STANDING, at
+    below = await _decide(h, UPDATING, {old: "update"}, own=0.2)
+    assert below["status"] == "committed", below
+    assert [row["id"] for row in below["supersedes"]] == [old]
+    assert h.events("standing_guard") == []
+
+
+async def test_a_standing_write_declaring_a_plain_supersedes_rests_on_said(
+    h: Harness,
+) -> None:
+    old = h.seed(RULE)
+    refused = await _decide(h, CONFLICTING, {}, supersedes=[old], own=0.9)
+    assert refused["status"] == review.ACTION_STANDING, refused
+    assert [row["id"] for row in refused["standing"]] == [old]
+    done = await _decide(h, CONFLICTING, {}, supersedes=[old], own=0.9, said=QUOTE)
+    assert done["status"] == "committed", done
+    assert [x.target_id for x in h.store.load_one(done["id"]).links] == [old]
+    assert done["said_checked"] is False
+
+
+async def test_a_standing_write_that_replaces_nothing_needs_no_words(
+    h: Harness,
+) -> None:
+    """Rule S guards what a standing write takes out of force, and an
+    extends or a conflict answer takes nothing: the write commits and the
+    record stays in force."""
+    old = h.seed(RULE)
+    done = await _decide(h, UPDATING, {old: "extends"}, own=0.9)
+    assert done["status"] == "committed", done
+    assert not in_force(h.store, [old], _admission(h))[old].history
     assert h.events("standing_guard") == []
 
 
@@ -500,6 +603,46 @@ def test_a_declared_supersedes_of_a_standing_record_rests_on_said_alone() -> Non
     # a conflict with a standing record refuses whatever said holds
     conflict = _apply({"a": "conflict"}, _related(["a"]), standing_ids=["a"], said=True)
     assert conflict.action == review.ACTION_STANDING
+
+
+def test_rule_s_names_every_record_a_standing_write_replaces() -> None:
+    """Rule S (ENG-113) in the pure decision: every id `replaced_ids` names,
+    standing or not; `standing_write` marks a refusal of a write that is
+    itself standing."""
+    related = _related(["a", "b", "c"], cue=["c", "d"])
+    relation = {"a": "update", "b": "extends", "c": "unrelated"}
+    refused = _apply(relation, related, write_standing=True, declared_ids=["x"])
+    assert refused.action == review.ACTION_STANDING
+    assert refused.standing == ("a", "x", "d")
+    assert refused.standing_write is True
+    assert refused.to_event()["standing_write"] is True
+    mixed = _apply(relation, related, write_standing=True, standing_ids=["a"])
+    assert (mixed.standing, mixed.standing_write) == (("a", "d"), True)
+    only = _apply(
+        {"a": "update"}, _related(["a"]), write_standing=True, standing_ids=["a"]
+    )
+    assert (only.standing, only.standing_write) == (("a",), True)
+    plain = _apply({"a": "update"}, _related(["a"]), standing_ids=["a"])
+    assert (plain.standing, plain.standing_write) == (("a",), False)
+    assert "standing_write" not in plain.to_event()
+    carried = _apply(relation, related, write_standing=True, said=True)
+    assert carried.action == review.ACTION_COMMIT
+    assert carried.links == ("a",)
+    assert _apply(relation, related).action == review.ACTION_COMMIT
+    extends = _apply({"b": "extends"}, _related(["b"]), write_standing=True)
+    assert extends.action == review.ACTION_COMMIT
+
+
+def test_a_standing_conflict_refuses_before_rule_s_does() -> None:
+    decision = _apply(
+        {"a": "conflict", "b": "update"},
+        _related(["a", "b"]),
+        write_standing=True,
+        standing_ids=["a"],
+        said=True,
+    )
+    assert (decision.action, decision.standing) == (review.ACTION_STANDING, ("a",))
+    assert decision.standing_write is False
 
 
 def test_a_declared_target_is_not_also_extended() -> None:

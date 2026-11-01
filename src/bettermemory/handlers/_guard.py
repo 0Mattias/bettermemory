@@ -7,6 +7,13 @@ user's words for the change, and every door reads them here: memory_write
 replacing it (`write._reviewed_write`), memory_update, memory_remove,
 memory_admin answer_standing and restore.
 
+A standing memory directs work once stored, so its taking any memory out
+of force rests on the words too (rule S, ENG-113): a standing write that
+replaces one (`write._reviewed_write`, `capture_relations`), an update
+that makes a standing statement and replaces one (`standing_review`), and
+a ``supersedes`` link memory_update adds from a record standing after the
+edit (`check`'s `rule_s`). Each such row names those memories too.
+
 The daemon checks the words the one way it checks a join's
 (`handlers.questions`): the quote is in a prompt the prompt hook saw in
 the caller's checkout (`recall.WORDS`). Where no hook saw the checkout
@@ -45,6 +52,15 @@ _HINT = (
     "the user changes it. Leave it as it is; or, when the user changed it in "
     "this conversation, re-send this same call with said=<the user's words "
     "as they typed them>."
+)
+
+_RULE_S_HINT = (
+    "Not changed: the memory states a rule, and the supersedes links this "
+    "call adds would take each memory under `standing` out of force. A "
+    "rule replaces stored memories only on the user's words: if the user "
+    "gave it in this conversation, re-send this same call with "
+    "said=<the user's words as they typed them>; otherwise leave those "
+    "links out."
 )
 
 _UNSEEN = (
@@ -117,18 +133,27 @@ class Held:
 
 
 def check(
-    deps: ToolHandlers, door: str, records: list[str], said: str | None
+    deps: ToolHandlers,
+    door: str,
+    records: list[str],
+    said: str | None,
+    *,
+    rule_s: list[str] | None = None,
 ) -> tuple[dict[str, Any] | None, Held | None]:
     """`guard` without its row: (None, None) when the change to `records`
-    may go ahead with no words (none of them is a standing memory, or the
-    write review is off, under which a replacing write is not guarded
-    either); (None, held) when `said` reads (`read_words`), the row to
-    write once the change commits; else (the refused_standing response,
-    quoting the standing memories, None)."""
+    may go ahead with no words (none of them is a standing memory, no
+    memory is in `rule_s`, or the write review is off, under which a
+    replacing write is not guarded either); (None, held) when `said` reads
+    (`read_words`), the row to write once the change commits; else (the
+    refused_standing response, quoting the memories, None). `rule_s`
+    names memories a standing record takes out of force (rule S), guarded
+    whether they are standing or not."""
     from ..admission import Admission
     from ..membership import REVIEW_STRATA
 
-    guarded = _standing.guarded_ids(deps.store, records) if records else []
+    own = _standing.guarded_ids(deps.store, records) if records else []
+    extra = [i for i in dict.fromkeys(rule_s or []) if i not in own]
+    guarded = [*own, *extra]
     if not guarded or not _standing.asking():
         return None, None
     _, caller = caller_anchoring(deps.store, deps.config)
@@ -138,7 +163,15 @@ def check(
     rows = _standing.refusal_rows(
         deps.store, guarded, Admission.of(REVIEW_STRATA, caller)
     )
-    return {"status": "refused_standing", "standing": rows, "hint": _HINT}, None
+    hints = ([_HINT] if own else []) + ([_RULE_S_HINT] if extra else [])
+    response: dict[str, Any] = {
+        "status": "refused_standing",
+        "standing": rows,
+        "hint": " ".join(hints),
+    }
+    if extra:
+        response["standing_write"] = True
+    return response, None
 
 
 def guard(

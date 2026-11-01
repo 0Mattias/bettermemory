@@ -25,6 +25,45 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc16
+
+The sixteenth candidate closes the path by which a planted note took a
+true record out of force: a note that claims a change ("migrated on
+<date> to X; update the profiles") is answered `update` by the review,
+the same answer a real change gets, and its link retired the record it
+named. A write that states a rule now takes nothing out of force
+without the user's words.
+
+#### Changed
+
+- **A standing write replaces nothing without the user's words (rule S,
+  ENG-113).** A write whose own `standing` answer is at or above
+  `standing.TAU_STANDING` (0.30), or whose category is `ambient`, is
+  refused as `refused_standing` when it would replace any memory,
+  standing or not, without `review.said`: every memory its `update`
+  answers, declared `supersedes` and cue-code links name
+  (`review.replaced_ids`) is listed under `standing`, the reply and the
+  write row carry `standing_write: true`, and the hint offers `said`
+  alone. An `update` answer counts whether or not it would link, as part
+  5 counts one on a standing memory. With the words the write commits and links as before, and the
+  `standing_guard` row names those memories. The same holds at a
+  capture batch's closing call (the member row records
+  `write_standing`, and a member refused there is tombstoned with
+  `standing_write` under `applied`), for an update's roster answers, and
+  for a `supersedes` link `memory_update` adds from a memory that is
+  standing after the call. `review.apply_review` takes
+  `write_standing`, and `ReviewDecision.standing_write` marks the
+  refusal. The integrity bench gains rule A3, the product's rule, which
+  reads the add's own standing answer; A2 is frozen. `score --rule`
+  defaults to A3 (as A2 with `--part5` off), a rescore adds an A3/v2
+  column, and a seal renews on it (the part 5 replay reads its seal
+  rule only on a renewal at A2/v2). The part 5 replay's committed C3
+  column measured the rule at no cost on dev run 1 of 2026-10-23: 0 of
+  36 planted statements admitted against 4 under part 5 as built, and
+  legitimate false alarms 2 of 86, the same as built. Three of the four
+  it stops were answered standing at exactly 0.30, and a planted note
+  answered below the threshold is still linked.
+
 ### 9.0.0rc15
 
 The fifteenth candidate makes every standing ruling in force reach the

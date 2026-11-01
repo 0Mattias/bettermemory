@@ -592,6 +592,90 @@ async def test_unchecked_words_carry_an_update_given_at_the_close(
     assert ConflictQueue(world.store).load() == []
 
 
+async def test_a_standing_capture_write_replaces_at_the_close_only_on_said(
+    world: World,
+) -> None:
+    """Rule S (ENG-113) at the close: the member's own answer made it
+    standing, so an update answer for a pending record that is not
+    standing removes it when no words carried the write, with the hint
+    that offers said alone."""
+    old = world.seed(BACKUP_OLD)
+    batch = world.open()
+    res = await world.scored(batch, BACKUP_NEW, standing=0.9)
+    assert res["status"] == "committed", res
+    assert old in _pending_ids(res)
+    (member,) = capture.members(world.store, batch.batch)
+    assert member.review is not None and member.review["write_standing"] is True
+    done = await world.relations({res["id"]: {old: "update"}})
+    applied = done["applied"][res["id"]]
+    assert applied["action"] == review.ACTION_STANDING, applied
+    assert (applied["standing"], applied["standing_write"]) == ([old], True)
+    assert applied["tombstoned"] is True
+    assert "standing_write" in done["hint"]
+    assert "rewritten" not in done["hint"]
+    assert [m.id for m in world.store.load_all()] == [old]
+
+
+async def test_a_member_row_from_before_rule_s_is_read_off_the_member(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A member row written before it recorded write_standing (a batch left
+    open across the upgrade) is read off the member's own stored standing
+    answer, so the close still applies rule S."""
+    real = capture.deferred_review
+
+    def before(**kw: Any) -> dict[str, Any]:
+        row = real(**kw)
+        del row["write_standing"]
+        return row
+
+    monkeypatch.setattr(capture, "deferred_review", before)
+    old = world.seed(BACKUP_OLD)
+    batch = world.open()
+    res = await world.scored(batch, BACKUP_NEW, standing=0.9)
+    assert res["status"] == "committed", res
+    (member,) = capture.members(world.store, batch.batch)
+    assert member.review is not None and "write_standing" not in member.review
+    done = await world.relations({res["id"]: {old: "update"}})
+    applied = done["applied"][res["id"]]
+    assert (applied["action"], applied["standing_write"]) == (
+        review.ACTION_STANDING,
+        True,
+    )
+
+
+async def test_said_on_a_standing_capture_write_carries_its_update_at_the_close(
+    world: World,
+) -> None:
+    old = world.seed(BACKUP_OLD)
+    batch = world.open()
+    res = await world.scored(
+        batch, BACKUP_NEW, said="nightly archive backups to Borg", standing=0.9
+    )
+    assert res["status"] == "committed", res
+    done = await world.relations({res["id"]: {old: "update"}})
+    assert done["applied"][res["id"]]["action"] == review.ACTION_COMMIT
+    assert [
+        (link.type, link.target_id) for link in world.store.load_one(res["id"]).links
+    ] == [(LinkType.SUPERSEDES, old)]
+
+
+async def test_a_standing_capture_writes_cue_link_rests_on_the_users_words(
+    world: World,
+) -> None:
+    """The cue code's link stands while its target is pending, so a
+    standing capture write that would replace a record by it is refused at
+    commit, the record not standing; the same write not standing commits."""
+    old = world.seed(PORT_OLD)
+    batch = world.open()
+    refused = await world.scored(batch, PORT_NEW, standing=0.9)
+    assert refused["status"] == review.ACTION_STANDING, refused
+    assert [row["id"] for row in refused["standing"]] == [old]
+    plain = await world.scored(batch, PORT_NEW)
+    assert plain["status"] == "committed", plain
+    assert [r["id"] for r in plain["supersedes"]] == [old]
+
+
 # ---------------------------------------------------------------------------
 # 4. A batch that settles with relations pending
 # ---------------------------------------------------------------------------

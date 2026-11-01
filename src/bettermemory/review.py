@@ -941,7 +941,9 @@ class ReviewDecision:
     that do not link, `filings` the `(id, detector)` pairs to file, and
     `cue_dropped` the cue code's targets the review disputed, whose links
     the commit does not set. The cue code's other links are not here: the
-    commit sets them."""
+    commit sets them. `standing_write` marks a refused_standing that rule S
+    made: the write is itself standing, and `standing` names every record
+    it would replace, standing or not."""
 
     action: str
     restated: tuple[str, ...] = ()
@@ -951,6 +953,7 @@ class ReviewDecision:
     cue_dropped: tuple[str, ...] = ()
     extends: tuple[str, ...] = ()
     standing: tuple[str, ...] = ()
+    standing_write: bool = False
 
     def to_event(self) -> dict[str, Any]:
         out: dict[str, Any] = {"action": self.action}
@@ -958,6 +961,8 @@ class ReviewDecision:
             out["restated"] = list(self.restated)
         if self.standing:
             out["standing"] = list(self.standing)
+        if self.standing_write:
+            out["standing_write"] = True
         if self.links:
             out["links"] = list(self.links)
         if self.extends:
@@ -1006,6 +1011,7 @@ def apply_review(
     standing_ids: Iterable[str] = (),
     said: bool = False,
     restates_refuses: bool = True,
+    write_standing: bool = False,
 ) -> ReviewDecision:
     """Turn answers into the action, in this order:
 
@@ -1021,10 +1027,13 @@ def apply_review(
        nothing.
     5. a standing record the write would replace (`replaced_ids`: an
        update answer, a declared supersedes, a cue link left standing),
-       without the user's words (`said`): refused (refused_standing,
-       naming them). The caller reads the words before it passes `said`
-       (`handlers._guard.read_words`); the records are those
-       `standing.guarded_ids` names, admitted to the caller or not.
+       or any record it would replace when the write is itself standing
+       (`write_standing`, rule S), without the user's words (`said`):
+       refused (refused_standing, naming them; `standing_write` when the
+       write is itself standing). The caller reads the words
+       before it passes `said` (`handlers._guard.read_words`); the
+       standing records are those `standing.guarded_ids` names, admitted
+       to the caller or not.
     6. otherwise committed, with the restated ids carried on the decision
        and given nothing, and per related id:
        - update between two claim-sized statements, flag on: a supersedes
@@ -1048,7 +1057,10 @@ def apply_review(
 
     A standing record directs work until it is replaced (unit RS-F7 part
     5): a conflict with one never commits, and replacing one takes the
-    user's words.
+    user's words. A standing write directs work once stored, so its
+    taking anything out of force takes the user's words too (rule S,
+    ENG-113): a false note that claims a change and is answered update
+    would otherwise retire the true record it names.
 
     A dropped cue link (unit D1c): on legitimate writes in D1's runs the
     review disputed a cue link only where the link missed the statement
@@ -1083,11 +1095,13 @@ def apply_review(
     if restated and not updates and not declared and restates_refuses:
         return ReviewDecision(action=ACTION_RESTATES, restated=restated)
     cue_linked = set(related.cue_supersedes)
-    if standing and not said:
+    if (standing or write_standing) and not said:
         replaced = replaced_ids(answers, related, declared_list)
-        unsaid = tuple(i for i in replaced if i in standing)
+        unsaid = tuple(i for i in replaced if write_standing or i in standing)
         if unsaid:
-            return ReviewDecision(action=ACTION_STANDING, standing=unsaid)
+            return ReviewDecision(
+                action=ACTION_STANDING, standing=unsaid, standing_write=write_standing
+            )
     links: list[str] = []
     extends: list[str] = []
     suggested: list[str] = []

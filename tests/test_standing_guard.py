@@ -188,6 +188,64 @@ async def test_a_supersedes_link_to_a_standing_memory_rests_on_words(
     assert not _guarded(h, old)
 
 
+async def test_a_link_a_ruling_adds_rests_on_words_whatever_its_target(
+    h: Harness,
+) -> None:
+    """Rule S (ENG-113): a supersedes link added from a standing memory
+    takes its target out of force as a standing write's update does, so it
+    rests on the user's words though the target is not standing."""
+    ruling = _ruling(h, UPDATING)
+    old = h.seed(RULE)
+    link = [{"type": "supersedes", "target_id": old}]
+    refused = await _update(h, id=ruling, links=link)
+    _refused(refused, old)
+    assert refused["standing_write"] is True
+    assert "the user's words" in refused["hint"]
+    assert h.store.load_one(ruling).links == []
+    _heard(h, QUOTE)
+    done = await _update(h, id=ruling, links=link, said=QUOTE)
+    assert done["status"] == "committed", done
+    assert [(x.type, x.target_id) for x in h.store.load_one(ruling).links] == [
+        (LinkType.SUPERSEDES, old)
+    ]
+    (row,) = _rows(h)
+    assert (row["door"], row["standing"]) == ("memory_update", [old])
+
+
+async def test_a_link_from_a_memory_made_standing_in_the_call_rests_on_words(
+    h: Harness,
+) -> None:
+    plain = h.seed(UPDATING)
+    old = h.seed(RULE)
+    link = [{"type": "supersedes", "target_id": old}]
+    _refused(await _update(h, id=plain, links=link, standing=0.9), old)
+    assert h.store.load_one(plain).links == []
+
+
+async def test_a_rulings_link_to_a_memory_the_store_lacks_is_not_rule_s(
+    h: Harness,
+) -> None:
+    """A link to a removed memory takes nothing out of force, so rule S
+    names nothing and no refusal lists an empty roster."""
+    ruling = _ruling(h, UPDATING)
+    gone = h.seed(RULE)
+    h.store.tombstone(gone, reason="test")
+    link = [{"type": "supersedes", "target_id": gone}]
+    res = await _update(h, id=ruling, links=link)
+    assert res["status"] != review.ACTION_STANDING, res
+
+
+async def test_a_link_from_a_memory_that_is_not_standing_needs_no_words(
+    h: Harness,
+) -> None:
+    plain = h.seed(UPDATING)
+    old = h.seed(RULE)
+    link = [{"type": "supersedes", "target_id": old}]
+    done = await _update(h, id=plain, links=link)
+    assert done["status"] == "committed", done
+    assert _rows(h) == []
+
+
 async def test_dropping_a_rulings_own_link_needs_no_words(h: Harness) -> None:
     """A ruling that replaced a memory holds it out of force by its link.
     Dropping the link puts the older memory back beside the ruling, which

@@ -11,7 +11,7 @@ gate-only arm beside it. Every command prints counts and ids only.
                                     [--operating-points P --rerun-reason R]   (v1 test)
     review_integrity.py wave        --receipts DIR [--stop N --estimate N] [--tokens CHUNK=N ...]
     review_integrity.py score       --receipts DIR --out RESULT [--tau X | --operating-points P]
-                                    [--run-index N --run-reason R] [--rule A2 --table 1]
+                                    [--run-index N --run-reason R] [--rule A3 --table 1]
                                     [--part5 off]
     review_integrity.py rescore     --receipts DIR --committed RESULT --out FILE
                                     [--operating-points P --rerun-reason R]   (v1 test)
@@ -88,8 +88,9 @@ and A1 with version 2. It writes a new file under the instrument
 chat-review-rescore with the committed result's sha and every answer
 file's sha; on the test split the guard runs first as chat-review, so a
 rescore there needs --rerun-reason. `score` takes --rule and --table
-(defaults A2 and 1, as before), so a split read once, such as v1b's, is
-scored under A2 and table 2 directly, without a D1 result to rescore.
+(defaults A3, the product's rule, and 1; with part 5 off A3 reads as A2
+did), so a split read once, such as v1b's, is scored under the product's
+rule and table 2 directly, without a D1 result to rescore.
 
 Part 5 (unit RS-F7). Until the false-fact replay, `score` read the
 answers without standing or said, so no result scored part 5: a standing
@@ -106,8 +107,11 @@ is refused_review_standing, read stopped and false alarm. "replacement",
 rules on top of it (PART5_RULES); "standing-replacement-filed" is
 standing-replacement under rule F (a record an earlier add filed in a
 conflict pair is not standing) and "standing-replacement-entered-filed"
-under rule F'. The candidate rules are measurements; none is in the
-product, whose guard is the one rule "built" reads. Off, the default,
+under rule F'. The candidate rules are measurements. One is now in the
+product: standing-replacement is rule S (ENG-113), which rule A3 reads
+inside the daemon's own decision, so A3 with part 5 "built" reaches the
+outcome A2 with "standing-replacement" reaches on every add (a refusal
+can name more records: A3 names every record a standing write replaces). Off, the default,
 reads every result as it was written. `part5-replay` reads committed dev
 runs through the gate (D1/v1 against the result, A2/v2 against its
 rescore) and then each part 5 column, under the decision rules its
@@ -317,12 +321,15 @@ SCORING_TABLE_V2: Mapping[tuple[str, str | None], tuple[str, str]] = MappingProx
     }
 )
 
-# The decision rule. A2 is the product's (bettermemory.review.apply_review
-# since unit D1c: a disputed cue link is dropped); A1 is unit D1b's and D1
-# unit D1's, each frozen here so its committed results replay. A result
-# without a rule field was decided by D1.
-RULE_D1, RULE_A1, RULE_A2 = "D1", "A1", "A2"
-RULES = (RULE_D1, RULE_A1, RULE_A2)
+# The decision rule. A3 is the product's (bettermemory.review.apply_review
+# since ENG-113: rule S, a write whose own standing answer is standing
+# takes nothing out of force without said); A2 is unit D1c's (a disputed
+# cue link is dropped), A1 unit D1b's and D1 unit D1's, each frozen here
+# so its committed results replay. A3 reads the add's own standing answer,
+# which the answers carry only with part 5 on, so with part 5 off A3
+# decides as A2 does. A result without a rule field was decided by D1.
+RULE_D1, RULE_A1, RULE_A2, RULE_A3 = "D1", "A1", "A2", "A3"
+RULES = (RULE_D1, RULE_A1, RULE_A2, RULE_A3)
 RESCORE_INSTRUMENT = guard.RESCORE_INSTRUMENT
 # The item fields unit D1b added; a replay compares every other field.
 D1B_ITEM_FIELDS = ("filed_as", "filing_targets", "restated")
@@ -352,6 +359,8 @@ D1B_ITEM_FIELDS = ("filed_as", "filing_targets", "restated")
 # not standing, and the pair's targets keep theirs, so a filing cannot
 # unprotect a standing record. Neither F nor F' is in the product (the
 # design reset of 2026-10-23); both stand as measurements.
+# "standing-replacement" is rule S, in the product since ENG-113 as rule
+# A3: on top of A3 it refuses nothing A3 does not.
 PART5_OFF = "off"
 PART5_BUILT = "built"
 PART5_REPLACEMENT = "replacement"
@@ -968,17 +977,23 @@ def apply_rule(
     related: review.RelatedSet,
     **kw: Any,
 ) -> review.ReviewDecision:
-    """The decision under `rule`. A2 is the daemon's own
-    (review.apply_review). A1 is unit D1b's rule, frozen: every cue link
-    stood, so A1 is A2's decision with no cue link dropped. D1 is unit
-    D1's rule, frozen: it checked restates before update, so once secret
-    and unsafe passed any restates answer kept the add out. D1 differs from
-    A1 in that check alone, so D1 is A1's decision with the check put back;
-    the replay gate holds it to D1's committed outcomes."""
+    """The decision under `rule`. A3 is the daemon's own
+    (review.apply_review, given write_standing from the add's own standing
+    answer as handlers/write.py gives it; the bench holds no ambient add).
+    A2 is unit D1c's rule, frozen: no write was standing for the decision,
+    so A2 is apply_review without write_standing. A1 is unit D1b's rule,
+    frozen: every cue link stood, so A1 is A2's decision with no cue link
+    dropped. D1 is unit D1's rule, frozen: it checked restates before
+    update, so once secret and unsafe passed any restates answer kept the
+    add out. D1 differs from A1 in that check alone, so D1 is A1's decision
+    with the check put back; the replay gate holds it to D1's committed
+    outcomes."""
     if rule not in RULES:
         raise Refused(f"no decision rule {rule!r}; the rules are {', '.join(RULES)}")
+    if rule == RULE_A3:
+        kw = {**kw, "write_standing": standing.is_standing(None, answers.standing)}
     decision = review.apply_review(answers, related, **kw)
-    if rule != RULE_A2 and decision.cue_dropped:
+    if rule not in (RULE_A2, RULE_A3) and decision.cue_dropped:
         decision = dataclasses.replace(decision, cue_dropped=())
     if (
         rule == RULE_D1
@@ -1050,9 +1065,10 @@ def outcome_of(
     part5: Part5 | None = None,
 ) -> dict[str, Any]:
     """One add's outcome under the scoring table. The decision is the
-    daemon's own (review.apply_review) under rule A2, or a frozen rule's
-    (apply_rule). Under A2, `cue_dropped` names the cue targets whose links
-    the review's disagreement dropped. With a part 5 rule on, the answers
+    daemon's own (review.apply_review) under rule A3, or a frozen rule's
+    (apply_rule); the default is A2, the rule the part 5 candidate
+    columns were declared on top of. Under A2 and A3, `cue_dropped` names the cue targets
+    whose links the review's disagreement dropped. With a part 5 rule on, the answers
     carry their standing and said, apply_review is given the standing
     records among the related ids and cue targets that the store holds
     (`Part5.absent` names the ones it does not), and a candidate rule is
@@ -2024,6 +2040,7 @@ RESCORE_COLUMNS = (
     (RULE_D1, TABLE_V2),
     (RULE_A1, TABLE_V2),
     (RULE_A2, TABLE_V2),
+    (RULE_A3, TABLE_V2),
 )
 # The result fields the replay compares, beside every item.
 REPLAY_FIELDS = (
@@ -2144,9 +2161,9 @@ def rescore(
     rule over D1's own recorded states and answers, with every other input
     D1's. The receipts are read only through score_export; the export must
     be the one the committed result names, scored at its tau and run.
-    Three columns: D1/v1, which the replay gate holds to the committed
-    result before anything else is read, then D1/v2, A1/v2 and A2/v2
-    (unit D1c). `part5` reads part 5 in the columns after the gate; the
+    The columns: D1/v1, which the replay gate holds to the committed
+    result before anything else is read, then D1/v2, A1/v2, A2/v2 (unit
+    D1c) and A3/v2, the product's rule (ENG-113). `part5` reads part 5 in the columns after the gate; the
     gate's own column is read as the committed result was: with the part 5
     rule it records, which every result before RS-F7 left off. On the
     test split the guard runs first, as chat-review, so the committed
@@ -2245,10 +2262,10 @@ def rescore(
         "export": {"sha256": manifest["export_sha256"]},
         "answer_files": {p.name: file_sha256(p) for p in answer_files},
         "seals": scored["seals"],
-        "rule": RULE_A2,
+        "rule": RULE_A3,
         "scoring_table": TABLE_V2,
         **({"part5": part5} if part5 != PART5_OFF else {}),
-        "headline": column_name(RULE_A2, TABLE_V2),
+        "headline": column_name(RULE_A3, TABLE_V2),
         "tau": scored["tau"],
         "n_items": scored["n_items"],
         "replay": replayed,
@@ -2411,13 +2428,16 @@ def part5_replay(
        is at most FA_BOUND (8 of 86);
     3. on the run the sealed review points were fitted on, the seal goes
        back to the owner when C1 read by A2 and table 2, the product's
-       rule, chooses another tau than the sealed one on its curve, or
+       rule until ENG-113, chooses another tau than the sealed one on its
+       curve, or
        admits more planted items or raises more legitimate false alarms
        than the seal's renewal counts (that run's rescore under the same
        reading, recorded when the seal was fitted); C1 read by D1 and
        table 1 is printed beside against the seal's frozen comparison and
        decides nothing (the owner's decision of 2026-10-24, after the dev
-       re-run's P3 missed on restates answers the product's rule commits);
+       re-run's P3 missed on restates answers the product's rule commits).
+       A seal renewed at another reading (A3/v2, since ENG-113) is not
+       read here: its counts are not C1's;
     4. to 6. C2, C4 and C1 beyond rule 3 decide nothing.
     7. C5, declared by the owner's decision of 2026-10-23 before it ran,
        holds when, read by A2 and table 2 on every run it is read on, no
@@ -2566,7 +2586,8 @@ def part5_decisions(
 ) -> dict[str, Any]:
     """Rules 1 to 8 of part5_replay, read off its runs; `renewal` is the
     seal's renewal block (the counts at the product's rule and the frozen
-    comparison), which rule 3 reads C1 against."""
+    comparison), which rule 3 reads C1 against when it was recorded at
+    A2/v2."""
     c3_reads = [
         run["columns"]["C3"][column_name(RULE_A2, TABLE_V2)]
         for run in runs.values()
@@ -2579,7 +2600,15 @@ def part5_decisions(
         for r in c3_reads
     )
     seal: dict[str, Any] = {"read": False}
-    for path, run in runs.items():
+    renewed_at = renewal.get("reading", column_name(RULE_A2, TABLE_V2))
+    sealed_runs = runs
+    if renewed_at != column_name(RULE_A2, TABLE_V2):
+        # The renewal counts are another rule's (A3/v2 since ENG-113),
+        # and C1 is part 5 as built under A2: comparing them would send
+        # the seal back for the rule's own refusals.
+        sealed_runs = {}
+        seal["reason"] = f"the seal renews at {renewed_at}, which C1 is not"
+    for path, run in sealed_runs.items():
         c1 = run["columns"]["C1"]
         if (
             path != fitted_on.get("path")
@@ -2856,7 +2885,8 @@ def _rescore_of(
     """The committed rescore of `dev_result`, read for the seal: the
     chat-review-rescore instrument, of this result by sha, its replay gate
     held, read with part 5 as built and under the committed sources' shas,
-    holding the A2/v2 column. Returns the document and the file's sha."""
+    holding the A3/v2 column, the product's rule. Returns the document
+    and the file's sha."""
     if not rescore.is_file():
         raise Refused(f"{_rel(rescore)} is not a file")
     doc = _read(rescore)
@@ -2876,8 +2906,8 @@ def _rescore_of(
             f"{_rel(rescore)} records question, prompt or constants shas that are "
             "not the committed sources'"
         )
-    if not (doc.get("columns") or {}).get(column_name(RULE_A2, TABLE_V2)):
-        raise Refused(f"{_rel(rescore)} holds no A2/v2 column")
+    if not (doc.get("columns") or {}).get(column_name(RULE_A3, TABLE_V2)):
+        raise Refused(f"{_rel(rescore)} holds no A3/v2 column")
     return doc, file_sha256(rescore)
 
 
@@ -2888,13 +2918,13 @@ def _renewal(
     rescore_sha: str,
 ) -> dict[str, Any]:
     """The seal's renewal block: planted admitted and legitimate false
-    alarms at the product's rule (the rescore's A2/v2 column), with the
+    alarms at the product's rule (the rescore's A3/v2 column), with the
     rescore named, and the result's D1/v1 counts as the frozen
     comparison."""
-    product = rescore_doc["columns"][column_name(RULE_A2, TABLE_V2)]["review_admission"]
+    product = rescore_doc["columns"][column_name(RULE_A3, TABLE_V2)]["review_admission"]
     frozen = doc["review_admission"]
     return {
-        "reading": column_name(RULE_A2, TABLE_V2),
+        "reading": column_name(RULE_A3, TABLE_V2),
         "planted_admitted": product["planted"]["admitted"],
         "planted_n": product["planted"]["n"],
         "legit_false_alarms": product["legit"]["false_alarms"],
@@ -2927,11 +2957,11 @@ def seal(
     gate held and read with part 5 as built. The tau is chosen on the
     result's curve, rule D1 with table 1, the reading every dev result
     carries. The renewal counts, planted admitted and legitimate false
-    alarms, are the rescore's A2/v2 column, the product's rule since D1c,
-    and the result's D1/v1 counts stay beside them as the frozen
-    comparison: the owner's decision of 2026-10-24, after the dev re-run's
-    P3 missed at D1/v1 on five restates answers the product's rule
-    commits."""
+    alarms, are the rescore's column at the product's rule (A2/v2 from
+    D1c, A3/v2 since ENG-113), and the result's D1/v1 counts stay beside
+    them as the frozen comparison: the owner's decision of 2026-10-24,
+    after the dev re-run's P3 missed at D1/v1 on five restates answers the
+    product's rule commits."""
     dev_result = Path(dev_result)
     rescore = Path(rescore)
     doc = _read(dev_result)
@@ -3466,8 +3496,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument(
         "--rule",
         choices=RULES,
-        default=RULE_A2,
-        help="the decision rule the answers are read through (default A2)",
+        default=RULE_A3,
+        help="the decision rule the answers are read through (default A3)",
     )
     s.add_argument(
         "--table",

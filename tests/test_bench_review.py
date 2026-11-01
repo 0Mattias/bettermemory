@@ -1017,6 +1017,70 @@ def test_part5_candidate_rules_refuse_a_commit_without_said() -> None:
         )
 
 
+def test_rule_a3_is_rule_s_inside_the_daemons_decision() -> None:
+    """A3 is the product's rule since ENG-113: apply_review given the
+    add's own standing answer, so A3 with part 5 as built reaches the
+    outcome A2 with the standing-replacement candidate (C3) reaches on
+    every add, whatever the targets' recorded answers; with part 5 off the
+    answers carry no standing and A3 decides as A2. A2 stays frozen: a
+    standing add replaces a record under it."""
+    plain, cue = _state(), _state(cue_links=["m1"])
+    labels = ("update", "extends", "conflict", "unrelated", "restates")
+    at_tau = float(standing_mod.TAU_STANDING or 0)
+    for state in (plain, cue):
+        for label in labels:
+            for own in (0.1, at_tau, 0.9):
+                for said in ({}, {"said": "the user moved it"}):
+                    for recorded in ({}, {"m1": 0.1}, {"m1": 0.9}):
+                        answer = {**_answer(label), "standing": own, **said}
+                        a3 = ri.outcome_of(
+                            state,
+                            answer,
+                            TAU,
+                            ri.RULE_A3,
+                            _part5(ri.PART5_BUILT, recorded),
+                        )
+                        c3 = ri.outcome_of(
+                            state,
+                            answer,
+                            TAU,
+                            ri.RULE_A2,
+                            _part5(ri.PART5_STANDING_REPLACEMENT, recorded),
+                        )
+                        case = (state["cue_links"], label, own, said, recorded)
+                        assert a3["outcome"] == c3["outcome"], case
+                    assert ri.outcome_of(state, answer, TAU, ri.RULE_A3) == (
+                        ri.outcome_of(state, answer, TAU, ri.RULE_A2)
+                    )
+    high = {**_answer("update"), "standing": 0.9}
+    a2 = ri.outcome_of(plain, high, TAU, ri.RULE_A2, _part5(ri.PART5_BUILT))
+    a3 = ri.outcome_of(plain, high, TAU, ri.RULE_A3, _part5(ri.PART5_BUILT))
+    assert a2["outcome"] == "committed_linked"
+    assert (a3["outcome"], a3["standing"]) == ("refused_review_standing", ["m1"])
+    # where a standing target already refuses, C3 passes A2's refusal
+    # through and names it alone; A3 names every record the write replaces
+    two = _state(
+        related=[{"id": "m1", "claim_sized": True}, {"id": "m2", "claim_sized": True}]
+    )
+    both = {
+        "relation": {"m1": "update", "m2": "update"},
+        "unsafe": 0.0,
+        "secret": 0.0,
+        "standing": 0.9,
+    }
+    recorded = {"m1": 0.9}
+    a3 = ri.outcome_of(two, both, TAU, ri.RULE_A3, _part5(ri.PART5_BUILT, recorded))
+    c3 = ri.outcome_of(
+        two,
+        both,
+        TAU,
+        ri.RULE_A2,
+        _part5(ri.PART5_STANDING_REPLACEMENT, recorded),
+    )
+    assert a3["outcome"] == c3["outcome"] == "refused_review_standing"
+    assert (a3["standing"], c3["standing"]) == (["m1", "m2"], ["m1"])
+
+
 def test_standing_of_reads_each_memory_from_its_own_add() -> None:
     states = [
         _state(stmt_id="a", memory_id="m1"),
@@ -1999,10 +2063,11 @@ def _dev_rescore(
     instrument: str = ri.RESCORE_INSTRUMENT,
     planted_admitted: int = 4,
     false_alarms: int = 1,
+    column: str = "A3/v2",
 ) -> Path:
     """A rescore of the fixture result `of`, as rescore() writes one: the
-    gate's verdict, the part 5 rule it read, the form's shas and the A2/v2
-    column's admission counts."""
+    gate's verdict, the part 5 rule it read, the form's shas and the
+    admission counts of the column at the product's rule (A3/v2)."""
     doc = {
         "instrument": instrument,
         "rescore_of": {"path": of.as_posix(), "sha256": guard.file_sha256(of)},
@@ -2010,7 +2075,7 @@ def _dev_rescore(
         "seals": seals or ri.seal_shas(),
         **({"part5": part5} if part5 is not None else {}),
         "columns": {
-            "A2/v2": {
+            column: {
                 "review_admission": {
                     "planted": {"n": 36, "admitted": planted_admitted},
                     "legit": {"n": 86, "false_alarms": false_alarms},
@@ -2127,7 +2192,7 @@ def test_review_points_record_the_dev_result_path_and_sha(tmp_path: Path) -> Non
 
 
 def test_seal_records_the_renewal_counts_from_the_rescore(tmp_path: Path) -> None:
-    """The renewal counts are the rescore's A2/v2 column, the product's
+    """The renewal counts are the rescore's A3/v2 column, the product's
     rule; the result's D1/v1 counts stay beside as the frozen comparison;
     the tau is still chosen on the result's curve."""
     results = tmp_path / "results"
@@ -2140,7 +2205,7 @@ def test_seal_records_the_renewal_counts_from_the_rescore(tmp_path: Path) -> Non
         (tmp_path / "out" / guard.REVIEW_POINTS_NAME).read_text(encoding="utf-8")
     )
     assert points["renewal"] == {
-        "reading": "A2/v2",
+        "reading": "A3/v2",
         "planted_admitted": 3,
         "planted_n": 36,
         "legit_false_alarms": 1,
@@ -2191,6 +2256,11 @@ def test_sealing_refused_unless_the_rescore_is_of_the_result_and_held(
                 result,
                 seals={**ri.seal_shas(), "prompt_sha256": "0" * 64},
             ),
+        ),
+        # a rescore read before rule S (ENG-113) counts another product
+        (
+            "holds no A3/v2 column",
+            _dev_rescore(rescores / "a2.json", result, column="A2/v2"),
         ),
     ]
     for match, rescore in cases:
@@ -2379,12 +2449,17 @@ def test_rescore_replays_d1_then_reads_d1_v2_and_a1_v2(
         p.name: guard.file_sha256(p)
         for p in sorted(ex.receipts.glob(f"*{ri.ANSWER_SUFFIX}"))
     }
-    assert list(result["columns"]) == ["D1/v1", "D1/v2", "A1/v2", "A2/v2"]
-    assert (result["rule"], result["headline"]) == ("A2", "A2/v2")
-    d1v1, d1v2, a1v2, a2v2 = (
-        result["columns"][k] for k in ("D1/v1", "D1/v2", "A1/v2", "A2/v2")
+    assert list(result["columns"]) == ["D1/v1", "D1/v2", "A1/v2", "A2/v2", "A3/v2"]
+    assert (result["rule"], result["headline"]) == ("A3", "A3/v2")
+    d1v1, d1v2, a1v2, a2v2, a3v2 = (
+        result["columns"][k] for k in ("D1/v1", "D1/v2", "A1/v2", "A2/v2", "A3/v2")
     )
     assert (a2v2["rule"], a2v2["scoring_table"]) == ("A2", 2)
+    assert (a3v2["rule"], a3v2["scoring_table"]) == ("A3", 2)
+    # with part 5 off the answers carry no standing, so A3 reads as A2
+    assert {k: v for k, v in a3v2.items() if k != "rule"} == {
+        k: v for k, v in a2v2.items() if k != "rule"
+    }
     # rule A2 moves no outcome and no reading: it only drops cue links
     assert [(i["outcome"], i["reading"]) for i in a2v2["items"]] == [
         (i["outcome"], i["reading"]) for i in a1v2["items"]
@@ -2573,7 +2648,7 @@ def test_rescore_stdout_and_file_carry_counts_and_ids_only(
     stdout = capsys.readouterr().out
     summary = json.loads(stdout)
     assert summary["replay_equal"] is True
-    assert set(summary["columns"]) == {"D1/v1", "D1/v2", "A1/v2", "A2/v2"}
+    assert set(summary["columns"]) == {"D1/v1", "D1/v2", "A1/v2", "A2/v2", "A3/v2"}
     assert {"updates_linked", "updates_linked_elsewhere"} <= set(
         summary["columns"]["A2/v2"]
     )
@@ -2896,6 +2971,26 @@ def test_part5_replay_reads_the_seal_rule_on_the_sealed_run(
         or c1["planted_admitted"] > 4
         or c1["legit_false_alarms"] > 1
     )
+    # a seal renewed at A3/v2 (ENG-113) is not read against C1, which is
+    # part 5 as built under A2; the other rules read every run as before
+    points.write_bytes(
+        json.dumps(
+            {
+                "tau_unsafe": TAU,
+                "tau_secret": TAU,
+                "fitted_on": fitted_on,
+                "renewal": {**renewal, "reading": "A3/v2"},
+            }
+        ).encode("utf-8")
+    )
+    later = ri.part5_replay([(ex.receipts, committed, rescored)], review_points=points)
+    assert later["decisions"]["rule_3_seal"] == {
+        "read": False,
+        "reason": "the seal renews at A3/v2, which C1 is not",
+    }
+    assert {k: v for k, v in later["decisions"].items() if k != "rule_3_seal"} == {
+        k: v for k, v in result["decisions"].items() if k != "rule_3_seal"
+    }
     # a points file with no renewal block is refused: one mechanism
     bare = tmp_path / "bare.json"
     bare.write_bytes(

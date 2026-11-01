@@ -9,7 +9,9 @@ The answers act as the write review's do (`review.apply_review`, on the
 write's own scores and the related set its member row recorded at commit
 time), applied after the commit: a conflict with a standing record, or a
 standing record replaced without the user's words, tombstones the member
-(refused_standing, unit RS-F7 part 5), and so does restates with nothing
+(refused_standing, unit RS-F7 part 5), as does any record replaced
+without them by a write that was itself standing (rule S, ENG-113), and
+so does restates with nothing
 updated, extended or declared; update links it (claim-sized pair,
 write-time supersession on) or names the target in update_suggested,
 extends sets an extends link, conflict files the pair as "review", and
@@ -54,6 +56,12 @@ _STANDING_HINT = (
     "conflict with or replace a standing memory. Write it again with "
     "memory_write, rewritten to comply, or answered update with review.said, "
     "the user's words, if the user changed it in this conversation."
+)
+_STANDING_WRITE_HINT = (
+    " A write under applied with standing_write was removed: it states a "
+    "rule, and its answers replace the memories under its standing, which "
+    "a rule does only on the user's words. Write it again with review.said, "
+    "the user's words, only if the user gave it in this conversation."
 )
 _LEFT_HINT = (
     "Answer the ids under relations_pending in the same way, then stop. "
@@ -165,6 +173,19 @@ def _apply(
     guarded = set(record.get("standing") or []) | set(
         _standing.guarded_ids(store, related_ids)
     )
+    try:
+        memory = store.load_one(member.memory_id)
+    except (NotFoundError, TombstonedError):
+        return {"action": "gone"}
+    # Whether the member is itself standing (rule S, ENG-113), as its
+    # commit recorded it; a row written before the record carried it is
+    # read off the member's own category and stored standing answer.
+    write_standing = record.get("write_standing")
+    if not isinstance(write_standing, bool):
+        write_standing = _standing.is_standing(
+            memory.category.value if memory.category is not None else None,
+            _standing.answers(store, [memory.id]).get(memory.id),
+        )
     decision = _review.apply_review(
         _review.ReviewAnswers(
             relation=relation,
@@ -178,13 +199,9 @@ def _apply(
         declared_ids=record.get("declared") or [],
         standing_ids=sorted(guarded),
         said=bool(record.get("said")),
+        write_standing=write_standing,
     )
     out: dict[str, Any] = {"action": decision.action}
-    try:
-        memory = store.load_one(member.memory_id)
-    except (NotFoundError, TombstonedError):
-        out["action"] = "gone"
-        return out
     if decision.action in (_review.ACTION_RESTATES, _review.ACTION_STANDING):
         # The write adds nothing, or may not stand: it goes, as the
         # two-call review would never have written it, and so do the pairs
@@ -193,6 +210,8 @@ def _apply(
             out["restated"] = list(decision.restated)
         if decision.standing:
             out["standing"] = list(decision.standing)
+        if decision.standing_write:
+            out["standing_write"] = True
         dropped = [
             str(c["id"])
             for c in store.list_conflicts()
@@ -312,8 +331,13 @@ async def capture_relations(
     if left:
         response["relations_pending"] = left
     response["hint"] = _LEFT_HINT if left else _DONE_HINT
-    if any(r.get("action") == _review.ACTION_STANDING for r in applied.values()):
+    refused = [
+        r for r in applied.values() if r.get("action") == _review.ACTION_STANDING
+    ]
+    if any(not r.get("standing_write") for r in refused):
         response["hint"] += _STANDING_HINT
+    if any(r.get("standing_write") for r in refused):
+        response["hint"] += _STANDING_WRITE_HINT
     return _standing_review.with_held(
         response, _standing_review.held_reply(deps, unlinked)
     )

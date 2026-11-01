@@ -28,8 +28,9 @@ chain's `review_id`, by the write's rules (`write._with_named`,
 `review.check_named`). They are decided by `review.apply_review` as a
 write's are, with `restates_refuses` off, since the memory is in the
 store whatever the answer: a conflict with a standing record refuses; a
-standing record the update replaces rests on the user's words (`said`,
-`_guard.read_words`); an update or extends answer links from the memory
+record the update replaces rests on the user's words (`said`,
+`_guard.read_words`), standing or not, since the memory is itself
+standing (rule S, ENG-113); an update or extends answer links from the memory
 (`review_links`); a conflict with a record no longer standing files the
 pair.
 
@@ -147,6 +148,14 @@ _STANDING_HINT = (
     "Leave this memory as it is, or change it to comply; or, if the user "
     "changed the memory under `standing` in this conversation, answer update "
     "for it and add said=<the user's words as they typed them>."
+)
+
+_STANDING_WRITE_HINT = (
+    "Not updated. With this change the memory states a rule, and your "
+    "answers would take each memory under `standing` out of force. A rule "
+    "replaces stored memories only on the user's words: if the user gave it "
+    "in this conversation, re-send this same call with said=<the user's "
+    "words as they typed them>; otherwise leave the memory as it is."
 )
 
 
@@ -356,14 +365,15 @@ def _decide(
     said: str | None,
 ) -> StandingReview:
     """The answers decided as a write's are (`review.apply_review`), with a
-    restatement refusing nothing. A conflict with a standing record refuses
-    whatever `said` holds, so the words are read only for a standing
-    record the update replaces and nothing conflicts with."""
+    restatement refusing nothing, as a standing write's (rule S): the
+    change makes a standing statement. A conflict with a standing record
+    refuses whatever `said` holds, so the words are read only for a record
+    the update replaces and nothing conflicts with."""
     standing_ids = _standing.guarded_ids(deps.store, related.ids)
     conflicted = any(
         answers.relation.get(i) == _review.LABEL_CONFLICT for i in standing_ids
     )
-    rests = [i for i in _review.replaced_ids(answers, related) if i in standing_ids]
+    rests = _review.replaced_ids(answers, related)
     words = _guard.read_words(deps, caller, said) if rests and not conflicted else None
     decision = _review.apply_review(
         answers,
@@ -374,6 +384,7 @@ def _decide(
         standing_ids=standing_ids,
         said=words is not None,
         restates_refuses=False,
+        write_standing=True,
     )
     return StandingReview(
         decision=decision, answers=answers, related=related, words=words, rests=rests
@@ -401,10 +412,11 @@ def early_response(
         id=record_id,
         status=_review.ACTION_STANDING,
         standing=list(decision.standing),
+        **({"standing_write": True} if decision.standing_write else {}),
         **review.fields(),
     )
     _, caller = caller_anchoring(deps.store, deps.config)
-    return {
+    out: dict[str, Any] = {
         "status": _review.ACTION_STANDING,
         "standing": _standing_rows(
             deps,
@@ -414,6 +426,10 @@ def early_response(
         ),
         "hint": _STANDING_HINT,
     }
+    if decision.standing_write:
+        out["standing_write"] = True
+        out["hint"] = _STANDING_WRITE_HINT
+    return out
 
 
 def review_links(
@@ -506,8 +522,8 @@ def after_commit(
     deps: ToolHandlers, memory: Memory, review: StandingReview | None
 ) -> dict[str, Any]:
     """After the update committed: file the pairs the answers file, write
-    the `standing_guard` row for the standing records it replaced on the
-    user's words, and return the committed response's review keys
+    the `standing_guard` row for the records it replaced on the user's
+    words, and return the committed response's review keys
     (`supersedes`, `extends`, `update_suggested`, `conflicts_filed`)."""
     decision = review.decision if review is not None else None
     if review is None or decision is None or decision.action != _review.ACTION_COMMIT:

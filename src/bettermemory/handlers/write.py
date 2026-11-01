@@ -651,6 +651,14 @@ _REVIEW_STANDING_HINT = (
     "words as they typed them."
 )
 
+_REVIEW_STANDING_WRITE_HINT = (
+    "Not written. This write states a rule, and it would take each memory "
+    "under `standing` out of force. A rule replaces stored memories only on "
+    "the user's words: if the user gave it in this conversation, re-send "
+    "this same call with review.said, the user's words as they typed them; "
+    "otherwise leave it unwritten."
+)
+
 _REVIEW_RESTATES_HINT = (
     "Not written. The review answered that a stored memory already says "
     "this; the recurrence is recorded on it. Use memory_update on the "
@@ -970,6 +978,8 @@ def _standing_guard(
     related: _review.RelatedSet,
     declared_ids: list[str],
     missing: list[str],
+    *,
+    write_standing: bool,
 ) -> tuple[list[str], list[str], _guard.Words | None]:
     """Take the review's answers and ids; return the standing ids, those replaced, the words."""
     # The standing records the write could conflict with or replace, of
@@ -981,7 +991,8 @@ def _standing_guard(
     )
     standing_ids = _standing.guarded_ids(deps.store, candidates)
     # The standing records the write replaces rest on the user's words
-    # (`_guard.read_words`). A capture write's pending ids may be answered
+    # (`_guard.read_words`), and so does every record a standing write
+    # replaces (rule S). A capture write's pending ids may be answered
     # update at its closing call, so they are read now too. A conflict
     # with a standing record refuses whatever said holds, so said is then
     # not read.
@@ -990,7 +1001,7 @@ def _standing_guard(
     )
     potential = _review.replaced_ids(answers, related, declared_ids)
     potential += [i for i in missing if i not in potential]
-    rests = [i for i in potential if i in standing_ids]
+    rests = [i for i in potential if write_standing or i in standing_ids]
     words = (
         _guard.read_words(deps, caller, answers.said, name="review.said")
         if rests and not conflicted
@@ -1013,6 +1024,7 @@ def _review_fields(
     declared_ids: list[str],
     standing_ids: list[str],
     said: bool,
+    write_standing: bool,
 ) -> tuple[
     dict[str, Any],
     list[_review.RelatedEntry],
@@ -1056,6 +1068,7 @@ def _review_fields(
                 pending=missing,
                 standing=standing_ids,
                 said=said,
+                write_standing=write_standing,
             ),
         )
     return review_fields, pending, standing, capture
@@ -1105,8 +1118,16 @@ def _review_refusal(
             scopes=payload["scopes"],
             forced=False,
             standing=list(decision.standing),
+            **({"standing_write": True} if decision.standing_write else {}),
             **review_fields,
         )
+        if decision.standing_write:
+            return {
+                "status": _review.ACTION_STANDING,
+                "standing": _standing_rows(deps, related, decision.standing, admission),
+                "standing_write": True,
+                "hint": _REVIEW_STANDING_WRITE_HINT,
+            }
         return {
             "status": _review.ACTION_STANDING,
             "standing": _standing_rows(deps, related, decision.standing, admission),
@@ -1320,8 +1341,17 @@ def _reviewed_write(
     review_id = _decided_review_id(
         deps, answers, related, chain=chain, stray_id=stray_id, deferred=deferred
     )
+    # A write its own answer makes standing takes nothing out of force
+    # without the user's words (rule S, ENG-113).
+    write_standing = _standing.is_standing(payload["category"], answers.standing)
     standing_ids, rests, words = _standing_guard(
-        deps, caller, answers, related, declared_ids, missing
+        deps,
+        caller,
+        answers,
+        related,
+        declared_ids,
+        missing,
+        write_standing=write_standing,
     )
     decision = _review.apply_review(
         answers,
@@ -1332,6 +1362,7 @@ def _reviewed_write(
         declared_ids=declared_ids,
         standing_ids=standing_ids,
         said=words is not None,
+        write_standing=write_standing,
     )
     review_fields, pending, standing, capture = _review_fields(
         payload,
@@ -1346,6 +1377,7 @@ def _reviewed_write(
         declared_ids=declared_ids,
         standing_ids=standing_ids,
         said=words is not None,
+        write_standing=write_standing,
     )
     # The commit reads both from the payload: the review's standing answer,
     # stored beside the record, and the capture with its deferred review.
@@ -1377,9 +1409,10 @@ def _reviewed_write(
         pending=pending,
     )
     if words is not None:
-        # The standing memories the words were given for: the ones the
-        # write replaces now, and a capture write's pending ones that its
-        # closing call may replace on the same words.
+        # The memories the words were given for: the standing ones the
+        # write replaces now (every one, for a standing write), and a
+        # capture write's pending ones that its closing call may replace on
+        # the same words.
         _guard.record(deps, "memory_write", rests, words)
         if not words.checked:
             response["said_checked"] = False
