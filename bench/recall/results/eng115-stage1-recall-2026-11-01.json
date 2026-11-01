@@ -1,0 +1,107 @@
+{
+ "kind": "eng115-stage1-1b-1c",
+ "unit": "ENG-115",
+ "stage": "1, parts 1b and 1c",
+ "question": "1b: do the owner's prompts the probe's no_signal floor holds back have relevant memories in their top 3? 1c: when none of the pointers the prompt recall shows is relevant, does showing them harm the reply?",
+ "declared": "before any result was read, on the owner's yes of 2026-11-01 (\"Yes, run Stage 1\"); 1c's population on the owner's rulings of 2026-11-01 (\"Yes, both\", then \"Yes, extend\"), each before any 1c grade or reply was read",
+ "commit": "5da132df3e9b5d7b2afa38e41fc456ce343f0906",
+ "version": "9.0.0rc15",
+ "store_snapshot": {
+  "backup_at": "2026-11-01T04:00:14.969964+00:00",
+  "sha256": "84c297484ce457654d78ada1ea5d697a8306ae31d71edc53a3ccf9226a6dda3a"
+ },
+ "prompts": {
+  "since": "2026-10-12T04:31",
+  "counts": {
+   "turns": 458,
+   "recovered": 436,
+   "duplicate_text": 14,
+   "unrecoverable_or_not_owner": 8,
+   "below_floor": 13,
+   "above_floor_from_c": 130
+  },
+  "recovery": "Stage A's (stage-a-2026-10-22/sample.py): Stop-hook turn_audited rows with a probe hash, the transcript row whose owner_text hashes to it, duplicate texts once"
+ },
+ "floor": "audit._too_thin_to_probe at HEAD: fewer than two unique content tokens, or only acknowledgment words",
+ "1b": {
+  "prompts_below_floor": 13,
+  "with_recorded_checkout": 12,
+  "ranking": "the production pool and probe at each prompt's typed time, the floor bypassed, top 3",
+  "graded": 36,
+  "relevant": 14,
+  "precision": 0.389,
+  "wilson95": [
+   0.248,
+   0.551
+  ],
+  "passing_prompts_precision": {
+   "stage_a_ranks_1_to_3": [
+    122,
+    300
+   ],
+   "share": 0.407
+  },
+  "rule": "the floor stays when the upper bound is below the passing prompts' precision",
+  "decision": "the floor does not stay",
+  "prediction": "MISSED: declared 0.15 or less, missed above 0.25"
+ },
+ "1c": {
+  "population": "prompts above the floor since 2026-10-12T04:31 that Stage A did not rank (its 100, which Stage B also used), with a recorded checkout and at least one delivered pointer: 207, all read (the declared window from 2026-10-22T03:21 held 115; the first 140 in seeded order gave 30 nil)",
+  "delivered": "the probe's top 3 at the typed time that the PROMPT_RECALL admission admits (recall.prompt_recall's other_project hold); the provenance, contradiction, superseded and seen-in-segment holds not replayed",
+  "graded_pointers": 560,
+  "relevant_pointers": 264,
+  "prompts": 207,
+  "nil": 44,
+  "minimum_met": true,
+  "replies": "Stage B's agent (anthropic/claude-opus-5.5, low reasoning, memory_search and memory_show over the store as of the prompt, 4 tool rounds then the nudged answer) under none and top3; memory_show's response is that handler's core fields, the removed ResponseBuilder.memory_to_dict no longer being there",
+  "judging": "Stage B's judges, blind (openai/gpt-6.1-sol and anthropic/claude-opus-5.5 scoring, google/gemini-4-argon settling categorical splits); the score is the mean of the first two",
+  "mean_score": {
+   "none": 3.284,
+   "top3": 3.227
+  },
+  "top3_minus_none": {
+   "mean": -0.057,
+   "bootstrap95": [
+    -0.295,
+    0.205
+   ]
+  },
+  "wins_ties_losses": [
+   10,
+   19,
+   15
+  ],
+  "misled_replies": {
+   "none": 1,
+   "top3": 6
+  },
+  "replies_that_searched": {
+   "none": 21,
+   "top3": 18
+  },
+  "rule": "harm when the upper bound is below 0; no harm when the lower bound is at or above -0.15; else undecided",
+  "decision": "undecided",
+  "prediction": "HIT: the interval includes 0"
+ },
+ "sub_project": "not measured: no project in the store has a parent, so the relation cannot occur; it stays not admitted, with no evidence on this store",
+ "spend_usd": {
+  "stage_1_total_by_the_keys_meter": 32.0501,
+  "of_which": {
+   "1a": 17.4426,
+   "grading_1b_and_1c": 7.6041,
+   "1c_replies": 5.1641,
+   "1c_judges": 1.8943
+  },
+  "cap": 50.0,
+  "source": "the meter before and after; the parts are the costs the calls returned, summed over the response caches"
+ },
+ "receipts": "~/.cache/bettermemory-v9/receipts/eng115-stage1-2026-11-01 (recall_side.py, prompts.json, ranked.json, grade-packets.json, graded.json, c1/prep.py, c1/agent.py, c1/judge.py, c1/analyse.py, c1/cases.json, c1/replies.json, c1/judged.json)",
+ "scripts_sha256": {
+  "recall_side.py": "3850b4a8a2acdfc2175227f9c1f8a68af66b5baa81066e1f36bd3bb7cc9b206d",
+  "c1/prep.py": "4973c27921c62546b4b548b7dbcc2a91359b3a8fee4f9e0c2abd1915ff879c12",
+  "c1/agent.py": "57e0ebf73520e366433cce62173bc3849289e756de0096ff061cde9141d265bf",
+  "c1/judge.py": "e330b1d1f297db1aadc11b8091c395dd5cf92bd541828a545609e50545ed3265",
+  "c1/analyse.py": "969091da67572d00d5154d48630ba034dc4ddf19b3f2f8ae01682d69e475ead6"
+ },
+ "note": "Counts and rates only. Prompt, reply and memory text and ids stay in the receipts. The store copy the run read was deleted after it."
+}
