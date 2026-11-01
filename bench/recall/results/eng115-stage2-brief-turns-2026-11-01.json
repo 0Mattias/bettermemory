@@ -1,0 +1,106 @@
+{
+  "kind": "measurement",
+  "unit": "ENG-115",
+  "stage": "2",
+  "question": "Does the shipped SessionStart brief (STANDING 8 plus WORK 8) keep helping over the first three owner turns after a start?",
+  "declared": "2026-11-01, before any reply existed; resume pooled with compaction as one continued stratum on the owner's ruling",
+  "commit": "2c1c4ddd",
+  "rule": "rs-v7",
+  "store_snapshot": {
+    "copy_sha256_prefix": "4e3ff15c",
+    "copied_at": "2026-11-01T18:06Z",
+    "deleted_after_the_run": true
+  },
+  "cases": {
+    "start_rows_read": 316,
+    "verified": 42,
+    "sessions": 28,
+    "startup": {"cases": 21, "sessions": 21},
+    "continued": {"cases": 21, "sessions": 19, "compaction": 16, "resume": 5},
+    "turns": {"two_turn_cases": 14, "three_turn_cases": 28, "total": 112},
+    "era": {"logged_brief_ids": 11, "reconstructed": 31},
+    "logged_brief_mismatches": 0
+  },
+  "conditions": ["none", "shipped"],
+  "models": {
+    "agent": "anthropic/claude-opus-5.5",
+    "judges": {
+      "record": "openai/gpt-6.1-sol",
+      "second": "anthropic/claude-opus-5.5",
+      "settle": "google/gemini-4-argon"
+    }
+  },
+  "primary": {
+    "measure": "per case, the mean over its turns of (shipped minus none), the score the mean of record and second; 95% cluster bootstrap by session, 10,000 resamples, seed 20261101",
+    "startup": {"mean": 0.194, "ci95": [-0.012, 0.381], "wins": 16, "ties": 2, "losses": 3, "decision": "inconclusive"},
+    "continued": {"mean": -0.032, "ci95": [-0.25, 0.167], "wins": 7, "ties": 6, "losses": 8, "decision": "drop"},
+    "all": {"mean": 0.081, "ci95": [-0.07, 0.211], "wins": 23, "ties": 8, "losses": 11}
+  },
+  "per_turn": {
+    "all": {
+      "1": {"mean": 0.381, "ci95": [0.114, 0.622], "n": 42},
+      "2": {"mean": 0.06, "ci95": [-0.115, 0.222], "n": 42},
+      "3": {"mean": -0.375, "ci95": [-0.643, -0.111], "n": 28}
+    },
+    "startup": {
+      "1": {"mean": 0.452, "ci95": [0.095, 0.786], "n": 21},
+      "2": {"mean": 0.286, "ci95": [0.0, 0.619], "n": 21},
+      "3": {"mean": -0.357, "ci95": [-0.714, -0.036], "n": 14}
+    },
+    "continued": {
+      "1": {"mean": 0.31, "ci95": [-0.025, 0.675], "n": 21},
+      "2": {"mean": -0.167, "ci95": [-0.417, 0.079], "n": 21},
+      "3": {"mean": -0.393, "ci95": [-0.786, 0.0], "n": 14}
+    }
+  },
+  "secondaries": {
+    "later_turns_minus_turn_1": {"all": {"mean": -0.482, "ci95": [-0.788, -0.169]}, "startup": {"mean": -0.405, "ci95": [-0.833, 0.048]}, "continued": {"mean": -0.56, "ci95": [-0.938, -0.212]}},
+    "record_judge_alone": {"startup": {"mean": 0.198, "ci95": [-0.056, 0.437]}, "continued": {"mean": -0.087, "ci95": [-0.311, 0.1]}},
+    "misled_turn_replies": {"none": 8, "shipped": 8, "of": 112},
+    "compactions_alone": {"mean": -0.036, "ci95": [-0.318, 0.208], "n": 16},
+    "resume_case_means": [-0.17, 0.0, 0.25, 0.33, -0.5],
+    "era": {"logged": {"mean": 0.068, "ci95": [-0.225, 0.264], "n": 11}, "reconstructed": {"mean": 0.086, "ci95": [-0.104, 0.25], "n": 31}},
+    "key_notes_used": {"none": 0.67, "shipped": 0.76, "relevant_notes": 487},
+    "contradicted": {"none": 0.035, "shipped": 0.016},
+    "mean_score": {"none": 3.22, "shipped": 3.29},
+    "judge_agreement": {"key_note_used_kappa": 0.45, "misled_kappa": 0.42, "score_correlation": 0.49}
+  },
+  "predictions": {
+    "PS1": "HIT",
+    "PS2": "HIT",
+    "PS3": "MISSED",
+    "PS4": "MISSED",
+    "PS5": "HIT",
+    "PS6": "HIT"
+  },
+  "exploratory_not_declared": {
+    "what": "graded-relevant pointers in each turn's own recall block, and the relevant ones the segment hold withheld, by condition",
+    "startup": {
+      "1": {"relevant_shown_none": 24, "relevant_shown_shipped": 19, "relevant_held_shipped": 5},
+      "2": {"relevant_shown_none": 13, "relevant_shown_shipped": 9, "relevant_held_shipped": 5},
+      "3": {"relevant_shown_none": 9, "relevant_shown_shipped": 4, "relevant_held_shipped": 5}
+    },
+    "continued": {
+      "1": {"relevant_shown_none": 22, "relevant_shown_shipped": 11, "relevant_held_shipped": 10},
+      "2": {"relevant_shown_none": 15, "relevant_shown_shipped": 8, "relevant_held_shipped": 9},
+      "3": {"relevant_shown_none": 9, "relevant_shown_shipped": 5, "relevant_held_shipped": 7}
+    },
+    "note": "under the shipped brief the segment hold withholds from each turn's recall block the pointers the brief already showed, so a relevant pointer sits at the top of the context instead of beside the prompt; a candidate cause of the later turns' losses, not tested"
+  },
+  "pointer_grades": {"graded": 1802, "relevant": 487, "settled_by_the_third_judge": 196},
+  "spend_usd": {
+    "stage_2_total_by_the_keys_meter": 46.0661,
+    "of_which": {"dry_run": 0.546, "grading": 20.0549, "replies": 16.2412, "judging": 8.9781},
+    "cap": 50.0,
+    "source": "the meter before and after; the parts are the costs the calls returned"
+  },
+  "receipts": "~/.cache/bettermemory-v9/receipts/stage2-2026-11-01/",
+  "scripts_sha256_prefix": {
+    "prep.py": "d64974fbd617",
+    "agent.py": "115435a70b6d",
+    "grade.py": "8ceece33acb7",
+    "judge.py": "649eab9c2736",
+    "analyse.py": "e81308191286",
+    "common.py": "a079796ffdb6"
+  }
+}
