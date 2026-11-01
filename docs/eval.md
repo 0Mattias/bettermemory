@@ -517,6 +517,22 @@ Stage A
 audit keeps the floor: its miss rule reads the rank-1 coverage label,
 which a one-word prompt always scores high. The brief is unchanged.
 
+### Rule `rs-v8`: no brief at a resume or a compaction
+
+From rule `rs-v8` (ENG-115) the session brief is shown at a startup or a
+clear and never at a resume or a compaction, so `session_brief` rows
+carry only those two sources and a compaction leaves a
+`segment_opened` row. ENG-115 Stage 2 replayed 42 session starts over
+up to three owner turns each, the brief against no brief, judged blind,
+with a 95% bootstrap by session. After a resume or a compaction (21
+cases, 19 sessions) the brief read -0.03 (-0.25 to +0.17), below the
++0.25 it had to be able to reach to stay; at a startup it read +0.19
+(-0.01 to +0.38) and stays. Over all starts the brief's difference fell
+from +0.38 at the first turn to -0.38 at the third, and it fell in both
+strata
+(`bench/recall/results/eng115-stage2-brief-turns-2026-11-01.json`). The
+prompt recall is unchanged.
+
 ## Integrity benchmark
 
 `bench/integrity/` measures two things the rates above do

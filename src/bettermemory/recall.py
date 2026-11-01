@@ -240,6 +240,15 @@ __all__ = [
 # pointers (+0.46 [+0.10, +0.88]). The brief is that condition.
 BRIEF_STANDING = 8
 BRIEF_WORK = 8
+# ENG-115 Stage 2 (2026-11-01): 42 starts replayed over up to three owner
+# turns each, the brief against no brief, judged blind, 95% bootstrap by
+# session. After a resume or a compaction (21 cases, 19 sessions) the
+# brief read -0.03 [-0.25, +0.17], below the declared +0.25 the brief had
+# to be able to reach to stay, and over all starts it fell from +0.38
+# at the first turn to -0.38 at the third. The owner dropped it there;
+# at a startup (+0.19 [-0.01, +0.38]) it stays. A clear starts an empty
+# conversation, as a startup does.
+_NO_BRIEF_SOURCES: frozenset[str] = frozenset({"resume", "compact"})
 # The owner's words before the start the lists are ranked by: the
 # length Stage C ranked with (Stage B set 12,000 as the conversation
 # tail the agent and the judges saw).
@@ -614,7 +623,8 @@ def _attribute_compaction(
     """Take the session's compact signal held since `at` back for the
     subagent whose transcript holds its marker, if one does (ENG-150).
 
-    The signal ends and the ids the compact's brief printed leave the
+    The signal ends and the ids the compact's brief printed (a row
+    before rs-v8; a compact shows no brief since) leave the
     session's segment and its settled set (`RecallState.
     attribute_compaction`): they were printed into the subagent, which
     the session never saw. A `segment_opened` row records it under the
@@ -681,7 +691,8 @@ def session_brief(
     project, return the brief.
 
     Nothing is shown without a session id (the show has no session to be
-    recorded under or to count against), with `session_brief` off,
+    recorded under or to count against), at a ``resume`` or a ``compact``
+    (`_NO_BRIEF_SOURCES`, from rs-v8), with `session_brief` off,
     outside a project, for a caller nothing could be read
     for (its row says so, `_brief_in_segment`), on an empty store, or
     when no row passes (`_select_brief`). A shown brief is recorded as a
@@ -690,9 +701,9 @@ def session_brief(
     anchor (`sessions._latest_in_process_session`) skips it like every other
     out-of-process row; it is not a retrieval kind, so the Stop audit's
     shield does not count it. Its ids join the segment's shown set, so
-    neither surface points at them again in the segment. On a ``resume``,
-    which keeps the segment, the brief omits the ids the segment has
-    shown and records them as ``omitted``; when every candidate is
+    neither surface points at them again in the segment. A brief whose
+    segment has shown ids (a startup of a session the state has seen)
+    omits them and records them as ``omitted``; when every candidate is
     omitted the row is still recorded, with no ids, and nothing is
     printed.
 
@@ -715,14 +726,14 @@ def session_brief(
     A SessionStart whose payload names a subagent (`agent_id`, ENG-150) is
     the subagent's: Claude Code raises a subagent's compaction under the
     parent's session id and main transcript path. Its segment is opened,
-    its signal held and its brief claimed in the subagent's own scope (a
+    and its signal held in the subagent's own scope (a
     `RecallState` scoped to the id, rebuilt from the session's rows that
     carry it), on the markers of the subagent's own transcript
     (`_subagent_transcript`), and every row it records carries the
     subagent (`Subagent.fields`); `state`, the session's, is neither read
     nor changed, so the session keeps its segment, holds no signal and
-    counts none of the brief's ids. The brief is the existing one, ranked
-    by the owner's words in `transcript_path` as the session's is.
+    counts none of the brief's ids. A subagent's compaction shows no
+    brief, as the session's does.
 
     One line leads whatever is shown, or stands alone, while the store
     was created fresh after a daemon saved the one it lost
@@ -849,6 +860,8 @@ def _open_brief_segment(
     marker = _marker_near(marker_path, now) if opened_by == "compact" else None
     # The brief's event is named on a compact's signal, so a later read
     # that finds the compaction a subagent's takes its ids back (ENG-150).
+    # From rs-v8 a compact shows no brief, so the event it names records
+    # nothing and the take-back has no ids to withdraw.
     brief_event_id = generate_ulid()
     view, opened = state.open_segment(
         store,
@@ -956,9 +969,10 @@ def _brief_in_segment(
     resolution: Resolution | None = None,
     event_id: str | None = None,
 ) -> HookResult:
-    """The brief for the segment `session_brief` just opened or resumed,
-    recorded when shown, under `event_id` when given (the event a
-    compact's signal names); empty when nothing is.
+    """The brief for the segment `session_brief` just opened, recorded
+    when shown, under `event_id` when given (the event a compact's
+    signal names); empty when nothing is, and always at a ``resume`` or a
+    ``compact`` (`_NO_BRIEF_SOURCES`, ENG-115 Stage 2).
 
     What the brief may show is the SESSION_BRIEF surface's admission for
     the caller's `resolution` (design 3.5): its own project's memories
@@ -979,13 +993,11 @@ def _brief_in_segment(
     neither show an id the brief is printing nor have the brief print one
     it has just delivered. The freed slots are not filled, so the
     selection stays the ranker's. The
-    rule reads the shown set on every source: on a ``clear``, and on a
-    ``compact`` that opened a segment on its marker, the set is empty by
-    construction, on a ``startup`` for a session the state has not seen
-    it is empty too, and a ``resume``, like a ``compact`` without its
-    marker, keeps what its segment showed. `compaction` (the compact's
-    ``marker`` or ``marker_absent``, and the subagent's fields when the
-    brief is a subagent's) rides on the row. A brief with
+    rule reads the shown set on both sources that show a brief: on a
+    ``clear`` the set is empty by construction, and on a ``startup`` for
+    a session the state has not seen it is empty too. `compaction` (the
+    subagent's fields when the brief is a subagent's) rides on the row.
+    A brief with
     nothing left to print still records its row, with no ids and
     `omitted` naming the selection's, so the log shows the rule acted and
     on what; nothing is recorded when the selection itself is empty.
@@ -1002,7 +1014,7 @@ def _brief_in_segment(
     as `redact_query` renders it (``probe_query``) and ``ranked_by``
     ("probe", or "recency" when there were no words)."""
     empty = HookResult.empty("session_brief")
-    if not cfg.behavior.session_brief:
+    if opened_by in _NO_BRIEF_SOURCES or not cfg.behavior.session_brief:
         return empty
     caller = origin if origin is not None else _origin.capture_caller(cwd)
     if store.count_memories() == 0:

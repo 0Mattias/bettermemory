@@ -33,8 +33,9 @@ true record out of force: a note that claims a change ("migrated on
 the same answer a real change gets, and its link retired the record it
 named. A write that states a rule now takes nothing out of force
 without the user's words. The review's related set grows to the size
-ENG-115 measured, and the prompt recall probes a prompt however few
-words it has.
+ENG-115 measured, the prompt recall probes a prompt however few words
+it has, and the session brief is shown at a startup but not after a
+resume or a compaction.
 
 #### Changed
 
@@ -109,6 +110,18 @@ words it has.
   held back pointers as useful as the ones it let through. The Stop
   audit keeps the floor. The rows carry rule `rs-v7`.
   (`bench/recall/results/eng115-stage1-recall-2026-11-01.json`)
+- **No brief at a resume or a compaction (ENG-115, rule `rs-v8`).** The
+  session brief is shown at a startup or a clear only
+  (`recall._NO_BRIEF_SOURCES`); a resume or a compaction still opens or
+  keeps its segment as before, and a compaction records its
+  `segment_opened` row. ENG-115 Stage 2 replayed 42 session starts over
+  up to three owner turns each, with and without the brief, judged
+  blind. After a resume or a compaction (21 cases, 19 sessions) the
+  brief read -0.03 (95% -0.25 to +0.17), below the +0.25 it had to be
+  able to reach to stay; at a startup it read +0.19 (-0.01 to +0.38) and
+  stays. Over all starts the brief's difference fell from +0.38 at the
+  first turn to -0.38 at the third, and it fell in both strata.
+  (`bench/recall/results/eng115-stage2-brief-turns-2026-11-01.json`)
 
 ### 9.0.0rc15
 

@@ -46,7 +46,9 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   deliberate tool call; the recall surface (`recall.py`) is the one
   delivery that bypasses it, and it delivers pointers only: an id and a
   summary, never a body, so the verify-before-relying read path stays on
-  `memory_show`. On SessionStart inside a project the session brief is
+  `memory_show`. On a SessionStart that begins a conversation (a startup
+  or a clear; from `rs-v8` a resume or a compaction shows none) inside a
+  project the session brief is
   two lists, standing first: the caller's standing records in force
   (`standing.standing_ids`: an answer at or above `TAU_STANDING` for the
   current body, or category ambient; history excluded), eight at most,

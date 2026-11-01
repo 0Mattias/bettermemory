@@ -363,8 +363,8 @@ def test_stop_hook_has_reasonable_timeout() -> None:
 # The five documented SessionStart matcher values (Claude Code hooks
 # reference). Omitting the matcher — which this manifest does — is
 # equivalent to listing all five, and stays correct if a sixth is ever
-# added; `clear` and `compact` in particular have just discarded the
-# context this hook supplies, which is when re-injecting it matters most.
+# added. A `startup` or a `clear` gets the brief; a `resume` or a
+# `compact` gets none (rule rs-v8) but still opens or keeps its segment.
 _SESSION_START_MATCHERS = frozenset({"startup", "resume", "clear", "compact", "fork"})
 
 

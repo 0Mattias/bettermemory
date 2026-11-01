@@ -31,11 +31,6 @@ import pytest
 
 from bettermemory.recall import RECALL_CAP_CHARS
 
-from ._review_rows import Clock
-from .test_recall_prompt import PromptWorld
-from .test_recall_subagent import OTHER_QUERY, Parent, _subagent_compacts
-from .test_recall_subagent import clock as clock  # noqa: F401
-from .test_recall_subagent import world as world  # noqa: F401
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -589,26 +584,84 @@ def _clause_one(db: sqlite3.Connection) -> Counter[str]:
     return total
 
 
-def test_clause_one_reads_a_brief_taken_back_as_the_subagents_show(
-    world: PromptWorld, clock: Clock, tmp_path: Path
-) -> None:
-    """ENG-150's rows, written by the hooks on the receipt's shape. A
-    subagent's compaction, raised as the session's, prints a brief the
-    session counts as its own until a later read takes it back for the
-    subagent; the session's prompt recall then delivers the withdrawn id
-    in the segment the brief row named. Keyed by (session_id, segment)
-    alone that delivery read as a repeat show (3 shows, 1 repeat), which
-    the session never had before the take-back existed; keyed by session,
-    subagent and segment, the brief's show is the subagent's, in the
-    segment the take-back row names, and the clause reads no repeat."""
-    parent = Parent(world, clock, tmp_path / "project", held=True)
-    _first, second, _compact, _signal = _subagent_compacts(parent, world, clock)
-    clock.advance(seconds=300)
-    parent.stop()
-    clock.advance(seconds=30)
-    assert parent.prompt(OTHER_QUERY).ids == (second,)
+# The rows ENG-150 left in the log while a compact SessionStart printed a
+# brief (rs-v7 and before), in the shape the hooks wrote them. From rs-v8
+# a compaction prints none, so the product writes these no more; the
+# clause still reads the logs that hold them.
 
-    total = _clause_one(world.store._conn)
+AGENT = "a1b2c3d4e5f6a7b8c"
+
+
+def _brief_row(
+    event_id: str, source: str, ids: list[str], **over: Any
+) -> dict[str, Any]:
+    """A SessionStart's `session_brief` row as rs-v7 wrote it."""
+    row: dict[str, Any] = {
+        "event_id": event_id,
+        "session_id": SESSION,
+        "harness": "claude-code",
+        "source": source,
+        "segment": 0,
+        "ids": ids,
+        "omitted": [],
+        "rule": "rs-v7",
+        "triggered_from": "session_hook",
+    }
+    row.update(over)
+    return row
+
+
+def test_clause_one_reads_a_brief_taken_back_as_the_subagents_show() -> None:
+    """ENG-150's rows on the receipt's shape. A subagent's compaction,
+    raised as the session's, printed a brief the session counted as its
+    own until a later read took it back for the subagent; the session's
+    prompt recall then delivered the withdrawn id in the segment the
+    brief row named. Keyed by (session_id, segment) alone that delivery
+    read as a repeat show (3 shows, 1 repeat), which the session never
+    had before the take-back existed; keyed by session, subagent and
+    segment, the brief's show is the subagent's, in the segment the
+    take-back row names, and the clause reads no repeat."""
+    taken = {
+        "session_id": SESSION,
+        "harness": "claude-code",
+        "source": "compact",
+        "segment": 1,
+        "marker": "sub-boundary-1",
+        "opened_at": "2026-10-17T05:02:00.000000Z",
+        "withdrawn": [B],
+        "brief_event_id": "e-compact",
+        "agent_id": AGENT,
+        "agent_type": "Explore",
+        "agent_from": "transcript",
+        "rule": "rs-v7",
+        "triggered_from": "stop_hook",
+    }
+    delivery = {
+        "event_id": "e-recall",
+        "session_id": SESSION,
+        "harness": "claude-code",
+        "segment": 0,
+        "shown_ids": [B],
+        "rule": "rs-v7",
+        "triggered_from": "prompt_hook",
+    }
+    db = _log(
+        [
+            (_at(1), SESSION, "session_brief", _brief_row("e-start", "startup", [A])),
+            (
+                _at(2),
+                SESSION,
+                "session_brief",
+                _brief_row(
+                    "e-compact", "compact", [B], omitted=[A], marker_absent=True
+                ),
+            ),
+            (_at(7), SESSION, "segment_opened", taken),
+            (_at(8), SESSION, "prompt_recall", delivery),
+        ]
+    )
+
+    total = _clause_one(db)
     assert (total["shows"], total["repeat_shows"], total["segments"]) == (2, 0, 1)
     assert (
         total["subagent_shows"],
@@ -617,20 +670,24 @@ def test_clause_one_reads_a_brief_taken_back_as_the_subagents_show(
     ) == (1, 0, 1)
 
 
-def test_clause_one_reads_a_brief_naming_its_subagent_in_its_scope(
-    world: PromptWorld, clock: Clock, tmp_path: Path
-) -> None:
-    """A SessionStart whose payload names a subagent writes a brief row
+def test_clause_one_reads_a_brief_naming_its_subagent_in_its_scope() -> None:
+    """A SessionStart whose payload named a subagent wrote a brief row
     that carries `agent_id` and the subagent's segment: its shows are
     the subagent's, and an id the session had shown is no repeat."""
-    parent = Parent(world, clock, tmp_path / "project", held=True)
-    first = world.write("the nightly backup runs at two from the ops host").id
-    clock.advance(seconds=1)
-    assert parent.start("startup").ids == (first,)
-    clock.advance(seconds=30)
-    assert parent.start("compact", agent_id="a0123456789abcdef").ids == (first,)
+    named = {"agent_id": "a0123456789abcdef", "agent_from": "payload"}
+    db = _log(
+        [
+            (_at(1), SESSION, "session_brief", _brief_row("e-start", "startup", [A])),
+            (
+                _at(2),
+                SESSION,
+                "session_brief",
+                _brief_row("e-compact", "compact", [A], marker_absent=True, **named),
+            ),
+        ]
+    )
 
-    total = _clause_one(world.store._conn)
+    total = _clause_one(db)
     assert (total["shows"], total["repeat_shows"]) == (1, 0)
     assert (total["subagent_shows"], total["subagent_repeat_shows"]) == (1, 0)
     assert (total["segments"], total["subagent_segments"]) == (1, 1)

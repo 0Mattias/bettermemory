@@ -21,8 +21,15 @@ the parent's conversation gone on past the window with no marker newer
 than the one its segments opened on (a compaction of the parent's own
 writes its marker before its conversation goes on), and finds the
 subagent's marker in its own transcript: the signal is then taken back
-for the subagent, with the ids its brief printed. The review's cases
-(D1, D2) are pinned here too, with what the timing rule cannot tell.
+for the subagent. The review's cases (D1, D2) are pinned here too, with
+what the timing rule cannot tell.
+
+From rs-v8 no compaction shows a brief, the session's or a subagent's
+(ENG-115 Stage 2), so a take-back has no ids to withdraw. What is pinned
+is the rest: the session's segment and shown set are left as they were,
+read through its prompt recall; the subagent's segments open on its own
+transcript's markers; the signals are held and answered as before; and
+the `segment_opened` rows carry the subagent.
 
 Every row here is stamped by one test clock, which the hooks read as
 their `now` too, so a held segment and its rebuild compare whole.
@@ -45,7 +52,6 @@ from bettermemory.hook import audit_transcript
 from bettermemory.recall import (
     HOOK_TIMEOUT_SECONDS,
     SUBAGENT_WAIT_SECONDS,
-    SURFACE_BRIEF,
     HookResult,
     RecallState,
     SegmentView,
@@ -61,6 +67,7 @@ from .test_recall_prompt import BODY, QUERY, PromptWorld
 
 KEY = ("claude-code", "transcript-parent")
 AGENT = "a1b2c3d4e5f6a7b8c"
+OTHER_AGENT = "f0e1d2c3b4a596870"
 OTHER_BODY = "the deploy window is tuesday mornings for the payments service"
 OTHER_QUERY = "deploy window payments"
 
@@ -196,8 +203,19 @@ class Parent:
             self.world.store, KEY, now=self.clock.now
         )
 
+    def scope_pending(self, agent: str) -> datetime | None:
+        """When the subagent's own scope's held compact signal came."""
+        return RecallState(agent_id=agent).pending_compaction(
+            self.world.store, KEY, now=self.clock.now
+        )
+
     def rows(self, kind: str) -> list[dict[str, Any]]:
         return [e for e in self.world.store.iter_events() if e["kind"] == kind]
+
+    def taken(self) -> list[dict[str, Any]]:
+        """The `segment_opened` rows that took a held signal of the
+        session's back for a subagent."""
+        return [r for r in self.rows("segment_opened") if "withdrawn" in r]
 
 
 @pytest.fixture(params=["held", "cli"])
@@ -222,13 +240,12 @@ def _memory(world: PromptWorld, clock: Clock) -> str:
 def test_a_subagent_compaction_named_in_the_payload_leaves_the_parent_alone(
     parent: Parent, world: PromptWorld, clock: Clock
 ) -> None:
-    """The subagent's compact SessionStart prints its brief, and the
+    """The subagent's compact SessionStart shows no brief (rs-v8), and the
     parent's segment, signal and shows are what they were before it: the
-    parent's next prompt still delivers the id only the subagent was
-    shown."""
+    parent's next prompt still holds the id its startup showed as seen
+    in segment 0."""
     first = _memory(world, clock)
     assert parent.start("startup").ids == (first,)
-    second = world.write(OTHER_BODY).id
     clock.advance(seconds=30)
     before = parent.segment()
     assert (before.segment, before.shown, parent.pending()) == (
@@ -239,27 +256,35 @@ def test_a_subagent_compaction_named_in_the_payload_leaves_the_parent_alone(
 
     shown = parent.start("compact", agent_id=AGENT, agent_type="Explore")
 
-    assert set(shown.ids) == {first, second}
+    assert (shown.ids, shown.event_id) == ((), None)
     assert parent.segment() == before
     assert parent.rebuilt() == before
     assert parent.pending() is None
     clock.advance(seconds=30)
-    assert parent.prompt(OTHER_QUERY).ids == (second,)
-    [delivery] = parent.rows("prompt_recall")
-    assert delivery["segment"] == 0
-    assert delivery["shown_ids"] == [second]
+    assert parent.prompt().ids == ()
+    [held] = parent.rows("recall_held")
+    assert held["segment"] == 0
+    assert held["held"] == [{"id": first, "reason": "seen_in_segment"}]
 
 
-def test_the_subagents_brief_row_carries_the_subagent(
+def test_the_subagents_compaction_records_its_segment_with_the_subagent(
     parent: Parent, world: PromptWorld, clock: Clock
 ) -> None:
-    """The row is recorded under the session's id, as every hook row of
-    the conversation is, and names the subagent, where its identity was
-    read, and the segment of the subagent's own scope."""
-    memory = _memory(world, clock)
+    """On a store the brief selects from, a subagent's compaction shows no
+    brief, as the session's does (rs-v8), and records `segment_opened`:
+    under the session's id, as every hook row of the conversation is,
+    naming the subagent, where its identity was read, ``agent_type`` when
+    the payload names one, and the segment of the subagent's own scope,
+    which holds the compaction's signal. The parent's state reads none of
+    it."""
+    _memory(world, clock)
+    signal = clock.now
     shown = parent.start("compact", agent_id=AGENT, agent_type="Explore")
-    [row] = parent.rows("session_brief")
-    assert row["event_id"] == shown.event_id
+    parent.start("compact", agent_id=OTHER_AGENT)
+
+    assert (shown.ids, shown.event_id) == ((), None)
+    assert parent.rows("session_brief") == []
+    row, bare = parent.rows("segment_opened")
     assert (row["session"], row["session_id"], row["harness"]) == (
         KEY[1],
         KEY[1],
@@ -271,11 +296,13 @@ def test_the_subagents_brief_row_carries_the_subagent(
         "payload",
     )
     assert (row["source"], row["segment"], row["marker_absent"]) == ("compact", 0, True)
-    assert row["ids"] == [memory]
-    assert row["transcript_path"] == str(parent.transcript)
-    scope = parent.scope(AGENT)
-    assert scope.shown == {memory}
-    assert scope.shown_by[memory] == (SURFACE_BRIEF, shown.event_id)
+    assert row["triggered_from"] == "session_hook"
+    assert (bare["agent_id"], bare["agent_from"]) == (OTHER_AGENT, "payload")
+    assert "agent_type" not in bare
+    assert parent.scope(AGENT).segment == parent.scope(OTHER_AGENT).segment == 0
+    assert parent.scope_pending(AGENT) == signal
+    assert parent.pending() is None
+    assert parent.rebuilt().segment == 0
 
 
 def test_an_agent_type_alone_is_the_main_threads_agent(
@@ -290,57 +317,41 @@ def test_an_agent_type_alone_is_the_main_threads_agent(
     assert parent.segment().shown == {memory}
 
 
-def test_a_subagent_compaction_that_shows_nothing_records_its_own_segment(
-    parent: Parent, clock: Clock
-) -> None:
-    """With nothing to brief, the compact still records `segment_opened`
-    for the subagent's scope, and the parent's state reads none of it."""
-    parent.start("compact", agent_id=AGENT)
-    [row] = parent.rows("segment_opened")
-    assert (row["agent_id"], row["agent_from"], row["marker_absent"]) == (
-        AGENT,
-        "payload",
-        True,
-    )
-    assert "agent_type" not in row
-    assert parent.pending() is None
-    assert parent.rebuilt().segment == 0
-    assert parent.scope(AGENT).segment == 0
-
-
 def test_the_subagents_segments_open_on_its_own_transcripts_markers(
     parent: Parent, world: PromptWorld, clock: Clock
 ) -> None:
     """A subagent compacted twice. Its second compact SessionStart reads
     the first one's marker in the subagent's own transcript and opens the
-    subagent's next segment at the first compact, holding what that
-    compact's brief showed, by the session's own rule (RS-F5); the second
-    compact's marker is not written yet, so its brief is a resume's. The
+    subagent's next segment at the first compact, by the session's own
+    rule (RS-F5); the second compact's marker is not written yet, so its
+    signal is held in the subagent's scope. Neither shows a brief. The
     parent's transcript holds no marker, and its segment never moves."""
-    memory = _memory(world, clock)
+    _memory(world, clock)
     first = clock.now
-    assert parent.start("compact", agent_id=AGENT).ids == (memory,)
+    assert parent.start("compact", agent_id=AGENT).ids == ()
     parent.subagent_boundary(AGENT, first + timedelta(seconds=1))
     clock.advance(seconds=600)
-    again = parent.start("compact", agent_id=AGENT)
-    assert again.ids == ()
-    opened, brief = parent.rows("segment_opened"), parent.rows("session_brief")[-1]
-    assert [(r["agent_id"], r["segment"], r["marker"]) for r in opened] == [
-        (AGENT, 1, "sub-boundary-1")
+    again = clock.now
+    assert parent.start("compact", agent_id=AGENT).ids == ()
+    opened = parent.rows("segment_opened")
+    assert [
+        (r["agent_id"], r["segment"], r.get("marker"), r.get("marker_absent"))
+        for r in opened
+    ] == [
+        (AGENT, 0, None, True),
+        (AGENT, 1, "sub-boundary-1", None),
+        (AGENT, 1, None, True),
     ]
-    assert opened[0]["triggered_from"] == "session_hook"
-    assert (brief["agent_id"], brief["segment"], brief["omitted"]) == (
-        AGENT,
-        1,
-        [memory],
-    )
-    assert brief["marker_absent"] is True
+    assert opened[1]["opened_at"] == isoformat_utc(first)
+    assert {r["triggered_from"] for r in opened} == {"session_hook"}
+    assert parent.rows("session_brief") == []
     scope = parent.scope(AGENT)
     assert (scope.segment, scope.marker, scope.started_at) == (
         1,
         "sub-boundary-1",
         first,
     )
+    assert parent.scope_pending(AGENT) == again
     assert parent.segment().segment == 0
     assert parent.pending() is None
 
@@ -349,22 +360,23 @@ def test_the_parents_own_compaction_is_unchanged(
     parent: Parent, world: PromptWorld, clock: Clock
 ) -> None:
     """A compact SessionStart naming no subagent is the session's, as
-    before: it holds the signal, and the later read that finds the
-    session's own marker opens the session's segment."""
+    before: it shows no brief (rs-v8) and holds the signal, and the later
+    read that finds the session's own marker opens the session's segment
+    at the signal, where the prompt recall shows its id again."""
     memory = _memory(world, clock)
+    assert parent.prompt().ids == (memory,)
+    clock.advance(seconds=5)
     signal = clock.now
-    assert parent.start("compact").ids == (memory,)
+    assert parent.start("compact").ids == ()
     assert parent.pending() == signal
     tr.append(parent.transcript, tr.boundary(signal + timedelta(seconds=1)))
     clock.advance(seconds=300)
     parent.stop()
     view = parent.segment()
-    assert (view.segment, view.marker, view.shown) == (
-        1,
-        "boundary-1",
-        frozenset({memory}),
-    )
+    assert (view.segment, view.marker, view.started_at) == (1, "boundary-1", signal)
     assert parent.rebuilt() == view
+    assert parent.prompt().ids == (memory,)
+    assert [r["segment"] for r in parent.rows("prompt_recall")] == [0, 1]
 
 
 # ---------------------------------------------------------------------------
@@ -374,25 +386,25 @@ def test_the_parents_own_compaction_is_unchanged(
 
 def _subagent_compacts(
     parent: Parent, world: PromptWorld, clock: Clock
-) -> tuple[str, str, HookResult, datetime]:
+) -> tuple[str, str, datetime]:
     """The receipt's shape (D1, 2026-10-28): the session showed `first`;
     a subagent compacts, and Claude Code raises its SessionStart under the
-    session's id and transcript path with no `agent_id`, so the brief,
-    printed into the subagent, shows `second` and is counted as the
-    session's; the subagent's marker lands in its own transcript, stamped
-    half a second before the hook, and never in the session's."""
+    session's id and transcript path with no `agent_id`, so its signal is
+    held as the session's (from rs-v8 it shows no brief); the subagent's
+    marker lands in its own transcript, stamped half a second before the
+    hook, and never in the session's. `second` is a memory no hook has
+    shown."""
     first = _memory(world, clock)
     assert parent.start("startup").ids == (first,)
     second = world.write(OTHER_BODY).id
     clock.advance(seconds=30)
     signal = clock.now
-    compact = parent.start("compact")
-    assert compact.ids == (second,)
+    assert parent.start("compact").ids == ()
     assert parent.pending() == signal
-    assert parent.segment().shown == {first, second}
+    assert parent.segment().shown == {first}
     path = parent.subagent_boundary(AGENT, signal - timedelta(milliseconds=500))
     path.with_name(f"{path.stem}.meta.json").write_text('{"agentType": "Explore"}')
-    return first, second, compact, signal
+    return first, second, signal
 
 
 @pytest.mark.parametrize(
@@ -410,11 +422,12 @@ def test_a_held_signal_a_subagents_transcript_answers_is_the_subagents(
     conversation has gone on past the window (a Stop's own turn, or the
     subagent's result reaching the session before a prompt or a resume),
     finds no marker in the session's transcript and the subagent's marker
-    in its own: the signal ends, the compact brief's ids leave the
-    session's segment, and the session's prompt recall delivers the id
-    only the subagent was shown; a resume's brief, reading after the same
-    step, prints it to the session instead."""
-    first, second, compact, signal = _subagent_compacts(parent, world, clock)
+    in its own: the signal ends and its row opens the subagent's segment,
+    withdrawing nothing (the compaction printed no brief). The session's
+    segment neither opens nor resets: its prompt recall still holds the
+    startup's id as seen and delivers the id no hook has shown in
+    segment 0."""
+    first, second, signal = _subagent_compacts(parent, world, clock)
     clock.advance(seconds=300)
     if reading == "stop":
         parent.stop()
@@ -423,23 +436,19 @@ def test_a_held_signal_a_subagents_transcript_answers_is_the_subagents(
         assert parent.prompt(OTHER_QUERY).ids == (second,)
     else:
         parent.goes_on()
-        resumed = parent.start("resume")
-        assert resumed.ids == (second,)
-        assert parent.rows("session_brief")[-1]["omitted"] == [first]
+        assert parent.start("resume").ids == ()
 
     assert parent.pending() is None
     view = parent.segment()
     assert parent.rebuilt() == view
-    if reading == "stop":
-        assert (view.segment, view.shown, view.marker) == (
-            0,
-            frozenset({first}),
-            None,
-        )
+    assert (view.segment, view.marker) == (0, None)
+    assert parent.prompt().ids == ()
+    if reading != "prompt":
         assert parent.prompt(OTHER_QUERY).ids == (second,)
-    else:
-        assert (view.segment, view.shown) == (0, frozenset({first, second}))
-    [taken] = parent.rows("segment_opened")
+    [delivery] = parent.rows("prompt_recall")
+    assert (delivery["shown_ids"], delivery["segment"]) == ([second], 0)
+    assert parent.segment().shown == {first, second}
+    [taken] = parent.taken()
     assert (taken["agent_id"], taken["agent_type"], taken["agent_from"]) == (
         AGENT,
         "Explore",
@@ -454,8 +463,7 @@ def test_a_held_signal_a_subagents_transcript_answers_is_the_subagents(
         "sub-boundary-1",
         isoformat_utc(signal),
     )
-    assert taken["withdrawn"] == [second]
-    assert taken["brief_event_id"] == compact.event_id
+    assert taken["withdrawn"] == [] and "brief_event_id" not in taken
     assert taken["triggered_from"] == triggered_from
     scope = parent.scope(AGENT)
     assert (scope.segment, scope.marker, scope.started_at) == (
@@ -463,10 +471,7 @@ def test_a_held_signal_a_subagents_transcript_answers_is_the_subagents(
         "sub-boundary-1",
         signal,
     )
-    assert scope.shown_by == {second: (SURFACE_BRIEF, compact.event_id)}
-    if reading != "resume":
-        [delivery] = parent.rows("prompt_recall")
-        assert (delivery["shown_ids"], delivery["segment"]) == ([second], 0)
+    assert scope.shown == frozenset()
 
 
 def test_a_read_inside_the_wait_keeps_the_signal_and_the_sessions_marker_wins(
@@ -477,22 +482,25 @@ def test_a_read_inside_the_wait_keeps_the_signal_and_the_sessions_marker_wins(
     nothing back, and once the session's marker lands the compaction opens
     the session's segment as before."""
     memory = _memory(world, clock)
+    assert parent.prompt().ids == (memory,)
+    clock.advance(seconds=5)
     signal = clock.now
-    assert parent.start("compact").ids == (memory,)
+    assert parent.start("compact").ids == ()
     parent.subagent_boundary(AGENT, signal + timedelta(seconds=2))
     clock.advance(seconds=SUBAGENT_WAIT_SECONDS - 10)
     parent.stop()
     assert parent.pending() == signal
-    assert parent.rows("segment_opened") == []
+    assert parent.taken() == []
     tr.append(parent.transcript, tr.boundary(signal + timedelta(seconds=1)))
     clock.advance(seconds=60)
     parent.stop()
     view = parent.segment()
-    assert (view.segment, view.marker) == (1, "boundary-1")
-    assert view.shown == {memory}
-    [opened] = parent.rows("segment_opened")
+    assert (view.segment, view.marker, view.started_at) == (1, "boundary-1", signal)
+    absent, opened = parent.rows("segment_opened")
+    assert "agent_id" not in absent and absent["marker_absent"] is True
     assert "agent_id" not in opened and opened["marker"] == "boundary-1"
     assert parent.rebuilt() == view
+    assert parent.prompt().ids == (memory,)
 
 
 @pytest.mark.parametrize("offset", [-61, 61])
@@ -500,14 +508,18 @@ def test_a_subagent_marker_outside_the_window_takes_nothing(
     parent: Parent, world: PromptWorld, clock: Clock, offset: int
 ) -> None:
     memory = _memory(world, clock)
+    assert parent.start("startup").ids == (memory,)
+    clock.advance(seconds=30)
     signal = clock.now
     parent.start("compact")
     parent.subagent_boundary(AGENT, signal + timedelta(seconds=offset))
     clock.advance(seconds=600)
     parent.stop()
     assert parent.pending() == signal
-    assert parent.segment().shown == {memory}
-    assert parent.rows("segment_opened") == []
+    assert parent.taken() == []
+    view = parent.segment()
+    assert (view.segment, view.shown) == (0, frozenset({memory}))
+    assert parent.rebuilt() == view
 
 
 def test_a_subagent_compacting_after_the_sessions_own_compaction_is_taken_back(
@@ -518,9 +530,9 @@ def test_a_subagent_compacting_after_the_sessions_own_compaction_is_taken_back(
     the window of the subagent's signal too, but a marker the segment
     already opened on answers no new compaction: the later read takes
     the signal back for the subagent, and the session's segment stays
-    the one its own compaction opened."""
-    _memory(world, clock)
-    parent.start("startup")
+    the one its own compaction opened, with what it has shown."""
+    first = _memory(world, clock)
+    assert parent.start("startup").ids == (first,)
     clock.advance(seconds=30)
     own = clock.now
     parent.start("compact")
@@ -528,11 +540,11 @@ def test_a_subagent_compacting_after_the_sessions_own_compaction_is_taken_back(
     clock.advance(seconds=5)
     parent.stop()
     assert (parent.segment().segment, parent.segment().marker) == (1, "boundary-1")
+    assert parent.prompt().ids == (first,)
     second = world.write(OTHER_BODY).id
     clock.advance(seconds=25)
     signal = clock.now
-    compact = parent.start("compact")
-    assert second in compact.ids
+    assert parent.start("compact").ids == ()
     assert parent.pending() == signal
     parent.subagent_boundary(AGENT, signal - timedelta(milliseconds=500))
     clock.advance(seconds=300)
@@ -540,16 +552,19 @@ def test_a_subagent_compacting_after_the_sessions_own_compaction_is_taken_back(
 
     assert parent.pending() is None
     view = parent.segment()
-    assert (view.segment, view.marker) == (1, "boundary-1")
-    assert not view.shown & set(compact.ids)
+    assert (view.segment, view.marker, view.shown) == (
+        1,
+        "boundary-1",
+        frozenset({first}),
+    )
     assert parent.rebuilt() == view
-    taken = [r for r in parent.rows("segment_opened") if r.get("agent_id")]
+    taken = parent.taken()
     assert [(r["agent_id"], r["marker"], r["segment"]) for r in taken] == [
         (AGENT, "sub-boundary-1", 1)
     ]
-    assert taken[0]["withdrawn"] == sorted(compact.ids)
-    assert taken[0]["brief_event_id"] == compact.event_id
+    assert taken[0]["withdrawn"] == []
     clock.advance(seconds=30)
+    assert parent.prompt().ids == ()
     assert parent.prompt(OTHER_QUERY).ids == (second,)
 
 
@@ -560,22 +575,22 @@ def test_a_late_marker_of_the_sessions_own_keeps_its_compaction(
     marker a slow SessionStart hook holds back, with a subagent's marker
     within the window of its signal: reads past the wait find no marker
     of the session's, but nor has the session's conversation gone on
-    past the window, so nothing is taken back and the brief's ids stay
-    shown. Once the marker lands, the compaction opens the session's
-    segment as before, holding those ids."""
+    past the window, so nothing is taken back. Once the marker lands,
+    the compaction opens the session's segment as before, holding what
+    was shown since the signal."""
     first = _memory(world, clock)
     assert parent.start("startup").ids == (first,)
     second = world.write(OTHER_BODY).id
     clock.advance(seconds=30)
     signal = clock.now
-    assert parent.start("compact").ids == (second,)
+    assert parent.start("compact").ids == ()
     parent.subagent_boundary(AGENT, signal - timedelta(seconds=30))
     clock.advance(seconds=90)
-    assert parent.prompt(OTHER_QUERY).ids == ()
+    assert parent.prompt(OTHER_QUERY).ids == (second,)
     clock.advance(seconds=210)
-    assert parent.prompt(OTHER_QUERY).ids == ()
+    assert parent.prompt().ids == ()
     assert parent.pending() == signal
-    assert parent.rows("segment_opened") == []
+    assert parent.taken() == []
 
     tr.append(
         parent.transcript,
@@ -591,9 +606,10 @@ def test_a_late_marker_of_the_sessions_own_keeps_its_compaction(
     assert (view.segment, view.marker, view.started_at) == (1, "boundary-1", signal)
     assert view.shown == {second}
     assert parent.rebuilt() == view
-    assert [r.get("agent_id") for r in parent.rows("segment_opened")] == [None]
+    assert [r.get("agent_id") for r in parent.rows("segment_opened")] == [None, None]
     clock.advance(seconds=30)
     assert parent.prompt(OTHER_QUERY).ids == ()
+    assert parent.prompt().ids == (first,)
 
 
 def test_a_subagents_compaction_waits_for_the_sessions_conversation(
@@ -601,24 +617,24 @@ def test_a_subagents_compaction_waits_for_the_sessions_conversation(
 ) -> None:
     """Review D2, the subagent's side. The receipt's shape, read past the
     wait before the session's conversation has gone on: the signal stays
-    the session's and its prompt recall still holds the brief's ids as
-    seen. Once a row of the session's conversation is stamped past the
-    window, the next read takes the signal back."""
-    _first, second, compact, signal = _subagent_compacts(parent, world, clock)
+    the session's. Once a row of the session's conversation is stamped
+    past the window, the next read takes the signal back."""
+    _first, second, signal = _subagent_compacts(parent, world, clock)
     clock.advance(seconds=300)
-    assert parent.prompt(OTHER_QUERY).ids == ()
+    assert parent.prompt().ids == ()
     assert parent.pending() == signal
-    assert parent.rows("segment_opened") == []
+    assert parent.taken() == []
+    assert parent.segment() == parent.rebuilt()
 
     parent.goes_on()
     clock.advance(seconds=30)
     assert parent.prompt(OTHER_QUERY).ids == (second,)
     assert parent.pending() is None
-    [taken] = parent.rows("segment_opened")
-    assert (taken["agent_id"], taken["withdrawn"], taken["brief_event_id"]) == (
+    [taken] = parent.taken()
+    assert (taken["agent_id"], taken["withdrawn"], taken["triggered_from"]) == (
         AGENT,
-        [second],
-        compact.event_id,
+        [],
+        "prompt_hook",
     )
     assert parent.segment() == parent.rebuilt()
 
@@ -634,25 +650,24 @@ def test_a_marker_of_the_sessions_own_outside_the_window_keeps_its_signal(
     signal, as before ENG-150, but the session's conversation goes on
     after it and a subagent's marker sits within the window: the marker,
     newer than the one the segments opened on, keeps the signal the
-    session's, and the brief's ids stay shown."""
+    session's."""
     first = _memory(world, clock)
     assert parent.start("startup").ids == (first,)
-    second = world.write(OTHER_BODY).id
     clock.advance(seconds=30)
     signal = clock.now
-    assert parent.start("compact").ids == (second,)
+    assert parent.start("compact").ids == ()
     parent.subagent_boundary(AGENT, signal + timedelta(seconds=2))
     tr.append(parent.transcript, tr.boundary(signal + timedelta(seconds=offset)))
     clock.advance(seconds=300)
     parent.stop()
 
     assert parent.pending() == signal
-    assert parent.rows("segment_opened") == []
+    assert parent.taken() == []
     view = parent.segment()
-    assert (view.segment, view.shown) == (0, frozenset({first, second}))
+    assert (view.segment, view.shown) == (0, frozenset({first}))
     assert parent.rebuilt() == view
     clock.advance(seconds=30)
-    assert parent.prompt(OTHER_QUERY).ids == ()
+    assert parent.prompt().ids == ()
 
 
 def test_a_marker_no_segment_opened_on_long_before_keeps_nothing(
@@ -664,18 +679,20 @@ def test_a_marker_no_segment_opened_on_long_before_keeps_nothing(
     subagent's compaction takes nothing from the take-back."""
     tr.append(parent.transcript, tr.boundary(clock.now, uuid="missed"))
     clock.advance(seconds=HOOK_TIMEOUT_SECONDS + 60)
-    _first, second, compact, _signal = _subagent_compacts(parent, world, clock)
+    first, _second, _signal = _subagent_compacts(parent, world, clock)
     clock.advance(seconds=300)
     parent.stop()
 
     assert parent.pending() is None
-    [taken] = parent.rows("segment_opened")
-    assert (taken["agent_id"], taken["withdrawn"], taken["brief_event_id"]) == (
+    [taken] = parent.taken()
+    assert (taken["agent_id"], taken["marker"], taken["withdrawn"]) == (
         AGENT,
-        [second],
-        compact.event_id,
+        "sub-boundary-1",
+        [],
     )
-    assert parent.segment() == parent.rebuilt()
+    view = parent.segment()
+    assert (view.segment, view.shown) == (0, frozenset({first}))
+    assert parent.rebuilt() == view
 
 
 def test_rows_of_the_session_before_its_marker_are_taken_for_a_subagent(
@@ -687,14 +704,13 @@ def test_rows_of_the_session_before_its_marker_are_taken_for_a_subagent(
     row in the 143 boundaries measured), with a subagent's marker within
     the window of its signal, is taken for the subagent once that
     conversation is past the window. The marker lands after the signal
-    has ended, the session's segment never opens on it, and the brief's
-    ids are delivered to the session again."""
+    has ended, and the session's segment never opens on it: the prompt
+    recall holds as seen the id the compaction would have shown again."""
     first = _memory(world, clock)
     assert parent.start("startup").ids == (first,)
-    second = world.write(OTHER_BODY).id
     clock.advance(seconds=30)
     signal = clock.now
-    assert parent.start("compact").ids == (second,)
+    assert parent.start("compact").ids == ()
     parent.subagent_boundary(AGENT, signal + timedelta(seconds=2))
     clock.advance(seconds=90)
     parent.stop()
@@ -704,21 +720,20 @@ def test_rows_of_the_session_before_its_marker_are_taken_for_a_subagent(
 
     assert parent.pending() is None
     view = parent.segment()
-    assert (view.segment, view.marker) == (0, None)
+    assert (view.segment, view.marker, view.shown) == (0, None, frozenset({first}))
     assert parent.rebuilt() == view
-    [taken] = parent.rows("segment_opened")
-    assert (taken["agent_id"], taken["withdrawn"]) == (AGENT, [second])
-    assert parent.prompt(OTHER_QUERY).ids == (second,)
+    [taken] = parent.taken()
+    assert (taken["agent_id"], taken["withdrawn"]) == (AGENT, [])
+    assert parent.prompt().ids == ()
 
 
 def test_a_workflow_agents_transcript_names_it_too(
-    parent: Parent, world: PromptWorld, clock: Clock
+    parent: Parent, clock: Clock
 ) -> None:
     """A workflow's agents keep their transcripts one level down, in
     ``subagents/workflows/<run>/``."""
-    memory = _memory(world, clock)
     signal = clock.now
-    compact = parent.start("compact")
+    parent.start("compact")
     run = parent.subagents / "workflows" / "wf_run-001"
     run.mkdir(parents=True)
     tr.write(
@@ -728,15 +743,20 @@ def test_a_workflow_agents_transcript_names_it_too(
     )
     clock.advance(seconds=300)
     parent.stop()
-    [taken] = parent.rows("segment_opened")
+    assert parent.pending() is None
+    [taken] = parent.taken()
     assert (taken["agent_id"], taken["marker"], taken["withdrawn"]) == (
         AGENT,
         "wf-boundary",
-        [memory],
+        [],
     )
     assert "agent_type" not in taken
-    assert taken["brief_event_id"] == compact.event_id
-    assert parent.segment().shown == frozenset()
+    scope = parent.scope(AGENT)
+    assert (scope.segment, scope.marker, scope.started_at) == (
+        1,
+        "wf-boundary",
+        signal,
+    )
 
 
 def test_held_and_rebuilt_agree_through_a_subagents_compactions(
@@ -783,7 +803,8 @@ def test_held_and_rebuilt_agree_through_a_subagents_compactions(
         step()
         agree()
         clock.advance(seconds=10)
-    assert [r.get("agent_id") for r in parent.rows("segment_opened")][0] == AGENT
+    opened = [(r.get("agent_id"), r["segment"]) for r in parent.rows("segment_opened")]
+    assert opened == [(None, 0), (AGENT, 1), (None, 0), (None, 1)]
     assert parent.segment().segment == 2
     assert first in parent.segment().shown
 
@@ -799,21 +820,25 @@ def test_the_surfaces_count_a_subagents_segment_apart_from_the_sessions(
     """The subagent's compaction, taken back, opened the subagent's
     segment 1; the session's own compaction opened the session's segment
     1. Eval's surfaces count two segments opened, not one, and read the
-    shows as before: three briefs, the compact one printed into the
-    subagent among them."""
-    _subagent_compacts(parent, world, clock)
+    shows as before: the startup's brief, and a prompt recall in each of
+    the session's segments (neither compaction shows a brief, rs-v8)."""
+    first, second, _signal = _subagent_compacts(parent, world, clock)
     clock.advance(seconds=300)
     parent.stop()
+    assert parent.prompt(OTHER_QUERY).ids == (second,)
     signal = clock.now
     parent.start("compact")
     tr.append(parent.transcript, tr.boundary(signal + timedelta(seconds=1)))
     clock.advance(seconds=120)
     parent.stop()
     assert parent.segment().segment == 1
+    assert parent.prompt().ids == (first,)
     assert [
         (r.get("agent_id"), r["segment"]) for r in parent.rows("segment_opened")
     ] == [
+        (None, 0),
         (AGENT, 1),
+        (None, 0),
         (None, 1),
     ]
     surfaces = compute_surface_report(
@@ -821,7 +846,8 @@ def test_the_surfaces_count_a_subagents_segment_apart_from_the_sessions(
     )
     assert surfaces is not None
     assert surfaces["segments"] == {"sessions": 1, "opened": 2}
-    assert surfaces["brief"]["deliveries"] == 3
+    assert surfaces["brief"]["deliveries"] == 1
+    assert surfaces["recall"]["deliveries"] == 2
 
 
 # ---------------------------------------------------------------------------

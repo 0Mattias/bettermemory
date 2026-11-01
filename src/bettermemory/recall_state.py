@@ -42,9 +42,10 @@ from .transcript import CompactMarker
 # rs-v5: RS-F6's delivery decided by membership; the brief and recall rows carry the checkout, the membership rule and rc3_admitted
 # rs-v6: RS-F7's delivery of what is in force; the brief is standing and work; every outcome a row
 # rs-v7: ENG-115's prompt recall probes the owner's words without the audit's content-token floor
+# rs-v8: ENG-115's brief is shown at a startup or a clear, never at a resume or a compaction
 # Every row written after a landing carries its rule, so a read of the
 # log splits on the row's rule and never on a clock.
-RULE = "rs-v7"
+RULE = "rs-v8"
 
 # The harness a hook payload names when it names none: the one whose
 # hook protocol the plugin implements.
@@ -189,7 +190,8 @@ class _Signal:
     yet: when it came, and what the segment had shown and delivered by
     then. When a later read finds the marker, the segment it opens holds
     what was shown and delivered since (`_reopen`). `event_id` is the
-    event of the brief the SessionStart showed, if any: when the
+    event of the brief the SessionStart showed, if any (none from rs-v8,
+    when a compact shows no brief): when the
     compaction turns out to be a subagent's, its ids leave the segment
     (`_withdraw`)."""
 
@@ -578,7 +580,8 @@ class RecallState:
     ) -> tuple[SegmentView, bool]:
         """A SessionStart: the segment it leaves the session in, and
         whether it opened that segment. `event_id` names the brief the
-        SessionStart shows, held with a compact's signal.
+        SessionStart shows, held with a compact's signal (a compact shows
+        none from rs-v8, so its event records nothing).
 
         A ``clear`` opens a new segment (nothing shown, no deliveries).
         A ``compact`` opens one when `marker`, the compaction marker the
