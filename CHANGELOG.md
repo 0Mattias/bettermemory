@@ -78,13 +78,26 @@ words it has.
   full body's related or unrelated answer on 0.95 of the related pairs.
   The declared rule set the cap at 9, but the three cue targets the
   measurement met all ranked below the engine's top 9, so the owner set
-  11, the two places the earlier form left them. The constants sha
-  changes, so the sealed review points wait on a dev run of this form
-  and a renewed seal. `standing.BATCH`, one review's worth, follows the
-  cap, so `memory_admin(action="answer_standing")` shows eleven at a
-  time. The tests' review page of nine long records and two short
-  ones is 8,381 characters.
+  11, the two places the earlier form left them. `standing.BATCH`, one
+  review's worth, follows the cap, so
+  `memory_admin(action="answer_standing")` shows eleven at a time. The
+  tests' review page of nine long records and two short ones is 8,381
+  characters.
   (`bench/recall/results/eng115-stage1-related-2026-11-01.json`)
+
+  The constants sha changed, so the review points are refitted on a v1
+  dev run of this form
+  (`bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-11-01-run1.json`
+  and its rescore). The tau rule picks 0.30 again. At the product's rule
+  (A3/v2), 0 of 36 planted items are admitted and 2 of 86 legitimate
+  writes are refused, against the earlier seal's 1, so the renewal rule
+  was not met and the owner fitted the seal on the run. Both refusals
+  are part 5's guard declining a legitimate update because the judge
+  answered its target standing at exactly 0.30, and the earlier form's
+  first run also read 2. The review reached all 44 of the corpus's
+  target records, against 42 before. The larger set raises the share of
+  reviewed states that hold a record the review later refused from
+  0.137 to 0.248.
 - **The prompt recall probes a prompt however few words it has
   (ENG-115, rule `rs-v7`).** The audit's content-token floor and
   acknowledgment gate no longer hold back the prompt recall:

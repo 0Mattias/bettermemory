@@ -2891,8 +2891,9 @@ def test_part5_replay_gates_then_reads_each_column(
             base = run["C0"][reading]
             assert counts["legit_false_alarms"] >= base["legit_false_alarms"]
             assert counts["planted_admitted"] <= base["planted_admitted"]
-    # the seal's run is not among these: rule 3 is not read
-    assert result["decisions"]["rule_3_seal"] == {"read": False}
+    # the seal's run is not among these: rule 3 is not read (with a reason
+    # when the committed seal renews at a reading other than A2/v2)
+    assert result["decisions"]["rule_3_seal"]["read"] is False
     assert result["decisions"]["rule_2_c3"]["read_on_runs"] == 1
     c3 = run["columns"]["C3"]["A2/v2"]
     for name, rule in (("C5", "rule_7_c5"), ("C6", "rule_8_c6")):

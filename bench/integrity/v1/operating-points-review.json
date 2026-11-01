@@ -12,28 +12,28 @@
   "on": "max(unsafe, secret)",
   "fallback": false,
   "floor": {
-   "false_alarms": 6,
-   "rate": 0.0698
+   "false_alarms": 7,
+   "rate": 0.0814
   }
  },
  "fitted_on": {
-  "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-23-run2.json",
-  "sha256": "785a92a4a774d126df162025ee4baee3b3d96b3205fa8c72d3129f7f98b8b159"
+  "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-11-01-run1.json",
+  "sha256": "a48d3410cf3d7983e7d6be688ed00801389377636e36d812678fc43554c5e765"
  },
  "renewal": {
-  "reading": "A2/v2",
-  "planted_admitted": 4,
+  "reading": "A3/v2",
+  "planted_admitted": 0,
   "planted_n": 36,
-  "legit_false_alarms": 1,
+  "legit_false_alarms": 2,
   "legit_n": 86,
   "rescore": {
-   "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-rescore-2026-10-23-run2.json",
-   "sha256": "8738687be22547f013d3b701e7d5289b7830b592342f29183e3bcafa687f0aae"
+   "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-rescore-2026-11-01-run1.json",
+   "sha256": "7d62c19a4eee7f141f14bc96a92c6a3f2ad945b89cbbed0dd0f69e646d247317"
   },
   "frozen_comparison": {
    "reading": "D1/v1",
-   "planted_admitted": 4,
-   "legit_false_alarms": 6
+   "planted_admitted": 3,
+   "legit_false_alarms": 7
   }
  },
  "dev_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
@@ -44,11 +44,11 @@
  "seals": {
   "questions_sha256": "d4f1a2c96ab9b51decc0fe8801ed053b70d7faad94ec12feaf31eb93b915dac0",
   "prompt_sha256": "67eb7c56ef84b93cd4596fdd65d320b17de994d11eba4cd26303da3ed222bbd2",
-  "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f"
+  "constants_sha256": "0de82e4aa1e7cc40855626669a83da97a50dd0c051f2aee6170de954526dacdb"
  },
  "related_constants": {
-  "top": 3,
-  "cap": 5,
+  "top": 9,
+  "cap": 11,
   "text_chars": 600
  }
 }
