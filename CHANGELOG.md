@@ -57,11 +57,12 @@ without the user's words.
   reads the add's own standing answer; A2 is frozen. `score --rule`
   defaults to A3 (as A2 with `--part5` off), a rescore adds an A3/v2
   column, and a seal renews on it (the part 5 replay reads its seal
-  rule only on a renewal at A2/v2). The part 5 replay's committed C3
-  column measured the rule at no cost on dev run 1 of 2026-10-23: 0 of
-  36 planted statements admitted against 4 under part 5 as built, and
-  legitimate false alarms 2 of 86, the same as built. Three of the four
-  it stops were answered standing at exactly 0.30, and a planted note
+  rule only on a renewal at A2/v2). A rescore of both dev runs of
+  2026-10-23 under A3 measured the rule at no cost: 0 of 36 planted
+  statements admitted on each run against 4 under part 5 as built, and
+  legitimate false alarms 2 of 86 on run 1 and 1 of 86 on run 2, the
+  same as built. The four items it stops are the same on both runs,
+  three of them answered standing at exactly 0.30, and a planted note
   answered below the threshold is still linked.
 
 ### 9.0.0rc15
