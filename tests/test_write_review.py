@@ -391,12 +391,12 @@ def _long_billing_record(n: int) -> str:
 
 
 def _seed_billing(harness: Harness) -> tuple[list[str], list[str]]:
-    longs = [harness.seed(_long_billing_record(n)) for n in range(3)]
+    longs = [harness.seed(_long_billing_record(n)) for n in range(review.RELATED_TOP)]
     cues = [harness.seed(text) for text in _BILLING_CUE_TARGETS]
     return longs, cues
 
 
-def _engine_top3(harness: Harness, content: str) -> list[str]:
+def _engine_top(harness: Harness, content: str) -> list[str]:
     admission = harness.admission()
     pool = resolve_search_pool(
         harness.store,
@@ -415,15 +415,15 @@ def _engine_top3(harness: Harness, content: str) -> list[str]:
     return [h.id for h in hits]
 
 
-async def test_related_is_engine_top3_plus_cue_targets_capped_at_5(
+async def test_related_is_engine_top_plus_cue_targets_capped(
     harness: Harness, tau: float
 ) -> None:
     _, cues = _seed_billing(harness)
-    top3 = _engine_top3(harness, BILLING_NEW)
+    top = _engine_top(harness, BILLING_NEW)
     report = supersession.detect_supersession(BILLING_NEW, harness.store.load_all())
     cue_ids = [m.memory_id for m in [*report.supersedes, *report.conflicts]]
     assert set(cue_ids) == set(cues)
-    expected = list(top3)
+    expected = list(top)
     for memory_id in cue_ids:
         if memory_id not in expected:
             expected.append(memory_id)
@@ -431,10 +431,10 @@ async def test_related_is_engine_top3_plus_cue_targets_capped_at_5(
 
     first = await harness.write(BILLING_NEW)
     related = _related_ids(first)
-    assert len(top3) == review.RELATED_TOP
+    assert len(top) == review.RELATED_TOP
     assert related == expected
     assert len(related) == review.RELATED_CAP
-    assert related[: review.RELATED_TOP] == top3
+    assert related[: review.RELATED_TOP] == top
     assert set(related[review.RELATED_TOP :]) <= set(cues)
 
 
@@ -496,9 +496,11 @@ async def test_review_response_size_bounded(harness: Harness, tau: float) -> Non
     assert len(related) <= review.RELATED_CAP
     assert all(len(entry["text"]) <= review.RELATED_TEXT_CHARS for entry in related)
     assert any(len(entry["text"]) > 500 for entry in related)
-    assert len(json.dumps(first)) <= 5_000
+    # Eleven entries of at most 600 characters each, their ids and dates,
+    # and the four questions.
+    assert len(json.dumps(first)) <= 10_000
     issued = harness.events(review.REVIEW_ISSUED)[-1]
-    assert issued["response_chars"] <= 5_000
+    assert issued["response_chars"] <= 10_000
 
 
 async def test_write_supersession_off_gives_no_cue_targets_and_no_review_links(
@@ -508,13 +510,13 @@ async def test_write_supersession_off_gives_no_cue_targets_and_no_review_links(
         tmp_path / "store", behavior=BehaviorConfig(write_supersession=False)
     )
     _seed_billing(harness)
-    top3 = _engine_top3(harness, BILLING_NEW)
+    top = _engine_top(harness, BILLING_NEW)
     first = await harness.write(BILLING_NEW)
-    assert _related_ids(first) == top3
+    assert _related_ids(first) == top
     answered = await harness.answer(first, BILLING_NEW, label="update")
     assert answered["status"] == "committed"
     assert "supersedes" not in answered
-    assert answered["update_suggested"] == top3
+    assert answered["update_suggested"] == top
     memory = harness.store.load_one(answered["id"])
     assert memory.links == []
 

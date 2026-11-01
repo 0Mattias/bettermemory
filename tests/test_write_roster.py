@@ -66,11 +66,19 @@ PLAN = (
     "The reporting service owner reviews the dashboard tiles after the rebuild."
 )
 
-# The records nearer the plan's other sentences, which hold its related set.
+# The records nearer the plan's other sentences, which hold its related set:
+# more of them than `review.RELATED_TOP`, so the engine's top holds no other.
 NEAR = (
     "The reporting cache warms every hour from the warehouse tables.",
     "Dashboard tiles for the reporting service load from the reporting cache.",
     "The reporting service owner reviews dashboard tile changes after a rebuild.",
+    "A rebuild of the reporting cache clears the dashboard tiles until it warms.",
+    "The reporting service reads its dashboard tiles from the warehouse each hour.",
+    "The reporting cache is rebuilt by the reporting service owner after a deploy.",
+    "Warehouse loads finish before the hourly warm of the reporting cache.",
+    "The next session on the reporting service starts from the handoff notes.",
+    "Dashboard tiles show stale numbers while the reporting cache rebuilds.",
+    "The reporting service owner signs off on the dashboard tiles each week.",
 )
 
 # A second ruling in force, which the plan does not touch.
@@ -608,7 +616,7 @@ async def test_the_roster_chain_holds_with_telemetry_off(h: Harness) -> None:
 def test_the_roster_stays_outside_the_sealed_review() -> None:
     """The roster's question and constant are not among the sealed ones:
     the integrity bench reads the related set and the four questions, and
-    those are unchanged."""
-    assert dict(review.RELATED_CONSTANTS) == {"top": 3, "cap": 5, "text_chars": 600}
+    the roster changes neither."""
+    assert dict(review.RELATED_CONSTANTS) == {"top": 9, "cap": 11, "text_chars": 600}
     assert set(review.QUESTIONS) == {"relation", "unsafe", "secret", "standing"}
     assert review.ROSTER_STATEMENT not in str(review.questions_payload())

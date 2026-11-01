@@ -2338,7 +2338,7 @@ def test_review_seals_pin_questions_prompt_and_related_constants(
     assert (
         seals["constants_sha256"]
         == hashlib.sha256(
-            review.canonical_json({"top": 3, "cap": 5, "text_chars": 600})
+            review.canonical_json({"top": 9, "cap": 11, "text_chars": 600})
         ).hexdigest()
     )
     assert seals["questions_sha256"] == review.questions_sha256()

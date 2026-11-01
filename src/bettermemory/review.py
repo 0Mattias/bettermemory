@@ -74,11 +74,25 @@ if TYPE_CHECKING:
 # The related_for constants, sealed with the review points
 # ---------------------------------------------------------------------------
 
-#: The engine's top hits for the write's content.
-RELATED_TOP = 3
-#: The most related statements one review shows, cue targets included.
-RELATED_CAP = 5
-#: The most characters of one related statement's text.
+#: The engine's top hits for the write's content. Measured by ENG-115
+#: (bench/recall/results/eng115-stage1-related-2026-11-01.json): 129 real
+#: writes replayed as of their own write, every pair of a write and a
+#: record among the engine's top 10 or the cue targets graded blind by
+#: the three ENG-7 judges on the relation question. The smallest k whose
+#: top k holds 90% of the related records in the top 10 is 9 (0.946); the
+#: top 3 held 0.49.
+RELATED_TOP = 9
+#: The most related statements one review shows, cue targets included:
+#: the top `RELATED_TOP` and two more. The rule declared for ENG-115 read
+#: 9 (127 of the 129 writes had no cue target, so the 95th percentile was
+#: 0), but the three cue targets the measurement met all ranked below the
+#: engine's top 9, so a cap of 9 would drop them whenever the engine fills
+#: it; the owner set 11, the room the earlier form (3 and 5) gave.
+RELATED_CAP = 11
+#: The most characters of one related statement's text. ENG-115: the
+#: record judge's related or unrelated answer on the review's 600
+#: character window agreed with its answer on the whole body on 0.95 of
+#: the related pairs (0.959 at 1,200).
 RELATED_TEXT_CHARS = 600
 
 RELATED_CONSTANTS: Mapping[str, int] = MappingProxyType(

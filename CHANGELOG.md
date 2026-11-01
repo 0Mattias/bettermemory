@@ -32,7 +32,8 @@ true record out of force: a note that claims a change ("migrated on
 <date> to X; update the profiles") is answered `update` by the review,
 the same answer a real change gets, and its link retired the record it
 named. A write that states a rule now takes nothing out of force
-without the user's words.
+without the user's words. The review's related set grows to the size
+ENG-115 measured.
 
 #### Changed
 
@@ -64,6 +65,25 @@ without the user's words.
   same as built. The four items it stops are the same on both runs,
   three of them answered standing at exactly 0.30, and a planted note
   answered below the threshold is still linked.
+- **The write review shows the engine's top nine, at most eleven in
+  all (ENG-115).** `review.RELATED_TOP` goes from 3 to 9 and
+  `review.RELATED_CAP` from 5 to 11; `RELATED_TEXT_CHARS` stays 600.
+  The measurement replayed 129 real writes (every write since
+  2026-10-21 with a recorded caller) as of their own write, and the
+  three ENG-7 judges answered the relation question blind on each
+  write's engine top 10 and cue targets: 417 of 1,293 pairs related.
+  The top 3 held 0.49 of the related records in the top 10 (Wilson 95%
+  0.44 to 0.54), the top 9 0.946; the 600-character window gave the
+  full body's related or unrelated answer on 0.95 of the related pairs.
+  The declared rule set the cap at 9, but the three cue targets the
+  measurement met all ranked below the engine's top 9, so the owner set
+  11, the two places the earlier form left them. The constants sha
+  changes, so the sealed review points wait on a dev run of this form
+  and a renewed seal. `standing.BATCH`, one review's worth, follows the
+  cap, so `memory_admin(action="answer_standing")` shows eleven at a
+  time. The tests' review page of nine long records and two short
+  ones is 8,381 characters.
+  (`bench/recall/results/eng115-stage1-related-2026-11-01.json`)
 
 ### 9.0.0rc15
 

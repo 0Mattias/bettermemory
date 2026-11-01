@@ -228,14 +228,15 @@ async def test_memory_show_asks_a_record_with_no_answer(h: Harness) -> None:
 async def test_answer_standing_shows_the_newest_waiting_records_in_batches(
     h: Harness,
 ) -> None:
-    ids = [h.seed(fact) for fact in FACTS[:7]]
+    count = standing.BATCH + 2
+    ids = [h.seed(fact) for fact in FACTS[:count]]
     first = await _answer_standing(h)
     assert first["status"] == "waiting"
-    assert (first["answered"], first["waiting"]) == (0, 7)
+    assert (first["answered"], first["waiting"]) == (0, count)
     assert first["question"]["instructions"] == review.STANDING_STATEMENT
     shown = [r["id"] for r in first["records"]]
     assert shown == list(reversed(ids))[: standing.BATCH]
-    assert first["records"][0]["text"] == FACTS[6]
+    assert first["records"][0]["text"] == FACTS[count - 1]
     assert "standing={<id>: <0 to 1>, ...}" in first["hint"]
 
     second = await _answer_standing(h, {i: 0.1 for i in shown})
