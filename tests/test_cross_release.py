@@ -74,6 +74,9 @@ pytestmark = [
 CLI_SECONDS = 120.0
 MCP_SECONDS = 60.0
 DAEMON_SECONDS = 30.0
+#: SIGKILL where the platform has it: the job runs on Linux, and Windows
+#: has no SIGKILL for its type check to find.
+_SIGKILL: int = getattr(signal, "SIGKILL", 9)
 #: Variables carried from this process's environment, when set. Everything
 #: else a child sees is set by `Pair.env`.
 CARRIED = ("LANG", "LC_ALL", "LC_CTYPE")
@@ -358,7 +361,7 @@ def _end(pid: int, pair: Pair) -> None:
     while _alive(pid) and time.monotonic() < deadline:
         time.sleep(0.1)
     if _alive(pid):
-        os.kill(pid, signal.SIGKILL)
+        os.kill(pid, _SIGKILL)
 
 
 # ---------------------------------------------------------------------------
