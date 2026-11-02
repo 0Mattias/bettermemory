@@ -1426,10 +1426,11 @@ def test_a_snapshot_from_a_newer_schema_is_unreadable_here(bundle: Path) -> None
 def test_a_store_with_no_log_is_not_backed_up(tmp_path: Path) -> None:
     path = tmp_path / STORE_FILENAME
     conn = sqlite3.connect(str(path))
-    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
     conn.execute(
-        "CREATE TABLE log (seq INTEGER PRIMARY KEY, ts TEXT, session TEXT, "
-        "kind TEXT, payload TEXT, prev_mac TEXT, mac TEXT)"
+        "CREATE TABLE log (seq INTEGER PRIMARY KEY, ts TEXT NOT NULL, session TEXT, "
+        "kind TEXT NOT NULL, payload TEXT NOT NULL, prev_mac TEXT NOT NULL, "
+        "mac TEXT NOT NULL)"
     )
     conn.commit()
     with pytest.raises(BackupError, match="no store id"):

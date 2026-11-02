@@ -168,11 +168,8 @@ from .store_schema import (
     SCHEMA_VERSION,
     SYNCED,
     UNACCOUNTED,
-    StoreRefusedError as StoreRefusedError,
-    admit_store as admit_store,
     connect_read_only as connect_read_only,
     remove_read_only_copy as remove_read_only_copy,
-    read_store_meta as read_store_meta,
     _MEMBERSHIP_SPECS as _MEMBERSHIP_SPECS,
     ConcurrentUpdateError,
     EpisodeVolume,
@@ -195,6 +192,11 @@ from .store_schema import (
     resolve_keys_dir as resolve_keys_dir,
     store_path,
     version_meta,
+)
+from .store_admission import (
+    StoreRefusedError as StoreRefusedError,
+    admit_store as admit_store,
+    read_store_meta as read_store_meta,
 )
 from .store_rows import (
     _MEMORY_COLUMNS as _MEMORY_COLUMNS,

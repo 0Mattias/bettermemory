@@ -111,7 +111,7 @@ from pathlib import Path
 from typing import Any
 
 from ._fsutil import fsync_file, sqlite_file_uri
-from .store_schema import StoreRefusedError
+from .store_admission import StoreRefusedError
 
 LOCK_SUFFIX = ".restore-lock"
 MARKER_FORMAT = "bettermemory.restore_lock"

@@ -353,6 +353,58 @@ def test_a_revision_1_build_only_reads_a_store_step_2_marked(path: Path) -> None
 # --- an older store, a newer build -------------------------------------------
 
 
+def _at_revision_1(path: Path, *statements: str) -> None:
+    """The store as a build of revision 1 left it, after `statements`:
+    step 2 not recorded and its backfill not marked."""
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        for statement in statements:
+            conn.execute(statement)
+        conn.execute(
+            "UPDATE meta SET value = '1' WHERE key IN (?, ?)",
+            (SCHEMA_REVISION_KEY, MIN_WRITER_KEY),
+        )
+        conn.execute("DELETE FROM meta WHERE key = 'returned_backfill'")
+    finally:
+        conn.close()
+
+
+def test_a_foreign_table_under_a_steps_name_is_refused_not_stepped(
+    path: Path,
+) -> None:
+    """A build of revision 1 admits a plain table under any name it does
+    not use, so a store it wrote can hold one under the name step 2
+    creates, of another shape (ENG-107, review L4). This build refuses the
+    store at every open, before step 2 could take the table as its own and
+    record the revision, and the store keeps the revision it had."""
+    _written_by_this_build(path)
+    _at_revision_1(
+        path,
+        "DROP TABLE returned",
+        "CREATE TABLE returned (record_id INTEGER PRIMARY KEY, via TEXT, at TEXT)",
+    )
+    for allow_rekey in (False, True):
+        with pytest.raises(ValueError, match="its table 'returned'"):
+            Store.open(path, allow_rekey=allow_rekey)
+    assert versions_of(path) == ["1", str(_READER), "1"]
+    assert bundles(path) == []
+
+
+def test_step_2_records_the_table_a_readers_open_made(path: Path) -> None:
+    """Every open but a read-only one adds the membership tables a store
+    lacks, ``returned`` among them, without recording a step: the owner's
+    open then records step 2 over the table this build made."""
+    first = _written_by_this_build(path)
+    _at_revision_1(path, "DROP TABLE returned")
+    with Store.open(path) as reader:
+        assert reader.get_memory(first.id).body == first.body
+    assert "returned" in tables_of(path)
+    assert versions_of(path) == ["1", str(_READER), "1"]
+    with Store.open(path, allow_rekey=True) as owner:
+        assert owner.log_verify()["status"] == "ok"
+    assert versions_of(path) == OURS_KEYS
+
+
 def test_a_later_build_steps_a_store_this_build_wrote(path: Path) -> None:
     first = _written_by_this_build(path)
     assert versions_of(path) == OURS_KEYS

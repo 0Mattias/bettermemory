@@ -123,6 +123,24 @@ resume or a compaction.
   first turn to -0.38 at the third, and it fell in both strata.
   (`bench/recall/results/eng115-stage2-brief-turns-2026-11-01.json`)
 
+#### Fixed
+
+- **A table under a later step's name is refused, not taken as made
+  (ENG-107).** An older build admits a plain table under any name it
+  does not use, so a store could hold one under the name a later schema
+  step creates with `CREATE TABLE IF NOT EXISTS`; the later build's
+  owner's open then recorded the step over the foreign table, and with
+  no key, a rowid alias or a missing column its writes failed or added
+  second rows. Every open now holds each of this build's tables to the
+  shape this build gives it (`store_admission.shape_refusal`): each column
+  it declares, with its affinity, NOT NULL, default and place in the
+  key, and its UNIQUE and PRIMARY KEY keys, read from SQLite's pragmas
+  rather than the table's text. A column a later build added passes, as
+  does an optional one a store from before its step lacks. The schema
+  each release from 9.0.0rc1 created is frozen in
+  `tests/fixtures/release_schemas/` and admitted, and so was a copy of
+  a long-lived store; the check adds about 0.6 ms to an open.
+
 ### 9.0.0rc15
 
 The fifteenth candidate makes every standing ruling in force reach the

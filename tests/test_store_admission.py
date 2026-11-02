@@ -6,9 +6,9 @@ that checkout. One whose ``meta`` is a view over an endless recursive CTE
 hung `security audit`, `doctor`, the daemon's open and the hooks for good;
 one with a trigger of its own on ``log`` hung the first write, which the
 session-start hook makes. Every opener now admits the file before it reads
-a value from it (`store_schema.admit_store`): ``trusted_schema`` off, the
+a value from it (`store_admission.admit_store`): ``trusted_schema`` off, the
 schema checked against this build's own objects, and the reads made before
-the file is admitted held to `store_schema.ADMISSION_DEADLINE_SECONDS`. A
+the file is admitted held to `store_admission.ADMISSION_DEADLINE_SECONDS`. A
 file that fails is refused with one finding, and this build writes
 nothing to it.
 
@@ -61,7 +61,7 @@ from typing import Any, TypeVar
 
 import pytest
 
-from bettermemory import doctor, posture, store_schema
+from bettermemory import doctor, posture, store_admission, store_schema
 from bettermemory.cli import _common
 from bettermemory.config import PROJECT_DIR_NAME
 from bettermemory.log import KeyRing
@@ -300,7 +300,7 @@ def test_every_store_this_build_writes_is_admitted(repo: Path) -> None:
     earlier build left without an optional column, whose table text is
     not this build's; each opens."""
     path = repo / PROJECT_DIR_NAME / STORE_FILENAME
-    assert store_schema.schema_refusal(_master(path)) is None
+    assert store_admission.schema_refusal(_master(path)) is None
     older = repo / "older" / STORE_FILENAME
     older.parent.mkdir()
     shutil.copy(path, older)
@@ -312,14 +312,142 @@ def test_every_store_this_build_writes_is_admitted(repo: Path) -> None:
     )
     rows = _master(older)
     assert any(name == "sqlite_stat1" for _, name, _, _ in rows)
-    assert store_schema.schema_refusal(rows) is None
+    assert store_admission.schema_refusal(rows) is None
     lacking = repo / "lacking" / STORE_FILENAME
     lacking.parent.mkdir()
     shutil.copy(path, lacking)
     _sql(lacking, "ALTER TABLE checkouts DROP COLUMN unresolved_json")
-    assert store_schema.schema_refusal(_master(lacking)) is None
+    assert store_admission.schema_refusal(_master(lacking)) is None
     for each in (older, lacking):
         Store.open(each).close()
+
+
+#: The schema each release created, frozen from its tag: one file per schema,
+#: named by the first release that created it.
+_RELEASE_SCHEMAS = sorted(
+    (Path(__file__).parent / "fixtures" / "release_schemas").glob("*.sql")
+)
+
+
+@pytest.mark.parametrize("schema", _RELEASE_SCHEMAS, ids=lambda path: path.stem)
+def test_a_store_each_release_created_is_admitted(tmp_path: Path, schema: Path) -> None:
+    """Every table each release from 9.0.0rc1 created has the shape this
+    build gives it (`store_admission.shape_refusal`), so the shape check
+    refuses no store a release made; a later step that adds a column to
+    one of these tables lists it as optional, or this fails."""
+    path = tmp_path / STORE_FILENAME
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        conn.executescript(schema.read_text(encoding="utf-8"))
+        store_admission.admit_store(conn, path)
+    finally:
+        conn.close()
+
+
+#: One of this build's tables made otherwise, as an earlier build admits a
+#: plain table under a name it does not use (ENG-107, review L4), each with
+#: what the shape check names: ``returned`` (step 2's) with no key, a rowid
+#: alias, a key in another collation, a column missing, another affinity, a
+#: NOT NULL dropped or a default, and ``project_blobs`` WITHOUT ROWID.
+_RESHAPED: dict[str, tuple[str, str, str]] = {
+    "no key": (
+        "returned",
+        "CREATE TABLE returned (record_id TEXT, via TEXT NOT NULL, "
+        "returned TEXT NOT NULL)",
+        "declares 'record_id' otherwise",
+    ),
+    "rowid alias": (
+        "returned",
+        "CREATE TABLE returned (record_id INTEGER PRIMARY KEY, via TEXT NOT NULL, "
+        "returned TEXT NOT NULL)",
+        "declares 'record_id' otherwise",
+    ),
+    "collation": (
+        "returned",
+        "CREATE TABLE returned (record_id TEXT PRIMARY KEY COLLATE NOCASE, "
+        "via TEXT NOT NULL, returned TEXT NOT NULL)",
+        "is not keyed as this build keys it",
+    ),
+    "missing column": (
+        "returned",
+        "CREATE TABLE returned (record_id TEXT PRIMARY KEY, via TEXT NOT NULL)",
+        "lacks 'returned'",
+    ),
+    "affinity": (
+        "returned",
+        "CREATE TABLE returned (record_id TEXT PRIMARY KEY, via BLOB NOT NULL, "
+        "returned TEXT NOT NULL)",
+        "declares 'via' otherwise",
+    ),
+    "nullable": (
+        "returned",
+        "CREATE TABLE returned (record_id TEXT PRIMARY KEY, via TEXT, "
+        "returned TEXT NOT NULL)",
+        "declares 'via' otherwise",
+    ),
+    "default": (
+        "returned",
+        "CREATE TABLE returned (record_id TEXT PRIMARY KEY, "
+        "via TEXT NOT NULL DEFAULT 'x', returned TEXT NOT NULL)",
+        "declares 'via' otherwise",
+    ),
+    "without rowid": (
+        "project_blobs",
+        "CREATE TABLE project_blobs (project TEXT NOT NULL, blob TEXT NOT NULL, "
+        "witness TEXT NOT NULL, PRIMARY KEY (project, blob)) WITHOUT ROWID",
+        "is WITHOUT ROWID, unlike this build's",
+    ),
+}
+
+
+@pytest.mark.parametrize("reshaped", sorted(_RESHAPED))
+def test_one_of_this_builds_tables_made_otherwise_is_refused(
+    repo: Path, reshaped: str
+) -> None:
+    """Refused by the reader's and the owner's open alike, in the
+    admission's words and naming what differs, the file left as it was:
+    no step takes the table as its own."""
+    table, statement, named = _RESHAPED[reshaped]
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    _sql(path, f"DROP TABLE {table}", statement)
+    before = _snapshot(path)
+    for allow_rekey in (False, True):
+        with pytest.raises(ValueError, match=_REFUSED) as raised:
+            _in_time(lambda: Store.open(path, allow_rekey=allow_rekey))
+        assert f"its table '{table}' {named}" in str(raised.value)
+        assert isinstance(raised.value, store_admission.StoreRefusedError)
+    assert _snapshot(path) == before
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        'record_id text primary key, "via" Text not null, [returned] TEXT NOT NULL',
+        "returned TEXT NOT NULL, via TEXT NOT NULL, record_id TEXT PRIMARY KEY",
+        "record_id TEXT PRIMARY KEY, via TEXT NOT NULL, returned TEXT NOT NULL, "
+        "later_note TEXT DEFAULT ''",
+    ],
+    ids=["spelled otherwise", "columns in another order", "a later column"],
+)
+def test_one_of_this_builds_tables_of_its_shape_is_admitted(
+    repo: Path, columns: str
+) -> None:
+    """The shape is read, not the text: names in any case or quoting,
+    columns in any order, and a column a later build added pass, and this
+    build writes the table."""
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    _sql(path, "DROP TABLE returned", f"CREATE TABLE returned ({columns})")
+    with Store.open(path, allow_rekey=True) as owner:
+        owner.put_memory(_memory("the build server is named after a moon"))
+        assert owner.log_verify()["status"] == "ok"
+
+
+def test_the_full_text_tables_shadow_tables_are_not_held_to_a_shape() -> None:
+    """FTS5 makes them, and their shape may differ between SQLite's versions,
+    so a store another SQLite made is not refused for it."""
+    shapes = store_admission._built_shapes()
+    assert "returned" in shapes and "memories" in shapes
+    assert not [name for name in shapes if name.startswith("memories_fts")]
 
 
 @pytest.mark.parametrize(
@@ -364,7 +492,7 @@ def test_an_object_this_build_does_not_create_is_refused(
 ) -> None:
     path = repo / PROJECT_DIR_NAME / STORE_FILENAME
     _sql(path, *statements)
-    why = store_schema.schema_refusal(_master(path))
+    why = store_admission.schema_refusal(_master(path))
     assert why is not None and named in why
 
 
@@ -412,7 +540,7 @@ def test_a_table_of_this_builds_name_that_runs_an_expression_is_refused(
     repo: Path, statements: tuple[str, ...], named: str
 ) -> None:
     """A plain table is admitted by its name; what it could make SQLite run
-    is read from the file (`store_schema.table_refusal`), and SQLite's own
+    is read from the file (`store_admission.table_refusal`), and SQLite's own
     statistics tables pass only with the text SQLite gives them."""
     path = repo / PROJECT_DIR_NAME / STORE_FILENAME
     _sql(path, *statements)
@@ -436,7 +564,7 @@ def test_every_open_refuses_it_and_writes_nothing(
     with pytest.raises(ValueError, match=_REFUSED) as refused:
         _in_time(lambda: Store.open(path, allow_rekey=allow_rekey))
     assert time.perf_counter() - started < _REFUSAL_BOUND
-    assert isinstance(refused.value, store_schema.StoreRefusedError)
+    assert isinstance(refused.value, store_admission.StoreRefusedError)
     assert not refused.value.timed_out
     assert _snapshot(path) == before
 
@@ -455,10 +583,10 @@ def test_a_read_that_runs_past_the_deadline_is_refused(
         "SELECT x + 1 FROM n WHERE x < 500000) SELECT 'padding' || x, x FROM n",
     )
     with monkeypatch.context() as patched:
-        patched.setattr(store_schema, "ADMISSION_DEADLINE_SECONDS", 0.01)
+        patched.setattr(store_admission, "ADMISSION_DEADLINE_SECONDS", 0.01)
         with pytest.raises(ValueError, match="ran past") as refused:
             Store.open(path)
-    assert isinstance(refused.value, store_schema.StoreRefusedError)
+    assert isinstance(refused.value, store_admission.StoreRefusedError)
     assert refused.value.timed_out
     Store.open(path).close()
 
@@ -466,8 +594,8 @@ def test_a_read_that_runs_past_the_deadline_is_refused(
 def test_the_bounds_hold_to_the_admission_deadline() -> None:
     """A refusal comes back well under the deadline; the audit's read of a
     meta SQLite cannot parse, which does not refuse, within it."""
-    assert _REFUSAL_BOUND <= store_schema.ADMISSION_DEADLINE_SECONDS / 4
-    assert _READ_BOUND == store_schema.ADMISSION_DEADLINE_SECONDS
+    assert _REFUSAL_BOUND <= store_admission.ADMISSION_DEADLINE_SECONDS / 4
+    assert _READ_BOUND == store_admission.ADMISSION_DEADLINE_SECONDS
 
 
 def test_the_deadline_ends_an_endless_statement(
@@ -476,16 +604,16 @@ def test_the_deadline_ends_an_endless_statement(
     """The deadline itself, on a statement that never ends: interrupted
     once the deadline has passed, raised as a timed-out refusal, and the
     progress handler removed after."""
-    monkeypatch.setattr(store_schema, "ADMISSION_DEADLINE_SECONDS", 0.2)
+    monkeypatch.setattr(store_admission, "ADMISSION_DEADLINE_SECONDS", 0.2)
     path = tmp_path / "plain.sqlite"
     conn = sqlite3.connect(str(path), isolation_level=None)
     try:
         started = time.perf_counter()
         with pytest.raises(ValueError, match="ran past") as refused:
-            with store_schema._deadline(conn, path, "test"):
+            with store_admission._deadline(conn, path, "test"):
                 conn.execute(_ENDLESS).fetchall()
         took = time.perf_counter() - started
-        assert isinstance(refused.value, store_schema.StoreRefusedError)
+        assert isinstance(refused.value, store_admission.StoreRefusedError)
         assert refused.value.timed_out
         assert 0.2 <= took < 1.2
         assert conn.execute("SELECT 1").fetchone() == (1,)
@@ -621,7 +749,7 @@ def test_what_a_later_build_may_add_is_admitted(repo: Path, addition: str) -> No
     beside it: the reader's open, the owner's, a write and a verify."""
     path = repo / PROJECT_DIR_NAME / STORE_FILENAME
     _sql(path, *_LATER_ADDITIONS[addition])
-    assert store_schema.schema_refusal(_master(path)) is None
+    assert store_admission.schema_refusal(_master(path)) is None
     with Store.open(path) as reader:
         assert reader.count_memories() == 0
     with Store.open(path, allow_rekey=True) as owner:
@@ -715,7 +843,7 @@ _LATER_REFUSED: dict[str, tuple[tuple[str, ...], str]] = {
             "PRIMARY KEY') WHERE name = 'quarantine'",
             "PRAGMA writable_schema = OFF",
         ),
-        "its index 'sqlite_autoindex_quarantine_1' is not on the columns this build",
+        "its table 'quarantine' declares 'name' otherwise than this build",
     ),
     "NOT NULL with no default": (
         (
@@ -744,7 +872,7 @@ def test_what_a_later_build_may_not_add_is_refused(repo: Path, refused: str) -> 
             _in_time(lambda: Store.open(path, allow_rekey=allow_rekey))
         assert time.perf_counter() - started < _REFUSAL_BOUND
         assert named in str(raised.value)
-        assert isinstance(raised.value, store_schema.StoreRefusedError)
+        assert isinstance(raised.value, store_admission.StoreRefusedError)
         assert not isinstance(raised.value, store_schema.StoreVersionError)
     assert _snapshot(path) == before
 
@@ -783,7 +911,7 @@ def test_an_index_that_reads_as_columns_is_held_to_what_sqlite_made(
     what SQLite made of it is read on the file (`index_refusal`)."""
     path = repo / PROJECT_DIR_NAME / STORE_FILENAME
     make(path)
-    assert store_schema.schema_refusal(_master(path)) is None
+    assert store_admission.schema_refusal(_master(path)) is None
     with pytest.raises(ValueError, match=_REFUSED) as raised:
         _in_time(lambda: Store.open(path, allow_rekey=True))
     assert f"its index 'later_x' {named}" in str(raised.value)
@@ -851,7 +979,7 @@ def test_a_refused_store_a_later_build_wrote_says_to_upgrade(
         assert _REFUSED not in message
         assert isinstance(refused, store_schema.StoreVersionError)
         assert (refused.key, refused.needed) == (key, _NEXT)
-        assert isinstance(refused, store_schema.StoreRefusedError)
+        assert isinstance(refused, store_admission.StoreRefusedError)
         assert refused.holds_meta is True and not refused.timed_out
     assert _snapshot(path) == before
     with pytest.raises(OSError):
@@ -870,7 +998,7 @@ def test_a_refused_store_at_this_builds_revision_keeps_the_schema_refusal(
         _in_time(lambda: Store.open(path))
     assert "view named 'later_view'" in str(raised.value)
     assert not isinstance(raised.value, store_schema.StoreVersionError)
-    assert isinstance(raised.value, store_schema.StoreRefusedError)
+    assert isinstance(raised.value, store_admission.StoreRefusedError)
     assert raised.value.holds_meta is True
 
 
@@ -926,7 +1054,7 @@ def test_admission_reads_each_index_it_does_not_create_once(repo: Path) -> None:
     statements: list[str] = []
     conn.set_trace_callback(statements.append)
     try:
-        store_schema.admit_store(conn, path)
+        store_admission.admit_store(conn, path)
     finally:
         conn.close()
     reads = [s for s in statements if s.startswith("PRAGMA index")]

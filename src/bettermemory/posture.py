@@ -101,7 +101,7 @@ from .posture_sandbox import (
 )
 
 if TYPE_CHECKING:
-    from .store_schema import StoreRefusedError
+    from .store_admission import StoreRefusedError
 
 #: Every status a finding can carry, mildest first.
 STATUSES: tuple[str, ...] = ("ok", "info", "skip", "warn", "high")
@@ -510,7 +510,7 @@ def _meta_or_error(
 ) -> tuple[dict[str, str] | None, str | None, StoreRefusedError | None]:
     """The store's meta, or why it could not be read, and the refusal
     every opener makes of the file when that is why (`read_meta`)."""
-    from .store_schema import StoreRefusedError
+    from .store_admission import StoreRefusedError
 
     present, unreachable = _presence(store_file)
     if unreachable is not None:

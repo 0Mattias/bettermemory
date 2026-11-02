@@ -61,13 +61,8 @@ from .log import (
     _dangling_link,
     same_mac,
 )
-from .store_schema import (
-    StoreRefusedError,
-    admit_store,
-    connect_read_only,
-    read_store_meta,
-    resolve_keys_dir,
-)
+from .store_schema import connect_read_only, resolve_keys_dir
+from .store_admission import StoreRefusedError, admit_store, read_store_meta
 
 log = logging.getLogger("bettermemory.store")
 

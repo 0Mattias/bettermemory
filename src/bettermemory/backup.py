@@ -381,7 +381,7 @@ def _snapshot(source: Path, target: Path) -> None:
     (`_snapshot_facts`), and a file whose ``meta`` is an endless view
     hung that read, where a writing open refuses it in under a second.
     Raises `store_schema.StoreRefusedError` for a file it refuses."""
-    from .store_schema import admit_store
+    from .store_admission import admit_store
 
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(fd)
@@ -644,7 +644,7 @@ def create_backup(
         fsync_dir(bundle)
         return {"bundle": str(bundle), "manifest": manifest, "warnings": warnings}
     except BaseException as exc:
-        from .store_schema import StoreRefusedError
+        from .store_admission import StoreRefusedError
 
         shutil.rmtree(bundle, ignore_errors=True)
         if isinstance(exc, StoreRefusedError):

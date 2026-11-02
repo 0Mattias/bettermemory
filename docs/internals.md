@@ -1326,7 +1326,7 @@ names this build in `engine_version` when it is the newest, in a
 as it is, and the next writing open records what is missing.
 
 Before any of that, every opener of an existing store file admits it
-(`store_schema.admit_store`, ENG-172): `trusted_schema` off, then, the
+(`store_admission.admit_store`, ENG-172): `trusted_schema` off, then, the
 schema reads held to 2 s of virtual-machine time together and to strings
 of at most 16 KiB, its `sqlite_master` checked (`schema_refusal`), each
 plain table's columns read (`table_refusal`) and each index the build
