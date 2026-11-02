@@ -285,6 +285,85 @@ jobs:
                 || format('{0}..{1}', github.event.before, github.sha) }}
         run: python3 tools/commit_lint.py --range "$RANGE"
 
+  # The previous published release against this checkout (ENG-107): an
+  # old shim, hook and CLI paired with this checkout's daemon and store,
+  # and this checkout's daemon and store with the old ones, across a
+  # candidate boundary. tests/test_shim_versions.py and
+  # tests/test_cross_build.py stand the other build in with this build's
+  # own code; here it is the release a user has installed, from PyPI.
+  #
+  # The release is the newest on PyPI in this major at or below the
+  # checkout's version, other than the one a tag on this commit names, so
+  # a release's own tag meets the release before it. PyPI is the source,
+  # not the tags: some tags were never published. It installs as of its
+  # wheel's upload (`--exclude-newer`), with the dependencies it had then.
+  # Between releases the checkout carries the newest release's version,
+  # and two equal versions are one build to the daemon and its clients,
+  # so the checkout is then built as the next candidate, from a copy;
+  # nothing is edited in the checkout. No earlier release in the major
+  # (a new major's first candidate) skips the job with a notice.
+  #
+  # `fetch-depth: 0` so `git tag --points-at HEAD` sees the tags. Every
+  # child of the test runs in a sandbox under its tmp_path; the test
+  # checks where each build resolves its store, keys, config and state
+  # before it starts a daemon.
+  cross-release:
+    name: cross-release (previous release against this checkout)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      # Prints version, uploaded, exclude_newer and build, or nothing.
+      - name: Find the previous release
+        id: previous
+        run: |
+          python3 tools/ci/previous_release.py > "$RUNNER_TEMP/previous-release.txt"
+          cat "$RUNNER_TEMP/previous-release.txt"
+          cat "$RUNNER_TEMP/previous-release.txt" >> "$GITHUB_OUTPUT"
+
+      - name: No earlier release in this major
+        if: steps.previous.outputs.version == ''
+        run: >-
+          echo "::notice title=cross-release::PyPI holds no earlier release of
+          this major; nothing to cross"
+
+      - name: Sync dependencies
+        if: steps.previous.outputs.version != ''
+        run: uv sync --locked --extra dev
+
+      - name: Make the two installs
+        id: builds
+        if: steps.previous.outputs.version != ''
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.version }}
+          EXCLUDE_NEWER: ${{ steps.previous.outputs.exclude_newer }}
+          BUILD: ${{ steps.previous.outputs.build }}
+        run: |
+          python3 tools/ci/cross_release_builds.py --previous "$PREVIOUS" \
+            --exclude-newer "$EXCLUDE_NEWER" --build "$BUILD" --python 3.13 \
+            "$RUNNER_TEMP/cross-release" > "$RUNNER_TEMP/cross-release.txt"
+          cat "$RUNNER_TEMP/cross-release.txt"
+          cat "$RUNNER_TEMP/cross-release.txt" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-release tests
+        if: steps.previous.outputs.version != ''
+        env:
+          BETTERMEMORY_CI_PREVIOUS: ${{ steps.builds.outputs.BETTERMEMORY_CI_PREVIOUS }}
+          BETTERMEMORY_CI_NEXT: ${{ steps.builds.outputs.BETTERMEMORY_CI_NEXT }}
+        run: uv run pytest -p no:cacheprovider -rA tests/test_cross_release.py
+
   # The membership legs (RS-F6, design 8.7, plan phase 7): the
   # environments the design argued, run for real on ubuntu-latest. Each
   # runs on a dispatch of this workflow with `membership_legs` ticked or on

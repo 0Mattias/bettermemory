@@ -37,6 +37,16 @@ ENG-115 measured, the prompt recall probes a prompt however few words
 it has, and the session brief is shown at a startup but not after a
 resume or a compaction.
 
+#### Added
+
+- **CI runs the previous release against this one (ENG-107).** The new
+  `cross-release` job installs the newest release of the major from
+  PyPI beside the checkout; each reads, writes and verifies the other's
+  store and backups, the release's shim and hooks work against the
+  checkout's daemon, and the checkout's `up` replaces the release's
+  daemon under an open shim, which asks for a client restart
+  (`tests/test_cross_release.py`).
+
 #### Changed
 
 - **A standing write replaces nothing without the user's words (rule S,
