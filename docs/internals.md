@@ -95,8 +95,9 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   its segments open on its own transcript's markers), and the session's
   segment, signal and shows are left as they were. Claude Code names no
   subagent on that SessionStart today, so the hook answers it as the
-  session's: the brief goes into the subagent and the session holds the
-  signal and the brief's ids. A later read of the signal, a minute or
+  session's and the session holds the signal. From rs-v8 a compaction
+  shows no brief; before it, the brief went into the subagent and the
+  session held its ids too. A later read of the signal, a minute or
   more after it, that finds no new marker of the session's within 60
   seconds of it (the one its segments last opened on counts as none),
   finds the session's own conversation gone on past those 60 seconds (a
@@ -105,9 +106,12 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   session's writes its marker before its conversation goes on), and
   finds a marker in a subagent transcript (`<session>/subagents/agent-<id>.jsonl`, or
   `subagents/workflows/<run>/agent-<id>.jsonl` for a workflow's agents)
-  takes the signal back for that subagent: the ids that brief printed
-  leave the session's segment, and a `segment_opened` row carrying the
-  subagent, the ids `withdrawn` and the `brief_event_id` says so. This
+  takes the signal back for that subagent, and a `segment_opened` row
+  carrying the subagent and the ids `withdrawn` says so. For a signal
+  held from a brief before rs-v8 those are the ids the brief printed,
+  which leave the session's segment, and the row names its
+  `brief_event_id` when there are any; for one held since, `withdrawn`
+  is empty. This
   is a timing rule resting on a measured order (see the rc14 known
   limitations). The cooldown is rebuilt from the session's own rows
   whenever they were stamped, so a restart, an eviction after a day idle

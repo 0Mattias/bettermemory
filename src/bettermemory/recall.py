@@ -623,19 +623,20 @@ def _attribute_compaction(
     """Take the session's compact signal held since `at` back for the
     subagent whose transcript holds its marker, if one does (ENG-150).
 
-    The signal ends and the ids the compact's brief printed (a row
-    before rs-v8; a compact shows no brief since) leave the
+    The signal ends and the ids the compact's brief printed leave the
     session's segment and its settled set (`RecallState.
     attribute_compaction`): they were printed into the subagent, which
-    the session never saw. A `segment_opened` row records it under the
+    the session never saw. Only a signal held from a row before rs-v8
+    has such ids; a compact shows no brief since, so ``withdrawn`` is
+    empty for one held after. A `segment_opened` row records it under the
     session's id, carrying the subagent (`Subagent.fields`, ``agent_from:
     "transcript"``), the segment the compaction opened in the subagent's
     own scope (the next one, or the one it is in when that segment
     opened on this marker), the ``marker``, the signal's ``opened_at``,
-    the ``withdrawn`` ids and the brief's ``brief_event_id``: the
-    session's rebuild takes the same ids back on it, and the subagent's
-    scope holds them as shown in its segment. The session's segment does
-    not change, so nothing is settled."""
+    the ``withdrawn`` ids and, when there are any, the brief's
+    ``brief_event_id``: the session's rebuild takes the same ids back on
+    it, and the subagent's scope holds them as shown in its segment. The
+    session's segment does not change, so nothing is settled."""
     found = _subagent_marker_near(transcript_path, at)
     if found is None:
         return
@@ -781,7 +782,7 @@ def session_brief(
     key = (harness or DEFAULT_HARNESS, str(session_id))
     opened_by = source if source in _SESSION_SOURCES else "startup"
     agent = Subagent.from_payload(agent_id, agent_type)
-    state, view, opened, brief_event_id = _open_brief_segment(
+    state, view, opened = _open_brief_segment(
         store,
         cfg,
         state,
@@ -807,7 +808,6 @@ def session_brief(
         state=state,
         now=now,
         resolution=caller_resolution,
-        event_id=brief_event_id,
     )
     if result.event_id is None and opened_by in _NEW_SEGMENT_SOURCES:
         _record_segment_opened(
@@ -837,8 +837,8 @@ def _open_brief_segment(
     cwd: Path | None,
     origin: Origin | None,
     now: datetime,
-) -> tuple[RecallState, SegmentView, bool, str]:
-    """Take the SessionStart; return (scope's state, segment, opened, brief's id)."""
+) -> tuple[RecallState, SegmentView, bool]:
+    """Take the SessionStart; return (scope's state, segment, opened)."""
     marker_path = transcript_path
     if agent is not None:
         # A subagent's SessionStart (ENG-150): its own scope, read from the
@@ -858,18 +858,8 @@ def _open_brief_segment(
         agent=agent,
     )
     marker = _marker_near(marker_path, now) if opened_by == "compact" else None
-    # The brief's event is named on a compact's signal, so a later read
-    # that finds the compaction a subagent's takes its ids back (ENG-150).
-    # From rs-v8 a compact shows no brief, so the event it names records
-    # nothing and the take-back has no ids to withdraw.
-    brief_event_id = generate_ulid()
     view, opened = state.open_segment(
-        store,
-        key,
-        source=opened_by,
-        now=now,
-        marker=marker,
-        event_id=brief_event_id,
+        store, key, source=opened_by, now=now, marker=marker
     )
     if opened and agent is None:
         settle_unused(
@@ -883,7 +873,7 @@ def _open_brief_segment(
             triggered_from="session_hook",
             telemetry=cfg.telemetry.enabled,
         )
-    return state, view, opened, brief_event_id
+    return state, view, opened
 
 
 def _segment_compaction(
@@ -967,11 +957,9 @@ def _brief_in_segment(
     state: RecallState,
     now: datetime,
     resolution: Resolution | None = None,
-    event_id: str | None = None,
 ) -> HookResult:
     """The brief for the segment `session_brief` just opened, recorded
-    when shown, under `event_id` when given (the event a compact's
-    signal names); empty when nothing is, and always at a ``resume`` or a
+    when shown; empty when nothing is, and always at a ``resume`` or a
     ``compact`` (`_NO_BRIEF_SOURCES`, ENG-115 Stage 2).
 
     What the brief may show is the SESSION_BRIEF surface's admission for
@@ -1021,7 +1009,7 @@ def _brief_in_segment(
         return empty
     admission = admission_for(SESSION_BRIEF, store, resolution)
     membership = _delivery_membership(resolution, admission)
-    brief_event_id = event_id or generate_ulid()
+    brief_event_id = generate_ulid()
     record = partial(
         _record_brief,
         store=store,

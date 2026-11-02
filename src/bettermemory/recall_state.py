@@ -190,10 +190,10 @@ class _Signal:
     yet: when it came, and what the segment had shown and delivered by
     then. When a later read finds the marker, the segment it opens holds
     what was shown and delivered since (`_reopen`). `event_id` is the
-    event of the brief the SessionStart showed, if any (none from rs-v8,
-    when a compact shows no brief): when the
-    compaction turns out to be a subagent's, its ids leave the segment
-    (`_withdraw`)."""
+    event of the brief a compact showed before rs-v8, read back from its
+    row (`_replay`); a compact shows no brief from rs-v8, so a signal
+    held live names none. When the compaction turns out to be a
+    subagent's, that brief's ids leave the segment (`_withdraw`)."""
 
     at: datetime
     shown: frozenset[str]
@@ -328,7 +328,7 @@ def _hold_signal(
     entry: _SessionRecall, *, at: datetime, event_id: str | None = None
 ) -> None:
     """Hold a compact SessionStart whose marker is not read yet, and the
-    event of the brief it showed (`event_id`)."""
+    event of the brief it showed before rs-v8 (`event_id`, from its row)."""
     entry.signal = _Signal(
         at=at,
         shown=frozenset(entry.shown),
@@ -576,12 +576,9 @@ class RecallState:
         source: str,
         now: datetime,
         marker: CompactMarker | None = None,
-        event_id: str | None = None,
     ) -> tuple[SegmentView, bool]:
         """A SessionStart: the segment it leaves the session in, and
-        whether it opened that segment. `event_id` names the brief the
-        SessionStart shows, held with a compact's signal (a compact shows
-        none from rs-v8, so its event records nothing).
+        whether it opened that segment.
 
         A ``clear`` opens a new segment (nothing shown, no deliveries).
         A ``compact`` opens one when `marker`, the compaction marker the
@@ -603,7 +600,7 @@ class RecallState:
                 entry.closed = _closing_view(entry)
                 _restart(entry, segment=entry.segment + 1, at=now, marker=marker.key)
                 return _view(entry), True
-            _hold_signal(entry, at=now, event_id=event_id)
+            _hold_signal(entry, at=now)
             return _view(entry), False
 
     def pending_compaction(
@@ -653,7 +650,9 @@ class RecallState:
         """The compact signal held since `at` was a subagent's (ENG-150):
         end it and take the ids its SessionStart's brief printed out of
         the segment (`_withdraw`); those ids, sorted, and that brief's
-        event id. None when the signal was resolved meanwhile."""
+        event id. Only a signal read back from a row before rs-v8 names a
+        brief; one held since withdraws nothing. None when the signal was
+        resolved meanwhile."""
         with self._lock:
             entry = self._sessions.get(key)
             if entry is None or entry.signal is None or entry.signal.at != at:

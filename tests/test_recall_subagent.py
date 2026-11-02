@@ -25,7 +25,8 @@ for the subagent. The review's cases (D1, D2) are pinned here too, with
 what the timing rule cannot tell.
 
 From rs-v8 no compaction shows a brief, the session's or a subagent's
-(ENG-115 Stage 2), so a take-back has no ids to withdraw. What is pinned
+(ENG-115 Stage 2), so a take-back has no ids to withdraw, but for a
+signal the log held from a brief before rs-v8 (pinned once). What is pinned
 is the rest: the session's segment and shown set are left as they were,
 read through its prompt recall; the subagent's segments open on its own
 transcript's markers; the signals are held and answered as before; and
@@ -48,6 +49,7 @@ import pytest
 from bettermemory import hook as hook_module
 from bettermemory import log as bm_log
 from bettermemory.config import BehaviorConfig, Config, StorageConfig, TelemetryConfig
+from bettermemory.events import Recorder
 from bettermemory.hook import audit_transcript
 from bettermemory.recall import (
     HOOK_TIMEOUT_SECONDS,
@@ -472,6 +474,57 @@ def test_a_held_signal_a_subagents_transcript_answers_is_the_subagents(
         signal,
     )
     assert scope.shown == frozenset()
+
+
+def test_a_signal_held_from_a_brief_before_rs_v8_takes_its_ids_back(
+    parent: Parent, world: PromptWorld, clock: Clock
+) -> None:
+    """A compact's brief recorded before rs-v8, whose signal no read had
+    answered when the daemon restarted on a later build: the rebuild holds
+    the signal with that brief's event, and the take-back for the
+    subagent withdraws the ids the brief printed into it and names the
+    brief, so the session's prompt recall shows them again. The live
+    store held one such signal when the live path stopped naming a brief
+    on the signal."""
+    world.write(BODY)
+    second = world.write(OTHER_BODY).id
+    clock.advance(seconds=30)
+    signal = clock.now
+    Recorder(
+        store=world.store,
+        session_id=KEY[1],
+        enabled=True,
+        worktree_root=world.caller.worktree_root,
+        triggered_from="session_hook",
+    ).record(
+        "session_brief",
+        event_id="brief-before-rs-v8",
+        session_id=KEY[1],
+        harness=KEY[0],
+        source="compact",
+        segment=0,
+        ids=[second],
+        chars=64,
+        marker_absent=True,
+        rule="rs-v7",
+    )
+    assert parent.pending() == signal
+    assert parent.segment().shown == {second}
+    path = parent.subagent_boundary(AGENT, signal - timedelta(milliseconds=500))
+    path.with_name(f"{path.stem}.meta.json").write_text('{"agentType": "Explore"}')
+    clock.advance(seconds=300)
+    parent.goes_on()
+
+    assert parent.prompt(OTHER_QUERY).ids == (second,)
+    assert parent.pending() is None
+    assert parent.rebuilt() == parent.segment()
+    [taken] = parent.taken()
+    assert (taken["agent_id"], taken["withdrawn"], taken["brief_event_id"]) == (
+        AGENT,
+        [second],
+        "brief-before-rs-v8",
+    )
+    assert parent.scope(AGENT).shown == {second}
 
 
 def test_a_read_inside_the_wait_keeps_the_signal_and_the_sessions_marker_wins(
