@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 # Make `src/` importable without depending on the editable install. This is
 # belt-and-suspenders: if the venv's editable .pth file is unreadable for any
@@ -251,6 +253,182 @@ def keys_dir(local_tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 #: passes through, so the tests of the resolution rule are unaffected.
 _DEVELOPER_GLOBAL_DIR = (Path.home() / _config.GLOBAL_DIR_NAME).resolve()
 
+#: The developer's home, read once at import time, before any test fakes
+#: it.
+_DEVELOPER_HOME = str(Path.home())
+
+
+def _spelling(value: str) -> str:
+    """`value` as two spellings of one path compare: resolved, and with its
+    case folded where the platform folds case."""
+    return os.path.normcase(os.path.realpath(value))
+
+
+#: The variables a child process resolves bettermemory's default
+#: locations through (`scratch_child_env`), and the developer's own value
+#: of each, read once at import time, before any fixture changes one, as
+#: `_spelling` compares them: the home under both of its names, whichever
+#: the shell set.
+_CHILD_LOCATION_ENVS: tuple[str, ...] = (
+    "HOME",
+    "USERPROFILE",
+    "XDG_CONFIG_HOME",
+    "XDG_STATE_HOME",
+    "XDG_DATA_HOME",
+    "WIN_PD_OVERRIDE_APPDATA",
+    "WIN_PD_OVERRIDE_LOCAL_APPDATA",
+    _config.ENV_DIR_OVERRIDE,
+    _config.KEYS_DIR_ENV,
+    _daemon_client.STATE_DIR_ENV,
+)
+_DEVELOPER_LOCATIONS: dict[str, frozenset[str]] = {
+    name: frozenset(
+        _spelling(value)
+        for value in (
+            os.environ.get(name),
+            _DEVELOPER_HOME if name in ("HOME", "USERPROFILE") else None,
+        )
+        if value
+    )
+    for name in _CHILD_LOCATION_ENVS
+}
+
+
+def _uv_cache_dir() -> str | None:
+    """The cache the developer's uv uses, read at import time, before any
+    child runs under a scratch home, where uv would start with an empty
+    cache and download what a test installs (`scratch_child_env`)."""
+    if os.environ.get("UV_CACHE_DIR"):
+        return os.environ["UV_CACHE_DIR"]
+    uv = shutil.which("uv")
+    if uv is None:
+        return None
+    try:
+        done = subprocess.run(
+            [uv, "cache", "dir"], capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout.strip() or None
+
+
+_DEVELOPER_UV_CACHE = _uv_cache_dir()
+
+#: The scratch home of a child process started now: the running test's
+#: (`storage_dir`) above the session's (`scratch_session`).
+_CHILD_HOMES: list[Path] = []
+
+
+def _home_dirs_env(home: Path) -> dict[str, str]:
+    """The variables that put a child's user directories under `home`, as
+    `platformdirs` reads them: the XDG ones on macOS and Linux, and on
+    Windows the overrides of the shell's folders, since it reads no home
+    or `APPDATA` there (ENG-124), and ignores an override that is not
+    absolute."""
+    home = home.absolute()
+    if sys.platform == "win32":
+        return {
+            "WIN_PD_OVERRIDE_APPDATA": str(home / "AppData" / "Roaming"),
+            "WIN_PD_OVERRIDE_LOCAL_APPDATA": str(home / "AppData" / "Local"),
+        }
+    return {
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_STATE_HOME": str(home / ".local" / "state"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+    }
+
+
+def _scratch_home(home: Path) -> Path:
+    """`home` made a scratch home for child processes: the directory, and
+    the config.toml a child given it finds (`platformdirs`' own answer
+    under `_home_dirs_env`), written with the shipped defaults, so a
+    child's `load_config` stays as silent as the in-process one does
+    (`storage_dir`)."""
+    import platformdirs
+
+    with pytest.MonkeyPatch.context() as mp:
+        for name, value in _home_dirs_env(home).items():
+            mp.setenv(name, value)
+        config_dir = Path(platformdirs.PlatformDirs("bettermemory").user_config_dir)
+    config_dir.mkdir(parents=True)
+    (config_dir / _config.CONFIG_FILENAME).write_text(
+        _config.DEFAULT_CONFIG, encoding="utf-8"
+    )
+    return home
+
+
+def scratch_child_env(env: Mapping[str, str] | None) -> dict[str, str]:
+    """The environment a child process the suite starts runs with: `env`
+    (this process's when None), completed so that what the child resolves
+    by default, its store, keys, state and config directories, lies under
+    the test's scratch directory.
+
+    A child runs none of the in-process guards (`storage_dir`,
+    `scratch_session`), so its environment decides: a child whose
+    environment named neither the keys nor the state directory kept its
+    key rings in the developer's keys directory (ENG-202), and one that
+    named no store directory and stood outside any project opened the
+    developer's store. So a location variable that names the developer's
+    own location, in any spelling of it (`_spelling`), counts as unset.
+
+    A home the test named decides the child's defaults: its platform's
+    user directories lie under it, which on Windows takes the overrides
+    of `_home_dirs_env`, as `platformdirs` reads no home there. Otherwise
+    the home (`HOME`, and on Windows `USERPROFILE`) is the test's scratch
+    home with its user directories under it, the keys and state
+    directories are this process's, the test's own, and uv keeps the
+    developer's cache, which is no location of bettermemory's. A
+    variable the test set stays, empty included (empty reads as unset).
+    On Windows, where the environment's names are case-insensitive, they
+    are upper-cased first, as `os.environ` holds them there."""
+    windows = sys.platform == "win32"
+    given = os.environ if env is None else env
+    out = (
+        {name.upper(): value for name, value in given.items()}
+        if windows
+        else dict(given)
+    )
+    for name, spellings in _DEVELOPER_LOCATIONS.items():
+        value = out.get(name)
+        if value and _spelling(value) in spellings:
+            del out[name]
+    named = (out.get("USERPROFILE") or out.get("HOME")) if windows else out.get("HOME")
+    home = Path(named) if named else _CHILD_HOMES[-1]
+    for name in ("HOME", "USERPROFILE") if windows else ("HOME",):
+        out[name] = out.get(name) or str(home)
+    if windows or not named:
+        for name, value in _home_dirs_env(home).items():
+            out.setdefault(name, value)
+    if not named:
+        for name in (_config.KEYS_DIR_ENV, _daemon_client.STATE_DIR_ENV):
+            if name not in out and os.environ.get(name):
+                out[name] = os.environ[name]
+        if "UV_CACHE_DIR" not in out and _DEVELOPER_UV_CACHE:
+            out["UV_CACHE_DIR"] = _DEVELOPER_UV_CACHE
+    return out
+
+
+def _scratch_popen_init(real: Callable[..., None]) -> Callable[..., None]:
+    """`subprocess.Popen.__init__` running every child under
+    `scratch_child_env`: the one seam `subprocess.run`, `check_output`,
+    asyncio's subprocesses and their Windows subclass all start a child
+    through. An environment of bytes is passed as given."""
+
+    def init(self: subprocess.Popen[Any], args: Any, *more: Any, **kw: Any) -> None:
+        # `env` is the tenth parameter after `args`.
+        given = more[9] if len(more) > 9 else kw.get("env")
+        if given is None or not any(isinstance(name, bytes) for name in given):
+            env = scratch_child_env(given)
+            if len(more) > 9:
+                more = (*more[:9], env, *more[10:])
+            else:
+                kw["env"] = env
+        real(self, args, *more, **kw)
+
+    return init
+
 
 @pytest.fixture(autouse=True)
 def storage_dir(
@@ -276,7 +454,9 @@ def storage_dir(
     stays silent, which the tests of the hook commands' silence rely on.
 
     In-process only. A child process the test spawns resolves on its
-    own; the spawn helpers in the suite set ``BETTERMEMORY_DIR`` for it.
+    own, under the environment `scratch_child_env` completes, whose home
+    is the ``home`` beside this fixture's store: a child that names no
+    store directory and stands outside any project resolves one there.
     Under ``BETTERMEMORY_TEST_LOCAL_TMP`` the directory is on local disk
     with the test's other stores.
     """
@@ -306,12 +486,17 @@ def storage_dir(
     # and in any child, and is stopped when the test ends.
     state_dir = guard_dir / "state"
     monkeypatch.setenv(_daemon_client.STATE_DIR_ENV, str(state_dir))
-    yield fallback
-    for state_file in state_dir.glob("daemon-*.json"):
-        state = _daemon_client.read_state_file(state_file)
-        if state is not None:
-            _daemon_client.shutdown_daemon(state, state_dir=state_dir, timeout=10.0)
-        state_file.unlink(missing_ok=True)
+    child_home = _scratch_home(guard_dir / "home")
+    _CHILD_HOMES.append(child_home)
+    try:
+        yield fallback
+        for state_file in state_dir.glob("daemon-*.json"):
+            state = _daemon_client.read_state_file(state_file)
+            if state is not None:
+                _daemon_client.shutdown_daemon(state, state_dir=state_dir, timeout=10.0)
+            state_file.unlink(missing_ok=True)
+    finally:
+        _CHILD_HOMES.remove(child_home)
 
 
 @pytest.fixture(autouse=True)
@@ -435,8 +620,10 @@ def scratch_session(
     - the keys directory `store_schema.resolve_keys_dir` and
       `log.default_keys_dir` resolve.
 
-    A child process a test spawns inherits the environment named here or
-    the test's own; the guards themselves are in-process.
+    The guards are in-process. A child process runs none of them, so
+    every child the session starts runs under the environment
+    `scratch_child_env` completes (`subprocess.Popen.__init__`), whose
+    home is the running test's or, before any test, the session's.
     """
     import platformdirs
 
@@ -529,7 +716,12 @@ def scratch_session(
 
         return resolved
 
+    session_home = _scratch_home(kept / "home")
+    _CHILD_HOMES.append(session_home)
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            subprocess.Popen, "__init__", _scratch_popen_init(subprocess.Popen.__init__)
+        )
         if os.environ.get(NO_BIRTH_ENV) == "1":
             mp.setattr(location, "REPORT_BIRTH", False)
         mp.setattr(platformdirs, "user_state_dir", user_dir("user-state"))
@@ -548,6 +740,7 @@ def scratch_session(
         mp.setattr(_store, "resolve_keys_dir", resolve_keys_dir)
         mp.setattr(_log, "default_keys_dir", default_keys_dir)
         yield root
+    _CHILD_HOMES.remove(session_home)
 
 
 @pytest.fixture(autouse=True)
