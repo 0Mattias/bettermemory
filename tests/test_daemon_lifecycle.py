@@ -26,6 +26,7 @@ from bettermemory._daemon_client import (
     _spawn,
     health,
     lock_file_for,
+    log_file_for,
     pid_alive,
     read_state,
     release_lock,
@@ -107,12 +108,28 @@ def _wait_running(tmp_path: Path, timeout: float = 15.0) -> dict:
     )
 
 
+def _daemon_log(tmp_path: Path) -> str:
+    """The log the store's daemons share, for a failure's message: on CI
+    the test's directory goes with the runner (ENG-201)."""
+    path = log_file_for(tmp_path / "state", _store_path(tmp_path))
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError as error:
+        return f"(no daemon log at {path}: {error})"
+
+
 @pytest.fixture
 def daemon_env(tmp_path: Path) -> Iterator[dict[str, str]]:
     env = _env(tmp_path)
     yield env
     # Whatever the test left running goes down with it.
-    _cli(["down"], env, timeout=30)
+    try:
+        _cli(["down"], env, timeout=30)
+    except subprocess.TimeoutExpired as error:
+        raise AssertionError(
+            f"`down` did not return within {error.timeout}s; the daemon log:\n"
+            + _daemon_log(tmp_path)
+        ) from error
 
 
 def test_up_writes_the_state_file_and_status_reads_running(
@@ -347,13 +364,33 @@ from bettermemory._daemon_client import (
 go = Path(sys.argv[1])
 while not go.exists():
     time.sleep(0.002)
+began = time.monotonic()
 store = resolved_store_path()
 state = ensure_daemon(
     resolve_state_dir(), store, version=package_version(), port=0,
     env=daemon_env_for(store), timeout=30.0,
 )
-print(json.dumps(None if state is None else [state["pid"], state["port"]]))
+print(json.dumps({
+    "daemon": None if state is None else [state["pid"], state["port"]],
+    "waited": round(time.monotonic() - began, 3),
+}))
 """
+
+
+def _reports(outputs: list[tuple[subprocess.Popen[str], str, str]]) -> list[str]:
+    """One line per client: its exit, its answer and wait, its stderr."""
+    return [
+        f"client {number}: exit {client.returncode}, {out.strip()}"
+        + (f"\n{err.strip()}" if err.strip() else "")
+        for number, (client, out, err) in enumerate(outputs)
+    ]
+
+
+def _diagnosis(reports: list[str], tmp_path: Path) -> str:
+    """What a failed concurrent start carries out of the runner (ENG-201):
+    each client's answer, its wait from the go file to that answer, its
+    stderr, and the log the store's daemons share."""
+    return "\n".join([*reports, "the daemon log:", _daemon_log(tmp_path)])
 
 
 def test_concurrent_clients_on_a_fresh_store_start_one_daemon(
@@ -363,8 +400,10 @@ def test_concurrent_clients_on_a_fresh_store_start_one_daemon(
     once end with one daemon for the store: every caller got the same pid
     and port, the state file names it, /health answers with it, and the
     log the clients' daemons share holds one daemon's start line once any
-    daemon that lost the lock has had its grace to leave."""
-    from bettermemory._daemon_client import LOCK_WAIT_SECONDS, log_file_for
+    daemon that lost the lock has had its grace to leave. A failure's
+    message carries each client's answer and wait and the daemon log
+    (`_diagnosis`), for a failure seen once on a Windows runner (ENG-201)."""
+    from bettermemory._daemon_client import LOCK_WAIT_SECONDS
 
     go = tmp_path / "go"
     clients = [
@@ -378,22 +417,43 @@ def test_concurrent_clients_on_a_fresh_store_start_one_daemon(
         for _ in range(6)
     ]
     pids: set[int] = set()
+    reports: list[str] = []
     try:
         time.sleep(1.0)
         go.write_text("go")
         answers = []
-        for client in clients:
-            out, err = client.communicate(timeout=60)
-            assert client.returncode == 0, err
-            answers.append(json.loads(out))
+        outputs: list[tuple[subprocess.Popen[str], str, str]] = []
+        for number, client in enumerate(clients):
+            try:
+                out, err = client.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                # Every client's output, the hung ones' as far as they got.
+                for late in clients[number:]:
+                    late.kill()
+                    outputs.append((late, *late.communicate()))
+                raise AssertionError(_diagnosis(_reports(outputs), tmp_path)) from None
+            outputs.append((client, out, err))
+        reports = _reports(outputs)
+        for client, out, _ in outputs:
+            assert client.returncode == 0, _diagnosis(reports, tmp_path)
+            try:
+                answers.append(json.loads(out)["daemon"])
+            except (ValueError, KeyError, TypeError):
+                raise AssertionError(_diagnosis(reports, tmp_path)) from None
         pids = {answer[0] for answer in answers if answer is not None}
-        assert None not in answers, answers
-        assert len({tuple(answer) for answer in answers}) == 1, answers
+        assert None not in answers, _diagnosis(reports, tmp_path)
+        assert len({tuple(answer) for answer in answers}) == 1, _diagnosis(
+            reports, tmp_path
+        )
         pid, port = answers[0]
         state = read_state(tmp_path / "state", _store_path(tmp_path))
-        assert state is not None and (state["pid"], state["port"]) == (pid, port)
+        assert state is not None and (state["pid"], state["port"]) == (pid, port), (
+            _diagnosis(reports, tmp_path)
+        )
         answer = health(port)
-        assert answer is not None and answer["pid"] == pid
+        assert answer is not None and answer["pid"] == pid, _diagnosis(
+            reports, tmp_path
+        )
         time.sleep(LOCK_WAIT_SECONDS + 1.0)
         log = log_file_for(tmp_path / "state", _store_path(tmp_path)).read_text(
             encoding="utf-8"

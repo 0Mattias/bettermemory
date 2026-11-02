@@ -22,6 +22,21 @@ on:
         description: "Also run the membership legs (docker, NFS, SMB)"
         type: boolean
         default: false
+      # The `repeat` job below runs on a dispatch that names a test; like
+      # the membership legs, it never runs under workflow_call.
+      repeat_test:
+        description: "Also run this test (a pytest node id) alone, repeat_runs times"
+        type: string
+        default: ""
+      repeat_runs:
+        description: "How many times the repeat job runs repeat_test"
+        type: number
+        default: 30
+      repeat_os:
+        description: "The runner the repeat job uses"
+        type: choice
+        options: [windows-latest, ubuntu-latest, macos-latest]
+        default: windows-latest
 
 permissions:
   contents: read
@@ -567,3 +582,47 @@ jobs:
         run: >-
           uv run pytest -p no:cacheprovider --basetemp=/mnt/smb/pytest-remounted
           -q -rfEs tests/test_checkout_token.py
+
+  # One test run alone many times on one runner, on a dispatch that names
+  # it (`-f repeat_test=<node id>`): how a failure seen once is told apart
+  # from a runner that stalled (ENG-201, the Windows concurrent start).
+  # Each run is a pytest process of its own, so a failing run's output (the
+  # test's own diagnostics) stands alone in the log; the job counts the
+  # failures and fails when any run did. Never a gate: under workflow_call
+  # `inputs.repeat_test` is unset, so release.yml's gate skips it.
+  repeat:
+    name: repeat (${{ inputs.repeat_os || 'windows-latest' }}, py3.14)
+    runs-on: ${{ inputs.repeat_os || 'windows-latest' }}
+    timeout-minutes: 180
+    if: github.event_name == 'workflow_dispatch' && inputs.repeat_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.14
+        run: uv python install 3.14
+
+      - name: Sync dependencies
+        run: uv sync --locked --extra dev --python 3.14
+
+      - name: Repeat the test
+        shell: bash
+        env:
+          REPEAT_TEST: ${{ inputs.repeat_test }}
+          REPEAT_RUNS: ${{ inputs.repeat_runs }}
+        run: |
+          failed=0
+          for run in $(seq 1 "$REPEAT_RUNS"); do
+            echo "run $run of $REPEAT_RUNS"
+            if ! uv run pytest -p no:cacheprovider -q -rfE "$REPEAT_TEST"; then
+              failed=$((failed + 1))
+            fi
+          done
+          echo "$failed of $REPEAT_RUNS runs failed"
+          test "$failed" -eq 0
