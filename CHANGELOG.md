@@ -35,7 +35,12 @@ named. A write that states a rule now takes nothing out of force
 without the user's words. The review's related set grows to the size
 ENG-115 measured, the prompt recall probes a prompt however few words
 it has, and the session brief is shown at a startup but not after a
-resume or a compaction.
+resume or a compaction. Every open holds this build's tables to the
+shape it gives them, and CI runs the previous release against each
+checkout. The store takes no schema step, so the fifteenth candidate
+and this one read and write each other's stores. It is a release
+candidate like the fifteenth; the stable 9.0.0 follows the candidates'
+testing.
 
 #### Added
 
