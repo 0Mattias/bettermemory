@@ -36,8 +36,14 @@ next owner open, unless a record was written after the restore first, a
 read holds a restore off until it has read, and on Windows a writing
 open that races a restore is refused or stops it. No git it runs
 fetches or starts a git in a submodule, so a planted repository can no
-longer have git run a command of its config's choosing. The store takes
-no schema step.
+longer have git run a command of its config's choosing. A model's
+chat-template control token is refused in every free-text argument a
+tool reads back, not only in a body, and named where a model reads it;
+a re-minted checkout token names the token it replaced, so a re-mint
+the store missed is known without birth time; and the migration homes a
+record written in a part's folder in the part. The store takes no schema
+step, so the sixteenth and seventeenth candidates and this one read and
+write each other's stores.
 
 #### Changed
 
