@@ -14,7 +14,13 @@ call here, with all four properties:
   ``GIT_OBJECT_DIRECTORY`` and ``GIT_INDEX_FILE`` removed, so git reads
   the repository the call names (its `cwd`, or `git_dir`), never one the
   environment points at, and its walk tests each folder by that folder's
-  own ``objects`` as membership's does (ENG-193);
+  own ``objects`` as membership's does (ENG-193); ``GIT_ALTERNATE_OBJECT_DIRECTORIES``
+  and ``GIT_SHALLOW_FILE`` go too, for the same reason;
+* ``GIT_NO_LAZY_FETCH=1`` and an empty ``GIT_ALLOW_PROTOCOL`` are set, so
+  no call fetches: a repository whose own config makes it a partial clone
+  of an ``ext::`` remote (``protocol.ext.allow=always``) otherwise has git
+  run that remote's command to fetch an object the call reads and the
+  clone lacks (ENG-218). The package runs no git that fetches;
 * ``core.fsmonitor``, ``core.hooksPath`` and ``log.showSignature`` are
   pinned off, so no daemon starts, no hook of the repository's runs and
   no ``gpg.program`` checks a signature on a read (the one diff reader,
@@ -56,8 +62,19 @@ SCRUBBED_ENV = (
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
     "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_SHALLOW_FILE",
     "GIT_INDEX_FILE",
 )
+#: Set on every call so that no git the package runs fetches. A partial
+#: clone fetches an object a read needs and the clone lacks from its
+#: promisor remote, and the remote and the protocol's permission
+#: (``protocol.ext.allow=always``, which runs the remote as a command) come
+#: from the repository's own config, which a ``-c`` pin does not outrank
+#: there (git 2.54). ``GIT_NO_LAZY_FETCH`` (git 2.44 and later) stops the
+#: fetch; ``GIT_ALLOW_PROTOCOL`` set empty allows no transport, whatever
+#: any config says, on every git since 2.12 (ENG-218).
+NO_FETCH = {"GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""}
 #: Configuration pinned on every call: no fsmonitor daemon, no hooks, no
 #: signature check (``log.showSignature`` runs ``gpg.program`` for every
 #: signed commit a log lists and writes its output among the log's lines).
@@ -127,6 +144,7 @@ def subcommand(args: Sequence[str]) -> str:
 def _environment() -> dict[str, str]:
     env = dict(os.environ)
     env["GIT_OPTIONAL_LOCKS"] = "0"
+    env.update(NO_FETCH)
     for name in SCRUBBED_ENV:
         env.pop(name, None)
     return env

@@ -34,8 +34,9 @@ It closes four of the restore's rc14 Known limitations: a restore's
 `store_restored` row the restore could not write is appended by the
 next owner open, unless a record was written after the restore first, a
 read holds a restore off until it has read, and on Windows a writing
-open that races a restore is refused or stops it. The store takes no
-schema step.
+open that races a restore is refused or stops it. No git it runs
+fetches, so a planted repository can no longer have git run a command of
+its config's choosing. The store takes no schema step.
 
 #### Changed
 
@@ -56,6 +57,27 @@ schema step.
 
 #### Fixed
 
+- **No git the package runs fetches (ENG-218, security).** A repository's
+  own config can make it a partial clone whose promisor remote is an
+  `ext::` transport (`extensions.partialClone`, `remote.<name>.promisor`,
+  `protocol.ext.allow=always`), and git then runs that remote's command
+  to fetch an object a read needs and the clone lacks; a `-c
+  protocol.allow=never` on the command line does not outrank the
+  repository's own setting. The history reader behind membership asks
+  git (`cat-file commit`) whenever its own object reader is incomplete,
+  which a garbage pack index is enough for, so a planted repository
+  (an extracted archive, a cloned repository, another account's folder:
+  `--git-dir` skips git's ownership check) ran a command of its choosing
+  in the daemon or in a container's hook client, shown on git 2.54
+  through the ancestry traversal. `_git.run_git` now sets
+  `GIT_NO_LAZY_FETCH=1` (read from git 2.44) and an empty
+  `GIT_ALLOW_PROTOCOL` (no transport, whatever any config says, from git
+  2.12) on every call, so neither alone is relied on, and removes
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES` and `GIT_SHALLOW_FILE` from its
+  environment as it removes `GIT_OBJECT_DIRECTORY`. The package runs no
+  git that fetches; an object a partial clone lacks reads as absent. A
+  test builds such a clone and requires the command never runs, with
+  either setting alone and through the history reader.
 - **A checkout whose token was re-minted without the store recording it
   is known without birth time (ENG-193).** Where the filesystem gives no
   birth time, a checkout's token proves its object (witness O). A token
