@@ -25,26 +25,40 @@ on this host (`tests.test_membership_resolution.Container`).
 
 from __future__ import annotations
 
+import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from bettermemory import checkout_token, location
 from bettermemory.declare import declaring_model
-from bettermemory.membership import SILENT, SUPERSEDED, Declaration, Resolution
+from bettermemory.location import AnsweredLiveness, NeedWitnesses, continuity
+from bettermemory.membership import (
+    SILENT,
+    SUPERSEDED,
+    Declaration,
+    Membership,
+    Resolution,
+)
 
 from .test_membership_resolution import (
     Container,
     Lab,
     _container_machine,
+    birth_reported,
+    clone,
     lab,
     lab_of,
     make_repo,
     neutral_git,
+    no_birth,
     pytestmark,
 )
 
-__all__ = ["lab", "lab_of", "neutral_git", "pytestmark"]
+__all__ = ["lab", "lab_of", "neutral_git", "no_birth", "pytestmark"]
 
 
 @dataclass
@@ -210,3 +224,147 @@ def test_a_declaration_about_a_container_checkout_is_re_minted_at_its_next_sight
     assert again.remint_token is False and _reminted_in(lab, again)
     k = lab.model().checkout(joined.checkout)
     assert k.token == _file_token(line) != token
+
+
+# ---------------------------------------------------------------------------
+# A superseded token whose re-mint the store missed (ENG-193)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_unwritten(lab: Lab, path: Path) -> Resolution:
+    """A resolution at `path` by a model with no token writer, so a
+    re-mint it asks for is left to the caller, which may never report it
+    (a hook client before 9.0.0rc14, an exchange out of rounds)."""
+    location.forget()
+    cap = location.capture(str(path), write_token=True, use_cache=False)
+    loc = location.to_location(
+        cap,
+        machine=lab.identity.id,
+        session="s",
+        history=location.RepositoryHistory(str(cap.common_dir)),
+    )
+    return Membership(lab.store, lab.identity.id).resolve(loc)
+
+
+def _superseded_and_reminted_unrecorded(tmp_path: Path, lab: Lab) -> tuple[Path, str]:
+    """A copy carrying a line's token, its checkout superseded, and the
+    copy's token re-minted without the store being told: the copy and the
+    checkout id."""
+    line = make_repo(tmp_path / "line", commits=2)
+    lab.write("l1", line)
+    copy = make_repo(tmp_path / "copy", commits=2)
+    _carrying_the_token_of(line, copy)
+    res = _resolve_unwritten(lab, copy)
+    assert res.remint_token and res.checkout is not None
+    k = lab.model().checkout(res.checkout)
+    assert k.token_status == SUPERSEDED
+    wrote = checkout_token.remint(copy / ".git", policy=True, bare=False)
+    assert wrote.token not in (None, k.token)
+    location.forget()
+    return copy, res.checkout
+
+
+def test_a_superseded_token_refutes_a_git_directory_holding_no_token() -> None:
+    """`continuity` on a superseded token: a re-mint never removes a token,
+    so no token found there is another object (E15); a token found there,
+    the superseded one or a re-mint the store missed, leaves the last HEAD
+    to decide; and where nothing else can be read the superseded token
+    still in place is the checkout's, as it was before ENG-193."""
+
+    def read(
+        token_here: str | None, last_head: str | None = "a" * 40
+    ) -> tuple[bool, str]:
+        return continuity(
+            "t-old",
+            last_head,
+            (),
+            token_here=token_here,
+            head_here="a" * 40,
+            stamps_here=(),
+            holds=lambda _commits: set(),
+            superseded=True,
+        )
+
+    assert read(None) == (False, "token")
+    assert read("t-new") == (True, "last_head")
+    assert read("t-old") == (True, "last_head")
+    assert read("t-new", last_head="b" * 40) == (False, "last_head")
+    assert read("t-old", last_head=None) == (True, "token")
+    assert read("t-new", last_head=None) == (False, "nothing_observable")
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_fresh_clone_on_a_superseded_checkouts_inode_is_not_that_checkout(
+    tmp_path: Path, lab: Lab
+) -> None:
+    """E15 for a superseded checkout: a container checkout of the host's
+    line is declared a project of its own on the host, which leaves its
+    token superseded (the host cannot write in the container); the
+    checkout is deleted and a fresh clone of the line lands on its inode
+    number with no birth time. The clone holds no token, so it is not the
+    separated checkout and does not get its project's memories: it joins
+    the line's project as any clone of the line does."""
+    url = "https://example.invalid/line.git"
+    line = make_repo(tmp_path / "host" / "line", commits=2, remote=url)
+    lab.write("h1", line)
+    machine = _container_machine(lab, "container-e")
+    c_real = clone(line, tmp_path / "box" / "c", url=url)
+    joined = Client(c_real, "/workspaces/c", machine).post(lab)
+    assert joined.checkout is not None and joined.project == lab.project_of("h1")
+    declared = declaring_model(lab.store, lab.config).declare(
+        Declaration("new", "os:tester", checkout=joined.checkout, name="box fork")
+    )
+    assert lab.model().checkout(joined.checkout).token_status == SUPERSEDED
+
+    shutil.rmtree(c_real)
+    fresh = clone(line, tmp_path / "box" / "x", url=url)
+    assert _file_token(fresh) is None
+    res = Client(fresh, "/workspaces/x", machine).post(lab)
+
+    assert res.checkout != joined.checkout
+    assert res.project == lab.project_of("h1") != declared.project
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_client_answers_a_superseded_checkouts_view_as_the_daemon_reads_it(
+    tmp_path: Path, lab: Lab
+) -> None:
+    """The view question the daemon asks a client it cannot read for
+    (`AnsweredLiveness`) names a superseded token as superseded, and the
+    client's answer (`location.answer`) reads it as the daemon's own read
+    does: a re-mint the store missed leaves the view live, not replaced."""
+    copy, kid = _superseded_and_reminted_unrecorded(tmp_path, lab)
+    k = lab.model().checkout(kid)
+    view = k.views[0]
+
+    daemon = location.path_liveness(k, view)
+    with pytest.raises(NeedWitnesses) as need:
+        AnsweredLiveness({})(k, view)
+    question = need.value.question
+    cap = location.capture(str(copy), write_token=False, use_cache=False)
+    client = location.answer(question, {}, cap)["views"][view.path]
+
+    assert question["views"][0]["superseded"] is True
+    assert (daemon, client) == ("live", "live")
+
+
+def test_a_superseded_checkout_restored_at_its_path_is_rekeyed(
+    tmp_path: Path, lab: Lab
+) -> None:
+    """B for a superseded checkout whose re-mint the store missed: the copy
+    is restored at its path as a new object (a backup restored). The token
+    there is the unrecorded re-mint, which is no other lineage's, so the
+    checkout is re-keyed silently rather than a third checkout registered
+    and asked about."""
+    if not birth_reported(tmp_path):
+        pytest.skip("B needs birth time to tell the new object (design 2.2)")
+    copy, kid = _superseded_and_reminted_unrecorded(tmp_path, lab)
+    backup = tmp_path / "copy.bak"
+    shutil.copytree(copy, backup, symlinks=True)
+    shutil.rmtree(copy)
+    os.rename(backup, copy)
+
+    again = _resolve_unwritten(lab, copy)
+
+    assert (again.checkout, again.outcome) == (kid, SILENT)
+    assert again.rule.startswith("rekeyed:B")

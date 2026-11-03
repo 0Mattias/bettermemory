@@ -509,6 +509,15 @@ class Checkout:
     sessions: tuple[str, ...] = ()
     replaced_by: str | None = None
 
+    @property
+    def token_superseded(self) -> bool:
+        """Whether the recorded token is superseded (decision B15): its
+        re-mint is asked for, and the git directory may already hold a
+        token the store was never told (ENG-153's windows), so the
+        recorded token is read as `location.continuity` reads a superseded
+        one (ENG-193)."""
+        return self.token_status == SUPERSEDED
+
     def views_on(self, machine: str) -> list[View]:
         return sorted(
             (v for v in self.views if v.machine == machine), key=lambda v: v.order
@@ -521,14 +530,16 @@ class Checkout:
 
 def _live_key(k: Checkout, v: View) -> tuple[object, ...]:
     """What a view's liveness depends on (`Liveness`, ENG-156): the path
-    and machine, and the checkout's recorded objects, token, last HEAD and
-    init stamps; a value read for one key answers for that key only."""
+    and machine, and the checkout's recorded objects, token (and whether it
+    is superseded), last HEAD and init stamps; a value read for one key
+    answers for that key only."""
     return (
         k.id,
         k.kind,
         k.object_key,
         k.common_object_key,
         k.token,
+        k.token_superseded,
         k.last_head,
         k.stamps,
         v.machine,

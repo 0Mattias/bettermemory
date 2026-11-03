@@ -1013,7 +1013,7 @@ class Membership:
 
     def _continuity(self, k: Checkout, loc: Location) -> tuple[bool, str]:
         """Without birth time on one side (design 2.2, O): the token
-        decides; without a recorded token, the last HEAD held; commit-less
+        decides; without one, the last HEAD held; commit-less
         and token-less, the init stamps by equality (A2); where none of
         those can be read, another witness of the same object (B20,
         `_confirms`). The one rule the liveness of a view applies too
@@ -1021,16 +1021,21 @@ class Membership:
         where none was, the one this sighting's capture wrote: of writers
         racing to a fresh git directory the winner's location carries its
         token as written, and another writer's resolution, serialized ahead
-        of it, may have registered the checkout with that token (I34)."""
+        of it, may have registered the checkout with that token (I34). A
+        superseded token is read against the token found alone: its git
+        directory holds one, so a token this capture had to write says
+        the object is another (E15; ENG-193)."""
+        superseded = k.token_superseded
         return continuity(
             k.token,
             k.last_head,
             k.stamps,
-            token_here=loc.token or loc.token_written,
+            token_here=loc.token if superseded else loc.token or loc.token_written,
             head_here=loc.head,
             stamps_here=loc.stamps,
             holds=lambda commits: self._holds(loc, commits),
             confirms=lambda: self._confirms(k, loc),
+            superseded=superseded,
         )
 
     def _confirms(self, k: Checkout, loc: Location) -> bool:

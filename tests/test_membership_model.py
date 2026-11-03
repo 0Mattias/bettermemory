@@ -265,6 +265,7 @@ class World:
                 head_here=here.head,
                 stamps_here=here.stamps,
                 holds=here.history.holds,
+                superseded=checkout.token_superseded,
             )
             return LIVE if held else REPLACED
         return REPLACED

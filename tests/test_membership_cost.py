@@ -37,6 +37,8 @@ from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.origin import Origin
 from bettermemory.store import Store
 
+from .test_membership_resolution import known_rule
+
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
 _NOW = datetime.fromtimestamp(1_800_000_000, tz=timezone.utc)
@@ -264,11 +266,16 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     the checkout it registered is known at its next sighting, resolved by
     its object, which writes its token in the caller's namespace; from
     then on a prompt there spawns no git process and stays within a
-    bounded number of stat calls. Measured on macOS (APFS, the test's
-    temporary directory): the migration 0 spawns; the steady prompt 0
-    spawns, 11 os.stat and 1 os.lstat calls (the same as at a checkout no
-    migration registered, tests/test_membership_capture.py, where the
-    ``.git`` entry's ``lstat`` since ENG-206 is the ``stat`` it was)."""
+    bounded number of stat calls. Without birth time (NFSv3, or
+    ``BETTERMEMORY_TEST_NO_BIRTH=1``) the object is proven by witness O
+    (decision B18): at the first sighting by the last HEAD the migration
+    recorded, since the migration writes no token, and from then on by
+    the token that sighting wrote. Measured on macOS (APFS, the test's
+    temporary directory), with birth time and without: the migration 0
+    spawns; the steady prompt 0 spawns, 11 os.stat and 1 os.lstat calls
+    (the same as at a checkout no migration registered,
+    tests/test_membership_capture.py, where the ``.git`` entry's
+    ``lstat`` since ENG-206 is the ``stat`` it was)."""
     store, identity, config = lab
     synthetic = _synthetic(store, identity.id, projects=20, checkouts_each=10)
     repo = make_repo(tmp_path.resolve() / "Developer" / "game", remote=_URL)
@@ -298,7 +305,10 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     assert not (repo / ".git" / "info" / "bettermemory").exists()
 
     first = resolve_here(store, config, str(repo), identity=identity)
-    assert (first.checkout, first.rule) == (root.checkout, "object")
+    assert (first.checkout, first.rule) == (
+        root.checkout,
+        known_rule(repo / ".git", without_birth="last_head"),
+    )
     assert (repo / ".git" / "info" / "bettermemory").is_file()
     checkout = Membership(store, identity.id).checkout(str(root.checkout))
     assert checkout.token is not None and checkout.token_status == "written"
@@ -311,7 +321,8 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
         )
     )
     print(f"steady: spawns={warm.spawns} stat={warm.stats} lstat={warm.lstats}")
-    assert results[0].rule == "object" and results[0].checkout == root.checkout
+    assert results[0].rule == known_rule(repo / ".git")
+    assert results[0].checkout == root.checkout
     assert warm.spawns == 0
     assert warm.stats <= 11 and warm.lstats <= 1
 

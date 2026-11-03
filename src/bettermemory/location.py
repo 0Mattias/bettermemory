@@ -1000,6 +1000,7 @@ def continuity(
     stamps_here: Iterable[Sequence[Any]],
     holds: Callable[[Sequence[str]], Collection[str]],
     confirms: Callable[[], bool] | None = None,
+    superseded: bool = False,
 ) -> tuple[bool, str]:
     """Witness O where birth time cannot decide (design 2.2, decision
     B18): an object with the recorded device and inode number continues
@@ -1013,8 +1014,16 @@ def continuity(
     and the witness that decided (``token``, ``last_head``,
     ``init_stamps``, ``same_object`` or ``nothing_observable``). Rung 2
     of the model (`membership.Membership._by_object`) and the liveness of
-    a view (`view_state`) both apply this one rule."""
-    if token:
+    a view (`view_state`) both apply this one rule. A `superseded` token
+    (B15) may be re-minted with the store not told (ENG-153), and a re-mint
+    never removes a token: a git directory holding none (`token_here`, one
+    found there) is not the checkout (E15), and one holding any is left to
+    the witnesses below, the superseded token deciding only where none can
+    be read (ENG-193)."""
+    if token and superseded:
+        if not token_here:
+            return False, "token"
+    elif token:
         return token_here == token, "token"
     if last_head is not None:
         held = last_head == head_here or bool(holds([last_head]))
@@ -1025,6 +1034,8 @@ def continuity(
         return bool(mine & there), "init_stamps"
     if confirms is not None and confirms():
         return True, "same_object"
+    if token and token_here == token:
+        return True, "token"
     return False, "nothing_observable"
 
 
@@ -1046,13 +1057,15 @@ def view_state(
     last_head: str | None = None,
     stamps: Iterable[Sequence[Any]] = (),
     common_key: Key | None = None,
+    superseded: bool = False,
 ) -> str:
     """What `path` holds now, read in this namespace: ``live`` (the
     checkout's object: its birth time, or with no birth time on one side
     `continuity` over the token, the last HEAD and the init stamps read
-    there against the checkout's, and where none of those can be read the
-    folder's project file (F) or a linked worktree's object store (S, the
-    recorded `common_key`) confirming the same object, decision B20),
+    there against the checkout's (a `superseded` one as it reads one), and
+    where none of those can be read the folder's project file (F) or a
+    linked worktree's object store (S, the recorded `common_key`)
+    confirming the same object, decision B20),
     ``live_legacy`` (a repository at a legacy checkout's path),
     ``replaced``, ``gone`` or ``unreachable``. `path_liveness` reads a
     view with it, and the client answers the daemon's view questions with
@@ -1099,6 +1112,7 @@ def view_state(
         stamps_here=_init_stamps(git_dir),
         holds=RepositoryHistory(common).holds,
         confirms=lambda: linked and _same_number(object_key(common), common_key),
+        superseded=superseded,
     )
     return "live" if ok else "replaced"
 
@@ -1150,10 +1164,12 @@ def _liveness_read(
     common = checkout.common_object_key
     recorded_key = None if key is None else (key.device, key.inode, key.birth)
     common_key = None if common is None else (common.device, common.inode, common.birth)
+    superseded = checkout.token_superseded
     what = (
         checkout.kind,
         recorded_key,
         checkout.token,
+        superseded,
         checkout.last_head,
         tuple(tuple(s) for s in checkout.stamps),
         common_key,
@@ -1168,6 +1184,7 @@ def _liveness_read(
             last_head=checkout.last_head,
             stamps=checkout.stamps,
             common_key=common_key,
+            superseded=superseded,
         )
 
     return view.path, what, read
@@ -1265,6 +1282,7 @@ def answer(
                 last_head=_asked_head(v.get("last_head")),
                 stamps=_asked_stamps(v.get("stamps")),
                 common_key=_key(v.get("common_object")),
+                superseded=v.get("superseded") is True,
             )
     out["views"] = views
     return out

@@ -32,7 +32,54 @@ The eighteenth candidate follows a `.git` file naming a
 working tree, and judges a `.git` that is a link as the pointer it is.
 The store takes no schema step.
 
+#### Changed
+
+- **CI's no-birth leg runs every membership and location test
+  (ENG-193).** The leg that reads every object as a filesystem without
+  birth time reads it (`BETTERMEMORY_TEST_NO_BIRTH`) ran a list of test
+  files that left out `tests/test_membership_migration.py` and
+  `tests/test_membership_cost.py`, and their three failures there went
+  unseen. It now runs every `tests/test_membership*.py` and
+  `tests/test_location*.py` file by glob, so a new file under either name
+  is run there without a change to the list. Two of the three failures
+  were the tests': they expected the rule `object` at a checkout the
+  migration registered, and without birth time the rule names the
+  witness that proved the object, `object+last_head` (a migration writes
+  no token). The third was the product's, fixed below.
+  (`.github/workflows/ci.yml`, `tests/test_membership_cost.py`,
+  `tests/test_membership_migration.py`)
+
 #### Fixed
+
+- **A checkout whose token was re-minted without the store recording it
+  is known without birth time (ENG-193).** Where the filesystem gives no
+  birth time, a checkout's token proves its object (witness O). A token
+  the store marks superseded (history outranked it, as at a copy
+  carrying another line's token, or a declaration separated the
+  checkout) is re-minted at the next sighting, and the store can miss
+  the re-mint: a hook client before 9.0.0rc14, or, for a checkout
+  already recorded as superseded, an exchange that ran out of rounds
+  after the client wrote the token or an error between the in-process
+  write and the commit (9.0.0rc14's Known limitations). The
+  token it kept is then the superseded one, which the git directory no
+  longer holds, and it still decided: the next sighting registered a
+  second checkout of the same git directory and asked the user about
+  it, and the re-key of a checkout restored at its path (B) refused it
+  as another lineage, with birth time too. A re-mint never removes a
+  token, so a superseded checkout's git directory always holds one. A
+  superseded token now refutes a git directory that holds no token (a
+  fresh clone landed on the checkout's freed inode number keeps the
+  line's project, not the separated one); where one is held, the last
+  HEAD, then the init stamps, then another witness of the same object
+  decide, and the superseded token still in place decides only where
+  none of those can be read. The daemon, the hook client answering for
+  a container's views (the question now says the token is superseded;
+  a client before 9.0.0rc18 reads it as before) and the re-key read it
+  by this one rule (`location.continuity`), and the sighting takes the
+  new token and asks nothing more.
+  (`src/bettermemory/location.py`, `src/bettermemory/location_witness.py`,
+  `src/bettermemory/membership.py`, `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_resolve.py`)
 
 - **A `.git` file naming a `--separate-git-dir` directory is followed
   only from its recorded working tree (ENG-206).** Since 9.0.0rc14 a

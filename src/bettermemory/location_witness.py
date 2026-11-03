@@ -165,6 +165,11 @@ class AnsweredLiveness:
                         if key is None
                         else [key.device, key.inode, key.birth],
                         "token": checkout.token,
+                        # Read by `location.view_state` as `continuity`
+                        # reads a superseded token (ENG-193); a client
+                        # before 9.0.0rc18 skips the key and reads the
+                        # token as recorded, as it did.
+                        "superseded": checkout.token_superseded,
                         "last_head": checkout.last_head,
                         "stamps": [list(s) for s in checkout.stamps],
                         "common_object": None

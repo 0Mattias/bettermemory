@@ -54,6 +54,8 @@ from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.origin import Origin
 from bettermemory.store import Store
 
+from .test_membership_resolution import known_rule
+
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
 # A fixed instant from an epoch count: no rule reads it, and no test
@@ -852,11 +854,16 @@ def test_records_written_since_are_homed_by_the_same_rules(world: World) -> None
     rollback to rc3 and a re-upgrade) are homed at the next open by the
     same rules, at the checkouts and projects their roots were given; the
     rest is reported 0, and the legacy question is restated, not asked
-    twice (M12)."""
+    twice (M12). The live root's checkout is known by its object: by its
+    birth time, or without one by the last HEAD the first run recorded,
+    since a migration writes no token (decision B18)."""
     first = migrate(world.store, world.identity, now=_now)
     roots = {r.path: r for r in first.roots}
     g = world.gone
-    world.memory("a-new", "migration:live:object", root=world.alpha, repo=_ALPHA_URL)
+    known = "migration:live:" + known_rule(
+        world.alpha / ".git", without_birth="last_head"
+    )
+    world.memory("a-new", known, root=world.alpha, repo=_ALPHA_URL)
     world.memory("dsh-new", "migration:none", root=g["dsh"], cited=(_UNKNOWN,))
     world.episode("moved-new", "migration:rehome", root=g["moved"])
     world.memory("d4-new", "migration:cwd_in_root", cwd=world.alpha / "src")
@@ -867,7 +874,7 @@ def test_records_written_since_are_homed_by_the_same_rules(world: World) -> None
     _homes_match(world)
     got = {r.path: (r.rule, r.memories, r.episodes) for r in report.roots}
     assert got == {
-        str(world.alpha): ("migration:live:object", 1, 0),
+        str(world.alpha): (known, 1, 0),
         str(g["dsh"]): ("migration:none", 1, 0),
         str(g["moved"]): ("migration:rehome", 0, 1),
     }
@@ -1039,9 +1046,17 @@ def test_a_superseded_token_is_reminted_at_the_next_sighting(tmp_path: Path) -> 
 
 
 def test_a_superseded_token_settles_on_a_new_token_seen(tmp_path: Path) -> None:
-    """B15, the hook's path: the client re-mints on the reply's request and
-    calls no `token_written`; the next sighting reads the new token, takes
-    it and its status, and asks nothing more."""
+    """B15, a re-mint the store did not record: the client re-mints on the
+    reply's request and calls no `token_written` (a hook client before
+    9.0.0rc14, or an exchange that ran out of rounds after the client
+    wrote the token; CHANGELOG, 9.0.0rc14, Known limitations); the next
+    sighting reads the new token, takes it and its status, and asks
+    nothing more. Without birth time as well: rung 2 proves the object
+    by witness O, and a superseded token whose git directory holds a
+    token proves nothing there (`location.continuity`), so the last HEAD
+    decides; before ENG-193 the superseded token decided, and the
+    sighting registered another checkout of ``second``'s git directory
+    and asked about it."""
     from bettermemory import checkout_token
 
     tmp = tmp_path.resolve()
@@ -1056,8 +1071,11 @@ def test_a_superseded_token_settles_on_a_new_token_seen(tmp_path: Path) -> None:
         assert model.resolve(_location_of(identity, second)).remint_token
         wrote = checkout_token.remint(second / ".git", policy=True, bare=False)
         assert wrote.token not in (None, old)
+        asked = len(store.membership_rows("proposals"))
         res = model.resolve(_location_of(identity, second))
         assert (res.checkout, res.remint_token) == (kid, False)
+        assert res.rule == known_rule(second / ".git", without_birth="last_head")
+        assert len(store.membership_rows("proposals")) == asked
         assert kid is not None
         k = model.checkout(kid)
         assert (k.token, k.token_status) == (wrote.token, "present")
