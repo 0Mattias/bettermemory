@@ -32,6 +32,7 @@ nothing. `bettermemory security audit` grades the modes and owners.
 | `daemon-<hash>.json` | the state directory: the daemon's port, pid, version, store and bearer token | | `0600` |
 | `daemon-<hash>.log` | the state directory: the daemon's output | | `0600` |
 | `daemon-<hash>.lock`, `.spawn.lock` | the state directory: held by the daemon for its life, and by whoever is starting one | | empty |
+| `gitdir-pins/<32 hex>.json` | the state directory: for each git directory kept apart with `--separate-git-dir`, the working tree membership follows it from, recorded at the first capture there and named for the git directory's device and inode (since 9.0.0rc18) | | directory `0700`, files `0600` |
 | The managed config | `/Library/Application Support/bettermemory/managed.toml` on macOS, `/etc/bettermemory/managed.toml` on Linux and other POSIX systems; on Windows no file, the registry value `HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig` | nothing | root-owned `0644`; on Cygwin and MSYS no folder from `/` down that another account can write, or it is refused; on Windows the key's default access, which only administrators can write |
 | Backup bundles | `backups/<UTC stamp>/` in the store directory | `backup create --out DIR` | directory `0700`, files `0600` |
 

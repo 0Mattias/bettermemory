@@ -72,7 +72,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import _caches, checkout_token, githead, gitobjects, project_file
+from . import _caches, checkout_token, githead, gitdir_pin, gitobjects, project_file
 from ._location_probe import (
     INDETERMINATE,
     TOKEN_VERSION,
@@ -122,7 +122,6 @@ from .location_git import (
     _common_of,
     _discover,
     _Git,
-    _gitfile_target,
     _inside,
     _key,
     _manifest,
@@ -130,7 +129,12 @@ from .location_git import (
     _resolve_head,
     bounded_read,
     bounded_reads,
-    gitfile_refusal,
+    _at_dotgit,
+    _config_values,
+    _is_link,
+    _recorded_refusal,
+    _same_folder,
+    names_git_dir,
     remote_urls,
 )
 from .location_git import (
@@ -560,6 +564,7 @@ def _capture_uncached(
             cwd_key=cwd_key,
             hostname=host,
         )
+    kept = kept_apart(git)
     git = _real_git(git)
     object_dir = git.git_dir
     common_key = object_key(git.common_dir)
@@ -608,6 +613,10 @@ def _capture_uncached(
     urls = remote_urls(git.common_dir, git.git_dir)
     keys = sorted({k for k in (remote_key(u, base) for u in urls) if k})
     token, written, status = _token_fields(git, write_token=write_token)
+    # A git directory kept apart (`kept`, read above) keeps no pointer back
+    # to its tree, so `capture` records the folder followed in the state
+    # directory (ENG-206), whatever the token's policy: nothing is written
+    # into the repository.
     walk_root = git.root if git.root is not None else git.git_dir
     walk, files, errors = _walk_files(real, walk_root)
     born = head is not None or bool(tips)
@@ -641,7 +650,58 @@ def _capture_uncached(
         file_tracked=tracked,
         manifest=_manifest(git.root) if keep_manifest and git.root else None,
         hostname=host,
+        kept_apart=kept,
     )
+
+
+def kept_apart(found: _Git) -> bool:
+    """Whether `found` (as discovery gives it, before its paths are
+    resolved) was reached through a ``.git`` entry naming a git directory
+    kept apart (``--separate-git-dir``): a primary checkout found from a
+    ``.git`` entry that is not a directory of its own (a file, or a link)
+    whose config names no ``core.worktree``, so git keeps no pointer back
+    to its tree."""
+    if found.kind != PRIMARY or found.dotgit in (None, found.git_dir):
+        # Found at its own `.git` directory, or not from a `.git` entry.
+        return False
+    if found.root is None:
+        return False
+    try:
+        own = os.lstat(os.path.join(found.root, ".git"))
+    except (OSError, ValueError):
+        return False
+    if stat.S_ISDIR(own.st_mode) and not _is_link(own):
+        return False
+    config = os.path.join(found.git_dir, "config")
+    return not _config_values(config, git_dir=found.git_dir).get(
+        ("core", None, "worktree")
+    )
+
+
+def record_working_tree(git_dir: str, tree: str) -> str:
+    """Record the folder `tree` as the working tree of the git directory
+    kept apart `git_dir` (`kept_apart`), where nothing is recorded for it
+    or the record names a folder whose ``.git`` is gone or names another
+    git directory now (ENG-206). A record naming another folder whose
+    ``.git`` still names it, or cannot be read (one made between the
+    follow and this call), is left as it is. Returns ``first`` where this
+    call made the git directory's first record, which the resolution
+    checks against the store's earlier views (`location._earlier_tree`);
+    ``elsewhere`` where another folder holds the record, so the follow
+    stands refused; ``kept`` otherwise (recorded here already, a record
+    replaced, or a write the state directory refused). Writes the state
+    directory only."""
+    pin = gitdir_pin.recorded(git_dir)
+    if pin is not None and _same_folder(pin.tree, tree) is True:
+        return "kept"
+    if pin is not None and _recorded_refusal(pin, git_dir, tree) is not None:
+        return "elsewhere"
+    if gitdir_pin.put(git_dir, tree, pin):
+        return "first" if pin is None else "kept"
+    # A first record another capture made meanwhile stands: read it again.
+    if _recorded_refusal(gitdir_pin.recorded(git_dir), git_dir, tree) is not None:
+        return "elsewhere"
+    return "kept"
 
 
 def _real_git(git: _Git) -> _Git:
@@ -808,6 +868,7 @@ def capture(
     budget: float = FETCH_BUDGET,
     manifest: bool = True,
     use_cache: bool = True,
+    record_tree: bool = True,
 ) -> Capture:
     """The capture of `cwd` (design 3.1), from the cache while its
     signature reads as it did and it is younger than `CACHE_SECONDS` on
@@ -817,7 +878,46 @@ def capture(
     manifest is read (the hook client's first post leaves it out). A
     capture is kept only when the signature read the same before and
     after it (the token's own slot aside when this capture wrote the
-    token), never an indeterminate or evicted one."""
+    token), never an indeterminate or evicted one. Where it follows a
+    git directory kept apart (``Capture.kept_apart``), its folder is
+    recorded as that git directory's working tree unless `record_tree`
+    is off (the migration's read-only probe) or another folder is
+    recorded (`record_working_tree`, ENG-206), cached or not."""
+    got = _capture_cached(
+        cwd,
+        write_token=write_token,
+        budget=budget,
+        manifest=manifest,
+        use_cache=use_cache,
+    )
+    if not (record_tree and got.kept_apart and got.git_dir and got.root):
+        return got
+    recorded = record_working_tree(got.git_dir, got.root)
+    if recorded == "first":
+        return dataclasses.replace(got, tree_recorded=True)
+    if recorded == "elsewhere":
+        # Another folder's record landed between the follow and this
+        # check: read the cwd again under it, which refuses the follow.
+        forget(cwd)
+        return _capture_cached(
+            cwd,
+            write_token=write_token,
+            budget=budget,
+            manifest=manifest,
+            use_cache=False,
+        )
+    return got
+
+
+def _capture_cached(
+    cwd: str,
+    *,
+    write_token: bool,
+    budget: float,
+    manifest: bool,
+    use_cache: bool,
+) -> Capture:
+    """`capture` without the working tree's record."""
     key = (cwd, write_token, manifest)
     before = signature(cwd) if use_cache else None
     now, wall = time.monotonic(), time.time()
@@ -878,14 +978,16 @@ def _git_dir_at(path: str, kind: str) -> str | None:
     if kind == BARE:
         return path
     dotgit = os.path.join(path, ".git")
-    if os.path.isdir(dotgit):
-        return dotgit
-    target = _gitfile_target(dotgit)
-    if target is None or gitfile_refusal(path, dotgit, target) is not None:
-        # A pointer discovery would not follow names no git directory here
-        # either (ENG-158).
+    try:
+        st = os.lstat(dotgit)
+    except (OSError, ValueError):
         return None
-    return target
+    if stat.S_ISDIR(st.st_mode) and not _is_link(st):
+        return dotgit
+    # A pointer discovery would not follow, a `.git` file's or a link's,
+    # names no git directory here either (ENG-158, ENG-206).
+    found = _at_dotgit(path, dotgit, st)
+    return None if found is None else found.git_dir
 
 
 def continuity(
@@ -1549,6 +1651,7 @@ def _caller(
         except OSError as exc:
             return _machineless(store, config, cwd, session, exc, stand)
     errors: tuple[str, ...] = ()
+    cap: Capture | None = None
     if cwd is None:
         loc: Location = _Location(
             machine=identity.id,
@@ -1580,11 +1683,69 @@ def _caller(
         return made.token, made.status
 
     model = _model(store, identity, session, token_writer=write_token)
+    if where is not None and cap is not None and _earlier_tree(model, cap):
+        # The tree this capture recorded first is not the one the store saw
+        # first: the record now names that one, and the cwd is read again
+        # under it (ENG-206).
+        forget(where)
+        cap = capture(
+            where,
+            write_token=config.membership.write_token,
+            budget=budget,
+            use_cache=False,
+        )
+        errors = cap.file_errors
+        loc = to_location(
+            cap, machine=identity.id, session=session, history=_history_of(cap)
+        )
+        git_dir, bare = loc.git_dir, loc.kind == BARE
     with _location_lock(loc):
         res = _resolved(model, loc, config, stand)
     if wrote and where is not None:
         forget(where)
     return Caller(loc, _with_file_errors(res, errors), model)
+
+
+def _earlier_tree(model: Membership, cap: Capture) -> bool:
+    """Where `cap` made the first record of the working tree of a git
+    directory kept apart (`Capture.tree_recorded`, ENG-206), whether this
+    machine's store saw that git directory first at another tree whose
+    ``.git`` file still names it: the earliest view of its checkout that
+    still does, unless the capture's own tree was seen no later. Then the
+    record is made to name that tree, and True is returned. A checkout
+    seen before 9.0.0rc18, which keeps no record, so keeps the tree it was
+    first seen at, whichever folder naming it is seen first after the
+    upgrade."""
+    if not cap.tree_recorded or cap.git_dir is None or cap.object_key is None:
+        return False
+    # By inode alone: a device number a remount changed must still find
+    # the views, and each is confirmed below by its `.git` naming the git
+    # directory as it is now.
+    inode = cap.object_key[1]
+    views = sorted(
+        (
+            v
+            for k in model.checkouts()
+            if k.object_key is not None and k.object_key.inode == inode
+            for v in k.views_on(model.machine)
+        ),
+        key=lambda v: (v.first_seen, v.order),
+    )
+    for view in views:
+        if cap.root is not None and _same_object(view.path, cap.root):
+            return False
+        if names_git_dir(os.path.join(view.path, ".git"), cap.git_dir):
+            pin = gitdir_pin.recorded(cap.git_dir)
+            return gitdir_pin.put(cap.git_dir, os.path.realpath(view.path), pin)
+    return False
+
+
+def _same_object(a: str, b: str) -> bool:
+    """Whether the paths `a` and `b` reach one filesystem object."""
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return False
 
 
 def _with_file_errors(res: Resolution, errors: Sequence[str]) -> Resolution:

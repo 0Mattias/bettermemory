@@ -2811,8 +2811,10 @@ def test_i22_separate_git_dir_holds_the_token_and_names_one_checkout(
 ) -> None:
     """I22 (E30 c, d, E19 f): `--separate-git-dir`: the token is written in
     the separate git directory and the working tree gets nothing; a second
-    tree whose `.git` file names the same git directory is the same
-    checkout at a second path; the first tree moved, the same checkout."""
+    tree whose `.git` file names the same git directory while the first
+    still does reads as no repository, since git keeps no pointer back
+    that would tell it from a plant (ENG-206); the first tree moved, the
+    same checkout, and the second tree is still not followed."""
     sep = tmp_path / "sep" / "git" / "app.git"
     sep.parent.mkdir(parents=True)
     w1 = tmp_path / "sep" / "tree1" / "app"
@@ -2825,11 +2827,13 @@ def test_i22_separate_git_dir_holds_the_token_and_names_one_checkout(
     assert (sep / "info" / "bettermemory").is_file() and (w1 / ".git").is_file()
     assert sorted(p.name for p in w1.iterdir()) == [".git", "main.py"]
     w2 = copy(w1, tmp_path / "sep" / "tree2" / "app")
-    res, _ = lab.view(w2)
-    assert (res.rule, res.checkout) == (known_rule(tmp_path), lab.checkout_of("s1"))
+    res, brief = lab.view(w2)
+    assert (res.rule, res.checkout, brief) == ("outside_repository", None, [])
     w3 = move(w1, tmp_path / "sep" / "moved" / "app")
     res, brief = lab.view(w3)
     assert (res.rule, brief) == (known_rule(tmp_path), ["s1"])
+    res, brief = lab.view(w2)
+    assert (res.rule, res.checkout, brief) == ("outside_repository", None, [])
 
 
 def test_i23_bare_mirror_and_worktrees_of_a_bare_repository(

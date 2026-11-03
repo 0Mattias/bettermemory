@@ -25,6 +25,59 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc18
+
+The eighteenth candidate follows a `.git` file naming a
+`--separate-git-dir` directory only from that git directory's own
+working tree, and judges a `.git` that is a link as the pointer it is.
+The store takes no schema step.
+
+#### Fixed
+
+- **A `.git` file naming a `--separate-git-dir` directory is followed
+  only from its recorded working tree (ENG-206).** Since 9.0.0rc14 a
+  `.git` file is followed only where git's own pointers say the folder
+  is its git directory's working tree, but git keeps no pointer back for
+  a git directory kept apart with `--separate-git-dir` (`git init`, `git
+  clone`): its config names no `core.worktree`. So a folder an attacker
+  controls, or an extracted archive, holding a `.git` file that named
+  the separate git directory of one of the user's checkouts resolved as
+  that checkout, and the session brief and prompt recall delivered its
+  memories there; 9.0.0rc14 listed this under Known limitations.
+  bettermemory now keeps the pointer git does not. The first capture
+  that follows such a file records its folder in the state directory
+  (`gitdir-pins/`, one small file for each such git directory, named for
+  the git directory's device and inode; nothing is written into the
+  repository, so it holds where the checkout token is not written), and
+  a `.git` in another folder naming that git directory reads as no
+  repository while the recorded folder's `.git` still names it, or
+  cannot be read, and `bettermemory security audit` warns of it. A
+  recorded tree moved with a plain `mv`, removed, or pointed at another
+  git directory gives way to the next folder followed. A first record is
+  checked against the store, so a checkout seen before this release
+  keeps the tree it was first seen at, whichever folder naming it is
+  seen first after the upgrade. A second working tree kept on purpose
+  beside the first (a copy of it) is refused as a plant is; the audit's
+  fix says how to move the record, and it warns where the state
+  directory cannot be written, so no record can be kept.
+
+- **A `.git` that is a link is judged as the pointer it is (ENG-206).**
+  Each pointer back (a worktree's, a submodule's, the record above) is
+  now compared with the folder, not with its `.git` file, so a `.git`
+  that is a symbolic or a hard link to the right `.git` file is refused
+  from any other folder. A `.git` that is a symbolic link to a directory
+  was read as the folder's own repository: one reaching another working
+  tree's `.git`, a linked worktree's git directory, or a recorded
+  separate git directory was followed and delivered that checkout's
+  memories (an archive can carry such a link). It is now read as a
+  pointer to where it leads and judged by the `.git` file rule, and one
+  reaching another working tree's own `.git` is that tree's. A `.git`
+  link to a git directory nothing else claims is followed as before, and
+  so is one to a folder holding that `.git` alone (a git directory moved
+  out of a synced folder), as a git directory kept apart whose tree is
+  recorded. On Windows a directory junction (`mklink /J`), which
+  CPython's `lstat` reports as a plain directory, is judged as a link.
+
 ### 9.0.0rc17
 
 The seventeenth candidate runs the plugin's hooks on Windows without
@@ -3385,14 +3438,6 @@ follows the candidates' testing.
 - **The reachable-walk memo is bounded at 128 walks, not in bytes.** A
   walk holds about 141 bytes a commit, so 128 walks of 10,000 commits
   hold about 180 MB in a long-lived daemon. (`src/bettermemory/origin.py`)
-- **A `.git` file naming a `--separate-git-dir` directory is followed.**
-  git writes no pointer back for a git directory kept apart with
-  `--separate-git-dir`, and design I22 keeps a second tree naming one the
-  same checkout, so nothing git keeps tells a planted `.git` file naming
-  one (whose path the planter knows) from the checkout's own: it is
-  followed, and the folder resolves as that checkout (ENG-158). git
-  itself follows every such pointer; the rule bounds what bettermemory
-  delivers, not what git runs there.
 - **Past the ancestry walk's bound, a tie in a long-lived project asks.**
   The traversal that picks the most specific of several tied projects
   reads 512 commits in all, about 512/n below each of n tied witness

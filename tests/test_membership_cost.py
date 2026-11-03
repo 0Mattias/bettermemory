@@ -266,8 +266,9 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     then on a prompt there spawns no git process and stays within a
     bounded number of stat calls. Measured on macOS (APFS, the test's
     temporary directory): the migration 0 spawns; the steady prompt 0
-    spawns, 12 os.stat and 0 os.lstat calls (the same as at a checkout no
-    migration registered, tests/test_membership_capture.py)."""
+    spawns, 11 os.stat and 1 os.lstat calls (the same as at a checkout no
+    migration registered, tests/test_membership_capture.py, where the
+    ``.git`` entry's ``lstat`` since ENG-206 is the ``stat`` it was)."""
     store, identity, config = lab
     synthetic = _synthetic(store, identity.id, projects=20, checkouts_each=10)
     repo = make_repo(tmp_path.resolve() / "Developer" / "game", remote=_URL)
@@ -312,7 +313,7 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     print(f"steady: spawns={warm.spawns} stat={warm.stats} lstat={warm.lstats}")
     assert results[0].rule == "object" and results[0].checkout == root.checkout
     assert warm.spawns == 0
-    assert warm.stats <= 12 and warm.lstats == 0
+    assert warm.stats <= 11 and warm.lstats <= 1
 
 
 # ---------------------------------------------------------------------------

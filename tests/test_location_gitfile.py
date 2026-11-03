@@ -8,10 +8,12 @@ resolved SILENT as that checkout and was delivered its project's
 memories. Discovery now follows a linked worktree's pointer when the
 worktree's git directory names this file back, a submodule's when its
 ``core.worktree`` names this folder, a ``--separate-git-dir`` pointer
-(git writes none back; design I22), and a pointer whose back-pointer
-names nothing any more (a plain ``mv``); any other reads as a ``.git``
-file that names nothing. Each is told by the filesystem object, not the
-spelling (review M, D1 and G5): a symlink to another tree's ``.git``, the
+from the tree recorded for it (git writes none back, so bettermemory
+keeps one; ENG-206, ``tests/test_location_gitdir_pin.py``), and a
+pointer whose back-pointer names nothing any more (a plain ``mv``); any
+other reads as a ``.git`` file that names nothing. Each is told by the
+filesystem object, not the spelling (review M, D1 and G5): a symlink to
+another tree's ``.git``, the
 same ``.git`` in another case on a case-insensitive volume, a forged
 worktree directory whose ``commondir`` names another repository, and a
 folder holding ``HEAD`` and such a ``commondir`` with no ``.git`` file at

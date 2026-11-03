@@ -7,8 +7,9 @@ memories nowhere else; git itself still follows the file, and a git
 command in that folder acts on the other repository. `bettermemory
 security audit` now says so for the working directory and its parents
 (``membership.gitfile``: ``warn``), says when the repository found is a
-``--separate-git-dir`` pointer that carries no pointer back (``info``:
-followed as git follows it, a planted one too), and is ``ok`` otherwise.
+``--separate-git-dir`` pointer with no working tree recorded for it yet
+(``info``: the next session there records it; ENG-206), and is ``ok``
+otherwise.
 Each spelling review M found membership following (a case variant, a
 symlink, a forged worktree directory, a folder holding ``HEAD`` and a
 ``commondir``) warns, and the warning's fix is a check by hand that
@@ -26,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import location, location_git, posture
+from bettermemory import location, location_audit, posture
 
 from .test_location_gitfile import PLANTS, _plant, plant
 from .test_membership_security import _git, checkout, neutral_git
@@ -43,7 +44,7 @@ def _neutral(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _finding(cwd: Path) -> dict[str, Any]:
-    found: dict[str, Any] = location_git.gitfile_posture(str(cwd))
+    found: dict[str, Any] = location_audit.gitfile_posture(str(cwd))
     return found
 
 
@@ -87,9 +88,10 @@ def test_a_repository_or_worktree_of_its_own_is_ok(tmp_path: Path) -> None:
 
 
 def test_a_separate_git_dir_pointer_is_named_as_followed(tmp_path: Path) -> None:
-    """A ``--separate-git-dir`` checkout's ``.git`` file is followed with no
-    pointer back to check, so the audit names it (``info``), with the git
-    directory it names."""
+    """A ``--separate-git-dir`` checkout's ``.git`` file with no working
+    tree recorded for it yet is named (``info``), with the git directory
+    it names; ``tests/test_location_gitdir_pin.py`` reads it once
+    recorded."""
     tree, sep = tmp_path / "tree", tmp_path / "sep"
     _git(tmp_path, "init", "-q", "-b", "main", f"--separate-git-dir={sep}", str(tree))
     found = _finding(tree)

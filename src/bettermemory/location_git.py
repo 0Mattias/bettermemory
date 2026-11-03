@@ -12,7 +12,9 @@ package's 2,000-line bound (ENG-96); `location` imports this module,
 never the reverse. The hook client loads it with `location`, so it
 imports only the standard library and the readers `_caches`, `_git`,
 `_location_probe`, `githead`, `gitobjects` and `project_file`, which
-import the standard library and each other alone; never `location`
+import the standard library and each other alone, and `gitdir_pin`,
+which writes through `_fsutil` and reads the state directory through
+`_daemon_client` (both loaded on every hook already); never `location`
 itself, the model, the store or the config
 (tests/test_membership_capture.py pins that set).
 """
@@ -30,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import _caches, githead, gitobjects, project_file
+from . import _caches, githead, gitdir_pin, gitobjects, project_file
 from . import _git as _git_runner
 from ._location_probe import INDETERMINATE, TOKEN_VERSION
 
@@ -817,6 +819,13 @@ def _gitfile_target(dotgit: str) -> str | None:
             data = fh.read(_GITFILE_LIMIT + 1)
     except OSError:
         return None
+    return _parse_gitfile(data, dotgit)
+
+
+def _parse_gitfile(data: bytes, dotgit: str) -> str | None:
+    """The directory the bytes `data` of the ``.git`` file `dotgit` name
+    after ``gitdir:`` (taken from the file's folder when relative), or None
+    when they are not such a file."""
     if len(data) > _GITFILE_LIMIT:
         return None
     text = data.decode("utf-8", errors="replace").strip()
@@ -862,29 +871,38 @@ def _names_here(raw: str, base: str, here: str) -> bool | None:
 
 
 def gitfile_refusal(directory: str, dotgit: str, target: str) -> str | None:
-    """Why the ``.git`` file `dotgit` in `directory`, which names the git
-    directory `target`, is not followed (ENG-158), or None when it is.
+    """Why the ``.git`` entry `dotgit` in `directory`, which names the git
+    directory `target` (a ``.git`` file's ``gitdir:``, or the directory a
+    ``.git`` symbolic link reaches), is not followed (ENG-158), or None
+    when it is.
 
     A ``.git`` file is followed where git's own pointers say the folder
     is that git directory's working tree: a linked worktree's git
     directory (``<common>/worktrees/<name>``) whose ``gitdir`` file names
-    this ``.git`` file, a git directory whose ``core.worktree`` names this
-    folder (a submodule's, under the enclosing repository's ``modules/``),
-    and a git directory kept apart by ``--separate-git-dir``, for which
-    git writes no pointer back (design I22: a second tree naming it is the
-    same checkout at a second path). A pointer that names nothing any more
-    (the worktree or submodule moved by a plain ``mv``, which ``git
-    worktree repair`` mends) is followed too. Anything else is refused:
-    another working tree's own ``.git``, a worktree's git directory that
-    names another worktree, a git directory whose ``core.worktree`` names
-    another folder, and a bare repository. Followed, such a file would key
-    the folder on another checkout's git directory, and an extracted
-    archive or a cloned repository that planted one would be delivered
-    that checkout's memories.
+    a ``.git`` in this folder, and a git directory whose ``core.worktree``
+    names this folder (a submodule's, under the enclosing repository's
+    ``modules/``). For a git directory kept apart by
+    ``--separate-git-dir`` git writes no pointer back, so bettermemory
+    keeps one (`gitdir_pin`, ENG-206): it is followed from the folder the
+    first capture followed it from, and from no other while that folder's
+    ``.git`` still names it, or cannot be read. A pointer that names
+    nothing any more (the worktree, the submodule or the separate git
+    directory's tree moved by a plain ``mv``, which ``git worktree
+    repair`` mends for a worktree) is followed too. Anything else is
+    refused: another working tree's own ``.git``, a worktree's git
+    directory that names another worktree, a git directory whose
+    ``core.worktree`` names another folder, a separate git directory
+    recorded for another folder, and a bare repository. Followed, such a
+    file would key the folder on another checkout's git directory, and an
+    extracted archive or a cloned repository that planted one would be
+    delivered that checkout's memories.
 
-    Each is told by the filesystem object, not the spelling: a target
-    that is the ``.git`` of the folder above it, through a symlink or in
-    another case on a case-insensitive volume, is that tree's own; a
+    Each is told by the filesystem object, not the spelling, and each
+    pointer back is compared with this folder, not with the ``.git``
+    entry, so a ``.git`` here that is a symbolic or hard link to the right
+    ``.git`` file names this folder no more than a copy of it does: a
+    target that is the ``.git`` of a folder, through a symlink or in
+    another case on a case-insensitive volume, is that folder's own; a
     ``commondir`` is trusted only for a git directory registered under it
     (``<common>/worktrees/<name>``, where git keeps a linked worktree's),
     so a forged worktree directory names no common directory."""
@@ -896,7 +914,7 @@ def gitfile_refusal(directory: str, dotgit: str, target: str) -> str | None:
         back = _small_text(os.path.join(target, "gitdir"))
         if not back:
             return f"{target} is a worktree's git directory that names no worktree"
-        if _names_here(back, target, dotgit) is False:
+        if _names_folder(back, target, directory) is False:
             return f"{target} is the git directory of the worktree at {back}"
         return None
     values = _config_values(os.path.join(target, "config"), git_dir=target)
@@ -913,16 +931,160 @@ def gitfile_refusal(directory: str, dotgit: str, target: str) -> str | None:
         return None
     if _truthy(values.get(("core", None, "bare"))):
         return f"{target} is a bare repository"
-    tree = _tree_of(target)
-    if tree is not None:
+    tree = _working_tree_of(target)
+    if tree is not None and _same_folder(tree, directory) is not True:
         return f"{target} is the git directory of the working tree {tree}"
+    return _recorded_refusal(gitdir_pin.recorded(target), target, directory)
+
+
+def _recorded_refusal(
+    pin: gitdir_pin.Pin | None, target: str, directory: str
+) -> str | None:
+    """Why the git directory kept apart `target` is not followed from the
+    folder `directory`, by the working tree `pin` records for it
+    (ENG-206), or None: nothing recorded, the record names `directory`, or
+    the recorded folder's ``.git`` is gone or names another git directory
+    now (the tree moved or was removed), so the follow is recorded in its
+    place. A recorded ``.git`` that cannot be read (a permission refused,
+    an I/O error, a provider's placeholder) refuses the follow and keeps
+    the record: what cannot be told is not given away."""
+    if pin is None or _same_folder(pin.tree, directory) is True:
+        return None
+    entry = _entry_names(os.path.join(pin.tree, ".git"), target)
+    if entry == "names":
+        return f"{target} is the git directory of the working tree {pin.tree}"
+    if entry == "unknown":
+        return (
+            f"{target} is recorded as the git directory of the working tree "
+            f"{pin.tree}, whose .git could not be read"
+        )
     return None
 
 
+def names_git_dir(entry: str, git_dir: str) -> bool:
+    """Whether the ``.git`` entry `entry` (a ``.git`` file, or a link to a
+    directory) names the git directory `git_dir`, compared as filesystem
+    objects."""
+    return _entry_names(entry, git_dir) == "names"
+
+
+def _entry_names(entry: str, git_dir: str) -> str:
+    """What the ``.git`` entry `entry` names, against the git directory
+    `git_dir`: ``names`` (it is a ``.git`` file whose ``gitdir:`` reaches
+    `git_dir`, or reaches it as a directory itself), ``other`` (it reaches
+    something else, or is not a pointer), ``gone`` (nothing is there, or a
+    link that reaches nothing) or ``unknown`` (it could not be read, or is
+    a provider's placeholder that a read would fetch)."""
+    try:
+        lst = os.lstat(entry)
+    except (FileNotFoundError, NotADirectoryError):
+        return "gone"
+    except (OSError, ValueError):
+        return "unknown"
+    if _is_link(lst):
+        # A link reaching another working tree's own `.git` names nothing
+        # for this folder, as discovery reads it (`_at_dotgit`).
+        owner = _working_tree_of(entry)
+        if (
+            owner is not None
+            and _same_folder(owner, os.path.dirname(entry)) is not True
+        ):
+            return "other"
+    try:
+        st = os.stat(entry)
+        want = os.stat(git_dir)
+    except (FileNotFoundError, NotADirectoryError):
+        return "gone"
+    except (OSError, ValueError):
+        return "unknown"
+    if stat.S_ISDIR(st.st_mode):
+        return "names" if os.path.samestat(st, want) else "other"
+    if not stat.S_ISREG(st.st_mode):
+        return "other"
+    if getattr(st, "st_flags", 0) & _SF_DATALESS or (
+        getattr(st, "st_file_attributes", 0) & _WINDOWS_RECALL
+    ):
+        return "unknown"
+    try:
+        with open(entry, "rb") as fh:
+            data = fh.read(_GITFILE_LIMIT + 1)
+    except OSError:
+        return "unknown"
+    named = _parse_gitfile(data, entry)
+    if named is None:
+        return "other"
+    return "names" if _names_here(named, git_dir, git_dir) is True else "other"
+
+
+def _names_folder(raw: str, base: str, directory: str) -> bool | None:
+    """Whether the ``.git`` path `raw` (taken from `base` when relative),
+    as a worktree's ``gitdir`` file names it, sits in the folder
+    `directory`: None when nothing is at `raw` any more (the worktree was
+    moved or removed), True when its folder is `directory`, False
+    otherwise."""
+    path = os.path.normpath(raw if os.path.isabs(raw) else os.path.join(base, raw))
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except (OSError, ValueError):
+        return False
+    return _same_folder(os.path.dirname(path), directory) is True
+
+
+def _same_folder(a: str, b: str) -> bool | None:
+    """Whether the paths `a` and `b` reach one folder: None when `a`
+    reaches nothing, False when it reaches another or cannot be told."""
+    try:
+        theirs = os.stat(a)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except (OSError, ValueError):
+        return False
+    try:
+        return os.path.samestat(theirs, os.stat(b))
+    except (OSError, ValueError):
+        return False
+
+
+# The reparse tag of a Windows directory junction (``mklink /J``): CPython's
+# ``lstat`` sets ``S_IFLNK`` only for a symbolic link's tag, so a junction
+# reads as a directory, yet it leads elsewhere as a link does.
+_JUNCTION_TAG = 0xA0000003
+
+
+def _is_link(st: os.stat_result) -> bool:
+    """Whether the ``lstat`` result `st` is of an entry that leads
+    elsewhere: a symbolic link, or a Windows directory junction."""
+    return stat.S_ISLNK(st.st_mode) or (
+        getattr(st, "st_reparse_tag", 0) == _JUNCTION_TAG
+    )
+
+
+def _working_tree_of(path: str) -> str | None:
+    """The folder whose own ``.git`` the entry `path` is (`_tree_of`),
+    where that folder is a working tree: it holds something besides its
+    ``.git``, or cannot be listed. A folder holding its ``.git`` alone (a
+    git directory moved out of a synced folder, with a link left in its
+    place) is no working tree, so a ``.git`` that reaches it is judged as
+    one reaching a git directory kept apart (ENG-206)."""
+    owner = _tree_of(path)
+    if owner is None:
+        return None
+    try:
+        with os.scandir(owner) as entries:
+            if all(entry.name == ".git" for entry in entries):
+                return None
+    except OSError:
+        pass
+    return owner
+
+
 def _tree_of(git_dir: str) -> str | None:
-    """The folder whose own ``.git`` the git directory `git_dir` is, or
-    None: compared as filesystem objects, so a symlink to it or a spelling
-    in another case on a case-insensitive volume is the same ``.git``."""
+    """The folder whose own ``.git`` the entry `git_dir` (a git directory,
+    or a ``.git`` file) is, or None: compared as filesystem objects, so a
+    symlink to it or a spelling in another case on a case-insensitive
+    volume is the same ``.git``."""
     try:
         real = os.path.realpath(git_dir)
         parent = os.path.dirname(real)
@@ -1058,7 +1220,8 @@ def _discover(
     while True:
         dotgit = os.path.join(d, ".git")
         try:
-            st = os.stat(dotgit)
+            # The entry itself: a link is read as a pointer (`_at_dotgit`).
+            st = os.lstat(dotgit)
         except (OSError, ValueError):
             st = None
         if st is not None:
@@ -1098,14 +1261,42 @@ def _at_dotgit(
     st: os.stat_result,
     refused: list[tuple[str, str, str]] | None = None,
 ) -> _Git | None:
+    """The repository the ``.git`` entry `dotgit` in `directory` gives,
+    `st` its ``lstat``, or None where it gives none or is not followed
+    (each refusal to `refused`, as `_discover` says)."""
+    linked_entry = _is_link(st)
+    if linked_entry:
+        try:
+            st = os.stat(dotgit)
+        except (OSError, ValueError):
+            return None
+        # A `.git` that is a symbolic link reaching another folder's own
+        # `.git` is that folder's, whatever it holds (ENG-206).
+        owner = _working_tree_of(dotgit)
+        if owner is not None and _same_folder(owner, directory) is not True:
+            if refused is not None:
+                refused.append(
+                    (
+                        dotgit,
+                        os.path.realpath(dotgit),
+                        f"{dotgit} links to the .git of {owner}",
+                    )
+                )
+            return None
     if stat.S_ISDIR(st.st_mode):
         if not os.path.isfile(os.path.join(dotgit, "HEAD")):
             return None
-        return _Git(dotgit, dotgit, dotgit, directory, PRIMARY)
-    if not stat.S_ISREG(st.st_mode):
-        return None
-    target = _gitfile_target(dotgit)
-    if target is None or not os.path.isfile(os.path.join(target, "HEAD")):
+        if not linked_entry:
+            return _Git(dotgit, dotgit, dotgit, directory, PRIMARY)
+        # A link to a git directory is a pointer to it, read by the rule a
+        # `.git` file's is (ENG-206).
+        target = os.path.realpath(dotgit)
+    elif stat.S_ISREG(st.st_mode):
+        named = _gitfile_target(dotgit)
+        if named is None or not os.path.isfile(os.path.join(named, "HEAD")):
+            return None
+        target = named
+    else:
         return None
     why = gitfile_refusal(directory, dotgit, target)
     if why is not None:
@@ -1120,111 +1311,6 @@ def _at_dotgit(
     # dir``, a submodule's): the latter is the primary checkout of its
     # repository, its git directory elsewhere.
     return _Git(dotgit, target, common, directory, LINKED if linked else PRIMARY)
-
-
-#: The security audit's finding id for the ``.git`` files above the cwd.
-GITFILE_FINDING = "membership.gitfile"
-
-
-def gitfile_posture(cwd: str | None) -> dict[str, Any]:
-    """The security audit's finding on the ``.git`` files at `cwd` (the
-    working directory when None) and above (ENG-158), as the keyword
-    arguments of `posture.Finding`: ``warn`` naming each ``.git`` file
-    git's discovery walk passes there that membership does not follow
-    (`gitfile_refusal`; git itself still follows it, so a git command
-    there acts on the repository it names), and each folder holding
-    ``HEAD`` and a ``commondir`` naming a repository it is not registered
-    under, with a check by hand as its fix (`_gitfile_fix`); ``info``
-    where the repository found is a ``.git`` file naming a git directory
-    with no pointer back (``--separate-git-dir``, design I22), which
-    membership follows as git does, so a planted one naming a known path
-    is followed too; ``ok`` otherwise; ``skip`` with no working
-    directory. Reads only."""
-    try:
-        start = os.path.realpath(cwd if cwd is not None else os.getcwd())
-    except (OSError, ValueError):
-        return {
-            "id": GITFILE_FINDING,
-            "status": "skip",
-            "summary": "no working directory to walk up from",
-        }
-    refused: list[tuple[str, str, str]] = []
-    try:
-        found = _discover(start, refused)
-    except (OSError, ValueError):
-        found = None
-    if refused:
-        first, _target, why = refused[0]
-        return {
-            "id": GITFILE_FINDING,
-            "status": "warn",
-            "summary": f"{first} names a git directory membership does not follow: {why}",
-            "path": first,
-            "fix": _gitfile_fix(first),
-            "details": {
-                "cwd": start,
-                "refused": [
-                    {"dotgit": d, "target": t, "reason": w} for d, t, w in refused
-                ],
-            },
-        }
-    dotgit = None if found is None else found.dotgit
-    details: dict[str, Any] = {"cwd": start, "dotgit": dotgit}
-    if (
-        found is not None
-        and dotgit not in (None, found.git_dir)
-        and found.kind == PRIMARY
-    ):
-        config = os.path.join(found.git_dir, "config")
-        if not _config_values(config, git_dir=found.git_dir).get(
-            ("core", None, "worktree")
-        ):
-            return {
-                "id": GITFILE_FINDING,
-                "status": "info",
-                "summary": (
-                    f"{dotgit} names {found.git_dir}, a git directory kept apart "
-                    "(--separate-git-dir) with no pointer back; membership follows "
-                    "it as git does"
-                ),
-                "path": dotgit,
-                "fix": (
-                    "if this checkout was not made with --separate-git-dir, remove "
-                    "the .git file: a planted one naming a git directory whose path "
-                    "is known is followed too"
-                ),
-                "details": {**details, "target": found.git_dir},
-            }
-    return {
-        "id": GITFILE_FINDING,
-        "status": "ok",
-        "summary": (
-            "no .git file at or above the working directory names a git directory "
-            "membership does not follow"
-        ),
-        "details": details,
-    }
-
-
-def _gitfile_fix(refused: str) -> str:
-    """The warning's fix for the refused `.git` file or folder `refused`
-    (review M D4): a check by hand of where it points and the removal of a
-    plant. It suggests no command that rewrites a worktree's registration:
-    one run in a copy of a live worktree moves the live worktree's
-    registration to the copy, and membership then follows the copy."""
-    plant = (
-        "its .git file"
-        if os.path.basename(refused) == ".git"
-        else "the HEAD and commondir files in it"
-    )
-    return (
-        "git still follows it, so a git command here acts on the repository it "
-        "names. Check by hand where it points: a worktree's .git file names "
-        "<common>/worktrees/<name>, whose gitdir file names that .git file back, "
-        "and a submodule's names a git directory whose core.worktree names this "
-        "folder; any other is not this folder's. If this folder came from an "
-        f"archive, a copy or someone else, remove {plant}."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1257,7 +1343,12 @@ class Capture:
     project (decision B1). ``evicted`` is set when HEAD or config is a
     provider's placeholder the fetch did not bring within the budget;
     ``detail`` then names the file. ``cwd_key`` and ``hostname`` let the
-    daemon tell whether it reads the same object at ``cwd``."""
+    daemon tell whether it reads the same object at ``cwd``.
+    ``kept_apart`` is set where the repository was reached through a
+    ``.git`` entry naming a git directory kept apart (`kept_apart`), and
+    ``tree_recorded`` where this capture made the first record of its
+    working tree (`record_working_tree`, ENG-206); neither is part of the
+    token."""
 
     cwd: str
     state: str
@@ -1285,6 +1376,8 @@ class Capture:
     detail: str = ""
     manifest: tuple[str, tuple[tuple[str, int], ...]] | None = None
     hostname: str | None = None
+    kept_apart: bool = False
+    tree_recorded: bool = False
 
     @property
     def born(self) -> bool:

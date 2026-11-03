@@ -479,11 +479,26 @@ where git's own pointers say the folder is its git directory's working
 tree (ENG-158): a linked worktree's git directory registered at
 `<common>/worktrees/<name>` that names the file back, a git directory
 whose `core.worktree` names the folder, a `--separate-git-dir`
-directory, or a pointer back that names nothing any more. A git
+directory from the working tree recorded for it, or a pointer back that
+names nothing any more. git keeps no pointer back for a git directory
+kept apart, so bettermemory keeps one (`gitdir_pin.py`, ENG-206): the
+first capture that follows such a `.git` file records its folder under
+`gitdir-pins/` in the state directory, in a file named for the git
+directory's device and inode, and a `.git` in another folder naming
+that git directory is not followed while the recorded folder's still
+names it or cannot be read; a recorded tree moved, removed or pointed
+at another git directory gives way to the next one followed. Each
+pointer back is compared with the folder, not its `.git` file, and a
+`.git` that is a symbolic link to a directory is judged as a pointer to
+it, so a link to the right `.git` from another folder is refused. A first record is checked against the
+store (`location._earlier_tree`): where the checkout's earliest view on
+this machine is another folder whose `.git` file still names the git
+directory, that folder is recorded and the cwd is read again. A git
 directory that is the `.git` of the folder above it (compared as a
 filesystem object, so a symlink or another case is the same), a
 `commondir` naming a repository the directory is not registered under,
-a `core.worktree` naming another folder and a bare repository read as no
+a `core.worktree` naming another folder, a separate git directory whose
+recorded tree is another folder and a bare repository read as no
 repository, and the walk goes on upward. Each witness is one observable
 fact:
 

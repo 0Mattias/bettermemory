@@ -236,7 +236,7 @@ Witness codes as in section 2.2; lines L1 to L10 as in section 5.4. Every ASK ON
 | I19 R1.5 | another owner's repository that git refuses | read from its files | H+R | SILENT; no token written | E20 f |
 | I20 R1.5 | a cwd the session itself cannot read, a dropped mount | nothing | none | NEW said so: L8, nothing from any project; the first readable prompt decides | E13 |
 | I21 | HEAD or config evicted by a file provider | object; a fetch started | O; fetched; deferred | SILENT; offline at first sight L9, SILENT on the next prompt | E36 c1 to c3 (flag simulated) |
-| I22 | GIT_DIR and GIT_WORK_TREE; `--separate-git-dir` | the object | O | SILENT; the token under that git directory | E30 |
+| I22 | GIT_DIR and GIT_WORK_TREE; `--separate-git-dir` | the object | O | SILENT; the token under that git directory; a second tree naming a separate git directory while the recorded one still does reads as no repository (ENG-206) | E30 |
 | I23 | bare and mirror clones; worktrees of a bare repository | witnesses, remote | H+R, S | SILENT; no token in a bare repository | E31 |
 | I24 | a shallow clone at a tip no witness names, no file | remote | R | ASK ONCE, L1; closed by evidence after `git fetch --unshallow` (L4) | E05, E32 a, b |
 | I25 | a shallow clone at a recorded tip; with the file | witnesses; file | H+R; F+R | SILENT | E32 c, d |

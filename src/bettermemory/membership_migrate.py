@@ -873,7 +873,11 @@ class _Run:
         except (OSError, ValueError):
             return _Probe(UNREACHABLE)
         cap = location.capture(
-            path, write_token=False, use_cache=False, budget=location.FETCH_BUDGET
+            path,
+            write_token=False,
+            use_cache=False,
+            budget=location.FETCH_BUDGET,
+            record_tree=False,
         )
         if cap.state == location.INDETERMINATE or cap.evicted:
             return _Probe(UNREACHABLE, cap)

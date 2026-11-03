@@ -529,9 +529,11 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     paths above them (the realpath walk and the walk up from the cwd)
     are reported, not bounded: they grow with the depth of the temporary
     directory. Measured on macOS (APFS), the same at any depth of the
-    temporary directory: steady state 0 spawns, 12 os.stat and 0 os.lstat
-    calls on 9 paths; after a commit 0 spawns, 47 os.stat and 11 os.lstat
-    calls on 19 paths."""
+    temporary directory: steady state 0 spawns, 11 os.stat and 1 os.lstat
+    calls on 9 paths; after a commit 0 spawns, 44 os.stat and 14 os.lstat
+    calls on 19 paths. Since ENG-206 discovery reads each ``.git`` entry
+    with ``lstat`` (a link is a pointer, judged as one), where it read
+    it with ``stat``: the totals (12 and 58) are unchanged."""
     store, config, identity, repo, within = steady
 
     def prompt() -> object:
@@ -546,13 +548,13 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     warm = counted(prompt, within)
     report("steady", warm)
     assert warm.spawns == 0
-    assert warm.stats <= 12 and warm.lstats == 0 and len(warm.files) <= 9
+    assert warm.stats <= 11 and warm.lstats <= 1 and len(warm.files) <= 9
 
     git(repo, "commit", "-q", "--allow-empty", "-m", "work")
     moved = counted(prompt, within)
     report("after a commit", moved)
     assert moved.spawns == 0
-    assert moved.stats <= 47 and moved.lstats <= 11 and len(moved.files) <= 19
+    assert moved.stats <= 44 and moved.lstats <= 14 and len(moved.files) <= 19
 
 
 # ---------------------------------------------------------------------------
@@ -622,6 +624,7 @@ print(json.dumps(sorted(sys.modules)))
         "bettermemory._location_probe",
         "bettermemory.checkout_token",
         "bettermemory.githead",
+        "bettermemory.gitdir_pin",
         "bettermemory.gitobjects",
         "bettermemory.location",
         "bettermemory.location_git",
