@@ -12,8 +12,10 @@ sets them at interpreter start (conftest's `child_tau_env`).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -183,6 +185,24 @@ async def test_review_round_trip_through_stdio_shim(
     assert issued["review_id"] == first["review"]["review_id"]
 
 
+def _reopen_evidence(
+    exc: sqlite3.OperationalError, store_dir: Path, stderr_path: Path
+) -> str:
+    """What a reopen that failed after the shim served the store shows
+    (ENG-209): SQLite's error, the store's files and the shim's stderr."""
+    files = []
+    for entry in sorted(store_dir.iterdir()):
+        with contextlib.suppress(OSError):
+            files.append(f"{entry.name} {entry.stat().st_size}")
+    code = getattr(exc, "sqlite_errorcode", None)
+    name = getattr(exc, "sqlite_errorname", None)
+    return (
+        f"the store did not reopen after the shim served it: {exc} "
+        f"({name}, {code}); files: {files}; the shim's stderr:\n"
+        f"{stderr_path.read_text(errors='replace')[-4000:]}"
+    )
+
+
 async def test_in_process_fallback_serves_the_same_review(
     tmp_path: Path, tau: float
 ) -> None:
@@ -215,7 +235,13 @@ async def test_in_process_fallback_serves_the_same_review(
     assert fallback["status"] == "review"
 
     # The same write through the daemon's app, on the same store.
-    with Store(tmp_path / "store") as daemon_store:
+    try:
+        daemon_store = Store(tmp_path / "store")
+    except sqlite3.OperationalError as exc:
+        raise AssertionError(
+            _reopen_evidence(exc, tmp_path / "store", stderr_path)
+        ) from exc
+    with daemon_store:
         async with running_app(_config(tmp_path / "store"), daemon_store) as client:
             async with mcp_session(client, headers=_auth()) as session:
                 served = _payload(
