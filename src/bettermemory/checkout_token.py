@@ -567,7 +567,10 @@ def _take(claim: Path, nonce: str, own: Path) -> bool:
     which is how a claim a holder was killed making reads, and breaks it.
     Where links are refused (some SMB servers, FAT) an exclusive create
     and a write, which a reader may find empty between the two; a claim
-    this call created and could not finish is removed."""
+    this call created and could not finish is removed. Windows refuses a
+    create at a name still being removed (another's release or break) as
+    a ``PermissionError``, in a folder `own` was just made in, so that is
+    a claim not yet gone, and False too."""
     try:
         os.link(own, claim)
         return True
@@ -578,6 +581,10 @@ def _take(claim: Path, nonce: str, own: Path) -> bool:
     try:
         fd = os.open(claim, _OPEN_CREATE, _FILE_MODE)
     except FileExistsError:
+        return False
+    except PermissionError:
+        if sys.platform != "win32":
+            raise
         return False
     try:
         try:
@@ -641,7 +648,9 @@ def _break(info: Path, held: str, now: float | None) -> None:
 
 def _break_marks(info: Path, held: str, now: float | None) -> list[Path] | None:
     """`_break`'s marks for `held`: the stale ones it passed and, last, the
-    one it created; None where a live breaker holds one."""
+    one it created; None where a live breaker holds one, or, on Windows,
+    where a mark's name is still being removed (a ``PermissionError`` at
+    its create): its breaker has removed what it broke."""
     digest = hashlib.blake2b(held.encode("utf-8", "replace"), digest_size=8)
     marks: list[Path] = []
     for generation in itertools.count():
@@ -649,6 +658,10 @@ def _break_marks(info: Path, held: str, now: float | None) -> list[Path] | None:
         marks.append(mark)
         try:
             os.close(os.open(mark, _OPEN_CREATE, _FILE_MODE))
+        except PermissionError:
+            if sys.platform != "win32":
+                raise
+            return None
         except FileExistsError:
             try:
                 age = None if now is None else now - os.stat(mark).st_mtime

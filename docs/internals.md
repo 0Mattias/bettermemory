@@ -768,9 +768,12 @@ about 150 ms (`_fsutil.unlink_retrying`), a claim's removal only while
 the claim still holds the nonce it is removed for, so a claim another
 took during the pause is left to it. A removal still refused after the
 tries leaves the claim for the next re-mint to break after its wait,
-and the linked file for `_sweep` an hour on; a re-mint whose create meets the
-claim's name pending deletion fails (`failed:readonly`), and the next
-sighting reads the other's token as the checkout's re-mint. So of two
+and the linked file for `_sweep` an hour on. Windows refuses a create
+at a name still being removed as a `PermissionError`, in a folder the
+holder's own file was just made in, so a waiter's create at the claim's
+name reads as a claim not yet gone (`_take`) and a breaker's at a mark's
+as a live breaker's (`_break_marks`), and the re-mint waits on, where it
+failed (`failed:readonly`). So of two
 exchanges asked to re-mint one token (two sessions prompting at once),
 the second writes nothing, and its hook client posts a fresh capture,
 which holds the first's token, with its answer

@@ -280,9 +280,13 @@ no schema step.
   the claim still holds the nonce it is removed for
   (`_fsutil.unlink_retrying`), where it failed once and was left for the
   next re-mint to break after its wait (CI's Windows leg saw that left
-  claim in the concurrent re-mints test). A re-mint meeting the claim's
-  name pending deletion fails (`failed:readonly`); the next sighting reads
-  the other re-mint's token as the checkout's.
+  claim in the concurrent re-mints test). Windows also refuses a create
+  at a name still being removed, as a `PermissionError`: a waiter's
+  create meeting the claim another releases or breaks, or a breaker's
+  meeting the mark another breaker removes, failed its re-mint
+  (`failed:readonly`; the leg's repeated run of that test saw it), where
+  the claim now reads as held and the mark as a live breaker's, and the
+  re-mint waits on.
 
   Which orders hold, by caller: two hook clients of this release
   re-minting one checkout at once leave it one checkout and one token in

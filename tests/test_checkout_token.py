@@ -599,6 +599,47 @@ def test_a_claim_a_waiter_reads_meanwhile_is_removed_on_windows(
     assert _info_listing(git_dir) == ["exclude"]
 
 
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_a_name_still_being_removed_reads_as_held_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    """ENG-205: Windows refuses a create at a name still being removed as a
+    PermissionError. A waiter's create meeting another's release or break
+    of the claim, or a breaker's meeting the mark another breaker is
+    removing, failed its re-mint (`failed:readonly`; CI run 41739958465's
+    Windows repeat of the concurrent re-mints test, stale case). There the
+    claim reads as not yet gone and the mark as a live breaker's; elsewhere
+    a PermissionError is the folder's and is raised."""
+    git_dir = _repo(tmp_path / "proj")
+    info = git_dir / "info"
+    claim = info / checkout_token._CLAIM_NAME
+    own = info / f"{checkout_token._TEMP_PREFIX}OWNNONCE0000"
+    own.write_bytes(b"OWNNONCE0000")
+    real_open = os.open
+
+    def link_refused(*_args: Any) -> None:
+        raise PermissionError(13, "Access is denied")
+
+    def being_removed(path: Any, flags: int, mode: int = 0o777) -> int:
+        name = Path(path).name
+        if name == claim.name or name.startswith(checkout_token._BREAK_PREFIX):
+            raise PermissionError(13, "Access is denied")
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(os, "link", link_refused)
+    monkeypatch.setattr(os, "open", being_removed)
+    if platform == "win32":
+        assert checkout_token._take(claim, "OWNNONCE0000", own) is False
+        assert checkout_token._break_marks(info, "STALENONCE00", time.time()) is None
+    else:
+        with pytest.raises(PermissionError):
+            checkout_token._take(claim, "OWNNONCE0000", own)
+        with pytest.raises(PermissionError):
+            checkout_token._break_marks(info, "STALENONCE00", time.time())
+    assert not claim.exists()
+
+
 @pytest.mark.parametrize("by", ["holder", "breaker"])
 def test_a_claim_taken_while_its_removal_waits_is_left(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, by: str
@@ -671,7 +712,7 @@ def test_one_of_concurrent_re_mints_of_a_lineage_writes(
             "written",
             "exists",
             checkout_token.CONTENDED,
-        }
+        }, (run, out)
         assert read(git_dir).token == written[0].token
         # Only bettermemory's own names: git may write `info/refs` here
         # meanwhile (`update-server-info`, from a gc it runs on its own).
