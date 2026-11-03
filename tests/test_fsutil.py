@@ -1311,6 +1311,96 @@ class TestReplaceAtomicRetry:
         assert not list(tmp_path.glob("*.tmp"))
 
 
+class TestUnlinkRetrying:
+    """`unlink_retrying`: `replace_atomic`'s retry for a removal, which
+    Windows refuses while a reader holds the file open (ENG-205's claim,
+    CI's Windows leg)."""
+
+    def test_retries_then_removes_on_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "claim"
+        path.write_bytes(b"nonce")
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+        calls: list[int] = []
+        real_unlink = os.unlink
+
+        def read_meanwhile(p: object) -> None:
+            calls.append(1)
+            if len(calls) < 3:
+                raise PermissionError(13, "The process cannot access the file")
+            real_unlink(p)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(os, "unlink", read_meanwhile)
+        _fsutil.unlink_retrying(path)
+
+        assert len(calls) == 3
+        assert not path.exists()
+
+    def test_gives_up_when_the_file_is_no_longer_the_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "claim"
+        path.write_bytes(b"nonce")
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+        calls: list[int] = []
+
+        def denied(p: object) -> None:
+            calls.append(1)
+            raise PermissionError(13, "The process cannot access the file")
+
+        monkeypatch.setattr(os, "unlink", denied)
+        _fsutil.unlink_retrying(path, still=lambda: False)
+
+        assert len(calls) == 1
+        assert path.exists()
+
+    def test_reraises_the_original_error_after_the_budget(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+        calls: list[int] = []
+
+        def denied(p: object) -> None:
+            calls.append(1)
+            raise PermissionError(13, "The process cannot access the file")
+
+        monkeypatch.setattr(os, "unlink", denied)
+        with pytest.raises(PermissionError) as excinfo:
+            _fsutil.unlink_retrying(tmp_path / "claim")
+
+        assert excinfo.value.errno == 13
+        assert len(calls) == _fsutil._REPLACE_ATTEMPTS
+
+    def test_posix_does_not_retry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On POSIX a refused removal is never a reader's handle."""
+        monkeypatch.setattr(sys, "platform", "linux")
+        calls: list[int] = []
+
+        def denied(p: object) -> None:
+            calls.append(1)
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(os, "unlink", denied)
+        with pytest.raises(PermissionError):
+            _fsutil.unlink_retrying(tmp_path / "claim")
+
+        assert len(calls) == 1
+
+    def test_does_not_retry_other_errors_on_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(time, "sleep", lambda _s: pytest.fail("no pause"))
+        with pytest.raises(FileNotFoundError):
+            _fsutil.unlink_retrying(tmp_path / "absent")
+
+
 # ---------------------------------------------------------------------------
 # Structural guard — close the CLASS, not the instance.
 #

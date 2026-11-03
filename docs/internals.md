@@ -761,10 +761,14 @@ wait for the store's lock, long enough for another waiter to break it
 live. Between processes on one store only one holds that transaction, so
 a host re-mint waits there only for a claim a killed re-mint left, once,
 or a container's client on a bind mount. On Windows a claim is read
-without FILE_SHARE_DELETE, so a holder's release (or the removal of the
-file it linked to the claim's name, which `_sweep` then removes an hour
-on) can fail while a waiter reads it, and the claim is then broken by
-the next re-mint after its wait; a re-mint whose create meets the
+without FILE_SHARE_DELETE, so a holder's release, a breaker's removal,
+or the removal of the file a holder linked to the claim's name can meet
+a waiter's read; each is tried again, `replace_atomic`'s five tries over
+about 150 ms (`_fsutil.unlink_retrying`), a claim's removal only while
+the claim still holds the nonce it is removed for, so a claim another
+took during the pause is left to it. A removal still refused after the
+tries leaves the claim for the next re-mint to break after its wait,
+and the linked file for `_sweep` an hour on; a re-mint whose create meets the
 claim's name pending deletion fails (`failed:readonly`), and the next
 sighting reads the other's token as the checkout's re-mint. So of two
 exchanges asked to re-mint one token (two sessions prompting at once),

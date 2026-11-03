@@ -570,6 +570,71 @@ def test_a_breaker_removes_only_the_stale_claim_it_found(tmp_path: Path) -> None
     assert _info_listing(git_dir) == ["exclude"]
 
 
+def test_a_claim_a_waiter_reads_meanwhile_is_removed_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-205: Windows refuses to remove a file a reader holds open, and a
+    waiter reads the claim for a moment at a time, so a holder's release
+    that met such a read left its claim, for the next re-mint to wait out
+    and break (CI run 41729532022's Windows leg, in the concurrent re-mints
+    test). The removal is tried again."""
+    git_dir = _repo(tmp_path / "proj")
+    claim = git_dir / "info" / checkout_token._CLAIM_NAME
+    claim.write_bytes(b"HOLDERNONCE0")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    real_unlink = os.unlink
+    calls: list[int] = []
+
+    def read_meanwhile(path: Any) -> None:
+        calls.append(1)
+        if len(calls) < 3:
+            raise PermissionError(13, "The process cannot access the file")
+        real_unlink(path)
+
+    monkeypatch.setattr(os, "unlink", read_meanwhile)
+    checkout_token._release(claim, "HOLDERNONCE0")
+
+    assert len(calls) == 3
+    assert _info_listing(git_dir) == ["exclude"]
+
+
+@pytest.mark.parametrize("by", ["holder", "breaker"])
+def test_a_claim_taken_while_its_removal_waits_is_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, by: str
+) -> None:
+    """ENG-205: a removal tried again on Windows first asks whether the
+    claim still holds the nonce it is removed for, as the first try did: a
+    claim broken and taken by another re-mint during the pause is that
+    one's, and is left, whether a holder releases or a waiter breaks."""
+    git_dir = _repo(tmp_path / "proj")
+    info = git_dir / "info"
+    claim = info / checkout_token._CLAIM_NAME
+    claim.write_bytes(b"HOLDERNONCE0")
+    monkeypatch.setattr(sys, "platform", "win32")
+    real_unlink = os.unlink
+    calls: list[int] = []
+
+    def read_once(path: Any) -> None:
+        calls.append(1)
+        if Path(path) == claim and len(calls) == 1:
+            raise PermissionError(13, "The process cannot access the file")
+        real_unlink(path)
+
+    def taken_meanwhile(_s: float) -> None:
+        real_unlink(claim)
+        claim.write_bytes(b"ANOTHERHOLDR")
+
+    monkeypatch.setattr(os, "unlink", read_once)
+    monkeypatch.setattr(time, "sleep", taken_meanwhile)
+    if by == "holder":
+        checkout_token._release(claim, "HOLDERNONCE0")
+    else:
+        checkout_token._break(info, "HOLDERNONCE0", None)
+
+    assert claim.read_bytes() == b"ANOTHERHOLDR"
+
+
 @pytest.mark.parametrize("stale", [False, True], ids=["live", "stale"])
 def test_one_of_concurrent_re_mints_of_a_lineage_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stale: bool

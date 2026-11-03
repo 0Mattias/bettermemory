@@ -64,11 +64,12 @@ import secrets
 import stat
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple, TypeGuard
 
-from ._fsutil import fsync_dir, fsync_file, replace_atomic
+from ._fsutil import fsync_dir, fsync_file, replace_atomic, unlink_retrying
 
 #: The token's file name inside the git directory's `info/` folder.
 TOKEN_NAME = "bettermemory"
@@ -629,9 +630,10 @@ def _break(info: Path, held: str, now: float | None) -> None:
     marks = _break_marks(info, held, now)
     if marks is None:
         return
+    claim = info / _CLAIM_NAME
     try:
-        if _holder(info / _CLAIM_NAME) == held:
-            _unlink_quietly(info / _CLAIM_NAME)
+        if _holder(claim) == held:
+            _unlink_quietly(claim, lambda: _holder(claim) == held)
     finally:
         for mark in marks:
             _unlink_quietly(mark)
@@ -678,7 +680,7 @@ def _release(claim: Path, nonce: str) -> None:
     (this holder stalled past the wait) and another took is left to its
     holder."""
     if _holder(claim) == nonce:
-        _unlink_quietly(claim)
+        _unlink_quietly(claim, lambda: _holder(claim) == nonce)
 
 
 def _read_at(path: Path) -> TokenRead:
@@ -937,6 +939,10 @@ def _os_text(exc: OSError) -> str:
     return f"{text} ({name})" if name else text
 
 
-def _unlink_quietly(path: Path) -> None:
+def _unlink_quietly(path: Path, still: Callable[[], bool] | None = None) -> None:
+    """Remove `path` where it can be removed. On Windows a waiter reading
+    the claim holds it open for a moment, and the claim and its holder's
+    own link to it are one file, so either removal can meet that reader:
+    it is tried again (`unlink_retrying`), while `still` holds."""
     with contextlib.suppress(OSError):
-        os.unlink(path)
+        unlink_retrying(path, still)

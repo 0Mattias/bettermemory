@@ -275,9 +275,13 @@ no schema step.
   between its read of the claim and its removal removes the claim of the
   waiter that broke after it, so that waiter loses its claim and both
   write. On Windows a claim is read without FILE_SHARE_DELETE, so a
-  holder's release can fail while a waiter reads it (the next re-mint
-  breaks it after its wait), and a re-mint meeting the claim's name
-  pending deletion fails (`failed:readonly`); the next sighting reads
+  holder's release or a breaker's removal can meet a waiter's read; it is
+  tried again, as a token's rename is, five times over about 150 ms while
+  the claim still holds the nonce it is removed for
+  (`_fsutil.unlink_retrying`), where it failed once and was left for the
+  next re-mint to break after its wait (CI's Windows leg saw that left
+  claim in the concurrent re-mints test). A re-mint meeting the claim's
+  name pending deletion fails (`failed:readonly`); the next sighting reads
   the other re-mint's token as the checkout's.
 
   Which orders hold, by caller: two hook clients of this release
@@ -354,7 +358,8 @@ no schema step.
   nothing too, so one cut off there, with the token recorded as current
   and no birth time, still registers a second checkout. The store takes
   no schema step: it records the token as before.
-  (`src/bettermemory/checkout_token.py`, `src/bettermemory/location.py`,
+  (`src/bettermemory/checkout_token.py`, `src/bettermemory/_fsutil.py`,
+  `src/bettermemory/location.py`,
   `src/bettermemory/location_witness.py`, `src/bettermemory/membership.py`,
   `src/bettermemory/membership_records.py`,
   `src/bettermemory/membership_resolve.py`, `src/bettermemory/declare.py`,

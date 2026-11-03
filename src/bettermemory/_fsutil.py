@@ -91,7 +91,7 @@ import os
 import stat
 import sys
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path, PurePath, PureWindowsPath
 from typing import BinaryIO
 from urllib.parse import quote_from_bytes
@@ -381,6 +381,39 @@ def replace_atomic(src: Path, dst: Path) -> None:
                 raise
             time.sleep(delay)
             delay *= 2
+
+
+def unlink_retrying(path: Path, still: Callable[[], bool] | None = None) -> None:
+    """``os.unlink(path)`` with `replace_atomic`'s bounded, Windows-only
+    retry.
+
+    Windows refuses to remove a file while another handle holds it open
+    without ``FILE_SHARE_DELETE``, which every Python ``open`` there
+    does: ``ERROR_SHARING_VIOLATION`` (32), a ``PermissionError``, even
+    where the handle is a reader's open for a moment. POSIX removes the
+    name whatever is open, so it calls straight through, as
+    `replace_atomic` does, and only ``PermissionError`` retries.
+
+    `still`, where given, is asked after each pause and the removal given
+    up when it says no: the file at `path` is no longer the one to remove
+    (a claim another has taken since). After the budget the original
+    error propagates."""
+    if sys.platform != "win32":
+        os.unlink(path)
+        return
+
+    delay = _REPLACE_BACKOFF_S
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.unlink(path)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
+            if still is not None and not still():
+                return
 
 
 def bounded_read(path: Path, max_bytes: int) -> bytes:
@@ -745,4 +778,5 @@ __all__ = [
     "fsync_file",
     "replace_atomic",
     "sqlite_file_uri",
+    "unlink_retrying",
 ]
