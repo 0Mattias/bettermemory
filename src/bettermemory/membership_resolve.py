@@ -14,7 +14,7 @@ imports the standard library, the records, lines and rows modules,
 `history` (for `quoted`, which writes a value the evidence of a question
 names as the lines write theirs, ENG-193), `location` (for `view_path`),
 `location_git` (for the bounded read of a declared folder,
-`_prefetch_declared`), `location_witness` (for the exchange's one question
+`prefetch_declared`), `location_witness` (for the exchange's one question
 of the planned views, `prefetch_liveness`), and `membership` only under
 TYPE_CHECKING.
 """
@@ -283,11 +283,17 @@ def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolut
     first, outside the transaction and bounded (`prefetch_liveness`,
     ENG-156), and enters it as values: a view on a hung mount reads
     unreachable without holding the store's write lock. A declared
-    folder's stored spelling is read the same way (`_prefetch_declared`)."""
+    folder's stored spelling is read the same way (`prefetch_declared`).
+    Inside a transaction its caller holds, the lock is held already and
+    nothing is read first: the migration, which resolves inside its own,
+    reads both for every location it resolves before it opens it
+    (`membership_migrate._Run.prefetch`, ENG-204). A view not read before
+    is read in the transaction, bounded; a declared folder not read
+    before is compared as stored."""
     with self.liveness_held():
         if not self._store.in_batch:
             self.prefetch_liveness(self._liveness_plan(loc))
-            _prefetch_declared(self, loc)
+            self.prefetch_declared([loc])
         with self._call():
             res = self._settle_unresolved(loc, self._resolve(loc, strict))
             rows = tuple(self._rows)
@@ -1430,7 +1436,7 @@ def _declared_folder(
     project it names has no checkout yet. The declaration's folder is
     compared as stored (from 9.0.0rc14 on, `declare` stores it as a view
     records it: `_location_probe.view_path`, ENG-152), else in the spelling
-    `_prefetch_declared` read for it before the transaction: one a release
+    `prefetch_declared` read for it before the transaction: one a release
     before 9.0.0rc14 kept as its cwd was spelled, maybe through a symlink
     or a junction. Nothing here reads the filesystem, so a stored folder
     on a hung mount holds no writer (review M D2); one whose read did not
@@ -1448,7 +1454,7 @@ def _declared_folder(
     return False
 
 
-#: The key under which `_prefetch_declared` keeps a declared folder's
+#: The key under which `prefetch_declared` keeps a declared folder's
 #: spelling for the span `liveness_held` opened, beside the views'
 #: liveness.
 _DECLARED = "declared_dir"
@@ -1473,43 +1479,92 @@ def _declared_dirs(self: Membership, file_id: str) -> list[str]:
     return out
 
 
-def _prefetch_declared(self: Membership, loc: Location) -> None:
-    """Read, before the resolution's transaction, each folder a
-    declaration bound `loc`'s project file in whose stored spelling is not
-    `loc`'s, as a view records it (`_location_probe.view_path`): on one
-    thread, more as reads turn out slow, each bounded by `PROBE_BUDGET`
-    (`bounded_reads`, ENG-156), and kept for the span `liveness_held`
-    opened, where `_declared_folder` reads it as a value (review M D2). A
-    folder that does not answer in time is not kept, so it matches
-    nothing."""
+def prefetch_declared(
+    self: Membership,
+    locs: Sequence[Location],
+    beside: Callable[[], object] | None = None,
+) -> None:
+    """Read, before the transaction of a resolution or of the migration,
+    each folder a declaration bound one of `locs`' project files in whose
+    stored spelling is not that location's (`_declared_todo`), as a view
+    records it (`_location_probe.view_path`): on one thread, more as reads
+    turn out slow, each bounded by `PROBE_BUDGET` (`bounded_reads`,
+    ENG-156), and kept for the span `liveness_held` opened, where
+    `_declared_folder` reads it as a value (review M D2). The migration
+    reads the folders of every location it resolves in one batch, with
+    its views' liveness as `beside` (ENG-204): that runs on the calling
+    thread while the folders are read on a thread of their own, so a share
+    hung under a view and a declared folder costs one budget, not one
+    each; where no thread can start, `beside` runs first and the folders
+    are read after it. What `beside` raises is raised once the folders
+    read are kept. A batch of reads that fails keeps none, so each folder
+    is compared as stored, and raises nothing in place of `beside`.
+    Inside the store's write transaction nothing is read (`beside` still
+    runs), so no folder is read with the write lock held. A folder that
+    does not answer in time is not kept, so it matches nothing."""
     live = self._live
-    f = loc.root_file
-    if live is None or f is None or loc.state == UNREADABLE:
-        return
-    here = _dir_key(loc.root or loc.cwd)
-    try:
-        bound = self._file_binding(f.id)
-        if bound is None or self._checkouts_of(bound):
-            return
-        todo = sorted(
-            {
-                d
-                for d in _declared_dirs(self, f.id)
-                if _dir_key(d) != here and (_DECLARED, d) not in live
-            }
-        )
-    except Exception:  # noqa: BLE001 - the transaction compares as stored
-        return
-    if not todo:
+    todo: list[str] = []
+    if live is not None and not self._store.in_batch:
+        todo = sorted({d for loc in locs for d in _declared_todo(self, loc, live)})
+    if live is None or not todo:
+        if beside is not None:
+            beside()
         return
 
     def job(folder: str) -> tuple[str, str, Callable[[], str]]:
         return folder, _DECLARED, lambda: view_path(folder)
 
-    got = bounded_reads([job(d) for d in todo], PROBE_BUDGET)
-    for folder, read in zip(todo, got, strict=True):
-        if isinstance(read, str):
-            live[(_DECLARED, folder)] = read
+    def keep(read: Callable[[], Sequence[object]]) -> None:
+        try:
+            got = read()
+        except Exception:  # noqa: BLE001 - none kept: each compared as stored
+            return
+        for folder, value in zip(todo, got, strict=True):
+            if isinstance(value, str):
+                live[(_DECLARED, folder)] = value
+
+    jobs = [job(d) for d in todo]
+    if beside is not None:
+        with ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="bettermemory-declared"
+        ) as pool:
+            try:
+                reading = pool.submit(bounded_reads, jobs, PROBE_BUDGET)
+            except RuntimeError:  # no thread could start: in turn, below
+                reading = None
+            if reading is not None:
+                try:
+                    beside()
+                finally:
+                    keep(reading.result)
+                return
+        beside()
+    keep(lambda: bounded_reads(jobs, PROBE_BUDGET))
+
+
+def _declared_todo(
+    self: Membership, loc: Location, live: Mapping[tuple[object, ...], str]
+) -> set[str]:
+    """The folders `prefetch_declared` reads for `loc`: those of the
+    declarations that bound its project file, while the project they bound
+    it to has no checkout, whose stored spelling is not `loc`'s and that
+    `live` does not hold yet; none where the tables cannot be read, and
+    the transaction compares them as stored."""
+    f = loc.root_file
+    if f is None or loc.state == UNREADABLE:
+        return set()
+    here = _dir_key(loc.root or loc.cwd)
+    try:
+        bound = self._file_binding(f.id)
+        if bound is None or self._checkouts_of(bound):
+            return set()
+        return {
+            d
+            for d in _declared_dirs(self, f.id)
+            if _dir_key(d) != here and (_DECLARED, d) not in live
+        }
+    except Exception:  # noqa: BLE001 - the transaction compares as stored
+        return set()
 
 
 def _unordered(count: int) -> str:

@@ -350,6 +350,9 @@ def migrate(
     run = _Run(store, identity, now=now, write_token=write_token, strict=strict)
     with run.model.liveness_held():
         if store.in_batch:
+            # The caller's own transaction (no entry point's): its write
+            # lock is held already, so nothing is read first, and the run
+            # compares a declared folder as stored (`Membership.resolve`).
             return run.run(dry_run=False)
         # What the run reads of the disk is read first, bounded, outside the
         # transaction, and enters it as values (ENG-156).
@@ -786,16 +789,27 @@ class _Run:
     # -- probing -----------------------------------------------------------
 
     def prefetch(self) -> None:
-        """Read what the run reads of the disk before its transaction
-        (ENG-156): the probe of every recorded root and of every rootless
-        record's cwd, the liveness of the views the ladder reads for those
-        found live (`Membership.prefetch_liveness`), and the liveness and
-        probe of this machine's checkouts (`_live_set`). Each read is
-        bounded (`_probe`, `location.path_liveness`) and they run in
-        parallel, so a store whose roots sit on a hung mount costs one
-        budget here, without the store's write lock, and the transaction
-        reads the values. A read the run makes that is not here is made in
-        the transaction, bounded the same way."""
+        """Read the paths the run reads before its transaction (ENG-156),
+        each read bounded (`_probe`, `location.path_liveness`,
+        `location_git.bounded_reads`), and the transaction reads the values:
+        the probe of every recorded root and of every rootless record's cwd,
+        in parallel; then the liveness of the views the ladder reads for
+        those found live and of this machine's checkouts
+        (`Membership.prefetch_liveness`) and, side by side with it, the
+        folders of the declarations that bound the live ones' project files,
+        in the spelling a view records (`Membership.prefetch_declared`,
+        ENG-204), which a store written before 9.0.0rc14 may hold as a
+        symbolic link or a junction spelled them; then the probe of each of
+        those checkouts found live (`_live_set`). So a hung mount costs one
+        probe's budget (`_PROBE_BUDGET`) here for each `_PROBE_WORKERS` of
+        the recorded roots and cwds on it, and one `PROBE_BUDGET` more for
+        each `location_reads.READ_SLOTS` of its other views and declared
+        folders, read side by side, all without the store's write lock: a
+        path whose read hung answers every later read at once. A path the
+        run reads that is not read here is read in the transaction, bounded
+        the same way, but a declared folder: the ladder reads none there,
+        and compares one not read here as stored. The repositories' objects
+        (`_live_root`, `_gone_root`) are read in the transaction."""
         try:
             records = self._unhomed()
             roots = {
@@ -814,12 +828,12 @@ class _Run:
             ]
             self._probe_all(jobs)
             plan: list[tuple[mb.Checkout, mb.View]] = []
+            found: list[mb.Location] = []
             for path, at_root in jobs:
                 probe = self.probed.get((path, at_root))
                 if probe is not None and probe.state == LIVE and probe.capture:
-                    plan.extend(
-                        self.model._liveness_plan(self._location(probe.capture))
-                    )
+                    found.append(self._location(probe.capture))
+                    plan.extend(self.model._liveness_plan(found[-1]))
             mine = [
                 k
                 for k in self.model.checkouts()
@@ -828,7 +842,9 @@ class _Run:
                 and not k.legacy
             ]
             plan.extend((k, v) for k in mine for v in k.views_on(self.machine))
-            self.model.prefetch_liveness(plan)
+            self.model.prefetch_declared(
+                found, beside=lambda: self.model.prefetch_liveness(plan)
+            )
             live = [self.model.live_view(k) for k in mine]
             self._probe_all([(p, True) for p in live if p is not None])
         except Exception:  # noqa: BLE001 - the transaction reads what is missing

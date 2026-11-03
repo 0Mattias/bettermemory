@@ -450,6 +450,33 @@ schema step.
   `tests/test_restore_open_race.py`, whose `record` cases the Windows
   leg runs natively)
 
+- **The migration reads a declared folder in the spelling a view records
+  (ENG-204).** Since 9.0.0rc14 a resolution reads the folder a
+  declaration stored as a view records it (ENG-152), before its
+  transaction and bounded: a release before 9.0.0rc14 stored the folder
+  `project init` declared below a folder project's root as its cwd was
+  spelled, through a symbolic link or a junction. The migration resolves
+  the folder a record was written in inside its own transaction, where a
+  resolution reads nothing first, so such a folder matched none there,
+  and a record it homed by resolving the part's folder (one an earlier
+  build wrote meanwhile, or a re-upgrade after a rollback) went to a
+  provisional project of its own with a question, not to the part. That
+  is a record whose cwd lies inside no view of this machine's checkouts
+  (spelled through a link where the views hold the real path, or in a
+  tree moved since), or whose origin names the part's folder as its
+  root; a record whose cwd lies inside the enclosing folder project's
+  view is homed to that project before any resolution (`cwd_in_root`,
+  D4), as it was. The migration now reads the declared folders of every
+  location it resolves before it opens its transaction, in one batch read
+  side by side with the views' liveness, each read bounded by
+  `PROBE_BUDGET` (0.5 s), so a share hung under both a view and a
+  declared folder costs one budget, not one each; the record joins the
+  part by the declaration's rung. No declared folder is read with the
+  store's write lock held, even where the read is asked for inside the
+  transaction, and one that does not answer in time matches nothing, as
+  at a resolution. (`src/bettermemory/membership_migrate.py`,
+  `src/bettermemory/membership_resolve.py`, `src/bettermemory/membership.py`)
+
 ### 9.0.0rc17
 
 The seventeenth candidate runs the plugin's hooks on Windows without

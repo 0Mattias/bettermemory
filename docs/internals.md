@@ -891,6 +891,27 @@ an earlier run made for a root that is not live now and resolving a live
 root again; a later run that adds records to a project whose question is
 open restates the question's counts.
 
+The run reads paths before its transaction, each read bounded, and the
+transaction takes the values (`_Run.prefetch`, ENG-156): the probe of
+every recorded root and of every rootless record's cwd; then the
+liveness of the views the ladder reads for each one found live and of
+this machine's checkouts, and side by side with it, in the spelling a
+view records, the folders of the declarations that bound a live one's
+project file (`Membership.prefetch_declared`, ENG-204); then the probe
+of each of those checkouts found live. A release before 9.0.0rc14 stored
+the folder `project init` declared below a folder project's root as its
+cwd was spelled, through a symbolic link or a junction, and the ladder
+resolves a location inside the migration's transaction, where it reads
+nothing first. A root or a view on a hung mount reads unreachable, and
+a declared folder that does not answer in time matches nothing, without
+the store's write lock held. A path the prefetch did not read (a view
+the ladder reads that its plan left out, or one a prefetch that failed
+part way missed) is read in the transaction, bounded the same way, and a
+declared folder it did not read is compared as stored. The repositories'
+objects are read in the transaction: the commits a live root's records
+recorded and its witnesses' blobs, and the commits a gone root's records
+name, looked up in the live checkouts.
+
 It runs at the first open by an upgraded build (`ensure_migrated`, when a
 record has no home): the daemon at its start, under the store's lock and
 before it binds its port, logging one line with the totals; `bettermemory

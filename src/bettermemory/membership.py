@@ -1280,6 +1280,7 @@ class Membership:
     _declared_folder = membership_resolve._declared_folder
     _liveness_plan = membership_resolve._liveness_plan
     prefetch_liveness = membership_resolve.prefetch_liveness
+    prefetch_declared = membership_resolve.prefetch_declared
 
     # -- proposals ------------------------------------------------------------------------------
 

@@ -20,7 +20,10 @@ part declared before 9.0.0rc14 kept its folder as the cwd was spelled,
 and the resolution read that spelling as a view records it inside its
 transaction. It is read before the transaction now, bounded, and no
 filesystem read of a declaration's folder runs while the store's write
-lock is held, at a resolution or at the declaration itself (H5).
+lock is held, at a resolution, at the declaration itself (H5) or at the
+migration, which resolves inside its own transaction and reads the
+folders of every location it resolves before it opens it, side by side
+with its views' liveness (ENG-204).
 
 A batch of reads reads past a slow one (review M G3,
 `location_reads.READ_HANDOFF`): read in turn at a budget each, thirty
@@ -48,6 +51,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -899,3 +903,282 @@ def test_a_declaration_reads_its_folder_once_before_its_transaction(
             )
         )
         assert seen == [(str(inner), False)], action
+
+
+def _unhomed_at(store: Store, folder: Path, *, rooted: bool = False) -> None:
+    """An episode written at `folder` with no home, as a build before the
+    membership tables (or one a rollback went back to) wrote it: a folder
+    outside any repository, so its origin carries a cwd and no root. With
+    `rooted` the origin names the folder as its root as well, and the
+    migration reaches it as a recorded root (`_live_root`)."""
+    store.write_episode(
+        session_id="s1",
+        body="episode",
+        origin=Origin(cwd=str(folder), worktree_root=str(folder) if rooted else None),
+        now=_NOW,
+    )
+
+
+def _declared_reads(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[str, bool]]:
+    """Each declared folder the resolution's module reads from now on, with
+    whether the store's write transaction was open at the read."""
+    seen: list[tuple[str, bool]] = []
+    spied = location.view_path
+
+    def spy(path: str) -> str:
+        seen.append((path, store.in_batch))
+        return spied(path)
+
+    monkeypatch.setattr(membership_resolve, "view_path", spy)
+    return seen
+
+
+def test_the_migration_reads_a_declared_folder_before_its_transaction(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-204: the migration resolves the folder a record was written in
+    inside its own transaction, where a resolution reads nothing first. A
+    part declared before 9.0.0rc14 through a link (its folder stored in the
+    link's spelling) is read as a view records it before the migration's
+    transaction, never with the store's write lock held, and the record
+    written in the part's folder is homed by the declaration's rung."""
+    store, config = lab
+    here, stored, part = _folder_with_a_part(tmp_path, store, config)
+    _unhomed_at(store, here)
+    seen = _declared_reads(store, monkeypatch)
+
+    report = migrate(store, location.process_machine(), now=lambda: _NOW)
+
+    (home,) = report.rootless
+    assert (home.project, home.rule) == (part, "migration:cwd:declared_folder")
+    assert report.homed == 1
+    assert (stored, False) in seen, "the stored folder was not read before"
+    assert [p for p, held in seen if held] == []
+
+
+def test_the_migration_reads_a_declared_folder_at_a_recorded_root(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-204: the same part reached as a recorded root (`_live_root`): a
+    record whose origin names the part's folder as its root is homed by the
+    declaration's rung, the stored folder read before the migration's
+    transaction and never with the store's write lock held."""
+    store, config = lab
+    here, stored, part = _folder_with_a_part(tmp_path, store, config)
+    _unhomed_at(store, here, rooted=True)
+    seen = _declared_reads(store, monkeypatch)
+
+    report = migrate(store, location.process_machine(), now=lambda: _NOW)
+
+    (root,) = report.roots
+    assert (root.state, root.project, root.rule) == (
+        "live",
+        part,
+        "migration:live:declared_folder",
+    )
+    assert (stored, False) in seen, "the stored folder was not read before"
+    assert [p for p, held in seen if held] == []
+
+
+def test_the_migration_reads_a_hung_declared_folder_without_the_write_lock(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-204, review M D2: a declaration's stored folder whose read hangs
+    is read before the migration's transaction within `PROBE_BUDGET`, the
+    store's write lock is free while it blocks, and the run homes the
+    record with the folder matching nothing."""
+    store, config = lab
+    here, stored, part = _folder_with_a_part(tmp_path, store, config)
+    _unhomed_at(store, here)
+    hung = Hang()
+    spied = location.view_path
+
+    def blocking(path: str) -> str:
+        if path == stored:
+            hung.entered.set()
+            hung.release.wait(60)
+        return spied(path)
+
+    monkeypatch.setattr(membership_resolve, "view_path", blocking)
+    try:
+        watch = watch_lock(store.path, hung)
+        report, elapsed = _timed(
+            lambda: migrate(store, location.process_machine(), now=lambda: _NOW),
+            watch,
+        )
+    finally:
+        hung.release.set()
+
+    assert watch.entered, "the migration never read the stored folder"
+    assert watch.lock_free, f"the write lock was held across the read: {watch.error}"
+    assert not watch.released_early, "the migration waited on the hung read"
+    assert elapsed < PROBE_BUDGET + location.FETCH_BUDGET + 2 * _MARGIN
+    assert report.homed == 1
+    assert [h.rule for h in report.rootless if h.project == part] == []
+
+
+def test_the_migration_reads_declared_folders_beside_its_views(
+    tmp_path: Path,
+    lab: tuple[Store, Config],
+    monkeypatch: pytest.MonkeyPatch,
+    hang: Hang,
+) -> None:
+    """ENG-204 (review L1): the migration reads the declared folders side by
+    side with its views' liveness, not one batch after the other. With a
+    view of this machine's checkout and the part's stored folder both hung,
+    each read starts before the other batch has given up on its own read,
+    so a share hung under both costs one `PROBE_BUDGET`, not two."""
+    store, config = lab
+    repo = checkout(tmp_path / "work" / "app")
+    assert resolve_caller(store, config, str(repo)).resolution.checkout is not None
+    here, stored, _part = _folder_with_a_part(tmp_path, store, config)
+    _unhomed_at(store, here)
+    declared_done = threading.Event()
+    views_done = threading.Event()
+    release = threading.Event()
+    started: dict[str, bool] = {}
+    reads = location_git.bounded_reads
+    views = Membership.prefetch_liveness
+    spied = location.view_path
+
+    def read_declared(*args: Any, **kwargs: Any) -> list[Any]:
+        try:
+            return reads(*args, **kwargs)
+        finally:
+            declared_done.set()
+
+    def read_views(self: Membership, pairs: Any) -> None:
+        try:
+            views(self, pairs)
+        finally:
+            views_done.set()
+
+    def blocking(path: str) -> str:
+        if path == stored:
+            started["declared before the views gave up"] = not views_done.is_set()
+            release.wait(60)
+        return spied(path)
+
+    def watch_views() -> None:
+        if hang.entered.wait(20):
+            started["views before the declared gave up"] = not declared_done.is_set()
+
+    monkeypatch.setattr(membership_resolve, "bounded_reads", read_declared)
+    monkeypatch.setattr(Membership, "prefetch_liveness", read_views)
+    monkeypatch.setattr(membership_resolve, "view_path", blocking)
+    hang.add(repo)
+    watcher = threading.Thread(target=watch_views, daemon=True)
+    watcher.start()
+    try:
+        report = migrate(store, location.process_machine(), now=lambda: _NOW)
+    finally:
+        release.set()
+        hang.release.set()
+    watcher.join(10)
+
+    assert started == {
+        "declared before the views gave up": True,
+        "views before the declared gave up": True,
+    }
+    assert report.homed == 1
+
+
+def _a_part_located(
+    tmp_path: Path, store: Store, config: Config
+) -> tuple[Membership, membership.Location, str, Path]:
+    """`_folder_with_a_part`, with a model of this machine and the part's
+    folder captured as a resolution reads it: the model, the location,
+    the stored folder and the part's folder now."""
+    here, stored, _part = _folder_with_a_part(tmp_path, store, config)
+    model = Membership(store, location.process_machine().id)
+    loc = location.capture_location(
+        str(here), machine=model.machine, session=None, config=config
+    )
+    return model, loc, stored, here
+
+
+def _kept(model: Membership, stored: str) -> str | None:
+    """The spelling `prefetch_declared` kept for the stored folder in the
+    span `liveness_held` opened, if any."""
+    assert model._live is not None
+    return model._live.get((membership_resolve._DECLARED, stored))
+
+
+def test_a_declared_folder_is_never_read_inside_the_write_transaction(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review M D2 (ENG-204): `Membership.prefetch_declared` called inside
+    the store's write transaction reads no folder, whoever calls it, and
+    still runs the prefetch it was given to run beside its reads."""
+    store, config = lab
+    model, loc, _stored, _here = _a_part_located(tmp_path, store, config)
+    seen = _declared_reads(store, monkeypatch)
+    beside: list[bool] = []
+
+    with model.liveness_held(), store.batch():
+        model.prefetch_declared([loc], beside=lambda: beside.append(store.in_batch))
+
+    assert seen == []
+    assert beside == [True]
+
+
+def test_declared_folders_are_read_after_beside_where_no_thread_starts(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review R2-N1 (ENG-204): where the thread the folders are read on
+    cannot start (in an outage each hung read holds one), the prefetch run
+    beside them still runs, first, and the folders are read after it on
+    the calling thread and kept."""
+    store, config = lab
+    model, loc, stored, here = _a_part_located(tmp_path, store, config)
+    order: list[str] = []
+    spied = location.view_path
+
+    def spy(path: str) -> str:
+        order.append("read")
+        return spied(path)
+
+    class NoThread(ThreadPoolExecutor):
+        def submit(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(membership_resolve, "view_path", spy)
+    monkeypatch.setattr(membership_resolve, "ThreadPoolExecutor", NoThread)
+
+    with model.liveness_held():
+        model.prefetch_declared([loc], beside=lambda: order.append("beside"))
+        kept = _kept(model, stored)
+
+    assert order == ["beside", "read"]
+    assert kept == location.view_path(str(here))
+
+
+def test_what_the_prefetch_beside_raises_outranks_failed_reads(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review R2-N2 (ENG-204): a batch of folder reads that fails keeps
+    nothing, so each folder is compared as stored, and raises nothing of
+    its own: what the prefetch run beside it raises is raised, and where
+    that raises nothing, nothing is."""
+    store, config = lab
+    model, loc, stored, _here = _a_part_located(tmp_path, store, config)
+
+    def failing(*args: Any, **kwargs: Any) -> list[Any]:
+        raise RuntimeError("reads")
+
+    def raising() -> None:
+        raise ValueError("beside")
+
+    monkeypatch.setattr(membership_resolve, "bounded_reads", failing)
+    ran: list[bool] = []
+
+    with model.liveness_held():
+        with pytest.raises(ValueError, match="beside"):
+            model.prefetch_declared([loc], beside=raising)
+        model.prefetch_declared([loc], beside=lambda: ran.append(True))
+        kept = _kept(model, stored)
+
+    assert ran == [True]
+    assert kept is None
