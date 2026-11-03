@@ -738,18 +738,86 @@ no schema step.
   is a record whose cwd lies inside no view of this machine's checkouts
   (spelled through a link where the views hold the real path, or in a
   tree moved since), or whose origin names the part's folder as its
-  root; a record whose cwd lies inside the enclosing folder project's
-  view is homed to that project before any resolution (`cwd_in_root`,
-  D4), as it was. The migration now reads the declared folders of every
-  location it resolves before it opens its transaction, in one batch read
-  side by side with the views' liveness, each read bounded by
-  `PROBE_BUDGET` (0.5 s), so a share hung under both a view and a
-  declared folder costs one budget, not one each; the record joins the
-  part by the declaration's rung. No declared folder is read with the
-  store's write lock held, even where the read is asked for inside the
-  transaction, and one that does not answer in time matches nothing, as
-  at a resolution. (`src/bettermemory/membership_migrate.py`,
+  root; a record whose cwd lay inside the enclosing folder project's
+  view went to that project before any resolution (`cwd_in_root`, D4),
+  and the ENG-212 entry below resolves it with these reads. The
+  migration now reads the declared folders of every location it resolves
+  before it opens its transaction, in one batch read side by side with
+  the views' liveness, each read bounded by `PROBE_BUDGET` (0.5 s), so a
+  share hung under both a view and a declared folder costs one budget,
+  not one each; the record joins the part by the declaration's rung. No
+  declared folder is read with the store's write lock held, even where
+  the read is asked for inside the transaction, and one that does not
+  answer in time matches nothing, as at a resolution.
+  (`src/bettermemory/membership_migrate.py`,
   `src/bettermemory/membership_resolve.py`, `src/bettermemory/membership.py`)
+
+- **The migration homes a record written in a part's or a sub-project's
+  folder where a session there resolves (ENG-212).** A record with no
+  recorded root and no remote whose cwd lies inside a recorded root, or
+  inside a view of this machine's checkouts, goes to that root's project
+  (`cwd_in_root`, decision D4), and that rule ran before the ladder. So
+  a record written in the folder of a part declared below a folder
+  project's root (`project init`, B17), or below a sub-project's file
+  inside a repository (D13), went to the enclosing project, while a
+  session in that folder resolves to the part or the sub-project. Three
+  probes on this candidate's code before the fix: a part declared since
+  9.0.0rc14, the record at its folder (a session there resolves by
+  `declared_folder`); a part whose stored folder a moved tree left
+  spelled through a link, the record in that spelling (`folder_object`);
+  a record at a sub-project's folder below a repository's recorded root
+  (`object`). Each went to the enclosing project by `cwd_in_root`. Homed
+  there, the record reached a plain part's sessions as its parent's
+  records do, but the session brief and prompt recall also delivered it
+  at the enclosing folder and in every other part of that project, and
+  no surface delivered it in a part with a boundary, a tenant of its own
+  (`other_tenant`). The migration now resolves such a cwd, and the
+  ladder's project wins where it is a part or a sub-project of the
+  root's (`cwd:<rule>`): each of the three records goes where the
+  session does, by the session's rule, with birth time and without. The
+  ladder runs there only where the cwd's project files, read from the
+  tables as the ladder reads them, can place it so: its own file is
+  bound to a part of the root's project; a folder's own file is bound to
+  none yet and the nearest enclosing file bound to a project names the
+  root's project or a part of it (a folder project first seen at any
+  depth below the root, in either record order); or the cwd is in the
+  repository of the root's checkout, by an object the ladder's rungs
+  compare with that checkout's (its git directory, `object`; its object
+  store, `common_object`, a linked worktree inside the main working tree
+  among them; its working tree's root against a folder checkout's
+  folder, `rekeyed:F+O`, a folder project `git init` turned into a
+  repository), with a nested file bound to none yet or to a part and
+  none bound outside the root's project. So a record in the enclosing
+  project's own folders still goes there by D4 with no resolution (the
+  migration's other tests pass unchanged), a nested file bound outside
+  the root's project opens no question on the root's checkout, and a
+  repository of its own below the root registers nothing. Where the
+  ladder runs and finds no part (a folder holding a copy of a part's
+  file and other content, which it asks about), every record of the run
+  at that folder, or below it at no location of its own, keeps D4. The
+  first one's resolution leaves the folder as a session's first sight
+  there leaves it: a provisional project, a checkout with a view at that
+  folder, and an open `one_witness` question naming the part, listed by
+  `project pending` and asked only in sessions at that folder (without
+  birth time, later sessions at that folder each open their own question
+  until ENG-219). The records after it find that view as their root and
+  keep the home it replaced, with no second resolution; one below it at
+  a location of its own (a part declared there) goes through the gate
+  against that home. A later run, or a run after a session asked at that
+  folder, finds the view as a root: a record written at that folder
+  since goes to the provisional project by D4, where a session there
+  joins it when birth time is read, and while the question is open one
+  below it at a location of its own is also read against the root
+  outside that checkout's views, so a part of the enclosing project declared there
+  keeps its records in a later run too. What the run reads of the disk
+  is still read before its transaction (ENG-204): every rootless cwd's
+  probe, its views' liveness and its declared folders. A store migrated
+  already keeps the homes it has, since the migration homes only records
+  with none: `project why <record>` shows a record homed
+  `migration:cwd_in_root`, and `memory move <record> --project <part>`
+  moves one written in a part's folder.
+  (`src/bettermemory/membership_migrate.py`,
+  `tests/test_membership_migrate_parts.py`)
 
 - **A bulk acknowledgement's cutoff outside the calendar is refused in
   words (ENG-192).** `memory_admin(action="acknowledge_miss",

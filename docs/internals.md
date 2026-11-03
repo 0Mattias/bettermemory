@@ -1075,9 +1075,68 @@ only: a capture with the token write off.
   project carries mints a project, named after the repository and
   carrying the key (`remote_no_live_checkout`), so no key is carried by
   two projects the migration minted. Otherwise a cwd inside a recorded
-  root is that root's checkout (`cwd_in_root`); a cwd in a live
+  root, or a view of this machine's checkouts, is that root's checkout
+  (`cwd_in_root`, D4), unless the ladder places it in a part or a
+  sub-project of the root's project (next bullet). A cwd in a live
   repository or folder project takes its resolution (`cwd:<rule>`); else
   `global:outside_repository`.
+- D4 gives way to the ladder where a session at the cwd resolves to a
+  part or a sub-project of the root's project, the most specific one: the
+  record goes where the session does (`cwd:<rule>`, ENG-212). The ladder
+  runs there only where the cwd's project files, read from the tables as
+  the ladder reads them, can place it so (`_Run._finer_files`):
+  - its own file (a folder's, or a repository's at its root) is bound to
+    a part of the root's project: a declared part's folder, or one a
+    session has seen;
+  - a folder's own file is bound to none yet, and the nearest enclosing
+    file bound to a project names the root's project or a part of it: the
+    ladder makes each unbound file between them a folder project inside
+    the next one up, and this one inside the innermost, so a folder
+    project first seen at any depth below the root;
+  - the cwd is in the repository of the root's checkout, by an object
+    the ladder's rungs compare with that checkout's and do not tell
+    apart (`_Run._same_repository`): its git directory with the
+    checkout's (`object`); its object store with the checkout's object
+    store or git directory (`common_object`, a linked worktree inside the
+    main working tree among them); its working tree's root with a folder
+    checkout's folder (`rekeyed:F+O`, a folder project `git init` turned
+    into a repository). And of the files nested between the cwd and the
+    repository's root none is bound outside the root's project tree and
+    one is bound to none yet or to a part: a sub-project.
+
+  So the root's own folders, a folder whose file is bound outside the
+  root's project, a nested file bound so (which would open a question on
+  the root's own checkout, asked in every session there), and a
+  repository of its own below the root keep D4, and the run resolves
+  nothing there. Where the ladder runs and still places the cwd in no
+  part (a folder holding a copy of a part's file and other content: the
+  file alone asks), every record of the run at that folder keeps D4, and
+  so does one below it at no location of its own. The first one's
+  resolution leaves the folder as a session's first sight there leaves
+  it: a provisional project, a checkout with a view at that folder, and
+  an open `one_witness` question naming the part, which `project
+  pending`, the health report and `project show` of the part list, and
+  which only sessions at that folder are asked; without birth time,
+  later sessions at that folder each open their own question until
+  ENG-219. The records after it find that view as their root and keep
+  the home it replaced (`_Run._d4_home`), with no second resolution; one
+  below it at a location of its own (a project file between, or another
+  repository) goes through the gate against that home, as before. A
+  later run, like a run after a session asked at that folder, finds the
+  view as a root: a record written at that folder since, or below it at
+  no location of its own, goes to the provisional project by D4, the
+  project a session there joins where birth time is read. Below it at a
+  location of its own, while the question is open (`_Run._asked_below`),
+  the gate also reads the cwd against the next root outside that
+  checkout's views, so a part of the enclosing project declared below
+  the folder keeps its records in a later run too, where a session in
+  the part receives them.
+  A store migrated before this rule keeps its homes, since the migration
+  homes only records with none: a record `cwd_in_root` homed in what is
+  now a part's folder stays with the enclosing project, whose records a
+  part's sessions receive unless the part has a boundary. `project why
+  <record>` shows the rule, and `memory move <record> --project <part>`
+  moves it.
 
 Every rule is stored with the prefix `migration:`. The run is one store
 transaction ending in one `membership_migrated` row; `--dry-run` is the
@@ -1093,9 +1152,10 @@ open restates the question's counts.
 
 The run reads paths before its transaction, each read bounded, and the
 transaction takes the values (`_Run.prefetch`, ENG-156): the probe of
-every recorded root and of every rootless record's cwd; then the
-liveness of the views the ladder reads for each one found live and of
-this machine's checkouts, and side by side with it, in the spelling a
+every recorded root and of every rootless record's cwd (one inside a
+recorded root as well, whose probe D4's gate and ladder read, ENG-212);
+then the liveness of the views the ladder reads for each one found live
+and of this machine's checkouts, and side by side with it, in the spelling a
 view records, the folders of the declarations that bound a live one's
 project file (`Membership.prefetch_declared`, ENG-204); then the probe
 of each of those checkouts found live. A release before 9.0.0rc14 stored
@@ -1109,8 +1169,9 @@ the ladder reads that its plan left out, or one a prefetch that failed
 part way missed) is read in the transaction, bounded the same way, and a
 declared folder it did not read is compared as stored. The repositories'
 objects are read in the transaction: the commits a live root's records
-recorded and its witnesses' blobs, and the commits a gone root's records
-name, looked up in the live checkouts.
+recorded and its witnesses' blobs, the commits a gone root's records
+name, looked up in the live checkouts, and the HEAD a cwd's resolution in
+a repository adds as a witness.
 
 It runs at the first open by an upgraded build (`ensure_migrated`, when a
 record has no home): the daemon at its start, under the store's lock and

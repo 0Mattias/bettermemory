@@ -39,9 +39,12 @@ in this run or an earlier one), else the first minted of several carriers
 (``remote_ambiguous``), and only when no project carries the key a project
 minted for it, named after the repository, so no key is carried by two
 projects the migration minted; a remote-less one whose cwd lies inside a recorded root is homed to that root's checkout
-(D4, ``cwd_in_root``); one whose cwd is in a live repository or folder
-project takes that checkout's resolution (``cwd``); the rest were written
-outside any repository and any project file and are ``global``.
+(D4, ``cwd_in_root``), unless the ladder places that cwd in a part or a
+sub-project of the root's project, as a session there resolves: the most
+specific project wins (``cwd``, ENG-212); one whose cwd is in a live
+repository or folder project takes that checkout's resolution (``cwd``);
+the rest were written outside any repository and any project file and
+are ``global``.
 
 Nothing is written into any repository: the capture writes no token, and
 a checkout gets its token at its next sighting, in its caller's own
@@ -72,7 +75,7 @@ from . import membership as mb
 from ._paths import inside, norm
 from ._printable import quoted
 from .membership_lines import _named
-from .membership_records import _FULL_SHA
+from .membership_records import _FULL_SHA, DIFFERENT
 from .models import utcnow
 from .store import Store
 from .time_utils import isoformat_utc
@@ -148,10 +151,11 @@ class RootDecision:
 class RootlessHome:
     """A record with no recorded root homed by its cwd: inside a recorded
     root (``cwd_in_root``, D4) or in a live checkout found there now
-    (``cwd``). ``root`` is that root or checkout path. A record homed by a
-    remote key several projects carry (``remote_ambiguous``) is listed
-    too: ``root`` names the key and ``carriers`` the projects carrying
-    it, the one it was homed in first."""
+    (``cwd``), a part's or a sub-project's inside a recorded root among
+    them (ENG-212). ``root`` is that root or checkout path. A record
+    homed by a remote key several projects carry (``remote_ambiguous``)
+    is listed too: ``root`` names the key and ``carriers`` the projects
+    carrying it, the one it was homed in first."""
 
     record: str
     kind: str
@@ -644,6 +648,14 @@ class _Run:
         self.homed: Counter[str] = Counter()
         self.per_root: dict[str, Counter[str]] = defaultdict(Counter)
         self.resolved_cwd: dict[str, mb.Resolution | None] = {}
+        #: `_finer_at`'s answer by cwd and the home D4 found for it.
+        self.finer: dict[tuple[str, str, str | None], mb.Resolution | None] = {}
+        #: A view a resolution D4 passed over registered, by its path and
+        #: checkout: the D4 home it replaced, and the root of the location
+        #: passed over (`_d4_home`).
+        self.passed_over: dict[
+            tuple[str, str | None], tuple[tuple[str, str, str | None], str | None]
+        ] = {}
         #: Each path's probe, by path and whether it is to be a top level:
         #: read once per run (`_probe`), most of them before its transaction
         #: (`prefetch`).
@@ -1463,7 +1475,9 @@ class _Run:
 
     def _rootless(self, rec: _Record, prior: Mapping[str, Mapping[str, Any]]) -> None:
         """A record with no recorded root: its remote, its cwd inside a
-        recorded root (D4), a live checkout at its cwd, else global."""
+        recorded root (D4) unless the ladder finds a part or sub-project of
+        that root's project there (`_d4_home`, ENG-212), a live checkout at
+        its cwd, else global."""
         origin = rec.origin
         if origin is None:
             self._home(rec, mb.GLOBAL, None, "global:no_origin")
@@ -1476,8 +1490,9 @@ class _Run:
                 self._by_remote(rec, key)
                 return
         if cwd is not None:
-            inside = self._recorded_root_of(cwd, prior)
+            inside = self._d4_home(cwd, prior)
             if inside is not None:
+                # D4: no part or sub-project of the root's project found there.
                 root, project, checkout = inside
                 self._home(rec, project, checkout, "cwd_in_root")
                 self.rootless.append(
@@ -1566,11 +1581,19 @@ class _Run:
         self._home(rec, pid, None, "remote_no_live_checkout")
 
     def _recorded_root_of(
-        self, cwd: str, prior: Mapping[str, Mapping[str, Any]]
+        self,
+        cwd: str,
+        prior: Mapping[str, Mapping[str, Any]],
+        *,
+        skip: str | None = None,
     ) -> tuple[str, str, str | None] | None:
         """The recorded root `cwd` lies in, longest first: a root decided
         here or by an earlier run, or a view of a checkout of this machine;
-        with its project and checkout."""
+        with its project and checkout. With `skip`, none of that checkout's
+        views: the next root outside them. Views are read only where no
+        decided or prior root holds `cwd`; where one does, the lookup with
+        `skip` finds that same root, and the gate against it repeats a
+        check already made, so `skip` leaves decided roots as they are."""
         found: list[tuple[str, str, str | None]] = []
         for root, d in self.decided.items():
             if _inside(cwd, root):
@@ -1591,7 +1614,7 @@ class _Run:
                 "checkout_views", where={"machine": self.machine}
             ):
                 path = str(v["path"])
-                if _inside(cwd, path):
+                if _inside(cwd, path) and str(v["checkout"]) != skip:
                     k = self.model.checkout(str(v["checkout"]))
                     if k.kind != mb.UNRESOLVED:
                         found.append((path, k.project, k.id))
@@ -1599,6 +1622,190 @@ class _Run:
             return None
         root, project, checkout = max(found, key=lambda t: len(_norm(t[0])))
         return root, self._canon(project), checkout
+
+    def _d4_home(
+        self, cwd: str, prior: Mapping[str, Mapping[str, Any]]
+    ) -> tuple[str, str, str | None] | None:
+        """D4's home for `cwd`: the recorded root it lies in
+        (`_recorded_root_of`), with that root's project and checkout. None
+        where it lies in none, or where the ladder places it in a part or a
+        sub-project of that project (`_finer_at`).
+
+        A resolution D4 passed over can register a checkout with a view at
+        the location it resolved (a copy of a part's file, which it asks
+        about), and the records after it there would find that view as
+        their root, and the provisional project it names. They keep the
+        home the view replaced (`passed_over`), as the first record did: at
+        that location with no second resolution (a session there is asked;
+        without birth time the ladder would ask again, ENG-219), and below
+        it at a location of its own (a project file between, or another
+        repository) through the gate against that home. Only a view the
+        resolution added is kept so, the root the cwd is found in after it,
+        not its checkout's other views (a moved copy's old path).
+
+        The view stays, and a later run finds it as a root, as it finds one
+        a session's question left there: a record at that location goes to
+        the provisional project, the one a session there joins where birth
+        time is read. Below it at a location of its own, while the question
+        is open (`_asked_below`), the gate also reads the cwd against the
+        next root outside that checkout's views, so a part of that root's
+        project declared there keeps its records, as within a run."""
+        inside = self._recorded_root_of(cwd, prior)
+        if inside is None:
+            return None
+        over = self.passed_over.get((_norm(inside[0]), inside[2]))
+        if over is not None:
+            if self._root_at(cwd) == over[1]:
+                return over[0]
+            inside = over[0]
+        if self._finer_at(cwd, *inside[1:]) is not None:
+            return None
+        if self._asked_below(cwd, inside[0], inside[2]):
+            outer = self._recorded_root_of(cwd, prior, skip=inside[2])
+            if outer is not None and self._finer_at(cwd, *outer[1:]) is not None:
+                return None
+        if self.resolved_cwd.get(_norm(cwd)) is not None:
+            # The ladder ran here and D4 passed it over.
+            after = self._recorded_root_of(cwd, prior)
+            if after is not None and (after[0], after[2]) != (inside[0], inside[2]):
+                self.passed_over.setdefault(
+                    (_norm(after[0]), after[2]), (inside, self._root_at(cwd))
+                )
+        return inside
+
+    def _asked_below(self, cwd: str, root: str, checkout: str | None) -> bool:
+        """Whether `cwd` lies at a location of its own below `root`, a root
+        of `checkout`, whose project is still in question: an open
+        first-sight question about the checkout, as the ladder's ask leaves
+        at a copy of a part's file. One table read, after the probe's root."""
+        at = self._root_at(cwd)
+        return (
+            checkout is not None
+            and at is not None
+            and at != _norm(root)
+            and any(
+                pr.kind == mb.FIRST_SIGHT for pr in self.model._open_proposals(checkout)
+            )
+        )
+
+    def _root_at(self, cwd: str) -> str | None:
+        """The root of the location `cwd`'s probe found: a repository's
+        working tree, or a folder's nearest project file's directory."""
+        cap = self._probe(cwd, at_root=False).capture
+        return None if cap is None or cap.root is None else _norm(cap.root)
+
+    def _finer_at(
+        self, cwd: str, project: str, checkout: str | None
+    ) -> mb.Resolution | None:
+        """The ladder's resolution at `cwd`, a cwd inside a recorded root that
+        D4 homes to `project` and `checkout`, where it names a part or a
+        sub-project of `project` (ENG-212): a part declared in that folder, a
+        folder project first seen below the root, a sub-project whose file lies
+        between the cwd and the repository's root. A session there resolves to
+        it, the most specific project, so it wins over D4. The ladder runs only
+        where the project files the probe found at `cwd` can place it there
+        (`_finer_files`), so the root's own folders cost no resolution and
+        register nothing; once for each cwd and D4 home. None where it does not
+        run or places the cwd in no part of `project` (a copy of a part's file,
+        which it asks about: what it wrote stays, as a session's first sight
+        there writes it, and `_d4_home` keeps D4 for the records after it), and
+        D4 holds. The probe of `cwd` is the one `prefetch` read; a run inside
+        its caller's own transaction (no entry point's) reads it there,
+        bounded."""
+        key = (_norm(cwd), project, checkout)
+        if key not in self.finer:
+            self.finer[key] = None
+            probe = self._probe(cwd, at_root=False)
+            cap = probe.capture
+            if (
+                probe.state == LIVE
+                and cap is not None
+                and self._finer_files(self._location(cap), project, checkout)
+            ):
+                res = self._resolved_at(cwd)
+                if res is not None and self._part_of(res.project, project):
+                    self.finer[key] = res
+        return self.finer[key]
+
+    def _finer_files(
+        self, loc: mb.Location, project: str, checkout: str | None
+    ) -> bool:
+        """Whether the ladder may place `loc` in a part or a sub-project of
+        `project`, read from its project files and the tables, as the ladder
+        reads them:
+
+        - its own file (a folder's, or a repository's at its root) is bound
+          to such a part;
+        - a folder's own file is bound to none yet, and the nearest enclosing
+          file bound to a project names `project` or a part of it: the ladder
+          makes each unbound file between them a folder project inside the
+          next one up (`_enclosing`), and this one inside the innermost;
+        - the repository is D4's checkout's (`_same_repository`), and of the
+          files nested in it, between the cwd and its root, none is bound
+          outside `project`'s tree and one is bound to none yet or to a part:
+          the ladder makes or finds the sub-project (`_subproject`). A nested
+          file bound outside the tree opens a question on that checkout
+          there, which every session in it is then asked, so it is left to
+          D4.
+
+        A file bound outside `project`, and a repository of its own below the
+        root, are left to D4."""
+        bound = self.model._file_binding
+        own = loc.root_file
+        mine = bound(own.id) if own is not None else None
+        if self._part_of(mine, project):
+            return True
+        if loc.kind == mb.FOLDER:
+            if own is None or mine is not None:
+                return False
+            near = next(
+                (b for f in loc.enclosing_files if (b := bound(f.id)) is not None),
+                None,
+            )
+            return self._part_of(near, project, itself=True)
+        nested = [bound(f.id) for f in loc.nested_files]
+        if all(b == project for b in nested) or any(
+            b is not None and not self._part_of(b, project, itself=True) for b in nested
+        ):
+            return False
+        return self._same_repository(loc, checkout)
+
+    def _same_repository(self, loc: mb.Location, checkout: str | None) -> bool:
+        """Whether the ladder may find `checkout`, this machine's, for
+        `loc`, by the objects its rungs compare: `loc`'s git directory
+        with the checkout's (``object``, `Membership._by_object`); its
+        object store with the checkout's object store or git directory (a
+        linked worktree joins there, ``common_object``, `_by_common`); its
+        working tree's root with a folder checkout's folder (``git init`` in
+        a folder project, ``rekeyed:F+O``, `_folder_became_repository`).
+        Each pair is one where they are not told apart: without birth time
+        they compare unproven, and the ladder decides."""
+        if checkout is None:
+            return False
+        try:
+            k = self.model.checkout(checkout)
+        except KeyError:
+            return False
+
+        def near(a: mb.ObjectKey | None, b: mb.ObjectKey | None) -> bool:
+            return a is not None and b is not None and a.compare(b) != DIFFERENT
+
+        return k.machine == self.machine and (
+            near(k.object_key, loc.object_key)
+            or near(k.common_object_key, loc.common_object_key)
+            or near(k.object_key, loc.common_object_key)
+            or (k.kind == mb.FOLDER and near(k.object_key, loc.root_object_key))
+        )
+
+    def _part_of(
+        self, found: str | None, project: str, *, itself: bool = False
+    ) -> bool:
+        """Whether `found` is a part or a sub-project of `project`, at any
+        depth (`Membership.chain_of`), or with `itself` `project` too."""
+        if found is None:
+            return False
+        found = self._canon(found)
+        return (itself or found != project) and project in self.model.chain_of(found)
 
     def _resolved_at(self, cwd: str) -> mb.Resolution | None:
         key = _norm(cwd)
