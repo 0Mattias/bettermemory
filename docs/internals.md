@@ -520,7 +520,7 @@ fact:
 
 | Code | The witness | Read from | Alone |
 | --- | --- | --- | --- |
-| O | the same git-directory object (device, inode, birth time), or a folder checkout's folder | `stat` of the git directory; without birth time, confirmed by the token, else the last HEAD held, else the init stamps by equality | the same checkout: silent |
+| O | the same git-directory object (device, inode, birth time), or a folder checkout's folder | `stat` of the git directory; without birth time, confirmed by the token or a re-mint that names it, else the last HEAD held, else the init stamps by equality | the same checkout: silent |
 | S | the same object store | the common directory's object (a linked worktree) | another checkout of the project: silent |
 | H | holds witness commits of the project | the project's bounded witness set, asked of the history reader in one batch | one witness: asks once |
 | Hf | holds commits with a witness's fingerprint (sha256 of the author and committer lines and the message) | the repository's commits, where no witness commit is held | with H and Hb, one history witness |
@@ -676,7 +676,8 @@ bettermemory checkout token v1
 0XNK4RY1ZCMBN31P1J2EN2STQP
 ```
 
-The second line is 26 random Crockford base-32 characters (130 bits).
+The second line is 26 Crockford base-32 characters (130 bits), random
+as `write` makes them (a re-mint's half are derived, below).
 git keeps `info/` local: `git status` never shows the file, `git clone`
 never copies it, and git's maintenance leaves it; whatever copies a git
 directory copies it. `checkout_token.write` puts a token in place only
@@ -684,16 +685,187 @@ where none is: the bytes go to a temporary file in `info/`, flushed, then
 hard-linked to the name (CreateHardLinkW on Windows), so of two writers
 exactly one succeeds and both read the same token; where hard links are
 refused, an exclusive create, and a reader that finds the file empty or
-cut short reads it once more. Before it makes its temporary file it
-removes `info/bettermemory.tmp-*` files older than an hour, and nothing
-else. `remint` replaces the token, for a checkout that leaves its line
+cut short reads it once more. Once it has made its temporary file it
+removes `info/bettermemory.tmp-*` files last modified more than an hour
+before that file, and nothing else: both times are the filesystem's
+(`checkout_token._fs_now` sets the file's time to now there, which NFS
+takes from the server; an SMB client may send its own), so a client
+whose clock runs ahead of an NFS share's leaves a live writer's files.
+`remint` replaces the token, for a checkout that leaves its line
 (`project new`, or a superseded token).
 
+A re-mint names what it replaces (ENG-205). Its writer is given the
+checkout's lineage as the store records it, the token and the git
+directory's device and inode number (`checkout_token.Lineage`): the
+daemon's and the CLI's in-process writers take it from the checkout,
+and the daemon's re-mint question in the witness exchange names it to
+the hook client (``replacing``, null where the store records no token
+or object for the checkout, which names none; asked by a daemon before
+9.0.0rc18, whose question has no ``replacing``, the client names the
+token and object it captured). The new token's first 13 characters are
+random and the last 13 are derived from them and the lineage
+(`checkout_token.successor`: BLAKE2b over the token, the device and
+inode number and the random half, each length-prefixed, the numbers
+decimal, so no two lineages hash one text), in the version 1 form, so
+every reader reads it as any token. A lineage names no machine: where a
+Linux bind mount shows a host and a container one git directory at one
+device and inode number, both machines' records of it read a re-mint
+either side makes as their own, as both read the one token file.
+
+What a re-mint that names its lineage leaves in place, writing nothing
+and reporting it as `exists`, depends on its caller. A hook client
+(`location_witness.remint_answer`, and its re-mint after the final
+reply) and a resolution this process reads itself (`location._caller`)
+read the token moments before, so they leave any token but the one they
+replace: another session's re-mint since, of this release (`succeeds`)
+or of an older client, which names nothing. A declaration
+(`declare.declaring_model`: `project new`, the agent's `separate`) acts
+on the store's record and has not read the file, so it passes
+`only_siblings`: it leaves only another re-mint of the lineage and
+replaces anything else, a token copied in from another checkout among
+them. The store records a token left in place only where it is a re-mint
+of the checkout's own (`membership._foreign`); any other leaves the
+checkout superseded and is left to the sighting that reads it, so a
+re-mint never gives a checkout another line's token. Its row says
+`written` only of a token it wrote, and `project new` says so. It reads
+and renames under a claim, `info/bettermemory.tmp-claim`: a file already
+holding the holder's nonce, hard-linked to that name, so no waiter reads
+a claim empty while it is made (where links are refused, an exclusive
+create and a write), removed by the holder only while it holds that
+nonce. A re-mint finding it waits up to 1.5 s. A claim holding one nonce
+through the whole wait was left by a re-mint killed holding it: of the
+waiters that found it so, the one that creates
+`info/bettermemory.tmp-break-`, a digest of that nonce and a generation,
+exclusively, removes it while it still holds that nonce, and each takes
+the claim once more; whoever does not get it finds the re-mint
+(`exists`) or writes nothing (`skipped:contended`), and the store keeps
+a superseded checkout superseded, to ask again. A break mark more than 5
+s older than a file the waiter just stamped (the filesystem's clock: a
+break takes 0.14 ms median and 5.6 ms at most over 2,000 on APFS, and
+FAT keeps times to 2 s) was left by a breaker killed holding it, and the
+waiter takes the next generation, so that claim is broken at the next
+re-mint, not an hour on when `_sweep` removes both. Something other than
+a regular file at the claim's name (a directory, a link) can never be
+taken: a re-mint says so at once (`failed:claim_blocked`), waits for
+nothing, and, as any failed write, takes a superseded checkout out of
+superseded (decision B15): it keeps the token it holds and is not asked
+again. `_sweep` removes a link there an hour on; a directory stays until
+it is removed by hand. Only a holder stalled past the wait can lose its
+claim to a breaker while it still renames, and both write; and a breaker
+stalled more than 5 s between its read of the claim and its removal
+removes the claim of the waiter that broke after it, so that waiter
+loses its claim and both write. A claim's wait is inside the store
+transaction of an in-process re-mint: the ladder decides the re-mint in
+that transaction, and a claim taken before it would be held through the
+wait for the store's lock, long enough for another waiter to break it
+live. Between processes on one store only one holds that transaction, so
+a host re-mint waits there only for a claim a killed re-mint left, once,
+or a container's client on a bind mount. On Windows a claim is read
+without FILE_SHARE_DELETE, so a holder's release (or the removal of the
+file it linked to the claim's name, which `_sweep` then removes an hour
+on) can fail while a waiter reads it, and the claim is then broken by
+the next re-mint after its wait; a re-mint whose create meets the
+claim's name pending deletion fails (`failed:readonly`), and the next
+sighting reads the other's token as the checkout's re-mint. So of two
+exchanges asked to re-mint one token (two sessions prompting at once),
+the second writes nothing, and its hook client posts a fresh capture,
+which holds the first's token, with its answer
+(`location_witness.remint_refused`). Where that capture records the
+re-mint before the first exchange's own round arrives, that round's
+capture is older than the file: the daemon reads it with the token the
+client wrote, as a checkout of its machine at its object already records
+that token (`AnsweredToken.located`, an indexed read by token).
+
+A resolution this process reads itself (`location._caller`: a hook the
+daemon reads, the CLI, MCP) captures the cwd before its store
+transaction, so two of one superseded checkout, in one process or two,
+could capture its one token, and the second, after the first re-minted
+and committed, resolved a capture the store no longer matched: with
+birth time the checkout took back the superseded token until its next
+sighting; without it, a second checkout and a question (ENG-214). In its
+transaction the model reads the token again where a checkout of the
+machine is recorded at the capture's object and none records the
+capture's token (`membership_resolve._token_now`), and resolves with the
+token the file holds. The other resolution wrote the file in its own
+transaction, which committed before this one began, so the read sees the
+file as the store records it, whichever process made it. It is made in
+each attempt's transaction, so a resolution run again after git is asked
+with no store lock held (`NeedIndependent`, ENG-203) reads it again. The
+read is bounded by `PROBE_BUDGET`, the file's stat included
+(`_token_read`), and never fetches a token file a provider holds
+elsewhere (D19); where it does not answer (the file evicted, or a read
+slower than `PROBE_BUDGET`), the capture's token stands: with birth time
+the checkout takes the stale token back until its next sighting, without
+it a second checkout and a question, as before this read. A
+capture from another machine is not read again. A steady sighting finds
+its token recorded and reads nothing; a model that reads a client's
+answers (`Membership.reads_here` false) never reads, the claim and
+`AnsweredToken.located` ordering a client's re-mints. The read decides,
+not the store: a checkout recording a re-mint of the capture's token is
+also what a fresh capture meets where the file was put back to the older
+token, or, without birth time, where a copy of the line landed on the
+freed inode number (E15). The ENG-206 re-capture runs before the
+location lock is taken, so the lock is the resolved location's.
+
+A hook client before 9.0.0rc18 re-mints at random, without the claim or
+the compare. Where it re-mints first, a client of this release that
+re-mints the checkout next finds its token, writes nothing and posts a
+fresh capture: one checkout, whichever round the store records first.
+Where it re-mints second, it renames over this release's re-mint
+without reading it, and its round registers a second checkout and asks.
+The store cannot tell that token for the checkout's: it names nothing,
+and reading a capture's token as the checkout's because the checkout
+records a re-mint of it would take a copy of the line put at the
+checkout's old path, on a reused inode number, for the checkout. A
+daemon before 9.0.0rc18 records every re-mint answer as it did: a
+client's `skipped:contended` takes the checkout out of superseded there,
+as a failed write does, so it is not asked to re-mint again, and an
+`exists` answer's token is recorded as the checkout's, whichever it is.
+
+The store may still miss a re-mint: a crash between the in-process
+write and the commit, or an exchange that ends after the client wrote
+the token. The re-mint is the last question a resolution asks and the
+round that answers it settles while the store stands still; a post that
+fails, or a store changed between the rounds so that the answering
+round asks again, ends one there. The token then found at the
+checkout's object is one the store never recorded, and
+`checkout_token.succeeds` reads it as the checkout's own re-mint,
+whether the store records the token as current or superseded: witness O
+without birth time, a view's liveness and B take it (`continuity`
+returns `remint`, the rule reads `object+remint`), and the sighting
+records it. In rung 2 such a checkout yields to a later record at the
+object that birth time continues or that records the token found, and
+to no other, so of two records of one git directory (as a reader before
+9.0.0rc18 leaves them after missing a re-mint) the one that records the
+token found is resolved. A
+token not minted from that lineage (a fresh one, one planted without
+knowledge of the recorded token, the same token re-minted in another
+git directory, as a copy that carried it is) passes with probability
+2^-65, so a fresh clone on the freed inode number (E15), a re-clone at
+the old path and a copied tree are refused as before. The link has no
+key: whoever knows the recorded token and can stat the git directory
+can make a token that passes, which for a superseded token decides at
+once where planting the token itself leaves the object to the last
+HEAD. A key the hook client held would close nothing: whoever can write
+a git directory runs code as its owner through git's hooks. A re-mint
+made before 9.0.0rc18 names nothing. A superseded checkout's git
+directory holding a token it does not name (a hook client before
+9.0.0rc14 re-mints so after the final reply) is left to the last HEAD,
+then the init stamps, so it is the checkout's until that commit is
+pruned (a rebase alone keeps it in the reflog for weeks); and a
+superseded checkout's git directory holding no token is not the
+checkout, since a re-mint never removes one (ENG-193).
+
 A read is `present`, `absent`, `malformed` or `unreadable`. A write is
-`written`, `exists` (a token was there, never replaced), `malformed` (a
-file that is no token, left as it is), `skipped:bare`,
+`written`, `exists` (a token was there, never replaced; for a re-mint
+naming its lineage, any token in place but the one it replaces, or
+for a declaration's, another re-mint of that lineage),
+`malformed` (a file that is no token, left as it is), `skipped:bare`,
 `skipped:foreign_owner` (another OS user owns the git directory),
-`skipped:policy` (`write_token = false`), `failed:readonly` (EACCES,
+`skipped:policy` (`write_token = false`), `skipped:contended` (a
+re-mint's claim stayed other re-mints' through the wait; the checkout
+stays superseded), `failed:claim_blocked` (no regular file at the
+claim's name; nothing waited for), `failed:readonly` (EACCES,
 EPERM, EROFS) or `failed:io`. A skipped or failed write is named in the
 first-sight line (L1, L2). A checkout's `token_status` also reads
 `superseded` when the migration registered it with a token its history

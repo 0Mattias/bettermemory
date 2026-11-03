@@ -1623,10 +1623,14 @@ def _membership_rounds(
     checkout token under the policy the daemon names, decision D11),
     opens its own machine (`machine.open_machine`) and answers each
     question about its repository from its own files (`location.answer`),
-    and posts again; at most `location_git.EXCHANGE_ROUNDS` rounds. A final
-    reply asking for a re-mint (``membership.remint``) re-mints the token
-    of the checkout captured here (design 3.3). The daemon never reads
-    the client's paths.
+    and posts again; at most `location_git.EXCHANGE_ROUNDS` rounds. A
+    re-mint question it answers finding another session's re-mint in
+    place of the token replaced (`location_witness.remint_refused`) posts
+    a fresh capture with the answers, so the round reads the file as it
+    is (ENG-205). A final reply asking for a re-mint
+    (``membership.remint``) re-mints the token of the checkout captured
+    here (design 3.3), naming the token it replaces, where the file still
+    holds that one (ENG-205). The daemon never reads the client's paths.
 
     A first reply that asks nothing returns at once, before `location` is
     imported: no round runs and nothing is captured, so no re-mint can
@@ -1635,7 +1639,7 @@ def _membership_rounds(
     said = reply.get("membership")
     if not isinstance(said, dict) or not isinstance(said.get("ask"), dict):
         return reply
-    from . import checkout_token, location
+    from . import checkout_token, location, location_witness
 
     capture: location.Capture | None = None
     policy = False
@@ -1658,6 +1662,11 @@ def _membership_rounds(
         else:
             answers = location.answer(question, answers, capture)
             payload["answers"] = answers
+            if location_witness.remint_refused(question, answers):
+                # Another session re-minted the checkout first and the
+                # file holds its token: post what the file holds (ENG-205).
+                capture = location.capture(cwd, write_token=policy, use_cache=False)
+                payload["location"] = capture.to_token()
         reply = post(
             state["port"],
             state["token"],
@@ -1673,7 +1682,12 @@ def _membership_rounds(
         and capture.git_dir
     ):
         checkout_token.remint(
-            capture.git_dir, policy=policy, bare=capture.kind == location.BARE
+            capture.git_dir,
+            policy=policy,
+            bare=capture.kind == location.BARE,
+            replacing=checkout_token.lineage(
+                capture.token or capture.token_written, capture.object_key
+            ),
         )
     return reply
 

@@ -187,6 +187,179 @@ no schema step.
   `src/bettermemory/membership.py`, `src/bettermemory/membership_records.py`,
   `src/bettermemory/membership_resolve.py`)
 
+- **A re-minted checkout token names the token it replaced, so a
+  re-mint the store missed is known without birth time whatever the
+  store records (ENG-205, ENG-214).** The fix above reads a missed
+  re-mint for a checkout the store records as superseded, by the last
+  HEAD or the init stamps. One of 9.0.0rc14's three windows reaches a
+  checkout the store records as current: `project new` (the CLI's, or
+  the agent's `separate`) re-mints the token inside the declaration's
+  transaction, and an error or a crash between that write and the commit
+  rolls the store back with the file already new. Without birth time the old
+  token, current, still decided: the next sighting registered a second
+  checkout of the same git directory and asked about it, and the re-key
+  of the checkout restored at its path (B) refused it. A superseded
+  checkout whose re-mint the store missed went the same way once its
+  last HEAD was rewritten and pruned away. A re-mint now names what it
+  replaces: of its 26 characters, 13 are random and 13 are derived from
+  them, the token replaced and the device and inode number of the git
+  directory (BLAKE2b over the three and the random half, each field
+  length-prefixed and the numbers decimal, so no two lineages hash one
+  text), and the file keeps the version 1 form every reader reads. Each
+  writer names the lineage the store records: the daemon's and the CLI's
+  in-process writers, and a container's hook client, which the daemon's
+  re-mint question now tells (asked by a daemon before 9.0.0rc18, whose
+  question has no `replacing`, it names the token and object it
+  captured, which are those it posted). Witness O without birth time, a
+  view's liveness (the daemon's read and the client's answer) and B read
+  a token that names the recorded token and object as the checkout's own
+  re-mint, and the sighting records it, silently (rule `object+remint`);
+  a checkout that records the token found exactly, or that birth time
+  continues, outranks one the token continues only as its re-mint, and
+  no other does (two records of one git directory, as a reader before
+  9.0.0rc18 leaves them after missing a re-mint). A token
+  not minted from that lineage (a fresh one, one planted without
+  knowledge of the recorded token, the same token re-minted in another
+  git directory as a copy that carried it is) passes with probability
+  2^-65, so a fresh clone on the freed inode number (E15), a re-clone at
+  the old path and a copied tree are refused as before. The link has no
+  key: whoever knows the recorded token and can stat the git directory
+  can make a token that passes, and for a superseded token that decides
+  at once, where planting the token itself leaves the object to the last
+  HEAD. A key the hook client held would close nothing, since whoever
+  can write a git directory runs code as its owner through git's hooks.
+  Two sessions prompting at once in one checkout were both asked to
+  re-mint its one token, and the second re-mint replaced the first's:
+  its round read its older capture as a first sight, a second checkout
+  and a question. Two resolutions the daemon or the CLI read for
+  themselves went the same way without birth time, the second resolving
+  a capture taken before the first's re-mint (ENG-214). A re-mint that
+  names its lineage now reads and renames under a claim in `info/`: a
+  file holding its holder's nonce, linked to its name so that no waiter
+  reads it empty while it is made, and which only that holder removes. A
+  claim holding one nonce through a 1.5 s wait was left by a re-mint
+  killed holding it; one waiter breaks it, and the others find the
+  re-mint or give way. A breaker killed in turn leaves its break mark;
+  once that mark is more than 5 s older by the filesystem's clock (a
+  break takes milliseconds; FAT keeps times to 2 s), the next waiter
+  takes the next one, so the claim is broken at the next re-mint, not an
+  hour on. Something other than a file at the claim's name (a directory)
+  fails a re-mint at once (`failed:claim_blocked`), with no wait, and,
+  as any failed write, takes the checkout out of superseded: it keeps
+  the token it holds and is not asked again. A re-mint kept from the
+  claim writes nothing and leaves the checkout superseded, to be asked
+  again (`skipped:contended`). Temporary files in `info/` are aged
+  against one the writer has just made, stamped by the filesystem (on
+  NFS, the server's clock), so a client whose clock runs ahead of an NFS
+  share's no longer removes a live writer's. What a re-mint leaves in
+  place depends on its caller. A hook client and a resolution in the
+  daemon or the CLI read the token moments before, so they leave any
+  token but that one and report it (`exists`): another session's re-mint
+  since, of this release or an older one. A declaration (`project new`,
+  the agent's `separate`) acts on the store's record, not the file, so
+  it leaves only another re-mint of the lineage and replaces any other
+  token, one copied in from another checkout among them (so `project
+  new` still gives the checkout a token of its own, and says whether it
+  wrote one). The checkout records a token left in place only where it
+  is a re-mint of its own; any other is left to the sighting that reads
+  it, so a re-mint never gives a checkout another line's token. Finding
+  another session's re-mint, the hook client posts a fresh capture,
+  which holds it, with its answer; where that capture records the
+  re-mint before the first exchange's own round arrives, that round, its
+  capture older than the file, is read with the token it wrote. A
+  resolution in the daemon or the CLI whose capture meets, in its
+  transaction, a checkout at its object that records another token reads
+  the token again there and resolves with the token the file holds. A
+  holder stalled past the wait can still lose its claim to a breaker
+  while it renames, and both write. A breaker stalled more than 5 s
+  between its read of the claim and its removal removes the claim of the
+  waiter that broke after it, so that waiter loses its claim and both
+  write. On Windows a claim is read without FILE_SHARE_DELETE, so a
+  holder's release can fail while a waiter reads it (the next re-mint
+  breaks it after its wait), and a re-mint meeting the claim's name
+  pending deletion fails (`failed:readonly`); the next sighting reads
+  the other re-mint's token as the checkout's.
+
+  Which orders hold, by caller: two hook clients of this release
+  re-minting one checkout at once leave it one checkout and one token in
+  either order, whichever round the store records first, and so do two
+  resolutions, in one process or two. Where a hook client of 9.0.0rc14
+  to rc17 re-mints first, a client of this release that re-mints next
+  finds its token, writes nothing and posts what the file holds: one
+  checkout, silently, whichever round is recorded first. Where the older
+  client re-mints second, it renames its token over this release's
+  re-mint without reading it, and its round registers a second checkout
+  of the git directory and asks. The store cannot tell that client's
+  token for the checkout's: it names nothing, and taking a capture's
+  token as the checkout's because the checkout records a re-mint of it
+  would take a copy of the line put at the checkout's old path for the
+  checkout.
+
+  Across processes, the claim and compare hold as in one: of two
+  re-mints of one token, in any processes, exactly one writes. A
+  resolution whose capture predates another's re-mint, in its own
+  process or another (the CLI beside the daemon, two CLI commands),
+  reads the token again inside its store transaction, where a checkout
+  at the capture's object records another token than the capture's. The
+  other resolution wrote the file in its transaction and committed
+  before this one began, so the read sees the file the store records:
+  with birth time and without, the resolution finds the checkout by the
+  token the other wrote, silently, with no second checkout or question.
+  Before, with birth time the checkout took back the older token, which
+  the line it was separated from still carries, until its next sighting;
+  without birth time a second checkout of the git directory and a
+  question. The read is bounded by the probe budget (0.5 s), the file's
+  stat included, so a hung mount holds the store's write lock no longer
+  than that, and never fetches a token file a provider holds elsewhere;
+  where it does not answer (the file evicted, or a read slower than
+  0.5 s), the capture's token stands, as before: with birth time the
+  checkout takes the stale token back until its next sighting, without
+  it a second checkout and a question. A resolution run again after git is asked with no store lock held
+  (ENG-203) reads the token again in its next transaction. A capture
+  from another machine, or one a model reads from a hook client's
+  answers, is not read again. A steady prompt reads nothing more: its
+  token is recorded at its object, and the check costs about 0.03 ms a
+  resolution (measured on macOS). The read, not the store, decides: a
+  checkout recording a re-mint of the capture's token is also what a
+  fresh capture meets where the file was put back to the older token (a
+  restored `.git`), or, without birth time, where a copy of the line
+  landed on the freed inode number (E15).
+
+  Mixed versions: a daemon before 9.0.0rc18 asks the re-mint question
+  without `replacing`, and a client of this release names the token and
+  object it captured, which are those it posted, under the same claim
+  and compare. Such a daemon records every answer as it did. A
+  `skipped:contended` answer (another re-mint held the claim) takes the
+  checkout out of superseded there, as a failed write does: the daemon
+  does not ask for a re-mint again, and the checkout keeps the token
+  replaced as current until a sighting records the token the other
+  re-mint wrote; where that re-mint's round is lost, the next sighting
+  without birth time registers a second checkout. An `exists` answer's
+  token is recorded there as the checkout's, whichever token it is. Of
+  the other two windows: an exchange cannot run out of rounds after the
+  client re-minted while the store stands still, since the re-mint is
+  the last question a resolution asks and the round that answers it
+  settles; a post that failed, or a store changed between the rounds so
+  that the answering round asks again, can end one there, and the store
+  keeps the token replaced until the next prompt reads the file's token
+  as the checkout's re-mint (exercised for a checkout recorded as
+  superseded on another machine, a container's separated on the host,
+  its last HEAD rewritten and pruned away). A hook client before
+  9.0.0rc14 re-mints after the final reply a token that names nothing,
+  which the fix above knows by its last HEAD alone: amending or rebasing
+  that commit is not enough to lose it, since git's reflog keeps it for
+  weeks and a plain gc keeps what the reflog holds, but once it is
+  pruned (an expired reflog and a gc) the next prompt registers a second
+  checkout of the git directory. A re-mint an older CLI made names
+  nothing too, so one cut off there, with the token recorded as current
+  and no birth time, still registers a second checkout. The store takes
+  no schema step: it records the token as before.
+  (`src/bettermemory/checkout_token.py`, `src/bettermemory/location.py`,
+  `src/bettermemory/location_witness.py`, `src/bettermemory/membership.py`,
+  `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_resolve.py`, `src/bettermemory/declare.py`,
+  `src/bettermemory/_daemon_client.py`, `src/bettermemory/cli/project_cmd.py`)
+
 - **A `.git` file naming a `--separate-git-dir` directory is followed
   only from its recorded working tree (ENG-206).** Since 9.0.0rc14 a
   `.git` file is followed only where git's own pointers say the folder

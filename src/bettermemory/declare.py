@@ -21,7 +21,11 @@ def declaring_model(
 ) -> Membership:
     """`Membership.open` for a declaration: the process's machine identity
     and a token writer under the ``[membership] write_token`` policy that
-    writes only in this machine's checkouts."""
+    writes only in this machine's checkouts, each token naming the one it
+    replaces, so a declaration cut off between the write and its commit
+    leaves a token the store knows for the checkout's (ENG-205). Having
+    read the store, not the file, it replaces any token there but another
+    re-mint of the same one (`checkout_token.remint`, `only_siblings`)."""
     from . import checkout_token, location
     from .membership import BARE, Membership
 
@@ -31,7 +35,13 @@ def declaring_model(
     def write_token(k: Checkout) -> tuple[str | None, str]:
         if k.git_dir is None or k.machine != identity.id:
             return None, "skipped:other_machine"
-        wrote = checkout_token.remint(k.git_dir, policy=policy, bare=k.kind == BARE)
+        wrote = checkout_token.remint(
+            k.git_dir,
+            policy=policy,
+            bare=k.kind == BARE,
+            replacing=k.lineage,
+            only_siblings=True,
+        )
         return wrote.token, wrote.status
 
     return Membership.open(store, identity, token_writer=write_token, session=session)

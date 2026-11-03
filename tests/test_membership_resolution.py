@@ -362,7 +362,11 @@ class Lab:
             if k.git_dir is None or k.machine != me.id:
                 return None, "skipped:other_machine"
             wrote = checkout_token.remint(
-                k.git_dir, policy=policy, bare=k.kind == membership.BARE
+                k.git_dir,
+                policy=policy,
+                bare=k.kind == membership.BARE,
+                replacing=k.lineage,
+                only_siblings=True,
             )
             return wrote.token, wrote.status
 
@@ -3323,7 +3327,11 @@ class Container:
         return path
 
     def token(self, cap: location.Capture) -> dict[str, Any]:
-        raw = cap.to_token()
+        return self.posted(cap.to_token())
+
+    def posted(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """`raw`, a location token as `Capture.to_token` writes it, as the
+        container posts it (changed in place)."""
         for name in ("cwd", "root", "git_dir", "common_dir"):
             if isinstance(raw[name], str):
                 raw[name] = self._inside(raw[name])

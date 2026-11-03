@@ -166,6 +166,7 @@ from .location_witness import (
     AnsweredToken as AnsweredToken,  # resolve_hook's witness path, below
     NeedWitnesses as NeedWitnesses,  # tests/test_membership_resolution.py
     asked_views as asked_views,  # answer's view questions, below
+    remint_answer as remint_answer,  # answer's re-mint question, below
 )
 
 if TYPE_CHECKING:
@@ -1011,6 +1012,7 @@ def continuity(
     holds: Callable[[Sequence[str]], Collection[str]],
     confirms: Callable[[], bool] | None = None,
     superseded: bool = False,
+    reminted: Callable[[], bool] | None = None,
 ) -> tuple[bool, str]:
     """Witness O where birth time cannot decide (design 2.2, decision
     B18): an object with the recorded device and inode number continues
@@ -1021,15 +1023,20 @@ def continuity(
     none of those can be read (a folder project has none), when another
     witness confirms the same object (`confirms`: F for a folder project,
     S or H for a repository; decision B20). Returns whether it continues
-    and the witness that decided (``token``, ``last_head``,
+    and the witness that decided (``remint``, ``token``, ``last_head``,
     ``init_stamps``, ``same_object`` or ``nothing_observable``). Rung 2
     of the model (`membership.Membership._by_object`) and the liveness of
-    a view (`view_state`) both apply this one rule. A `superseded` token
-    (B15) may be re-minted with the store not told (ENG-153), and a re-mint
+    a view (`view_state`) both apply this one rule. A token there that
+    names the recorded one as the token it replaced in this git directory
+    (`reminted`: `checkout_token.succeeds`) is the checkout's re-mint,
+    which the store missed (ENG-205). A `superseded` token (B15) may be
+    re-minted with the store not told (ENG-153), and a re-mint
     never removes a token: a git directory holding none (`token_here`, one
     found there) is not the checkout (E15), and one holding any is left to
     the witnesses below, the superseded token deciding only where none can
     be read (ENG-193)."""
+    if token and token_here not in (None, token) and reminted and reminted():
+        return True, "remint"
     if token and superseded:
         if not token_here:
             return False, "token"
@@ -1071,8 +1078,9 @@ def view_state(
 ) -> str:
     """What `path` holds now, read in this namespace: ``live`` (the
     checkout's object: its birth time, or with no birth time on one side
-    `continuity` over the token, the last HEAD and the init stamps read
-    there against the checkout's (a `superseded` one as it reads one), and
+    `continuity` over the token (or its re-mint in the recorded `key`'s
+    git directory), the last HEAD and the init stamps read there against
+    the checkout's (a `superseded` one as it reads one), and
     where none of those can be read the folder's project file (F) or a
     linked worktree's object store (S, the recorded `common_key`)
     confirming the same object, decision B20),
@@ -1113,16 +1121,19 @@ def view_state(
         )
         return "live" if ok else "replaced"
     common, linked = _common_of(git_dir)
+    found = checkout_token.read(git_dir).token
+    recorded = checkout_token.lineage(token, key)
     ok, _how = continuity(
         token,
         last_head,
         stamps,
-        token_here=checkout_token.read(git_dir).token,
+        token_here=found,
         head_here=_head_at(git_dir, common, None if kind == BARE else path),
         stamps_here=_init_stamps(git_dir),
         holds=RepositoryHistory(common).holds,
         confirms=lambda: linked and _same_number(object_key(common), common_key),
         superseded=superseded,
+        reminted=lambda: checkout_token.succeeds(found, recorded),
     )
     return "live" if ok else "replaced"
 
@@ -1218,13 +1229,14 @@ def answer(
     (review M G4); asked about more views at once, a round meets such a
     view more often. Asked to re-mint its checkout token (``remint``,
     ENG-153), it writes a fresh one under the question's policy, once per
-    exchange, and answers the token and status, which the daemon records
-    in the resolution's transaction (`AnsweredToken`); ``remint_ok`` says
-    it answers that question."""
+    exchange, naming the token it replaces, unless another session's
+    re-mint replaced that first (`remint_answer`, ENG-205), and answers
+    the token and status, which the daemon records in the resolution's
+    transaction (`AnsweredToken`); ``remint_ok`` says it answers that."""
     out: dict[str, Any] = {k: v for k, v in answers.items()}
     out["remint_ok"] = True
     if question.get("remint") and "remint" not in out:
-        out["remint"] = _remint_here(cap, policy=bool(question.get("write_token")))
+        out["remint"] = remint_answer(cap, question)
     history = (
         RepositoryHistory(cap.common_dir)
         if cap.common_dir and cap.state == REPO
@@ -1281,15 +1293,6 @@ def answer(
         views[path] = "unreachable" if unread else str(state)
     out["views"] = views
     return out
-
-
-def _remint_here(cap: Capture, *, policy: bool) -> dict[str, Any]:
-    """The client's re-mint of the checkout token of its capture, as it
-    answers it."""
-    if not cap.git_dir:
-        return {"token": None, "status": "skipped:no_git_dir"}
-    wrote = checkout_token.remint(cap.git_dir, policy=policy, bare=cap.kind == BARE)
-    return {"token": wrote.token, "status": wrote.status}
 
 
 @dataclass(frozen=True)
@@ -1686,11 +1689,14 @@ def _caller(
 
     def write_token(k: Checkout) -> tuple[str | None, str] | None:
         # The caller's own checkout token, in this namespace, inside the
-        # resolution's transaction (ENG-153).
+        # resolution's transaction (ENG-153), naming its lineage (ENG-205).
         if not git_dir:
             return None
         made = checkout_token.remint(
-            git_dir, policy=config.membership.write_token, bare=bare
+            git_dir,
+            policy=config.membership.write_token,
+            bare=bare,
+            replacing=k.lineage,
         )
         wrote.append(made.token)
         return made.token, made.status
@@ -1894,9 +1900,10 @@ def resolve_hook(
     client answering each question of its repository (an `Exchange`
     names the next one); a re-mint is the client's to make, asked in the
     exchange and recorded in the resolution's transaction
-    (`AnsweredToken`, ENG-153), or after the final reply for a client
-    that cannot be asked (`Resolution.remint_token` stays set). Each
-    resolution is kept as the
+    (`AnsweredToken`, ENG-153; read as the client's token where another
+    session recorded it first, `AnsweredToken.located`, ENG-205), or after
+    the final reply for a client that cannot be asked
+    (`Resolution.remint_token` stays set). Each resolution is kept as the
     session's latest for the process's lifetime (decision B24), until the
     session is forgotten (`forget_session`) or crowded out."""
     raw = posted.get("location") if posted is not None else None
@@ -1945,15 +1952,14 @@ def resolve_hook(
         return Exchange({"location": True, "machine": True, "write_token": policy})
     given = posted.get("answers") if posted is not None else None
     answers: Mapping[str, Any] = given if isinstance(given, Mapping) else {}
-    model = _model(
-        store,
-        identity,
-        session,
-        liveness=AnsweredLiveness(answers),
-        token_writer=AnsweredToken(answers, posted=isinstance(given, Mapping)),
-    )
-    loc = to_location(
-        cap, machine=identity.id, session=session, history=AnsweredHistory(answers)
+    writer = AnsweredToken(answers, posted=isinstance(given, Mapping))
+    liveness = AnsweredLiveness(answers)
+    model = _model(store, identity, session, liveness=liveness, token_writer=writer)
+    loc = writer.located(
+        to_location(
+            cap, machine=identity.id, session=session, history=AnsweredHistory(answers)
+        ),
+        model,
     )
     try:
         with _location_lock(loc):

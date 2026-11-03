@@ -76,6 +76,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from . import (
+    checkout_token,
     membership_declare,
     membership_portable,
     membership_queries,
@@ -294,6 +295,13 @@ class Membership:
         #: write transaction by the resolution that wanted it (ENG-203):
         #: None where no resolution can read it outside its transaction.
         self._ancestry: dict[tuple[str, ...], frozenset[str] | None] | None = None
+
+    @property
+    def reads_here(self) -> bool:
+        """Whether the files a location names are read in this process's
+        namespace: the liveness is the default (`location.path_liveness`),
+        not a client's answers (`location.AnsweredLiveness`)."""
+        return self._liveness is _PATH_LIVENESS
 
     @classmethod
     def open(
@@ -839,8 +847,10 @@ class Membership:
             raise KeyError(checkout_id)
         return found[0]
 
-    def checkouts(self) -> list[Checkout]:
-        return self._checkouts()
+    def checkouts(self, *, token: str | None = None) -> list[Checkout]:
+        """Every checkout, or with `token` those recording it (an indexed
+        read, `checkouts_by_token`)."""
+        return self._checkouts(where=None if token is None else {"token": token})
 
     def _checkouts_of(self, project_id: str) -> list[Checkout]:
         """The project's checkouts, merges followed; a path written at
@@ -1061,18 +1071,23 @@ class Membership:
         of it, may have registered the checkout with that token (I34). A
         superseded token is read against the token found alone: its git
         directory holds one, so a token this capture had to write says
-        the object is another (E15; ENG-193)."""
+        the object is another (E15; ENG-193). A token there that names the
+        recorded token and object as the ones it replaced is the
+        checkout's re-mint the store missed (`checkout_token.succeeds`,
+        ENG-205); the sighting records it (`_observe`)."""
         superseded = k.token_superseded
+        here = _found_token(k, loc)
         return continuity(
             k.token,
             k.last_head,
             k.stamps,
-            token_here=loc.token if superseded else loc.token or loc.token_written,
+            token_here=here,
             head_here=loc.head,
             stamps_here=loc.stamps,
             holds=lambda commits: self._holds(loc, commits),
             confirms=lambda: self._confirms(k, loc),
             superseded=superseded,
+            reminted=lambda: checkout_token.succeeds(here, k.lineage),
         )
 
     def _confirms(self, k: Checkout, loc: Location) -> bool:
@@ -1097,10 +1112,17 @@ class Membership:
 
     def _by_object(self, loc: Location) -> tuple[Checkout | None, str]:
         """Rung 2, O: the checkout whose git directory (or folder) object
-        this is, on this machine."""
+        this is, on this machine, the first in order that birth time or
+        `_continuity` continues. One the token found continues only as the
+        re-mint of its own (``remint``, ENG-205) yields to a later one that
+        birth time continues or that records the token found, and to no
+        other: two records of one git directory, as a reader before
+        9.0.0rc18 leaves them after a re-mint it missed, resolve to the one
+        that records the token."""
         key = loc.object_key
         if key is None:
             return None, ""
+        reminted: Checkout | None = None
         for k in self._checkouts(
             where={
                 "machine": loc.machine,
@@ -1113,11 +1135,16 @@ class Membership:
             verdict = k.object_key.compare(key)
             if verdict == SAME:
                 return k, "birth"
-            if verdict == UNPROVEN:
-                ok, how = self._continuity(k, loc)
-                if ok:
-                    return k, how
-        return None, ""
+            if verdict != UNPROVEN or (
+                reminted is not None and k.token != _found_token(k, loc)
+            ):
+                continue
+            ok, how = self._continuity(k, loc)
+            if ok and (how != "remint" or reminted is not None):
+                return k, how
+            if ok:
+                reminted = k
+        return (reminted, "remint") if reminted is not None else (None, "")
 
     def _by_common(self, loc: Location) -> tuple[Checkout | None, str]:
         """Rung 3, S: a checkout of this object store (a linked
@@ -1587,40 +1614,63 @@ class Membership:
         (`Resolution.remint_token`); a writer asked for another machine's
         checkout (`OTHER_MACHINE_SKIP`, a declaration about a container's
         checkout made on the host) leaves it to that checkout's next
-        sighting there. Until then its status says its token is superseded
-        and every sighting asks again (decision B15)."""
+        sighting there, as does a re-mint whose claim other re-mints held
+        (`checkout_token.CONTENDED`, ENG-205). Until then its status says
+        its token is superseded and every sighting asks again (decision
+        B15). Another session's re-mint of the same lineage, found in place
+        (``exists``), is recorded as the checkout's token; any other token
+        found is left to the next sighting, which reads it, as a write
+        kept from the claim is (`_foreign`). The row says ``written`` only
+        of a token this writer wrote."""
         if k.git_dir is None or k.kind == BARE:
             return
         written = None if self._token_writer is None else self._token_writer(k)
-        if written is None or written[1] == OTHER_MACHINE_SKIP:
+        if (
+            written is None
+            or written[1] in (OTHER_MACHINE_SKIP, checkout_token.CONTENDED)
+            or _foreign(k, *written)
+        ):
             if k.token_status != SUPERSEDED:
                 self._put_checkout(dataclasses.replace(k, token_status=SUPERSEDED))
             if written is None:
                 self._remint = k.id
+            elif written[1] != OTHER_MACHINE_SKIP:
+                self._event(
+                    "token_reminted", checkout=k.id, status=written[1], written=False
+                )
             return
         token, status = written
         if token:
             self._put_checkout(dataclasses.replace(k, token=token, token_status=status))
         elif k.token_status == SUPERSEDED:
             self._put_checkout(dataclasses.replace(k, token_status=status))
-        self._event("token_reminted", checkout=k.id, status=status, written=bool(token))
+        self._event(
+            "token_reminted", checkout=k.id, status=status, written=status == "written"
+        )
 
     def token_written(self, checkout_id: str, token: str | None, status: str) -> None:
         """The caller wrote the token a resolution or declaration asked for
         (`Resolution.remint_token`, `Declared.remint_checkout`). A
         superseded checkout takes the status even when nothing was written
         (a policy that writes no token, a read-only git directory), so its
-        next sighting does not ask again (decision B15)."""
+        next sighting does not ask again (decision B15), except where other
+        re-mints held the claim (`checkout_token.CONTENDED`) or another
+        token than a re-mint of its own was found (`_foreign`): it stays
+        superseded, to be asked again."""
         with self._call():
             k = self.checkout(checkout_id)
-            if token:
+            kept = status == checkout_token.CONTENDED or _foreign(k, token, status)
+            if token and not kept:
                 self._put_checkout(
                     dataclasses.replace(k, token=token, token_status=status)
                 )
-            elif k.token_status == SUPERSEDED and status != SUPERSEDED:
+            elif k.token_status == SUPERSEDED and status != SUPERSEDED and not kept:
                 self._put_checkout(dataclasses.replace(k, token_status=status))
             self._event(
-                "token_reminted", checkout=k.id, status=status, written=bool(token)
+                "token_reminted",
+                checkout=k.id,
+                status=status,
+                written=status == "written",
             )
 
     # -- record counts -------------------------------------------------------------------
@@ -1775,6 +1825,24 @@ def portable_export(
     """`Membership.export_document` over `store`: no machine enters an
     export, so none is opened."""
     return Membership(store, "").export_document(record_ids)
+
+
+def _foreign(k: Checkout, token: str | None, status: str) -> bool:
+    """Whether a re-mint of `k` found in place of the token it replaces
+    (``exists``) one that is not a re-mint of `k`'s (`checkout_token.succeeds`):
+    a re-mint by a client before 9.0.0rc18, which names nothing, or a token
+    copied in from another checkout. A hook client's or resolution's
+    re-mint leaves any token it did not read (`checkout_token.remint`);
+    recording it here would give the checkout another line's token, so
+    the sighting that reads it decides (ENG-205)."""
+    return status == "exists" and not checkout_token.succeeds(token, k.lineage)
+
+
+def _found_token(k: Checkout, loc: Location) -> str | None:
+    """The token a sighting holds against `k`'s (`Membership._continuity`):
+    the one found or, where none was, the one its capture wrote; for a
+    superseded token only the one found (E15; ENG-193)."""
+    return loc.token if k.token_superseded else loc.token or loc.token_written
 
 
 def _decides(

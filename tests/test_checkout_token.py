@@ -12,6 +12,7 @@ checks of E19 a (status, clone, maintenance) close the file.
 from __future__ import annotations
 
 import errno
+import hashlib
 import multiprocessing
 import os
 import shutil
@@ -26,10 +27,12 @@ from typing import Any
 import pytest
 
 from bettermemory import checkout_token
+from bettermemory._fsutil import replace_atomic
 from bettermemory.checkout_token import (
     CROCKFORD,
     TOKEN_HEADER,
     TOKEN_LENGTH,
+    TOKEN_NAME,
     TokenRead,
     TokenWrite,
     mint,
@@ -208,6 +211,407 @@ def test_remint_replaces_the_token(tmp_path: Path) -> None:
     assert again.token not in (None, first.token)
     assert read(git_dir) == TokenRead("present", token=again.token)
     assert _info_listing(git_dir) == ["bettermemory", "exclude"]
+
+
+def test_a_re_mint_names_the_lineage_it_replaces(tmp_path: Path) -> None:
+    """ENG-205: a re-mint given the lineage the store records (the token
+    and its git directory's device and inode number) writes a token that
+    names it, in the version 1 form every reader reads. `succeeds` knows it
+    for that lineage's and for no other: not the token replaced, not that
+    token in another git directory (a copy that carried it and was
+    re-minted there), not another token, and not a token `mint` made or
+    one planted without knowledge of the recorded token."""
+    git_dir = _repo(tmp_path / "proj")
+    first = write(git_dir, policy=True, bare=False)
+    assert first.token is not None
+    st = os.stat(git_dir)
+    was = checkout_token.Lineage(first.token, str(st.st_dev), str(st.st_ino))
+
+    again = remint(git_dir, policy=True, bare=False, replacing=was)
+
+    assert again.status == "written" and again.token not in (None, first.token)
+    assert read(git_dir) == TokenRead("present", token=again.token)
+    assert token_path(git_dir).read_bytes() == render(str(again.token))
+    assert checkout_token.succeeds(again.token, was)
+    assert not checkout_token.succeeds(first.token, was)
+    assert not checkout_token.succeeds(again.token, None)
+    assert not checkout_token.succeeds(None, was)
+    for other in (
+        was._replace(device=was.device + "1"),
+        was._replace(inode=was.inode + "1"),
+        was._replace(token=mint()),
+    ):
+        assert not checkout_token.succeeds(again.token, other)
+    assert not any(checkout_token.succeeds(mint(), was) for _ in range(200))
+    elsewhere = checkout_token.successor(was._replace(inode=was.inode + "1"))
+    assert not checkout_token.succeeds(elsewhere, was)
+    assert len({checkout_token.successor(was) for _ in range(200)}) == 200
+
+
+def test_a_lineage_is_read_only_whole() -> None:
+    """A lineage a question names, or a token and an object key make, is
+    read only whole and well formed: anything else names none, and the
+    re-mint is then a fresh random token."""
+    token = mint()
+    want = checkout_token.Lineage(token, "16777220", "1234")
+    assert checkout_token.Lineage.read([token, "16777220", "1234"]) == want
+    assert checkout_token.lineage(token, ("16777220", "1234", None)) == want
+    for value in (
+        None,
+        True,
+        [token, "16777220"],
+        [token, "16777220", "1234", "x"],
+        ["not a token", "16777220", "1234"],
+        [token, "", "1234"],
+        [token, "16777220", 1234],
+        {"token": token},
+    ):
+        assert checkout_token.Lineage.read(value) is None, value
+    assert checkout_token.lineage(None, ("16777220", "1234", None)) is None
+    assert checkout_token.lineage(token, None) is None
+
+
+def test_a_lineages_fields_cannot_stand_for_one_another() -> None:
+    """ENG-205: the link reads each field of a lineage whole, so fields
+    that join to one text still name two lineages; and a device or inode
+    number that is not the decimal text of an integer names none."""
+    token = mint()
+    joined = checkout_token.Lineage(token, "1\n2", "3")
+    split = checkout_token.Lineage(token, "1", "2\n3")
+    assert not checkout_token.succeeds(checkout_token.successor(joined), split)
+    assert not checkout_token.succeeds(checkout_token.successor(split), joined)
+    for bad in ("1\n2", "2\n", "", "12a", " 12", "0x1f", "1.5", "１"):
+        assert checkout_token.lineage(token, (bad, "3", None)) is None, bad
+        assert checkout_token.lineage(token, ("3", bad, None)) is None, bad
+    wide = ("-5", str(2**64 - 1), None)
+    assert checkout_token.lineage(token, wide) == checkout_token.Lineage(
+        token, "-5", str(2**64 - 1)
+    )
+
+
+@pytest.mark.parametrize("only_siblings", [False, True], ids=["read", "declared"])
+def test_a_re_mint_leaves_what_its_caller_did_not_read(
+    tmp_path: Path, only_siblings: bool
+) -> None:
+    """ENG-205: a re-mint naming its lineage leaves another re-mint of that
+    lineage in place (another session's, made first) and reports it
+    (`exists`), so two re-mints of one token leave one. A caller that read
+    the file moments ago (the default: a hook client, a resolution) leaves
+    any other token too, as a re-mint by a client before 9.0.0rc18 makes
+    one, naming nothing; a declaration (`only_siblings`) replaces it, as
+    one copied in from another checkout, which the checkout must not keep.
+    Both replace the token replaced, no token, and a file that is no
+    token. The claim is gone after each."""
+    git_dir = _repo(tmp_path / "proj")
+    first = write(git_dir, policy=True, bare=False)
+    assert first.token is not None
+    st = os.stat(git_dir)
+    was = checkout_token.Lineage(first.token, str(st.st_dev), str(st.st_ino))
+
+    def again() -> TokenWrite:
+        return remint(
+            git_dir,
+            policy=True,
+            bare=False,
+            replacing=was,
+            only_siblings=only_siblings,
+        )
+
+    ahead = again()
+    behind = again()
+
+    assert ahead.status == "written" and checkout_token.succeeds(ahead.token, was)
+    assert behind == TokenWrite("exists", token=ahead.token)
+    assert read(git_dir) == TokenRead("present", token=ahead.token)
+    assert _info_listing(git_dir) == ["bettermemory", "exclude"]
+    foreign = mint()
+    _plant(git_dir, render(foreign))
+    other = again()
+    if only_siblings:
+        assert other.status == "written" and checkout_token.succeeds(other.token, was)
+        assert read(git_dir).token == other.token
+    else:
+        assert other == TokenWrite("exists", token=foreign)
+        assert read(git_dir).token == foreign
+    _plant(git_dir, render(first.token))
+    own = again()
+    assert own.status == "written" and checkout_token.succeeds(own.token, was)
+    token_path(git_dir).unlink()
+    gone = again()
+    assert gone.status == "written" and checkout_token.succeeds(gone.token, was)
+    _plant(git_dir, b"garbage\n")
+    garbage = again()
+    assert garbage.status == "written" and read(git_dir).token == garbage.token
+    assert _info_listing(git_dir) == ["bettermemory", "exclude"]
+
+
+def test_a_re_mint_waits_for_another_re_mints_claim(tmp_path: Path) -> None:
+    """ENG-205: two re-mints naming one lineage are ordered by the claim.
+    One that finds another's claim waits; when that re-mint has replaced
+    the token and let the claim go, it finds that token and writes
+    nothing (`exists`)."""
+    git_dir = _repo(tmp_path / "proj")
+    first = write(git_dir, policy=True, bare=False)
+    assert first.token is not None
+    st = os.stat(git_dir)
+    was = checkout_token.Lineage(first.token, str(st.st_dev), str(st.st_ino))
+    claim = git_dir / "info" / checkout_token._CLAIM_NAME
+    claim.write_bytes(b"")
+    other = checkout_token.successor(was)
+
+    def the_other_re_mint() -> None:
+        time.sleep(0.2)
+        _plant(git_dir, render(other))
+        claim.unlink()
+
+    holder = threading.Thread(target=the_other_re_mint)
+    holder.start()
+    try:
+        waited = remint(git_dir, policy=True, bare=False, replacing=was)
+    finally:
+        holder.join()
+
+    assert waited == TokenWrite("exists", token=other)
+    assert read(git_dir) == TokenRead("present", token=other)
+    assert _info_listing(git_dir) == ["bettermemory", "exclude"]
+
+
+def test_a_claim_a_killed_re_mint_left_is_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-205: a claim found unchanged through the whole wait was left by
+    a re-mint killed holding it; the next re-mint breaks it and writes."""
+    monkeypatch.setattr(checkout_token, "_CLAIM_WAIT_SECONDS", 0.05)
+    git_dir = _repo(tmp_path / "proj")
+    first = write(git_dir, policy=True, bare=False)
+    assert first.token is not None
+    st = os.stat(git_dir)
+    was = checkout_token.Lineage(first.token, str(st.st_dev), str(st.st_ino))
+    (git_dir / "info" / checkout_token._CLAIM_NAME).write_bytes(b"")
+
+    again = remint(git_dir, policy=True, bare=False, replacing=was)
+
+    assert again.status == "written" and checkout_token.succeeds(again.token, was)
+    assert _info_listing(git_dir) == ["bettermemory", "exclude"]
+
+
+def _lineage_of(git_dir: Path) -> checkout_token.Lineage:
+    first = write(git_dir, policy=True, bare=False)
+    assert first.token is not None
+    st = os.stat(git_dir)
+    return checkout_token.Lineage(first.token, str(st.st_dev), str(st.st_ino))
+
+
+def test_a_re_mint_removes_only_its_own_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-205: a claim holds its holder's nonce, and a holder removes the
+    claim only while it holds its own. A holder stalled past the wait, its
+    claim broken and taken by another re-mint meanwhile, leaves that one's
+    claim in place."""
+    git_dir = _repo(tmp_path / "proj")
+    was = _lineage_of(git_dir)
+    claim = git_dir / "info" / checkout_token._CLAIM_NAME
+
+    def broken_and_taken_meanwhile(src: Path, dst: Path) -> None:
+        claim.unlink()
+        claim.write_bytes(b"ANOTHERHOLDR")
+        replace_atomic(src, dst)
+
+    monkeypatch.setattr(checkout_token, "replace_atomic", broken_and_taken_meanwhile)
+    stalled = remint(git_dir, policy=True, bare=False, replacing=was)
+
+    assert stalled.status == "written"
+    assert claim.read_bytes() == b"ANOTHERHOLDR"
+
+
+def test_a_claim_others_hold_through_the_wait_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-205: where other re-mints hold the claim through the whole wait
+    (here a stale claim another waiter is breaking), a re-mint writes
+    nothing and says so (`CONTENDED`), not a failure, so the store keeps
+    the checkout superseded and asks again."""
+    monkeypatch.setattr(checkout_token, "_CLAIM_WAIT_SECONDS", 0.05)
+    git_dir = _repo(tmp_path / "proj")
+    was = _lineage_of(git_dir)
+    info = git_dir / "info"
+    (info / checkout_token._CLAIM_NAME).write_bytes(b"")
+    breaking = hashlib.blake2b(b"", digest_size=8).hexdigest()
+    (info / f"{checkout_token._BREAK_PREFIX}{breaking}-0").write_bytes(b"")
+
+    held = remint(git_dir, policy=True, bare=False, replacing=was)
+
+    assert held.status == checkout_token.CONTENDED and held.token is None
+    assert read(git_dir).token == was.token
+
+
+def test_a_claim_is_never_read_empty_while_it_is_made(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-205: a waiter reading the claim while a re-mint makes it never
+    finds it empty, which is how a claim whose holder was killed making
+    it reads: the claim is a file already holding its nonce, linked to
+    its name. Were it created and then written, a waiter that found a
+    killed holder's empty claim through its wait could read a new one in
+    that gap as the same claim and break it: two writes."""
+    git_dir = _repo(tmp_path / "proj")
+    was = _lineage_of(git_dir)
+    claim = git_dir / "info" / checkout_token._CLAIM_NAME
+    seen: list[str | None] = []
+    real = os.write
+
+    def write(fd: int, data: Any) -> int:
+        seen.append(checkout_token._holder(claim))
+        return real(fd, data)
+
+    monkeypatch.setattr(os, "write", write)
+    made = remint(git_dir, policy=True, bare=False, replacing=was)
+    monkeypatch.setattr(os, "write", real)
+
+    assert made.status == "written"
+    assert seen and "" not in seen
+
+
+def test_a_break_mark_a_killed_breaker_left_is_passed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-205: a breaker killed between creating its break mark and
+    removing it leaves the mark. A waiter that finds the claim stale and
+    that mark older than `_STALE_BREAK_SECONDS`, by the filesystem's clock,
+    takes the next generation's mark and breaks the claim: the re-mint
+    writes, and no claim or mark is left. Were the mark never passed,
+    every re-mint would give way (`CONTENDED`) until `_sweep` removed both
+    an hour on."""
+    monkeypatch.setattr(checkout_token, "_CLAIM_WAIT_SECONDS", 0.05)
+    git_dir = _repo(tmp_path / "proj")
+    was = _lineage_of(git_dir)
+    info = git_dir / "info"
+    (info / checkout_token._CLAIM_NAME).write_bytes(b"STALENONCE00")
+    digest = hashlib.blake2b(b"STALENONCE00", digest_size=8).hexdigest()
+    mark = info / f"{checkout_token._BREAK_PREFIX}{digest}-0"
+    mark.write_bytes(b"")
+    old = time.time() - 60
+    os.utime(mark, (old, old))
+
+    made = remint(git_dir, policy=True, bare=False, replacing=was)
+
+    assert made.status == "written" and read(git_dir).token == made.token
+    assert _info_listing(git_dir) == ["bettermemory", "exclude"]
+
+
+def test_a_claim_name_holding_no_file_fails_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-205: something other than a regular file at the claim's name (a
+    directory) can never be taken or broken: a re-mint says so at once
+    (`CLAIM_BLOCKED`), writes nothing and waits for nothing. Were it
+    waited on, every sighting would wait out the claim's wait and give way
+    (`CONTENDED`), for good."""
+    monkeypatch.setattr(checkout_token, "_CLAIM_WAIT_SECONDS", 5.0)
+    git_dir = _repo(tmp_path / "proj")
+    was = _lineage_of(git_dir)
+    (git_dir / "info" / checkout_token._CLAIM_NAME).mkdir()
+
+    started = time.monotonic()
+    made = remint(git_dir, policy=True, bare=False, replacing=was)
+
+    assert time.monotonic() - started < 1.0
+    assert (made.status, made.token) == (checkout_token.CLAIM_BLOCKED, None)
+    assert read(git_dir).token == was.token
+    assert [n for n in _info_listing(git_dir) if n.startswith(TOKEN_NAME)] == [
+        "bettermemory",
+        checkout_token._CLAIM_NAME,
+    ]
+
+
+def test_temporary_files_are_aged_by_the_filesystems_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-205: `_sweep` ages a temporary file against one this writer just
+    made, both stamped by the filesystem, so a machine whose clock runs two
+    hours ahead of a network share's leaves another writer's live file and
+    still removes one a killed writer left over an hour before. Before, it
+    read this machine's clock, and removed the live one."""
+    git_dir = _repo(tmp_path / "proj")
+    was = _lineage_of(git_dir)
+    info = git_dir / "info"
+    live = info / f"{checkout_token._TEMP_PREFIX}LIVEWRITER00"
+    left = info / f"{checkout_token._TEMP_PREFIX}KILLEDWRITER"
+    live.write_bytes(b"")
+    left.write_bytes(b"")
+    old = time.time() - 2 * 3600
+    os.utime(left, (old, old))
+    real = time.time
+    monkeypatch.setattr(time, "time", lambda: real() + 2 * 3600)
+
+    made = remint(git_dir, policy=True, bare=False, replacing=was)
+    monkeypatch.setattr(time, "time", real)
+
+    assert made.status == "written"
+    assert live.exists() and not left.exists()
+
+
+def test_a_breaker_removes_only_the_stale_claim_it_found(tmp_path: Path) -> None:
+    """ENG-205: a waiter breaking a stale claim removes it only while it
+    still holds the nonce the waiter found through its wait: a claim
+    another waiter broke and took since is left to its holder, and the
+    breaker's mark is gone either way."""
+    git_dir = _repo(tmp_path / "proj")
+    info = git_dir / "info"
+    claim = info / checkout_token._CLAIM_NAME
+    claim.write_bytes(b"TAKENSINCE00")
+
+    checkout_token._break(info, "STALENONCE00", time.time())
+
+    assert claim.read_bytes() == b"TAKENSINCE00"
+    checkout_token._break(info, "TAKENSINCE00", time.time())
+    assert not claim.exists()
+    assert _info_listing(git_dir) == ["exclude"]
+
+
+@pytest.mark.parametrize("stale", [False, True], ids=["live", "stale"])
+def test_one_of_concurrent_re_mints_of_a_lineage_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stale: bool
+) -> None:
+    """ENG-205: four re-mints of one lineage at once, many times over, with
+    the claim free or left by a re-mint killed holding it: in every run
+    exactly one writes and the file holds its token; the others find it
+    (`exists`) or give way (`CONTENDED`), so none writes a second
+    re-mint. Of the waiters that find one claim stale, one breaks it
+    (`_break`), and none removes a claim another took; no claim or break
+    mark is left in `info/`."""
+    monkeypatch.setattr(checkout_token, "_CLAIM_WAIT_SECONDS", 0.05)
+    for run in range(30):
+        git_dir = _repo(tmp_path / f"proj{run}")
+        was = _lineage_of(git_dir)
+        if stale:
+            (git_dir / "info" / checkout_token._CLAIM_NAME).write_bytes(b"")
+        gate = threading.Barrier(4)
+        out: list[TokenWrite] = []
+
+        def re_mint(git_dir: Path = git_dir, gate: threading.Barrier = gate) -> None:
+            gate.wait()
+            out.append(remint(git_dir, policy=True, bare=False, replacing=was))
+
+        threads = [threading.Thread(target=re_mint) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        written = [w for w in out if w.status == "written"]
+        assert len(written) == 1, (run, out)
+        assert {w.status for w in out} <= {
+            "written",
+            "exists",
+            checkout_token.CONTENDED,
+        }
+        assert read(git_dir).token == written[0].token
+        # Only bettermemory's own names: git may write `info/refs` here
+        # meanwhile (`update-server-info`, from a gc it runs on its own).
+        ours = [n for n in _info_listing(git_dir) if n.startswith(TOKEN_NAME)]
+        assert ours == [TOKEN_NAME], run
 
 
 def test_remint_replaces_a_malformed_file(tmp_path: Path) -> None:

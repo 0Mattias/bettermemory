@@ -586,6 +586,10 @@ def _token_said(ctx: CliContext, done: Declared) -> str:
     status = rows[-1].get("status")
     if rows[-1].get("written"):
         return "; its checkout token was re-minted"
+    if status == "exists":
+        # Another session's re-mint of the same token, found in place and
+        # recorded as the checkout's (ENG-205).
+        return "; its checkout token had just been re-minted by another session"
     return f"; its checkout token was not re-minted ({status})"
 
 

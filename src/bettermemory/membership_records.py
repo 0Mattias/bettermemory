@@ -12,7 +12,8 @@ from here, so they keep importing from it. This module lives apart from
 `membership.py` to keep each module under the package's 2,000-line bound
 (ENG-96). It is the family's bottom module: it imports the standard
 library, `_paths` (the rule of a path below a root, which verify reads
-too) and `store` (for `RecordHome`), and no other membership module.
+too), `checkout_token` (for a checkout's `Lineage`, ENG-205) and `store`
+(for `RecordHome`), and no other membership module.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, runtime_checkable
 
+from . import checkout_token
 from ._paths import inside, norm
 from .store import RecordHome
 
@@ -568,15 +570,28 @@ class Checkout:
         one (ENG-193)."""
         return self.token_status == SUPERSEDED
 
+    @property
+    def lineage(self) -> checkout_token.Lineage | None:
+        """The recorded token in the recorded git directory, which a re-mint
+        names (`checkout_token.successor`), so the store knows a re-mint it
+        missed for this checkout's (ENG-205); None without either."""
+        key = self.object_key
+        return checkout_token.lineage(
+            self.token, None if key is None else (key.device, key.inode)
+        )
+
     def token_refutes(self, found: str | None) -> bool:
         """Whether the token `found` at a git directory says it is another
         lineage than this checkout's (the B witness, a re-clone at the old
-        path): any other token, or, for a superseded one whose re-mint the
-        store may have missed, no token at all (`location.continuity`;
-        ENG-193)."""
+        path): any other token but a re-mint of this checkout's in its git
+        directory that the store missed (ENG-205), or, for a superseded one
+        whose re-mint the store may have missed, no token at all
+        (`location.continuity`; ENG-193)."""
         if not self.token:
             return False
-        return not found if self.token_superseded else found != self.token
+        if self.token_superseded:
+            return not found
+        return found != self.token and not checkout_token.succeeds(found, self.lineage)
 
     def views_on(self, machine: str) -> list[View]:
         return sorted(

@@ -12,25 +12,28 @@ binds every one by name. This module lives apart from `membership.py` to
 keep each module under the package's 2,000-line bound (ENG-96). It
 imports the standard library, the records, lines and rows modules,
 `history` (for `quoted`, which writes a value the evidence of a question
-names as the lines write theirs, ENG-193), `location` (for `view_path`),
-`location_git` (for the bounded read of a declared folder,
-`prefetch_declared`), `location_witness` (for the exchange's one question
-of the planned views, `prefetch_liveness`), and `membership` only under
-TYPE_CHECKING.
+names as the lines write theirs, ENG-193), `location` (for `view_path`,
+and `_evicted` for the token read again, `_token_now`), `checkout_token`
+(that read), `location_git` (for the bounded read of a declared folder,
+`prefetch_declared`, and of the token), `location_witness` (for the
+exchange's one question of the planned views, `prefetch_liveness`), and
+`membership` only under TYPE_CHECKING.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import os
 from collections import defaultdict
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+from . import checkout_token, location
 from .history import quoted
 from .location import view_path
-from .location_git import PROBE_BUDGET, bounded_reads
+from .location_git import PROBE_BUDGET, UNANSWERED, bounded_read, bounded_reads
 from .location_witness import NeedWitnesses
 from .membership_lines import (
     line_across_boundary,
@@ -297,7 +300,9 @@ def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolut
     before any token is written (`NeedIndependent`, raised ahead of a join
     or a question), git reads them with no lock held, and the ladder runs
     once more with the answer; inside a caller's transaction git is not
-    asked."""
+    asked. A capture that may predate another resolution's re-mint is read
+    again in each attempt's transaction (`_token_now`), since another
+    process can re-mint while git is asked."""
     outside = not self._store.in_batch
     with self.liveness_held():
         if outside:
@@ -311,6 +316,7 @@ def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolut
             while True:
                 try:
                     with self._call():
+                        loc = _token_now(self, loc)
                         res = self._settle_unresolved(loc, self._resolve(loc, strict))
                         rows = tuple(self._rows)
                         remint = self._remint is not None
@@ -323,6 +329,62 @@ def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolut
         finally:
             self._ancestry = None
     return dataclasses.replace(res, rows=rows, remint_token=remint)
+
+
+def _token_now(self: Membership, loc: Location) -> Location:
+    """`loc` holding the checkout token its git directory holds now, where
+    its capture may predate another resolution's re-mint (ENG-214): a
+    checkout of its machine is recorded at its object and none records its
+    token. A resolution that re-minted the token, in this process or
+    another, wrote the file in its transaction and committed before this
+    one began, so a read here sees the file as the store records it. Read
+    only where the model reads this process's namespace
+    (`Membership.reads_here`; a hook client's own re-mint is the claim's
+    and `AnsweredToken.located`'s, ENG-205), bounded and never fetching an
+    evicted file (`_token_read`). Otherwise, and where the file holds the
+    same token, none, or does not answer, `loc` as given; a sighting whose
+    token is recorded reads nothing."""
+    token = loc.token or loc.token_written
+    key = loc.object_key
+    if not (token and loc.git_dir and key is not None) or not (
+        loc.machine == self.machine and self.reads_here
+    ):
+        return loc
+    at = self._checkouts(
+        where={
+            "machine": loc.machine,
+            "object_device": key.device,
+            "object_inode": key.inode,
+        }
+    )
+    if not at or any(k.token == token for k in at):
+        return loc
+    found = _token_read(loc.git_dir)
+    if found is None or found == token:
+        return loc
+    return dataclasses.replace(
+        loc, token=found, token_written=None, token_status="present"
+    )
+
+
+def _token_read(git_dir: str) -> str | None:
+    """The checkout token `git_dir` holds now, read within `PROBE_BUDGET`
+    (`bounded_read`, ENG-156), or None: none there, a file a provider holds
+    elsewhere, never fetched here (design 3.1, D19), or a read that did not
+    answer in time. Its stat is inside the bound too: the read is made in
+    the store transaction, and a hung mount holds no write lock past it."""
+    path = str(checkout_token.token_path(git_dir))
+
+    def read() -> str | None:
+        if location._evicted(os.stat(path)):
+            return None
+        return checkout_token.read(git_dir).token
+
+    try:
+        got = bounded_read(path, "token", read, PROBE_BUDGET)
+    except OSError:
+        return None
+    return None if got is UNANSWERED else got
 
 
 def _liveness_plan(self: Membership, loc: Location) -> list[tuple[Checkout, View]]:

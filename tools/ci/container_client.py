@@ -17,7 +17,8 @@ and prints one JSON object on stdout:
 - ``answer``: the answers to the daemon's question (`location.answer`)
   from ``{"question", "answers", "location"}``.
 - ``remint``: the checkout token re-minted (`checkout_token.remint`) for
-  the checkout of ``{"location", "policy"}``.
+  the checkout of ``{"location", "policy"}``, naming the token it
+  replaces (ENG-205).
 - ``rc3``: what an rc3 hook client posts from the working directory: its
   cwd and no location.
 - ``facts PATH``: what the leg exercised: the network interfaces, the
@@ -117,6 +118,9 @@ def main(argv: list[str]) -> dict[str, Any]:
             cap.git_dir,
             policy=bool(given.get("policy")),
             bare=cap.kind == location.BARE,
+            replacing=checkout_token.lineage(
+                cap.token or cap.token_written, cap.object_key
+            ),
         )
         return {"status": wrote.status, "token": wrote.token}
     if command == "rc3" and not args:

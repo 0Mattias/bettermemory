@@ -2,28 +2,32 @@
 question the daemon raises when the membership model asks of a
 repository it cannot read, and the readers that answer the model from
 what the client sent instead: `AnsweredHistory` (the history),
-`AnsweredToken` (the checkout token) and `AnsweredLiveness` (a view's
-liveness); and the client's reading of a view question (`asked_views`).
+`AnsweredToken` (the checkout token, and the location of a client whose
+re-mint the store already recorded) and `AnsweredLiveness` (a view's
+liveness); and the client's reading of a view question (`asked_views`),
+its answer to a re-mint question (`remint_answer`) and whether that
+answer found another session's re-mint (`remint_refused`).
 
 They live apart from `location.py` to keep that module under the
 package's 2,000-line bound (ENG-96). They import nothing from
 `location`: the standard library, `checkout_token` and `location_git`'s
-hash pattern, kind and object-key reader, with the membership types they
-annotate under TYPE_CHECKING. `location` imports this module and
-re-exports the four readers under their old names, so a hook loads it
-only with `location`, for the exchange.
+hash pattern, kinds, `Capture` and object-key reader, with the
+membership types they annotate under TYPE_CHECKING. `location` imports
+this module and re-exports the four readers under their old names, so a
+hook loads it only with `location`, for the exchange.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from . import checkout_token
-from .location_git import _FULL_HASH, PRIMARY, Reach, _key
+from .location_git import _FULL_HASH, BARE, PRIMARY, Capture, Reach, _key
 
 if TYPE_CHECKING:
-    from .membership import Checkout, View
+    from .membership import Checkout, Location, Membership, View
 
 
 class NeedWitnesses(Exception):
@@ -176,7 +180,86 @@ class AnsweredToken:
             )
         if self._posted and not self._answers.get("remint_ok"):
             return None
-        raise NeedWitnesses({"remint": True})
+        # The lineage the re-mint replaces, as the store records it, which
+        # the new token names (`remint_answer`, ENG-205); a client before
+        # 9.0.0rc18 skips the key and mints a token that names nothing.
+        lineage = checkout.lineage
+        raise NeedWitnesses(
+            {"remint": True, "replacing": None if lineage is None else list(lineage)}
+        )
+
+    def located(self, loc: Location, model: Membership) -> Location:
+        """`loc` holding the token the client wrote in this exchange (its
+        re-mint answer) in place of the one its capture read, where a
+        checkout of its machine at its object already records that token:
+        another session's capture of the git directory recorded the
+        re-mint before this round arrived, and the capture is older than
+        the file (ENG-205). Otherwise `loc` as posted, so a round whose
+        store still records the token replaced records the re-mint as the
+        question asked (`__call__`)."""
+        got = self._answers.get("remint")
+        token = got.get("token") if isinstance(got, Mapping) else None
+        key = loc.object_key
+        if (
+            not isinstance(got, Mapping)
+            or got.get("status") != "written"
+            or not checkout_token.valid(token)
+            or token == loc.token
+            or key is None
+        ):
+            return loc
+        if not any(
+            k.machine == loc.machine
+            and k.object_key is not None
+            and (k.object_key.device, k.object_key.inode) == (key.device, key.inode)
+            for k in model.checkouts(token=token)
+        ):
+            return loc
+        return dataclasses.replace(
+            loc, token=token, token_written=None, token_status="present"
+        )
+
+
+def remint_answer(cap: Capture, question: Mapping[str, Any]) -> dict[str, Any]:
+    """The client's answer to the re-mint question `AnsweredToken` asks
+    (ENG-153): the checkout token of its capture re-minted under the
+    question's policy, naming the lineage the question names (the store's
+    record of the checkout; none where it names none) or, from a daemon
+    before 9.0.0rc18, whose question has no ``replacing``, the capture's
+    own (ENG-205); and the token and status written. Where the file holds
+    another token than the one replaced (another session re-minted the
+    checkout first), nothing is written and that token is answered as
+    ``exists`` (`checkout_token.remint`, `remint_refused`)."""
+    if not cap.git_dir:
+        return {"token": None, "status": "skipped:no_git_dir"}
+    if "replacing" in question:
+        replacing = checkout_token.Lineage.read(question["replacing"])
+    else:
+        replacing = checkout_token.lineage(
+            cap.token or cap.token_written, cap.object_key
+        )
+    wrote = checkout_token.remint(
+        cap.git_dir,
+        policy=bool(question.get("write_token")),
+        bare=cap.kind == BARE,
+        replacing=replacing,
+    )
+    return {"token": wrote.token, "status": wrote.status}
+
+
+def remint_refused(question: Mapping[str, Any], answers: Mapping[str, Any]) -> bool:
+    """Whether the client's answer to this round's re-mint question found
+    another token in place of the one it replaces and wrote nothing
+    (`remint_answer`, ``exists``): another session re-minted the checkout
+    first. The client then posts a fresh capture, which holds that token,
+    with its answers, so its round reads the git directory as it is
+    (`_daemon_client._membership_rounds`, ENG-205)."""
+    got = answers.get("remint")
+    return (
+        bool(question.get("remint"))
+        and isinstance(got, Mapping)
+        and got.get("status") == "exists"
+    )
 
 
 class AnsweredLiveness:
