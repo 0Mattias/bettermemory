@@ -63,9 +63,17 @@ from bettermemory.store import Store
 from .test_membership_cli import Scene, scene
 from .test_membership_lines import _literals, _skeleton
 from .test_membership_questions import Bench, bench
-from .test_membership_resolution import Lab, clone, lab, lab_of, make_repo, unborn
+from .test_membership_resolution import (
+    Lab,
+    clone,
+    lab,
+    lab_of,
+    make_repo,
+    neutral_git,
+    unborn,
+)
 
-__all__ = ["bench", "lab", "lab_of", "scene"]
+__all__ = ["bench", "lab", "lab_of", "neutral_git", "scene"]
 
 #: NTFS refuses a ``"`` in a file name.
 posix_names = pytest.mark.skipif(

@@ -25,6 +25,7 @@ from typing import Any, cast
 import pytest
 
 from bettermemory import project_file
+from bettermemory._printable import quoted
 from bettermemory.project_file import (
     PROJECT_FILE_NAME,
     Above,
@@ -215,7 +216,8 @@ def test_parse_reports_each_malformed_shape(
     assert isinstance(result, ProjectFileError)
     assert result.reason == reason
     assert result.path == path and result.directory == base
-    assert result.detail and str(path) in result.line and result.detail in result.line
+    assert result.detail and quoted(str(path)) in result.line
+    assert result.detail in result.line
 
 
 def test_parse_quotes_only_the_start_of_a_long_bad_id(base: Path) -> None:

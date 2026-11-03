@@ -39,9 +39,17 @@ from bettermemory.history import printable, quoted
 
 from .test_membership_cli import Scene, bm, scene
 from .test_membership_lines import PLANTED, _literals, _one_line, _skeleton
-from .test_membership_resolution import Lab, clone, lab, lab_of, make_repo, unborn
+from .test_membership_resolution import (
+    Lab,
+    clone,
+    lab,
+    lab_of,
+    make_repo,
+    neutral_git,
+    unborn,
+)
 
-__all__ = ["lab", "lab_of", "scene"]
+__all__ = ["lab", "lab_of", "neutral_git", "scene"]
 
 #: NTFS refuses a ``"`` in a file name.
 posix_names = pytest.mark.skipif(
