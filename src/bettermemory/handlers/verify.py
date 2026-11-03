@@ -20,7 +20,7 @@ from .._response import isoformat, isoformat_optional
 from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
 from ..models import Memory
 from ..origin import head_sha
-from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
+from ..store import ConcurrentUpdateError
 from ..symbols import SymbolDriftReport, check_symbol_citations
 from ..time_utils import isoformat_utc
 from ..verify import (
@@ -419,19 +419,16 @@ def _check_verify_args(
 
 
 def _load_verify_snapshot(deps: ToolHandlers, memory_id: str) -> Memory:
-    """Take the record's id; return its current snapshot, a gone record as ValueError."""
+    """Take the record's id; return its current snapshot. A removed or
+    unknown id raises the store's own error, which the tool boundary
+    refuses with its words (`_refusals_as_tool_errors`)."""
     # W8: load the current snapshot to capture `last_verified_at` for
     # the optimistic-concurrency CAS in `Store.mark_verified`. The
     # snapshot fingerprint is what the under-lock recheck compares
     # against — if another agent's verify lands between this load and
     # the store-level write, the CAS fires and we surface a structured
     # stale response. Mirror of the W2 `memory_update` flow.
-    try:
-        return deps.store.load_one(memory_id)
-    except TombstonedError as exc:
-        raise ValueError(str(exc)) from exc
-    except MemoryNotFoundError as exc:
-        raise ValueError(str(exc)) from exc
+    return deps.store.load_one(memory_id)
 
 
 def _verify_read_site(
@@ -628,6 +625,9 @@ def _stamp_or_stale(
     verified_head: str | None,
 ) -> tuple[Memory, None] | tuple[None, dict[str, Any]]:
     """Take the stamp's inputs; return `(stamped, None)`, or `(None, stale payload)` on a lost CAS."""
+    # A record another writer removed after the snapshot was read raises
+    # the store's own error under its lock, which the tool boundary
+    # refuses with its words (`_refusals_as_tool_errors`).
     try:
         stamped = _stamp(
             deps,
@@ -643,10 +643,6 @@ def _stamp_or_stale(
             claims=claims,
             verified_head=verified_head,
         )
-    except TombstonedError as exc:
-        raise ValueError(str(exc)) from exc
-    except MemoryNotFoundError as exc:
-        raise ValueError(str(exc)) from exc
     except ConcurrentUpdateError as exc:
         # W8: another agent landed a verify between this handler's
         # `load_one` snapshot (`_load_verify_snapshot`) and the under-lock

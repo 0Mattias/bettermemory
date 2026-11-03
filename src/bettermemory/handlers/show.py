@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 from .. import standing as _standing
 from .._response import isoformat, isoformat_optional
 from ..models import utcnow
-from ..store import MemoryNotFoundError, TombstonedError
 from ..verdict import memory_verdict
 from ._shared import Context, _advance_turn, caller_anchoring
 
@@ -36,12 +35,9 @@ async def memory_show(
     """Body of the ``memory_show`` MCP tool."""
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
-    try:
-        memory = deps.store.load_one(id)
-    except TombstonedError as exc:
-        raise ValueError(str(exc)) from exc
-    except MemoryNotFoundError as exc:
-        raise ValueError(str(exc)) from exc
+    # A removed or unknown id raises the store's own error, which the tool
+    # boundary refuses with its words (`_refusals_as_tool_errors`).
+    memory = deps.store.load_one(id)
     shown = _show_verdict(deps, memory)
     drift = shown.path_drift
     commit_drift = shown.commit_drift

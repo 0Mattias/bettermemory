@@ -58,6 +58,7 @@ from .store import (
     TombstonedError,
     retryable_code,
 )
+from .store_schema import absent_text
 
 log = logging.getLogger("bettermemory._handlers")
 
@@ -171,15 +172,16 @@ class RefusedError(ToolError, ValueError):
     meant to read.
 
     The handlers refuse with ``ValueError`` (an invalid scope, a cap, a
-    missing parameter, an unknown or tombstoned id), and docs/api.md names
-    ``ValueError`` as a refusal's form at the MCP boundary. mcp 2.0.0
-    forwarded the text of every exception a tool raised; from 2.1 the SDK
-    treats anything but its own ``ToolError`` as a crash and sends the
-    client only ``Error executing tool <name>``, keeping the text on the
-    server. A refusal that derives from both keeps its words on the wire
-    under every SDK version the declared bound admits, a direct caller
-    that catches ``ValueError`` still catches it, and a genuine crash
-    stays masked as the SDK intends.
+    missing parameter) and let the store's errors for an unknown, removed
+    or still-active id through (`_ABSENT`, refused here unquoted), and
+    docs/api.md names ``ValueError`` as a refusal's form at the MCP
+    boundary. mcp 2.0.0 forwarded the text of every exception a tool
+    raised; from 2.1 the SDK treats anything but its own ``ToolError`` as
+    a crash and sends the client only ``Error executing tool <name>``,
+    keeping the text on the server. A refusal that derives from both
+    keeps its words on the wire under every SDK version the declared bound
+    admits, a direct caller that catches ``ValueError`` still catches it,
+    and a genuine crash stays masked as the SDK intends.
     """
 
 
@@ -259,15 +261,6 @@ def store_refusal(exc: BaseException) -> RetryableRefusal | None:
 _ABSENT = (MemoryNotFoundError, TombstonedError, NotTombstonedError, NotFoundError)
 
 
-def _absent_text(exc: KeyError) -> str:
-    """The words of one of `_ABSENT`: its message, not the quoted repr a
-    KeyError prints; a bare key (NotFoundError) is named as one."""
-    said = exc.args[0] if len(exc.args) == 1 else exc.args
-    if isinstance(exc, NotFoundError):
-        return f"no record {said} in the store"
-    return str(said)
-
-
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -325,7 +318,7 @@ def _refusals_as_tool_errors(
         except ValueError as exc:
             raise RefusedError(str(exc)) from exc
         except _ABSENT as exc:
-            raise RefusedError(_absent_text(exc)) from exc
+            raise RefusedError(absent_text(exc)) from exc
         except sqlite3.OperationalError as exc:
             refusal = store_refusal(exc)
             if refusal is not None:

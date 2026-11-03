@@ -68,6 +68,7 @@ from ..store import (
     TombstonedError,
     error_code_name,
 )
+from ..store_schema import absent_text
 from ..supersession import SupersessionMatch, SupersessionReport
 from . import _guard
 from ._shared import (
@@ -1588,7 +1589,8 @@ def _validate_declared_supersedes(deps: ToolHandlers, ids: Any) -> list[dict[str
             deps.store.load_one(memory_id)
         except (MemoryNotFoundError, TombstonedError) as exc:
             raise ValueError(
-                f"supersedes entry {memory_id!r} is not an active memory: {exc}"
+                f"supersedes entry {memory_id!r} is not an active memory: "
+                f"{absent_text(exc)}"
             ) from exc
         links.append(
             {

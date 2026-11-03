@@ -50,6 +50,7 @@ from ..conflicts import (
 )
 from ..models import LinkType, Memory, MemoryLink
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
+from ..store_schema import absent_text
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -280,7 +281,8 @@ def _load_active_member(deps: ToolHandlers, memory_id: str) -> Memory:
         return deps.store.load_one(memory_id)
     except (MemoryNotFoundError, TombstonedError) as exc:
         raise ValueError(
-            f"conflict member {memory_id} is no longer active ({exc}); "
+            f"conflict member {memory_id} is no longer active "
+            f"({absent_text(exc)}); "
             're-scan (memory_admin(action="conflicts", scan=True)) to GC '
             "the candidate"
         ) from exc

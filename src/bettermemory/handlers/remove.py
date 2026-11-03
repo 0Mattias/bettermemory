@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .. import standing as _standing
-from ..store import MemoryNotFoundError, TombstonedError
 from . import _guard
 from . import standing_review as _standing_review
 from ._shared import Context, _advance_turn
@@ -34,12 +33,11 @@ async def memory_remove(
     if refusal is not None:
         deps.recorder.record("remove", id=id, status="refused_standing")
         return refusal
+    # An id already removed (TombstonedError) or one the store does not
+    # hold (NotFoundError) goes to the tool boundary as the store raised
+    # it, which refuses with its words (`_refusals_as_tool_errors`).
     try:
         deps.store.tombstone(id, reason, session=state.session_id)
-    except TombstonedError as exc:
-        raise ValueError(str(exc)) from exc
-    except MemoryNotFoundError as exc:
-        raise ValueError(str(exc)) from exc
     except OSError as exc:
         # A disk-level failure under the store's write (ENOSPC, EIO,
         # EACCES). Surface as ValueError so the MCP tool boundary returns

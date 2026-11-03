@@ -472,7 +472,7 @@ async def test_e2e_contradiction_verdict_refuses_when_target_is_dead(
         reason="the second port claim turned out to be a typo",
     )
 
-    with pytest.raises(Exception, match="no longer active"):
+    with pytest.raises(Exception, match="no longer active") as refused:
         await _call(
             server,
             "memory_admin",
@@ -481,6 +481,11 @@ async def test_e2e_contradiction_verdict_refuses_when_target_is_dead(
             verdict="contradiction",
             note="one of these ports is stale",
         )
+    # The removal in the store's words, unquoted (ENG-98).
+    assert (
+        f"(memory {row['b']['id']} was removed: the second port claim turned "
+        "out to be a typo)"
+    ) in str(refused.value)
 
     # Refused, not half-applied: no dangling link on the surviving side,
     # and the row stays pending until the named remedy runs.

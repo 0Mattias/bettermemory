@@ -216,6 +216,7 @@ def _cli_tombstones_restore(
     import json as _json
 
     from ..store import MemoryNotFoundError, NotTombstonedError
+    from ..store_schema import absent_text
 
     from .. import standing as _standing
     from ..handlers.restore import restore_with_trust_check
@@ -225,7 +226,12 @@ def _cli_tombstones_restore(
     try:
         # The same trust re-check the `memory_restore` MCP tool runs.
         memory, strip = restore_with_trust_check(store, memory_id)
-    except (MemoryNotFoundError, NotTombstonedError, ValueError, OSError) as exc:
+    except (MemoryNotFoundError, NotTombstonedError) as exc:
+        # A KeyError's str() is its message quoted, as a key is printed.
+        if parser is not None:
+            parser.error(absent_text(exc))
+        raise
+    except (ValueError, OSError) as exc:
         if parser is not None:
             parser.error(str(exc))
         raise

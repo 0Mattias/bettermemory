@@ -48,12 +48,7 @@ from ..models import (
     looks_truncated,
     validate_scope,
 )
-from ..store import (
-    ConcurrentUpdateError,
-    MemoryNotFoundError,
-    StandingAnswer,
-    TombstonedError,
-)
+from ..store import ConcurrentUpdateError, StandingAnswer
 from ._shared import (
     Context,
     _advance_turn,
@@ -190,12 +185,9 @@ async def memory_update(
         standing=standing,
     )
 
-    try:
-        existing = deps.store.load_one(id)
-    except TombstonedError as exc:
-        raise ValueError(str(exc)) from exc
-    except MemoryNotFoundError as exc:
-        raise ValueError(str(exc)) from exc
+    # A removed or unknown id raises the store's own error, which the tool
+    # boundary refuses with its words (`_refusals_as_tool_errors`).
+    existing = deps.store.load_one(id)
 
     if metadata_only and standing_answer is not None:
         return _answer_standing_only(

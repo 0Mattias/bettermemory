@@ -238,12 +238,11 @@ async def memory_restore(
         if has_home(deps.store, id)
         else None
     )
+    # An active id (NotTombstonedError) or one with no tombstone
+    # (MemoryNotFoundError) goes to the tool boundary as the store raised
+    # it, which refuses with its words (`_refusals_as_tool_errors`).
     try:
         memory, strip = restore_with_trust_check(deps.store, id, anchoring)
-    except NotTombstonedError as exc:
-        raise ValueError(str(exc)) from exc
-    except MemoryNotFoundError as exc:
-        raise ValueError(str(exc)) from exc
     except OSError as exc:
         raise ValueError(f"failed to restore memory {id}: {exc}") from exc
     except ValueError:

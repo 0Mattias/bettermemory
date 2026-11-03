@@ -995,6 +995,17 @@ class NotFoundError(KeyError):
     """No record with that key in the table asked."""
 
 
+def absent_text(exc: KeyError) -> str:
+    """The words of a missing, removed or still-active record's error
+    (`MemoryNotFoundError`, `TombstonedError`, `NotTombstonedError`,
+    `NotFoundError`): its message, not the quoted repr a KeyError's str()
+    prints; a bare key (NotFoundError) is named as one."""
+    said = exc.args[0] if len(exc.args) == 1 else exc.args
+    if isinstance(exc, NotFoundError):
+        return f"no record {said} in the store"
+    return str(said)
+
+
 class UnknownFieldsError(ValueError):
     """A mutation of a record whose last put carries fields this build's
     model does not define (a later build wrote them). The model would drop

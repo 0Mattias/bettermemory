@@ -25,6 +25,27 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc17
+
+The seventeenth candidate refuses an unknown or removed id in plain
+words. The store takes no schema step.
+
+#### Fixed
+
+- **A refusal for an unknown, removed or still-active id reads
+  unquoted (ENG-98).** `memory_show`, `memory_update`, `memory_verify`,
+  `memory_remove` and `memory_admin`'s restore answered such an id with
+  the message inside single quotes (`'no memory with id <id>'`,
+  `'memory <id> was removed: <reason>'`): each turned the store's
+  error, a `KeyError` whose `str()` quotes its message, into a
+  `ValueError` of that text before the tool boundary saw it. The error
+  now reaches the boundary as the store raised it, which refuses it with
+  its message. `memory_write`'s `supersedes` naming a removed id and a
+  conflict verdict on a removed member, which quote the store's words
+  inside their own, take them from `store_schema.absent_text` as the
+  boundary does, and so does `bettermemory tombstones restore` after
+  `error:`.
+
 ### 9.0.0rc16
 
 The sixteenth candidate closes the path by which a planted note took a
