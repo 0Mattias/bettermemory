@@ -1678,8 +1678,12 @@ def test_an_unreadable_settings_file_warns(env: Env) -> None:
     assert any(str(path) in s and "cannot be read" in s for s in summaries)
 
 
-def test_hook_commands_split_at_the_first_operator() -> None:
-    words = doctor._command_words("BM_X=1 uvx bettermemory hook stop --quiet || true")
+@pytest.mark.parametrize("guard", ["|| true", "; exit 0", ";exit 0"])
+def test_hook_commands_split_at_the_first_operator(guard: str) -> None:
+    """A settings file's hook may end in the guard an older plugin
+    shipped or the one it ships now; the program and its arguments are
+    the words before either."""
+    words = doctor._command_words(f"BM_X=1 uvx bettermemory hook stop --quiet {guard}")
     assert words == ["uvx", "bettermemory", "hook", "stop", "--quiet"]
     assert doctor._command_words("bettermemory 'unbalanced") == [
         "bettermemory",

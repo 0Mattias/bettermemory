@@ -1,5 +1,5 @@
 {
-  "$schema-comment": "Claude Code plugin hook manifest. The Stop event fires once per assistant response, every turn end. The hook calls `bettermemory hook stop`, a standard-library client that posts the hook's stdin JSON (session_id and transcript_path) to the local daemon, which runs the silent-miss probe over the pool memory_search would have built for that message (`hook.audit_transcript`), settles the turn's retrievals as applied and the recall's shown pointers when the reply used them, and records `turn_audited` / `search_miss` events. The client starts the daemon when none answers and always exits 0; the trailing `|| true` keeps a uvx network failure or an older wheel without the subcommand from surfacing as a hook error banner. Losing one turn of telemetry is preferable to interrupting the user.",
+  "$schema-comment": "Claude Code plugin hook manifest. The Stop event fires once per assistant response, every turn end. The hook calls `bettermemory hook stop`, a standard-library client that posts the hook's stdin JSON (session_id and transcript_path) to the local daemon, which runs the silent-miss probe over the pool memory_search would have built for that message (`hook.audit_transcript`), settles the turn's retrievals as applied and the recall's shown pointers when the reply used them, and records `turn_audited` / `search_miss` events. The client starts the daemon when none answers and always exits 0; the trailing `; exit 0` keeps a uvx network failure or an older wheel without the subcommand (argparse exits 2, which Claude Code reads as blocking) from surfacing as a hook error. It is an ending every shell Claude Code runs a hook in parses: /bin/sh, Git Bash on Windows, and on Windows without Git Bash PowerShell (pwsh, else Windows PowerShell 5.1, which has no `||`). Two cases `|| true` covered and it does not: a shell started with errexit (`SHELLOPTS=errexit`, a `BASH_ENV` that sets `-e`) hands a failing program's status on, and a `CLAUDE_CODE_SHELL_PREFIX` wrapper that evals the command ends with it. No ending both PowerShell 5.1 and an errexit shell read as 0 exists, and the client itself always exits 0. Losing one turn of telemetry is preferable to interrupting the user.",
   "$schema-comment-session-start": "The SessionStart event fires when a conversation opens; its stdout is injected verbatim into the model's context. `bettermemory hook session-start` asks the daemon for the session brief: the project's standing memories in force and the memories the conversation so far bears on (ranked by the owner's words in the session's transcript), eight pointers of each at most (id and summary, never a body), under a header that says they are pointers, not instructions. A shown brief is recorded as a `session_brief` event; it prints nothing outside a project or when nothing is admitted, and always exits 0. A clear opens a new recall segment, and so does a compact whose compaction marker the transcript holds. MATCHER DELIBERATELY OMITTED: an omitted matcher means match all, and every SessionStart matcher (startup, resume, clear, compact, fork) needs the hook: a startup or a clear gets the brief, and a resume or a compact opens or keeps its recall segment without one (rule rs-v8). Timeout 20 s because this one blocks session open and may be the call that starts the daemon.",
   "$schema-comment-prompt-recall": "The UserPromptSubmit event fires when the user submits a prompt, before the model sees it; stdout on exit 0 is injected into the model's context. `bettermemory hook prompt` asks the daemon to probe the prompt through production's search pool and ranker; up to three relevant memories the mode admits (`[behavior] prompt_recall = project`: written in this project; `everywhere`: what an unscoped search reaches), not shown, retrieved, written or updated in the session segment, come back as pointers (id, relevance, summary and snippet, never a body) and are recorded as a `prompt_recall` event, which the Stop hook's audit of the same turn reads as a delivery. `[behavior] prompt_recall` takes project, everywhere or off. The `prompt_recall` row is product state, recorded with telemetry off too, so nothing is injected off the books; when the row cannot land the hook injects nothing. MATCHER DELIBERATELY OMITTED. Timeout 10 s, the tightest of the three, because it sits between the user pressing enter and the model starting. The hook reads the three timeouts from `_daemon_client.HOOK_HARNESS_TIMEOUT_SECONDS`, which tests pin to this file, and the daemon stops trying a hook's rows 2 s before its timeout, so a busy store shows nothing rather than a recall the log missed.",
   "hooks": {
@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx bettermemory hook stop --quiet || true",
+            "command": "uvx bettermemory hook stop --quiet; exit 0",
             "timeout": 30
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx bettermemory hook session-start || true",
+            "command": "uvx bettermemory hook session-start; exit 0",
             "timeout": 20
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx bettermemory hook prompt || true",
+            "command": "uvx bettermemory hook prompt; exit 0",
             "timeout": 10
           }
         ]

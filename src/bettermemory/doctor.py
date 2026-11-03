@@ -834,7 +834,7 @@ def launcher_problem(command: str, *, what: str, remedy: str) -> Finding | None:
     """What is wrong with the program an entry or a hook runs, or None:
     an absolute path that no longer exists, or a bare name (`bettermemory`,
     `uvx`) PATH does not find, each fails silently at the client, since
-    every shipped hook ends in `|| true`. An absolute `bettermemory` of
+    every shipped hook ends in `; exit 0`. An absolute `bettermemory` of
     another install is a warning: it runs, at that install's version."""
     path = Path(command)
     if path.is_absolute():
@@ -965,7 +965,7 @@ def check_claude_code(ctx: _Context) -> Check:
     settings file, each running a bettermemory this machine has, and an
     MCP server registered. The hooks carry the session brief, the prompt
     recall and the turn-end settlement, and every shipped hook ends in
-    `|| true`, so a hook that runs nothing fails silently: this is the
+    `; exit 0`, so a hook that runs nothing fails silently: this is the
     one place that says so."""
     from .init import find_binary
 

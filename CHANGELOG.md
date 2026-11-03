@@ -27,11 +27,34 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 
 ### 9.0.0rc17
 
-The seventeenth candidate keeps the path `bettermemory init` writes
-working across a Homebrew or Nix upgrade and refuses an unknown or
-removed id in plain words. The store takes no schema step.
+The seventeenth candidate runs the plugin's hooks on Windows without
+Git Bash, where Claude Code runs them in PowerShell, keeps the path
+`bettermemory init` writes working across a Homebrew or Nix upgrade,
+and refuses an unknown or removed id in plain words. The store takes no
+schema step.
 
 #### Fixed
+
+- **The plugin's hooks run on Windows without Git Bash (ENG-185).**
+  Claude Code runs a hook that names no shell in `/bin/sh`, on Windows
+  in Git Bash, and on Windows without Git Bash in PowerShell: `pwsh`,
+  else Windows PowerShell 5.1 (read from 2.1.316's hook runner). The
+  three hooks ended in `|| true`, which 5.1 does not parse, so on such a
+  host every hook failed and the session had no brief, no prompt recall
+  and no turn-end settlement; under `pwsh` a failing `uvx` ran `true`,
+  which Windows does not have. They now end in `; exit 0`, which every
+  one of those shells reads alike: a `uvx` without a network, or an
+  older wheel whose argparse exits 2 (the status Claude Code reads as
+  blocking the prompt), still ends the hook with status 0. A test runs
+  each shipped command with a failing program in `uvx`'s place under
+  every shell the host has, Windows PowerShell 5.1 and `pwsh` on CI's
+  Windows leg. Two cases `|| true` covered and `; exit 0` does not: a
+  shell started with errexit (`SHELLOPTS=errexit`, a `BASH_ENV` that
+  sets `-e`) hands the failing status on, and a
+  `CLAUDE_CODE_SHELL_PREFIX` wrapper that evals the command ends with
+  it; no ending both PowerShell 5.1 and an errexit shell read as 0
+  exists, and the client itself always exits 0. A settings file's own
+  hooks may keep `|| true`, and `doctor` reads either.
 
 - **A refusal for an unknown, removed or still-active id reads
   unquoted (ENG-98).** `memory_show`, `memory_update`, `memory_verify`,

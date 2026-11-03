@@ -18,11 +18,14 @@ Its stretch is asked for again after that; writes that landed before the
 interrupt rely on the dedup gates.
 
 ATTENDED. Claude Code sets `CLAUDE_CODE_SESSION_ATTENDED` to "1" in the
-hooks of an interactive session and "0" for `claude -p` and SDK runs. The
-hook client forwards `attended` only when it reads exactly "1", and this
-reads only the payload, never the daemon's own environment, so a scripted
-session, an older host and a daemon started from an attended shell all
-read as unattended. Unattended or switched off, a Stop does exactly what
+hooks of an interactive session and "0" for `claude -p` and SDK runs
+(read from 2.1.316's hook runner, which builds every hook's environment
+with it; a session the desktop or web client drives counts as
+interactive, a background one does not). The hook client forwards
+`attended` only when it reads exactly "1", and this reads only the
+payload, never the daemon's own environment, so a scripted session, an
+older host and a daemon started from an attended shell all read as
+unattended. Unattended or switched off, a Stop does exactly what
 it did before capture existed.
 
 WHEN. One request per Stop, none while `stop_hook_active` is set

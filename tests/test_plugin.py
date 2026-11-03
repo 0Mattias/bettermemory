@@ -19,6 +19,9 @@ config when working *in* the bettermemory repo itself.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -340,6 +343,102 @@ def test_stop_hook_has_reasonable_timeout() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The guard every hook ends in (ENG-185).
+#
+# A hook's program can fail before bettermemory's own client runs: uvx
+# without a network, or an older published wheel without the subcommand,
+# whose argparse exits 2, the status Claude Code reads as "block" (for
+# UserPromptSubmit, the prompt is erased). The guard turns any status into
+# 0. Claude Code 2.1.316 (read from its hook runner) runs a hook that names
+# no `shell` in /bin/sh, on Windows in Git Bash, and on Windows without Git
+# Bash in PowerShell: pwsh, else Windows PowerShell 5.1. 5.1 has no `||`,
+# so `|| true` did not parse there and every hook failed; pwsh parses it
+# but finds no `true` on Windows. `; exit 0` means the same in all of them.
+# ---------------------------------------------------------------------------
+
+_HOOK_GUARD = "; exit 0"
+
+#: The first line Claude Code 2.1.316 appends to a PowerShell hook's
+#: command, which hands a status of 2 on as "block"; the guard's `exit 0`
+#: ends the script before it.
+_POWERSHELL_TAIL = "\n; if (-not $?) { if ($LASTEXITCODE -eq 2) { exit 2 } }"
+
+
+def _command_hooks() -> list[dict[str, object]]:
+    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
+    return [
+        h
+        for entries in body["hooks"].values()
+        for entry in entries
+        for h in entry.get("hooks", [])
+        if h.get("type") == "command"
+    ]
+
+
+def test_every_hook_ends_in_the_guard_and_no_one_shells_operator() -> None:
+    """Each shipped hook ends in `; exit 0` and carries no `||` or `&&`,
+    which Windows PowerShell 5.1 does not parse."""
+    hooks = _command_hooks()
+    assert len(hooks) == 3, hooks
+    for hook in hooks:
+        command = str(hook["command"])
+        assert command.endswith(_HOOK_GUARD), command
+        assert "||" not in command and "&&" not in command, command
+
+
+def _is_powershell(shell: str) -> bool:
+    return Path(shell).stem.lower() in ("pwsh", "powershell")
+
+
+def _run(shell: str, command: str) -> subprocess.CompletedProcess[str]:
+    """`command` run as Claude Code runs a hook's in `shell`."""
+    if _is_powershell(shell):
+        script = command + _POWERSHELL_TAIL
+        argv = [shell, "-NoProfile", "-NonInteractive", "-Command", script]
+    else:
+        argv = [shell, "-c", command]
+    return subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
+
+
+def _shells() -> list[str]:
+    # bash.exe on a Windows PATH may be WSL's launcher, not Git Bash.
+    names = (
+        ("pwsh", "powershell") if sys.platform == "win32" else ("sh", "bash", "pwsh")
+    )
+    found = [shutil.which(name) for name in names]
+    return [shell for shell in found if shell is not None]
+
+
+def _failing(shell: str, failure: str) -> str:
+    """A program to run in `uvx`'s place that fails as `failure` names."""
+    if failure == "not found":
+        return "bettermemory-no-such-program"
+    call = "& " if _is_powershell(shell) else ""
+    return f'{call}"{sys.executable}" -c "import sys; sys.exit(2)"'
+
+
+@pytest.mark.parametrize("failure", ["exit 2", "not found"])
+def test_each_hook_ends_0_when_its_program_fails_in_each_shell(failure: str) -> None:
+    """Each shipped command, its `uvx` swapped for a program that exits 2
+    or one no PATH has, ends with status 0 under every shell present here
+    that Claude Code runs hooks in. Without the guard, the one that exits
+    2 ends with 2, so the program ran and the guard is what answers."""
+    shells = _shells()
+    if not shells:
+        pytest.skip("no shell Claude Code runs hooks in is on PATH")
+    for shell in shells:
+        for hook in _command_hooks():
+            shipped = str(hook["command"])
+            assert shipped.startswith("uvx "), shipped
+            command = _failing(shell, failure) + shipped[len("uvx") :]
+            if failure == "exit 2":
+                bare = _run(shell, command[: -len(_HOOK_GUARD)])
+                assert bare.returncode == 2, (shell, command, bare.stderr)
+            done = _run(shell, command)
+            assert done.returncode == 0, (shell, command, done.stdout, done.stderr)
+
+
+# ---------------------------------------------------------------------------
 # SessionStart hook — the memory hint a fresh session opens with.
 #
 # A SessionStart hook's stdout is one of the three (with UserPromptSubmit
@@ -372,7 +471,7 @@ def test_plugin_ships_session_start_hook() -> None:
     """The SessionStart binding exists and calls the right subcommand.
 
     Pin the exact subcommand: a rename would otherwise degrade silently
-    into "the hook runs, argparse exits 2, `|| true` swallows it" — a
+    into "the hook runs, argparse exits 2, `; exit 0` swallows it" — a
     feature that ships and never fires."""
     body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
     assert "SessionStart" in body["hooks"], "SessionStart event binding missing"
@@ -394,11 +493,11 @@ def test_plugin_ships_session_start_hook() -> None:
         f"none of the SessionStart command hooks call `bettermemory "
         f"session-start`; got: {[h.get('command') for h in command_hooks]}"
     )
-    # `|| true` is why an older published wheel without the subcommand
-    # (argparse exits 2) can't surface as a hook-error banner.
+    # The guard is why an older published wheel without the subcommand
+    # (argparse exits 2) can't surface as a hook error.
     for hook in matched:
-        assert "|| true" in hook["command"], (
-            f"SessionStart hook drops the `|| true` guard: {hook['command']!r}"
+        assert hook["command"].endswith(_HOOK_GUARD), (
+            f"SessionStart hook drops the `{_HOOK_GUARD}` guard: {hook['command']!r}"
         )
 
 
@@ -451,7 +550,7 @@ def test_session_start_hook_has_reasonable_timeout() -> None:
 # runs the same silent-miss predicate the Stop hook audits with and prints
 # a one-hit pointer block only on the ~2% of prompts that clear it; empty
 # stdout — the common case — adds nothing to context. The four guards
-# below mirror the SessionStart set: exact-subcommand pin, `|| true`,
+# below mirror the SessionStart set: exact-subcommand pin, `; exit 0`,
 # matcher discipline, timeout window. UserPromptSubmit differs from
 # SessionStart on the matcher axis — the hooks reference defines NO
 # matcher values for it at all — so where the SessionStart guard checks
@@ -464,8 +563,8 @@ def test_session_start_hook_has_reasonable_timeout() -> None:
 
 def test_plugin_ships_prompt_recall_hook() -> None:
     """The UserPromptSubmit binding exists and calls the right
-    subcommand, with the `|| true` guard that keeps an older published
-    wheel (argparse exit 2) from surfacing as a hook-error banner on
+    subcommand, with the `; exit 0` guard that keeps an older published
+    wheel (argparse exit 2) from surfacing as a hook error on
     every single prompt — the same degradation the SessionStart pin
     guards, but per-prompt instead of per-session."""
     body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
@@ -487,8 +586,8 @@ def test_plugin_ships_prompt_recall_hook() -> None:
         f"prompt-recall`; got: {[h.get('command') for h in command_hooks]}"
     )
     for hook in matched:
-        assert "|| true" in hook["command"], (
-            f"UserPromptSubmit hook drops the `|| true` guard: {hook['command']!r}"
+        assert hook["command"].endswith(_HOOK_GUARD), (
+            f"UserPromptSubmit hook drops the `{_HOOK_GUARD}` guard: {hook['command']!r}"
         )
 
 

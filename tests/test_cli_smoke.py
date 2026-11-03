@@ -1063,7 +1063,7 @@ def test_session_start_exits_0_when_the_reader_hung_up(tmp_path: Path) -> None:
 
     A hook whose command exits 120 shows the user an error banner at
     session open, which is the one outcome this command must never
-    produce; `|| true` in hooks.json is a second net, not a reason to
+    produce; `; exit 0` in hooks.json is a second net, not a reason to
     leave the first one untested.
     """
     from bettermemory.origin import capture
