@@ -19,6 +19,7 @@ locks, and is refused while a daemon serves the store.
 from __future__ import annotations
 
 import os
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -31,6 +32,8 @@ from bettermemory import key_lifecycle as lifecycle
 from bettermemory._fsutil import atomic_write_bytes
 from bettermemory.log import REKEY, KeyRing, fingerprint
 from bettermemory.store import STORE_FILENAME, Store
+from bettermemory import store_keys
+from bettermemory.store_keys import _signing_key
 
 from .test_key_lifecycle import _ring_files, _rows, _store, _verify
 
@@ -174,6 +177,84 @@ def test_a_crash_at_each_step_leaves_a_store_that_opens_and_verifies(
     else:
         assert named == fingerprint(old)
         assert _rows(path, REKEY) == []
+
+
+def test_a_writer_that_read_the_old_key_signs_with_the_key_a_racing_finisher_renamed(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-210. A writer whose connection opened before a rotation reads
+    the ring's current key and finds the old one; the rotation, or another
+    open, renames the new key in before this writer's `finish_rotation`
+    reads the pending file, which is then gone. `_signing_key`, driven here
+    on that interleaving directly, returns the key meta names, read from
+    the ring again, not the old key it read first: a row signed with the
+    old key inside the new key's segment reads ``tampered`` (CI run
+    41554253487, the racing open's row, ubuntu py3.11)."""
+    path, store_id = _store(tmp_path / "home")
+    ring = KeyRing(keys_dir, store_id)
+    old = ring.load_current()
+    assert old is not None
+    report = lifecycle.rotate_key(path, apply=True)
+    assert report["status"] == "done", report
+    new = ring.load_current()
+    assert new is not None and fingerprint(new) == report["new_fingerprint"]
+    assert not pending_key_path(ring).exists()
+
+    stale = [old]
+    real_load = KeyRing.load_current
+
+    def the_old_key_first(self: KeyRing) -> bytes | None:
+        return stale.pop() if stale else real_load(self)
+
+    monkeypatch.setattr(KeyRing, "load_current", the_old_key_first)
+    conn = sqlite3.connect(path)
+    try:
+        assert _signing_key(conn, ring, path, old) == new
+    finally:
+        conn.close()
+
+
+def test_a_writer_meeting_a_rename_in_flight_tries_the_finish_again(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-210 on Windows. A rotation committed and is renaming its new key
+    over the current one, which holds the pending file open: a writer's
+    read of it fails for a moment (a sharing violation, PermissionError)
+    while the current key is still the old one. `_signing_key` tries the
+    finish again while the pending file is there, with `replace_atomic`'s
+    budget, and signs with the key meta names."""
+    path, store_id = _store(tmp_path / "home")
+    ring = KeyRing(keys_dir, store_id)
+    old = ring.load_current()
+    assert old is not None
+    report = lifecycle.rotate_key(path, apply=True)
+    assert report["status"] == "done", report
+    new = ring.load_current()
+    assert new is not None
+    # The state between the rotation's commit and its rename.
+    pending = pending_key_path(ring)
+    pending.write_bytes(new)
+    ring.current_path().write_bytes(old)
+
+    real_read = Path.read_bytes
+    met: list[Path] = []
+
+    def in_flight_once(self: Path) -> bytes:
+        if self == pending and not met:
+            met.append(self)
+            raise PermissionError(32, "the file is being renamed", str(self))
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", in_flight_once)
+    monkeypatch.setattr(store_keys, "_rename_read_attempts", lambda: 5)
+    conn = sqlite3.connect(path)
+    try:
+        assert _signing_key(conn, ring, path, old) == new
+    finally:
+        conn.close()
+    assert met == [pending]
+    assert ring.load_current() == new
+    assert not pending.exists()
 
 
 @pytest.mark.parametrize("window", ["before_commit", "after_commit"])

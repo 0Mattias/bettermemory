@@ -33,13 +33,17 @@ import os
 import shutil
 import sqlite3
 import stat
+import sys
 import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ._fsutil import (
+    _REPLACE_ATTEMPTS,
+    _REPLACE_BACKOFF_S,
     ensure_owner_only_dir,
     fsync_file,
     replace_atomic,
@@ -916,6 +920,18 @@ def _bound_here_or_nowhere(keyring: KeyRing, store_file: Path) -> bool:
         return False
 
 
+def _current_named(keyring: KeyRing, recorded: str) -> bytes | None:
+    """The ring's current key when its fingerprint is ``recorded``, else
+    None (an unreadable key included)."""
+    try:
+        current = keyring.load_current()
+    except KeyUnreadableError:
+        return None
+    if current is None or fingerprint(current) != recorded:
+        return None
+    return current
+
+
 def finish_rotation(keyring: KeyRing, store_file: Path, recorded: str) -> bytes | None:
     """Finish a `key rotate` that committed and did not rename its new key
     (a crash or a failure between its commit and the rename): when the
@@ -923,16 +939,19 @@ def finish_rotation(keyring: KeyRing, store_file: Path, recorded: str) -> bytes 
     names (``recorded``) and the ring is bound to ``store_file`` or to no
     file, the current key is kept under its fingerprint first (a copy is
     there already when the rotation wrote it) and the pending key renamed
-    over it, so the current key file is never absent. Returns that key, or
-    None when there is nothing to finish or it cannot be done now (said in
-    the log; the open goes on as it would have, and the next one tries
-    again). A pending key meta does not name is a rotation that did not
-    commit: it signs nothing and is left alone."""
+    over it, so the current key file is never absent. Returns that key;
+    with nothing pending, the ring's current key when meta names it (a
+    finisher that raced this one, the rotation itself or another open,
+    renamed it since the caller read the ring); otherwise None, when there
+    is nothing to finish or it cannot be done now (said in the log; the
+    open goes on as it would have, and the next one tries again). A
+    pending key meta does not name is a rotation that did not commit: it
+    signs nothing and is left alone."""
     pending = pending_key_path(keyring)
     try:
         key = pending.read_bytes()
     except FileNotFoundError:
-        return None
+        return _current_named(keyring, recorded)
     except OSError as exc:
         log.warning(
             "store %s: the pending key %s cannot be read: %s", store_file, pending, exc
@@ -950,11 +969,8 @@ def finish_rotation(keyring: KeyRing, store_file: Path, recorded: str) -> bytes 
                 raise OSError(f"{retired} holds another key under the same prefix")
         replace_atomic(pending, keyring.current_path())
     except (OSError, KeyUnreadableError) as exc:
-        try:
-            now = keyring.load_current()
-        except KeyUnreadableError:
-            now = None
-        if now is not None and fingerprint(now) == recorded:
+        now = _current_named(keyring, recorded)
+        if now is not None:
             return now
         log.warning(
             "store %s: the rotated key %s could not be made current (%s); the "
@@ -972,6 +988,31 @@ def finish_rotation(keyring: KeyRing, store_file: Path, recorded: str) -> bytes 
     return key
 
 
+def _rename_read_attempts() -> int:
+    """How many times `_signing_key` tries a rotation's finish while its
+    pending key is there: `replace_atomic`'s budget on Windows, where a
+    rename in flight holds the file open; once elsewhere, where a rename is
+    atomic to every reader."""
+    return _REPLACE_ATTEMPTS if sys.platform == "win32" else 1
+
+
+def _finish_for_signing(keyring: KeyRing, path: Path, recorded: str) -> bytes | None:
+    """`finish_rotation` for `_signing_key`, tried again with a doubling
+    pause while the pending key file is still there (`_rename_read_attempts`)."""
+    pending = pending_key_path(keyring)
+    delay = _REPLACE_BACKOFF_S
+    attempts = _rename_read_attempts()
+    for attempt in range(attempts):
+        finished = finish_rotation(keyring, path, recorded)
+        if finished is not None:
+            return finished
+        if attempt == attempts - 1 or not os.path.lexists(pending):
+            return None
+        time.sleep(delay)
+        delay *= 2
+    return None
+
+
 def _signing_key(
     conn: sqlite3.Connection, keyring: KeyRing, path: Path, key: bytes
 ) -> bytes:
@@ -985,9 +1026,14 @@ def _signing_key(
     names that one (the rekey replaced the key in this ring, which only a
     process that can write the keys directory, and so holds the key, can
     do), after finishing a `key rotate` that committed and has not renamed
-    its new key yet (`finish_rotation`). Otherwise still ``key``: meta is not authenticated, so a key meta
-    names that this ring does not hold (an edit of the file, or a rekey
-    under another keys directory) is not taken at its word. The owner goes
+    its new key yet (`finish_rotation`, which reads the ring again when a
+    racing finisher renamed it first). On Windows the rename holds the
+    pending key open, so a read that meets it fails for a moment, and the
+    finish is tried again while the pending file is there, with
+    `replace_atomic`'s bounded backoff. Otherwise still ``key``: meta is
+    not authenticated, so a key meta names that this ring does not hold
+    (an edit of the file, or a rekey under another keys directory) is not
+    taken at its word. The owner goes
     on signing under its own key into that segment, as it did before this
     check. After such a rekey `log verify` reports the segment as a
     foreign_segment (tampered) from then on, this connection's own rows in
@@ -1006,7 +1052,7 @@ def _signing_key(
     except KeyUnreadableError:
         current = None
     if current is None or fingerprint(current) != recorded:
-        current = finish_rotation(keyring, path, recorded) or current
+        current = _finish_for_signing(keyring, path, recorded) or current
     if current is not None and fingerprint(current) == recorded:
         log.info(
             "store %s was rekeyed since this connection opened; it signs with "

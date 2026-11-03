@@ -83,6 +83,21 @@ schema step.
   boundary does, and so does `bettermemory tombstones restore` after
   `error:`.
 
+- **A writer racing a key rotation signs with the new key (ENG-210).**
+  A connection opened before a `key rotate` reads the store's key once;
+  when the rotation commits first, its next write reads meta again under
+  the write lock and takes the ring's new key (ENG-81). If the rotation,
+  or another open, renamed the new key in between that write's read of
+  the ring and its own attempt to finish the rename, the write found
+  nothing pending and signed with the old key it had read, inside the
+  new key's segment, and `log verify` read the segment `tampered`.
+  `finish_rotation` now answers a finish another finisher beat with the
+  ring's current key, and on Windows, where the rename holds the pending
+  key open and a read that meets it fails for a moment, the write tries
+  the finish again while the pending file is there, with the bounded
+  backoff `replace_atomic` uses. Only a key whose fingerprint meta names
+  is taken, as before.
+
 - **A failed writing open gives the restore lock back at once
   (ENG-103).** `store._connect` kept its shared hold on the restore lock
   in a local, given back only when the object went, so an open that

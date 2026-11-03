@@ -926,13 +926,10 @@ def _rotate(store: Store) -> tuple[str, int, Path | None]:
         assert committed is not None
         row = committed
     store._forget_segments()
+    # An open that found the rotation committed may have finished it first;
+    # finish_rotation then finds nothing pending and returns the current
+    # key, so None still means the rename did not happen.
     finished = finish_rotation(ring, store.path, fingerprint(new))
-    if finished is None:
-        # An open that found the rotation committed may have finished it.
-        with contextlib.suppress(KeyUnreadableError):
-            finished = ring.load_current()
-        if finished is not None and fingerprint(finished) != fingerprint(new):
-            finished = None
     log.warning(
         "store %s: key %s retired and key %s written by `bettermemory key "
         "rotate`; the rekey row at seq %d opens its segment",
