@@ -622,6 +622,7 @@ print(json.dumps(sorted(sys.modules)))
         "bettermemory._fsutil",
         "bettermemory._git",
         "bettermemory._location_probe",
+        "bettermemory._printable",
         "bettermemory.checkout_token",
         "bettermemory.githead",
         "bettermemory.gitdir_pin",

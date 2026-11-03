@@ -22,6 +22,8 @@ from typing import Any
 
 import pytest
 
+from bettermemory._printable import quoted
+
 from bettermemory import project_file
 from bettermemory.membership import (
     ASK,
@@ -204,7 +206,7 @@ def test_t16_e27_import_maps_by_file_history_and_remote_one_or_none(
     assert [pr.checkout for pr in asked] == [b3.checkout]
     line = asked[0].line
     assert line == (
-        f'bettermemory: imported project "three" from teammate.json may be "three" '
+        'bettermemory: imported project "three" from "teammate.json" may be "three" '
         f"({b3.project}: H). Same project, when the user says so: "
         f'memory_admin(action="answer_question", id="{asked[0].id}", answer="join", '
         f'target="{b3.project}", said="<the user\'s words>") (in that checkout); '
@@ -305,7 +307,8 @@ def test_i37a_a_store_cloned_whole_forks_at_import(
     old = scene.store.membership_store_id
     bm(monkeypatch, "membership", "import", str(exported))
     out = capsys.readouterr().out
-    assert f"store forked: record {written} carries this store's id {old}" in out
+    said = f"store forked: record {quoted(written)} carries this store's id {old}"
+    assert said in out
     assert "not in this store" in out
     new = scene.store.membership_store_id
     assert new != old

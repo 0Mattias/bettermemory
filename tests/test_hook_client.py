@@ -978,7 +978,7 @@ def test_a_daemon_started_from_an_attended_shell_never_inherits_the_mark(
 
 
 def test_the_refusal_constants_are_the_store_sides() -> None:
-    from bettermemory import backup, history, restore_lock
+    from bettermemory import backup, restore_lock
 
     assert _store_refusal.BUNDLE_MANIFEST_NAME == backup.MANIFEST_NAME
     assert _store_refusal.BUNDLE_FORMAT == backup.BUNDLE_FORMAT
@@ -987,7 +987,6 @@ def test_the_refusal_constants_are_the_store_sides() -> None:
     assert _store_refusal.RESTORE_MARKER_CAP == restore_lock._MARKER_CAP_BYTES
     assert _store_refusal.RESTORE_LOCK_BYTE == restore_lock._WINDOWS_LOCK_OFFSET
     assert _store_refusal._LOCK_HELD_ERRNOS == restore_lock._RETRY_ERRNOS
-    assert _store_refusal._UNPRINTABLE == history._UNPRINTABLE
 
 
 @pytest.mark.parametrize(
@@ -998,6 +997,18 @@ def test_the_client_makes_a_line_printable_as_history_does(text: str) -> None:
     from bettermemory import history
 
     assert _store_refusal.printable(text) == history.printable(text)
+
+
+def test_the_client_writes_every_code_point_as_the_one_printable_does() -> None:
+    """A refusal's line goes through the one `printable` (`_printable`,
+    which the client imports only to write one): every code point, a lone
+    surrogate included, is written as `history.printable` writes it, so the
+    client keeps no copy of its categories to drift (ENG-193)."""
+    from bettermemory import history
+
+    every = "".join(map(chr, range(0x110000)))
+
+    assert _store_refusal.printable(every) == history.printable(every)
 
 
 #: Each layout `_bundle_layout` builds, and whether the store side refuses it.

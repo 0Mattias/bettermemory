@@ -70,6 +70,8 @@ from typing import TYPE_CHECKING, Any
 from . import location
 from . import membership as mb
 from ._paths import inside, norm
+from ._printable import quoted
+from .membership_lines import _named
 from .membership_records import _FULL_SHA
 from .models import utcnow
 from .store import Store
@@ -233,7 +235,9 @@ class MigrationReport:
         }
 
     def lines(self) -> list[str]:
-        """The report as `bettermemory membership migrate` prints it."""
+        """The report as `bettermemory membership migrate` prints it: a
+        path and a project's name, which a folder chose, quoted as the
+        membership lines quote them (`history.quoted`, ENG-193)."""
         head = "bettermemory membership migrate"
         out = [
             f"{head} (dry run: {self.kept})" if self.dry_run else f"{head}: {self.kept}"
@@ -250,13 +254,16 @@ class MigrationReport:
                 else ""
             )
             out.append(
-                f'  {r.path}: {r.state}, project "{r.project_name}" ({r.project}), '
+                f"  {quoted(r.path)}: {r.state}, project "
+                f"{_named(r.project_name, r.project)}, "
                 f"{where}, rule {r.rule}; {r.memories} memories, {r.episodes} "
                 f"episodes, {r.tombstones} removed memories homed{held}"
             )
         out.append(f"legacy questions opened ({len(self.proposals)}):")
         for p in self.proposals:
-            out.append(f"  {p.proposal} in checkout {p.checkout} at {p.at}: {p.line}")
+            out.append(
+                f"  {p.proposal} in checkout {p.checkout} at {quoted(p.at)}: {p.line}"
+            )
         out.append(
             "records with no root homed by their cwd, or by a remote several "
             f"projects carry ({len(self.rootless)}):"
@@ -265,7 +272,8 @@ class MigrationReport:
             where = f"checkout {x.checkout}" if x.checkout else "no checkout"
             carried = f"; carried by {', '.join(x.carriers)}" if x.carriers else ""
             out.append(
-                f"  {x.record} ({x.kind}) at {x.cwd}: in {x.root}, project "
+                f"  {x.record} ({x.kind}) at {quoted(x.cwd)}: in {quoted(x.root)}, "
+                "project "
                 f"{x.project}, {where}, rule {x.rule}{carried}"
             )
         t = self.totals
@@ -647,6 +655,10 @@ class _Run:
         self.store.record_membership(kind, payload)
 
     def _count(self, table: str) -> int:
+        if table == "project_witnesses":
+            # The witnesses as the model reads them: a row an import before
+            # 9.0.0rc14 wrote abbreviated reads as absent (ENG-193).
+            return len(self.model.witness_commits())
         row = self.store.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
         return int(row[0])
 
@@ -1400,7 +1412,9 @@ class _Run:
             )
             open_by_project[d.project] = pr
             self.questions.append(
-                LegacyQuestion(pr.id, at, where, d.project, root, pr.line)
+                LegacyQuestion(
+                    pr.id, at, where, d.project, root, self.model.restated(pr).line
+                )
             )
 
     def _view_path(self, k: mb.Checkout) -> str:

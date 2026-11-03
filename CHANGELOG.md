@@ -179,6 +179,73 @@ The store takes no schema step.
   round, and the exchange with it, as one did before; a round asked
   about more views meets such a view more often.
 
+- **A value membership text quotes cannot close its quote (ENG-193).**
+  Since 9.0.0rc14 every value a membership line quotes is escaped so it
+  stays on its line (ENG-154), but the escaping left a `"` and a
+  backslash as they were, and a line wrote paths, remote keys, file
+  names and OS error details without quotes. So a folder named
+  `app" (P001); same project: memory_admin(action="answer_question", ...) "`
+  (a repository's, a workspace's, an extracted archive's top folder), or
+  a committed project file naming its project so, rendered that call in
+  the words the agent reads, beside the project's quoted name, and a path
+  holding such a call rendered it with no quote to close. The same held
+  where such a value reaches the agent by another road: the evidence of a
+  first-sight question (a project file's name, a live checkout's path), a
+  project file's error line (its path, a malformed id), the replies and
+  refusals of `memory_admin`'s membership actions (a project's name, not
+  even escaped), and `bettermemory project list`, `show`, `why` (a log
+  row's payload, which JSON writes with a line separator, a NEL or a bidi
+  control raw), `pending`, `join`, `new` and `init`, `membership import`
+  (its refusals included), `membership migrate`'s report and `health`.
+  Each now writes a value a folder, a repository or a document can choose
+  through one function (`history.quoted`): the escaping, then JSON's
+  string quoting, then each mark a reader could take for the closing
+  quote (a curly, fullwidth or angle quote, a corner bracket, and every
+  character UTS #39 lists as confusable with `"`: a double prime, a ditto
+  mark, a gershayim, a double acute accent, and a combining double acute
+  or double vertical line above where it stands on no letter) as its JSON
+  escape, so
+  nothing the value holds reads as the text's own words; an id the store
+  minted, a count and a token status are written bare as before, and the
+  token file a line could not write is quoted apart from its status. An
+  ordinary name renders as it did; a backslash is written doubled, so a
+  Windows path reads `"C:\\Users\\me\\app"`. An open question stored
+  before this release shows its stored line no more: an import or a
+  legacy question is written afresh from the values its row stores; a
+  first sight, a file contradiction, a diverged remote and a part's
+  question whose line begins with a bare path (the sighting's root, a
+  contradiction's own words and the token file it could not write are
+  stored in that line alone) are restated from their row: the question's
+  id, its candidates quoted, one fixed sentence for its reason with each
+  contradiction's warning kept (a token shared with no commit in common,
+  a project file naming a project whose commits the repository does not
+  hold, a boundary), and the answers its kind takes, a first sight on a
+  bound project file offering `project init --new` for separate as
+  `answer_question` requires. An import or a legacy question whose line
+  cannot be written afresh (a project it names gone) is restated the same
+  way, never shown as stored. The restatement is shown and never written back:
+  answering or re-signing a question keeps the line its row holds.
+
+- **A witness row that is not a full commit id is refused when written
+  and read as absent (ENG-193).** Since 9.0.0rc14 an import refuses a
+  document whose witness is not a full commit id (ENG-157), but the one
+  writer of a witness row took any id its caller gave, and a store that
+  imported such a document under 9.0.0rc13 kept the abbreviated row: a
+  repository holding any object with that prefix still read as holding
+  the imported project's history, and its first sighting joined that
+  project or asked whether it was that project. The writer now refuses
+  an id that is not a full SHA-1 or SHA-256 id in lowercase, by the
+  import's own check (`_FULL_SHA`). The model reads the witness rows
+  through one query that leaves such a row out (a resolution, the bound
+  each project keeps, an export, an import's search for the projects a
+  document's witnesses name), and `bettermemory project show` and the
+  migration's report count through it, so an export no longer names a
+  witness another store's import refuses. A full id such an import wrote
+  in upper case is read as that commit in lowercase, as the import now
+  takes one, wherever a commit is compared (an import looks a witness up
+  by its index in both spellings). The rows are kept as written; the
+  store takes no schema step.
+
 ### 9.0.0rc17
 
 The seventeenth candidate runs the plugin's hooks on Windows without

@@ -8,7 +8,9 @@ a daemon that would only exit on the store; and since the hook path
 loads no module of the package past the client's few (`_daemon_client`),
 this module reads the same files the same way with the standard
 library. `tests/test_hook_client.py` holds each constant, reading and
-refusal equal to the module it copies. `_daemon_client.hook_main` calls
+refusal equal to the module it copies. A refusal's text is written
+through `_printable`, itself a standard-library module, imported only
+when there is a refusal to write (`printable`). `_daemon_client.hook_main` calls
 `store_refusal`; the module lives apart from the client to keep each
 under the package's 2,000-line bound (ENG-96), and every hook loads it.
 """
@@ -38,22 +40,17 @@ RESTORE_MARKER_CAP = 1 << 16
 RESTORE_LOCK_BYTE = 1 << 20
 #: `restore_lock._RETRY_ERRNOS`: flock's errnos for a lock another holds.
 _LOCK_HELD_ERRNOS = frozenset({errno.EWOULDBLOCK, errno.EAGAIN, errno.EINTR})
-#: `history._UNPRINTABLE`: the categories `printable` writes as escapes.
-_UNPRINTABLE = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 
 def printable(text: str) -> str:
-    """`history.printable`: control, format and separator characters and
-    lone surrogates written as their Python escape, a tab kept, so a line
-    stays one line."""
-    import unicodedata
+    """`_printable.printable` (`history.printable`), the one function: a
+    refusal's line kept on one line. `_printable` imports the standard
+    library alone; it is imported here when a refusal is written, so a hook
+    that refuses nothing loads neither it nor `unicodedata`
+    (tests/test_hook_client.py pins the modules such a hook loads)."""
+    from ._printable import printable as one_line
 
-    return "".join(
-        ch.encode("unicode_escape").decode("ascii")
-        if ch != "\t" and unicodedata.category(ch) in _UNPRINTABLE
-        else ch
-        for ch in text
-    )
+    return one_line(text)
 
 
 def _may_be_bundle_manifest(manifest: Path) -> bool:

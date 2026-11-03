@@ -20,7 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from .history import printable
+from .history import printable, quoted
 from .membership_records import (
     UNRESOLVED,
     Checkout,
@@ -228,11 +228,13 @@ def _signature(loc: Location) -> tuple[Any, ...]:
 
 def _unwritten(loc: Location) -> str | None:
     """The token file and status a line names when the capture could not
-    write the token (read-only, another owner, the policy switch)."""
+    write the token (read-only, another owner, the policy switch): the
+    path quoted (`history.quoted`, ENG-193), the status, one of the
+    capture's own words, after it."""
     if not loc.token_status.startswith(("failed", "skipped")):
         return None
     where = _path_under(loc.git_dir or "", "info", _TOKEN_NAME)
-    return f"{where}: {loc.token_status}"
+    return f"{quoted(where)}: {loc.token_status}"
 
 
 @dataclass

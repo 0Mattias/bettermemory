@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from bettermemory import membership as mb
+from bettermemory.history import quoted
 from bettermemory.location import NO_MACHINE, continuity
 from bettermemory.membership import (
     ASK,
@@ -566,7 +567,7 @@ def test_i06_r1_1_copied_while_the_original_lives_asks(world: World) -> None:
     twin = world.copy(repo, "/w/u-copy")
     res = world.see(twin)
     assert res.outcome == ASK and res.rule == "ask:token_shared_no_commit"
-    assert "carries the checkout token of /w/u" in res.lines[-1]
+    assert 'carries the checkout token of "/w/u"' in res.lines[-1]
     assert world.brief(res) == []
     mine = world.write(res)
     assert world.brief(world.see(repo)) == [rid]
@@ -582,7 +583,8 @@ def test_i07_r1_1_token_denied_content_asks_naming_it(world: World) -> None:
     assert res.outcome == ASK and res.rule == "ask:content_only"
     assert res.candidates == (first.project,)
     assert (
-        "could not write /vol/u/.git/info/bettermemory: skipped:policy" in res.lines[-1]
+        'could not write "/vol/u/.git/info/bettermemory": skipped:policy'
+        in res.lines[-1]
     )
 
 
@@ -843,7 +845,7 @@ def test_i20_r1_5_an_unreadable_cwd_shows_nothing_with_a_row(world: World) -> No
     )
     assert (res.outcome, res.project) == (INDETERMINATE, None)
     assert res.lines == (
-        "bettermemory: cannot tell what /w/locked is (permission denied); nothing "
+        'bettermemory: cannot tell what "/w/locked" is ("permission denied"); nothing '
         "from any project is shown here",
     )
     assert world.kinds(res) == ["resolution_indeterminate"]
@@ -1277,7 +1279,7 @@ def test_t04_a_fork_under_its_own_remote_asks_and_the_file_answers(
     fork = world.clone(upstream, "/w/fork", remote="example.invalid/enterprise/app")
     asked = world.see(fork)
     assert (asked.outcome, asked.rule) == (ASK, "ask:one_witness")
-    assert asked.lines[-1].startswith("bettermemory: /w/fork may be project")
+    assert asked.lines[-1].startswith('bettermemory: "/w/fork" may be project')
     assert world.brief(asked) == []
     # The project file committed upstream and pulled into the fork: F+H
     # answers the open question by evidence.
@@ -1408,8 +1410,8 @@ def test_t10_r1_3_repointed_template_clones_ask_and_l5_after_first_sight(
     later.remotes = {"example.invalid/me/later"}
     res = world.see(later)
     assert res.outcome == ASK and res.checkout == joined.checkout
-    assert "now names example.invalid/me/later" in res.lines[-1]
-    assert "elsewhere still names example.invalid/acme/template" in res.lines[-1]
+    assert 'now names "example.invalid/me/later"' in res.lines[-1]
+    assert 'elsewhere still names "example.invalid/acme/template"' in res.lines[-1]
     split = world.model.declare(Declaration("new", "os:tester", checkout=res.checkout))
     assert split.project not in (None, first.project)
     assert world.see(later).project == split.project
@@ -1665,7 +1667,7 @@ def test_x06_a_nested_file_of_another_repository_asks_l7(world: World) -> None:
     )
     res = world.see(repo, cwd="/m/vendor/y", files=(nested, root))
     assert res.outcome == ASK and res.project == at_root.project
-    assert "/m/vendor/y/bettermemory.toml names" in res.lines[-1]
+    assert '"/m/vendor/y/bettermemory.toml" names' in res.lines[-1]
     world.model.declare(
         Declaration("join", "os:tester", checkout=res.checkout, proposal=res.proposal)
     )
@@ -1821,7 +1823,7 @@ def test_rung4_several_projects_on_unrelated_lines_ask_once(world: World) -> Non
     res = world.see(both)
     assert (res.outcome, res.rule) == (ASK, "ask:several_projects")
     assert set(res.candidates) == {pa.project, pb.project}
-    assert res.lines[-1].startswith("bettermemory: /w/both may be")
+    assert res.lines[-1].startswith('bettermemory: "/w/both" may be')
     # Review M G2: the question says the most specific line was read and
     # not decided within the walk's bound.
     assert "descends from another's within the 512 commits read" in res.lines[-1]
@@ -2268,10 +2270,8 @@ def test_an_ask_line_spells_the_token_file_as_the_git_directory_is_spelled(
     res = world.see(repo, git_dir="D:\\vol\\u\\.git")
     assert res.outcome == ASK and res.rule == "ask:content_only"
     assert res.candidates == (first.project,)
-    assert (
-        "could not write D:\\vol\\u\\.git\\info\\bettermemory: skipped:policy"
-        in res.lines[-1]
-    )
+    token_file = "D:\\vol\\u\\.git\\info\\bettermemory"
+    assert f"could not write {quoted(token_file)}: skipped:policy" in res.lines[-1]
 
 
 def test_the_handoff_never_takes_a_live_siblings_run_state(world: World) -> None:
@@ -2431,7 +2431,7 @@ def test_b6_another_session_meets_one_legacy_question(
     home = world.model.home(rid)
     assert home is not None and home.unresolved
     expected = (
-        "bettermemory: the records written at /w/app while it could not be "
+        'bettermemory: the records written at "/w/app" while it could not be '
         "read (1 memories, 1 episodes) may belong to project "
         f'"app" ({first.project}) here. Same project, when the user says so: '
         f'memory_admin(action="answer_question", id="{res.proposal}", answer="join", '
@@ -2578,7 +2578,7 @@ def test_b16_a_write_without_a_machine_asks_another_session(
     res = world.see(repo, session="s2")
     assert res.outcome == ASK and res.checkout == first.checkout
     expected = (
-        "bettermemory: the records written at /w/app while it could not be "
+        'bettermemory: the records written at "/w/app" while it could not be '
         "read (1 memories, 0 episodes) may belong to project "
         f'"app" ({first.project}) here. Same project, when the user says so: '
         f'memory_admin(action="answer_question", id="{res.proposal}", answer="join", '

@@ -76,11 +76,14 @@ import contextlib
 import difflib
 import json
 import sqlite3
-import unicodedata
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+# The escaping every text report prints through, re-exported from the
+# module that holds it so the capture can quote without the store.
+from ._printable import printable as printable
+from ._printable import quoted as quoted
 from .log import (
     CAPTURE_MEMBER,
     HISTORY_REPLACED,
@@ -139,35 +142,6 @@ _CORROBORATION_FIELDS = frozenset({"corroborations", "last_corroborated"})
 # request carried (a removal reason) is the caller's own; the bodies and
 # quotes some events carry are not shown.
 _EVENT_DETAIL = ("status", "reason", "fields", "door", "attribution", "triggered_from")
-
-
-def printable(text: str) -> str:
-    """`text` made safe to print on one terminal line: control and format
-    characters (category Cc and Cf: escapes, line breaks, bidi controls,
-    zero-width characters) are written as their Python escape (``\\x1b``,
-    ``\\n``, ``\\u202e``), as are the line and paragraph separators (Zl
-    and Zp, U+2028 and U+2029, which `str.splitlines` and the agent's
-    reader both break a line at) and a lone surrogate (Cs, which a
-    ``\\ud800`` escape in stored JSON decodes to and which a strict UTF-8
-    stdout refuses to write); a tab is kept. The text comes from the
-    store, which an editor of the file may have written; a raw escape
-    sequence in a reason or a scope must not reach the terminal as one.
-    The membership lines a session's first output carries quote paths and
-    names through it too (ENG-154), so no directory name forges a line.
-    The stand-in is ASCII, so it encodes in every code page: U+FFFD did
-    not in cp1252, the one Windows gives a redirected stdout, and a path
-    holding a soft hyphen (Cf, which cp1252 does encode) ended a report in
-    UnicodeEncodeError."""
-    return "".join(
-        ch.encode("unicode_escape").decode("ascii")
-        if ch != "\t" and unicodedata.category(ch) in _UNPRINTABLE
-        else ch
-        for ch in text
-    )
-
-
-#: The categories `printable` writes as escapes.
-_UNPRINTABLE = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 
 @contextlib.contextmanager
@@ -1067,6 +1041,7 @@ __all__ = [
     "RecordHistory",
     "history_replaced",
     "printable",
+    "quoted",
     "read_snapshot",
     "record_history",
     "render_json",

@@ -206,6 +206,7 @@ from .membership_records import (
     legacy_asks,
     manifest_match,
     relation,
+    _FULL_SHA,
     _INITS,
     _LIVE_STATES,
     _basename,
@@ -493,10 +494,7 @@ class Membership:
     def _witnessed(self) -> set[str]:
         """The projects (merges followed) with a witness commit, in one read
         of the witness rows (ENG-159)."""
-        return {
-            self._canon(str(r["project"]))
-            for r in self._store.membership_rows("project_witnesses")
-        }
+        return {self._canon(str(r["project"])) for r in self._witness_query()}
 
     def _checkouts_by_project(
         self, project_ids: Collection[str], *, machine: str | None = None
@@ -578,24 +576,49 @@ class Membership:
 
     # -- evidence rows -----------------------------------------------------------
 
+    def _witness_query(self, **query: Any) -> list[dict[str, Any]]:
+        """The witness rows `query` selects (`Store.membership_rows`) whose
+        commit is a full id (`_FULL_SHA`) in either case: the model's every
+        read of the witness rows goes through it, and `witness_commits`
+        gives the CLI and the migration's report the same rows. An import
+        before 9.0.0rc14 wrote a document's witness as given, an
+        abbreviation included, and `HistoryReader.holds` expands an
+        abbreviation to whichever object a repository holds with that
+        prefix, so such a row witnessed a project it shares nothing with
+        (ENG-157). It reads as absent here (ENG-193): in a resolution, in
+        the bound `_add_witness` keeps, in an export and in a count. A full
+        id such an import wrote in upper case is read as that id: the reads
+        that compare a commit (`_held`, `_has_witness`, the export) compare
+        it in lowercase, as `HistoryReader.holds` answers. The store keeps
+        every row as written; its format does not change."""
+        return [
+            r
+            for r in self._store.membership_rows("project_witnesses", **query)
+            if _FULL_SHA.fullmatch(str(r["commit_id"]).lower())
+        ]
+
     def _witness_rows(self, project_id: str | None = None) -> list[dict[str, Any]]:
         if project_id is None:
-            return self._store.membership_rows(
-                "project_witnesses", order_by=("arrival",)
-            )
-        return self._store.membership_rows(
-            "project_witnesses",
-            column_in=("project", self._members(project_id)),
-            order_by=("arrival",),
+            return self._witness_query(order_by=("arrival",))
+        return self._witness_query(
+            column_in=("project", self._members(project_id)), order_by=("arrival",)
         )
 
+    def witness_commits(self, project_id: str | None = None) -> list[str]:
+        """The witness commits of the project (merges followed), or of every
+        project, oldest first and in lowercase, as the model reads them
+        (`_witness_query`): what ``project show`` counts and the
+        migration's report counts."""
+        return [str(r["commit_id"]).lower() for r in self._witness_rows(project_id)]
+
     def _has_witness(self, project_id: str, commit: str) -> bool:
-        target = self._canon(project_id)
+        """Whether the project (merges followed) holds `commit` as a
+        witness, compared in lowercase over its rows (`_witness_rows`, at
+        most `WITNESS_BOUND` a project): a full id an import before
+        9.0.0rc14 wrote in upper or mixed case is that commit."""
+        want = commit.lower()
         return any(
-            self.canonical(str(r["project"])) == target
-            for r in self._store.membership_rows(
-                "project_witnesses", where={"commit_id": commit}
-            )
+            str(r["commit_id"]).lower() == want for r in self._witness_rows(project_id)
         )
 
     def _has_witnesses(self, project_id: str) -> bool:
@@ -613,7 +636,8 @@ class Membership:
         a write, a verify), with its fingerprint and up to
         `BLOBS_PER_WITNESS` blob ids read through `history`. The project
         keeps at most `WITNESS_BOUND`: past it, the oldest witness after
-        the `KEEP_OLDEST` first is released with its blobs (D15)."""
+        the `KEEP_OLDEST` first is released with its blobs (D15). A
+        `commit` that is not a full id raises ValueError (`_add_witness`)."""
         with self._call():
             self._add_witness(project_id, commit, source=source, history=history)
 
@@ -625,8 +649,16 @@ class Membership:
         source: str,
         history: HistoryReader | None,
     ) -> None:
+        """The one writer of a witness row. `commit` is a full commit id in
+        lowercase (`_FULL_SHA`), as HEAD, the migration's expansion and an
+        import (`PortableIdentity.from_json`) give it; anything else raises
+        ValueError naming it and writes nothing, as the import refuses its
+        document (ENG-157, ENG-193): an abbreviation would be held by
+        whichever repository has an object with that prefix."""
+        if not _FULL_SHA.fullmatch(commit):
+            raise ValueError(f"a witness {commit[:72]!r} is not a full commit id")
         pid = self._canon(project_id)
-        if not commit or self._has_witness(pid, commit):
+        if self._has_witness(pid, commit):
             return
         fingerprint = history.fingerprint(commit) if history is not None else None
         blobs = sorted(set(history.blobs(commit))) if history is not None else []
@@ -651,9 +683,7 @@ class Membership:
         for blob in [b for b in blobs if b not in kept][:BLOBS_PER_WITNESS]:
             self._put("project_blob", {"project": pid, "blob": blob, "witness": commit})
         self._event("witness_put", project=pid, commit=commit, source=source)
-        own = self._store.membership_rows(
-            "project_witnesses", where={"project": pid}, order_by=("arrival",)
-        )
+        own = self._witness_query(where={"project": pid}, order_by=("arrival",))
         if len(own) > WITNESS_BOUND:
             drop = str(own[KEEP_OLDEST]["commit_id"])
             self._delete("project_witness", {"project": pid, "commit_id": drop})
@@ -1055,7 +1085,7 @@ class Membership:
             and _same_number(loc.common_object_key, k.common_object_key)
         ):
             return True
-        commits = [str(r["commit_id"]) for r in self._witness_rows(pid)]
+        commits = self.witness_commits(pid)
         return bool(commits) and bool(self._holds(loc, commits))
 
     def _by_object(self, loc: Location) -> tuple[Checkout | None, str]:
@@ -1171,7 +1201,7 @@ class Membership:
         for row in self._witness_rows():
             pid = self._canon(str(row["project"]))
             if pid not in exclude:
-                index[str(row["commit_id"])].add(pid)
+                index[str(row["commit_id"]).lower()].add(pid)
         if not index:
             return {}
         out: dict[str, set[str]] = defaultdict(set)
@@ -1263,14 +1293,17 @@ class Membership:
         ]
 
     def proposal(self, proposal_id: str) -> Proposal:
+        """The question as its row stores it, which a declaration closes;
+        a reader that shows its line shows `restated` of it."""
         rows = self._store.membership_rows("proposals", where={"id": proposal_id})
         if not rows:
             raise KeyError(proposal_id)
         return _proposal_from(rows[0])
 
     def pending(self) -> list[Proposal]:
-        """Every open proposal (``bettermemory project pending``)."""
-        return self._open_proposals()
+        """Every open proposal as it is shown (``bettermemory project
+        pending``, `restated`)."""
+        return [self.restated(pr) for pr in self._open_proposals()]
 
     def _put_proposal(self, pr: Proposal) -> None:
         self._put("proposal", _proposal_row(pr))
@@ -1606,6 +1639,8 @@ class Membership:
     homes = membership_queries.homes
     admit_recall = membership_queries.admit_recall
     first_output = membership_queries.first_output
+    restated = membership_queries.restated
+    filed_elsewhere = membership_queries.filed_elsewhere
     handoff = membership_queries.handoff
     anchor = membership_queries.anchor
     translate = membership_queries.translate
@@ -1668,9 +1703,10 @@ class Membership:
                 ),
                 None,
             )
+            spelled = _named(self.project(home.project).name, home.project)
             text = (
-                f'{record_id}: project "{self.project(home.project).name}" '
-                f"({home.project}), written in checkout {cid}; rule {home.rule}"
+                f"{record_id}: project {spelled}, written in checkout {cid}; rule "
+                f"{home.rule}"
                 + (f"; the checkout joined by {registered}" if registered else "")
                 + f"; {len(rows)} rows"
             )

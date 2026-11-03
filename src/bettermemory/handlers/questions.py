@@ -24,8 +24,9 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from .. import identity, location
+from .. import identity, location, membership_lines
 from ..declare import declaring_model
+from ..history import quoted
 from ..membership import (
     FILE_CONTRADICTION,
     FIRST_SIGHT,
@@ -52,13 +53,16 @@ def _principal() -> str:
 
 
 def _named(model: Membership, project_id: str | None) -> str:
+    """A project as a reply or a refusal names it, spelled as the
+    membership lines spell one (`membership_lines._named`): its name, which
+    a folder or an imported document chose, quoted, and its id (ENG-193)."""
     if project_id is None:
         return "no project"
     if project_id == GLOBAL:
         return GLOBAL
     canon = model.canonical(project_id) or project_id
     try:
-        return f'"{model.project(canon).name}" ({canon})'
+        return membership_lines._named(model.project(canon).name, canon)
     except KeyError:
         return canon
 
@@ -159,7 +163,7 @@ async def answer_question(
             raise ValueError(
                 f"question {pr.id} is about a folder's project file; a part of "
                 f"its own writes a file: bettermemory project init --new in "
-                f"{pr.evidence.get('dir')}"
+                f"{quoted(str(pr.evidence.get('dir')))}"
             )
         if pr.kind == FILE_CONTRADICTION:
             raise ValueError(
@@ -168,7 +172,7 @@ async def answer_question(
                 "init --rebind; a project of its own: bettermemory project init "
                 "--new"
             )
-        if pr.kind == FIRST_SIGHT and _filed(model, pr):
+        if pr.kind == FIRST_SIGHT and model.filed_elsewhere(pr):
             raise ValueError(
                 f"question {pr.id}: the checkout's project file is bound to "
                 "another project; a project of its own writes a fresh file: "
@@ -230,32 +234,6 @@ async def answer_question(
         "tethered": tethered,
         "reversal": _reversal(done.rows, deps),
     }
-
-
-def _filed(model: Membership, pr: Proposal) -> bool:
-    """Whether the checkout's root project file is bound to a project other
-    than the checkout's own (E22 e, as `cli/project_cmd._filed_root` reads
-    it): then a separate project needs a fresh file, which only
-    ``bettermemory project init --new`` writes."""
-    from pathlib import Path
-
-    from .. import project_file
-
-    if pr.checkout is None:
-        return False
-    k = model.checkout(pr.checkout)
-    views = k.views_on(model.machine)
-    if not views:
-        return False
-    path = Path(views[-1].path) / project_file.PROJECT_FILE_NAME
-    try:
-        found = project_file.parse(path) if path.exists() else None
-    except OSError:
-        return False
-    if not isinstance(found, project_file.ProjectFile):
-        return False
-    bound = model.file_binding(found.id)
-    return bound is not None and bound != (model.canonical(k.project) or k.project)
 
 
 async def join_project(
@@ -320,8 +298,8 @@ async def unjoin_project(
         "project": p.id,
         "was_into": was,
         "line": (
-            f'"{p.name}" ({p.id}) is a project of its own again, no longer merged '
-            f"into {_named(model, was)}"
+            f"{membership_lines._named(p.name, p.id)} is a project of its own "
+            f"again, no longer merged into {_named(model, was)}"
         ),
     }
 

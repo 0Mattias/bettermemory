@@ -806,9 +806,10 @@ def _settle_unresolved(self: Membership, loc: Location, res: Resolution) -> Reso
             signature=None,
             distinct="unresolved_project",
         )
-        if pr.id not in opened and pr.line not in lines:
+        shown = self.restated(pr).line
+        if pr.id not in opened and shown not in lines:
             # Named as every open question of the checkout is (`_caller`).
-            lines.append(pr.line)
+            lines.append(shown)
             outcome = ASK if outcome == SILENT else outcome
             proposal = proposal or pr.id
     return dataclasses.replace(

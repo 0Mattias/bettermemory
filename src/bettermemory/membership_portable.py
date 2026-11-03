@@ -64,7 +64,7 @@ def portable_identity(
             )
         }
     )
-    order = list(dict.fromkeys(str(r["commit_id"]) for r in self._witness_rows(pid)))
+    order = list(dict.fromkeys(self.witness_commits(pid)))
     half = EXPORT_WITNESSES // 2
     kept = order[:half] + [c for c in order[-half:] if c not in order[:half]]
     remotes = sorted(k for k in self._remotes_of(pid) if not k.startswith("local:"))
@@ -223,10 +223,17 @@ def _import_identity(
         if bound is not None:
             cands[bound].add(F)
     if identity.witnesses:
-        for row in self._store.membership_rows(
-            "project_witnesses", column_in=("commit_id", identity.witnesses)
-        ):
-            cands[self._canon(str(row["project"]))].add(H)
+        # The witness rows as the model reads them (`_witness_query`, an
+        # abbreviated one absent), looked up by the index on the commit in
+        # the two spellings a row carries: lowercase, as every writer since
+        # 9.0.0rc14 writes it, and upper case, as an import before it could
+        # (ENG-193); a document's witnesses are lowercase
+        # (`PortableIdentity.from_json`).
+        wanted = {c.lower() for c in identity.witnesses}
+        spellings = sorted(wanted | {c.upper() for c in wanted})
+        for row in self._witness_query(column_in=("commit_id", spellings)):
+            if str(row["commit_id"]).lower() in wanted:
+                cands[self._canon(str(row["project"]))].add(H)
     if identity.remotes:
         for row in self._store.membership_rows(
             "project_remotes", column_in=("remote_key", identity.remotes)

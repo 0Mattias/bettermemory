@@ -35,6 +35,7 @@ import pytest
 from bettermemory import checkout_token, location, project_file
 from bettermemory import membership as mb
 from bettermemory.config import load_config
+from bettermemory.history import quoted
 from bettermemory.membership import (
     ASK,
     FOLDER,
@@ -396,9 +397,9 @@ def test_project_list_shows_projects_checkouts_and_live_views(
     bm(monkeypatch, "project", "list")
     out = capsys.readouterr().out
     assert f'{up.project} "app"\n' in out
-    assert f"  {up.checkout} primary, live at {scene.root / 'app'}" in out
+    assert f"  {up.checkout} primary, live at {quoted(str(scene.root / 'app'))}" in out
     assert f'{asked.project} "fork" [provisional: one_witness]' in out
-    assert f"  {asked.checkout} primary, live at {fork.path}" in out
+    assert f"  {asked.checkout} primary, live at {quoted(str(fork.path))}" in out
 
 
 def test_project_list_marks_an_unresolved_project(
@@ -413,7 +414,8 @@ def test_project_list_marks_an_unresolved_project(
     out = capsys.readouterr().out
     assert '"x" [unresolved: indeterminate]' in out
     assert (
-        f"unresolved, written at {scene.root / 'x'} while it could not be read" in out
+        f"unresolved, written at {quoted(str(scene.root / 'x'))} while it could "
+        "not be read" in out
     )
 
 
@@ -433,7 +435,7 @@ def test_project_show_prints_the_evidence_and_open_questions(
     out = capsys.readouterr().out
     assert out.startswith(f'{up.project} "app"\n')
     assert "  witnesses: 1 commits\n" in out
-    assert f"  remotes: {URL}\n" in out
+    assert f"  remotes: {quoted(URL)}\n" in out
     assert "  file ids: (none)\n" in out
     assert "  records: 1 memories, 0 episodes\n" in out
     assert f"    {up.checkout} primary, live at" in out
@@ -456,10 +458,10 @@ def test_project_pending_prints_each_question_its_line_and_where(
     bm(monkeypatch, "project", "pending")
     out = capsys.readouterr().out.splitlines()
     assert out[0].startswith(
-        f"{asked.proposal} in checkout {asked.checkout} at {fork.path} "
+        f"{asked.proposal} in checkout {asked.checkout} at {quoted(str(fork.path))} "
         "(first_sight: one_witness), opened "
     )
-    assert out[1].startswith(f"  bettermemory: {fork.path} may be project")
+    assert out[1].startswith(f"  bettermemory: {quoted(str(fork.path))} may be project")
     assert (
         f'Same project, when the user says so: memory_admin(action="answer_question", '
         f'id="{asked.proposal}", answer="join", target="{up.project}", '
@@ -795,8 +797,8 @@ def test_i29_init_in_a_plain_folder_makes_a_folder_project(
     typed(monkeypatch, "notes")
     bm(monkeypatch, "project", "init", "--boundary")
     out = capsys.readouterr().out
-    assert f"and makes {notes} a folder project" in out
-    assert f"bettermemory: {notes} is a new project" in out
+    assert f"and makes {quoted(str(notes))} a folder project" in out
+    assert f"bettermemory: {quoted(str(notes))} is a new project" in out
     written = project_file.parse(notes / project_file.PROJECT_FILE_NAME)
     assert isinstance(written, project_file.ProjectFile) and written.boundary
     res = scene.see(notes)
@@ -831,7 +833,8 @@ def test_x05_d13_init_below_the_root_makes_a_sub_project(
         bm(monkeypatch, "project", "init")
         out = capsys.readouterr().out
         assert (
-            f'and makes {mono.at} a sub-project "{part}" of "{name}" ({root.project})'
+            f"and makes {quoted(str(mono.at))} a sub-project "
+            f'"{part}" of "{name}" ({root.project})'
         ) in out
         written = project_file.parse(mono.at / project_file.PROJECT_FILE_NAME)
         assert isinstance(written, project_file.ProjectFile)
@@ -910,7 +913,9 @@ def test_b17_init_new_below_the_root_makes_a_part_and_says_the_checkout_stays(
     name = scene.model.project(root.project).name
     cli = mono.path / "packages" / "cli"
     out = _init_at(scene, monkeypatch, capsys, mono, cli, "--new")
-    assert f'and makes {cli} a sub-project "cli" of "{name}" ({root.project})' in out
+    assert (
+        f'and makes {quoted(str(cli))} a sub-project "cli" of "{name}" ({root.project})'
+    ) in out
     keeps = f'checkout {root.checkout} keeps project "{name}" ({root.project})'
     assert f"  with an id of its own; {keeps}" in out
     written = project_file.parse(cli / project_file.PROJECT_FILE_NAME)
@@ -944,7 +949,7 @@ def test_i31_init_in_a_folder_inside_a_folder_project(
     typed(monkeypatch, "drafts")
     bm(monkeypatch, "project", "init")
     out = capsys.readouterr().out
-    assert f"and makes {drafts} a folder project" in out
+    assert f"and makes {quoted(str(drafts))} a folder project" in out
     res = scene.see(drafts)
     assert res.outcome == SILENT and res.project != outer.project
     assert scene.model.project(str(res.project)).folder
@@ -1144,7 +1149,9 @@ def test_b10_a_join_that_moves_the_checkout_takes_its_parts_along(
     typed(monkeypatch, "other")
     bm(monkeypatch, "project", "join", str(other.project))
     out = capsys.readouterr().out
-    assert f'and takes its parts along: "web" ({part.project}) at {web}' in out
+    assert (
+        f'and takes its parts along: "web" ({part.project}) at {quoted(str(web))}'
+    ) in out
     twin.at = web
     res = scene.see(twin)
     assert (res.outcome, res.project) == (SILENT, part.project)
@@ -1266,7 +1273,7 @@ def test_b12_a_root_files_boundary_follows_the_file_and_rebind_lifts_it(
     still = scene.see(app)
     assert any(
         "no longer declares a boundary" in line
-        and f"bettermemory project init --rebind (in {app.path})" in line
+        and f"bettermemory project init --rebind (in {quoted(str(app.path))})" in line
         for line in still.lines
     )
     assert scene.model.project(root.project).boundary
@@ -1301,7 +1308,7 @@ def test_b12_a_parts_boundary_follows_its_file_and_rebind_keeps_the_part(
     _flag(vault_dir, False)
     still = scene.see(mono)
     assert any(
-        f"bettermemory project init --rebind (in {vault_dir})" in line
+        f"bettermemory project init --rebind (in {quoted(str(vault_dir))})" in line
         for line in still.lines
     )
     typed(monkeypatch, "vault")
@@ -1441,7 +1448,7 @@ def test_t13_d18_join_in_a_shallow_clone_declares_the_remote(
     typed(monkeypatch, "work")
     bm(monkeypatch, "project", "join", str(project.project))
     out = capsys.readouterr().out
-    assert f'{URL} is declared "work" ({project.project})\'s remote' in out
+    assert f'{quoted(URL)} is declared "work" ({project.project})\'s remote' in out
     declared = scene.store.membership_rows("declared_remotes")
     assert declared == [
         {"remote_key": URL, "project": project.project, "principal": "os:tester"}
@@ -1539,8 +1546,8 @@ def test_membership_migrate_dry_run_then_run(
     bm(monkeypatch, "membership", "migrate", "--dry-run")
     captured = capsys.readouterr()
     assert captured.out.startswith("bettermemory membership migrate (dry run: ")
-    assert f"\n  {repo}: live, " in captured.out
-    assert f"\n  {gone}: gone, " in captured.out
+    assert f"\n  {quoted(str(repo))}: live, " in captured.out
+    assert f"\n  {quoted(str(gone))}: gone, " in captured.out
     assert "3 memory homes, 0 removed-memory homes, 1 episode homes" in captured.out
     assert captured.err == ""
     assert _rows(*_MEMBERSHIP) == before
@@ -1587,7 +1594,8 @@ def test_a_command_migrates_an_unhomed_store_at_open(
         "bettermemory: membership migrated: 4 records homed, "
         "0 legacy questions opened\n"
     )
-    assert '"app"' in captured.out and f"live at {repo}" in captured.out
+    assert '"app"' in captured.out
+    assert f"live at {quoted(str(repo))}" in captured.out
     homed = _rows("homes", "log")
     assert len(homed["homes"]) == 4
     bm(monkeypatch, "project", "list")
@@ -1806,10 +1814,11 @@ def test_init_and_new_through_the_real_resolution(
     out = capsys.readouterr().out
     written = project_file.parse(repo / project_file.PROJECT_FILE_NAME)
     assert isinstance(written, project_file.ProjectFile)
-    assert f"bettermemory: wrote {repo / project_file.PROJECT_FILE_NAME}" in out
+    written_to = quoted(str(repo / project_file.PROJECT_FILE_NAME))
+    assert f"bettermemory: wrote {written_to}" in out
     bm(monkeypatch, "project", "list")
     listing = capsys.readouterr().out
-    assert '"app"' in listing and f"live at {repo}" in listing
+    assert '"app"' in listing and f"live at {quoted(str(repo))}" in listing
     token = checkout_token.read(repo / ".git").token
     assert token is not None
     # The root file is bound: `new` would leave it naming the project the
@@ -1831,7 +1840,7 @@ def test_init_and_new_through_the_real_resolution(
     typed(monkeypatch, "web")
     bm(monkeypatch, "project", "init")
     out = capsys.readouterr().out
-    assert f'and makes {web} a sub-project "web" of "app"' in out
+    assert f'and makes {quoted(str(web))} a sub-project "web" of "app"' in out
     location.forget()
     store = Store(load_config().resolved_directory())
     try:

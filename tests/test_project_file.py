@@ -625,6 +625,7 @@ def test_the_capture_modules_import_nothing_beyond_the_standard_library() -> Non
     assert result.stdout.split() == [
         "bettermemory",
         "bettermemory._fsutil",
+        "bettermemory._printable",
         "bettermemory.checkout_token",
         "bettermemory.project_file",
     ]

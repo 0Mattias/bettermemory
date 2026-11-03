@@ -11,10 +11,12 @@ Each function takes the model as `self: Membership` and reaches its state
 binds every one by name. This module lives apart from `membership.py` to
 keep each module under the package's 2,000-line bound (ENG-96). It
 imports the standard library, the records, lines and rows modules,
-`location` (for `view_path`), `location_git` (for the bounded read of a
-declared folder, `_prefetch_declared`), `location_witness` (for the
-exchange's one question of the planned views, `prefetch_liveness`), and
-`membership` only under TYPE_CHECKING.
+`history` (for `quoted`, which writes a value the evidence of a question
+names as the lines write theirs, ENG-193), `location` (for `view_path`),
+`location_git` (for the bounded read of a declared folder,
+`_prefetch_declared`), `location_witness` (for the exchange's one question
+of the planned views, `prefetch_liveness`), and `membership` only under
+TYPE_CHECKING.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+from .history import quoted
 from .location import view_path
 from .location_git import PROBE_BUDGET, bounded_reads
 from .location_witness import NeedWitnesses
@@ -226,9 +229,9 @@ def _tally(
                 (
                     "token_shared_no_commit",
                     pid,
-                    f"carries the checkout token of "
-                    f"{where.path if where else live[0].id}, a live checkout with "
-                    "no commit in common",
+                    "carries the checkout token of "
+                    f"{quoted(where.path) if where else live[0].id}, a live "
+                    "checkout with no commit in common",
                 )
             )
     # The project file's claim against the history.
@@ -240,7 +243,7 @@ def _tally(
                     (
                         "file_names_other_history",
                         bound_file,
-                        f'its project file names "{self.project(bound_file).name}" '
+                        f"its project file names {self._name(bound_file)} "
                         "but it holds the commits of "
                         + ", ".join(self._name(q) for q in others),
                     )
@@ -571,8 +574,9 @@ def _caller(
             break
     out = [*lines, *sub_lines]
     for pr in self._open_proposals(k.id):
-        if pr.line not in out:
-            out.append(pr.line)
+        shown = self.restated(pr).line
+        if shown not in out:
+            out.append(shown)
         if outcome == SILENT:
             outcome = ASK
         proposal = proposal or pr.id

@@ -34,6 +34,7 @@ import pytest
 
 from bettermemory import checkout_token, location, membership, project_file
 from bettermemory.config import Config, MembershipConfig
+from bettermemory.history import quoted
 from bettermemory.location import (
     NO_MACHINE,
     Caller,
@@ -3765,7 +3766,9 @@ def test_first_sight_line_leads_the_brief(tmp_path: Path, lab: Lab) -> None:
         session_id="s-first", cwd=repo, config=lab.config, store=lab.store
     )
     lead = first.stdout.splitlines()[0]
-    assert lead.startswith(f"bettermemory: {os.path.realpath(repo)} is a new project ")
+    assert lead.startswith(
+        f"bettermemory: {quoted(os.path.realpath(repo))} is a new project "
+    )
     again = session_brief(
         session_id="s-next", cwd=repo, config=lab.config, store=lab.store
     )

@@ -21,9 +21,9 @@ the cwd to the filesystem root and classifies what it finds; the part above
 the repository's root comes back apart (`Above`) so that it can be cached
 on its own key (design 3.1). A file evicted by a file provider is reported,
 never read (design 3.1). `write` is called by `bettermemory project init`
-and by nothing else. Beyond the standard library it imports only `_fsutil`
-and `checkout_token`, which import nothing more, so the hook client can
-read project files in its own namespace (design 8.1).
+and by nothing else. Beyond the standard library it imports only `_fsutil`,
+`checkout_token` and `_printable`, which import nothing more, so the hook
+client can read project files in its own namespace (design 8.1).
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Literal, TypeAlias
 
 from ._fsutil import atomic_write_bytes, fsync_dir, fsync_file
+from ._printable import quoted
 from .checkout_token import CROCKFORD, random_crockford
 
 #: The project file's name (decision D12).
@@ -107,8 +108,11 @@ class ProjectFileError:
 
     @property
     def line(self) -> str:
-        """One line for the session's output or the log."""
-        return f"bettermemory: {self.path} names no project: {self.detail}"
+        """One line for the session's output or the log. The path is quoted
+        (`_printable.quoted`), as a membership line quotes one: a folder on
+        the walk from the cwd, an extracted archive's for one, names it, so
+        a bare path could write words of its own into the line (ENG-193)."""
+        return f"bettermemory: {quoted(str(self.path))} names no project: {self.detail}"
 
 
 Found: TypeAlias = ProjectFile | ProjectFileError
@@ -466,11 +470,11 @@ def _from_table(path: Path, data: dict[str, object]) -> ProjectFile | ProjectFil
     if not isinstance(project_id, str):
         return ProjectFileError(path, "wrong_type", "[project] id is not a string")
     if _ID_RE.fullmatch(project_id) is None:
-        quoted = repr(project_id[:_QUOTE_LIMIT])
+        given = quoted(project_id[:_QUOTE_LIMIT])
         return ProjectFileError(
             path,
             "id_malformed",
-            f"[project] id {quoted} is not {ID_PREFIX} and {ID_LENGTH} Crockford "
+            f"[project] id {given} is not {ID_PREFIX} and {ID_LENGTH} Crockford "
             "base-32 characters",
         )
     name = table.get("name")

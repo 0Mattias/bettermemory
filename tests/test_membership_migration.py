@@ -32,6 +32,8 @@ from typing import Any
 
 import pytest
 
+from bettermemory._printable import quoted
+
 from bettermemory import membership_migrate as mm
 from bettermemory import project_file
 from bettermemory.config import Config
@@ -942,10 +944,11 @@ def test_the_report_names_its_roots_questions_and_cwd_records(world: World) -> N
     assert text.startswith(
         "bettermemory membership migrate: committed in one transaction"
     )
-    assert f'  {world.alpha}: live, project "alpha"' in text
+    assert f'  {quoted(str(world.alpha))}: live, project "alpha"' in text
     for q in report.proposals:
         assert q.line in text
-    assert f"  {world.labels['d4']} (memory) at {world.alpha / 'src'}: in " in text
+    cwd = quoted(str(world.alpha / "src"))
+    assert f"  {world.labels['d4']} (memory) at {cwd}: in " in text
     assert "rows rewritten: 0 memories, 0 removed memories, 0 episodes" in text
     as_dict = report.to_dict()
     assert as_dict["totals"]["memory_homes"] == 21
@@ -1336,7 +1339,7 @@ def test_the_command_prints_a_dry_run_then_runs(
     mm.run_command(dry_run=True)
     out = capsys.readouterr().out
     assert out.startswith("bettermemory membership migrate (dry run: one transaction")
-    assert f"  {repo}: live" in out
+    assert f"  {quoted(str(repo))}: live" in out
     store = Store.open(directory / STORE_FILENAME)
     try:
         assert tables(store) == before

@@ -2,16 +2,18 @@
 
 `home` and `homes` read records' homes as `relation` reads them,
 `admit_recall` and `first_output` serve the prompt recall and a
-session's first output (design 3.5), `handoff`, `anchor` and `translate`
-are the run-state and anchoring rules of design 3.6, and `retire_quiet`
-and `health` the health data of design 8.10.
+session's first output (design 3.5), `restated` shows an open
+question where it is shown again and `filed_elsewhere` reads the answer
+its separate takes (ENG-193), `handoff`,
+`anchor` and `translate` are the run-state and anchoring rules of design
+3.6, and `retire_quiet` and `health` the health data of design 8.10.
 
 Each function takes the model as `self: Membership` and reaches its state
 (`_store`, `_projects`, `machine`, `_now`) and core methods through it;
 the class binds every one by name. This module lives apart from
 `membership.py` to keep each module under the package's 2,000-line bound
-(ENG-96). It imports the standard library, `time_utils` and the records
-module, and `membership` only under TYPE_CHECKING.
+(ENG-96). It imports the standard library, `time_utils`, `project_file`,
+the records and lines modules, and `membership` only under TYPE_CHECKING.
 """
 
 from __future__ import annotations
@@ -21,20 +23,31 @@ import json
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from . import project_file
+from .membership_lines import line_import, line_legacy, line_restated, line_unresolved
 from .membership_records import (
+    FIRST_SIGHT,
     GLOBAL,
+    IMPORT,
+    LEGACY,
+    LEGACY_NO_LIVE_CHECKOUT,
+    OPEN,
     PRIMARY,
     PROMPT_RECALL,
     RETIRE_AFTER,
+    SUBPROJECT_CONTRADICTION,
     UNRESOLVED,
+    UNRESOLVED_LOCATION,
     UNRESOLVED_STATES,
     Checkout,
     EpisodeRef,
     Handoff,
     Health,
     Home,
+    Proposal,
     RecallAdmission,
     Resolution,
     UnresolvedProject,
@@ -42,6 +55,7 @@ from .membership_records import (
     admitted,
     relation,
     _LIVE_STATES,
+    _basename,
     _inside,
     _rebase,
 )
@@ -116,14 +130,145 @@ def admit_recall(
     return RecallAdmission(tuple(delivered), tuple(suppressed))
 
 
+#: How a first sight (L1), a file contradiction (L3), a diverged remote
+#: (L5) and a part's question (L7) begin since 9.0.0rc18: with their path
+#: quoted (`history.quoted`). Through 9.0.0rc17 they began with the path
+#: bare, and a path is absolute, so it never began with a quote (ENG-193).
+_QUOTED_LINE = 'bettermemory: "'
+
+
+def restated(self: Membership, pr: Proposal) -> Proposal:
+    """An open question as it is shown (a session's first output, the
+    caller's resolution, ``project pending``, ``show``, ``join``, ``new``
+    and ``init``, health, an import's and the migration's report), never
+    written back: the reads that close or re-sign a question
+    (`_open_proposals`, `proposal`) read its row as stored (ENG-193).
+
+    A line stored before 9.0.0rc18 quoted no path, directory or project
+    name it named, so a folder's name or a document wrote a call into it.
+    An ``import`` question and a ``legacy`` one (the migration's, and an
+    unresolved location's, decision B6) store every value their line names,
+    and their line is written afresh by its own writer. A first sight (L1),
+    a file contradiction (L3), a diverged remote (L5) and a part's question
+    (L7) do not: the sighting's root, a contradiction's own words, the
+    token file it could not write and the project a part was weighed
+    against are in the line alone. Such a line is shown as stored when it
+    begins with its quoted path (`_QUOTED_LINE`); one stored before the
+    quoting, and any question whose line cannot be written afresh (its
+    project gone, its evidence short), is restated (`_restatement`)."""
+    if pr.state != OPEN:
+        return pr
+    line: str | None = None
+    if pr.kind in (IMPORT, LEGACY):
+        try:
+            line = _written_afresh(self, pr)
+        except (KeyError, ValueError, TypeError, IndexError, AttributeError):
+            line = None
+    elif pr.line.startswith(_QUOTED_LINE):
+        return pr
+    if line is None:
+        line = _restatement(self, pr)
+    return dataclasses.replace(pr, line=line)
+
+
+def _written_afresh(self: Membership, pr: Proposal) -> str | None:
+    """An ``import`` or a ``legacy`` question's line by its own writer,
+    from the values its row stores; None for a reason it does not hold."""
+    ev = pr.evidence
+    cand = pr.candidates[0]
+    if pr.kind == IMPORT:
+        codes = ev.get("codes", {}).get(cand, [])
+        name = self.project(str(ev["imported_project"])).name
+        candidates = [(self.project(cand).name, cand, codes)]
+        return line_import(name, str(ev["source"]), candidates, question=pr.id)
+    if pr.reason == UNRESOLVED_LOCATION:
+        return line_unresolved(
+            str(ev["path"]),
+            int(ev["memories"]),
+            int(ev["episodes"]),
+            self.project(cand).name,
+            cand,
+            question=pr.id,
+        )
+    if pr.reason == LEGACY_NO_LIVE_CHECKOUT:
+        # As the migration restates its own question (`_Run._restate`).
+        path = str(ev["path"])
+        return line_legacy(
+            _basename(path),
+            int(ev["memories"]),
+            int(ev["episodes"]),
+            path,
+            int(ev.get("held") or 0),
+            self.project(self.canonical(cand) or cand).name,
+            cand,
+            recorded=int(ev.get("recorded") or 0),
+            question=pr.id,
+        )
+    return None
+
+
+def _restatement(self: Membership, pr: Proposal) -> str:
+    """The question from what its row stores alone (`line_restated`): its
+    id, its candidates (merges followed, a gone one by its id), its
+    reason's sentence and the answers its kind takes, a first sight's
+    separate answer read as ``answer_question`` reads it
+    (`filed_elsewhere`). It reads no stored line, and it does not fail."""
+    named: list[tuple[str | None, str]] = []
+    for c in pr.candidates:
+        canon = self.canonical(c) or c
+        try:
+            named.append((self.project(canon).name, canon))
+        except KeyError:
+            named.append((None, canon))
+    try:
+        filed = pr.kind == FIRST_SIGHT and filed_elsewhere(self, pr)
+    except (KeyError, OSError, ValueError):
+        filed = False
+    folder = pr.evidence.get("dir") if pr.kind == SUBPROJECT_CONTRADICTION else None
+    return line_restated(
+        pr.id,
+        pr.kind,
+        pr.reason,
+        named,
+        filed=filed,
+        folder=folder if isinstance(folder, str) and folder else None,
+    )
+
+
+def filed_elsewhere(self: Membership, pr: Proposal) -> bool:
+    """Whether the root project file of the question's checkout, on this
+    machine, is bound to a project other than the checkout's own (E22 e,
+    as `cli/project_cmd._filed_root` reads it): then a separate project
+    needs a fresh file, which only ``bettermemory project init --new``
+    writes. ``answer_question`` refuses ``separate`` to a first sight
+    then, and a restated first sight offers ``init --new`` for it
+    (`line_restated`): one reading for both."""
+    if pr.checkout is None:
+        return False
+    k = self.checkout(pr.checkout)
+    views = k.views_on(self.machine)
+    if not views:
+        return False
+    path = Path(views[-1].path) / project_file.PROJECT_FILE_NAME
+    try:
+        found = project_file.parse(path) if path.exists() else None
+    except OSError:
+        return False
+    if not isinstance(found, project_file.ProjectFile):
+        return False
+    bound = self.file_binding(found.id)
+    return bound is not None and bound != (self.canonical(k.project) or k.project)
+
+
 def first_output(self: Membership, res: Resolution) -> list[str]:
     """The lines a session's first output carries: the resolution's,
     and every proposal still open on its checkout."""
     lines = list(res.lines)
     if res.checkout is not None:
         for pr in self._open_proposals(res.checkout):
-            if pr.line not in lines:
-                lines.append(pr.line)
+            shown = self.restated(pr).line
+            if shown not in lines:
+                lines.append(shown)
     return lines
 
 
@@ -356,7 +501,7 @@ def health(self: Membership) -> Health:
             )
         )
     return Health(
-        open_proposals=tuple(self._open_proposals()),
+        open_proposals=tuple(self.pending()),
         provisional=tuple(
             p
             for p in self.projects()

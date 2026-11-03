@@ -36,6 +36,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
+from .._printable import printable, quoted
+
 if TYPE_CHECKING:
     from ..membership import (
         Checkout,
@@ -172,8 +174,11 @@ def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> Non
 
 
 def refuse(line: str) -> NoReturn:
-    """One line on stderr and exit 2; nothing was declared."""
-    sys.stderr.write(f"bettermemory: {line}\n")
+    """One line on stderr and exit 2; nothing was declared. The line goes
+    through `printable`: a path or a name it quotes is the filesystem's or
+    a document's, and a control character in one must not reach the
+    terminal as one (ENG-154)."""
+    sys.stderr.write(f"bettermemory: {printable(line)}\n")
     raise SystemExit(2)
 
 
@@ -243,14 +248,16 @@ def caller(ctx: CliContext) -> tuple[str, Resolution]:
 
 
 def named(model: Membership, project_id: str | None) -> str:
-    """``"name" (P001)``, or ``global``."""
+    """``"name" (P001)``, or ``global``: the project as the membership lines
+    spell it (`membership_lines._named`), its name quoted (ENG-193)."""
     from ..membership import GLOBAL
+    from ..membership_lines import _named
 
     if project_id is None or project_id == GLOBAL:
         return "global"
     pid = model.canonical(project_id) or project_id
     try:
-        return f'"{model.project(pid).name}" ({pid})'
+        return _named(model.project(pid).name, pid)
     except KeyError:
         return pid
 
@@ -270,8 +277,10 @@ def project_or_refuse(model: Membership, project_id: str) -> str:
 
 
 def _where(k: Checkout) -> str:
+    """Where a checkout was last seen, as a line names it: its newest
+    view's path quoted (`quoted`, ENG-193), or its id."""
     newest = k.newest_view
-    return newest.path if newest is not None else k.id
+    return quoted(newest.path) if newest is not None else k.id
 
 
 def _said(res: Resolution) -> str:
@@ -286,7 +295,8 @@ def _checkout_of(model: Membership, res: Resolution, cwd: str) -> Checkout:
     if res.checkout is None:
         detail = _said(res) or "outside any repository and project file"
         refuse(
-            f"{cwd} is no checkout ({detail}); `bettermemory project init` makes a "
+            f"{quoted(cwd)} is no checkout ({detail}); `bettermemory project init` "
+            "makes a "
             "folder a project; nothing changed"
         )
     return model.checkout(res.checkout)
@@ -342,7 +352,9 @@ def checkout_line(model: Membership, k: Checkout) -> str:
         state = f"on machine {k.machine}, last seen at {where}"
     else:
         live = model.live_view(k)
-        state = f"live at {live}" if live else f"no live view, last seen at {where}"
+        state = (
+            f"live at {quoted(live)}" if live else f"no live view, last seen at {where}"
+        )
     retired = ", retired" if k.retired else ""
     return f"{k.id} {k.kind}{retired}, {state}"
 
@@ -364,7 +376,7 @@ def _list() -> None:
         return
     by_project = _checkouts_by_project(model)
     for p in projects:
-        print(f'{p.id} "{p.name}"{_markers(model, p)}')
+        print(f"{p.id} {quoted(p.name)}{_markers(model, p)}")
         checkouts = sorted(by_project.get(p.id, []), key=lambda k: k.id)
         if not checkouts:
             print("  no checkout")
@@ -388,9 +400,7 @@ def _show(project_id: str) -> None:
         for r in ctx.store.membership_rows("projects")
         if model.canonical(str(r["id"])) == pid
     )
-    witnesses = ctx.store.membership_rows(
-        "project_witnesses", column_in=("project", members)
-    )
+    witnesses = model.witness_commits(pid)
     remotes = sorted(
         {
             str(r["remote_key"])
@@ -409,9 +419,10 @@ def _show(project_id: str) -> None:
     )
     homes = ctx.store.membership_rows("homes", column_in=("project", members))
     memories = sum(1 for r in homes if r["kind"] == "memory")
-    print(f'{pid} "{p.name}"{_markers(model, p)}')
+    print(f"{pid} {quoted(p.name)}{_markers(model, p)}")
     print(f"  witnesses: {len(witnesses)} commits")
-    print(f"  remotes: {', '.join(remotes) if remotes else '(none)'}")
+    said = ", ".join(quoted(r) for r in remotes)
+    print(f"  remotes: {said or '(none)'}")
     print(f"  file ids: {', '.join(files) if files else '(none)'}")
     others = [m for m in members if m != pid]
     if others:
@@ -438,7 +449,35 @@ def _why(record_id: str) -> None:
     why = model.why(record_id)
     print(why.text)
     for row in why.rows:
-        print(f"  seq {row.seq} {row.ts} {row.kind} {row.payload}")
+        print(f"  seq {row.seq} {row.ts} {row.kind} {_shown_payload(row.payload)}")
+
+
+def _shown_payload(payload: str) -> str:
+    """A log row's payload as ``project why`` prints it: its compact JSON, every
+    string, key and value, written through `quoted`, so a path or a name a
+    folder chose cannot close its quote, and a line or paragraph separator,
+    a NEL or a bidi control in it (which ``json.dumps(ensure_ascii=False)``
+    writes raw) stays escaped on its line (ENG-193). A payload that is not
+    JSON is quoted whole."""
+    try:
+        value = json.loads(payload)
+    except ValueError:
+        return quoted(payload)
+    return _shown_json(value)
+
+
+def _shown_json(value: object) -> str:
+    if isinstance(value, str):
+        return quoted(value)
+    if isinstance(value, dict):
+        return (
+            "{"
+            + ",".join(f"{quoted(str(k))}:{_shown_json(v)}" for k, v in value.items())
+            + "}"
+        )
+    if isinstance(value, list):
+        return "[" + ",".join(_shown_json(v) for v in value) + "]"
+    return json.dumps(value)
 
 
 def _pending() -> None:
@@ -528,7 +567,8 @@ def _join(project_id: str) -> None:
     )
     for row in _rows_of(ctx, done, "remote_declared"):
         print(
-            f"bettermemory: {row.get('remote')} is declared {named(model, target)}'s "
+            f"bettermemory: {quoted(str(row.get('remote')))} is declared "
+            f"{named(model, target)}'s "
             "remote for shallow clones (D18)"
         )
 
@@ -550,9 +590,13 @@ def _token_said(ctx: CliContext, done: Declared) -> str:
 
 
 def _root_of(model: Membership, k: Checkout) -> str:
-    """The checkout's root on this machine: its newest view here."""
+    """The checkout's root on this machine: its newest view here, else its
+    newest anywhere, else its id."""
     views = k.views_on(model.machine)
-    return views[-1].path if views else _where(k)
+    if views:
+        return views[-1].path
+    newest = k.newest_view
+    return newest.path if newest is not None else k.id
 
 
 def _filed_root(model: Membership, k: Checkout) -> tuple[Path, str] | None:
@@ -577,7 +621,7 @@ def _parts_said(model: Membership, k: Checkout) -> str:
     if not parts:
         return ""
     listed = ", ".join(
-        f"{named(model, part.id)}" + (f" at {folder}" if folder else "")
+        f"{named(model, part.id)}" + (f" at {quoted(folder)}" if folder else "")
         for part, _file, folder in parts
     )
     return f"  and takes its parts along: {listed}"
@@ -604,7 +648,8 @@ def _new() -> None:
         # The committed file would keep naming the project the checkout
         # leaves (B11): a fresh file makes it a project of its own.
         refuse(
-            f"{filed[0]} names {named(model, filed[1])}; a project of its own "
+            f"{quoted(str(filed[0]))} names {named(model, filed[1])}; a project "
+            "of its own "
             "for this checkout: bettermemory project init --new (a fresh file); "
             "nothing changed"
         )
@@ -618,7 +663,8 @@ def _new() -> None:
     else:
         print(
             f"bettermemory project new: checkout {k.id} at {_where(k)} leaves "
-            f'{named(model, mine)} and becomes a project of its own, "{name}"; what '
+            f"{named(model, mine)} and becomes a project of its own, {quoted(name)}; "
+            "what "
             "was written there goes with it, and its checkout token is re-minted"
         )
     if pr is None or pr.kind == REMOTE_DIVERGED:
@@ -667,7 +713,7 @@ def _init_position(
         where = model.below_root(k, cwd)
         if where is None:
             refuse(
-                f"cannot tell where {cwd} stands in checkout {k.id} (seen at "
+                f"cannot tell where {quoted(cwd)} stands in checkout {k.id} (seen at "
                 f"{_where(k)}); nothing changed"
             )
         below = where
@@ -682,7 +728,7 @@ def _init_position(
         # The replaced file names a project off the caller's chain: L7's
         # question, answered in this folder by `join` or `init --new`.
         refuse(
-            f"{path} names {named(model, bound)}, not a part of "
+            f"{quoted(str(path))} names {named(model, bound)}, not a part of "
             f"{named(model, res.project)}; that folder is it: bettermemory "
             f"project join {bound}; a part with an id of its own: bettermemory "
             "project init --new; nothing changed"
@@ -735,18 +781,22 @@ def _print_init_plan(
     from ..membership import FOLDER
 
     verb = "replaces" if existing is not None else "writes"
-    shape = f'name "{display}"' + (", a boundary" if boundary else "")
-    print(f"bettermemory project init {verb} {path}{names} with a new id ({shape})")
+    shape = f"name {quoted(display)}" + (", a boundary" if boundary else "")
+    print(
+        f"bettermemory project init {verb} {quoted(str(path))}{names} with a new "
+        f"id ({shape})"
+    )
     if k is None:
-        print(f"  and makes {cwd} a folder project")
+        print(f"  and makes {quoted(cwd)} a folder project")
     elif enclosing is not None and k.kind == FOLDER:
         print(
-            f"  and makes {cwd} a folder project inside {named(model, enclosing)}, "
+            f"  and makes {quoted(cwd)} a folder project inside "
+            f"{named(model, enclosing)}, "
             f"whose folder {_where(k)} keeps its project"
         )
     elif enclosing is not None:
         print(
-            f'  and makes {cwd} a sub-project "{display}" of '
+            f"  and makes {quoted(cwd)} a sub-project {quoted(display)} of "
             f"{named(model, enclosing)}, in checkout {k.id} at {_where(k)}"
         )
         if new:
@@ -794,7 +844,7 @@ def _print_init_done(
     if enclosing is not None:
         kind = "a folder project" if k.kind == FOLDER else "a sub-project"
         print(
-            f"bettermemory: wrote {path} ({written.id}), {kind} "
+            f"bettermemory: wrote {quoted(str(path))} ({written.id}), {kind} "
             f"{named(model, done.project)} of {named(model, enclosing)}"
             + (
                 fence
@@ -814,7 +864,8 @@ def _print_init_done(
     if lifted:
         fence = ", no longer a boundary"
     print(
-        f"bettermemory: wrote {path} ({written.id}), bound to project "
+        f"bettermemory: wrote {quoted(str(path))} ({written.id}), bound to "
+        "project "
         f"{named(model, done.project)}{fence}{answered}{_token_said(ctx, done)}; "
         "commit it so every clone and CI runner finds the project"
     )
@@ -833,16 +884,19 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
     display = name or directory.name or cwd
     existing = project_file.parse(path) if path.exists() else None
     if isinstance(existing, project_file.ProjectFile):
-        names = f' (it names "{existing.name}", {existing.id})'
+        names = f" (it names {quoted(existing.name)}, {existing.id})"
     elif existing is not None:
         names = f" ({existing.detail})"
     else:
         names = ""
     if rebind and existing is None:
-        refuse(f"no {path} to rebind; `bettermemory project init` writes one")
+        refuse(
+            f"no {quoted(str(path))} to rebind; `bettermemory project init` writes one"
+        )
     if existing is not None and not (new or rebind):
         refuse(
-            f"{path} exists{names}; keep this checkout's project: bettermemory "
+            f"{quoted(str(path))} exists{names}; keep this checkout's project: "
+            "bettermemory "
             "project init --rebind; a project of its own: bettermemory project init "
             "--new"
         )
@@ -884,7 +938,7 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
             directory, name=display, boundary=boundary, rebind=existing is not None
         )
     except (OSError, ValueError) as exc:
-        refuse(f"could not write {path}: {exc}; nothing changed")
+        refuse(f"could not write {quoted(str(path))}: {exc}; nothing changed")
     location.forget(cwd)
     if k is None:
         _, res = caller(ctx)
@@ -892,7 +946,8 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
             print(line)
         if res.checkout is None:
             print(
-                f"bettermemory: wrote {path} ({written.id}); the next session decides"
+                f"bettermemory: wrote {quoted(str(path))} ({written.id}); the next "
+                "session decides"
             )
             return
         # The folder's first sight made it a folder project from this file:

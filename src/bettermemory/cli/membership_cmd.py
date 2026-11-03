@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from .._printable import printable, quoted
+
 if TYPE_CHECKING:
     from ..membership import ImportedProject, Membership, PortableIdentity
     from ..store import Store
@@ -104,7 +106,9 @@ def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> Non
 
 
 def _fail(line: str) -> NoReturn:
-    sys.stderr.write(f"bettermemory: {line}\n")
+    """Exit 2 with `line` on one line (`printable`); a path, a document's
+    value and an exception's text in it are quoted where it is composed."""
+    sys.stderr.write(f"bettermemory: {printable(line)}\n")
     raise SystemExit(2)
 
 
@@ -129,7 +133,7 @@ def _export(output: str | None) -> None:
 
     path = load_config().resolved_directory() / STORE_FILENAME
     if not path.is_file():
-        _fail(f"no bettermemory 9 store at {path}")
+        _fail(f"no bettermemory 9 store at {quoted(str(path))}")
     refusal = bundle_refusal(path)
     if refusal is not None:
         _fail(refusal)
@@ -150,14 +154,14 @@ def _export(output: str | None) -> None:
         return
     target = Path(output)
     if not target.parent.is_dir():
-        _fail(f"--output parent directory does not exist: {target.parent}")
+        _fail(f"--output parent directory does not exist: {quoted(str(target.parent))}")
     try:
         atomic_write_bytes(target, text.encode("utf-8"))
     except OSError as exc:
-        _fail(f"could not write {target}: {exc}")
+        _fail(f"could not write {quoted(str(target))}: {quoted(str(exc))}")
     sys.stderr.write(
         f"Exported {len(doc['projects'])} projects and {len(doc['homes'])} homes "
-        f"to {target}\n"
+        f"to {quoted(str(target))}\n"
     )
 
 
@@ -174,15 +178,16 @@ def _read_document(
     `bettermemory export` document. Exits 2 naming what is malformed."""
     from ..membership import PortableIdentity
 
+    named = quoted(file)
     try:
         doc = json.loads(Path(file).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError) as exc:
-        _fail(f"cannot read {file}: {exc}")
+        _fail(f"cannot read {named}: {quoted(str(exc))}")
     except ValueError as exc:
-        _fail(f"{file} is not JSON: {exc}")
+        _fail(f"{named} is not JSON: {quoted(str(exc))}")
     body = doc.get("membership", doc) if isinstance(doc, dict) else None
     if not isinstance(body, dict):
-        _fail(f"{file} carries no membership identities")
+        _fail(f"{named} carries no membership identities")
     store_id = body.get("store_id")
     projects = body.get("projects")
     homes = body.get("homes")
@@ -191,27 +196,30 @@ def _read_document(
         or not isinstance(projects, list)
         or not isinstance(homes, dict)
     ):
-        _fail(f"{file} carries no membership identities (store_id, projects, homes)")
+        _fail(f"{named} carries no membership identities (store_id, projects, homes)")
     try:
         identities = [PortableIdentity.from_json(raw) for raw in projects]
     except ValueError as exc:
-        _fail(f"{file}: {exc}")
+        _fail(f"{named}: {quoted(str(exc))}")
     for at, identity in enumerate(identities):
         if identity.parent is not None and not 0 <= identity.parent < len(identities):
-            _fail(f"{file}: project {at} names a parent that is not in the document")
+            _fail(f"{named}: project {at} names a parent that is not in the document")
         if identity.parent == at:
-            _fail(f"{file}: project {at} names itself as its parent")
+            _fail(f"{named}: project {at} names itself as its parent")
     out: dict[str, tuple[str, int | None]] = {}
     for record_id, raw in homes.items():
         if not isinstance(raw, dict) or raw.get("kind") not in ("memory", "episode"):
-            _fail(f"{file}: the home of {record_id} is malformed")
+            _fail(f"{named}: the home of {quoted(str(record_id))} is malformed")
         where = raw.get("project")
         if where is not None and (
             not isinstance(where, int)
             or isinstance(where, bool)
             or not 0 <= where < len(identities)
         ):
-            _fail(f"{file}: the home of {record_id} names no project of the document")
+            _fail(
+                f"{named}: the home of {quoted(str(record_id))} names no project "
+                "of the document"
+            )
         out[str(record_id)] = (str(raw["kind"]), where)
     return store_id, identities, out
 
@@ -285,7 +293,7 @@ def _import(file: str) -> None:
                 record_id, kind, imported, source=source, source_store=source_store
             ):
                 homed += 1
-    print(f"bettermemory membership import: {file}")
+    print(f"bettermemory membership import: {quoted(file)}")
     for at in sorted(mapped):
         _say_mapping(model, identities[at], mapped[at])
     print(
@@ -293,8 +301,9 @@ def _import(file: str) -> None:
     )
     for record_id, old, new in forks:
         print(
-            f"  store forked: record {record_id} carries this store's id {old}, "
-            f"which this store never wrote; its id is now {new}"
+            f"  store forked: record {quoted(record_id)} carries this store's id "
+            f"{printable(old)}, "
+            f"which this store never wrote; its id is now {printable(new)}"
         )
     migrate_at_open(store, ctx.config)
 
@@ -306,19 +315,22 @@ def _say_mapping(
 
     label = named(model, imported.project)
     rule = imported.rule
+    # The document chose the name: quoted, as a membership line quotes one.
+    name = quoted(identity.name)
     if rule.startswith("import:ask:"):
-        print(f'  "{identity.name}": kept apart as {label} until answered')
+        print(f"  {name}: kept apart as {label} until answered")
         for proposal in imported.proposals:
-            print(f"    {proposal}: {model.proposal(proposal).line}")
+            shown = model.restated(model.proposal(proposal)).line
+            print(f"    {proposal}: {shown}")
     elif rule == "import:new:no_live_checkout":
         print(
-            f'  "{identity.name}": {label}, a project with no live checkout here; '
+            f"  {name}: {label}, a project with no live checkout here; "
             "a checkout with its evidence joins it"
         )
     elif rule == "import:earlier":
-        print(f'  "{identity.name}": {label}, as an earlier import mapped it')
+        print(f"  {name}: {label}, as an earlier import mapped it")
     else:
-        print(f'  "{identity.name}": {label} ({rule[len("import:") :]})')
+        print(f"  {name}: {label} ({rule[len('import:') :]})")
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +405,7 @@ def health_lines(d: dict[str, Any]) -> list[str]:
     `health_dict`."""
     lines = [f"Membership: open questions ({len(d['open_proposals'])}):"]
     for pr in d["open_proposals"]:
-        where = f" at {pr['path']}" if pr["path"] else ""
+        where = f" at {quoted(pr['path'])}" if pr["path"] else ""
         lines.append(f"  {pr['id']} in checkout {pr['checkout']}{where}: {pr['line']}")
     if not d["open_proposals"]:
         lines.append("  (none)")
@@ -401,13 +413,14 @@ def health_lines(d: dict[str, Any]) -> list[str]:
         f"Membership: provisional projects ({len(d['provisional_projects'])}):"
     )
     for p in d["provisional_projects"]:
-        lines.append(f'  {p["id"]} "{p["name"]}": {p["reason"]}')
+        lines.append(f"  {p['id']} {quoted(p['name'])}: {p['reason']}")
     if not d["provisional_projects"]:
         lines.append("  (none)")
     lines.append(f"Membership: unresolved projects ({len(d['unresolved_projects'])}):")
     for u in d["unresolved_projects"]:
         lines.append(
-            f'  {u["id"]} "{u["name"]}" ({u["state"]}) at {u["path"]}: '
+            f"  {u['id']} {quoted(u['name'])} ({u['state']}) at "
+            f"{quoted(u['path'])}: "
             f"{u['memories']} memories, {u['episodes']} episodes"
         )
     if not d["unresolved_projects"]:
@@ -425,7 +438,8 @@ def health_lines(d: dict[str, Any]) -> list[str]:
     without = d["checkouts_without_live_view"]
     lines.append(f"Membership: checkouts with no live view ({len(without)}):")
     for k in without:
-        lines.append(f"  {k['checkout']}, last seen at {k['last_path']}")
+        last = quoted(k["last_path"]) if k["last_path"] else "nowhere"
+        lines.append(f"  {k['checkout']}, last seen at {last}")
     if not without:
         lines.append("  (none)")
     return lines

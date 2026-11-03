@@ -18,6 +18,7 @@ import pytest
 from bettermemory import checkout_token
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
+from bettermemory.history import quoted
 from bettermemory.membership import (
     ASK,
     DEFERRED,
@@ -90,8 +91,8 @@ def test_e13_x14_every_suppression_leaves_a_row_and_health_counts_it(
     )
     assert blind.outcome == INDETERMINATE
     assert blind.lines == (
-        f"bettermemory: cannot tell what {scene.root / 'locked'} is (EACCES); nothing "
-        "from any project is shown here",
+        f"bettermemory: cannot tell what {quoted(str(scene.root / 'locked'))} is "
+        '("EACCES"); nothing from any project is shown here',
     )
     model.admit_recall(blind, [p1])
     assert [r["suppressed"][0]["reason"] for r in _rows(scene, "recall_suppressed")][
@@ -248,15 +249,15 @@ def test_x14_health_lists_questions_provisional_unresolved_and_checkouts_without
     without = [k["checkout"] for k in section["checkouts_without_live_view"]]
     assert gone in without and old not in without
     assert (
-        f"Membership: open questions (1):\n  {proposal} in checkout {pr.checkout} at {fork.path}: {pr.line}"
-        in text
-    )
+        f"Membership: open questions (1):\n  {proposal} in checkout {pr.checkout} at "
+        f"{quoted(str(fork.path))}: {pr.line}"
+    ) in text
     assert (
         "Membership: provisional projects (1):\n  " in text
         and '"fork": one_witness' in text
     )
     assert '"x" (indeterminate) at ' in text and ": 1 memories, 0 episodes" in text
-    assert f"  {gone}, last seen at {scene.root / 'gone'}" in text
+    assert f"  {gone}, last seen at {quoted(str(scene.root / 'gone'))}" in text
     assert "Memory health" in text.splitlines()[0]
 
 
