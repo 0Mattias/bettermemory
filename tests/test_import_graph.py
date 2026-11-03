@@ -72,6 +72,7 @@ SPLIT_PARENTS: tuple[tuple[str, str], ...] = (
     ("bettermemory.doctor_store", "bettermemory.doctor"),
     ("bettermemory.origin_model", "bettermemory.origin"),
     ("bettermemory.location_witness", "bettermemory.location"),
+    ("bettermemory.location_reads", "bettermemory.location_git"),
 )
 
 #: The module-level import cycles the package holds, each as the sorted

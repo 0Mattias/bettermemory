@@ -16,7 +16,14 @@ from types import ModuleType
 
 import pytest
 
-from bettermemory import githead, location, location_git, membership_records
+from bettermemory import (
+    _daemon_client,
+    githead,
+    location,
+    location_git,
+    location_reads,
+    membership_records,
+)
 
 #: (module, bound) for every bound the review named.
 BOUNDS = [
@@ -31,6 +38,9 @@ BOUNDS = [
     (location_git, "_GITFILE_LIMIT"),
     (location_git, "_INCLUDE_DEPTH"),
     (location_git, "_INCLUDE_FILES"),
+    (location_reads, "READ_HANDOFF"),
+    (location_reads, "READ_LANES"),
+    (location_reads, "READ_SLOTS"),
     (location, "STANDS_CAP"),
     (membership_records, "WALK_LIMIT"),
     (membership_records, "CONTENT_MATCH"),
@@ -101,7 +111,10 @@ def test_the_relations_the_evidence_states_hold() -> None:
     scale from the capture cache's; a .git file is bounded where git
     bounds it, in both readers; an export's oldest half is among the
     witnesses every store keeps; a view is refreshed well inside the
-    retirement it serves."""
+    retirement it serves; a batch of reads hands a slow one off well
+    inside its budget, its lanes hand off more reads within a budget than
+    the slots hold, so the slots bound a batch of hung paths, and the
+    prompt hook's body holds 960 of them (review M G3)."""
     assert location_git.WALK_LIMIT == membership_records.WALK_LIMIT
     assert location.STANDS_CAP == location_git.CACHE_CAP * 4
     assert location_git._GITFILE_LIMIT == githead._GITFILE_LIMIT == 1 << 20
@@ -109,3 +122,9 @@ def test_the_relations_the_evidence_states_hold() -> None:
     assert membership_records.EXPORT_WITNESSES // 2 <= membership_records.KEEP_OLDEST
     assert membership_records.RETIRE_AFTER == 180 * membership_records.VIEW_REFRESH
     assert 0 < membership_records.CONTENT_MATCH < 1
+    handoff, probe = location_reads.READ_HANDOFF, location_git.PROBE_BUDGET
+    slots, lanes = location_reads.READ_SLOTS, location_reads.READ_LANES
+    assert handoff < probe
+    assert lanes * probe / handoff > slots
+    prompt = _daemon_client.hook_budget_seconds("prompt")
+    assert round((prompt - probe) / probe * slots) == 960

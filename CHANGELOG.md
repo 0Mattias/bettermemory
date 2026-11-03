@@ -125,6 +125,60 @@ The store takes no schema step.
   recorded. On Windows a directory junction (`mklink /J`), which
   CPython's `lstat` reports as a plain directory, is judged as a link.
 
+- **Hung recorded paths no longer cost a probe budget each (ENG-193).**
+  A resolution reads the views its ladder may read in turn, each bounded
+  by `PROBE_BUDGET` (0.5 s), and each path that did not answer held the
+  next one back for its whole budget: thirty views on one dropped
+  network share held the first prompt after the outage for 15.26 s, past
+  the 10 s the harness gives the prompt hook and the hook client's own
+  15 s wait; 9.0.0rc14 listed this under Known limitations. A read that
+  has not answered in 20 ms is now left running while the paths after
+  it are read on another thread, up to eight threads a batch as reads
+  turn out slow, and waited on for the rest of its budget once the
+  others are read; no more than 64 reads in the process are in flight
+  and not yet past their budget, so a later read waits for one to end
+  rather than take a thread of its own. Measured on macOS, the thirty
+  views and a live one behind them resolve in 0.67 to 0.68 s, with the
+  store's write lock free throughout, and 200 and 300 hung paths read
+  in 2.1 s and 2.7 s, where handing off one read at a time cost about
+  27 ms a hung path (5.9 s and 8.7 s; on Windows, whose timed waits wake
+  on a 15.6 ms tick, 31 ms or more). The 64 reads are the daemon's,
+  shared by every request, so the prompt hook's 8 s holds about 960 hung
+  paths a process, not a request: 8 requests at once, each reading 80
+  hung paths of its own, took 5.6 to 6.0 s each, and 4 reading 300 each
+  took 9.7 s; requests on one dead share read the same paths and share
+  their reads, and a healthy read waits for a slot about a budget at
+  most. Counting the reads in flight costs the same with an outage's
+  stalled reads on the board: 200 healthy views read in 0.6 ms with
+  1,000 of them, as with none, where a scan of the board took 21 ms.
+  Every view is still read to its whole budget, so the ladder decides
+  what it decided reading them one by one: none is read as gone or as
+  not live for want of time. A path whose read is still blocked answers
+  at once on later reads and keeps its one thread until it answers, as
+  before. A request that finds another request's read of a path in
+  flight waits on it with the rest of its batch, before its
+  transaction, where it read the path again with the store's write lock
+  held. Healthy paths cost what they did: 200 local views read in 1.5 to
+  2.1 ms, on one thread.
+
+- **A first sight the daemon cannot read asks about every view it plans
+  in one round (ENG-193).** Where the daemon cannot read the client's
+  paths (a container, another host's mount), the client answers its
+  questions about the repository in rounds of the witness exchange, at
+  most `EXCHANGE_ROUNDS` (8) a prompt. The resolution planned the views
+  whose liveness its ladder may read, but asked about one view a round,
+  as the ladder reached each, so a commit-less first sight with eight
+  or more candidate views ran out of rounds and the prompt went on
+  without its resolution. It now asks about every view it plans in one
+  question, which the client answers in one round: nine planned views
+  cost one round where they ran out of rounds. The client reads the
+  views it is asked about as the daemon reads one, each bounded by
+  `PROBE_BUDGET`, so a view on a hung mount answers `unreachable` rather
+  than holding the hook until the mount answers. A view whose read fails
+  with an error the client does not read as a state still fails the
+  round, and the exchange with it, as one did before; a round asked
+  about more views meets such a view more often.
+
 ### 9.0.0rc17
 
 The seventeenth candidate runs the plugin's hooks on Windows without
@@ -3497,17 +3551,6 @@ follows the candidates' testing.
   unbounded walk). Asking is the safe side; the question names the bound
   it read (ENG-151). Reading newest witnesses first (committer date or
   generation numbers) is filed.
-- **Each hung recorded path costs its own probe budget once.** The
-  bound on a read of a recorded path is per path: a resolution reads its
-  views in turn, and each path that does not answer costs one
-  `PROBE_BUDGET` (0.5 s) the first time it is read, then answers
-  `unreachable` at once while its read is still blocked. Six commit-less
-  projects with every view on a hung mount made the next commit-less
-  first sight take 3.04 s, with the store's write lock free throughout,
-  and the one after it 0.07 s; with the hook's 15 s timeout, about 30
-  distinct views on one dropped share time out the first prompt after
-  the outage (ENG-156). A budget per resolution, or stalled paths
-  grouped by mount, is filed.
 - **A re-minted checkout token can still run ahead of the store.** The
   re-mint is written in the resolution's transaction (ENG-153), and
   three windows are left. A hook client before 9.0.0rc14 cannot answer

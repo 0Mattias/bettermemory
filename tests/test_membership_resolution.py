@@ -3440,6 +3440,103 @@ def test_b18_a_client_answers_a_view_question_by_the_same_rule(
         assert answer(bare, {}, cap)["views"] == {view.path: "replaced"}
 
 
+def _as_the_client(
+    box: Container, lab: Lab, session: str, *, rounds: int = location.EXCHANGE_ROUNDS
+) -> tuple[Resolution | Exchange, list[Mapping[str, Any]]]:
+    """The hook client's rounds as `_daemon_client._membership_rounds`
+    makes them, against `location.resolve_hook`: the probe posted, then at
+    most `rounds` posts more, each with the location token and the machine
+    where the daemon asks for them, else with the client's own answers to
+    its question (`location.answer`). The last reply and the questions
+    answered."""
+    cap = capture(
+        str(box.real), write_token=lab.config.membership.write_token, use_cache=False
+    )
+    posted: dict[str, Any] = {"location": box.probe()}
+    reply = resolve_hook(lab.store, lab.config, box.mount, posted, session=session)
+    answers: dict[str, Any] = {}
+    asked: list[Mapping[str, Any]] = []
+    for _ in range(rounds):
+        if not isinstance(reply, Exchange):
+            break
+        question = reply.question
+        posted = {
+            "location": box.token(cap),
+            "machine": identity_to_json(box.identity),
+        }
+        if not (question.get("location") or question.get("machine")):
+            asked.append(question)
+            answers = answer(question, answers, cap)
+            posted["answers"] = answers
+        reply = resolve_hook(lab.store, lab.config, box.mount, posted, session=session)
+    return reply, asked
+
+
+def test_a_first_sight_with_nine_planned_views_settles_within_the_clients_rounds(
+    tmp_path: Path, lab_of: Callable[..., Lab]
+) -> None:
+    """Review M G4: nine commit-less repositories seen in one container,
+    whose paths the daemon cannot read, then a tenth's first sight there,
+    the client answering as the hook client does (`location.answer`,
+    within `EXCHANGE_ROUNDS` posts after its probe). The resolution plans
+    the liveness of the nine views for its content candidates (C), and
+    the daemon asks the client about all nine in one round, each view
+    saying whether its token is superseded: before, each view the ladder
+    read raised its own question, one view a round, and the exchange ran
+    out of rounds with no resolution. The tenth is a checkout of its own."""
+    lab = lab_of(write_token=False)
+    machine = _container_machine(lab, "container-a")
+    seen: list[str] = []
+    for i in range(9):
+        repo = unborn(tmp_path / "c" / f"notes{i}", note=f"note {i}\n")
+        box = Container(repo, f"/work/notes{i}", machine, device=str(4300 + i))
+        got, _asked = _as_the_client(box, lab, f"s-notes{i}", rounds=50)
+        assert isinstance(got, Resolution) and got.checkout is not None
+        seen.append(got.checkout)
+    tenth = unborn(tmp_path / "c" / "notes9", note="note 9\n")
+    box = Container(tenth, "/work/notes9", machine, device="4309")
+
+    res, asked = _as_the_client(box, lab, "s-notes9")
+
+    assert isinstance(res, Resolution), f"no resolution in the client's rounds: {res}"
+    views = [list(q.get("views") or ()) for q in asked]
+    assert [sorted(str(v["path"]) for v in vs) for vs in views] == [
+        [f"/work/notes{i}" for i in range(9)]
+    ], views
+    assert all(v["superseded"] is False for v in views[0])
+    assert res.outcome == NEW
+    assert res.checkout is not None and res.checkout not in seen
+
+
+def test_a_joined_question_names_each_item_once_and_keeps_the_first_flag() -> None:
+    """Review M G4: the one question a resolution's prefetch raises for its
+    planned views (`NeedWitnesses.joined`) names every item each list of
+    the separate questions named, in the order first named and once (a
+    view by its path, the first asked kept, as the client answers a path
+    once), and keeps the first value of a key that is no list. Review
+    193c: an item with no path is one item by all it holds, so a list of
+    such mappings keeps each distinct one, not the first alone."""
+    a = {"path": "/work/a", "kind": "primary", "token": "t-a", "superseded": False}
+    b = {"path": "/work/b", "kind": "primary", "token": "t-b", "superseded": True}
+    again = {"path": "/work/a", "kind": "primary", "token": "t-other"}
+    one, two = {"sha": "c3", "depth": 1}, {"sha": "c4", "depth": 1}
+    joined = location.NeedWitnesses.joined(
+        [
+            location.NeedWitnesses({"views": [a], "probes": [one]}),
+            location.NeedWitnesses({"views": [b], "held": ["c1"], "walk": True}),
+            location.NeedWitnesses(
+                {"views": [again], "held": ["c2", "c1"], "probes": [two, dict(one)]}
+            ),
+        ]
+    )
+    assert joined.question == {
+        "views": [a, b],
+        "held": ["c1", "c2"],
+        "walk": True,
+        "probes": [one, two],
+    }
+
+
 def test_i39_a_bind_mounted_repository_resolves_from_the_location_token(
     tmp_path: Path, lab: Lab
 ) -> None:

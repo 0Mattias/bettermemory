@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory import location, location_git
+from bettermemory import location, location_reads
 
 
 def test_a_fetch_in_flight_is_not_started_again(
@@ -48,7 +48,7 @@ def test_a_fetch_in_flight_is_not_started_again(
     finally:
         release.set()
     deadline = time.monotonic() + 5
-    while str(f) in location_git._FLIGHTS and time.monotonic() < deadline:
+    while str(f) in location_reads._FLIGHTS and time.monotonic() < deadline:
         time.sleep(0.01)
     third = location._fetch(str(f), budget)
     assert started == 1, f"each capture started its own read: {started}"

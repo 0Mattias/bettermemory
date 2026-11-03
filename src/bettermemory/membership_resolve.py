@@ -11,9 +11,10 @@ Each function takes the model as `self: Membership` and reaches its state
 binds every one by name. This module lives apart from `membership.py` to
 keep each module under the package's 2,000-line bound (ENG-96). It
 imports the standard library, the records, lines and rows modules,
-`location` (for `view_path`) and `location_git` (for the bounded read of
-a declared folder, `_prefetch_declared`), and `membership` only under
-TYPE_CHECKING.
+`location` (for `view_path`), `location_git` (for the bounded read of a
+declared folder, `_prefetch_declared`), `location_witness` (for the
+exchange's one question of the planned views, `prefetch_liveness`), and
+`membership` only under TYPE_CHECKING.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from .location import view_path
 from .location_git import PROBE_BUDGET, bounded_reads
+from .location_witness import NeedWitnesses
 from .membership_lines import (
     line_across_boundary,
     line_content_crowded,
@@ -357,11 +359,15 @@ def prefetch_liveness(self: Membership, pairs: Sequence[tuple[Checkout, View]]) 
     """Read the liveness of `pairs` now, outside any transaction, and keep
     each value for the span `liveness_held` opened (ENG-156): the
     resolution or the migration reads them as values inside its
-    transaction. The default liveness reads them in turn on one thread,
-    each bounded by `location_git.PROBE_BUDGET` (`location.path_liveness_many`:
-    a thread per read cost more than the read); one given to the model is
-    read in a pool. A read that raises (a client's view question not yet
-    answered) is left to the transaction, where it raises as before."""
+    transaction. The default liveness reads them on one thread, more as
+    reads turn out slow, each bounded by `location_git.PROBE_BUDGET` and a
+    slow one read past (`location.path_liveness_many`: a thread per read
+    cost more than the read); one given to the model is read in a pool.
+    The views a client must answer (the witness exchange's
+    `AnsweredLiveness`) raise one `NeedWitnesses` naming them all, so the
+    client answers them in one round, not one view a round (review M G4);
+    another read that raises is left to the transaction, where it raises
+    as before."""
     live = self._live
     if live is None:
         return
@@ -373,26 +379,35 @@ def prefetch_liveness(self: Membership, pairs: Sequence[tuple[Checkout, View]]) 
     if not todo:
         return
     got: list[tuple[tuple[object, ...], str | None]]
+    needs: list[NeedWitnesses] = []
     if self._liveness_many is not None:
         states = self._liveness_many(todo)
         got = [(_live_key(k, v), s) for (k, v), s in zip(todo, states, strict=True)]
     else:
 
-        def read(pair: tuple[Checkout, View]) -> tuple[tuple[object, ...], str | None]:
-            k, v = pair
+        def read(pair: tuple[Checkout, View]) -> str | NeedWitnesses | None:
             try:
-                return _live_key(k, v), self._liveness(k, v)
+                return self._liveness(*pair)
+            except NeedWitnesses as need:
+                return need
             except Exception:  # noqa: BLE001 - read again in the transaction
-                return _live_key(k, v), None
+                return None
 
         with ThreadPoolExecutor(
             max_workers=min(_PREFETCH_WORKERS, len(todo)),
             thread_name_prefix="bettermemory-liveness",
         ) as pool:
-            got = list(pool.map(read, todo))
+            read_all = list(pool.map(read, todo))
+        needs = [r for r in read_all if isinstance(r, NeedWitnesses)]
+        got = [
+            (_live_key(k, v), r if isinstance(r, str) else None)
+            for (k, v), r in zip(todo, read_all, strict=True)
+        ]
     for key, state in got:
         if state is not None:
             live[key] = state
+    if needs:
+        raise NeedWitnesses.joined(needs)
 
 
 #: Reads of a given liveness `prefetch_liveness` runs at once.
@@ -1457,11 +1472,12 @@ def _declared_dirs(self: Membership, file_id: str) -> list[str]:
 def _prefetch_declared(self: Membership, loc: Location) -> None:
     """Read, before the resolution's transaction, each folder a
     declaration bound `loc`'s project file in whose stored spelling is not
-    `loc`'s, as a view records it (`_location_probe.view_path`): in turn on one
-    thread, each bounded by `PROBE_BUDGET` (`bounded_reads`, ENG-156), and
-    kept for the span `liveness_held` opened, where `_declared_folder`
-    reads it as a value (review M D2). A folder that does not answer in
-    time is not kept, so it matches nothing."""
+    `loc`'s, as a view records it (`_location_probe.view_path`): on one
+    thread, more as reads turn out slow, each bounded by `PROBE_BUDGET`
+    (`bounded_reads`, ENG-156), and kept for the span `liveness_held`
+    opened, where `_declared_folder` reads it as a value (review M D2). A
+    folder that does not answer in time is not kept, so it matches
+    nothing."""
     live = self._live
     f = loc.root_file
     if live is None or f is None or loc.state == UNREADABLE:

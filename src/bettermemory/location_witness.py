@@ -3,15 +3,15 @@ question the daemon raises when the membership model asks of a
 repository it cannot read, and the readers that answer the model from
 what the client sent instead: `AnsweredHistory` (the history),
 `AnsweredToken` (the checkout token) and `AnsweredLiveness` (a view's
-liveness).
+liveness); and the client's reading of a view question (`asked_views`).
 
 They live apart from `location.py` to keep that module under the
 package's 2,000-line bound (ENG-96). They import nothing from
 `location`: the standard library, `checkout_token` and `location_git`'s
-hash pattern, with the membership types they annotate under
-TYPE_CHECKING. `location` imports this module and re-exports all four
-under their old names, so a hook loads it only with `location`, for the
-exchange.
+hash pattern, kind and object-key reader, with the membership types they
+annotate under TYPE_CHECKING. `location` imports this module and
+re-exports the four readers under their old names, so a hook loads it
+only with `location`, for the exchange.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from . import checkout_token
-from .location_git import _FULL_HASH
+from .location_git import _FULL_HASH, PRIMARY, _key
 
 if TYPE_CHECKING:
     from .membership import Checkout, View
@@ -33,6 +33,40 @@ class NeedWitnesses(Exception):
     def __init__(self, question: Mapping[str, Any]) -> None:
         super().__init__("the client's repository must answer")
         self.question = dict(question)
+
+    @classmethod
+    def joined(cls, needs: Sequence[NeedWitnesses]) -> NeedWitnesses:
+        """One question asking all that each of `needs` asks, so the client
+        answers them in one round (`location.answer`), not one each (review
+        M G4): each list a key names (the views, the held ids, the commits)
+        holds every item any of them names, once, in the order first named
+        (an item with a path, a view, by its path, the first asked kept, as
+        the client answers a path once; any other item by itself), and any
+        other value (a flag) is the first named."""
+        question: dict[str, Any] = {}
+        seen: dict[str, set[tuple[str, str]]] = {}
+        for need in needs:
+            for name, value in need.question.items():
+                held = question.setdefault(
+                    name, [] if isinstance(value, list) else value
+                )
+                if not isinstance(value, list) or not isinstance(held, list):
+                    continue
+                marks = seen.setdefault(name, set())
+                for item in value:
+                    if isinstance(item, Mapping) and "path" not in item:
+                        if item not in held:
+                            held.append(item)
+                        continue
+                    mark = (
+                        ("path", repr(item["path"]))
+                        if isinstance(item, Mapping)
+                        else ("item", repr(item))
+                    )
+                    if mark not in marks:
+                        marks.add(mark)
+                        held.append(item)
+        return cls(question)
 
 
 class AnsweredHistory:
@@ -142,7 +176,9 @@ class AnsweredToken:
 class AnsweredLiveness:
     """The `membership_records.Liveness` of a caller the daemon cannot read:
     each view's state as the client answered it (`view_state` in its own
-    namespace); a view not answered raises `NeedWitnesses`."""
+    namespace); a view not answered raises `NeedWitnesses` naming it,
+    which a resolution's prefetch joins with those of the other views it
+    plans (`membership_resolve.prefetch_liveness`)."""
 
     def __init__(self, answers: Mapping[str, Any]) -> None:
         raw = answers.get("views")
@@ -183,3 +219,51 @@ class AnsweredLiveness:
                 ]
             }
         )
+
+
+def asked_views(question: Mapping[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Each view `question` names, as `AnsweredLiveness` asks it: its path
+    and the keyword arguments the client reads it with in its own
+    namespace (`location.view_state`), a malformed field read as absent
+    and a malformed object key raising `ValueError`."""
+    out: list[tuple[str, dict[str, Any]]] = []
+    for v in question.get("views") or ():
+        if not isinstance(v, Mapping) or not isinstance(v.get("path"), str):
+            continue
+        token = v.get("token")
+        out.append(
+            (
+                v["path"],
+                {
+                    "kind": str(v.get("kind") or PRIMARY),
+                    "key": _key(v.get("object")),
+                    "token": token if isinstance(token, str) else None,
+                    "last_head": _asked_head(v.get("last_head")),
+                    "stamps": _asked_stamps(v.get("stamps")),
+                    "common_key": _key(v.get("common_object")),
+                    "superseded": v.get("superseded") is True,
+                },
+            )
+        )
+    return out
+
+
+def _asked_head(value: Any) -> str | None:
+    """A last HEAD a view question names, when it is a full hash."""
+    if isinstance(value, str) and _FULL_HASH.fullmatch(value.lower()):
+        return value.lower()
+    return None
+
+
+def _asked_stamps(value: Any) -> tuple[tuple[str, int, int, int, int], ...]:
+    """The init stamps a view question names, the malformed ones left out."""
+    out: list[tuple[str, int, int, int, int]] = []
+    if isinstance(value, list):
+        for s in value[:8]:
+            if not isinstance(s, (list, tuple)) or len(s) != 5:
+                continue
+            try:
+                out.append((str(s[0]), int(s[1]), int(s[2]), int(s[3]), int(s[4])))
+            except (TypeError, ValueError):
+                continue
+    return tuple(out)

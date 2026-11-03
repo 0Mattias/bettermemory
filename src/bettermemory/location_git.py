@@ -6,16 +6,18 @@ its token codec, the HEAD, ref, stamp and manifest readers, and the
 history reader (`RepositoryHistory`, `walk`). `location` keeps the
 capture, its cache, the witness exchange and the resolution, and
 re-exports every name here that a caller reads, so no import path changes.
+The bounded reads of recorded paths are `location_reads`'s, re-exported
+here.
 
 These readers live apart from `location` to keep each module under the
 package's 2,000-line bound (ENG-96); `location` imports this module,
 never the reverse. The hook client loads it with `location`, so it
 imports only the standard library and the readers `_caches`, `_git`,
-`_location_probe`, `githead`, `gitobjects` and `project_file`, which
-import the standard library and each other alone, and `gitdir_pin`,
-which writes through `_fsutil` and reads the state directory through
-`_daemon_client` (both loaded on every hook already); never `location`
-itself, the model, the store or the config
+`_location_probe`, `githead`, `gitobjects`, `location_reads` and
+`project_file`, which import the standard library and each other alone,
+and `gitdir_pin`, which writes through `_fsutil` and reads the state
+directory through `_daemon_client` (both loaded on every hook already);
+never `location` itself, the model, the store or the config
 (tests/test_membership_capture.py pins that set).
 """
 
@@ -25,9 +27,8 @@ import os
 import re
 import stat
 import threading
-import time
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,15 @@ from typing import Any
 from . import _caches, githead, gitdir_pin, gitobjects, project_file
 from . import _git as _git_runner
 from ._location_probe import INDETERMINATE, TOKEN_VERSION
+
+# The bounded reads of recorded paths (ENG-156) live in `location_reads`;
+# `location` and its callers read these names from here.
+from .location_reads import (
+    NOT_READ as NOT_READ,
+    UNANSWERED as UNANSWERED,
+    bounded_read as bounded_read,
+    bounded_reads as bounded_reads,
+)
 
 # -- vocabulary (equal to membership's; tests/test_membership_capture.py
 # pins each pair) ---------------------------------------------------------
@@ -71,7 +81,9 @@ FETCH_BUDGET = 0.3
 #: init-stamp files) and a round trip more on a healthy network mount; a
 #: hard-mounted NFS export or a dropped SMB share that does not answer
 #: holds the read indefinitely, so the bound is what a hook waits for it,
-#: once per path while that read is still in flight.
+#: once per path while that read is still in flight, and once for each
+#: `location_reads.READ_SLOTS` such paths a batch reads beside each other
+#: (`location_reads.READ_HANDOFF`).
 PROBE_BUDGET = 0.5
 #: How long a capture answers for its directory, as `origin.capture`'s
 #: cache (`origin.ORIGIN_CACHE_SECONDS`), on both clocks.
@@ -146,182 +158,6 @@ _TOKEN_SLOT = "token"
 #: An object key: device, inode (the volume serial and file index on
 #: Windows) and birth time in ns where the platform reports it, as text.
 Key = tuple[str, str, str | None]
-
-
-@dataclass
-class _Flight:
-    """One bounded read in flight: when it started, the longest budget a
-    waiter waited out on it (`_give_up`), whether it ended, and its outcome
-    (``(True, value)`` or ``(False, exception)``)."""
-
-    started: float
-    overdue: float = 0.0
-    done: threading.Event = field(default_factory=threading.Event)
-    outcome: list[tuple[bool, Any]] = field(default_factory=list)
-
-
-_FLIGHTS_LOCK = threading.Lock()
-#: The bounded reads in flight, by path and then by what each reads there.
-_FLIGHTS: dict[str, dict[Any, _Flight]] = {}
-#: What `bounded_read` returns for a read that did not answer within its
-#: budget, and `bounded_reads` for one that did not answer or whose path
-#: has a read in flight past the budget.
-UNANSWERED: Any = object()
-#: What `bounded_reads` returns for a read that raised or never started.
-NOT_READ: Any = object()
-
-
-def _board(
-    path: str, what: Any, now: float, budget: float
-) -> tuple[_Flight | None, bool]:
-    """The flight to wait on for a read of `path` and `what`, and whether
-    the caller is to run it: the one in flight, else a new one; None when
-    another read of `path` is in flight past `budget` (it is stalled): by
-    the clock, or because a waiter waited that budget out on it."""
-    with _FLIGHTS_LOCK:
-        flights = _FLIGHTS.get(path, {})
-        flight = flights.get(what)
-        if flight is not None:
-            return flight, False
-        if any(
-            f.overdue >= budget or now - f.started >= budget for f in flights.values()
-        ):
-            return None, False
-        flight = _FLIGHTS.setdefault(path, {})[what] = _Flight(now)
-        return flight, True
-
-
-def _give_up(flight: _Flight, budget: float) -> None:
-    """A waiter waited `budget` out on `flight`: the board reads the flight
-    as past that budget from now on, whatever the clock says. A wait can
-    end a hair before the clock shows the budget elapsed (Windows times its
-    waits on a coarser timer than its clock), and the next read of the path
-    then boarded a read of its own and waited the budget out again."""
-    with _FLIGHTS_LOCK:
-        flight.overdue = max(flight.overdue, budget)
-
-
-def _fly(path: str, what: Any, flight: _Flight, read: Callable[[], Any]) -> None:
-    """Run `read` for `flight` and land it: its outcome kept, the flight
-    off the board, its waiters woken."""
-    try:
-        flight.outcome.append((True, read()))
-    except BaseException as exc:  # noqa: BLE001 - raised in the caller
-        flight.outcome.append((False, exc))
-    finally:
-        with _FLIGHTS_LOCK:
-            mine = _FLIGHTS.get(path)
-            if mine is not None and mine.get(what) is flight:
-                del mine[what]
-                if not mine:
-                    del _FLIGHTS[path]
-        flight.done.set()
-
-
-def bounded_read(path: str, what: Any, read: Callable[[], Any], budget: float) -> Any:
-    """`read()` of the recorded path `path`, run on a worker thread and
-    waited on for `budget` seconds (ENG-156): its value, or `UNANSWERED`
-    when it did not answer in time; an exception it raised is raised here.
-    A read that outruns the budget keeps running, as a provider's fetch
-    does (`_fetch`). One read of a path and `what` is in flight at a time:
-    a caller that finds it waits on it within its own budget, and a path
-    with a read in flight past the budget answers `UNANSWERED` at once,
-    so a hung mount costs one blocked thread and one budget, not one per
-    prompt."""
-    now = time.monotonic()
-    flight, mine = _board(path, what, now, budget)
-    if flight is None:
-        return UNANSWERED
-    if mine:
-        threading.Thread(
-            target=_fly,
-            args=(path, what, flight, read),
-            name="bettermemory-probe",
-            daemon=True,
-        ).start()
-    if not flight.done.wait(max(0.0, flight.started + budget - now)):
-        _give_up(flight, budget)
-        return UNANSWERED
-    ok, value = flight.outcome[0]
-    if not ok:
-        raise value
-    return value
-
-
-def bounded_reads(
-    jobs: Sequence[tuple[str, Any, Callable[[], Any]]], budget: float
-) -> list[Any]:
-    """`bounded_read` of each job (path, what, read), the reads run in
-    turn on one worker thread rather than one thread each, each waited on
-    for `budget` seconds from its start: each job's value; `UNANSWERED`
-    where the read did not answer in time or its path has a read in flight
-    past the budget; `NOT_READ` where the read raised or another thread is
-    reading that path and `what`, for the caller to read alone. A read that
-    hangs is left on the board (its path answers every later read at once)
-    and the reads after it go on, on a fresh thread."""
-    out: list[Any] = [NOT_READ] * len(jobs)
-    todo = list(range(len(jobs)))
-    while todo:
-        todo = _read_in_turn(jobs, todo, out, budget)
-    return out
-
-
-def _read_in_turn(
-    jobs: Sequence[tuple[str, Any, Callable[[], Any]]],
-    todo: list[int],
-    out: list[Any],
-    budget: float,
-) -> list[int]:
-    """One worker thread of `bounded_reads` over the jobs `todo` names:
-    the ones it did not start, when one of its reads outran the budget."""
-    lock = threading.Lock()
-    # The read running (its job, flight and place in `todo`) and whether
-    # the caller stopped waiting.
-    current: list[tuple[int, _Flight, int]] = []
-    stop: list[bool] = []
-    finished = threading.Event()
-
-    def run() -> None:
-        try:
-            for pos, i in enumerate(todo):
-                path, what, read = jobs[i]
-                with lock:
-                    if stop:
-                        return
-                    flight, mine = _board(path, what, time.monotonic(), budget)
-                    if flight is None:
-                        out[i] = UNANSWERED
-                        continue
-                    if not mine:
-                        continue
-                    current.append((i, flight, pos))
-                _fly(path, what, flight, read)
-                with lock:
-                    current.clear()
-                    if stop:
-                        return
-                    ok, value = flight.outcome[0]
-                    if ok:
-                        out[i] = value
-        finally:
-            finished.set()
-
-    threading.Thread(target=run, name="bettermemory-probes", daemon=True).start()
-    wait = budget
-    while not finished.wait(wait):
-        with lock:
-            if not current:
-                wait = budget
-                continue
-            i, flight, pos = current[0]
-            wait = flight.started + budget - time.monotonic()
-            if wait > 0:
-                continue
-            stop.append(True)
-            _give_up(flight, budget)
-            out[i] = UNANSWERED
-            return todo[pos + 1 :]
-    return []
 
 
 # ---------------------------------------------------------------------------

@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import functools
 import os
 import re
 import stat
@@ -161,6 +162,7 @@ from .location_witness import (
     AnsweredLiveness as AnsweredLiveness,  # tests/test_membership_resolution.py
     AnsweredToken as AnsweredToken,  # resolve_hook's witness path, below
     NeedWitnesses as NeedWitnesses,  # tests/test_membership_resolution.py
+    asked_views as asked_views,  # answer's view questions, below
 )
 
 if TYPE_CHECKING:
@@ -1143,11 +1145,10 @@ def path_liveness(checkout: Checkout, view: View) -> str:
 
 
 def path_liveness_many(pairs: Sequence[tuple[Checkout, View]]) -> list[str | None]:
-    """`path_liveness` of each (checkout, view), the reads run in turn on
-    one worker thread, each bounded by `PROBE_BUDGET` (`bounded_reads`):
-    the model's batch read before its transaction (ENG-156). None where a
-    read raised or another thread was reading it, for the caller to read
-    alone."""
+    """`path_liveness` of each (checkout, view), each read bounded by
+    `PROBE_BUDGET` and read past when slow (`bounded_reads`): the model's
+    batch read before its transaction (ENG-156). None where a read raised,
+    for the caller to read again in its transaction, where it raises."""
     got = bounded_reads([_liveness_read(k, v) for k, v in pairs], PROBE_BUDGET)
     return [
         "unreachable" if g is UNANSWERED else None if g is NOT_READ else str(g)
@@ -1190,27 +1191,6 @@ def _liveness_read(
     return view.path, what, read
 
 
-def _asked_head(value: Any) -> str | None:
-    """A last HEAD a view question names, when it is a full hash."""
-    if isinstance(value, str) and _FULL_HASH.fullmatch(value.lower()):
-        return value.lower()
-    return None
-
-
-def _asked_stamps(value: Any) -> tuple[tuple[str, int, int, int, int], ...]:
-    """The init stamps a view question names, the malformed ones left out."""
-    out: list[tuple[str, int, int, int, int]] = []
-    if isinstance(value, list):
-        for s in value[:8]:
-            if not isinstance(s, (list, tuple)) or len(s) != 5:
-                continue
-            try:
-                out.append((str(s[0]), int(s[1]), int(s[2]), int(s[3]), int(s[4])))
-            except (TypeError, ValueError):
-                continue
-    return tuple(out)
-
-
 def answer(
     question: Mapping[str, Any], answers: Mapping[str, Any], cap: Capture
 ) -> dict[str, Any]:
@@ -1221,11 +1201,17 @@ def answer(
     the question names (`reachable_among`, one bounded traversal, and only
     when the question asks it: ENG-151), the blob sample of HEAD and the
     asked commits, and the state of the named views, all read from its
-    own files. Asked to re-mint its checkout token (``remint``, ENG-153),
-    it writes a fresh one under the question's policy, once per exchange,
-    and answers the token and status, which the daemon records in the
-    resolution's transaction (`AnsweredToken`); ``remint_ok`` says it
-    answers that question."""
+    own files; each view as the daemon reads one (`bounded_reads`), a path
+    that does not answer in `PROBE_BUDGET` ``unreachable``. A view whose
+    read raises (an error `view_state` does not read as a state) is read
+    once and its exception raised, so it fails the round, and the
+    exchange with it, as one did before the views were asked together
+    (review M G4); asked about more views at once, a round meets such a
+    view more often. Asked to re-mint its checkout token (``remint``,
+    ENG-153), it writes a fresh one under the question's policy, once per
+    exchange, and answers the token and status, which the daemon records
+    in the resolution's transaction (`AnsweredToken`); ``remint_ok`` says
+    it answers that question."""
     out: dict[str, Any] = {k: v for k, v in answers.items()}
     out["remint_ok"] = True
     if question.get("remint") and "remint" not in out:
@@ -1272,18 +1258,16 @@ def answer(
             out["ancestry_of"] = sorted(s for s in asked if _FULL_HASH.fullmatch(s))
             out["ancestry"] = []
     views = dict(out.get("views") or {})
-    for v in question.get("views") or ():
-        if isinstance(v, Mapping) and isinstance(v.get("path"), str):
-            views[v["path"]] = view_state(
-                v["path"],
-                str(v.get("kind") or PRIMARY),
-                _key(v.get("object")),
-                v.get("token"),
-                last_head=_asked_head(v.get("last_head")),
-                stamps=_asked_stamps(v.get("stamps")),
-                common_key=_key(v.get("common_object")),
-                superseded=v.get("superseded") is True,
-            )
+    jobs = [
+        (path, tuple(sorted(kw.items())), functools.partial(view_state, path, **kw))
+        for path, kw in asked_views(question)
+    ]
+    states = bounded_reads(jobs, PROBE_BUDGET, raises=True)
+    for (path, _what, _read), state in zip(jobs, states, strict=True):
+        # A read that raised raised above; any other view not read is
+        # unknown, never a sentinel's text on the wire.
+        unread = state is UNANSWERED or state is NOT_READ
+        views[path] = "unreachable" if unread else str(state)
     out["views"] = views
     return out
 
