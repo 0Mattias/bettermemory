@@ -22,8 +22,9 @@ call here, with all four properties:
   run that remote's command to fetch an object the call reads and the
   clone lacks (ENG-218). The package runs no git that fetches;
 * ``core.fsmonitor``, ``core.hooksPath`` and ``log.showSignature`` are
-  pinned off, so no daemon starts, no hook of the repository's runs and
-  no ``gpg.program`` checks a signature on a read (the one diff reader,
+  pinned off and ``diff.submodule`` to ``short``, so no daemon starts, no
+  hook of the repository's runs, no git starts in a submodule and no
+  ``gpg.program`` checks a signature on a read (the one diff reader,
   `origin.commit_patch_stream`, keeps textconv and external diff
   programs off on its own command line);
 * stdout and stderr are UTF-8 with ``errors="replace"`` (git emits UTF-8,
@@ -71,13 +72,22 @@ SCRUBBED_ENV = (
 #: promisor remote, and the remote and the protocol's permission
 #: (``protocol.ext.allow=always``, which runs the remote as a command) come
 #: from the repository's own config, which a ``-c`` pin does not outrank
-#: there (git 2.54). ``GIT_NO_LAZY_FETCH`` (git 2.44 and later) stops the
-#: fetch; ``GIT_ALLOW_PROTOCOL`` set empty allows no transport, whatever
-#: any config says, on every git since 2.12 (ENG-218).
+#: there (git 2.54); so do ``core.sshCommand`` for an ``ssh://`` remote
+#: and ``remote.<name>.uploadpack`` for a local one. ``GIT_NO_LAZY_FETCH``
+#: (git 2.44 and later) stops the fetch; ``GIT_ALLOW_PROTOCOL`` set empty
+#: allows no transport, whatever any config says, on every git since
+#: 2.6.1, earlier than partial clones (2.17) (ENG-218).
 NO_FETCH = {"GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""}
 #: Configuration pinned on every call: no fsmonitor daemon, no hooks, no
 #: signature check (``log.showSignature`` runs ``gpg.program`` for every
-#: signed commit a log lists and writes its output among the log's lines).
+#: signed commit a log lists and writes its output among the log's lines),
+#: and a gitlink's change in a patch kept to git's default ``-/+Subproject
+#: commit`` lines:
+#: ``diff.submodule=diff``, from the repository's config or the user's,
+#: starts a git in the submodule for each one, and that git honours the
+#: submodule's own ``diff.external``, which a planted repository names
+#: (an absorbed submodule's git directory sits under ``.git/modules``), so
+#: a ``log -p`` ran a program of its choosing (ENG-218).
 PINS = (
     "-c",
     "core.fsmonitor=false",
@@ -85,6 +95,8 @@ PINS = (
     "core.hooksPath=/dev/null",
     "-c",
     "log.showSignature=false",
+    "-c",
+    "diff.submodule=short",
 )
 
 # How many git invocations could not run at all since import, on any

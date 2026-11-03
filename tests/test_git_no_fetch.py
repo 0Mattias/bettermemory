@@ -9,7 +9,15 @@ incomplete, which a garbage pack index is enough for, so a planted
 repository ran a command of its choosing in the daemon or a hook client.
 `_git.run_git` now sets ``GIT_NO_LAZY_FETCH=1`` and an empty
 ``GIT_ALLOW_PROTOCOL`` on every call; each alone stops the fetch, the
-first on git 2.44 and later, the second on any git since 2.12.
+first on git 2.44 and later, the second on any git since 2.6.1, earlier
+than partial clones (2.17). The ``ext::`` tests need a shell script, so a
+blobless clone of an ordinary ``file://`` remote shows the same on every
+platform, Windows included.
+
+The one diff reader, `origin.commit_patch_stream`, had git start a git in
+a submodule whenever ``diff.submodule=diff`` was set, and that git runs
+the submodule's own ``diff.external``; `_git.PINS` keeps a gitlink's
+change to git's default ``-/+Subproject commit`` lines.
 """
 
 from __future__ import annotations
@@ -173,3 +181,190 @@ def test_the_history_reader_asks_git_without_running_the_remote(
     assert history.parents(hostile.ids[3]) == (hostile.missing,)
     assert tuple(history.parents(hostile.missing)) == ()
     assert not hostile.marker.exists()
+
+
+class PlantedSubmodule:
+    """A repository whose README.md was a gitlink for two commits, its
+    submodule's git directory planted absorbed at ``.git/modules/m`` with a
+    ``diff.external`` that touches `marker` (the review's probe e218_b2)."""
+
+    def __init__(self, base: Path) -> None:
+        self.repo = base / "repo"
+        self.repo.mkdir()
+        self.marker = base / "MARKER"
+        script = base / "diff.sh"
+        script.write_text(f"#!/bin/sh\ntouch '{self.marker}'\nexit 0\n")
+        script.chmod(0o755)
+        _plain_git(self.repo, "init", "-q")
+        mod = self.repo / ".git" / "modules" / "m"
+        _plain_git(base, "init", "-q", "--bare", str(mod))
+        empty = _plain_git(mod, "hash-object", "-w", "-t", "tree", "--stdin", stdin=b"")
+        blob = _plain_git(mod, "hash-object", "-w", "--stdin", stdin=b"s\n")
+        tree = _plain_git(mod, "mktree", stdin=f"100644 blob {blob}\tx.txt\n".encode())
+        s1 = self._commit(mod, empty, [], 1_600_000_000)
+        s2 = self._commit(mod, tree, [s1], 1_600_000_100)
+        _plain_git(mod, "config", "diff.external", str(script))
+        readme = _plain_git(self.repo, "hash-object", "-w", "--stdin", stdin=b"hi\n")
+        modules = _plain_git(
+            self.repo,
+            "hash-object",
+            "-w",
+            "--stdin",
+            stdin=b'[submodule "m"]\n\tpath = README.md\n\turl = ./m\n',
+        )
+        trees = [
+            f"100644 blob {readme}\tREADME.md\n",
+            f"100644 blob {modules}\t.gitmodules\n160000 commit {s1}\tREADME.md\n",
+            f"100644 blob {modules}\t.gitmodules\n160000 commit {s2}\tREADME.md\n",
+            f"100644 blob {modules}\t.gitmodules\n100644 blob {readme}\tREADME.md\n",
+        ]
+        parents: list[str] = []
+        self.commits: list[str] = []
+        for i, entries in enumerate(trees):
+            made = _plain_git(self.repo, "mktree", stdin=entries.encode())
+            sha = self._commit(self.repo, made, parents, 1_700_000_000 + i)
+            self.commits.append(sha)
+            parents = [sha]
+        _plain_git(self.repo, "update-ref", "HEAD", self.commits[-1])
+        _plain_git(self.repo, "reset", "-q", "--hard", "HEAD")
+        # The gitlink's second change: s1 to s2.
+        self.bump = self.commits[2]
+        self.s2 = s2
+
+    @staticmethod
+    def _commit(repo: Path, tree: str, parents: list[str], when: int) -> str:
+        args = ["commit-tree", tree, "-m", "c"]
+        for parent in parents:
+            args += ["-p", parent]
+        stamp = f"@{when} +0000"
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "A",
+            "GIT_AUTHOR_EMAIL": "a@a",
+            "GIT_COMMITTER_NAME": "C",
+            "GIT_COMMITTER_EMAIL": "c@c",
+            "GIT_AUTHOR_DATE": stamp,
+            "GIT_COMMITTER_DATE": stamp,
+        }
+        done = subprocess.run(
+            ["git", "-C", str(repo), *args], capture_output=True, check=True, env=env
+        )
+        return done.stdout.decode().strip()
+
+    def patch(self) -> str | None:
+        from bettermemory import origin
+        from bettermemory.verify import _literal_pathspecs
+
+        return origin.commit_patch_stream(
+            self.repo, [self.bump], _literal_pathspecs(["README.md"])
+        )
+
+
+@pytest.fixture
+def submodule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PlantedSubmodule:
+    if not _POSIX:
+        pytest.skip("the diff program is a POSIX shell script")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    return PlantedSubmodule(tmp_path)
+
+
+@pytest.mark.parametrize("where", ["repository", "global"])
+def test_a_patch_never_starts_a_git_in_a_planted_submodule(
+    submodule: PlantedSubmodule,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    where: str,
+) -> None:
+    """``diff.submodule=diff``, in the repository's config or the user's
+    own, has git diff a gitlink's change with a git started in the
+    submodule, which runs the submodule's ``diff.external``. The control
+    shows plain git does; the package's patch stream does not."""
+    if where == "repository":
+        _plain_git(submodule.repo, "config", "diff.submodule", "diff")
+    else:
+        config = tmp_path / "global.cfg"
+        config.write_text("[diff]\n\tsubmodule = diff\n")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    _plain_git(submodule.repo, "log", "-p", "-1", submodule.bump)
+    assert submodule.marker.exists(), "the control: plain git runs the program"
+    submodule.marker.unlink()
+    stream = submodule.patch()
+    assert stream is not None
+    assert f"+Subproject commit {submodule.s2}" in stream
+    assert not submodule.marker.exists()
+
+
+class Blobless:
+    """A blobless clone, through ``file://``, of a repository whose a.txt
+    changed in each of three commits: the clone holds every commit and only
+    the blobs its checkout needed, so the first a.txt is one a read must
+    fetch, from an ordinary remote that needs no program of the test's."""
+
+    def __init__(self, base: Path) -> None:
+        source = base / "source"
+        source.mkdir()
+        _plain_git(source, "init", "-q")
+        _plain_git(source, "config", "uploadpack.allowFilter", "true")
+        for i in range(3):
+            (source / "a.txt").write_bytes(f"v{i}\n".encode())
+            _plain_git(source, "add", "a.txt")
+            _plain_git(
+                source,
+                "-c",
+                "user.name=A",
+                "-c",
+                "user.email=a@a",
+                "commit",
+                "-q",
+                "-m",
+                f"c{i}",
+            )
+        self.first = _plain_git(source, "rev-parse", "HEAD~2:a.txt")
+        self.repo = base / "clone"
+        _plain_git(
+            base, "clone", "-q", "--filter=blob:none", source.as_uri(), str(self.repo)
+        )
+
+    def read_first(self) -> str | None:
+        done = _git.run_git(
+            ["cat-file", "blob", self.first], cwd=self.repo, timeout=10.0
+        )
+        return done.stdout if done is not None and done.returncode == 0 else None
+
+
+@pytest.fixture
+def blobless(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Blobless:
+    config = tmp_path / "global.cfg"
+    config.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    for name in ("GIT_NO_LAZY_FETCH", "GIT_ALLOW_PROTOCOL"):
+        monkeypatch.delenv(name, raising=False)
+    return Blobless(tmp_path)
+
+
+def test_a_blobless_clone_fetches_the_blob_for_a_git_that_may(
+    blobless: Blobless, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control: with neither setting, git fetches the blob."""
+    monkeypatch.setattr(_git, "NO_FETCH", {})
+    assert blobless.read_first() == "v0\n"
+
+
+@pytest.mark.parametrize(
+    "kept",
+    [None, {"GIT_ALLOW_PROTOCOL": ""}, {"GIT_NO_LAZY_FETCH": "1"}],
+    ids=["both", "GIT_ALLOW_PROTOCOL", "GIT_NO_LAZY_FETCH"],
+)
+def test_a_blob_a_partial_clone_lacks_reads_as_absent_on_every_platform(
+    blobless: Blobless, monkeypatch: pytest.MonkeyPatch, kept: dict[str, str] | None
+) -> None:
+    """Each setting alone holds, on Windows too, where the review could not
+    show that Git for Windows reads an empty ``GIT_ALLOW_PROTOCOL`` from
+    its environment as set."""
+    if kept is not None:
+        if "GIT_NO_LAZY_FETCH" in kept and _git_version() < (2, 44):
+            pytest.skip("GIT_NO_LAZY_FETCH is read from git 2.44")
+        monkeypatch.setattr(_git, "NO_FETCH", kept)
+    assert blobless.read_first() is None

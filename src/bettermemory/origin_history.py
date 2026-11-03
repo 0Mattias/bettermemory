@@ -187,7 +187,10 @@ def located_key(cwd: Path) -> Key | None:
 
 
 # The variables that change which commits a head reaches in git's eyes: the
-# replacement refs and their namespace, the graft and shallow files.
+# replacement refs and their namespace, the graft and shallow files. Since
+# ENG-218 `_git` removes GIT_SHALLOW_FILE from every git it runs, so that
+# one no longer moves git's answer; it stays listed, so a change in its
+# value reads the history whole again where an extension would serve.
 _HISTORY_ENV = (
     "GIT_NO_REPLACE_OBJECTS",
     "GIT_REPLACE_REF_BASE",

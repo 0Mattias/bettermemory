@@ -1859,8 +1859,11 @@ def commit_patch_stream(
     the diff is then of the blob's own text, the text a claim reads from
     the file, not the program's conversion. ``--no-ext-diff`` keeps an
     external diff driver off, as ``log`` does by default. The signature
-    check ``log.showSignature`` would run is pinned off for every call
-    (`_git.PINS`).
+    check ``log.showSignature`` would run is pinned off for every call,
+    and a gitlink's change is kept to git's default ``-/+Subproject
+    commit`` lines (``diff.submodule=short``, `_git.PINS`): ``diff`` would start a git in
+    the submodule, which honours the submodule's own ``diff.external``
+    (ENG-218).
 
     ``--format=<COMMIT_MARK>%H`` writes the same control-character
     record separator the bench streams carry; source content cannot
