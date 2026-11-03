@@ -77,9 +77,21 @@ only; `memory_show` occurrences feed the rate denominators but not
 the floor), one definition of a use (`health_model.endorsement_tier`: every
 applied `use`, a pointer's settlement included, since the settlement is
 the Stop finding the memory in the reply; only the three rates leave the
-settlement out), and one honesty gate (with zero
+settlement out), one honesty gate (with zero
 Stop-hook settlement telemetry in the log the bucket is suppressed and
-says so, rather than reporting an unwired hook as acknowledge-debt).
+says so, rather than reporting an unwired hook as acknowledge-debt), and
+one predicate (`health_model.weakly_endorsed`): applied at least once and
+never explicitly, or, with `[behavior] cold_endorsement_ratio_threshold`
+above 0, explicitly less often than that fraction of the applies. Eval
+reads the knob the health report reads, within 0 and 1 as it does
+(`inf` as 1, NaN as 0, and `bettermemory config check` warns of a value
+outside them), for rate mode and for the two
+replays `--report` composes, and publishes it as
+`cold_endorsement_memories.ratio_threshold`; each row carries its
+`auto_applied_count`, its `explicit_applied_count` and its
+`endorsement_ratio`, the explicit fraction a health row reports under
+that name, so a threshold can be checked against a replayed log before
+it is set.
 
 ### `silent_miss_rate`
 

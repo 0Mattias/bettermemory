@@ -19,21 +19,27 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
-from bettermemory import location
+from bettermemory import location, verify_anchoring
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
+from bettermemory.health import compute_health
 from bettermemory.machine import MachineIdentity, open_machine
-from bettermemory.membership import Membership
+from bettermemory.membership import Home, Membership
+from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.server import main as cli_main
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from bettermemory.verify_anchoring import Anchoring
 
 from ._mcp import call_tool
 from .conftest import set_git_discovery_ceiling
@@ -284,3 +290,116 @@ def test_the_cli_report_writes_nothing(
     assert not (repo / ".git" / "info" / "bettermemory").exists()
     assert _files(repo / ".git") == before_files
     assert _row_counts(memory_dir) == before_rows
+
+
+# ---------------------------------------------------------------------------
+# One read of the caller's object store per cited commit (ENG-192, G3)
+# ---------------------------------------------------------------------------
+
+_VERIFIED = datetime(2001, 1, 1, tzinfo=timezone.utc)
+
+
+class _StandInModel:
+    """A membership model whose every record is homed in one project whose
+    home checkout has no live view here, read by a caller standing in the
+    checkout at `root`: each cited commit is resolved in the caller's
+    store (`ClaimAnchor.commit_root`), the read the memo keeps."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = str(root)
+
+    def home(self, record_id: str) -> Home:
+        return Home(
+            record_id=record_id,
+            kind="record",
+            project="p-elsewhere",
+            checkout="k-home",
+            rule="test",
+            decided="2026-01-01T00:00:00Z",
+            recorded_project="p-elsewhere",
+        )
+
+    def homes(self, record_ids: Sequence[str]) -> dict[str, Home]:
+        return {rid: self.home(rid) for rid in record_ids}
+
+    def anchor(self, record_id: str, caller: Any) -> tuple[str | None, str]:
+        return None, "no_live_checkout"
+
+    def checkout(self, checkout_id: str) -> str:
+        return checkout_id
+
+    def live_view(self, checkout: str) -> str:
+        return self.root
+
+
+def _stand_in(root: Path) -> Anchoring:
+    caller = SimpleNamespace(checkout="k-caller")
+    return Anchoring(cast(Any, _StandInModel(root)), cast(Any, caller))
+
+
+def _citing(commit: str) -> Memory:
+    """A verified record citing `commit`, with a claim anchor and an origin
+    in another repository than the caller's."""
+    return Memory(
+        id=generate_ulid(),
+        created=_VERIFIED,
+        updated=_VERIFIED,
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="The entry point lives in src/a.py.\n",
+        origin=Origin(repo="git@github.com:example/elsewhere.git"),
+        verified_paths=["src/a.py"],
+        last_verified_at=_VERIFIED,
+        verified_head=commit,
+    )
+
+
+def test_a_report_reads_the_callers_store_once_per_cited_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Twelve homed records whose home has no live view here, six citing
+    one commit and six another, both held by the caller's checkout: the
+    report asks whether the caller's store holds each commit once, not
+    once a record, and still groups all twelve at the caller's checkout."""
+    repo = _repo(tmp_path / "caller")
+    first = _git(repo, "rev-parse", "HEAD")
+    _change(repo, "a.py")
+    second = _git(repo, "rev-parse", "HEAD")
+    asked: list[tuple[str, str]] = []
+    real = verify_anchoring.holds_commit
+
+    def counted(root: str | Path, sha: str) -> bool:
+        asked.append((str(root), sha))
+        return real(root, sha)
+
+    monkeypatch.setattr(verify_anchoring, "holds_commit", counted)
+    memories = [_citing(first) for _ in range(6)] + [_citing(second) for _ in range(6)]
+    report = compute_health(memories, [], anchoring=_stand_in(repo))
+    assert sorted(asked) == sorted([(str(repo), first), (str(repo), second)])
+    drift = report.cross_repo_drift
+    assert drift is not None
+    assert [(g.worktree_root, g.candidates) for g in drift.groups] == [(str(repo), 12)]
+
+
+def test_the_memo_keeps_at_most_its_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Past `_HELD_COMMIT_MEMO_CAP` the least recently asked answer is
+    dropped and read again when asked again; the memo never holds more."""
+    asked: list[str] = []
+
+    def counted(root: str | Path, sha: str) -> bool:
+        asked.append(sha)
+        return sha == "a" * 40
+
+    monkeypatch.setattr(verify_anchoring, "holds_commit", counted)
+    monkeypatch.setattr(verify_anchoring, "_HELD_COMMIT_MEMO_CAP", 2)
+    anchoring = _stand_in(tmp_path)
+    shas = ["a" * 40, "b" * 40, "a" * 40, "c" * 40, "b" * 40, "a" * 40]
+    answers = [anchoring.holds(str(tmp_path), sha) for sha in shas]
+    assert answers == [True, False, True, False, False, True]
+    # a and b read; a answered from the memo; c read, b dropped; b read
+    # again, a dropped; a read again, c dropped.
+    assert asked == ["a" * 40, "b" * 40, "c" * 40, "b" * 40, "a" * 40]
+    assert len(anchoring._held) == 2

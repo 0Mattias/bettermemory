@@ -56,6 +56,63 @@ no schema step.
   (`.github/workflows/ci.yml`, `tests/test_membership_cost.py`,
   `tests/test_membership_migration.py`)
 
+- **`bettermemory eval` reads the cold-endorsement ratio threshold the
+  health report reads (ENG-192).** With `[behavior]
+  cold_endorsement_ratio_threshold` above 0 the health report's
+  `cold_endorsement_memories` also lists the memories explicitly applied
+  less often than that fraction of their applies, and eval, whose bucket
+  otherwise mirrors health's, read no threshold: its bucket was the
+  strict one whatever the knob said, so a threshold could not be checked
+  against a replayed log. The two reports now read the bucket through
+  one predicate (`health_model.weakly_endorsed`), eval reads the knob as
+  `bettermemory health` does, and its JSON carries the threshold beside
+  the floor (`ratio_threshold`) and on each row the `endorsement_ratio` a
+  health row carries, the explicit applies no longer always 0. With the
+  threshold on, the text names it and each row's explicit applies; off,
+  it reads as before. `eval --report` reads it for the two replays its
+  document holds. Both reports read the knob as the nearer end of 0 to
+  1, `inf` as 1, and NaN as 0 (`health_model.clamp_ratio_threshold`):
+  TOML spells `inf` and `nan`, an infinite threshold would have been
+  written to eval's JSON as `Infinity`, which strict JSON cannot read,
+  and above 1 the health report listed every applied memory, one every
+  apply of which was explicit included, where it now lists those not
+  wholly explicit, at `inf` as at 1.5. `bettermemory config check` warns
+  of a threshold outside 0 to 1, or NaN, and names the value the reports
+  read. The two eval golden files take the two keys.
+  (`src/bettermemory/eval.py`,
+  `src/bettermemory/eval_model.py`, `src/bettermemory/eval_rates.py`,
+  `src/bettermemory/eval_render.py`, `src/bettermemory/health.py`,
+  `src/bettermemory/health_model.py`, `src/bettermemory/cli/eval.py`,
+  `src/bettermemory/cli/config_cmd.py`, `src/bettermemory/config.py`,
+  `tests/fixtures/eval_surfaces/alltime.json`,
+  `tests/fixtures/eval_surfaces/window.json`)
+
+- **`bettermemory health`'s drift rollups are documented as read without
+  the caller's admission (ENG-192).** Since 9.0.0rc14
+  `memory_admin(health)` counts a record's commit drift where
+  the caller's admission counts it, as `memory_show` does, while the
+  CLI, which writes nothing, resolves no caller: run from the client's
+  directory, its `commit_drift_debt` counts every record the action
+  counts and may count more, its 20 rows, the most commits behind, can
+  list others, and its `cross_repo_drift` groups homed records by their
+  recorded origin.
+  docs/api.md now says so, and why no read-only admission is built: the
+  ladder would run in a rolled-back write transaction holding the
+  store's write lock against the daemon's writers, the admission and
+  anchors would have to be read whole inside it, and the two writes the
+  resolution makes outside the store (the checkout token, the
+  working-tree record of a git directory kept apart) would have to be
+  turned off for this one caller.
+
+- **A description constant the tool list does not serve fails the suite
+  wherever it is defined (ENG-192).** The eight unserved action
+  descriptions were deleted before this release, and a test held each
+  action body to keeping none; a new test reads every `DESC_*` binding
+  in the package and requires it to stand at a module's top level and be
+  the description of a served tool, and the list of action bodies is now
+  the modules the two dispatchers import, wherever and however they
+  import them. (`tests/test_admin_episode.py`)
+
 #### Fixed
 
 - **No git the package runs fetches or starts a git in a submodule
@@ -520,6 +577,71 @@ no schema step.
   transaction, and one that does not answer in time matches nothing, as
   at a resolution. (`src/bettermemory/membership_migrate.py`,
   `src/bettermemory/membership_resolve.py`, `src/bettermemory/membership.py`)
+
+- **A bulk acknowledgement's cutoff outside the calendar is refused in
+  words (ENG-192).** `memory_admin(action="acknowledge_miss",
+  before=...)` read `0001-01-01T00:00:00+02:00`, the last two hours of
+  the year 0 once read in UTC, through `astimezone`, which raised
+  `OverflowError`. That is no refusal at the tool boundary, which turns
+  a `ValueError` into one, so the client was sent only `Error executing
+  tool memory_admin` and the server logged a traceback. The cutoff is
+  now read into UTC as eval's `--since` and `--until` are (review D5),
+  and a time the calendar cannot hold is refused with a `ValueError`
+  naming `before`; `9999-12-31T23:00:00-02:00`, the first hour of the
+  year 10000, refused before as lying in the future, is refused for
+  lying outside the calendar. (`src/bettermemory/handlers/acknowledge_miss.py`)
+
+- **A request reads the caller's object store once for each cited
+  commit (ENG-192).** Where a record's home checkout has no live view
+  here, its cited commit is resolved in the caller's checkout when that
+  checkout's store holds it, and each record asked again: a health
+  report over twelve such records citing two commits read the store
+  twelve times, each read about 0.42 ms on a repository of 29,155
+  objects. The request's anchoring now keeps each answer by root and
+  commit (`Anchoring.holds`), so that report reads it twice; up to
+  4,096 answers are kept, about 344 KB, past the 1,447 memories the
+  owner's store held, each citing one commit at most, and a commit asked
+  again after 4,096 others is read again. `memory_search` and
+  `memory_show`, which read through the same anchoring, ask once per
+  commit in a request too. (`src/bettermemory/verify_anchoring.py`)
+
+- **The health report's typo-scope check is offered a bounded number of
+  pairs for dense short names (ENG-192).** Since 9.0.0rc14's one pass
+  (ENG-170) a scope's typo candidates came from a whole-string index of
+  the strings one or two deleted characters leave, and short names share
+  most of those: the 2,197 names of three letters out of thirteen behind
+  one namespace were offered about 2.46 million pairs (2.2 s), though
+  rule 4 pairs no two of them, and a numbered family (`ns:ticket-1000`
+  to `ns:ticket-2999`), which rule 3 exempts, about 1.58 million
+  (1.7 s). The index now reads each tail behind the segments a pair
+  shares, only where the scopes there part, keyed for the distance rule
+  4 allows at its length (one insertion or deletion under 4 characters,
+  one edit or a shared one-deletion under 6, two from 6), and leaves out
+  the pairs that share their next segment or their stem. Both stores are
+  offered no pair (0.006 s and 0.003 s); a tail under 6 characters is
+  offered at most 1,183 candidates at one depth, whatever the store's
+  size; and every name of four letters out of seven runs the predicate
+  7,689 times, not 151,451. The scopes that go on with the next segment
+  most of a group shares are indexed only at a length within 2 of the
+  others', and the pairs two tails within two edits share are tried
+  first: 1,000 scopes of 400 segments that part at the last take 0.06 s
+  (were 0.71 s), and every six-letter name over five letters behind one
+  namespace 0.38 s (2.6 s). The bucket is the pairwise check's still, on
+  41,000 random stores of odd shapes besides the test suite's. Not
+  bounded: tails of 6 to 32 characters each 3 or 4 edits from most of
+  the others, which share keys, and tails over 32 compared by length as
+  before. Some shapes pay for indexing a tail again at each depth where
+  its group parts: synthetic stores, namespaced scopes indexed whole and
+  behind their namespace, take about 1.3 times as long (0.060 s for
+  2,000 scopes, against 0.047 s), 2,000 scopes of sixteen one-letter
+  segments over two letters about 4 times (1.2 s against 0.32 s), and
+  2,000 of twelve and a six-letter leaf 4.8 times (0.98 s against
+  0.21 s). 1,000 pairs of 30-letter names, each pair behind a first
+  segment of a length of its own, take 8 times as long (0.169 s against
+  0.021 s): their tails, of 6 to 32 characters, are indexed by their
+  deletions, about 0.1 ms a scope, where the whole-string index compared
+  the whole scopes, over 32 characters, by length only.
+  (`src/bettermemory/health_stats.py`)
 
 ### 9.0.0rc17
 

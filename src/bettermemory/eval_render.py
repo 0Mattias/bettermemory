@@ -100,18 +100,28 @@ def render_text(report: EvalReport) -> str:
             )
 
     if report.cold_endorsement_memories_rows or report.cold_endorsement_memories_total:
+        # With the ratio threshold on, a row may carry explicit applies, so
+        # the line names the threshold and each row its explicit share.
+        ratio = report.cold_endorsement_ratio_threshold
+        rule = f"explicit share < {ratio:g}" if ratio > 0 else "0 explicit applied"
         lines.append("")
         lines.append(
             f"Cold-endorsement memories "
-            f"(retrievals ≥ {report.endorsement_min_retrievals}, 0 explicit applied): "
+            f"(retrievals ≥ {report.endorsement_min_retrievals}, {rule}): "
             f"{report.cold_endorsement_memories_total}"
         )
         for row in report.cold_endorsement_memories_rows[:10]:
             scopes = printable(",".join(row.scopes)) or "—"
+            share = (
+                f", explicit {row.explicit_applied_count}/"
+                f"{row.auto_applied_count + row.explicit_applied_count}"
+                if ratio > 0
+                else ""
+            )
             lines.append(
                 f"  {printable(row.id)}  {scopes:<18s}  "
                 f'"{printable(_truncate(row.summary, 50))}"  '
-                f"({row.retrieval_count} retrievals)"
+                f"({row.retrieval_count} retrievals{share})"
             )
         if report.cold_endorsement_memories_total > 10:
             lines.append(f"  … plus {report.cold_endorsement_memories_total - 10} more")

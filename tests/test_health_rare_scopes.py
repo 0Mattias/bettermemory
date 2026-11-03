@@ -8,15 +8,26 @@ predicate decide each: the bucket equals the pairwise check's, and the
 predicate's work grows with the store, not with its square. A scope longer
 than the index's cap is compared by length instead, since the index costs
 the cube of a scope's length (review D4).
+
+The whole-string index still paired dense short names, which share most
+of their deletion variants (ENG-192, G5). The index now reads each tail
+behind the segments a pair shares, with the keys rule 4 needs at the
+tail's length, and leaves out the pairs that share their next segment or
+their stem: the densest stores of short names are offered a bounded
+number of candidates each, and the bucket still equals the pairwise
+check's.
 """
 
 from __future__ import annotations
 
+import itertools
 import random
 import string
 import tracemalloc
 from collections import Counter
+from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
@@ -148,7 +159,8 @@ def test_the_predicates_work_grows_with_the_store_not_its_square(
     """The distance check the predicate runs, counted at 500 and 2,000
     scopes. The pairwise form ran it for nearly every pair, about 250,000
     and 4,000,000 times; the one pass runs it for the candidates the
-    indexes name, fewer times than there are scopes (55 and 519 here)."""
+    indexes name, fewer times than there are scopes (50 and 202 here; 55
+    and 519 under the whole-string index of ENG-170)."""
     calls = 0
     real = health_stats._edit_distance_within
 
@@ -216,10 +228,10 @@ def test_a_long_scope_costs_the_report_little(monkeypatch: pytest.MonkeyPatch) -
     built = 0
     real = health_stats._deletion_variants
 
-    def counted(text: str) -> set[str]:
+    def counted(text: str) -> tuple[set[str], set[str]]:
         nonlocal built
         out = real(text)
-        built += sum(map(len, out))
+        built += sum(len(key) for keys in out for key in keys)
         return out
 
     monkeypatch.setattr(health_stats, "_deletion_variants", counted)
@@ -312,3 +324,206 @@ def test_the_bucket_equals_the_pairwise_check_on_200_random_stores() -> None:
         assert health_stats._rare_scopes(counts, exempt=exempt) == expected, case
         flagged += len(expected)
     assert flagged > 200, "the stores must exercise the rule, not miss it"
+
+
+# ---------------------------------------------------------------------------
+# Dense short names (ENG-192, G5)
+# ---------------------------------------------------------------------------
+
+
+def _every_name(
+    letters: str, lengths: tuple[int, ...], space: str = "ns:"
+) -> Counter[str]:
+    """Every name of `lengths` over `letters` behind `space`, once each:
+    the densest store of short names those letters make."""
+    return Counter(
+        space + "".join(name)
+        for size in lengths
+        for name in itertools.product(letters, repeat=size)
+    )
+
+
+def _counted_predicate(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the predicate's runs; the one-element list holds the count."""
+    calls = [0]
+    real = health_stats._scope_typo_neighbor
+
+    def counted(scope: str, other: str) -> bool:
+        calls[0] += 1
+        return real(scope, other)
+
+    monkeypatch.setattr(health_stats, "_scope_typo_neighbor", counted)
+    return calls
+
+
+def test_every_three_letter_name_behind_one_namespace_is_offered_no_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The case the old docstring named: all 2,197 names of three letters
+    out of thirteen behind one namespace. Rule 4 never pairs two short
+    tails of one length, and every pair of them shares its namespace, so
+    no pair is offered and the bucket is empty, as the pairwise check's
+    is. The whole-string index offered them about 2.46 million pairs
+    (6.2 s, a 74 MB peak)."""
+    calls = _counted_predicate(monkeypatch)
+    counts = _every_name(string.ascii_lowercase[:13], (3,))
+    assert len(counts) == 2197
+    assert health_stats._rare_scopes(counts) == []
+    assert calls[0] == 0
+
+
+def test_a_numbered_family_is_offered_no_pair(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two thousand sibling scopes (``ns:ticket-1000`` to ``ns:ticket-2999``)
+    share their stem, which rule 3 exempts, so none is offered another;
+    the whole-string index offered them about 1.58 million pairs."""
+    calls = _counted_predicate(monkeypatch)
+    counts = Counter(f"ns:ticket-{1000 + i}" for i in range(2000))
+    assert health_stats._rare_scopes(counts) == []
+    assert calls[0] == 0
+
+
+def _offer_bound(size: int, letters: int) -> int:
+    """The most candidates a tail of `size` characters (under 6) is offered
+    at one depth over `letters` characters: the tails one insertion
+    longer, one deletion shorter and, from 4 up, the tails of its length
+    that share one of its one-deletions, one substitution or two edits
+    away (`health_stats._rare_scopes`)."""
+    same_length = size * size * letters if size >= 4 else 0
+    return (size + 1) * letters + size + same_length
+
+
+@pytest.mark.parametrize(
+    ("letters", "lengths"),
+    [("abcdef", (3, 4)), ("abcdefg", (4,)), ("abcde", (5,))],
+    ids=["3-and-4-of-6", "4-of-7", "5-of-5"],
+)
+def test_the_densest_short_names_are_offered_a_bounded_number_each(
+    monkeypatch: pytest.MonkeyPatch, letters: str, lengths: tuple[int, ...]
+) -> None:
+    """Every name of the lengths over the letters, behind one namespace:
+    each is one edit from many others, so each is in the bucket, and each
+    is offered no more candidates than its length and the letters allow,
+    however many names the store holds. The whole scopes, behind no
+    shared segment, are not indexed: they all share the namespace."""
+    offered: dict[int, int] = {}
+    real = health_stats._tail_candidates
+
+    def recorded(
+        scopes: Sequence[str],
+        group: Sequence[health_stats._TailEntry],
+        candidates: dict[int, set[int]],
+    ) -> list[list[int]]:
+        later = real(scopes, group, candidates)
+        assert later == []  # no tail is long enough for the two-edit keys
+        for entry in group:
+            if entry.asks:
+                size = len(scopes[entry.n]) - entry.start
+                most = len(candidates.get(entry.n, ()))
+                offered[size] = max(offered.get(size, 0), most)
+        return later
+
+    monkeypatch.setattr(health_stats, "_tail_candidates", recorded)
+    counts = _every_name(letters, lengths)
+    assert health_stats._rare_scopes(counts) == sorted(counts)
+    assert set(offered) == set(lengths)
+    for size, most in offered.items():
+        assert 0 < most <= _offer_bound(size, len(letters)), (size, most)
+
+
+def _entries_built(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the entries the index builds, one for each scope it reads at
+    one depth; the one-element list holds the count."""
+    built = [0]
+    real = health_stats._TailEntry
+
+    def counted(*args: Any) -> Any:
+        built[0] += 1
+        return real(*args)
+
+    monkeypatch.setattr(health_stats, "_TailEntry", counted)
+    return built
+
+
+@pytest.mark.parametrize("leaves", [False, True], ids=["deep", "deep-with-leaves"])
+def test_a_deep_store_is_indexed_where_its_scopes_part_only(
+    monkeypatch: pytest.MonkeyPatch, leaves: bool
+) -> None:
+    """150 scopes of 101 segments that part only at the last, ``a:`` a
+    hundred times and a name, and with a one-segment leaf off every depth
+    besides (``a:z``, ``a:a:z``, ...). A depth whose scopes all go on with
+    one segment offers no pair; at one where a leaf parts, the scopes that
+    go on pair only with the leaf, and only a tail within two characters
+    of its length. So the index builds fewer entries than twice the
+    scopes (150 and 349). Read at every depth, as the first form of the
+    index did (ENG-192, review F1), they took 15,150 and 20,300, and the
+    report 21 times as long as the whole-string index on 1,000 such
+    scopes."""
+    built = _entries_built(monkeypatch)
+    counts = Counter("a:" * 100 + f"{i}x" for i in range(150))
+    if leaves:
+        counts.update("a:" * k + "z" for k in range(100))
+    rare = health_stats._rare_scopes(counts)
+    assert built[0] < 2 * len(counts), (built[0], len(counts))
+    assert rare == _pairwise(counts)
+    assert rare
+
+
+def test_the_bucket_equals_the_pairwise_check_on_dense_short_names() -> None:
+    """Names of one to seven characters over two letters, a digit and a
+    hyphen, behind one namespace and bare, three in a hundred of them
+    drawn, beside one-edit typos of the namespace: siblings, insertions,
+    deletions and substitutions at every length the index treats apart,
+    across the two-edit length. The bucket names most of them, not all."""
+    rng = random.Random(5)
+    every = _every_name("ab1-", (1, 2, 3, 4, 5, 6, 7))
+    every += _every_name("ab1", (1, 2, 3, 4), "")
+    counts = Counter(scope for scope in sorted(every) if rng.random() < 0.03)
+    counts.update(["nss:ab", "n:ab1", "ms:abba"])
+    rare = health_stats._rare_scopes(counts)
+    assert rare == _pairwise(counts)
+    assert 0 < len(rare) < len(counts)
+
+
+@pytest.mark.parametrize(
+    ("pair", "bystanders"),
+    [
+        (("cc:cbca:b:a", "cc:cca:ba"), ()),
+        (
+            (
+                "p:q:baaaaaabbabbbaaaabbbaabbab:baaabbaa",
+                "p:q:baaaaabbabbbaaaabbbaabbabbaaabbaa",
+            ),
+            (),
+        ),
+        (
+            (
+                "a:babbbaaaabaaaabbaaabababbbbbbbbaaa",
+                "ababbbaaaabaaabbbaaabababbbbbbbbaaa",
+            ),
+            ("a:" + "c" * 34, "a:" + "d" * 34),
+        ),
+    ],
+    ids=["heavy-run-two-off", "long-tail-two-short", "one-segment-tail"],
+)
+def test_the_bucket_names_the_pairs_the_differential_run_shrank_to(
+    pair: tuple[str, str], bystanders: tuple[str, ...]
+) -> None:
+    """Three stores the differential run against the pairwise check shrank
+    to (ENG-192, review R2), each the smallest one a one-line slip in the
+    index misses its pair on. In the first, the pair's tails behind
+    ``cc`` are two characters apart, the farthest the heavy run's members
+    are kept from a light entry; kept within one, neither is named. In
+    the second, both tails behind ``p:q`` are over the length cap and
+    the shorter is two characters short of the longer, the low end of
+    the longer's near pools; read from one short, the longer is not
+    named. Its tails also cross the heavy filter two apart, so it pins
+    that bound beside the first. In the third, one scope is a single segment and the other a
+    typo of it behind the namespace ``a``; the single segment's entry
+    skips the class of the tails that begin with all of it, and two
+    bystanders behind ``a`` of the typo's length make that pool one that
+    reads skips. Skipping the class of its first character instead,
+    which is ``a``'s, the single segment is not named."""
+    counts = Counter([*pair, *bystanders])
+    rare = health_stats._rare_scopes(counts)
+    assert rare == _pairwise(counts)
+    assert rare == sorted(pair)

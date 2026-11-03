@@ -873,6 +873,8 @@ def _value_findings(
                     f"write {_config.MIN_CHECKPOINT_TOKENS} or more",
                 )
             )
+    elif (section, key) == ("behavior", "cold_endorsement_ratio_threshold"):
+        findings.extend(_ratio_threshold_findings(role, label, parsed))
     elif (section, key) == ("daemon", "port"):
         findings.extend(_port_findings(role, parsed))
     elif section == "scopes" and isinstance(parsed, list):
@@ -906,6 +908,30 @@ def _system_dir_findings(role: str, directory: str) -> list[Finding]:
             "under a system directory; bettermemory will try to use it, but it "
             "is almost always a misconfiguration.",
             "point it at a directory your account owns",
+        )
+    ]
+
+
+def _ratio_threshold_findings(role: str, label: str, written: float) -> list[Finding]:
+    """`[behavior] cold_endorsement_ratio_threshold` outside 0 to 1, or
+    NaN: both reports read it through `health_model.clamp_ratio_threshold`
+    as the nearer end, or 0, which the line does not say (ENG-192, review
+    R3)."""
+    from ..health_model import clamp_ratio_threshold
+
+    read = clamp_ratio_threshold(written)
+    if read == written:
+        return []
+    return [
+        Finding(
+            WARNING,
+            "clamped",
+            role,
+            "behavior",
+            "cold_endorsement_ratio_threshold",
+            f"{label} = {_shown(written)} is not a fraction from 0 to 1; the "
+            f"health report and `bettermemory eval` read it as {_shown(read)}.",
+            "write a fraction from 0.0 to 1.0",
         )
     ]
 

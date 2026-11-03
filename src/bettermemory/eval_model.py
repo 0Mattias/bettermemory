@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from collections.abc import Callable, Mapping
 from typing import Any, Iterable
 
+from .health_model import explicit_ratio
 from .time_utils import parse_event_ts
 
 
@@ -179,14 +180,27 @@ class ColdEndorsementMemoriesRow:
     is SEARCH deliveries only, the same basis as
     ``health_model.MemoryStats.retrieval_count`` (which only
     ``_handle_search`` bumps) — see ``search_delivery_count`` in
-    ``compute_eval`` for why ``list`` / ``show`` don't count here."""
+    ``compute_eval`` for why ``list`` / ``show`` don't count here.
+    ``explicit_applied_count`` is 0 unless the ratio threshold is on
+    (``health_model.weakly_endorsed``), and ``endorsement_ratio`` is the
+    fraction a health row reports under that name
+    (``health_model.explicit_ratio``), so a configured threshold can be
+    checked against a replayed log (ENG-192)."""
 
     id: str
     scopes: list[str]
     summary: str
     retrieval_count: int
     auto_applied_count: int
-    explicit_applied_count: int  # always 0 for inclusion, kept for shape
+    explicit_applied_count: int
+
+    @property
+    def endorsement_ratio(self) -> float | None:
+        """The explicit fraction of the row's applies, None with none."""
+        return explicit_ratio(
+            self.auto_applied_count + self.explicit_applied_count,
+            self.explicit_applied_count,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -196,6 +210,7 @@ class ColdEndorsementMemoriesRow:
             "retrieval_count": self.retrieval_count,
             "auto_applied_count": self.auto_applied_count,
             "explicit_applied_count": self.explicit_applied_count,
+            "endorsement_ratio": self.endorsement_ratio,
         }
 
 

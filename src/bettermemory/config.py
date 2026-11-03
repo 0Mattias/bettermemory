@@ -183,7 +183,9 @@ DEFAULT_CONFIG = """\
 # auto" case the strict "explicit == 0" check misses. Default 0.0
 # keeps the strict behaviour (only zero-explicit memories surface).
 # Set to 0.1 to additionally surface memories where less than 10% of
-# applies are explicit endorsements.
+# applies are explicit endorsements. A value outside 0.0-1.0 is read as
+# the nearer end (inf as 1.0), nan as 0.0; `bettermemory config check`
+# warns of either.
 # cold_endorsement_ratio_threshold = 0.0
 
 # Days after `last_verified_at` past which a memory's verification is

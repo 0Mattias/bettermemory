@@ -59,6 +59,7 @@
   },
   "cold_endorsement_memories": {
     "min_retrievals": 30,
+    "ratio_threshold": 0.0,
     "total": 1,
     "rows": [
       {
@@ -69,7 +70,8 @@
         "summary": "The deploy pipeline signs every release",
         "retrieval_count": 32,
         "auto_applied_count": 2,
-        "explicit_applied_count": 0
+        "explicit_applied_count": 0,
+        "endorsement_ratio": 0.0
       }
     ],
     "suppressed": false,

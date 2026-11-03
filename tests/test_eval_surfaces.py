@@ -357,7 +357,9 @@ def _surfaces(events: list[dict[str, Any]], **kw: Any) -> dict[str, Any]:
 def test_a_log_without_the_surface_renders_every_body_as_before() -> None:
     """The text, JSON and markdown bodies of a log holding no row of the
     recall surface (the old one-hit `prompt_recall` rows included) are
-    the files the code before the section wrote."""
+    the files the code before the section wrote, plus the two keys the
+    cold-endorsement bucket's JSON took since (ENG-192): its
+    `ratio_threshold` and each row's `endorsement_ratio`."""
     rendered = _render_all(legacy_memories(), legacy_log())
     for name, text in rendered.items():
         assert text == (FIXTURES / name).read_text(encoding="utf-8"), name

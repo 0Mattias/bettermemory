@@ -761,6 +761,32 @@ def test_ranges(line: str, level: str, code: str) -> None:
     assert (finding["level"], finding["code"]) == (level, code)
 
 
+@pytest.mark.parametrize(
+    ("written", "read"),
+    [("inf", "1.0"), ("1.5", "1.0"), ("-inf", "0.0"), ("nan", "0.0"), ("-0.5", "0.0")],
+)
+def test_a_ratio_threshold_outside_0_to_1_is_named_with_the_value_read(
+    written: str, read: str
+) -> None:
+    """`[behavior] cold_endorsement_ratio_threshold` loads whatever number
+    TOML spells; both reports read it as the nearer end of 0 to 1, or 0
+    for NaN (`health_model.clamp_ratio_threshold`), so the check names
+    the value they use (ENG-192, review R3). 0, 1 and a fraction between
+    are read as written."""
+    finding = _only(
+        _check(f"[behavior]\ncold_endorsement_ratio_threshold = {written}\n")
+    )
+    assert (finding["level"], finding["code"]) == ("warning", "clamped")
+    assert finding["message"] == (
+        f"[behavior] cold_endorsement_ratio_threshold = {written} is not a "
+        "fraction from 0 to 1; the health report and `bettermemory eval` read "
+        f"it as {read}."
+    )
+    for line in ("0.0", "0.25", "1.0"):
+        report = _check(f"[behavior]\ncold_endorsement_ratio_threshold = {line}\n")
+        assert report["findings"] == []
+
+
 def test_a_port_out_of_range_loads_but_still_fails_the_check() -> None:
     """The loader takes any integer; the daemon's bind then raises before
     its ephemeral fallback can run, so the check calls it an error."""

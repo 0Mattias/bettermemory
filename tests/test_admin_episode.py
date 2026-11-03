@@ -6,12 +6,14 @@ and that each action returns the keys its former tool returned.
 
 from __future__ import annotations
 
+import ast
 import importlib
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import bettermemory
 from bettermemory.config import Config, StorageConfig
 
 from bettermemory.server import build_server
@@ -256,3 +258,106 @@ def test_an_action_body_keeps_no_description_of_its_own(name: str) -> None:
     body is never served, so nothing holds it to what the action does."""
     module = importlib.import_module(f"bettermemory.handlers.{name}")
     assert [n for n in vars(module) if n.startswith("DESC_")] == []
+
+
+_HANDLERS = "bettermemory.handlers"
+
+
+def _handler_imports(name: str) -> set[str]:
+    """The handler modules `bettermemory.handlers.<name>` imports, by name,
+    wherever the import stands (inside a function included) and however
+    it is spelled: ``from .x import y``, ``from . import x`` and their
+    absolute forms. The private helpers (``_shared``) are left out."""
+    path = Path(importlib.import_module(f"{_HANDLERS}.{name}").__file__ or "")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(
+                alias.name.removeprefix(f"{_HANDLERS}.").split(".")[0]
+                for alias in node.names
+                if alias.name.startswith(f"{_HANDLERS}.")
+            )
+            continue
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        module = node.module or ""
+        if node.level == 0 and (module + ".").startswith(f"{_HANDLERS}."):
+            module = module.removeprefix(_HANDLERS).removeprefix(".")
+        elif node.level != 1:
+            continue
+        if module:
+            found.add(module.split(".")[0])
+        else:
+            found.update(alias.name for alias in node.names)
+    return {module for module in found if not module.startswith("_")}
+
+
+def test_the_pinned_action_bodies_are_every_one_the_dispatchers_route_to() -> None:
+    """`_ACTION_MODULES` is the modules `admin` and `episode` import,
+    wherever and however they import them (ENG-192): a dispatcher routed
+    to a new action body fails here until the list names it, and the
+    test above then holds that body to keeping no description."""
+    assert sorted(_handler_imports("admin") | _handler_imports("episode")) == list(
+        _ACTION_MODULES
+    )
+
+
+def _desc_bindings(tree: ast.Module) -> tuple[list[str], list[str]]:
+    """The `DESC_*` names a module binds at its top level, and those it
+    binds anywhere else (in a function, a class or a block), by an
+    assignment of any shape, unpacking included."""
+    top: list[str] = []
+    nested: list[str] = []
+    module_level = {id(node) for node in tree.body}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        names = [
+            leaf.id
+            for target in targets
+            for leaf in ast.walk(target)
+            if isinstance(leaf, ast.Name) and leaf.id.startswith("DESC_")
+        ]
+        (top if id(node) in module_level else nested).extend(names)
+    return top, nested
+
+
+async def test_every_description_constant_in_the_package_is_served(
+    served: tuple[Any, SessionState, Store],
+) -> None:
+    """Every `DESC_*` binding anywhere in the package is a module-level
+    constant and the description of a tool the server lists (ENG-192).
+    The eight unserved ones (`DESC_MEMORY_RENAME_SCOPE`,
+    `DESC_MEMORY_CONFLICTS`, `DESC_MEMORY_RESTORE`,
+    `DESC_MEMORY_LIST_TOMBSTONES`, `DESC_MEMORY_SCOPE_DISABLE`,
+    `DESC_MEMORY_SCOPE_ENABLE`, `DESC_EPISODE_HANDOFF` and
+    `DESC_EPISODE_WRITE`) were deleted as `DESC_MEMORY_ACKNOWLEDGE_MISS`
+    was; one written again in any module, a helper's included, is caught
+    here, not only beside an action body, and so is one bound inside a
+    function or a block, where no module attribute holds it."""
+    server, _, _ = served
+    descriptions = {tool.description for tool in await server.list_tools()}
+    source = Path(bettermemory.__file__).resolve().parent
+    unserved: list[str] = []
+    not_top_level: list[str] = []
+    bound = 0
+    for path in sorted(source.rglob("*.py")):
+        names, nested = _desc_bindings(ast.parse(path.read_text(encoding="utf-8")))
+        dotted = ".".join(path.relative_to(source.parent).with_suffix("").parts)
+        not_top_level += [f"{dotted}:{name}" for name in nested]
+        if not names:
+            continue
+        module = importlib.import_module(dotted)
+        for name in names:
+            bound += 1
+            if getattr(module, name) not in descriptions:
+                unserved.append(f"{dotted}.{name}")
+    assert not_top_level == []
+    assert unserved == []
+    # The nine served tools' constants and `_handlers`' nine re-exports.
+    assert bound == 18

@@ -16,7 +16,7 @@ from __future__ import annotations
 import bisect
 import re
 from collections import Counter, defaultdict
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1167,6 +1167,15 @@ def _build_recent_silent_misses(
 # is stripped are deliberate siblings, not typos of each other.
 _SIBLING_SUFFIX_RE = re.compile(r"[-_]?v?\d+$")
 
+#: Rule 4's tail lengths (`_scope_typo_neighbor`), named so the index of
+#: `_rare_scopes` reads the rule it serves: two edits count only between
+#: tails of at least 6 characters, a substitution only between tails of
+#: at least 4, and below 4 one inserted or deleted character is the only
+#: edit that counts. Rule 4's docstring holds the reasons (vim/git and
+#: gpu/cpu rejected, bug/bugs kept, just/rust the accepted residue).
+_TWO_EDIT_MIN_TAIL = 6
+_SUBSTITUTION_MIN_TAIL = 4
+
 
 def _scope_typo_neighbor(scope: str, other: str) -> bool:
     """True iff `scope` plausibly looks like a typo of `other`.
@@ -1217,40 +1226,400 @@ def _scope_typo_neighbor(scope: str, other: str) -> bool:
         return False
 
     shorter = min(len(tail_a), len(tail_b))
-    if shorter >= 6:
+    if shorter >= _TWO_EDIT_MIN_TAIL:
         return _edit_distance_within(tail_a, tail_b, 2)
-    if shorter <= 3 and len(tail_a) == len(tail_b):
+    if shorter < _SUBSTITUTION_MIN_TAIL and len(tail_a) == len(tail_b):
         # Equal-length short tails: a distance-1 hit would have to be a
         # substitution, which rule 4 rejects below this length.
         return False
     return _edit_distance_within(tail_a, tail_b, 1)
 
 
-#: The longest scope the deletion index takes. A scope's 1- and
+#: The longest tail the two-edit deletion index takes. A tail's 1- and
 #: 2-deletion variants number about L²/2 strings of about L characters, so
-#: the index costs the cube of a scope's length: one 1,009-character scope,
+#: the index costs the cube of a tail's length: one 1,009-character scope,
 #: which `memory_write` accepts, took the report from 0.07 s and 3 MB to
-#: 2.63 s and 567 MB (review D4). A longer scope is compared with every
-#: scope whose length is within 2 of its own instead (`_rare_scopes`).
-#: The value is a choice, not a measurement: it covers the namespaced
-#: scopes stores hold (``projects:bettermemory`` is 21) and keeps a
-#: scope's variants near 500.
+#: 2.63 s and 567 MB (review D4). A longer tail is compared with every
+#: tail behind the same leading segments whose length is within 2 of its
+#: own instead (`_tail_candidates`). The value is a choice, not a
+#: measurement: it covers the namespaced scopes stores hold
+#: (``projects:bettermemory`` is 21) and keeps a tail's variants near 500.
 _DELETION_INDEX_MAX_LEN = 32
 
 
-def _deletion_variants(text: str) -> set[str]:
+def _deletion_variants(text: str) -> tuple[set[str], set[str]]:
     """`text` and every string one or two deleted characters leave of it:
-    the keys of the symmetric-deletion index (`_rare_scopes`). Two strings
+    the keys of the two-edit index (`_tail_candidates`). Two strings
     within edit distance 2 share a key, since the edits of an alignment
-    undone by deletions on each side leave one string."""
-    out = {text}
+    undone by deletions on each side leave one string. In two sets: the
+    keys one deletion or none leaves, and the further ones a second
+    leaves; two strings sharing a key of the first are within two edits."""
+    close = {text}
+    distant: set[str] = set()
     size = len(text)
     for i in range(size):
         once = text[:i] + text[i + 1 :]
-        out.add(once)
+        close.add(once)
         for j in range(i, size - 1):
-            out.add(once[:j] + once[j + 1 :])
-    return out
+            distant.add(once[:j] + once[j + 1 :])
+    distant.difference_update(close)
+    return close, distant
+
+
+def _one_deletions(text: str) -> set[str]:
+    """Every string one deleted character leaves of `text`: the keys a
+    tail too short for two edits is indexed by (`_tail_candidates`)."""
+    return {text[:i] + text[i + 1 :] for i in range(len(text))}
+
+
+@dataclass(frozen=True, slots=True)
+class _TailEntry:
+    """One scope read at one depth of `_rare_scopes`: its index, where its
+    tail starts (the characters of its leading segments with their
+    colons), the class the skip rules know it by, the classes it skips
+    when it asks for candidates, and whether it asks (a singleton not yet
+    matched).
+
+    A tail of two or more segments is of class ``("f", first segment)``
+    and skips its own: a pair sharing the next segment shares one more
+    leading segment and is read at the next depth. A tail of one segment,
+    or none, is of class ``("s", stem)``, the tail less its sibling suffix
+    (`_SIBLING_SUFFIX_RE`), and skips that class, since an equal stem is
+    rule 3's sibling, and (with one segment) the class of the tails that
+    begin with it, which are read at the next depth. Two tails of other
+    first segments never share a stem, so the two kinds of class need no
+    cross rule."""
+
+    n: int
+    start: int
+    cls: tuple[str, str]
+    skips: tuple[tuple[str, str], ...]
+    asks: bool
+
+
+def _tail_entry(
+    n: int, segs: Sequence[str], depth: int, start: int, asks: bool
+) -> _TailEntry:
+    """Scope `n`'s entry at `depth`, its tail starting at `start`."""
+    rest = len(segs) - depth
+    if rest >= 2:
+        cls = ("f", segs[depth])
+        return _TailEntry(n, start, cls, (cls,), asks)
+    tail = segs[depth] if rest == 1 else ""
+    cls = ("s", _SIBLING_SUFFIX_RE.sub("", tail))
+    skips = (cls, ("f", tail)) if rest == 1 else (cls,)
+    return _TailEntry(n, start, cls, skips, asks)
+
+
+class _Buckets:
+    """Entry numbers by key, a list kept only for a key two entries share:
+    most keys are one tail's own."""
+
+    __slots__ = ("first", "shared")
+
+    def __init__(self) -> None:
+        self.first: dict[int, int] = {}
+        self.shared: dict[int, list[int]] = {}
+
+    def add(self, texts: Iterable[str], entry: int) -> None:
+        """File `entry` under the hash of each of `texts` (a collision only
+        adds a candidate)."""
+        first, shared = self.first, self.shared
+        for key in map(hash, texts):
+            seen = first.setdefault(key, entry)
+            if seen != entry:
+                group = shared.get(key)
+                if group is None:
+                    shared[key] = [seen, entry]
+                else:
+                    group.append(entry)
+
+    def get(self, key: int) -> list[int]:
+        group = self.shared.get(key)
+        if group is not None:
+            return group
+        seen = self.first.get(key)
+        return [] if seen is None else [seen]
+
+
+class _Pool:
+    """Scopes offered together at one depth, by number: all of them, and
+    by class, so each asker takes them less the classes it skips."""
+
+    __slots__ = ("by_cls", "every", "flat")
+
+    def __init__(self, group: Sequence[_TailEntry], members: Iterable[int]) -> None:
+        self.every: list[int] = []
+        self.by_cls: dict[tuple[str, str], list[int]] = {}
+        for e in members:
+            entry = group[e]
+            self.every.append(entry.n)
+            self.by_cls.setdefault(entry.cls, []).append(entry.n)
+        self.flat = len(self.by_cls) == len(self.every)
+
+    def offer_to(self, entry: _TailEntry, out: set[int]) -> None:
+        """Add the pool's scopes to `out`, less the classes `entry` skips.
+
+        A pool whose scopes are each of a class of its own holds at most
+        two an asker skips (itself and, with one segment, the tail that
+        begins with it), so all go in but the asker and the predicate
+        decides the other. Otherwise, when the skipped scopes are few
+        against the classes, all go in and the skipped ones come out
+        again, in C; when they are many, the classes not skipped go in one
+        by one. Each costs a few steps for every scope `out` takes, plus
+        two, never one for each scope skipped. A scope's class is fixed
+        for the depth, so one of a skipped class is in `out` by no right,
+        and taking it out loses no candidate."""
+        if self.flat:
+            out.update(self.every)
+            out.discard(entry.n)
+            return
+        skipped = [m for c in entry.skips if (m := self.by_cls.get(c)) is not None]
+        if not skipped:
+            out.update(self.every)
+            return
+        count = sum(map(len, skipped))
+        if count >= len(self.every):
+            return
+        if count > 2 * len(self.by_cls):
+            for cls, members in self.by_cls.items():
+                if cls not in entry.skips:
+                    out.update(members)
+            return
+        out.update(self.every)
+        for members in skipped:
+            out.difference_update(members)
+
+
+def _offer(
+    group: Sequence[_TailEntry],
+    askers: Iterable[int],
+    partners: Iterable[int],
+    candidates: dict[int, set[int]],
+    still: Collection[int] | None = None,
+) -> None:
+    """Add `partners`' scopes to the candidates of every entry of `askers`
+    that asks (and is in `still`, when given), less the classes each
+    skips (`_Pool.offer_to`)."""
+    asking = [
+        group[e]
+        for e in askers
+        if group[e].asks and (still is None or group[e].n in still)
+    ]
+    if not asking:
+        return
+    pool = _Pool(group, partners)
+    for entry in asking:
+        pool.offer_to(entry, candidates.setdefault(entry.n, set()))
+
+
+def _tail_candidates(
+    scopes: Sequence[str],
+    group: Sequence[_TailEntry],
+    candidates: dict[int, set[int]],
+) -> list[list[int]]:
+    """Add to `candidates`, for each asking entry of `group` (the scopes
+    behind the same leading segments at one depth, `_SegmentWalk`), the
+    scopes of the group that may be its typo neighbour by rules 2 to 4
+    (`_scope_typo_neighbor`) with exactly those segments in common: those
+    whose tails share a key of the index rule 4 needs at their lengths,
+    less the classes it skips.
+
+    A tail under `_TWO_EDIT_MIN_TAIL` characters pairs only within one
+    edit: as the shorter of an insertion its key is itself, as the longer
+    its one-deletions (`one_short` against `one_long`). From
+    `_SUBSTITUTION_MIN_TAIL` up it also meets the tails of its length
+    that share one of its one-deletions (`same_length`): a substitution
+    is one such pair, and two edits that delete and insert (``abab`` and
+    ``baba``) another, which the predicate then rejects. Two short tails
+    of equal length under 4 share no key, as rule 4 never pairs them.
+    Tails of 6 to `_DELETION_INDEX_MAX_LEN` share a key of up to two
+    deletions (`two_edit`). A key both reach by one deletion or none
+    pairs two tails within two edits, neighbours unless siblings, and
+    those are offered here; the scopes sharing any key, up to four edits
+    apart, are returned (each entry filed as twice its number, plus one
+    when the key is that close to it), for `_rare_scopes` to offer the
+    scopes the close ones left unmatched. A tail over the cap meets the
+    tails of a length within 2 (`near`), a pool built once for each
+    length."""
+    one_short: dict[int, list[int]] = {}
+    one_long, same_length, two_edit = _Buckets(), _Buckets(), _Buckets()
+    near: dict[int, list[int]] = {}
+    long_askers: list[tuple[_TailEntry, int]] = []
+    cap = _DELETION_INDEX_MAX_LEN
+    for e, entry in enumerate(group):
+        scope = scopes[entry.n]
+        size = max(0, len(scope) - entry.start)
+        if size <= cap:
+            tail = scope[entry.start :]
+            if size < _TWO_EDIT_MIN_TAIL:
+                one_short.setdefault(hash(tail), []).append(e)
+                if size >= _SUBSTITUTION_MIN_TAIL:
+                    same_length.add(_one_deletions(tail), e)
+            if 0 < size <= _TWO_EDIT_MIN_TAIL:
+                one_long.add(_one_deletions(tail), e)
+            if size >= _TWO_EDIT_MIN_TAIL:
+                close, distant = _deletion_variants(tail)
+                two_edit.add(close, 2 * e + 1)
+                two_edit.add(distant, 2 * e)
+        if size >= cap - 1:
+            near.setdefault(size, []).append(e)
+            if entry.asks:
+                long_askers.append((entry, size))
+    for key, shorter in one_short.items():
+        longer = one_long.get(key)
+        if longer:
+            _offer(group, shorter, longer, candidates)
+            _offer(group, longer, shorter, candidates)
+    for members in same_length.shared.values():
+        _offer(group, members, members, candidates)
+    for filed in two_edit.shared.values():
+        close_by = [code >> 1 for code in filed if code & 1]
+        if len(close_by) > 1:
+            _offer(group, close_by, close_by, candidates)
+    if long_askers:
+        pools = {size: _Pool(group, members) for size, members in near.items()}
+        for entry, size in long_askers:
+            # A long tail against every tail of a near length; one at or
+            # just under the cap against the long ones, which the two-edit
+            # keys lack.
+            out = candidates.setdefault(entry.n, set())
+            for length in range(size - 2 if size > cap else cap + 1, size + 3):
+                pool = pools.get(length)
+                if pool is not None:
+                    pool.offer_to(entry, out)
+    return list(two_edit.shared.values())
+
+
+class _SegmentWalk:
+    """The scopes `_rare_scopes` still reads, one leading segment deeper
+    each `step`, in the order of their segments, so the scopes behind the
+    same leading segments are one range of it: the groups of two or more
+    (each a range and the characters of its leading segments with their
+    colons).
+
+    A group none of whose scopes asks is dropped with every group under
+    it, and so is a group of one: neither ever offers a pair. Within a
+    group the scopes that go on with one next segment are a run of the
+    order, found by galloping, so a group costs one pass in C over its
+    numbers (whether one asks) and a step for each run, not one for each
+    scope. A group of one run offers no pair at its depth (each skips its
+    own class) and is read one segment deeper. In a group that can offer
+    one, the largest run's scopes pair only with the others, and only at
+    a tail length within 2 of one of theirs (rule 4 allows two edits at
+    most): the others are indexed, and of the largest run only those. A
+    scope outside the largest run goes on in a group of at most half its
+    group's scopes, so it is outside one at most log2 of the store's size
+    times: the scopes indexed over every depth number about the store's
+    size times that logarithm, besides those of the largest runs a near
+    length draws in."""
+
+    __slots__ = ("depth", "groups", "lens", "order", "split")
+
+    def __init__(self, scopes: Sequence[str]) -> None:
+        self.split = [scope.split(":") for scope in scopes]
+        self.lens = [len(scope) for scope in scopes]
+        self.order = sorted(range(len(scopes)), key=self.split.__getitem__)
+        self.depth = 0
+        self.groups: list[tuple[int, int, int]] = [(0, len(scopes), 0)]
+
+    def _run_end(self, i: int, hi: int, key: str) -> int:
+        """Where the run of the scopes whose next segment is `key`, from
+        position `i` of the order, ends: galloping, then bisecting."""
+        order, split, depth = self.order, self.split, self.depth
+        step = 1
+        while i + step < hi and split[order[i + step]][depth] == key:
+            step *= 2
+        return bisect.bisect_right(
+            order,
+            key,
+            i + step // 2,
+            min(hi, i + step),
+            key=lambda n: split[n][depth],
+        )
+
+    def step(self, asking: set[int]) -> list[list[_TailEntry]]:
+        """This depth's groups that can offer a pair, as entries (asking
+        when in `asking`); the walk is then one segment deeper."""
+        depth, order, split = self.depth, self.order, self.split
+        live: list[list[_TailEntry]] = []
+        deeper: list[tuple[int, int, int]] = []
+        for lo, hi, start in self.groups:
+            if asking.isdisjoint(order[lo:hi]):
+                continue
+            ends: list[int] = []
+            runs: list[tuple[int, int, str]] = []
+            i = lo
+            if len(split[order[i]]) == depth:
+                ends.append(order[i])
+                i += 1
+            while i < hi:
+                key = split[order[i]][depth]
+                j = self._run_end(i, hi, key)
+                if j - i > 1:
+                    deeper.append((i, j, start + len(key) + 1))
+                if len(split[order[i]]) == depth + 1:
+                    ends.append(order[i])
+                    i += 1
+                if i < j:
+                    runs.append((i, j, key))
+                i = j
+            entries = self._entries(ends, runs, start, asking)
+            if entries:
+                live.append(entries)
+        self.groups = deeper
+        self.depth = depth + 1
+        return live
+
+    def _entries(
+        self,
+        ends: list[int],
+        runs: list[tuple[int, int, str]],
+        start: int,
+        asking: set[int],
+    ) -> list[_TailEntry]:
+        """A group's entries at this depth, or none when it can offer no
+        pair: `ends` are its scopes of one segment past it or none, `runs`
+        the ranges of the others by next segment, `start` where its tails
+        start."""
+        depth, order, split, lens = self.depth, self.order, self.split, self.lens
+        entries = [_tail_entry(n, split[n], depth, start, n in asking) for n in ends]
+        if not runs and len({entry.cls for entry in entries}) < 2:
+            return []
+        if not ends and len(runs) < 2:
+            return []
+        heavy = max(runs, key=lambda run: run[1] - run[0]) if runs else None
+        for lo, hi, key in runs:
+            if (lo, hi, key) == heavy:
+                continue
+            cls = ("f", key)
+            entries.extend(
+                _TailEntry(n, start, cls, (cls,), n in asking) for n in order[lo:hi]
+            )
+        if heavy is not None:
+            lo, hi, key = heavy
+            near = {
+                max(0, lens[e.n] - start) + gap for e in entries for gap in range(-2, 3)
+            }
+            cls = ("f", key)
+            entries.extend(
+                _TailEntry(n, start, cls, (cls,), n in asking)
+                for n in order[lo:hi]
+                if lens[n] - start in near
+            )
+        return entries
+
+
+def _name_part_matches(scopes: Sequence[str], wanted: Collection[int]) -> set[int]:
+    """The scopes of `wanted` whose name part (the text after the first
+    ':', the whole scope when bare) another scope shares: rule 1, under
+    which every such pair is a neighbour."""
+    by_name: dict[str, list[int]] = {}
+    for n, scope in enumerate(scopes):
+        by_name.setdefault(scope.split(":", 1)[-1], []).append(n)
+    return {
+        n for group in by_name.values() if len(group) > 1 for n in group if n in wanted
+    }
 
 
 def _rare_scopes(
@@ -1260,35 +1629,67 @@ def _rare_scopes(
     neighbour among all the scopes (`_scope_typo_neighbor`), sorted: the
     `rare_scopes` bucket.
 
-    One pass over the scopes, not a pass per singleton: every scope the
-    predicate can call a neighbour of another is within edit distance 2
-    of it as a whole string, or shares its name part (rule 1). Rule 4
-    compares the tails left after the leading segments the two share,
-    and a shared prefix adds no distance, so a tail pair within 2 is a
-    whole-string pair within 2; where one scope is all shared segments
-    its tail is empty, and the rule then holds only for a one-character
-    tail on the other, two edits away (``a:b`` and ``a:b:c``). So the
-    candidates are the scopes sharing a deletion variant
-    (`_deletion_variants`, keyed by hash: a collision only adds a
-    candidate) or a name part, and the predicate decides each, so the
-    bucket is the pairwise check's to the scope. Measured on synthetic
-    stores of 500, 1,000 and 2,000 scopes (70% namespaced, 5% planted
-    one-edit typos): the pairwise check took 2.1 s, 8.1 s and 32.2 s
-    (42 s on the review's shapes), this pass 0.013 s, 0.027 s and
-    0.056 s, with a 22 MB peak at 2,000.
+    One pass over the scopes for each depth of leading segments, not a
+    pass per singleton. Rule 1 is the name-part index: every pair sharing
+    a name part is a neighbour (`_name_part_matches`). Rules 2 to 4 read
+    the tails after the segments a pair shares, so a pair with `depth`
+    segments in common is looked for among the scopes behind the same
+    `depth` segments whose next segments differ (`_SegmentWalk`), by an
+    index built for rule 4's distance at the tails' lengths
+    (`_tail_candidates`), with rule 3's siblings (an equal stem) left out.
+    The predicate decides each candidate (`_settle`), the pairs within two
+    edits first and the others for the scopes those leave unmatched, so
+    the bucket is the pairwise check's to the scope.
 
-    A scope longer than `_DELETION_INDEX_MAX_LEN` stays out of the
-    deletion index, whose cost grows with the cube of a scope's length.
-    The lengths of a pair the predicate accepts by distance differ by 2
-    at most, so a long singleton's candidates are every scope whose
-    length is within 2 of its own, and a short singleton's include the
-    long scopes within 2 of its length; the name-part index still holds
-    every scope. The bucket stays exact.
+    The pairs offered are bounded where the whole-string index of ENG-170
+    was quadratic (ENG-192). It paired short names that share most of
+    their deletion variants: the 2,197 names of three letters out of
+    thirteen behind one namespace were offered about 2.46 million pairs,
+    and a numbered family (``ns:ticket-1000`` to ``ns:ticket-2999``)
+    about 1.58 million. Both are offered none now. A tail under 6
+    characters of length t is offered, at one depth, at most the tails
+    one insertion longer ((t + 1) x A), one deletion shorter (t) and,
+    from 4 characters, the tails of its length that share one of its
+    one-deletions (t x t x A: one substitution away, or two edits the
+    predicate rejects), A being the characters a scope may hold (38 in
+    `models._SCOPE_RE`): never more than 1,183, whatever the store's
+    size. Every name of four letters out of seven (2,401, each one
+    substitution from 24 others) runs the predicate 7,689 times, not
+    151,451.
 
-    The worst case is still near the square of the scope count: short
-    names that share most of their deletion variants (2,000 scopes of
-    three letters out of thirteen behind one namespace) make the
-    candidates approach all pairs.
+    The bound gives up no answer, only work: the predicate still decides
+    every pair the rules can accept. It does not bound tails of 6 to
+    `_DELETION_INDEX_MAX_LEN` characters, which share a key up to 4 edits
+    apart, so a store built of such tails 3 or 4 edits from most of the
+    others is offered near all its pairs; nor a tail over the cap, which
+    stays out of the index (its cost grows with the cube of a tail's
+    length) and is offered every tail of a length within 2 behind its
+    segments, as before: 2,000 random 35-character names behind four
+    segments take 29 s here and there.
+
+    Measured against the whole-string index (best of three, Python 3.11,
+    macOS), the first form of this index having been slower on deep and
+    dense shapes (review F1): 1,000 scopes of 100 and of 400 segments
+    that part at the last take 0.03 s and 0.06 s (were 0.26 s and
+    0.71 s); every six-letter name over four and over five letters behind
+    one namespace, 0.09 s and 0.38 s (0.37 s and 2.6 s); the three-letter
+    and numbered stores above, 0.006 s and 0.003 s (2.2 s and 1.7 s).
+    Some shapes pay for the depths, each tail of 6 to 32 characters being
+    indexed again at every depth where its group parts: synthetic stores
+    of 500, 1,000 and 2,000 scopes (70% namespaced behind four
+    namespaces, 5% planted one-edit typos), indexed whole and again
+    behind their namespace, take 0.014 s, 0.028 s and 0.060 s against
+    0.010 s, 0.021 s and 0.047 s, about 1.3 times; 2,000 scopes of
+    sixteen one-letter segments over two letters, a group parting at each
+    of a dozen depths, take 1.2 s against 0.32 s, about 4 times; 2,000
+    of twelve such segments and a six-letter leaf, 0.98 s against 0.21 s,
+    about 4.8 times. And 1,000 pairs of 30-letter names, each pair behind
+    a first segment of a length of its own, take 0.169 s against 0.021 s,
+    about 8 times: the tails, of 6 to 32 characters, are indexed by their
+    deletions, about 0.1 ms a scope, where the whole-string index compared
+    the whole scopes, over 32 characters, by length only (ENG-192, review
+    R4). The memory peak at 2,000 synthetic scopes is 23.7 MB against
+    22.8 MB.
     """
     scopes = list(scope_counts)
     wanted = {
@@ -1298,50 +1699,41 @@ def _rare_scopes(
     }
     if not wanted:
         return []
-    first: dict[int, int] = {}
-    shared: dict[int, list[int]] = {}
-    by_name: dict[str, list[int]] = {}
-    long_by_length: dict[int, list[int]] = {}
-    for n, scope in enumerate(scopes):
-        by_name.setdefault(scope.split(":", 1)[-1], []).append(n)
-        if len(scope) > _DELETION_INDEX_MAX_LEN:
-            long_by_length.setdefault(len(scope), []).append(n)
-            continue
-        for key in map(hash, _deletion_variants(scope)):
-            seen = first.setdefault(key, n)
-            if seen != n:
-                group = shared.get(key)
-                if group is None:
-                    shared[key] = [seen, n]
-                else:
-                    group.append(n)
-    del first
-    candidates: dict[int, set[int]] = {}
-    for group in (*shared.values(), *by_name.values()):
-        if len(group) < 2:
-            continue
-        for n in group:
-            if n in wanted:
-                candidates.setdefault(n, set()).update(group)
-    if long_by_length:
-        by_length: dict[int, list[int]] = {}
-        for n, scope in enumerate(scopes):
-            by_length.setdefault(len(scope), []).append(n)
-        for n in wanted:
-            size = len(scopes[n])
-            # A long singleton against every scope of a near length; a
-            # short one against the long scopes of a near length, which
-            # the deletion index does not hold.
-            near = by_length if size > _DELETION_INDEX_MAX_LEN else long_by_length
-            for length in range(size - 2, size + 3):
-                group = near.get(length)
-                if group:
-                    candidates.setdefault(n, set()).update(group)
-    return sorted(
-        scopes[n]
-        for n, others in candidates.items()
-        if any(m != n and _scope_typo_neighbor(scopes[n], scopes[m]) for m in others)
-    )
+    found = _name_part_matches(scopes, wanted)
+    asking = wanted - found
+    walk = _SegmentWalk(scopes)
+    while asking and walk.groups:
+        candidates: dict[int, set[int]] = {}
+        later = [
+            (group, _tail_candidates(scopes, group, candidates))
+            for group in walk.step(asking)
+        ]
+        _settle(scopes, candidates, found, asking)
+        farther: dict[int, set[int]] = {}
+        for group, shared in later:
+            if not shared or asking.isdisjoint(entry.n for entry in group):
+                continue
+            for filed in shared:
+                members = [code >> 1 for code in filed]
+                _offer(group, members, members, farther, asking)
+        for n, others in farther.items():
+            others.difference_update(candidates.get(n, ()))
+        _settle(scopes, farther, found, asking)
+    return sorted(scopes[n] for n in found)
+
+
+def _settle(
+    scopes: Sequence[str],
+    candidates: Mapping[int, Collection[int]],
+    found: set[int],
+    asking: set[int],
+) -> None:
+    """Run the predicate over each scope's candidates: a scope with a
+    neighbour among them is found and asks no more."""
+    for n, others in candidates.items():
+        if any(m != n and _scope_typo_neighbor(scopes[n], scopes[m]) for m in others):
+            found.add(n)
+            asking.discard(n)
 
 
 def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:

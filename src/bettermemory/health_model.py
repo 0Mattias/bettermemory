@@ -11,6 +11,7 @@ reads, so callers keep importing from `health`. Nothing here imports
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -457,11 +458,10 @@ class MemoryStats:
         shaped the response. The latter is the "weakly endorsed"
         signal. Returns None on `applied_count == 0` so the consumer
         can distinguish "zero apply traffic" from "applied but all
-        auto."
+        auto." The fraction is `explicit_ratio`, the one eval's
+        cold-endorsement rows report too.
         """
-        if self.applied_count == 0:
-            return None
-        return self.explicit_applied_count / self.applied_count
+        return explicit_ratio(self.applied_count, self.explicit_applied_count)
 
     @property
     def model_endorsement_ratio(self) -> float | None:
@@ -774,6 +774,58 @@ _COLD_ENDORSEMENT_MIN_RETRIEVALS = 30
 _COLD_ENDORSEMENT_CAP = 20
 
 
+def explicit_ratio(applied: int, explicit_applied: int) -> float | None:
+    """The fraction of a memory's `applied` uses that were explicit (every
+    tier but the auto fallback, `endorsement_tier`), or None when it has no
+    applies: the `endorsement_ratio` a health row carries and an eval
+    cold-endorsement row carries, and what `weakly_endorsed` compares with
+    the ratio threshold."""
+    if applied <= 0:
+        return None
+    return explicit_applied / applied
+
+
+def clamp_ratio_threshold(value: float) -> float:
+    """`[behavior] cold_endorsement_ratio_threshold` as both reports read
+    it (`health._cold_endorsement_bucket` and `eval.compute_eval`, one
+    reading, not two copies): the nearer end of 0 to 1 for a value outside
+    it, ``inf`` included, and 0 (off) for NaN. The config takes any number
+    TOML spells, ``inf`` and ``nan`` included. Above 1 every applied
+    memory was listed, one wholly explicit included, and eval's JSON wrote
+    an infinite threshold as ``Infinity``, which strict JSON cannot read
+    (ENG-192, review F3); 1 lists every applied memory not wholly
+    explicit, the most a share of the applies can ask, so ``inf``, written
+    to mean every memory, reads as 1.5 does (review R3). Below 0,
+    ``-inf`` included, or NaN, the ratio never fired, as at 0.
+    `bettermemory config check` warns of a value this changes."""
+    value = float(value)
+    if math.isnan(value):
+        return 0.0
+    return min(1.0, max(0.0, value))
+
+
+def weakly_endorsed(
+    applied: int, explicit_applied: int, ratio_threshold: float
+) -> bool:
+    """Whether a memory with `applied` applies, `explicit_applied` of them
+    explicit, is weakly endorsed: the one predicate the cold-endorsement
+    bucket is read under, in `health.compute_health` (`_is_weakly_endorsed`)
+    and `eval.compute_eval` alike (ENG-192), so a ratio threshold configured
+    for health is checked against a replayed log by eval with the same
+    answer. Applied at least once, and either never explicitly or, with
+    `ratio_threshold` above 0, explicitly less than that fraction of the
+    time (`explicit_ratio`); `_is_weakly_endorsed`'s docstring gives the
+    reasons for each rule."""
+    ratio = explicit_ratio(applied, explicit_applied)
+    if ratio is None:
+        return False
+    if explicit_applied == 0:
+        return True
+    if ratio_threshold <= 0.0:
+        return False
+    return ratio < ratio_threshold
+
+
 def _is_weakly_endorsed(stats: MemoryStats, ratio_threshold: float) -> bool:
     """Predicate for the cold_endorsement_memories bucket.
 
@@ -805,18 +857,14 @@ def _is_weakly_endorsed(stats: MemoryStats, ratio_threshold: float) -> bool:
     Default `ratio_threshold=0.0` preserves the original binary
     semantics exactly: the predicate reduces to the equality check
     because the ratio branch needs `ratio_threshold > 0` to fire.
+
+    The rules live in `weakly_endorsed`, which eval's rows read too; the
+    ratio is over `applied_count`, which `_StatsAccumulator._handle_use`
+    keeps equal to `auto_applied_count + explicit_applied_count`.
     """
-    if stats.applied_count == 0:
-        return False
-    if stats.explicit_applied_count == 0:
-        return True
-    if ratio_threshold <= 0.0:
-        return False
-    total_applied = stats.auto_applied_count + stats.explicit_applied_count
-    if total_applied <= 0:
-        return False
-    ratio = stats.explicit_applied_count / total_applied
-    return ratio < ratio_threshold
+    return weakly_endorsed(
+        stats.applied_count, stats.explicit_applied_count, ratio_threshold
+    )
 
 
 @dataclass

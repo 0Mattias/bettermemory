@@ -99,6 +99,7 @@ from .health_model import (
     _is_dead_weight,
     _is_weakly_endorsed,
     applied_tier,
+    clamp_ratio_threshold,
     endorsement_tier as endorsement_tier,
     is_hook_telemetry_event,
 )
@@ -533,7 +534,8 @@ def _cold_endorsement_bucket(
     # below the threshold — catches the "1 explicit out of 50 auto"
     # case the binary check misses. Default 0.0 preserves the
     # pre-existing behaviour exactly (the ratio branch never fires).
-    ratio_threshold = max(0.0, float(cold_endorsement_ratio_threshold))
+    # Read within 0 and 1 as eval reads it (`clamp_ratio_threshold`).
+    ratio_threshold = clamp_ratio_threshold(cold_endorsement_ratio_threshold)
     # Rides the same honesty gate as dead_weight, and skipped the same
     # way — not filtered afterwards: `explicit_applied_count` is
     # produced by the Stop hook's containment matcher and deliberate

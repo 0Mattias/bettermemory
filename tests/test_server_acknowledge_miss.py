@@ -324,3 +324,70 @@ async def test_acknowledge_miss_rejects_overlong_reason(
 
     res = await _ack(server, event_id, "y" * _MAX_REASON_LENGTH)
     assert res["status"] == "acknowledged"
+
+
+# ---------------------------------------------------------------------------
+# The bulk cutoff: a time the calendar cannot hold in UTC (ENG-192)
+# ---------------------------------------------------------------------------
+
+#: The last two hours of the year 0 and the first hour of the year 10000
+#: once read in UTC: `astimezone` raises `OverflowError` for both.
+_MIN_YEAR_OVERFLOW = "0001-01-01T00:00:00+02:00"
+_MAX_YEAR_OVERFLOW = "9999-12-31T23:00:00-02:00"
+_NORMAL_CUTOFF = "2026-05-25T07:25:35+02:00"
+
+
+@pytest.mark.parametrize("before", [_MIN_YEAR_OVERFLOW, _MAX_YEAR_OVERFLOW])
+def test_canonical_cutoff_refuses_a_time_outside_the_calendar(before: str) -> None:
+    """The parser behind `before=` refuses both ends of the calendar with
+    a ValueError naming the field, as eval's `--since` and `--until` do
+    (review D5): the year-1 time raised `OverflowError` from `astimezone`,
+    and the year-9999 one was refused as lying in the future, which says
+    nothing of why it cannot be read."""
+    from bettermemory.handlers.acknowledge_miss import canonical_cutoff
+
+    with pytest.raises(ValueError, match="`before` lies outside the calendar"):
+        canonical_cutoff(before)
+
+
+def test_canonical_cutoff_reads_a_normal_offset_into_utc() -> None:
+    from bettermemory.handlers.acknowledge_miss import canonical_cutoff
+
+    assert canonical_cutoff(_NORMAL_CUTOFF) == "2026-05-25T05:25:35Z"
+
+
+@pytest.mark.parametrize("before", [_MIN_YEAR_OVERFLOW, _MAX_YEAR_OVERFLOW])
+async def test_memory_admin_refuses_a_cutoff_outside_the_calendar(
+    server_with_events: tuple[Any, Store, SessionState], before: str
+) -> None:
+    """`memory_admin` answers with the refusal's words and records no
+    cutoff. Before the fix the year-1 time's `OverflowError` was no
+    refusal at the tool boundary (`_handlers._refusals_as_tool_errors`
+    turns a ValueError into one), so the SDK sent the client only
+    ``Error executing tool memory_admin``."""
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    server, store, _ = server_with_events
+    with pytest.raises(ToolError) as caught:
+        await _call(server, "memory_admin", action="acknowledge_miss", before=before)
+    assert str(caught.value) == (
+        "Error executing tool memory_admin: `before` lies outside the calendar "
+        f"once read in UTC: {before!r}; pick a time inside it"
+    )
+    assert [e for e in _events(store) if e["kind"] == "silent_miss_cutoff"] == []
+
+
+async def test_memory_admin_records_a_normal_cutoff_in_utc(
+    server_with_events: tuple[Any, Store, SessionState],
+) -> None:
+    server, store, _ = server_with_events
+    out = await _call(
+        server, "memory_admin", action="acknowledge_miss", before=_NORMAL_CUTOFF
+    )
+    assert out == {
+        "status": "cutoff_recorded",
+        "cutoff_ts": "2026-05-25T05:25:35Z",
+        "reason": None,
+    }
+    cutoffs = [e for e in _events(store) if e["kind"] == "silent_miss_cutoff"]
+    assert [e["cutoff_ts"] for e in cutoffs] == ["2026-05-25T05:25:35Z"]

@@ -26,6 +26,7 @@ from .eval_model import (
     _silent_miss_from_event,
 )
 from .health import endorsement_tier as _endorsement_tier, is_hook_telemetry_event
+from .health_model import weakly_endorsed
 from .models import Memory, first_summary_line
 
 
@@ -423,20 +424,22 @@ def _cold_endorsement_rows(
     walk: _EvalWalk,
     by_id: dict[str, Memory],
     floor: int,
+    ratio_threshold: float = 0.0,
 ) -> tuple[list[ColdEndorsementMemoriesRow], int, bool]:
     """List the cold-endorsement rows; returns the rows, their total and the gate."""
-    # Cold-endorsement rows: search deliveries >= floor AND at least
-    # one apply happened AND explicit_applied_count == 0. Ambient
-    # memories are excluded — same rationale as health's
-    # cold_endorsement_memories bucket (their value is implicit; an
-    # explicit use event is structurally rare).
+    # Cold-endorsement rows: search deliveries >= floor AND weakly
+    # endorsed by `health_model.weakly_endorsed`, the predicate health's
+    # bucket reads (ENG-192): at least one apply, and none explicit or,
+    # with `ratio_threshold` above 0, fewer explicit than that fraction
+    # of them. Ambient memories are excluded — same rationale as
+    # health's cold_endorsement_memories bucket (their value is
+    # implicit; an explicit use event is structurally rare).
     #
-    # The "at least one apply" gate (auto + explicit > 0) keeps the
-    # bucket as the COMPLEMENT of dead_weight, matching health's
-    # `_is_weakly_endorsed`: cold-endorsement means "applies happened,
-    # but every one was the auto fallback." A memory retrieved over the
-    # floor with zero applies is dead_weight, not cold-endorsement, and
-    # must not surface here.
+    # The "at least one apply" gate keeps the bucket as the COMPLEMENT
+    # of dead_weight, as in health: cold-endorsement means "applies
+    # happened, but (nearly) every one was the auto fallback." A memory
+    # retrieved over the floor with zero applies is dead_weight, not
+    # cold-endorsement, and must not surface here.
     #
     # Honesty gate, mirroring health's `telemetry_coverage` (widened to
     # the endorsement leg 2026-08-30): with zero Stop-hook settlement
@@ -453,13 +456,9 @@ def _cold_endorsement_rows(
         for mid, rcount in walk.search_delivery_count.items():
             if rcount < floor:
                 continue
-            if (
-                walk.auto_applied_count.get(mid, 0)
-                + walk.explicit_applied_count.get(mid, 0)
-                == 0
-            ):
-                continue
-            if walk.explicit_applied_count.get(mid, 0) > 0:
+            auto = walk.auto_applied_count.get(mid, 0)
+            explicit = walk.explicit_applied_count.get(mid, 0)
+            if not weakly_endorsed(auto + explicit, explicit, ratio_threshold):
                 continue
             mem = by_id.get(mid)
             if mem is None:
@@ -473,8 +472,8 @@ def _cold_endorsement_rows(
                     scopes=list(mem.scopes),
                     summary=first_summary_line(mem.body),
                     retrieval_count=rcount,
-                    auto_applied_count=walk.auto_applied_count.get(mid, 0),
-                    explicit_applied_count=0,
+                    auto_applied_count=auto,
+                    explicit_applied_count=explicit,
                 )
             )
         # Sort by retrieval_count descending so the chattiest

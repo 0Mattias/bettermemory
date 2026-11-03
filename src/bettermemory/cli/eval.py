@@ -281,6 +281,11 @@ def _run_report_mode(
         # silent-miss numbers agree with `bettermemory eval` and
         # `memory_health` over the same log.
         tombstoned_ids={t.id for t in report_store.load_tombstones()},
+        # A config knob, not a rate-mode flag: the document's replays hold
+        # the bucket rate mode prints (ENG-192).
+        cold_endorsement_ratio_threshold=(
+            ctx.config.behavior.cold_endorsement_ratio_threshold
+        ),
     )
     markdown = render_report_markdown(doc)
     if output is not None:
@@ -415,6 +420,12 @@ def _run_rate_mode(
         # whose top-hit memory was since removed is no longer
         # actionable and must not keep the two surfaces disagreeing.
         tombstoned_ids={t.id for t in store.load_tombstones()},
+        # The knob `bettermemory health` and `memory_admin(health)` read
+        # their cold-endorsement bucket under, so the replay publishes
+        # the bucket they publish (ENG-192).
+        cold_endorsement_ratio_threshold=(
+            ctx.config.behavior.cold_endorsement_ratio_threshold
+        ),
     )
     if json_out:
         sys.stdout.write(_json.dumps(rate_report.to_dict(), indent=2) + "\n")

@@ -184,7 +184,18 @@ def canonical_cutoff(value: str) -> str:
     recorder's UTC spelling. The offset must be explicit (a trailing Z or
     a numeric offset): a naive local time from a caller in another zone
     would land the cutoff hours off and silence the wrong misses. Raises
-    ValueError with the reason."""
+    ValueError with the reason.
+
+    A time the calendar cannot hold once read in UTC is refused as eval's
+    `--since` and `--until` refuse it (`eval_model.parse_timestamp_utc`,
+    review D5): ``0001-01-01T00:00:00+02:00`` is the last two hours of the
+    year 0 and ``9999-12-31T23:00:00-02:00`` the first hour of the year
+    10000. `astimezone` raises `OverflowError` there, which is not a
+    refusal at the tool boundary (`_handlers._refusals_as_tool_errors`
+    turns a `ValueError` into one): the client was sent only ``Error
+    executing tool memory_admin`` (ENG-192). The reading into UTC comes
+    before the future check, so a time past the year 9999 is named for
+    what it is."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError("`before` must be an ISO-8601 timestamp")
     raw = value.strip()
@@ -198,10 +209,17 @@ def canonical_cutoff(value: str) -> str:
         raise ValueError(
             f"`before` needs an explicit UTC offset or a trailing Z: {value!r}"
         )
+    try:
+        cutoff = parsed.astimezone(timezone.utc)
+    except OverflowError as exc:
+        raise ValueError(
+            f"`before` lies outside the calendar once read in UTC: {value!r}; "
+            "pick a time inside it"
+        ) from exc
     now = datetime.now(timezone.utc)
-    if parsed > now + _CUTOFF_FUTURE_SLACK:
+    if cutoff > now + _CUTOFF_FUTURE_SLACK:
         raise ValueError(f"`before` lies in the future: {value!r}")
-    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return cutoff.isoformat().replace("+00:00", "Z")
 
 
 async def acknowledge_misses_before(

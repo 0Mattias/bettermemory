@@ -305,12 +305,15 @@ class ClaimAnchor:
     the live view of the checkout it was recorded under and names the
     rule (`Membership.translate`). `caller_root` is the live view of the
     caller's checkout, where a cited commit is resolved when the home
-    checkout has no live view here (`commit_root`)."""
+    checkout has no live view here (`commit_root`). `holds` answers
+    whether a root's object store holds a commit: the request's memo
+    (`Anchoring.holds`), or `holds_commit` itself when None."""
 
     root: str | None
     rule: str
     translate: Callable[[str], tuple[str, str]] | None = None
     caller_root: str | None = None
+    holds: Callable[[str, str], bool] | None = None
 
     @property
     def convicting(self) -> bool:
@@ -347,13 +350,26 @@ class ClaimAnchor:
         reads unconfirmed."""
         if self.root is not None and self.rule == "home_checkout":
             return self.root, "home_checkout"
-        if (
-            commit
-            and self.caller_root is not None
-            and holds_commit(self.caller_root, commit)
-        ):
+        held = self.holds if self.holds is not None else holds_commit
+        if commit and self.caller_root is not None and held(self.caller_root, commit):
             return self.caller_root, "caller_checkout"
         return None, UNCONFIRMED_COMMIT
+
+
+#: How many (root, commit) answers one request's `Anchoring.holds` keeps,
+#: the least recently asked dropped first past it (ENG-192). A request
+#: reads one caller root, so its keys are the distinct commits its records
+#: cite, at most one a record (`verified_head`, the HEAD a verify stamped):
+#: the owner's store held 1,447 memories on 2026-11-02, under 9.0.0rc16
+#: (the count `verify_candidates`' cap comments also cite), so 4,096
+#: holds every commit of a store near three times that size. Measured
+#: with tracemalloc (Python 3.11, macOS), an entry keeps about 84 bytes
+#: beyond the strings the records already hold, so a full memo is about
+#: 344 KB; one read it saves cost about 0.42 ms on this repository
+#: (29,155 objects in three packs), a held commit or an absent one alike.
+#: Past the cap a commit asked again after 4,096 others is read again, as
+#: every one was before the memo.
+_HELD_COMMIT_MEMO_CAP = 4096
 
 
 class Anchoring:
@@ -365,7 +381,10 @@ class Anchoring:
     `for_record` is None for a record with no home row, which the callers
     read at its recorded root as before. Records sharing a home checkout
     share an anchor, and an absolute path is translated once per request;
-    a path under no recorded view never reaches the model."""
+    a path under no recorded view never reaches the model. Whether a root
+    holds a cited commit is read once per (root, commit) in the request
+    (`holds`), so a report over many records citing one commit reads the
+    caller's object store once for it, not once a record."""
 
     def __init__(self, model: Membership, caller: Resolution | None) -> None:
         self.model = model
@@ -376,6 +395,7 @@ class Anchoring:
         self._views: tuple[str, ...] | None = None
         self._caller_root: str | None = None
         self._caller_root_read = False
+        self._held: OrderedDict[tuple[str, str], bool] = OrderedDict()
 
     def prime(self, record_ids: Sequence[str]) -> None:
         """Read the homes of `record_ids` in one query."""
@@ -420,8 +440,25 @@ class Anchoring:
                 rule=rule,
                 translate=self.translate,
                 caller_root=self.caller_root,
+                holds=self.holds,
             )
             self._anchors[key] = found
+        return found
+
+    def holds(self, root: str, sha: str) -> bool:
+        """`holds_commit(root, sha)`, read once per (root, commit) in this
+        request and kept for the rest of it, up to `_HELD_COMMIT_MEMO_CAP`
+        answers. One request reads one answer, so a commit fetched while a
+        report runs is read as the report first read it."""
+        key = (root, sha)
+        found = self._held.get(key)
+        if found is not None:
+            self._held.move_to_end(key)
+            return found
+        found = holds_commit(root, sha)
+        self._held[key] = found
+        if len(self._held) > _HELD_COMMIT_MEMO_CAP:
+            self._held.popitem(last=False)
         return found
 
     def translate(self, path: str) -> tuple[str, str]:

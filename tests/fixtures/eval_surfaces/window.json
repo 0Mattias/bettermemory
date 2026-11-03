@@ -59,6 +59,7 @@
   },
   "cold_endorsement_memories": {
     "min_retrievals": 30,
+    "ratio_threshold": 0.0,
     "total": 0,
     "rows": [],
     "suppressed": false,

@@ -124,6 +124,7 @@ from .eval_render import (
     render_widening_preview_text,
 )
 from .health import _HOOKLESS_REASON  # one sentence, shared — see its comment
+from .health_model import clamp_ratio_threshold
 from .models import Memory, first_summary_line
 from .time_utils import isoformat_utc_optional
 
@@ -208,6 +209,12 @@ class EvalReport:
     )
     cold_endorsement_memories_total: int = 0
     endorsement_min_retrievals: int = DEFAULT_ENDORSEMENT_MIN_RETRIEVALS
+    # The ratio threshold the bucket was read under (`[behavior]
+    # cold_endorsement_ratio_threshold`, `health_model.weakly_endorsed`),
+    # serialised as `ratio_threshold` beside `min_retrievals` so a replay
+    # says which bucket it published (ENG-192). 0.0 is the strict
+    # "never explicitly" bucket.
+    cold_endorsement_ratio_threshold: float = 0.0
     # Honesty gate on the bucket above (2026-08-30, parity with
     # health's `telemetry_coverage.cold_endorsement_suppressed`): True
     # when the walked log carries zero Stop-hook settlement telemetry
@@ -297,6 +304,7 @@ class EvalReport:
             "silent_miss_rate": self.silent_miss_rate.to_dict(),
             "cold_endorsement_memories": {
                 "min_retrievals": self.endorsement_min_retrievals,
+                "ratio_threshold": self.cold_endorsement_ratio_threshold,
                 "total": self.cold_endorsement_memories_total,
                 "rows": [r.to_dict() for r in self.cold_endorsement_memories_rows],
                 "suppressed": self.cold_endorsement_suppressed,
@@ -324,6 +332,7 @@ def _eval_report(
     window_end: datetime | None,
     scope: str | None,
     floor: int,
+    ratio_threshold: float,
     walk: _EvalWalk,
     tally: _AuditTally,
     cold_rows: list[ColdEndorsementMemoriesRow],
@@ -368,6 +377,7 @@ def _eval_report(
         cold_endorsement_memories_rows=cold_rows,
         cold_endorsement_memories_total=cold_total,
         endorsement_min_retrievals=floor,
+        cold_endorsement_ratio_threshold=ratio_threshold,
         cold_endorsement_suppressed=cold_suppressed,
         silent_miss_recent=tally.silent_miss_buffer,
         repeat_audits=tally.repeat_audits,
@@ -396,6 +406,7 @@ def compute_eval(
     silent_miss_limit: int = DEFAULT_SILENT_MISS_LIMIT,
     tombstoned_ids: set[str] | None = None,
     until: timedelta | datetime | None = None,
+    cold_endorsement_ratio_threshold: float = 0.0,
 ) -> EvalReport:
     """Build an ``EvalReport`` from active memories + the event stream.
 
@@ -461,7 +472,13 @@ def compute_eval(
     over the whole log, not the window — the rows are skipped entirely
     and ``cold_endorsement_suppressed`` says so, because
     ``explicit_applied_count == 0`` is uninformative when nothing was
-    ever in a position to attribute an apply.
+    ever in a position to attribute an apply. A third axis is the
+    predicate (ENG-192): ``cold_endorsement_ratio_threshold`` is health's
+    ``[behavior]`` knob of that name, read by the same
+    ``health_model.weakly_endorsed``, so with it above 0 the bucket also
+    lists the memories explicitly endorsed less often than that fraction,
+    as health's does, and each row carries its ``endorsement_ratio`` to
+    check a threshold against.
     """
     now = now or datetime.now(timezone.utc)
     cutoff, window_end = resolve_window(since, until, now=now)
@@ -486,13 +503,18 @@ def compute_eval(
     walk = _walk_eval_events(events, cutoff, window_end, passes_scope)
     tally = _resolve_audit_telemetry(walk, tombstoned_ids, silent_miss_limit)
     floor = max(1, int(endorsement_min_retrievals))
-    cold_rows, cold_total, cold_suppressed = _cold_endorsement_rows(walk, by_id, floor)
+    # Read within 0 and 1 as health reads it (`clamp_ratio_threshold`).
+    ratio_threshold = clamp_ratio_threshold(cold_endorsement_ratio_threshold)
+    cold_rows, cold_total, cold_suppressed = _cold_endorsement_rows(
+        walk, by_id, floor, ratio_threshold
+    )
     return _eval_report(
         now=now,
         cutoff=cutoff,
         window_end=window_end,
         scope=scope,
         floor=floor,
+        ratio_threshold=ratio_threshold,
         walk=walk,
         tally=tally,
         cold_rows=cold_rows,
@@ -1444,6 +1466,7 @@ def compute_report(
     since: timedelta | None = None,
     tombstoned_ids: set[str] | None = None,
     version: str | None = None,
+    cold_endorsement_ratio_threshold: float = 0.0,
 ) -> ReportDocument:
     """Compose the existing rollups into one report document.
 
@@ -1461,6 +1484,11 @@ def compute_report(
     minus every event ``is_admin_recorded_event`` rejects (admin/CLI
     writers run under a throwaway session id and would each publish a
     phantom session); the ids themselves never land on the document.
+
+    ``cold_endorsement_ratio_threshold`` is read by both columns as
+    rate mode reads it (ENG-192, review N5): the markdown renders no
+    cold-endorsement bucket, but the document's two replays carry one,
+    and it is the bucket `bettermemory eval` prints.
     """
     now = now or datetime.now(timezone.utc)
     memory_list = list(memories)
@@ -1472,6 +1500,7 @@ def compute_report(
         now=now,
         since=None,
         tombstoned_ids=tombstoned_ids,
+        cold_endorsement_ratio_threshold=cold_endorsement_ratio_threshold,
     )
     if since is None:
         window_eval = alltime_eval
@@ -1482,6 +1511,7 @@ def compute_report(
             now=now,
             since=since,
             tombstoned_ids=tombstoned_ids,
+            cold_endorsement_ratio_threshold=cold_endorsement_ratio_threshold,
         )
     sweep = compute_threshold_sweep(event_list, since=None, now=now)
     usage = compute_tool_usage(event_list, since=None, now=now)

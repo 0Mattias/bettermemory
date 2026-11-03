@@ -27,6 +27,7 @@ import sys
 import tempfile
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -353,6 +354,74 @@ def test_health_default_ratio_threshold_keeps_strict_bucket(
     _run_main(["health", "--json"], monkeypatch=monkeypatch, storage=storage)
     payload = json.loads(capsys.readouterr().out)
     assert payload["cold_endorsement_memories"]["total"] == 0
+
+
+@pytest.mark.parametrize(("threshold", "listed"), [("0.25", True), ("0.0", False)])
+def test_eval_reads_the_ratio_threshold_health_reads(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    threshold: str,
+    listed: bool,
+) -> None:
+    """`bettermemory eval` replays the log under the cold-endorsement
+    ratio threshold `bettermemory health` reads (ENG-192): the memory
+    only the ratio half catches is listed at 0.25 and not at 0.0, as in
+    health's bucket, with its explicit share (1 of 10) on the row and
+    the threshold beside the floor. Eval read no threshold before, so its
+    bucket was the strict one whatever the knob said."""
+    storage = tmp_path / "store"
+    storage.mkdir()
+    _config_with_ratio_threshold(tmp_path, monkeypatch, threshold)
+    store = _seeded_store(storage, monkeypatch)
+    memory_id = _seed_weakly_endorsed_memory(store)
+
+    _run_main(["health", "--json"], monkeypatch=monkeypatch, storage=storage)
+    health = json.loads(capsys.readouterr().out)["cold_endorsement_memories"]
+    _run_main(
+        ["eval", "--since", "all", "--json"], monkeypatch=monkeypatch, storage=storage
+    )
+    bucket = json.loads(capsys.readouterr().out)["cold_endorsement_memories"]
+    assert bucket["ratio_threshold"] == float(threshold)
+    assert [row["id"] for row in bucket["rows"]] == [r["id"] for r in health["rows"]]
+    assert [row["id"] for row in bucket["rows"]] == ([memory_id] if listed else [])
+    if listed:
+        row = bucket["rows"][0]
+        assert (row["auto_applied_count"], row["explicit_applied_count"]) == (9, 1)
+        assert row["endorsement_ratio"] == health["rows"][0]["endorsement_ratio"] == 0.1
+
+
+def test_eval_report_reads_the_ratio_threshold_health_reads(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`bettermemory eval --report` composes the replays rate mode prints
+    and reads the same knob for them (ENG-192, review N5). The markdown
+    renders no cold-endorsement bucket, so the document is read where the
+    CLI builds it."""
+    from bettermemory import eval as eval_module
+
+    storage = tmp_path / "store"
+    storage.mkdir()
+    _config_with_ratio_threshold(tmp_path, monkeypatch, "0.25")
+    store = _seeded_store(storage, monkeypatch)
+    memory_id = _seed_weakly_endorsed_memory(store)
+    documents: list[Any] = []
+    real = eval_module.compute_report
+
+    def recorded(*args: Any, **kwargs: Any) -> Any:
+        doc = real(*args, **kwargs)
+        documents.append(doc)
+        return doc
+
+    monkeypatch.setattr(eval_module, "compute_report", recorded)
+    _run_main(["eval", "--report"], monkeypatch=monkeypatch, storage=storage)
+    capsys.readouterr()
+    (doc,) = documents
+    for report in (doc.alltime_eval, doc.window_eval):
+        assert report.cold_endorsement_ratio_threshold == 0.25
+        assert [r.id for r in report.cold_endorsement_memories_rows] == [memory_id]
 
 
 def test_try_subcommand_reproduces_path_drift_offline(

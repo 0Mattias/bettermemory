@@ -835,6 +835,8 @@ class TestSilentMissInvalidation:
             "silent_miss_rate": RateCI.from_counts(1, 2).to_dict(),
             "cold_endorsement_memories": {
                 "min_retrievals": DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
+                # The bucket's ratio threshold, off by default (ENG-192).
+                "ratio_threshold": 0.0,
                 "total": 0,
                 "rows": [],
                 # None of these synthetic events qualifies as Stop-hook

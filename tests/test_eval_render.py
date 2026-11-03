@@ -144,6 +144,32 @@ def test_render_text_escapes_store_and_log_strings() -> None:
     assert len(text.splitlines()) == len(_rate_text("plain").splitlines())
 
 
+def test_render_text_names_the_ratio_threshold_and_each_rows_share() -> None:
+    """With the ratio threshold on, a cold row may carry explicit applies
+    (ENG-192): the heading names the threshold, and each row its explicit
+    applies out of all of them. Off, the heading reads as it always did."""
+    report = compute_eval([], [], now=NOW)
+    report.cold_endorsement_memories_total = 1
+    report.cold_endorsement_memories_rows = [
+        ColdEndorsementMemoriesRow(
+            id="id-a",
+            scopes=["tools"],
+            summary="sum",
+            retrieval_count=40,
+            auto_applied_count=9,
+            explicit_applied_count=1,
+        )
+    ]
+    report.cold_endorsement_ratio_threshold = 0.25
+    text = render_text(report)
+    assert "(retrievals ≥ 30, explicit share < 0.25): 1" in text
+    assert "(40 retrievals, explicit 1/10)" in text
+    report.cold_endorsement_ratio_threshold = 0.0
+    text = render_text(report)
+    assert "(retrievals ≥ 30, 0 explicit applied): 1" in text
+    assert "(40 retrievals)" in text
+
+
 def _detail_text(text: str) -> str:
     turn = WideningFlaggedTurn(
         ts=f"2026-05-15T12:00{text}",
