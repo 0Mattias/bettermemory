@@ -98,25 +98,79 @@ def test_server_snippet_uses_find_binary_when_unset(
 def test_find_binary_uses_path_when_present(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # Use a real on-disk path so `Path(...).resolve()` inside find_binary
+    """The PATH hit comes back as the path PATH names."""
+    # Use a real on-disk path so `Path(...).absolute()` inside find_binary
     # behaves consistently across platforms — a hardcoded POSIX string like
     # "/usr/local/bin/bettermemory" gets rewritten to "D:\usr\local\bin\..."
-    # on Windows because resolve() anchors to the current drive.
+    # on Windows because absolute() anchors it to the current drive.
     fake = tmp_path / "bettermemory"
     fake.write_text("#!/bin/sh\n", encoding="utf-8")
     monkeypatch.setattr("bettermemory.init.shutil.which", lambda _name: str(fake))
-    assert find_binary() == str(fake.resolve())
+    assert find_binary() == str(fake)
+
+
+def test_find_binary_anchors_a_relative_path_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A hit through a relative PATH entry comes back absolute, anchored to
+    the working directory: a client spawns the server from its own."""
+    fake = tmp_path / "bin" / "bettermemory"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "bettermemory.init.shutil.which",
+        lambda _name: os.path.join("bin", "bettermemory"),
+    )
+    assert find_binary() == str(Path.cwd() / "bin" / "bettermemory")
+
+
+def test_find_binary_keeps_the_link_on_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ENG-185 (H3). A Homebrew or Nix install puts a link on PATH that
+    points into a versioned directory; init wrote the link's target, which
+    the next upgrade removes, and the client could no longer start the
+    server. The link's own path is written now, and it still runs the
+    server after the versioned directory is replaced. A config an earlier
+    init wrote with the target is still recognized as this binary."""
+    from bettermemory.init import command_launches_bettermemory
+
+    cellar = tmp_path / "Cellar" / "bettermemory"
+    old = cellar / "1.0" / "bin" / "bettermemory"
+    old.parent.mkdir(parents=True)
+    old.write_text("#!/bin/sh\n", encoding="utf-8")
+    link = tmp_path / "bin" / "bettermemory"
+    _link(link, old)
+    monkeypatch.setattr("bettermemory.init.shutil.which", lambda _name: str(link))
+
+    binary = find_binary()
+    assert binary == str(link)
+    assert command_launches_bettermemory(str(old), [], binary)
+
+    # The upgrade: a new versioned directory, the link repointed, the old
+    # directory gone.
+    new = cellar / "1.1" / "bin" / "bettermemory"
+    new.parent.mkdir(parents=True)
+    new.write_text("#!/bin/sh\n", encoding="utf-8")
+    link.unlink()
+    _link(link, new)
+    old.unlink()
+    assert Path(binary).is_file()
+    assert Path(binary).resolve() == new.resolve()
 
 
 def test_find_binary_falls_back_to_argv_when_path_misses(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """With nothing on PATH, an absolute argv[0] naming the binary is used
+    as given."""
     monkeypatch.setattr("bettermemory.init.shutil.which", lambda _name: None)
     fake = tmp_path / "bettermemory"
     fake.write_text("#!/bin/sh\n", encoding="utf-8")
     monkeypatch.setattr("bettermemory.init.sys.argv", [str(fake)])
-    assert find_binary() == str(fake.resolve())
+    assert find_binary() == str(fake)
 
 
 def test_find_binary_last_resort_returns_bare_name(

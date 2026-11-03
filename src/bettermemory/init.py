@@ -224,12 +224,21 @@ KNOWN_CLIENTS: dict[str, Callable[[], ClientPaths]] = {
 
 
 def find_binary() -> str:
-    """Resolve the absolute path to the `bettermemory` binary as a fresh
-    shell would see it. The result is what we'd write into the MCP
-    client's config — clients spawn the server in their own process,
-    not ours, so a relative path or shell alias would fail at runtime.
+    """The absolute path to the `bettermemory` binary as a fresh shell
+    would see it. The result is what we'd write into the MCP client's
+    config — clients spawn the server in their own process, not ours, so
+    a relative path or shell alias would fail at runtime.
 
-    Resolution order:
+    The path is the PATH entry itself, links left in place. A Homebrew or
+    Nix install puts a stable link on PATH (`/opt/homebrew/bin`,
+    `~/.nix-profile/bin`) that points into a versioned directory an upgrade
+    removes (`Cellar/<version>`, `/nix/store/<hash>-<name>-<version>`);
+    the link's path survives the upgrade, its target does not. (A uv
+    tool's or pipx's link points into a venv an upgrade keeps.) What the
+    config no longer shows is which install a link leads to: a reinstall
+    that repoints the link is not visible there.
+
+    Lookup order:
     1. `shutil.which("bettermemory")` on the user's PATH.
     2. `sys.argv[0]` if it's already absolute and exists (covers
        `python -m bettermemory init` invocations from a venv).
@@ -238,7 +247,9 @@ def find_binary() -> str:
     """
     binary = shutil.which("bettermemory")
     if binary:
-        return str(Path(binary).resolve())
+        # `absolute()`, not `resolve()`: a relative PATH entry is anchored
+        # to the working directory, and a link is not followed.
+        return str(Path(binary).absolute())
 
     candidate = Path(sys.argv[0])
     # Require the argv0 basename to actually be the bettermemory binary.
@@ -251,7 +262,7 @@ def find_binary() -> str:
         and candidate.exists()
         and "bettermemory" in candidate.name
     ):
-        return str(candidate.resolve())
+        return str(candidate)
 
     return "bettermemory"
 
@@ -393,7 +404,7 @@ def command_launches_bettermemory(
 
     Any one of these shapes matches:
 
-    * ``command`` equals the resolved absolute ``binary`` path we'd write.
+    * ``command`` equals the absolute ``binary`` path we'd write.
     * a bare (non-absolute) console-script whose basename is
       ``bettermemory`` — the form ``docs/clients.md`` and
       ``docs/installation.md`` bless (``"command": "bettermemory"``).

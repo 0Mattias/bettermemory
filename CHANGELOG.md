@@ -27,8 +27,9 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 
 ### 9.0.0rc17
 
-The seventeenth candidate refuses an unknown or removed id in plain
-words. The store takes no schema step.
+The seventeenth candidate keeps the path `bettermemory init` writes
+working across a Homebrew or Nix upgrade and refuses an unknown or
+removed id in plain words. The store takes no schema step.
 
 #### Fixed
 
@@ -45,6 +46,18 @@ words. The store takes no schema step.
   inside their own, take them from `store_schema.absent_text` as the
   boundary does, and so does `bettermemory tombstones restore` after
   `error:`.
+
+- **`bettermemory init` writes the link on PATH, not its target
+  (ENG-185).** Init wrote the resolved target of the `bettermemory` it
+  found on PATH into the client's MCP config. A Homebrew or Nix install
+  puts a stable link on PATH that points into a versioned directory
+  (`Cellar/<version>`, `/nix/store/<hash>-<name>-<version>`), so the
+  config named a path the next upgrade removed, and the client could no
+  longer start the server. Init now writes the PATH entry's absolute
+  path with links left in place. A config an earlier init wrote with the
+  target is still recognised as bettermemory, and the next `init
+  --client` rewrites it. A uv tool's or pipx's link points into a venv
+  an upgrade keeps, so those configs were not affected.
 
 ### 9.0.0rc16
 
