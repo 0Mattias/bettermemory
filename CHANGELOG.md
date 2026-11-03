@@ -30,8 +30,12 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 The seventeenth candidate runs the plugin's hooks on Windows without
 Git Bash, where Claude Code runs them in PowerShell, keeps the path
 `bettermemory init` writes working across a Homebrew or Nix upgrade,
-and refuses an unknown or removed id in plain words. The store takes no
-schema step.
+and refuses an unknown or removed id in plain words. A write that races
+a key rotation signs with the rotated key, and a failed open no longer
+keeps a restore waiting. The store takes no schema step, so the
+sixteenth candidate and this one read and write each other's stores. It
+is a release candidate like the sixteenth; the stable 9.0.0 follows the
+candidates' testing.
 
 #### Changed
 
