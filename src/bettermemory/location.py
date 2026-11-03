@@ -82,6 +82,17 @@ from ._location_probe import (
     probe,
     view_path,
 )
+from .gitconfig import _config_values  # with the `.git` rule below: ENG-193
+from .gitfile_rule import (
+    _SF_DATALESS,
+    _WINDOWS_RECALL,
+    _common_of,
+    _headref_content,
+    _is_link,
+    _recorded_reading,
+    _recorded_refusal,
+    earliest_naming,
+)
 
 # The vocabulary, discovery, the capture model and the history reader live
 # in `location_git`, which imports nothing from here. Every name a caller
@@ -98,9 +109,7 @@ from .location_git import (
     _FULL_HASH,
     _HEAD_LIMIT,
     _PROJECT_FILE,
-    _SF_DATALESS,
     _TOKEN_SLOT,
-    _WINDOWS_RECALL,
     BARE,
     CACHE_SECONDS,
     FETCH_BUDGET,
@@ -120,7 +129,6 @@ from .location_git import (
     Key,
     RepositoryHistory,
     _clear_above,
-    _common_of,
     _discover,
     _Git,
     _inside,
@@ -131,11 +139,6 @@ from .location_git import (
     bounded_read,
     bounded_reads,
     _at_dotgit,
-    _config_values,
-    _is_link,
-    _recorded_refusal,
-    _same_folder,
-    names_git_dir,
     remote_urls,
 )
 from .location_git import (
@@ -694,10 +697,10 @@ def record_working_tree(git_dir: str, tree: str) -> str:
     replaced, or a write the state directory refused). Writes the state
     directory only."""
     pin = gitdir_pin.recorded(git_dir)
-    if pin is not None and _same_folder(pin.tree, tree) is True:
-        return "kept"
-    if pin is not None and _recorded_refusal(pin, git_dir, tree) is not None:
-        return "elsewhere"
+    # The recorded folder is read bounded (`_recorded_reading`, ENG-156).
+    why, here = _recorded_reading(pin, git_dir, tree)
+    if here or why is not None:
+        return "kept" if here else "elsewhere"
     if gitdir_pin.put(git_dir, tree, pin):
         return "first" if pin is None else "kept"
     # A first record another capture made meanwhile stands: read it again.
@@ -723,7 +726,7 @@ def _real_git(git: _Git) -> _Git:
 # ---------------------------------------------------------------------------
 
 
-def signature(cwd: str) -> tuple[Any, ...] | None:
+def signature(cwd: str, *, read_head: bool = False) -> tuple[Any, ...] | None:
     """The change detector a capture of `cwd` is kept against, or None when
     no capture there is kept (GIT_DIR and its kin set, an evicted HEAD or
     config, a cwd that cannot be stat'ed). In a repository: the cwd's
@@ -733,7 +736,10 @@ def signature(cwd: str) -> tuple[Any, ...] | None:
     while HEAD is unborn the ref tips themselves. Outside one: the cwd's
     object and its own project file; the discovery walk that found no
     repository runs on every call, so ``git init`` at the cwd or above is
-    seen."""
+    seen. The walk takes a ``HEAD`` by its presence (`read_head` False,
+    `_discover`): the bytes read here are tested by git's rule instead, and
+    one git does not read as a ``HEAD`` sends the call to a walk that reads
+    each, as the capture's does, so HEAD is read once a prompt."""
     if any(os.environ.get(v) for v in _DISCOVERY_ENV):
         return None
     try:
@@ -742,7 +748,7 @@ def signature(cwd: str) -> tuple[Any, ...] | None:
         return None
     cwd_part = (cwd, st.st_dev, st.st_ino)
     try:
-        git = _discover(cwd)
+        git = _discover(cwd, read_head=read_head)
     except OSError:
         return None
     if git is None:
@@ -762,6 +768,8 @@ def signature(cwd: str) -> tuple[Any, ...] | None:
             head_bytes = fh.read(_HEAD_LIMIT)
     except OSError:
         return None
+    if not read_head and not _headref_content(head_bytes):
+        return signature(cwd, read_head=True)
     ref_part: Any = None
     refs_part: Any = None
     text = head_bytes.decode("utf-8", errors="replace").strip()
@@ -1713,41 +1721,32 @@ def _earlier_tree(model: Membership, cap: Capture) -> bool:
     directory kept apart (`Capture.tree_recorded`, ENG-206), whether this
     machine's store saw that git directory first at another tree whose
     ``.git`` file still names it: the earliest view of its checkout that
-    still does, unless the capture's own tree was seen no later. Then the
+    still does, or that does not answer (`earliest_naming`, failing
+    closed), unless the capture's own tree was seen no later. Then the
     record is made to name that tree, and True is returned. A checkout
     seen before 9.0.0rc18, which keeps no record, so keeps the tree it was
     first seen at, whichever folder naming it is seen first after the
     upgrade."""
     if not cap.tree_recorded or cap.git_dir is None or cap.object_key is None:
         return False
-    # By inode alone: a device number a remount changed must still find
-    # the views, and each is confirmed below by its `.git` naming the git
-    # directory as it is now.
-    inode = cap.object_key[1]
+    # Not by device: one a remount changed must still find the views
+    # (`ObjectKey.on_any_device`), each confirmed below by its `.git`.
+    _dev, inode, birth = cap.object_key
     views = sorted(
         (
             v
             for k in model.checkouts()
-            if k.object_key is not None and k.object_key.inode == inode
+            if k.object_key is not None and k.object_key.on_any_device(inode, birth)
             for v in k.views_on(model.machine)
         ),
         key=lambda v: (v.first_seen, v.order),
     )
-    for view in views:
-        if cap.root is not None and _same_object(view.path, cap.root):
-            return False
-        if names_git_dir(os.path.join(view.path, ".git"), cap.git_dir):
-            pin = gitdir_pin.recorded(cap.git_dir)
-            return gitdir_pin.put(cap.git_dir, os.path.realpath(view.path), pin)
-    return False
-
-
-def _same_object(a: str, b: str) -> bool:
-    """Whether the paths `a` and `b` reach one filesystem object."""
-    try:
-        return os.path.samefile(a, b)
-    except (OSError, ValueError):
+    # Each view is read within a bound, side by side (`earliest_naming`).
+    tree = earliest_naming([v.path for v in views], cap.root, cap.git_dir)
+    if tree is None:
         return False
+    pin = gitdir_pin.recorded(cap.git_dir)
+    return gitdir_pin.put(cap.git_dir, tree, pin)
 
 
 def _with_file_errors(res: Resolution, errors: Sequence[str]) -> Resolution:

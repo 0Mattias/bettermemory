@@ -54,6 +54,8 @@ from ..models import (
     snippet_for,
     utcnow,
 )
+from ..origin import follow_unsettled
+from ..origin_model import Origin
 from ..search import _pairwise_content_jaccard, raw_content_tokens
 from .. import capture as _capture
 from .. import identity
@@ -377,7 +379,14 @@ def _write_payload(
     # resolved (`_payload_caller`), whose admission filters the review's
     # related set. A refusal or a review writes no record, so the origin
     # of a call that does not commit never reaches the disk.
-    payload["origin"] = _h.capture_origin()
+    payload["origin"] = found = _h.capture_origin()
+    if isinstance(found, Origin) and follow_unsettled(found):
+        # A `.git` file followed to a git directory kept apart that no
+        # record names this folder for yet (ENG-193): the caller's
+        # resolution records the tree membership follows, which may be
+        # another folder, and the origin is captured again against it.
+        _payload_caller(deps, payload)
+        payload["origin"] = _h.capture_origin()
     # The actor rides beside the origin: who is writing, resolved at the
     # handler entry (`identity.bind` inside `sessions.for_request`) from
     # the request's headers, the server environment, the `initialize`

@@ -2,7 +2,7 @@
 
 A ``.git`` file is followed where git's own pointers say the folder is
 the working tree of the git directory it names
-(`location_git.gitfile_refusal`, ENG-158). git writes no such pointer
+(`gitfile_rule.gitfile_refusal`, ENG-158). git writes no such pointer
 for a git directory kept apart with ``--separate-git-dir`` (``git
 init``, ``git clone``): its config names no ``core.worktree`` and
 nothing in it names the folder, so a ``.git`` file anywhere that names
@@ -34,7 +34,9 @@ hard link, the checkout token's method), so of two captures making one
 at once the first stands.
 
 This module reads and writes records and decides nothing: which record
-refuses a follow is `location_git`'s rule.
+refuses a follow is `gitfile_rule`'s rule, which membership, `githead`
+and the origin family read (ENG-193). Only membership's capture writes
+a record (`location.record_working_tree`); the others read them.
 """
 
 from __future__ import annotations

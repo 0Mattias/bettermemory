@@ -1,23 +1,27 @@
 """Git and capture readers for `location` (design 3.1).
 
 The vocabulary and bounds a capture shares with the model, git's
-discovery from a directory and its config reader, the `Capture` model and
-its token codec, the HEAD, ref, stamp and manifest readers, and the
-history reader (`RepositoryHistory`, `walk`). `location` keeps the
+discovery from a directory, the remotes its config names, the `Capture`
+model and its token codec, the HEAD, ref, stamp and manifest readers, and
+the history reader (`RepositoryHistory`, `walk`). `location` keeps the
 capture, its cache, the witness exchange and the resolution, and
 re-exports every name here that a caller reads, so no import path changes.
-The bounded reads of recorded paths are `location_reads`'s, re-exported
-here.
+The rule a ``.git`` entry is followed by (`gitfile_rule.judge`,
+`gitfile_rule.gitfile_refusal`) and the config reader it reads through
+(`gitconfig`) moved out of this module so `githead` reads the same rule
+(ENG-193): `githead` cannot import this module, which imports it. The
+bounded reads of recorded paths are `location_reads`'s, re-exported here.
 
 These readers live apart from `location` to keep each module under the
 package's 2,000-line bound (ENG-96); `location` imports this module,
 never the reverse. The hook client loads it with `location`, so it
 imports only the standard library and the readers `_caches`, `_git`,
-`_location_probe`, `githead`, `gitobjects`, `location_reads` and
-`project_file`, which import the standard library and each other alone,
-and `gitdir_pin`, which writes through `_fsutil` and reads the state
-directory through `_daemon_client` (both loaded on every hook already);
-never `location` itself, the model, the store or the config
+`_location_probe`, `githead`, `gitconfig`, `gitobjects`, `location_reads`
+and `project_file`, which import the standard library and each other
+alone, and `gitfile_rule`, which reads records through `gitdir_pin`,
+which writes through `_fsutil` and reads the state directory through
+`_daemon_client` (both loaded on every hook already); never `location`
+itself, the model, the store or the config
 (tests/test_membership_capture.py pins that set).
 """
 
@@ -29,13 +33,22 @@ import stat
 import threading
 from collections import deque
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import _caches, githead, gitdir_pin, gitobjects, project_file
+from . import _caches, githead, gitobjects, project_file
 from . import _git as _git_runner
 from ._location_probe import INDETERMINATE, TOKEN_VERSION
+from .gitconfig import _config_values, _home, _truthy
+from .gitfile_rule import (
+    _common_of,
+    _foreign_commondir,
+    _git_reads,
+    _is_git_directory,
+    _not_registered,
+    judge,
+)
 
 # The bounded reads of recorded paths (ENG-156) live in `location_reads`;
 # `location` and its callers read these names from here.
@@ -138,17 +151,6 @@ EXCHANGE_ROUNDS = 8
 
 _FULL_HASH = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _HEAD_LIMIT = 1 << 16
-# A repository's config: git reads any size; the eight on the development
-# machine measured 349 B at the median and 608 B at most (ENG-160). One
-# over the bound is read to its last whole line within it.
-_CONFIG_LIMIT = 1 << 20
-# git refuses a .git file over 1 MiB (read_gitfile_gently in setup.c).
-_GITFILE_LIMIT = 1 << 20
-# SF_DATALESS (macOS <sys/stat.h>) and the Windows recall attributes
-# (winnt.h): the file's data is held by a provider and a read would wait
-# on a download.
-_SF_DATALESS = 0x40000000
-_WINDOWS_RECALL = 0x00040000 | 0x00400000
 # Environment variables that move git's discovery; under any of them the
 # capture reads what they name and is never cached.
 _DISCOVERY_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
@@ -164,380 +166,9 @@ Key = tuple[str, str, str | None]
 # Git config files
 # ---------------------------------------------------------------------------
 
-
-def _unquote(value: str) -> str:
-    """A git config value: an unquoted ``#`` or ``;`` starts a comment,
-    double quotes group, a backslash escapes."""
-    out: list[str] = []
-    quoted = False
-    i = 0
-    while i < len(value):
-        ch = value[i]
-        if ch == "\\" and i + 1 < len(value):
-            nxt = value[i + 1]
-            out.append({"n": "\n", "t": "\t", "b": "\b"}.get(nxt, nxt))
-            i += 2
-            continue
-        if ch == '"':
-            quoted = not quoted
-        elif ch in "#;" and not quoted:
-            break
-        else:
-            out.append(ch)
-        i += 1
-    return "".join(out).strip()
-
-
-_SECTION = re.compile(r'^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]')
-
-
-#: A config variable's name: section, subsection, key.
-_Name = tuple[str, str | None, str]
-#: git's bound on nested includes (``MAX_INCLUDE_DEPTH`` in config.c), past
-#: which git refuses the configuration.
-_INCLUDE_DEPTH = 10
-#: Config files one read takes in all, the file itself and each include, a
-#: file included again counted again (review M D3). git has no such bound,
-#: but it stops at its depth, and one file naming itself in four
-#: ``include.path`` lines was read 1,398,101 times here (38 s, every value
-#: kept); past this many files the read stops and reads as incomplete.
-#: Measured (`_config_values`, macOS, warm): 64 files (a two-line file
-#: included 63 times) in 1.2 ms, the median of 50 reads; the self-including
-#: config now stops at its first include in 0.05 ms.
-_INCLUDE_FILES = 64
-#: The names that say where a git directory's working tree is.
-_TREE_NAMES = frozenset({("core", None, "worktree"), ("core", None, "bare")})
-
-
-class ConfigValues(dict[_Name, list[str]]):
-    """`_config_values`'s answer: ``{(section, subsection, key): values}``.
-
-    `complete` is False where git reads more than was read here: a file
-    over `_CONFIG_LIMIT` (read to its last whole line within the bound),
-    an include nested past `_INCLUDE_DEPTH`, one naming a file it is read
-    from (a cycle, which git follows to its depth and refuses), the
-    includes past `_INCLUDE_FILES` files read in all, or a file that could
-    not be read or is not a regular file (one that does not exist is
-    skipped, as git skips it). The first three stop the read where it
-    stands, as git stops at its depth; what was read before stands. `undecided` holds the names an include sets under a
-    condition not evaluated here (``onbranch:``, ``hasconfig:``, a
-    ``gitdir:`` with no git directory given); their values are not
-    taken."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.complete = True
-        self.undecided: set[_Name] = set()
-
-
-class _Overflow(Exception):
-    """An include past `_INCLUDE_DEPTH` or `_INCLUDE_FILES`, or one naming
-    a file it is read from: the read stops where it stands (review M D3)."""
-
-
-@dataclass
-class _Reading:
-    """One `_config_values` read: the files it has taken, and the
-    identity (device, inode) of each file open on the include chain."""
-
-    files: int = 0
-    chain: list[tuple[int, int]] = field(default_factory=list)
-
-
-def _config_values(path: str, *, git_dir: str | None = None) -> ConfigValues:
-    """``{(section, subsection, key): values}`` of a git config file, read
-    as bytes and bounded, its includes followed in place as git follows
-    them (ENG-160): ``include.path``, and ``includeIf.<condition>.path``
-    where the condition is ``gitdir:`` or ``gitdir/i:`` matched against
-    `git_dir`. Section and key names are lower case. An include past
-    git's depth, one naming a file it is read from, or one past
-    `_INCLUDE_FILES` files stops the read (review M D3): the values read
-    before stand, and the answer is incomplete."""
-    out = ConfigValues()
-    try:
-        _read_config(path, out, git_dir, 0, _Reading())
-    except _Overflow:
-        out.complete = False
-    return out
-
-
-def _config_bytes(
-    path: str, out: ConfigValues, identity: list[tuple[int, int]] | None = None
-) -> bytes | None:
-    """The bytes of the config file `path`, at most `_CONFIG_LIMIT` of
-    them: one larger is cut at its last whole line within the bound (ENG-160:
-    it was dropped whole, and its remotes with it) and `out` is incomplete.
-    None where the file does not exist; None and `out` incomplete where it
-    cannot be read or is not a regular file. The open does not block, so
-    an include naming a FIFO fails instead of waiting. The file's (device,
-    inode) is appended to `identity` where the OS gives one."""
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_NONBLOCK", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_BINARY", 0)
-    )
-    try:
-        fd = os.open(path, flags)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except (OSError, ValueError):
-        out.complete = False
-        return None
-    chunks: list[bytes] = []
-    size = 0
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            out.complete = False
-            return None
-        if identity is not None and st.st_ino:
-            identity.append((st.st_dev, st.st_ino))
-        while size <= _CONFIG_LIMIT:
-            chunk = os.read(fd, _CONFIG_LIMIT + 1 - size)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            size += len(chunk)
-    except OSError:
-        out.complete = False
-        return None
-    finally:
-        os.close(fd)
-    data = b"".join(chunks)
-    if size > _CONFIG_LIMIT:
-        out.complete = False
-        data = data[: data.rfind(b"\n", 0, _CONFIG_LIMIT) + 1]
-    return data
-
-
-def _read_config(
-    path: str, out: ConfigValues, git_dir: str | None, depth: int, reading: _Reading
-) -> None:
-    """Parse the config file `path` into `out`, its includes in place;
-    `_Overflow` past `_INCLUDE_FILES` files, or where `path` is a file
-    the include chain is read from (compared as filesystem objects)."""
-    reading.files += 1
-    if reading.files > _INCLUDE_FILES:
-        raise _Overflow(path)
-    identity: list[tuple[int, int]] = []
-    data = _config_bytes(path, out, identity)
-    if data is None:
-        return
-    if identity and identity[0] in reading.chain:
-        raise _Overflow(path)
-    reading.chain.extend(identity)
-    try:
-        _parse_config(path, data, out, git_dir, depth, reading)
-    finally:
-        del reading.chain[len(reading.chain) - len(identity) :]
-
-
-def _parse_config(
-    path: str,
-    data: bytes,
-    out: ConfigValues,
-    git_dir: str | None,
-    depth: int,
-    reading: _Reading,
-) -> None:
-    """The lines of the config file `path` (its bytes `data`) into `out`,
-    each include read where it stands."""
-    section: tuple[str, str | None] | None = None
-    for raw in data.decode("utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not line or line[0] in "#;":
-            continue
-        if line.startswith("["):
-            m = _SECTION.match(line)
-            if m is None:
-                section = None
-                continue
-            name, sub = m.group(1).lower(), m.group(2)
-            if sub is None and "." in name:
-                # The deprecated [section.subsection] spelling.
-                name, _, sub = name.partition(".")
-            section = (name, sub.replace('\\"', '"') if sub is not None else None)
-            line = line[m.end() :].strip()
-            if not line:
-                continue
-        if section is None:
-            continue
-        key, eq, value = line.partition("=")
-        key = key.strip().lower()
-        if not key:
-            continue
-        text = _unquote(value) if eq else "true"
-        out.setdefault((section[0], section[1], key), []).append(text)
-        if key == "path" and section[0] in ("include", "includeif"):
-            _include(
-                path,
-                section[1] if section[0] == "includeif" else None,
-                text,
-                out,
-                git_dir,
-                depth,
-                reading,
-            )
-
-
-def _include(
-    including: str,
-    condition: str | None,
-    value: str,
-    out: ConfigValues,
-    git_dir: str | None,
-    depth: int,
-    reading: _Reading,
-) -> None:
-    """Read the file an include names into `out`, as git does (config.c's
-    ``handle_path_include``): ``~/`` is the home directory and a relative
-    path is taken from the including file's directory; a missing file is
-    skipped. Under `condition` (an ``includeIf`` section's) only where it
-    holds; where it is not evaluated here, the names the file sets go to
-    `out.undecided` and its values are not taken. Past git's depth,
-    `_Overflow`: git refuses the configuration there (review M D3)."""
-    target = _expand_home(value)
-    if not target:
-        return
-    if not os.path.isabs(target):
-        target = os.path.join(os.path.dirname(including), target)
-    holds = True if condition is None else _condition(condition, including, git_dir)
-    if holds is False:
-        return
-    if depth + 1 > _INCLUDE_DEPTH:
-        raise _Overflow(target)
-    if holds:
-        _read_config(target, out, git_dir, depth + 1, reading)
-        return
-    maybe = ConfigValues()
-    try:
-        _read_config(target, maybe, git_dir, depth + 1, reading)
-    finally:
-        out.undecided.update(maybe, maybe.undecided)
-        out.complete = out.complete and maybe.complete
-
-
-def _home() -> str | None:
-    """The home directory git expands ``~`` to: HOME, which git for Windows
-    sets at start where it is unset; else the platform's."""
-    home = os.environ.get("HOME") or os.path.expanduser("~")
-    return None if home == "~" else home
-
-
-def _expand_home(value: str) -> str:
-    """`value` with a leading ``~/`` (or ``~user/``) expanded; empty when it
-    names a home that cannot be found."""
-    if value == "~" or value.startswith(("~/", "~" + os.sep)):
-        home = _home()
-        return home + value[1:] if home else ""
-    if value.startswith("~"):
-        expanded = os.path.expanduser(value)
-        return "" if expanded == value else expanded
-    return value
-
-
-def _condition(condition: str, including: str, git_dir: str | None) -> bool | None:
-    """Whether an ``includeIf`` condition holds (config.c's
-    ``include_condition_is_true``): ``gitdir:`` and ``gitdir/i:`` against
-    `git_dir`; None where it is not evaluated here (``onbranch:``,
-    ``hasconfig:``, or no git directory given); False for a condition git
-    does not know, which git ignores."""
-    for prefix, icase in (("gitdir:", False), ("gitdir/i:", True)):
-        if condition.startswith(prefix):
-            if git_dir is None:
-                return None
-            return _gitdir_matches(condition[len(prefix) :], including, git_dir, icase)
-    if condition.startswith(("onbranch:", "hasconfig:")):
-        return None
-    return False
-
-
-def _slashed(path: str) -> str:
-    """`path` with the platform's separator written ``/``, as git spells
-    the paths a ``gitdir:`` pattern is matched against."""
-    return path.replace(os.sep, "/") if os.sep != "/" else path
-
-
-def _gitdir_matches(pattern: str, including: str, git_dir: str, icase: bool) -> bool:
-    """config.c's ``include_by_gitdir``: the pattern with ``~/`` expanded,
-    ``./`` taken from the including file's directory (that part matched
-    literally), ``**/`` put before a relative one and ``**`` after one that
-    ends in ``/``; matched as a path against the real git directory, then
-    against it as given."""
-    literal = 0
-    if pattern == "~" or pattern.startswith("~/"):
-        home = _home()
-        if not home:
-            return False
-        pattern = _slashed(home) + pattern[1:]
-    if pattern.startswith("./"):
-        base = _slashed(os.path.dirname(os.path.realpath(including)))
-        pattern = base + pattern[1:]
-        literal = len(base) + 1
-    elif not os.path.isabs(pattern):
-        pattern = "**/" + pattern
-    if pattern.endswith("/"):
-        pattern += "**"
-    seen = set()
-    for text in (os.path.realpath(git_dir), os.path.abspath(git_dir)):
-        text = _slashed(text)
-        if text not in seen and _wildmatch(pattern, text, literal, icase):
-            return True
-        seen.add(text)
-    return False
-
-
-def _wildmatch(pattern: str, text: str, literal: int, icase: bool) -> bool:
-    """git's ``wildmatch`` with ``WM_PATHNAME`` over `text`, the first
-    `literal` characters of `pattern` taken as they are: ``*``, ``?`` and a
-    bracket do not match ``/``; a ``**`` that is a whole path component
-    matches across it, ``**/`` matching no directory too."""
-    out = [re.escape(pattern[:literal])]
-    i, n = literal, len(pattern)
-    while i < n:
-        ch = pattern[i]
-        if ch == "*":
-            j = i
-            while j < n and pattern[j] == "*":
-                j += 1
-            whole = (i == 0 or pattern[i - 1] == "/") and (j == n or pattern[j] == "/")
-            if j - i > 1 and whole:
-                out.append("(?:.*/)?" if j < n else ".*")
-                j += 1 if j < n else 0
-            else:
-                out.append("[^/]*")
-            i = j
-        elif ch == "?":
-            out.append("[^/]")
-            i += 1
-        elif ch == "[" and (end := _bracket_end(pattern, i)) is not None:
-            body = pattern[i + 1 : end]
-            negated = body[:1] in ("!", "^")
-            body = body[1:] if negated else body
-            spelled = "".join(c if c == "-" else re.escape(c) for c in body)
-            out.append(f"(?!/)[{'^' if negated else ''}{spelled}]")
-            i = end + 1
-        elif ch == "\\" and i + 1 < n:
-            out.append(re.escape(pattern[i + 1]))
-            i += 2
-        else:
-            out.append(re.escape(ch))
-            i += 1
-    flags = re.IGNORECASE | re.DOTALL if icase else re.DOTALL
-    return re.fullmatch("".join(out), text, flags) is not None
-
-
-def _bracket_end(pattern: str, start: int) -> int | None:
-    """Where the bracket expression at `start` closes, or None (an
-    unclosed ``[`` is matched as itself)."""
-    i = start + 1
-    if i < len(pattern) and pattern[i] in "!^":
-        i += 1
-    if i < len(pattern) and pattern[i] == "]":
-        i += 1
-    end = pattern.find("]", i)
-    return None if end < 0 else end
+# The reader of one config file and its includes (`_config_values`) is
+# `gitconfig`'s, imported above; the global files and the remotes are read
+# here.
 
 
 def _global_configs() -> list[str]:
@@ -593,17 +224,6 @@ def remote_urls(common_dir: str, git_dir: str) -> list[str]:
     return out
 
 
-def _truthy(values: Sequence[str] | None) -> bool | None:
-    if not values:
-        return None
-    last = values[-1].strip().lower()
-    if last in ("true", "yes", "on", "1"):
-        return True
-    if last in ("false", "no", "off", "0", ""):
-        return False
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
@@ -648,361 +268,9 @@ def _inside(path: str, root: str) -> bool:
     return path.startswith(prefix)
 
 
-def _gitfile_target(dotgit: str) -> str | None:
-    """The directory a ``gitdir: <path>`` file names, or None."""
-    try:
-        with open(dotgit, "rb") as fh:
-            data = fh.read(_GITFILE_LIMIT + 1)
-    except OSError:
-        return None
-    return _parse_gitfile(data, dotgit)
-
-
-def _parse_gitfile(data: bytes, dotgit: str) -> str | None:
-    """The directory the bytes `data` of the ``.git`` file `dotgit` name
-    after ``gitdir:`` (taken from the file's folder when relative), or None
-    when they are not such a file."""
-    if len(data) > _GITFILE_LIMIT:
-        return None
-    text = data.decode("utf-8", errors="replace").strip()
-    if not text.startswith("gitdir:"):
-        return None
-    target = text[len("gitdir:") :].strip()
-    if not target:
-        return None
-    if not os.path.isabs(target):
-        target = os.path.join(os.path.dirname(dotgit), target)
-    return os.path.normpath(target)
-
-
-def _small_text(path: str) -> str | None:
-    """A small text file's content, stripped; None when it cannot be read
-    or holds more than `_GITFILE_LIMIT` bytes."""
-    try:
-        with open(path, "rb") as fh:
-            data = fh.read(_GITFILE_LIMIT + 1)
-    except OSError:
-        return None
-    if len(data) > _GITFILE_LIMIT:
-        return None
-    return data.decode("utf-8", errors="replace").strip()
-
-
-def _names_here(raw: str, base: str, here: str) -> bool | None:
-    """Whether the path `raw` (taken from `base` when relative) names the
-    entry `here`: True when it is the same file, False when it names
-    another one, None when it names nothing (what it named was moved or
-    deleted since git wrote it)."""
-    path = raw if os.path.isabs(raw) else os.path.join(base, raw)
-    try:
-        theirs = os.stat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except (OSError, ValueError):
-        return False
-    try:
-        return os.path.samestat(theirs, os.stat(here))
-    except (OSError, ValueError):
-        return False
-
-
-def gitfile_refusal(directory: str, dotgit: str, target: str) -> str | None:
-    """Why the ``.git`` entry `dotgit` in `directory`, which names the git
-    directory `target` (a ``.git`` file's ``gitdir:``, or the directory a
-    ``.git`` symbolic link reaches), is not followed (ENG-158), or None
-    when it is.
-
-    A ``.git`` file is followed where git's own pointers say the folder
-    is that git directory's working tree: a linked worktree's git
-    directory (``<common>/worktrees/<name>``) whose ``gitdir`` file names
-    a ``.git`` in this folder, and a git directory whose ``core.worktree``
-    names this folder (a submodule's, under the enclosing repository's
-    ``modules/``). For a git directory kept apart by
-    ``--separate-git-dir`` git writes no pointer back, so bettermemory
-    keeps one (`gitdir_pin`, ENG-206): it is followed from the folder the
-    first capture followed it from, and from no other while that folder's
-    ``.git`` still names it, or cannot be read. A pointer that names
-    nothing any more (the worktree, the submodule or the separate git
-    directory's tree moved by a plain ``mv``, which ``git worktree
-    repair`` mends for a worktree) is followed too. Anything else is
-    refused: another working tree's own ``.git``, a worktree's git
-    directory that names another worktree, a git directory whose
-    ``core.worktree`` names another folder, a separate git directory
-    recorded for another folder, and a bare repository. Followed, such a
-    file would key the folder on another checkout's git directory, and an
-    extracted archive or a cloned repository that planted one would be
-    delivered that checkout's memories.
-
-    Each is told by the filesystem object, not the spelling, and each
-    pointer back is compared with this folder, not with the ``.git``
-    entry, so a ``.git`` here that is a symbolic or hard link to the right
-    ``.git`` file names this folder no more than a copy of it does: a
-    target that is the ``.git`` of a folder, through a symlink or in
-    another case on a case-insensitive volume, is that folder's own; a
-    ``commondir`` is trusted only for a git directory registered under it
-    (``<common>/worktrees/<name>``, where git keeps a linked worktree's),
-    so a forged worktree directory names no common directory."""
-    _common, linked = _common_of(target)
-    named = None if linked else _commondir(target)
-    if named is not None:
-        return _not_registered(target, named)
-    if linked:
-        back = _small_text(os.path.join(target, "gitdir"))
-        if not back:
-            return f"{target} is a worktree's git directory that names no worktree"
-        if _names_folder(back, target, directory) is False:
-            return f"{target} is the git directory of the worktree at {back}"
-        return None
-    values = _config_values(os.path.join(target, "config"), git_dir=target)
-    if not values.complete or values.undecided & _TREE_NAMES:
-        # Where its working tree is cannot be told (ENG-160): a config over
-        # the bound, an include past git's depth or unreadable, or one under
-        # a condition not evaluated here that names it.
-        return f"{target}'s config could not be read whole"
-    listed = values.get(("core", None, "worktree")) or []
-    configured = listed[-1] if listed else ""
-    if configured:
-        if _names_here(configured, target, directory) is False:
-            return f"{target} is the git directory of the working tree {configured}"
-        return None
-    if _truthy(values.get(("core", None, "bare"))):
-        return f"{target} is a bare repository"
-    tree = _working_tree_of(target)
-    if tree is not None and _same_folder(tree, directory) is not True:
-        return f"{target} is the git directory of the working tree {tree}"
-    return _recorded_refusal(gitdir_pin.recorded(target), target, directory)
-
-
-def _recorded_refusal(
-    pin: gitdir_pin.Pin | None, target: str, directory: str
-) -> str | None:
-    """Why the git directory kept apart `target` is not followed from the
-    folder `directory`, by the working tree `pin` records for it
-    (ENG-206), or None: nothing recorded, the record names `directory`, or
-    the recorded folder's ``.git`` is gone or names another git directory
-    now (the tree moved or was removed), so the follow is recorded in its
-    place. A recorded ``.git`` that cannot be read (a permission refused,
-    an I/O error, a provider's placeholder) refuses the follow and keeps
-    the record: what cannot be told is not given away."""
-    if pin is None or _same_folder(pin.tree, directory) is True:
-        return None
-    entry = _entry_names(os.path.join(pin.tree, ".git"), target)
-    if entry == "names":
-        return f"{target} is the git directory of the working tree {pin.tree}"
-    if entry == "unknown":
-        return (
-            f"{target} is recorded as the git directory of the working tree "
-            f"{pin.tree}, whose .git could not be read"
-        )
-    return None
-
-
-def names_git_dir(entry: str, git_dir: str) -> bool:
-    """Whether the ``.git`` entry `entry` (a ``.git`` file, or a link to a
-    directory) names the git directory `git_dir`, compared as filesystem
-    objects."""
-    return _entry_names(entry, git_dir) == "names"
-
-
-def _entry_names(entry: str, git_dir: str) -> str:
-    """What the ``.git`` entry `entry` names, against the git directory
-    `git_dir`: ``names`` (it is a ``.git`` file whose ``gitdir:`` reaches
-    `git_dir`, or reaches it as a directory itself), ``other`` (it reaches
-    something else, or is not a pointer), ``gone`` (nothing is there, or a
-    link that reaches nothing) or ``unknown`` (it could not be read, or is
-    a provider's placeholder that a read would fetch)."""
-    try:
-        lst = os.lstat(entry)
-    except (FileNotFoundError, NotADirectoryError):
-        return "gone"
-    except (OSError, ValueError):
-        return "unknown"
-    if _is_link(lst):
-        # A link reaching another working tree's own `.git` names nothing
-        # for this folder, as discovery reads it (`_at_dotgit`).
-        owner = _working_tree_of(entry)
-        if (
-            owner is not None
-            and _same_folder(owner, os.path.dirname(entry)) is not True
-        ):
-            return "other"
-    try:
-        st = os.stat(entry)
-        want = os.stat(git_dir)
-    except (FileNotFoundError, NotADirectoryError):
-        return "gone"
-    except (OSError, ValueError):
-        return "unknown"
-    if stat.S_ISDIR(st.st_mode):
-        return "names" if os.path.samestat(st, want) else "other"
-    if not stat.S_ISREG(st.st_mode):
-        return "other"
-    if getattr(st, "st_flags", 0) & _SF_DATALESS or (
-        getattr(st, "st_file_attributes", 0) & _WINDOWS_RECALL
-    ):
-        return "unknown"
-    try:
-        with open(entry, "rb") as fh:
-            data = fh.read(_GITFILE_LIMIT + 1)
-    except OSError:
-        return "unknown"
-    named = _parse_gitfile(data, entry)
-    if named is None:
-        return "other"
-    return "names" if _names_here(named, git_dir, git_dir) is True else "other"
-
-
-def _names_folder(raw: str, base: str, directory: str) -> bool | None:
-    """Whether the ``.git`` path `raw` (taken from `base` when relative),
-    as a worktree's ``gitdir`` file names it, sits in the folder
-    `directory`: None when nothing is at `raw` any more (the worktree was
-    moved or removed), True when its folder is `directory`, False
-    otherwise."""
-    path = os.path.normpath(raw if os.path.isabs(raw) else os.path.join(base, raw))
-    try:
-        os.lstat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except (OSError, ValueError):
-        return False
-    return _same_folder(os.path.dirname(path), directory) is True
-
-
-def _same_folder(a: str, b: str) -> bool | None:
-    """Whether the paths `a` and `b` reach one folder: None when `a`
-    reaches nothing, False when it reaches another or cannot be told."""
-    try:
-        theirs = os.stat(a)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except (OSError, ValueError):
-        return False
-    try:
-        return os.path.samestat(theirs, os.stat(b))
-    except (OSError, ValueError):
-        return False
-
-
-# The reparse tag of a Windows directory junction (``mklink /J``): CPython's
-# ``lstat`` sets ``S_IFLNK`` only for a symbolic link's tag, so a junction
-# reads as a directory, yet it leads elsewhere as a link does.
-_JUNCTION_TAG = 0xA0000003
-
-
-def _is_link(st: os.stat_result) -> bool:
-    """Whether the ``lstat`` result `st` is of an entry that leads
-    elsewhere: a symbolic link, or a Windows directory junction."""
-    return stat.S_ISLNK(st.st_mode) or (
-        getattr(st, "st_reparse_tag", 0) == _JUNCTION_TAG
-    )
-
-
-def _working_tree_of(path: str) -> str | None:
-    """The folder whose own ``.git`` the entry `path` is (`_tree_of`),
-    where that folder is a working tree: it holds something besides its
-    ``.git``, or cannot be listed. A folder holding its ``.git`` alone (a
-    git directory moved out of a synced folder, with a link left in its
-    place) is no working tree, so a ``.git`` that reaches it is judged as
-    one reaching a git directory kept apart (ENG-206)."""
-    owner = _tree_of(path)
-    if owner is None:
-        return None
-    try:
-        with os.scandir(owner) as entries:
-            if all(entry.name == ".git" for entry in entries):
-                return None
-    except OSError:
-        pass
-    return owner
-
-
-def _tree_of(git_dir: str) -> str | None:
-    """The folder whose own ``.git`` the entry `git_dir` (a git directory,
-    or a ``.git`` file) is, or None: compared as filesystem objects, so a
-    symlink to it or a spelling in another case on a case-insensitive
-    volume is the same ``.git``."""
-    try:
-        real = os.path.realpath(git_dir)
-        parent = os.path.dirname(real)
-        if os.path.samestat(os.stat(real), os.stat(os.path.join(parent, ".git"))):
-            return parent
-    except (OSError, ValueError):
-        pass
-    return None
-
-
-def _common_of(git_dir: str) -> tuple[str, bool]:
-    """(common directory, whether a ``commondir`` file named it): the one
-    GIT_COMMON_DIR names, else the one `git_dir`'s ``commondir`` file names
-    where `git_dir` is registered under it (`_registered`), else `git_dir`
-    itself. A ``commondir`` elsewhere is a forged worktree directory's
-    (ENG-158): followed, it keyed a folder on another repository's object
-    store."""
-    env = os.environ.get("GIT_COMMON_DIR")
-    if env:
-        return os.path.normpath(os.path.join(git_dir, env)), True
-    common = _commondir(git_dir)
-    if common is None or not _registered(git_dir, common):
-        return git_dir, False
-    return common, True
-
-
-def _commondir(git_dir: str) -> str | None:
-    """The common directory `git_dir`'s ``commondir`` file names, or None."""
-    try:
-        with open(os.path.join(git_dir, "commondir"), "rb") as fh:
-            rel = fh.read(_GITFILE_LIMIT).decode("utf-8", errors="replace").strip()
-    except OSError:
-        return None
-    if not rel:
-        return None
-    return os.path.normpath(os.path.join(git_dir, rel))
-
-
-def _not_registered(git_dir: str, common: str) -> str:
-    """Why a git directory whose ``commondir`` names `common` is not
-    followed: it is not one of that repository's worktrees."""
-    return (
-        f"{git_dir} names the common directory {common} but is not one of its worktrees"
-    )
-
-
-def _foreign_commondir(git_dir: str) -> str | None:
-    """The common directory `git_dir`'s ``commondir`` file names, where
-    that is a repository's (``objects`` and ``refs``) and `git_dir` is not
-    registered under it: git reads `git_dir` as a git directory of that
-    repository, membership as none (ENG-158, review M G5). None
-    otherwise."""
-    named = _commondir(git_dir)
-    if named is None or _registered(git_dir, named):
-        return None
-    if os.path.isdir(os.path.join(named, "objects")) and os.path.isdir(
-        os.path.join(named, "refs")
-    ):
-        return named
-    return None
-
-
-def _registered(git_dir: str, common: str) -> bool:
-    """Whether `git_dir` sits at ``<common>/worktrees/<name>``, the only
-    place git keeps a linked worktree's git directory (``git worktree
-    add``), compared as filesystem objects."""
-    try:
-        parent = os.path.dirname(os.path.realpath(git_dir))
-        return os.path.samefile(parent, os.path.join(common, "worktrees"))
-    except (OSError, ValueError):
-        return False
-
-
-def _is_git_directory(path: str) -> bool:
-    """git's ``is_git_directory``: HEAD, and ``objects`` and ``refs`` in
-    the common directory."""
-    if not os.path.isfile(os.path.join(path, "HEAD")):
-        return False
-    common, _ = _common_of(path)
-    return os.path.isdir(os.path.join(common, "objects")) and os.path.isdir(
-        os.path.join(common, "refs")
-    )
+# The rule a `.git` entry is followed by (`gitfile_refusal`, `judge`) and the
+# readers it rests on (`_common_of`, `_foreign_commondir`, `_is_git_directory`
+# and git's own stop test, `_git_reads`) are `gitfile_rule`'s, imported above.
 
 
 def _from_env(start: str) -> _Git | None:
@@ -1032,7 +300,10 @@ def _from_env(start: str) -> _Git | None:
 
 
 def _discover(
-    start: str, refused: list[tuple[str, str, str]] | None = None
+    start: str,
+    refused: list[tuple[str, str, str]] | None = None,
+    *,
+    read_head: bool = True,
 ) -> _Git | None:
     """The repository git would find from `start` (``setup.c``'s walk):
     at each directory a ``.git`` entry first, then the directory itself as
@@ -1044,7 +315,10 @@ def _discover(
     and a ``commondir`` that names a repository it is not registered under
     (the directory, that repository's common directory, why): git reads
     it as a git directory of that repository, membership passes over it
-    (review M G5)."""
+    (review M G5). With `read_head` False a ``HEAD`` is taken by its
+    presence where git's test reads it (`gitfile_rule._valid_headref`):
+    the caller reads the one where the walk stops and tests it, as
+    `location.signature` does."""
     if os.environ.get("GIT_DIR"):
         return _from_env(start)
     ceiling = _ceiling(start)
@@ -1061,10 +335,12 @@ def _discover(
         except (OSError, ValueError):
             st = None
         if st is not None:
-            found = _at_dotgit(d, dotgit, st, refused)
+            found = _at_dotgit(d, dotgit, st, refused, read_head=read_head)
             if found is not None:
                 return found
-        if os.path.isfile(os.path.join(d, "HEAD")) and _is_git_directory(d):
+        # Git's own test first, as at a `.git` entry (`judge`), so this walk
+        # stops where git's, and origin's, does (ENG-193).
+        if _git_reads(d, fetch=False, read=read_head) and _is_git_directory(d):
             common, linked = _common_of(d)
             values = _config_values(os.path.join(common, "config"), git_dir=d)
             if os.path.basename(d) == ".git" and not _truthy(
@@ -1096,51 +372,28 @@ def _at_dotgit(
     dotgit: str,
     st: os.stat_result,
     refused: list[tuple[str, str, str]] | None = None,
+    *,
+    read_head: bool = True,
 ) -> _Git | None:
     """The repository the ``.git`` entry `dotgit` in `directory` gives,
     `st` its ``lstat``, or None where it gives none or is not followed
-    (each refusal to `refused`, as `_discover` says)."""
-    linked_entry = _is_link(st)
-    if linked_entry:
-        try:
-            st = os.stat(dotgit)
-        except (OSError, ValueError):
-            return None
-        # A `.git` that is a symbolic link reaching another folder's own
-        # `.git` is that folder's, whatever it holds (ENG-206).
-        owner = _working_tree_of(dotgit)
-        if owner is not None and _same_folder(owner, directory) is not True:
-            if refused is not None:
-                refused.append(
-                    (
-                        dotgit,
-                        os.path.realpath(dotgit),
-                        f"{dotgit} links to the .git of {owner}",
-                    )
-                )
-            return None
-    if stat.S_ISDIR(st.st_mode):
-        if not os.path.isfile(os.path.join(dotgit, "HEAD")):
-            return None
-        if not linked_entry:
-            return _Git(dotgit, dotgit, dotgit, directory, PRIMARY)
-        # A link to a git directory is a pointer to it, read by the rule a
-        # `.git` file's is (ENG-206).
-        target = os.path.realpath(dotgit)
-    elif stat.S_ISREG(st.st_mode):
-        named = _gitfile_target(dotgit)
-        if named is None or not os.path.isfile(os.path.join(named, "HEAD")):
-            return None
-        target = named
-    else:
+    (each refusal to `refused`, as `_discover` says), as the rule
+    `gitfile_rule.judge` reads it, which `githead` and the origin family
+    read too (ENG-193). A provider's placeholder HEAD is not read (`fetch`
+    False; design 3.1, D19), nor any HEAD with `read_head` False
+    (`_discover`)."""
+    seen = judge(directory, dotgit, st, fetch=False, read=read_head)
+    if seen is None:
         return None
-    why = gitfile_refusal(directory, dotgit, target)
-    if why is not None:
+    if seen.why is not None:
         # Not followed (ENG-158): read as a `.git` file that names nothing,
         # so no other checkout's git directory keys this folder.
         if refused is not None:
-            refused.append((dotgit, target, why))
+            refused.append((dotgit, seen.git_dir, seen.why))
         return None
+    if seen.own:
+        return _Git(dotgit, dotgit, dotgit, directory, PRIMARY)
+    target = seen.git_dir
     common, linked = _common_of(target)
     # A ``.git`` file names a linked worktree's git directory (it has a
     # ``commondir``) or a git directory kept elsewhere (``--separate-git-

@@ -42,6 +42,8 @@ from .. import identity
 from ..control_tokens import find_control_tokens
 from ..credentials import find_credential_markers
 from ..events import HARNESS_SESSION_FIELD
+from ..origin import follow_unsettled
+from ..origin_model import Origin
 from ..store import error_code_name
 from ._shared import (
     Context,
@@ -239,6 +241,11 @@ async def episode_write(
         cwd or None,
         session=identity.current_harness_session(),
     )
+    if isinstance(origin, Origin) and follow_unsettled(origin):
+        # Captured through a `.git` file no record named this folder for
+        # (ENG-193): the resolution just made the record, which may name
+        # another folder, so the episode's origin is read against it.
+        origin = _h.capture_origin()
 
     # `swarm_id` (when set) is validated by the Episode model's
     # `_check_swarm_id` (charset + length) inside `store.write`; an

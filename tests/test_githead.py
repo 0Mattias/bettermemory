@@ -548,7 +548,6 @@ def test_discovery_environment_declines(
         "GIT_DIR": str(repo / ".git"),
         "GIT_WORK_TREE": str(repo),
         "GIT_COMMON_DIR": str(repo / ".git"),
-        "GIT_OBJECT_DIRECTORY": str(repo / ".git" / "objects"),
         "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1",
         "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
     }

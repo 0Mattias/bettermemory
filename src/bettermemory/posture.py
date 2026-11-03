@@ -831,7 +831,11 @@ def git_finding(
         # A non-zero exit is also git refusing a repository it will not read
         # (another account's, `safe.directory` unset): the files then hold
         # one, and whether it tracks the directory is not known (ENG-175).
-        held = githead.locate(directory) if top_run.returncode != 0 else None
+        # Read as git reads the `.git` entries, which follows a pointer
+        # membership refuses (`githead.locate`'s `as_git`, ENG-193).
+        held = (
+            githead.locate(directory, as_git=True) if top_run.returncode != 0 else None
+        )
         if held is None:
             return Finding(
                 finding_id, "ok", f"the {label} is not in a git working tree"

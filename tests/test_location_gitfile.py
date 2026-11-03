@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory import location, location_git
+from bettermemory import gitfile_rule, location
 from bettermemory.config import Config, StorageConfig
 from bettermemory.location import OUTSIDE, REPO, capture, resolve_caller
 from bettermemory.membership import GLOBAL, GLOBAL_OUTCOME
@@ -193,7 +193,7 @@ def test_a_pointer_at_a_git_directory_that_belongs_elsewhere_is_not_followed(
     cap = capture(str(planted), write_token=False)
 
     assert cap.state == OUTSIDE
-    why = location_git.gitfile_refusal(str(planted), str(planted / ".git"), str(target))
+    why = gitfile_rule.gitfile_refusal(str(planted), str(planted / ".git"), str(target))
     assert why is not None and str(target) in why
 
 

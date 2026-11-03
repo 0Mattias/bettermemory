@@ -25,13 +25,21 @@ import json
 import os
 import shutil
 import sys
-from collections.abc import Iterator
+import threading
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from bettermemory import gitdir_pin, location, location_audit, location_git
+from bettermemory import (
+    gitdir_pin,
+    gitfile_rule,
+    location,
+    location_audit,
+    location_git,
+)
 from bettermemory.config import Config, StorageConfig
 from bettermemory.location import OUTSIDE, REPO, capture, resolve_caller
 from bettermemory.membership import GLOBAL_OUTCOME
@@ -95,6 +103,51 @@ def _same(a: str | Path | None, b: str | Path) -> bool:
 def _finding(cwd: Path) -> dict[str, Any]:
     found: dict[str, Any] = location_audit.gitfile_posture(str(cwd))
     return found
+
+
+def _within_the_bound(
+    monkeypatch: pytest.MonkeyPatch,
+    hung: set[str],
+    call: Callable[[], Any],
+    armed: threading.Event | None = None,
+) -> Any:
+    """`call()` while every `os.stat` and `os.lstat` (which
+    `os.path.realpath` reads through) of a folder in `hung`, or of a path
+    below one (compared in this platform's case), blocks, once `armed` is
+    set when given, as a share that no longer answers does
+    (tests/test_membership_hung_view.py hangs one), until past the bound a
+    recorded path is read within, a few budgets and a margin: its value,
+    once it returned within that bound. The share answers once it returned.
+    It runs on the calling thread, which holds the store's connection."""
+    bound = gitfile_rule._RECORDED_BUDGET * 4 + 5
+    release = threading.Event()
+    names = {os.path.normcase(p) for p in hung}
+
+    def under(path: Any) -> bool:
+        if (armed is not None and not armed.is_set()) or not isinstance(
+            path, (str, os.PathLike)
+        ):
+            return False
+        here = os.path.normcase(os.fspath(path))
+        return any(here == n or here.startswith(n + os.sep) for n in names)
+
+    def hanging(real: Callable[..., os.stat_result]) -> Callable[..., os.stat_result]:
+        def call(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+            if under(path):
+                release.wait(bound + 5)
+            return real(path, *args, **kwargs)
+
+        return call
+
+    monkeypatch.setattr(os, "stat", hanging(os.stat))
+    monkeypatch.setattr(os, "lstat", hanging(os.lstat))
+    started = time.monotonic()
+    try:
+        value = call()
+    finally:
+        release.set()
+    assert time.monotonic() - started < bound, "a read waited on a path that hung"
+    return value
 
 
 def test_a_planted_git_file_naming_a_separate_git_dir_yields_no_membership(
@@ -187,10 +240,10 @@ def test_a_plant_is_refused_however_it_spells_the_git_directory(
     planted = _plant(folder, target)
 
     assert _see(planted).state == OUTSIDE
-    why = location_git.gitfile_refusal(
+    why = gitfile_rule.gitfile_refusal(
         str(planted),
         str(planted / ".git"),
-        location_git._gitfile_target(str(planted / ".git")) or "",
+        gitfile_rule._gitfile_target(str(planted / ".git")) or "",
     )
     assert why is not None and "working tree" in why
     assert os.path.realpath(tree) in why or str(tree) in why
@@ -277,6 +330,39 @@ def test_the_audit_names_whether_a_tree_is_recorded(tmp_path: Path) -> None:
     found = _finding(tree)
     assert found["status"] == "ok", found
     assert os.path.samefile(found["details"]["recorded"], tree)
+
+
+def test_the_audit_reads_the_recorded_tree_within_the_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The audit at a recorded tree reached by another spelling (a folder
+    above it renamed, and linked back in its place) reads the recorded
+    folder to tell that it is this one. Where the share holding it stops
+    answering between discovery's read and the audit's, the audit's read,
+    unbounded, held it for as long as the share hung. It is read within
+    the bound discovery reads it within, and the audit warns as
+    discovery's refusal of a recorded tree that did not answer warns."""
+    tree, sep = _separate(tmp_path)
+    _see(tree)
+    pin = gitdir_pin.recorded(str(sep))
+    assert pin is not None
+    moved = tree.parent.with_name("moved")
+    tree.parent.rename(moved)
+    _link(tree.parent, moved)
+    here = moved / tree.name
+    assert _finding(here)["status"] == "ok"
+    armed = threading.Event()
+    real_discover = location_git._discover
+
+    def discover(*args: Any, **kwargs: Any) -> Any:
+        found = real_discover(*args, **kwargs)
+        armed.set()
+        return found
+
+    monkeypatch.setattr(location_audit, "_discover", discover)
+    found = _within_the_bound(monkeypatch, {pin.tree}, lambda: _finding(here), armed)
+    assert found["status"] == "warn", found
+    assert "did not answer" in found["summary"]
 
 
 @pytest.mark.skipif(
@@ -375,7 +461,7 @@ def test_the_earliest_view_decides_between_two_trees_seen_before_the_records(
     planted = _plant(tmp_path / "downloads" / "archive", sep)
     with monkeypatch.context() as before:
         # 9.0.0rc17's rule: no record is read, none written.
-        before.setattr(location_git, "_recorded_refusal", lambda *a: None)
+        before.setattr(gitfile_rule, "_recorded_reading", lambda *a: (None, False))
         before.setattr(location, "record_working_tree", lambda *a: "kept")
         _forget_records()
         through = resolve_caller(store, config, str(planted))
@@ -617,8 +703,8 @@ def test_a_link_plant_the_store_saw_first_is_not_recorded_as_the_tree(
     planted = tmp_path / "downloads" / "archive"
     _link(planted / ".git", tree / ".git")
     with monkeypatch.context() as before:
-        before.setattr(location_git, "_recorded_refusal", lambda *a: None)
-        before.setattr(location_git, "_working_tree_of", lambda path: None)
+        before.setattr(gitfile_rule, "_recorded_reading", lambda *a: (None, False))
+        before.setattr(gitfile_rule, "_working_tree_of", lambda path: None)
         before.setattr(location, "record_working_tree", lambda *a: "kept")
         _forget_records()
         through = resolve_caller(store, config, str(planted))
@@ -631,6 +717,107 @@ def test_a_link_plant_the_store_saw_first_is_not_recorded_as_the_tree(
     pin = gitdir_pin.recorded(str(sep))
     assert pin is not None and _same(pin.tree, tree)
     assert _see(planted).state == OUTSIDE
+
+
+def test_an_earlier_view_that_does_not_answer_takes_the_record_from_a_plant(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout seen before the records, and a plant naming its git
+    directory seen first after the upgrade, while the share holding the
+    checkout's tree does not answer (a cold or dropped share). Read
+    unbounded, the store's earliest view held the plant's resolution until
+    the share answered; passed over within the bound, it left the plant's
+    first record standing, so the plant held the checkout and the tree
+    resolved as outside for good. The view fails closed: it takes the
+    record, the plant reads it as a recorded tree that did not answer and
+    is refused, and once the share answers the tree resolves as the
+    checkout and the plant stays refused."""
+    store, config = lab
+    tree, sep = _separate(tmp_path)
+    known = resolve_caller(store, config, str(tree))
+    planted = _plant(tmp_path / "downloads" / "archive", sep)
+    _forget_records()
+
+    hung = {str(tree), os.path.realpath(tree)}
+    there = _within_the_bound(
+        monkeypatch, hung, lambda: resolve_caller(store, config, str(planted))
+    )
+    assert there.resolution.checkout is None
+    assert there.resolution.outcome == GLOBAL_OUTCOME
+    pin = gitdir_pin.recorded(str(sep))
+    assert pin is not None and _same(pin.tree, tree)
+
+    location._clear_cache()
+    again = resolve_caller(store, config, str(tree))
+    assert again.resolution.checkout == known.resolution.checkout
+    assert resolve_caller(store, config, str(planted)).resolution.checkout is None
+    assert _see(planted).state == OUTSIDE
+
+
+def test_an_earlier_view_that_did_not_answer_gives_way_once_it_names_nothing(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cost of failing closed, and its end: a checkout seen before the
+    records and moved since (its old folder on a share that does not
+    answer) is refused at its new folder while the old share hangs, since
+    the old folder takes the record. Once the share answers with no
+    ``.git`` there naming the git directory, the record gives way and the
+    new folder resolves as the checkout and is recorded."""
+    store, config = lab
+    tree, sep = _separate(tmp_path)
+    known = resolve_caller(store, config, str(tree))
+    moved = tmp_path / "work" / "moved"
+    tree.rename(moved)
+    _forget_records()
+
+    hung = {str(tree), os.path.realpath(tree)}
+    there = _within_the_bound(
+        monkeypatch, hung, lambda: resolve_caller(store, config, str(moved))
+    )
+    assert there.resolution.checkout is None
+    pin = gitdir_pin.recorded(str(sep))
+    assert pin is not None and pin.tree == os.path.realpath(tree)
+
+    location._clear_cache()
+    again = resolve_caller(store, config, str(moved))
+    assert again.resolution.checkout == known.resolution.checkout
+    pin = gitdir_pin.recorded(str(sep))
+    assert pin is not None and _same(pin.tree, moved)
+
+
+def test_a_view_of_another_object_sharing_the_inode_number_is_not_read(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store's views are found by inode number, across a device number
+    a remount changed. An unrelated checkout on another device whose git
+    directory has the same inode number (filesystems with small or
+    sequential numbers: FUSE without ``use_ino``, some SMB servers), on a
+    share that does not answer, took a new checkout's first record, which
+    was then refused until that share answered. A remount keeps the birth
+    time, and the unrelated git directory's differs, so where both report
+    one its views are not read and the new checkout keeps its record."""
+    import dataclasses
+
+    store, config = lab
+    other, _ = _separate(tmp_path, "other")
+    seen = resolve_caller(store, config, str(other))
+    known = seen.model.checkout(str(seen.resolution.checkout)).object_key
+    tree, sep = _separate(tmp_path, "app")
+    cap = _see(tree)
+    assert cap.tree_recorded and cap.object_key is not None and known is not None
+    if known.birth is None or cap.object_key[2] is None:
+        pytest.skip("this filesystem reports no birth time")
+    collided = dataclasses.replace(
+        cap, object_key=("1" + known.device, known.inode, cap.object_key[2])
+    )
+
+    hung = {str(other), os.path.realpath(other)}
+    moved = _within_the_bound(
+        monkeypatch, hung, lambda: location._earlier_tree(seen.model, collided)
+    )
+    assert not moved
+    pin = gitdir_pin.recorded(str(sep))
+    assert pin is not None and _same(pin.tree, tree)
 
 
 def test_the_store_check_finds_views_whose_device_number_changed(
@@ -692,10 +879,10 @@ def test_a_windows_junction_reads_as_the_link_it_is() -> None:
     def fake(mode: int, tag: int = 0) -> Any:
         return SimpleNamespace(st_mode=mode, st_reparse_tag=tag)
 
-    assert location_git._is_link(fake(stat_mod.S_IFLNK | 0o777))
-    assert location_git._is_link(fake(stat_mod.S_IFDIR | 0o755, 0xA0000003))
-    assert not location_git._is_link(fake(stat_mod.S_IFDIR | 0o755))
-    assert not location_git._is_link(fake(stat_mod.S_IFREG | 0o644))
+    assert gitfile_rule._is_link(fake(stat_mod.S_IFLNK | 0o777))
+    assert gitfile_rule._is_link(fake(stat_mod.S_IFDIR | 0o755, 0xA0000003))
+    assert not gitfile_rule._is_link(fake(stat_mod.S_IFDIR | 0o755))
+    assert not gitfile_rule._is_link(fake(stat_mod.S_IFREG | 0o644))
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="directory junctions are Windows'")

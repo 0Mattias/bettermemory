@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory import location, location_git
+from bettermemory import gitconfig, gitfile_rule, location
 from bettermemory.location import remote_key
 
 from .test_membership_security import neutral_git
@@ -89,9 +89,9 @@ def test_a_config_over_the_bound_keeps_the_remotes_read_within_it(
             for i in range(30000)
         ),
     )
-    assert config.stat().st_size > location_git._CONFIG_LIMIT
+    assert config.stat().st_size > gitconfig._CONFIG_LIMIT
     assert "example.invalid/team/big" in _keys(repo)
-    assert not location_git._config_values(str(config)).complete
+    assert not gitconfig._config_values(str(config)).complete
 
 
 def test_includes_are_followed_as_git_follows_them(
@@ -136,7 +136,7 @@ def test_includes_are_followed_as_git_follows_them(
     assert not {"miss", "one-level", "case-miss", "unknown"} & set(git_remotes)
     expected = {remote_key(u) for urls in git_remotes.values() for u in urls}
     assert _keys(repo) == expected
-    values = location_git._config_values(str(gd / "config"), git_dir=str(gd))
+    values = gitconfig._config_values(str(gd / "config"), git_dir=str(gd))
     ours = {
         sub for (section, sub, key) in values if section == "remote" and key == "url"
     }
@@ -183,7 +183,7 @@ def test_a_gitfile_target_whose_config_cannot_be_read_whole_is_refused(
 
     def refusal(extra: str) -> str | None:
         config.write_text(original + extra, encoding="utf-8")
-        return location_git.gitfile_refusal(str(tree), str(tree / ".git"), str(sep))
+        return gitfile_rule.gitfile_refusal(str(tree), str(tree / ".git"), str(sep))
 
     (sep / "tree.inc").write_text(f"[core]\n\tworktree = {other.as_posix()}\n")
     (sep / "user.inc").write_text("[user]\n\tname = Someone\n")
@@ -204,10 +204,10 @@ def test_an_include_naming_a_fifo_does_not_wait(tmp_path: Path) -> None:
     fifo = tmp_path / "pipe"
     os.mkfifo(fifo)
     _append(repo / ".git" / "config", f"[include]\n\tpath = {fifo}\n")
-    answer: list[location_git.ConfigValues] = []
+    answer: list[gitconfig.ConfigValues] = []
     reader = threading.Thread(
         target=lambda: answer.append(
-            location_git._config_values(str(repo / ".git" / "config"))
+            gitconfig._config_values(str(repo / ".git" / "config"))
         ),
         daemon=True,
     )
@@ -217,19 +217,19 @@ def test_an_include_naming_a_fifo_does_not_wait(tmp_path: Path) -> None:
     assert not answer[0].complete
 
 
-#: `location_git._INCLUDE_FILES`, read so the module loads where it is not
+#: `gitconfig._INCLUDE_FILES`, read so the module loads where it is not
 #: defined (the fail-before run).
-_INCLUDE_FILES: int = getattr(location_git, "_INCLUDE_FILES", 64)
+_INCLUDE_FILES: int = getattr(gitconfig, "_INCLUDE_FILES", 64)
 
 
 def _counted(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """The config files `_config_values` reads, in order."""
     read: list[str] = []
-    real = location_git._config_bytes
+    real = gitconfig._config_bytes
 
     def counted(
         path: str,
-        out: location_git.ConfigValues,
+        out: gitconfig.ConfigValues,
         identity: list[tuple[int, int]] | None = None,
     ) -> bytes | None:
         read.append(path)
@@ -237,7 +237,7 @@ def _counted(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             return real(path, out)
         return real(path, out, identity)
 
-    monkeypatch.setattr(location_git, "_config_bytes", counted)
+    monkeypatch.setattr(gitconfig, "_config_bytes", counted)
     return read
 
 
@@ -256,11 +256,11 @@ def test_a_config_including_itself_stops_at_the_cycle(
         encoding="utf-8",
     )
     read = _counted(monkeypatch)
-    answer: list[tuple[location_git.ConfigValues, float]] = []
+    answer: list[tuple[gitconfig.ConfigValues, float]] = []
 
     def run() -> None:
         start = time.monotonic()
-        values = location_git._config_values(str(config))
+        values = gitconfig._config_values(str(config))
         answer.append((values, time.monotonic() - start))
 
     reader = threading.Thread(target=run, daemon=True)
@@ -289,7 +289,7 @@ def test_includes_fanning_out_stop_at_the_file_bound(
         )
     read = _counted(monkeypatch)
 
-    values = location_git._config_values(str(tmp_path / "f0"))
+    values = gitconfig._config_values(str(tmp_path / "f0"))
 
     assert len(read) == _INCLUDE_FILES
     assert not values.complete

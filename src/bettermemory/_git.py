@@ -10,9 +10,11 @@ logged nothing, not even a hang against its 20-second bound. Both now
 call here, with all four properties:
 
 * the environment is the caller's with ``GIT_OPTIONAL_LOCKS=0`` and
-  ``GIT_DIR``, ``GIT_WORK_TREE``, ``GIT_COMMON_DIR`` and
-  ``GIT_INDEX_FILE`` removed, so git reads the repository the call names
-  (its `cwd`, or `git_dir`), never one the environment points at;
+  ``GIT_DIR``, ``GIT_WORK_TREE``, ``GIT_COMMON_DIR``,
+  ``GIT_OBJECT_DIRECTORY`` and ``GIT_INDEX_FILE`` removed, so git reads
+  the repository the call names (its `cwd`, or `git_dir`), never one the
+  environment points at, and its walk tests each folder by that folder's
+  own ``objects`` as membership's does (ENG-193);
 * ``core.fsmonitor``, ``core.hooksPath`` and ``log.showSignature`` are
   pinned off, so no daemon starts, no hook of the repository's runs and
   no ``gpg.program`` checks a signature on a read (the one diff reader,
@@ -42,8 +44,20 @@ from typing import Literal, Sequence, overload
 log = logging.getLogger("bettermemory._git")
 
 #: Environment variables that would point git at another repository than
-#: the call names; removed from every call's environment.
-SCRUBBED_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE")
+#: the call names; removed from every call's environment. Under
+#: ``GIT_OBJECT_DIRECTORY`` git reads objects from the folder it names, and
+#: its walk tests that folder in place of each candidate's ``objects``
+#: (``is_git_directory`` in setup.c), so it stopped at a ``.git`` holding a
+#: HEAD and refs alone, which membership, reading each repository by its
+#: own files, and the origin's walk with it (`gitfile_rule._git_reads`)
+#: pass over (ENG-193).
+SCRUBBED_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_INDEX_FILE",
+)
 #: Configuration pinned on every call: no fsmonitor daemon, no hooks, no
 #: signature check (``log.showSignature`` runs ``gpg.program`` for every
 #: signed commit a log lists and writes its output among the log's lines).

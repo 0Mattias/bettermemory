@@ -287,6 +287,20 @@ class ObjectKey:
             return SAME if self.birth == other.birth else DIFFERENT
         return UNPROVEN
 
+    def on_any_device(self, inode: str, birth: str | None) -> bool:
+        """Whether this key may be the object whose inode is `inode` and
+        birth time `birth`, on whatever device it sits now: the same inode,
+        and the same birth time where both carry one, the inode alone
+        otherwise. A remount can renumber the device and leaves the inode
+        and the birth time as they were, so the store's views of a git
+        directory kept apart are found across one (`location._earlier_tree`,
+        ENG-206); the birth time keeps an unrelated object on another
+        device that shares the inode number out of them (ENG-193), where
+        the filesystems report one (APFS, NTFS, ``statx``)."""
+        if self.inode != inode:
+            return False
+        return self.birth is None or birth is None or self.birth == birth
+
 
 class InitStamp(NamedTuple):
     """A file ``git init`` writes and no git command rewrites

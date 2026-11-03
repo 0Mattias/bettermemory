@@ -14,9 +14,10 @@ and the client captures its location in its own namespace, writes the
 checkout token there, and answers the daemon's questions about its
 repository from its own files (`_membership_rounds`, design 8.7).
 `location` and the modules it imports (`checkout_token`, `project_file`,
-`gitobjects`, `githead`) are standard library only, and they and
-`machine` are imported only in that exchange: a hook whose reply asks
-nothing loads none of them.
+`gitobjects`, `githead`, `gitfile_rule`, `gitconfig`, `gitdir_pin`,
+`_fsutil`) are standard library only, and they and `machine` are
+imported only in that exchange: a hook whose reply asks nothing loads
+none of them.
 
 Before it starts a daemon, a hook refuses the store every opener refuses
 before it opens one: a store inside a backup bundle (`backup.bundle_

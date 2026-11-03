@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from . import _git as _git_runner
-from . import _caches, githead, identity, origin_history
+from . import _caches, githead, gitfile_rule, identity, origin_history
 
 # The repository files read in-process live in `origin_gitfiles`, which
 # imports nothing from here. The plain imports are `__all__`'s names and
@@ -123,7 +123,10 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     directory in (another account's checkout with ``safe.directory``
     unset), `worktree_root` is read from the files, `repo` and `branch`
     stay null, no further probe runs, and the origin is indeterminate
-    (`Origin.git_indeterminate`).
+    (`Origin.git_indeterminate`). Where the ``.git`` entry git's walk
+    reaches is one membership refuses (ENG-158, ENG-206), the origin is
+    that of a folder outside any repository, determinate and never kept,
+    and no git runs (`_git_result`, ENG-193).
 
     `worktree_root` is captured whenever we're inside any git checkout —
     it is the FIRST probe (`rev-parse --show-toplevel` fails exactly when
@@ -746,8 +749,67 @@ def _git_result(
     and hooks pinned off; UTF-8 with ``errors="replace"``; the could-not-
     run failures logged at WARNING there, the non-zero exits that `_git`
     folds at DEBUG.
+
+    Git follows any ``.git`` file or link, so in a folder whose ``.git``
+    entry names another checkout's git directory (a file planted in an
+    extracted archive, a link to another tree's ``.git``, a pointer at a
+    git directory kept apart that is recorded for another folder) every
+    question here was answered by that checkout: its toplevel, remote,
+    branch, HEAD and history became the origin of a record written there,
+    which verify anchoring reads (ENG-193). Where git's walk from `cwd`
+    reaches a repository membership does not follow
+    (`gitfile_rule.discovery_refusal`, the rule membership's discovery and
+    `githead` read), git is not run: the answer is the one git gives for a
+    ``.git`` entry that names no repository, exit 128 and ``fatal: not a
+    git repository``, and nothing is counted as unanswered. Every git
+    process the origin family runs comes through here, so a refused entry
+    gives no origin repository, toplevel, branch or HEAD along any path,
+    and the folder's origin is that of a folder outside any repository;
+    its signature equals no other (`githead.signature`), so `capture`
+    keeps none of it. A git directory kept apart that no record names the
+    folder for yet is followed, as membership's rule follows it, and
+    nothing here records it: membership's capture of the same folder
+    records the first tree it follows (in every hook, and in a write
+    before it keeps its origin, `follow_unsettled`), and until then no
+    capture of the folder is kept, so the next one reads the record.
+    Where the state directory refuses the record (the audit warns of it,
+    `location_audit`), the follow stays unrecorded and every capture there
+    asks git: four processes, 37 ms (median of 40) against 0.6 ms for a
+    kept capture, on the author's machine. That cost is left unbounded: a
+    capture kept across it would have to see the records' folder in its
+    signature, outside the repository's files and under the filesystem's
+    clock tick, and one kept past a record that refuses the folder is the
+    origin `follow_unsettled` exists to keep off a record.
     """
+    why = gitfile_rule.discovery_refusal(os.fspath(cwd))
+    if why is not None:
+        log.debug("git is not run in %s: %s", cwd, why)
+        return subprocess.CompletedProcess(
+            ["git", *args],
+            128,
+            stdout="",
+            stderr=f"fatal: not a git repository: {why}\n",
+        )
     return _git_runner.run_git(args, cwd=cwd, timeout=timeout)
+
+
+def follow_unsettled(found: Origin) -> bool:
+    """Whether the repository `found` places its folder in rests on a
+    ``.git`` entry membership's next capture may judge otherwise (ENG-193):
+    a git directory kept apart that no record names the folder for yet
+    (`gitfile_rule.Entry.provisional`), whose record that capture makes
+    and may make for another folder (`location._earlier_tree`), or one
+    membership refuses now, a record made since `found` was captured
+    naming another folder. A write that finds its origin so resolves its
+    caller first, whose capture makes the record, and captures the origin
+    again (`handlers.write._write_payload`): no such capture was kept
+    (`githead.signature`), so the second reads the record, and a record
+    never carries a follow membership refuses. False where `found` places
+    the folder in no repository."""
+    if found.worktree_root is None or not found.cwd:
+        return False
+    reading = gitfile_rule.discovery_reading(found.cwd)
+    return reading is not None and (reading.why is not None or reading.provisional)
 
 
 def _git(
@@ -1012,7 +1074,9 @@ def toplevel_and_head_from_files(cwd: Path | None) -> tuple[Path, str] | None:
     (`_config_variable_names`), a line naming ``bare`` with anything but a
     plain false, and a file git refuses, that holds a NUL byte or that
     cannot be read decline (`_config_moves_worktree`), and so does
-    everything `githead` declines.
+    everything `githead` declines, a ``.git`` entry membership refuses
+    among them; the process `repo_toplevel_and_head` runs then answers no
+    repository for such an entry without running (`_git_result`).
 
     The root is spelled the way git prints it (`_spelled_as_git`), which
     is the spelling the pathspec resolution needs: an absolute anchor is
@@ -1870,6 +1934,7 @@ __all__ = [
     "commits_since_anchor",
     "directories_held",
     "failed_git_calls",
+    "follow_unsettled",
     "gitattributes_signature",
     "head_sha",
     "is_full_commit_sha",

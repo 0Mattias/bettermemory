@@ -18,6 +18,8 @@ import pytest
 
 from bettermemory import (
     _daemon_client,
+    gitconfig,
+    gitfile_rule,
     githead,
     location,
     location_git,
@@ -34,10 +36,11 @@ BOUNDS = [
     (location_git, "BLOB_LOOK"),
     (location_git, "EXCHANGE_ROUNDS"),
     (location_git, "_GIT_TIMEOUT_SECONDS"),
-    (location_git, "_CONFIG_LIMIT"),
-    (location_git, "_GITFILE_LIMIT"),
-    (location_git, "_INCLUDE_DEPTH"),
-    (location_git, "_INCLUDE_FILES"),
+    (gitconfig, "_CONFIG_LIMIT"),
+    (gitfile_rule, "_GITFILE_LIMIT"),
+    (gitfile_rule, "_RECORDED_BUDGET"),
+    (gitconfig, "_INCLUDE_DEPTH"),
+    (gitconfig, "_INCLUDE_FILES"),
     (location_reads, "READ_HANDOFF"),
     (location_reads, "READ_LANES"),
     (location_reads, "READ_SLOTS"),
@@ -109,7 +112,8 @@ def test_only_a_measurement_or_a_named_source_is_evidence(
 def test_the_relations_the_evidence_states_hold() -> None:
     """The client walks what the model walks; the per-location bounds
     scale from the capture cache's; a .git file is bounded where git
-    bounds it, in both readers; an export's oldest half is among the
+    bounds it, in both readers; a recorded tree is read within the budget
+    every recorded path is read within; an export's oldest half is among the
     witnesses every store keeps; a view is refreshed well inside the
     retirement it serves; a batch of reads hands a slow one off well
     inside its budget, its lanes hand off more reads within a budget than
@@ -117,8 +121,9 @@ def test_the_relations_the_evidence_states_hold() -> None:
     prompt hook's body holds 960 of them (review M G3)."""
     assert location_git.WALK_LIMIT == membership_records.WALK_LIMIT
     assert location.STANDS_CAP == location_git.CACHE_CAP * 4
-    assert location_git._GITFILE_LIMIT == githead._GITFILE_LIMIT == 1 << 20
-    assert location_git._INCLUDE_DEPTH == 10
+    assert gitfile_rule._GITFILE_LIMIT == githead._GITFILE_LIMIT == 1 << 20
+    assert gitfile_rule._RECORDED_BUDGET == location_git.PROBE_BUDGET
+    assert gitconfig._INCLUDE_DEPTH == 10
     assert membership_records.EXPORT_WITNESSES // 2 <= membership_records.KEEP_OLDEST
     assert membership_records.RETIRE_AFTER == 180 * membership_records.VIEW_REFRESH
     assert 0 < membership_records.CONTENT_MATCH < 1

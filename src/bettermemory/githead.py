@@ -16,7 +16,8 @@ Discovery (`find_gitdir`, `gitdir_at`) follows ``setup_git_directory_gently``
 in git's ``setup.c``. Walking up from the resolved start directory, it
 takes the first ``.git`` directory that passes ``is_git_directory`` (a
 ``HEAD`` that ``validate_headref`` accepts, ``objects`` and ``refs``
-directories in the common directory) or ``.git`` file of the form
+directories in the common directory; `gitfile_rule._git_directory`, which
+membership's rule stops its walk by too) or ``.git`` file of the form
 ``gitdir: <path>``, and it stops where git stops: below a
 ``GIT_CEILING_DIRECTORIES`` entry, which git honours only as a strict
 ancestor of the directory it probes, and at a filesystem boundary. It
@@ -38,6 +39,27 @@ answers on every platform and for a repository another user owns, since
 git's ownership refusal guards against running what a foreign
 repository's configuration names, which reading files never does
 (`gitobjects`, design 3.1, E20 f).
+
+Every reader here follows a ``.git`` entry only where membership does
+(`gitfile_rule.reading_at`, ENG-193). Git follows any ``.git`` file or
+link, so a folder holding one that names another checkout's git
+directory (a planted file in an extracted archive, a link to another
+tree's ``.git``, a pointer at a git directory kept apart that is
+recorded for another folder) reads to git as that checkout. Membership
+refuses such an entry (ENG-158, ENG-206), and the origin family, which
+reads its repository through this module, carried that checkout's
+toplevel and HEAD as a record's origin, which verify anchoring reads.
+At an entry membership refuses every reader here declines as it
+declines wherever git's answer is not one to give, and `origin` runs no
+git process there (`gitfile_rule.discovery_refusal`), so the folder's
+origin is no repository's. A follow of a git directory kept apart that
+no record names the folder for yet is followed as membership follows it
+(its capture records the first tree it follows; this module writes no
+record), except by `signature`, which reads it as undetermined: the
+record sits outside every file a signature stamps. A caller asking
+what git itself does in a folder, whatever membership follows (whether
+a ``git add`` there writes into a repository's history), passes
+``as_git`` to `locate`.
 
 Resolution (`head_sha`, `head_ref`) follows ``refs_resolve_ref_unsafe``
 over the files backend. A symbolic ``ref: <name>`` is read from the loose
@@ -62,13 +84,22 @@ too, by reading the object the ref names through
 
 from __future__ import annotations
 
-import errno
 import os
 import re
 import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from . import gitfile_rule
+from .gitfile_rule import (
+    _REF_LIMIT,
+    _SPACE,
+    _git_directory,
+    _read,
+    _real,
+    _Unsettled,
+)
 
 __all__ = [
     "GitDir",
@@ -88,13 +119,16 @@ __all__ = [
 
 # Environment variables under which git's discovery or its check of a
 # candidate differs from the walk below: an explicit git directory, work
-# tree, common directory or object directory, discovery across
-# filesystems, and git's switch that treats every path as foreign-owned.
+# tree or common directory, discovery across filesystems, and git's switch
+# that treats every path as foreign-owned. ``GIT_OBJECT_DIRECTORY`` is not
+# one: no git process the package runs is given it (`_git.SCRUBBED_ENV`,
+# ENG-193), so git's check reads each candidate's own ``objects`` as the
+# walk below does, and the objects read here (`gitobjects`) are the
+# repository's own, which that git reads too.
 _DISCOVERY_ENV = (
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
     "GIT_TEST_ASSUME_DIFFERENT_OWNER",
 )
@@ -102,17 +136,9 @@ _DISCOVERY_ENV = (
 # A module constant, so a test can take the non-POSIX branch anywhere.
 _POSIX = os.name == "posix"
 
-# git's isspace (sane_ctype in ctype.c): space, tab, LF and CR. Python's
-# default strip set adds VT and FF, which git keeps.
-_SPACE = b" \t\n\r"
-
 # A full lowercase hash, the shape `origin.is_full_commit_sha` accepts: 40
 # hex characters in a SHA-1 repository, 64 in a SHA-256 one.
 _FULL_HASH = re.compile(rb"[0-9a-f]{40}(?:[0-9a-f]{24})?")
-
-# validate_headref accepts a HEAD whose first 40 characters are hex digits
-# of either case (get_oid_hex_any), whatever follows them.
-_HEX_PREFIX = re.compile(rb"[0-9a-fA-F]{40}")
 
 # SYMREF_MAXDEPTH in git's refs.h: at most five ref reads, HEAD's included.
 _MAX_READS = 5
@@ -124,13 +150,11 @@ _PER_WORKTREE = (b"refs/bisect/", b"refs/rewritten/", b"refs/worktree/")
 # characters, DEL, space, and ~ ^ : ? * [ \ .
 _BAD_REF_BYTES = frozenset(range(0x20)) | frozenset(b"\x7f ~^:?*[\\")
 
-# git refuses a .git file over 1 MiB (read_gitfile_gently). A ref file
-# holds a hash or one ref name. packed-refs past its bound is read faster
-# by git than here.
+# git refuses a .git file over 1 MiB (read_gitfile_gently). packed-refs
+# past its bound is read faster by git than here. A ref file's bound is
+# `gitfile_rule`'s, whose reader (`_read`) this module shares.
 _GITFILE_LIMIT = 1 << 20
-_REF_LIMIT = 1 << 16
 _PACKED_LIMIT = 1 << 26
-_READ_CHUNK = 1 << 16
 
 #: ``(gitdir, head, config, head_file, refs, packed_refs, GIT_DIR,
 #: GIT_WORK_TREE, GIT_CEILING_DIRECTORIES)``; see `signature`.
@@ -169,58 +193,9 @@ class _Undetermined:
         return "<undetermined>"
 
 
-class _Unsettled(Exception):
-    """The files do not settle what git would answer."""
-
-
 # ---------------------------------------------------------------------------
 # Reading
 # ---------------------------------------------------------------------------
-
-
-def _read(path: str | bytes, limit: int, *, follow: bool = True) -> bytes:
-    """Up to ``limit + 1`` leading bytes of the regular file `path`, so a
-    caller can tell a file longer than `limit` apart. With `follow` False a
-    symbolic link fails with ELOOP instead of being read through. A
-    directory raises IsADirectoryError and any other kind of file an
-    OSError; the open does not block, so a FIFO fails instead of waiting
-    for a writer."""
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-    )
-    if not follow:
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
-    try:
-        mode = os.fstat(fd).st_mode
-        if stat.S_ISDIR(mode):
-            raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR))
-        if not stat.S_ISREG(mode):
-            raise OSError(errno.EINVAL, "not a regular file")
-        chunks: list[bytes] = []
-        size = 0
-        while size <= limit:
-            chunk = os.read(fd, min(_READ_CHUNK, limit + 1 - size))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            size += len(chunk)
-    finally:
-        os.close(fd)
-    return b"".join(chunks)
-
-
-def _real(path: str) -> str:
-    """`path` with every symbolic link resolved. Where a component is
-    missing git's ``strbuf_realpath`` dies or drops the path; here that
-    declines."""
-    try:
-        return os.path.realpath(path, strict=True)
-    except OSError as exc:
-        raise _Unsettled from exc
 
 
 def stamp(path: str | bytes | os.PathLike[str], *, follow: bool = True) -> Stamp | None:
@@ -256,60 +231,6 @@ def stamp(path: str | bytes | os.PathLike[str], *, follow: bool = True) -> Stamp
 def _check_environment() -> None:
     if not _POSIX or any(name in os.environ for name in _DISCOVERY_ENV):
         raise _Unsettled
-
-
-def _valid_headref(path: str) -> bool:
-    """git's ``validate_headref``: HEAD is a symbolic link into ``refs/``,
-    a ``ref:`` line naming something under ``refs/``, or begins with a
-    hash. Git reads the first 255 bytes. A HEAD that is neither a regular
-    file, a directory nor a symbolic link declines: git's open of a FIFO
-    waits for a writer, and its read of a device reads the device."""
-    try:
-        mode = os.lstat(path).st_mode
-        if stat.S_ISLNK(mode):
-            return os.readlink(os.fsencode(path)).startswith(b"refs/")
-        if stat.S_ISDIR(mode):
-            return False
-        if not stat.S_ISREG(mode):
-            raise _Unsettled
-        content = _read(path, 255)[:255]
-    except OSError:
-        return False
-    if content.startswith(b"ref:") and content[4:].lstrip(_SPACE).startswith(b"refs/"):
-        return True
-    return _HEX_PREFIX.match(content) is not None
-
-
-def _common_dir(gitdir: str) -> str:
-    """git's ``get_common_dir_noenv``: the directory a ``commondir`` file
-    names, relative to `gitdir` unless absolute, or `gitdir` itself when
-    there is no such file. Git dies on an empty or unreadable one."""
-    try:
-        content = _read(os.path.join(gitdir, "commondir"), _REF_LIMIT)
-    except (FileNotFoundError, NotADirectoryError):
-        return gitdir
-    except OSError as exc:
-        raise _Unsettled from exc
-    target = content.rstrip(b"\r\n")
-    if not content or len(content) > _REF_LIMIT or b"\0" in target:
-        raise _Unsettled
-    name = os.fsdecode(target)
-    if not os.path.isabs(name):
-        name = os.path.join(gitdir, name)
-    return _real(name)
-
-
-def _git_directory(candidate: str) -> str | None:
-    """git's ``is_git_directory``: the common directory when `candidate`
-    is a git directory, None when it is not."""
-    if not _valid_headref(os.path.join(candidate, "HEAD")):
-        return None
-    common = _common_dir(candidate)
-    if os.access(os.path.join(common, "objects"), os.X_OK) and os.access(
-        os.path.join(common, "refs"), os.X_OK
-    ):
-        return common
-    return None
 
 
 def _read_gitfile(entry: str, directory: str) -> tuple[str, str]:
@@ -354,10 +275,29 @@ def _check_owner(*paths: str) -> None:
             raise _Unsettled
 
 
-def _probe(directory: str, *, owner: bool = True) -> GitDir | None:
+def _probe(
+    directory: str,
+    *,
+    owner: bool = True,
+    as_git: bool = False,
+    stable: bool = False,
+) -> GitDir | None:
     """The repository whose ``.git`` entry sits in `directory`; None when
     there is no entry and `directory` is not itself a git directory. With
-    `owner` False git's ownership check is not made (`locate`)."""
+    `owner` False git's ownership check is not made (`locate`).
+
+    Membership's rule is read first (`gitfile_rule.reading_at`), unless
+    `as_git`: where git would read a repository there that membership does
+    not follow, this declines, and with `stable` (`signature`) so does a
+    follow of a git directory kept apart that no record names `directory`
+    for (`gitfile_rule.Entry.provisional`). Where the rule follows the
+    entry, or reads none, the reading below is git's."""
+    if not as_git:
+        reading = gitfile_rule.reading_at(directory)
+        if reading is not None and (
+            reading.why is not None or (stable and reading.provisional)
+        ):
+            raise _Unsettled
     entry = os.path.join(directory, ".git")
     try:
         mode = os.stat(entry).st_mode
@@ -410,9 +350,10 @@ def _ceiling_offset(path: str) -> int:
     return best
 
 
-def _discover(start: Path) -> GitDir | None:
+def _discover(start: Path, *, stable: bool = False) -> GitDir | None:
     """The walk of `find_gitdir`. Raises `_Unsettled` or OSError where it
-    declines, returns None where git finds no repository."""
+    declines, returns None where git finds no repository. `stable` is
+    `_probe`'s."""
     _check_environment()
     here = os.path.realpath(start)
     status = os.stat(here)
@@ -421,7 +362,7 @@ def _discover(start: Path) -> GitDir | None:
         raise _Unsettled
     ceiling = _ceiling_offset(here)
     while True:
-        found = _probe(here)
+        found = _probe(here, stable=stable)
         if found is not None:
             return found
         parent = os.path.dirname(here)
@@ -438,7 +379,9 @@ def find_gitdir(start: Path) -> GitDir | None:
     """The repository git discovers from `start`, found by walking up from
     ``start.resolve()`` the way git does. None outside any repository and
     wherever the files do not settle the answer (the module docstring
-    lists those cases); a caller that needs the two apart asks git."""
+    lists those cases), a ``.git`` entry membership refuses among them; a
+    caller that needs the two apart asks git, as `origin` does only where
+    no such entry stands in the way (`gitfile_rule.discovery_refusal`)."""
     try:
         return _discover(start)
     except (_Unsettled, OSError, ValueError):
@@ -449,8 +392,8 @@ def gitdir_at(root: Path) -> GitDir | None:
     """`find_gitdir` without the walk, for a caller that already knows
     the working tree's root: the origin capture's ``worktree_root``, which
     is ``git rev-parse --show-toplevel`` resolved. None when `root` holds
-    no ``.git`` entry git would accept, and wherever `find_gitdir`
-    declines."""
+    no ``.git`` entry git would accept or one membership refuses, and
+    wherever `find_gitdir` declines."""
     try:
         _check_environment()
         directory = os.path.realpath(root)
@@ -500,12 +443,18 @@ def _ceilings(here: str) -> list[str]:
     return out
 
 
-def locate(start: Path, *, walk: bool = True) -> GitDir | None:
+def locate(start: Path, *, walk: bool = True, as_git: bool = False) -> GitDir | None:
     """The files of the repository whose working tree holds `start`: the
     ``.git`` entry in `start` or, with `walk`, in the nearest directory
     above it that has one, read as `find_gitdir` reads it, for a caller
     that reads the repository's objects and refs and runs nothing it
     configures (design 3.6; the module docstring says why).
+
+    A ``.git`` entry membership refuses reads as none (ENG-193), unless
+    `as_git`: then every entry is read as git reads it, for a caller that
+    asks what git itself does in `start` (the security audit's and the key
+    export's question, whether a ``git add`` there writes into a
+    repository's history, which a planted pointer answers yes).
 
     Unlike `find_gitdir` it answers off POSIX and for a repository another
     user owns, and the environment variables that move git's discovery
@@ -520,6 +469,11 @@ def locate(start: Path, *, walk: bool = True) -> GitDir | None:
     came in. None outside any repository, at a bare repository or the
     inside of a git directory, at a ``.git`` entry git would skip or die
     on, and wherever a file cannot be read."""
+    return _locate(start, walk=walk, as_git=as_git, stable=False)
+
+
+def _locate(start: Path, *, walk: bool, as_git: bool, stable: bool) -> GitDir | None:
+    """`locate`, `stable` as `_probe` reads it (`_located`)."""
     try:
         here = _real(os.fspath(start))
         status = os.stat(here)
@@ -527,7 +481,7 @@ def locate(start: Path, *, walk: bool = True) -> GitDir | None:
             return None
         ceilings = _ceilings(here)
         while True:
-            found = _probe(here, owner=False)
+            found = _probe(here, owner=False, as_git=as_git, stable=stable)
             if found is not None or not walk:
                 return found
             parent = os.path.dirname(here)
@@ -572,10 +526,12 @@ def _located(start: Path) -> GitDir | None:
     git's discovery, and where `locate` finds none while a ``.git`` or
     ``HEAD`` entry sits in `start` or above it (`_entry_above`), since git
     may find a repository there that `locate` does not read: above a
-    ``.git`` it skips, or in a directory that is itself a git directory."""
+    ``.git`` it skips, or in a directory that is itself a git directory,
+    or through a ``.git`` entry membership refuses. A follow `signature`
+    does not keep (`_probe`'s `stable`) declines here too."""
     if discovery_moved():
         raise _Unsettled
-    found = locate(start)
+    found = _locate(start, walk=True, as_git=False, stable=True)
     if found is None and _entry_above(start):
         raise _Unsettled
     return found
@@ -840,9 +796,12 @@ def signature(start: Path, *, owner: bool = True) -> Signature:
     inode number the file had before.
 
     Where the files do not settle what git would find (every case
-    `find_gitdir` declines, a HEAD `head_sha` cannot parse, such as a
-    reftable repository's ``ref: refs/heads/.invalid``, and a ref file the
-    chain from HEAD cannot read), the first slot is a new marker that
+    `find_gitdir` declines, a ``.git`` entry membership refuses among them,
+    a follow of a git directory kept apart that no record names the folder
+    for, whose record membership's next capture may make for another
+    folder, a HEAD `head_sha` cannot parse, such as a reftable
+    repository's ``ref: refs/heads/.invalid``, and a ref file the chain
+    from HEAD cannot read), the first slot is a new marker that
     equals nothing else, so the signature matches no stored one and the
     caller asks git every time. A None there would make each such call
     equal to the last, however the repository moved. A cache therefore
@@ -878,7 +837,7 @@ def signature(start: Path, *, owner: bool = True) -> Signature:
         os.environ.get("GIT_CEILING_DIRECTORIES"),
     )
     try:
-        gd = _discover(start) if owner else _located(start)
+        gd = _discover(start, stable=True) if owner else _located(start)
         if gd is None:
             return (None, None, None, None, None, None, *env)
         head = head_bytes(gd)

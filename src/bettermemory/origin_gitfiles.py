@@ -281,7 +281,10 @@ def refused_worktree_root(cwd: Path) -> tuple[str | None, bool]:
     extension or a config file git does not accept. `locate` reads the
     ``.git`` entry without git's ownership check, since reading the
     repository's files runs nothing its configuration names. Where it
-    finds no entry the exit is the answer, ``(None, False)``. Where it
+    finds no entry the exit is the answer, ``(None, False)``, and so it is
+    at a ``.git`` entry membership refuses, which `locate` reads as none
+    and for which `origin._git_result` answers git's "not a repository"
+    without running git (ENG-193). Where it
     finds one, git did not answer, and the result is indeterminate: the
     root is the directory holding the entry, spelled as git prints a root
     (`_spelled_as_git`) and resolved as the probe resolves git's, unless

@@ -10,6 +10,8 @@ Git runs with no user or system configuration (`neutral_git`, shared with
 
 from __future__ import annotations
 
+import builtins
+import io
 import json
 import os
 import shutil
@@ -417,17 +419,20 @@ def test_fetch_reads_a_file_within_its_budget(tmp_path: Path) -> None:
 
 
 class _Counts:
-    """What one call did: processes spawned, and the `os.stat` and
-    `os.lstat` calls on paths at or below the directories it was measured
-    within (`files`, the distinct paths among them), apart from the calls
-    on any other path (`elsewhere`): the ancestors `os.path.realpath`
-    walks and the walk up from the cwd, whose number grows with the depth
-    of the temporary directory the test runs in."""
+    """What one call did: processes spawned, and the `os.stat`,
+    `os.lstat`, `os.access` and open calls (`os.open` and the built-in
+    `open`, `io.open`) on paths at or below the directories it was
+    measured within (`files`, the distinct paths among them), apart from
+    the calls on any other path (`elsewhere`): the ancestors
+    `os.path.realpath` walks and the walk up from the cwd, whose number
+    grows with the depth of the temporary directory the test runs in."""
 
     def __init__(self) -> None:
         self.spawns = 0
         self.stats = 0
         self.lstats = 0
+        self.opens = 0
+        self.accesses = 0
         self.elsewhere = 0
         self.files: set[str] = set()
 
@@ -437,11 +442,14 @@ def counted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Callable[[Callable[[], object], Sequence[Path]], _Counts]:
     """Run a call with every process spawn (`subprocess.Popen`, which
-    `subprocess.run` uses) counted, and every `os.stat` and `os.lstat`
-    counted against the directories given (as given and resolved), the
-    suite's own guard on captures (conftest) set aside so only the
-    product's calls count. A call on a descriptor counts as within."""
+    `subprocess.run` uses) counted, and every `os.stat`, `os.lstat`,
+    `os.access`, `os.open` and built-in `open` counted against the
+    directories given (as given and resolved), the suite's own guard on
+    captures (conftest) set aside so only the product's calls count. A
+    call on a descriptor counts as within. An open that fails (a
+    ``commondir`` that is not there) counts as one made."""
     real_stat, real_lstat, real_popen = os.stat, os.lstat, subprocess.Popen
+    real_access, real_os_open, real_open = os.access, os.open, builtins.open
 
     def measure(fn: Callable[[], object], within: Sequence[Path]) -> _Counts:
         counts = _Counts()
@@ -477,6 +485,26 @@ def counted(
                 counts.files.add(here)
             return real_lstat(path, *a, **k)
 
+        def tally(path: Any) -> bool:
+            here = inside(path)
+            if here is None:
+                counts.elsewhere += 1
+                return False
+            counts.files.add(here)
+            return True
+
+        def access(path: Any, *a: Any, **k: Any) -> bool:
+            counts.accesses += tally(path)
+            return real_access(path, *a, **k)
+
+        def os_open(path: Any, *a: Any, **k: Any) -> int:
+            counts.opens += tally(path)
+            return real_os_open(path, *a, **k)
+
+        def opener(file: Any, *a: Any, **k: Any) -> Any:
+            counts.opens += tally(file)
+            return real_open(file, *a, **k)
+
         class Popen(real_popen):  # type: ignore[valid-type,misc]
             def __init__(self, *a: Any, **k: Any) -> None:
                 counts.spawns += 1
@@ -488,6 +516,10 @@ def counted(
                 m.setattr(location, name, getattr(fn_, "__wrapped__", fn_))
             m.setattr(os, "stat", stat)
             m.setattr(os, "lstat", lstat)
+            m.setattr(os, "access", access)
+            m.setattr(os, "open", os_open)
+            m.setattr(builtins, "open", opener)
+            m.setattr(io, "open", opener)
             m.setattr(subprocess, "Popen", Popen)
             fn()
         return counts
@@ -523,17 +555,29 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
 ) -> None:
     """E16, design 8.9: a prompt at a known checkout, its capture cached
     against the file signature, spawns no git and stays within a bounded
-    number of stat calls on the repository, the store and the state
-    directory; after a commit (the signature changed, a fresh capture
-    through the object reader) it still spawns nothing. The calls on the
-    paths above them (the realpath walk and the walk up from the cwd)
-    are reported, not bounded: they grow with the depth of the temporary
+    number of stat, open and access calls on the repository, the store and
+    the state directory; after a commit (the signature changed, a fresh
+    capture through the object reader) it still spawns nothing. The calls
+    on the paths above them (the realpath walk and the walk up from the
+    cwd) and the history key the commit moves (the test's keys folder) are
+    reported, not bounded: the first grow with the depth of the temporary
     directory. Measured on macOS (APFS), the same at any depth of the
-    temporary directory: steady state 0 spawns, 11 os.stat and 1 os.lstat
-    calls on 9 paths; after a commit 0 spawns, 44 os.stat and 14 os.lstat
-    calls on 19 paths. Since ENG-206 discovery reads each ``.git`` entry
-    with ``lstat`` (a link is a pointer, judged as one), where it read
-    it with ``stat``: the totals (12 and 58) are unchanged."""
+    temporary directory, as (os.stat, os.lstat, opens, os.access) on so
+    many paths: steady state 0 spawns, (10, 2, 2, 2) on 12 paths; after a
+    commit 0 spawns, (41, 17, 30, 6) on 22. Before ENG-193 they were
+    (11, 1, 1, 0) on 9 and (44, 14, 26, 0) on 20, with each ``.git`` entry
+    read with ``lstat`` since ENG-206 (a link is a pointer, judged as one).
+    ENG-193's discovery stops where git's walk does, by git's own test of
+    a git directory (`gitfile_rule._git_directory`): ``HEAD`` taken with
+    ``lstat`` where it was stat-ed, the ``commondir`` git reads looked for
+    (an open that finds none), ``objects`` and ``refs`` checked with
+    ``os.access``. HEAD's content is read once a prompt, by the signature,
+    as before: the walk under the signature takes ``HEAD`` by its
+    presence, and the signature tests the bytes it reads by git's rule
+    (`location.signature`), which took a second read of HEAD off every
+    prompt, 16 of 68 microseconds a steady capture (46 before ENG-193;
+    medians of nine runs of 3,000 captures, on the author's machine). A
+    fresh capture's own walk reads HEAD as git's test does."""
     store, config, identity, repo, within = steady
 
     def prompt() -> object:
@@ -542,19 +586,22 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     def report(name: str, c: _Counts) -> None:
         print(
             f"{name}: spawns={c.spawns} stat={c.stats} lstat={c.lstats} "
-            f"files={len(c.files)} elsewhere={c.elsewhere}"
+            f"open={c.opens} access={c.accesses} files={len(c.files)} "
+            f"elsewhere={c.elsewhere}"
         )
 
     warm = counted(prompt, within)
     report("steady", warm)
     assert warm.spawns == 0
-    assert warm.stats <= 11 and warm.lstats <= 1 and len(warm.files) <= 9
+    assert warm.stats <= 10 and warm.lstats <= 2 and len(warm.files) <= 12
+    assert warm.opens <= 2 and warm.accesses <= 2
 
     git(repo, "commit", "-q", "--allow-empty", "-m", "work")
     moved = counted(prompt, within)
     report("after a commit", moved)
     assert moved.spawns == 0
-    assert moved.stats <= 44 and moved.lstats <= 14 and len(moved.files) <= 19
+    assert moved.stats <= 41 and moved.lstats <= 17 and len(moved.files) <= 22
+    assert moved.opens <= 30 and moved.accesses <= 6
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +671,8 @@ print(json.dumps(sorted(sys.modules)))
         "bettermemory._location_probe",
         "bettermemory._printable",
         "bettermemory.checkout_token",
+        "bettermemory.gitconfig",
+        "bettermemory.gitfile_rule",
         "bettermemory.githead",
         "bettermemory.gitdir_pin",
         "bettermemory.gitobjects",

@@ -4,10 +4,11 @@ directory and above (ENG-158, ENG-206): `gitfile_posture`, which
 
 It reads what discovery reads (`location_git._discover`, with each
 ``.git`` entry it passes over and why) and the working tree recorded for
-a git directory kept apart (`gitdir_pin`), and writes nothing. It lives
-apart from `location_git` to keep that module under the package's
-2,000-line bound (ENG-96), and imports it and `location`, never the
-reverse.
+a git directory kept apart (`gitdir_pin`), within the bound discovery
+reads it within (`gitfile_rule._recorded_reading`), and writes nothing.
+It lives apart from `location_git` to keep that module under the
+package's 2,000-line bound (ENG-96), and imports it and `location`,
+never the reverse.
 """
 
 from __future__ import annotations
@@ -16,8 +17,9 @@ import os
 from typing import Any
 
 from . import gitdir_pin
+from .gitfile_rule import _recorded_reading
 from .location import kept_apart
-from .location_git import _discover, _same_folder
+from .location_git import _discover
 
 #: The security audit's finding id for the ``.git`` files above the cwd.
 GITFILE_FINDING = "membership.gitfile"
@@ -36,7 +38,9 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
     kept apart (``--separate-git-dir``) with no working tree recorded for
     it yet (`gitdir_pin`, ENG-206), which the next capture here records,
     so until then the first folder seen naming it becomes its tree;
-    ``ok`` otherwise; ``skip`` with no working directory. Reads only."""
+    ``ok`` otherwise; ``skip`` with no working directory. A recorded tree
+    that stopped answering since discovery read it warns as discovery's
+    refusal would. Reads only."""
     try:
         start = os.path.realpath(cwd if cwd is not None else os.getcwd())
     except (OSError, ValueError):
@@ -50,6 +54,20 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
         found = _discover(start, refused)
     except (OSError, ValueError):
         found = None
+    record: tuple[gitdir_pin.Pin | None, bool] | None = None
+    if (
+        not refused
+        and found is not None
+        and found.dotgit is not None
+        and found.root is not None
+        and kept_apart(found)
+    ):
+        pin = gitdir_pin.recorded(found.git_dir)
+        why, here = _recorded_reading(pin, found.git_dir, found.root)
+        if why is None:
+            record = (pin, here)
+        else:
+            refused.append((found.dotgit, found.git_dir, why))
     if refused:
         first, _target, why = refused[0]
         return {
@@ -67,10 +85,10 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
         }
     dotgit = None if found is None else found.dotgit
     details: dict[str, Any] = {"cwd": start, "dotgit": dotgit}
-    if found is not None and found.root is not None and kept_apart(found):
-        pin = gitdir_pin.recorded(found.git_dir)
+    if found is not None and record is not None:
+        pin, here = record
         kept = {**details, "target": found.git_dir}
-        if pin is not None and _same_folder(pin.tree, found.root) is True:
+        if pin is not None and here:
             return {
                 "id": GITFILE_FINDING,
                 "status": "ok",

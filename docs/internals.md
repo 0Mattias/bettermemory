@@ -486,16 +486,32 @@ first capture that follows such a `.git` file records its folder under
 `gitdir-pins/` in the state directory, in a file named for the git
 directory's device and inode, and a `.git` in another folder naming
 that git directory is not followed while the recorded folder's still
-names it or cannot be read; a recorded tree moved, removed or pointed
-at another git directory gives way to the next one followed. Each
+names it, cannot be read or does not answer within half a second (read
+on a worker thread, as every recorded path is, ENG-156); a recorded tree
+moved, removed or pointed at another git directory gives way to the next
+one followed. Each
 pointer back is compared with the folder, not its `.git` file, and a
 `.git` that is a symbolic link to a directory is judged as a pointer to
 it, so a link to the right `.git` from another folder is refused. A first record is checked against the
 store (`location._earlier_tree`): where the checkout's earliest view on
 this machine is another folder whose `.git` file still names the git
-directory, that folder is recorded and the cwd is read again. A git
-directory that is the `.git` of the folder above it (compared as a
-filesystem object, so a symlink or another case is the same), a
+directory, that folder is recorded and the cwd is read again. The views
+are read side by side within the same bound
+(`gitfile_rule.earliest_naming`), and one that does not answer takes
+the record, failing closed as a recorded tree that does not answer
+does: the cwd is refused while it does not answer or answers with an
+error, and once its share answers readably, or is unmounted, the record
+stands while its `.git` still names the git directory and gives way
+otherwise. So a plant seen first while the checkout's share is slow
+takes nothing, and a checkout moved off a share that hangs is refused
+at its new folder until the old share answers readably or is
+unmounted. The views are matched by inode number and, where both carry
+one, birth time, which a remount keeps (`ObjectKey.on_any_device`); a
+filesystem whose birth time does not tell objects apart (one placeholder
+for every object) is matched by inode number alone. A
+view whose `.git` cannot be read at the first record is passed over. A git directory that is the
+`.git` of the folder above it (compared as a filesystem object, so a
+symlink or another case is the same), a
 `commondir` naming a repository the directory is not registered under,
 a `core.worktree` naming another folder, a separate git directory whose
 recorded tree is another folder and a bare repository read as no
@@ -1071,7 +1087,38 @@ refold and verification, `store_provenance.py` the provenance labels
 and the trust reads, and `store_index.py` the reads behind search
 and the document frequency memo.
 `origin.py` stamps where the write happened, in an `Origin`
-(`origin_model.py`).
+(`origin_model.py`). It runs git only where the repository git's walk
+from the folder reaches is one membership follows
+(`gitfile_rule.discovery_refusal`, ENG-193), a walk that stops where
+git's does, by git's own test of a git directory
+(`gitfile_rule._git_reads`), so an entry git passes over hides no
+pointer above it; at a refused entry the origin is that of a folder
+outside any repository. Membership's discovery stops by the same test
+(`gitfile_rule.judge`, and the folder itself in `location_git._discover`),
+so the two walks stop at one entry, and they part only where membership
+refuses what it stops at. Membership passes over a refused entry and
+goes on upward, so at a plant inside the user's own checkout (a
+vendored folder whose `.git` file names another checkout) it places the
+folder in the enclosing checkout, while git's walk, and the origin with
+it, stops at the plant: a record written there is homed in the checkout
+with no origin repository or toplevel and declares no claims. For
+membership the test reads no placeholder `HEAD` (design 3.1, D19): one
+passes by its presence, where git fetches and reads it, and a `HEAD` git
+wrote passes either way; the walk's other small files (a `.git` file, a
+`commondir`, a worktree's `gitdir`, the config the rule reads) are read
+as they are, as membership read them before. Under the capture's
+signature the walk takes each `HEAD` by its presence and the signature
+tests the bytes it reads by git's rule (`location.signature`), so a
+prompt reads `HEAD` once. Git's test checks `$GIT_OBJECT_DIRECTORY` in
+place of a folder's `objects` where that is set; no git the package
+runs is given it (`_git.SCRUBBED_ENV`), so git's walk, the origin's and
+membership's each test a folder's own `objects`. A write or an episode
+whose origin follows a `.git` file to a git directory kept apart that no
+record names the folder for resolves its caller, whose capture makes
+the record, and captures the origin again (`origin.follow_unsettled`).
+No capture of such a follow is kept, so where the state directory
+refuses the record every capture there runs git: four processes, 37 ms
+against 0.6 ms for a kept capture on the author's machine.
 
 **Read path.** `handlers/search.py` and `handlers/show.py` read the
 store's candidate query (the FTS5 prefilter above the index threshold)
@@ -1199,11 +1246,14 @@ table rows, `membership_queries.py` run-state and anchoring, homes and
 health, and `membership_portable.py` export and import. `location.py`
 captures where a caller stands, from files, and resolves it under a
 per-location lock, and `location_git.py` holds its readers: git's
-discovery and config, the `Capture` model and its token codec, the
+discovery and remotes, the `Capture` model and its token codec, the
 HEAD, ref, stamp and manifest readers and the history reader,
 `location_reads.py` the bounded reads of recorded paths (a view's
 liveness, a root's probe; ENG-156), and `location_witness.py` the
-witness exchange's messages (design 8.7);
+witness exchange's messages (design 8.7); `gitfile_rule.py` is the rule
+a `.git` entry is followed by (ENG-158, ENG-206), which discovery,
+`githead.py` and the origin family read alike (ENG-193), and
+`gitconfig.py` the config reader it reads through;
 `_git.py` is the one way the package runs git (`run_git`), for
 `location.py` and `origin.py` alike;
 `gitobjects.py` reads commits and blobs from the repository's object

@@ -221,6 +221,10 @@ _CAPTURE_MODULES = (
     "bettermemory.checkout_token",
     "bettermemory.project_file",
     "bettermemory.githead",
+    "bettermemory.gitconfig",
+    "bettermemory.gitfile_rule",
+    "bettermemory.gitdir_pin",
+    "bettermemory._fsutil",
     "tomllib",
 )
 

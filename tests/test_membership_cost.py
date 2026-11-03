@@ -324,7 +324,9 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     assert results[0].rule == known_rule(repo / ".git")
     assert results[0].checkout == root.checkout
     assert warm.spawns == 0
-    assert warm.stats <= 11 and warm.lstats <= 1
+    # Discovery reads HEAD with lstat, git's test (ENG-193): the total of 12
+    # stays, as the steady state's E16 test in test_membership_capture says.
+    assert warm.stats <= 10 and warm.lstats <= 2
 
 
 # ---------------------------------------------------------------------------

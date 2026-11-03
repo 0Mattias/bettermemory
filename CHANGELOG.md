@@ -246,6 +246,68 @@ The store takes no schema step.
   by its index in both spellings). The rows are kept as written; the
   store takes no schema step.
 
+- **A record's origin follows a `.git` entry only where membership does
+  (ENG-193).** Membership has refused a `.git` file naming another
+  checkout's git directory since 9.0.0rc14, and the two fixes above
+  close its other spellings, but the origin a record carries was still
+  read through git and through the reader of the repository's files,
+  which follow any pointer: a record written in a folder holding a
+  planted `.git` file, a `.git` link to another tree's `.git`, or a
+  pointer at a git directory kept apart that is recorded for another
+  folder carried that checkout's toplevel, remote, branch and HEAD as
+  its origin, and verify anchoring read that checkout's commits and
+  objects for it. The rule now lives in one module that membership's
+  discovery, the file reader and the origin family all read, and git is
+  not run in a folder where the `.git` entry its walk reaches is one
+  membership refuses: the folder's origin is that of a folder outside
+  any repository, along every path that reads one, and no capture of it
+  is kept. Linked worktrees, submodules and a git directory kept apart
+  read from its own tree keep their origin. A git directory kept apart
+  with no tree recorded yet is followed, as membership follows it, and
+  origin records nothing: membership's capture records the first tree
+  it follows, and a write or an episode whose origin rests on such a
+  follow captures it again once its caller's resolution has made the
+  record, which may name another folder. Membership's discovery and the
+  walk that decides whether git runs both stop only where git's own walk
+  does, by git's test of a git directory, so a `.git` directory, a
+  `.git` link or a folder git passes over hides no plant above it, and
+  the two stop at one entry. Membership passes over such an entry now
+  where it stopped at it: the only checkouts that change are ones git
+  itself does not read, such as a repository with no commit copied by a
+  tool that drops empty folders, which leaves its `.git` with no
+  `objects` or `refs`. A recorded tree is read within the bound every
+  recorded path is read within, so a separate git directory recorded for
+  a folder on a share that no longer answers refuses the follow in half a
+  second instead of holding the capture; the security audit's read of
+  the recorded tree and a first record's read of the store's earlier
+  views are bounded so too, and a tree reached through a symbolic link
+  is told from its record with no read. An earlier view that does not
+  answer takes the record, as a recorded tree that does not answer
+  refuses the follow, so a plant seen first while the checkout's share is
+  slow is refused, and the record gives way once the share answers
+  readably with no `.git` there naming the git directory, or is
+  unmounted; until then a checkout moved off a share that hangs is
+  refused at its new folder. A prompt still
+  reads HEAD once: the signature it is kept against tests the HEAD it
+  reads by git's rule, and the walk under it takes HEAD by its presence.
+  No git process bettermemory runs is given `GIT_OBJECT_DIRECTORY` from
+  the environment any more: git reads the repository's own objects, and
+  its walk tests each folder's own `objects` as membership's does, so a
+  shell that exports it no longer has the origin read a `.git` holding no
+  objects as the repository, and the origin's capture is kept under it
+  as anywhere else. A checkout whose HEAD is a symbolic link into
+  `refs/`, which git writes under `core.preferSymlinkRefs`, on a branch
+  with no loose ref (packed, or not yet born) was read by membership as
+  no repository, so a session there was keyed on the repository
+  enclosing it, or on none; it is keyed on itself now, as git reads it,
+  so memories written there under the old key come up for rekey or stop
+  being delivered there. A plant inside
+  the user's own checkout (a vendored folder) leaves that folder in the
+  checkout for membership, which passes over the entry, and with no
+  origin repository or toplevel, so a write there declares no claims.
+  The security audit and the key export still read a `.git` entry as git
+  does, since a `git add` there follows it.
+
 ### 9.0.0rc17
 
 The seventeenth candidate runs the plugin's hooks on Windows without

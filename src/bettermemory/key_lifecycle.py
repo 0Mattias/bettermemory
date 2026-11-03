@@ -328,7 +328,9 @@ def describe(store_file: Path, *, keys_dir: Path | None = None) -> dict[str, Any
 def export_exposure(out: Path) -> list[str]:
     """Why the export at ``out`` sits where keys should not, as warnings
     (cold review L6): in a git working tree, found from the repository's
-    files (`githead.locate`, which runs no git), ignored or not, since one
+    files (`githead.locate`, which runs no git, every ``.git`` entry read as
+    git reads it, a pointer membership refuses included, since a ``git
+    add`` there follows it), ignored or not, since one
     `git add` puts every key of the store in the repository's history and
     keys belong in no working tree; in a synced folder
     (`posture.synced_root`), from which the keys leave this host. Empty
@@ -338,7 +340,7 @@ def export_exposure(out: Path) -> list[str]:
 
     directory = out.parent
     warnings: list[str] = []
-    held = githead.locate(directory)
+    held = githead.locate(directory, as_git=True)
     if held is not None:
         warnings.append(
             f"{out} is inside the git working tree at {held.worktree_root}: "
