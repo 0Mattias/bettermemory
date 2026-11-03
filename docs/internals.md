@@ -1104,7 +1104,15 @@ declared claims against the worktree (`claims.py`) and any declared
 `handlers/write_gates.py`: `credentials.py` (secret-shaped strings; its
 `secret_spans` is what the log's query redaction shares), the
 control-token check (`control_tokens.py`: a model's chat-template
-delimiters, which `memory_update` and the episode write run too), the
+delimiters, which `memory_update` and the episode write run too, and
+which `refuse_control_tokens` runs over the free-text arguments beside
+a body and `security scan` over what the store holds; text kept rather
+than refused, the user's quoted words and an event row's free-text fields
+(`events.NAMED_EVENT_FIELDS`) among it, is written with each token by its
+bare name by `defang_control_tokens`, a path, an id or a declared name
+is kept as given because the store compares it, and every tool reply,
+refusal and hook text names a token where it is sent (`named_tokens`),
+ENG-189), the
 capture gates on a capture write (the rules in `durability.py`, and a
 body an undo reverted before), `durability.py` (structural durability),
 the user-claim check, `scope_match.py` (scope mismatch against the

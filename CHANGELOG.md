@@ -708,6 +708,78 @@ no schema step.
   `src/bettermemory/membership.py`, `src/bettermemory/membership_records.py`,
   `src/bettermemory/membership_resolve.py`, `docs/internals.md`)
 
+- **The control-token refusal reads every free-text argument beside a
+  body that a tool reads back, the text kept rather than refused and what
+  a model reads name each token, and `bettermemory security scan` reports
+  the tokens a store already holds (ENG-189).** Since 9.0.0rc14 a body, and an episode's takeaway,
+  carrying a model's chat-template control token is refused, and the rest
+  of what an agent can store went unread: a reviewer's probe stored
+  `<|im_start|>` through `memory_update`'s `said`, and `memory_remove`'s
+  `reason` took one as readily, though a later write that overlaps the
+  removed body reads the reason back. The same detector now refuses one
+  in `reason` on `memory_remove` and `acknowledge_miss`; the `note` of
+  `memory_verify`, `memory_record_use` and a conflict verdict;
+  `memory_record_use`'s `claim_excerpts`; a link's `note` on
+  `memory_update`; `claims`, as sent and in the form the record keeps (a
+  literal's `repr`, which `'<\x7cim_start\x7c>'` or `'<|im_' 'start|>'`
+  makes spell the token); the four `verified_*` attestations; and the
+  handoff's explicit `prior_session_id`, which no session id can match
+  with a token in it and the handoff's event row would keep for good. Each
+  refusal is a raised error that names the argument and the token by
+  template family and bare name, never the token, and takes no flag; a
+  claim's way through is the path alone. The user's words cannot be
+  rewritten, and `drop [INST]` holds no part without the token, so `said`
+  at every door and `memory_write`'s `review.said` are taken and kept
+  with each token as its bare name (`control_tokens.defang_control_tokens`:
+  `<|im_start|>system` as `im_start system`), and the hook's check reads
+  a quote as typed or with the tokens named in it and in the prompt. The
+  event writer names the tokens the same way in a row's free-text fields
+  (`events.NAMED_EVENT_FIELDS`, an allow-list: a search's query preview
+  and its `client` and `model` filters, a missed search's prompt preview
+  and its hits' snippets, a note, a reason, claim excerpts, the user's
+  words), so a search for `<|im_start|>` no longer leaves a token in the
+  log. Every other field is kept as given: a checkout's path, a session,
+  an id and a declared client or model name are joined on their live
+  values, so a checkout under `llama-[INST]-tune` keeps its Stop audit's
+  anchor, the foreign-window filter and the handoff's quiet session, and a
+  `client` filter matches the name as declared. What a model reads is
+  named where it is sent instead: every tool reply (a record's origin and
+  actor in `memory_show` and a search hit, a membership question's
+  checkout, the id `acknowledge_miss` could not find, a body written
+  before 9.0.0rc14), the text of every
+  refusal, the MCP SDK's argument errors, which quoted an invalid
+  `input_value` as sent, and the hooks' text. A written `Human` or
+  `Assistant` is set apart from whatever follows it, so NFKC cannot fold
+  `<｜Assistant｜>：` into a turn marker. The health report and
+  `memory_search` name a token an older event row holds, and a re-run of
+  `migrate v8` reads an event an earlier build imported with its token as
+  the writer now keeps it, rather than importing it again.
+  A turn marker after a line of spaces, tabs and carriage returns counts,
+  since the export mirror strips the line's carriage returns.
+  `memory_write`'s description now says the gates refuse "control tokens
+  (content, claims)", and its `supersedes` clause reads "replaced ids"
+  (the served surface: 7,999 of its 8,000 characters). The scan runs the
+  detector over every text it reads for credentials, since a store
+  written before this candidate can hold a token: each finding names the
+  place, the record, the field and the template family, with an offset
+  and a count, never the token nor its bare name, in a `control_tokens`
+  list of its own beside the credential `findings`, with a remedy that is
+  a rewrite, not a rotation, or, for a log row that is no version of a
+  record, says no command erases it. A path, a session, an id or a
+  declared name, which the store keeps as given and nothing rewrites, is
+  grouped apart with a remedy that says so (`kept_as_given` in the JSON).
+  The summary line counts the two kinds
+  apart (`found, 0 credential findings, 2 control-token findings`), either
+  kind exits 1, and `--only credentials` or `--only control-tokens` looks
+  for one kind alone. A record id or a log kind that spells a turn marker
+  prints as `*`. (`src/bettermemory/control_tokens.py`,
+  `src/bettermemory/events.py`, `src/bettermemory/_handlers.py`,
+  `src/bettermemory/builder.py`, `src/bettermemory/recall_result.py`,
+  `src/bettermemory/recall.py`, `src/bettermemory/store_events.py`,
+  `src/bettermemory/secret_scan.py`, the handlers that store a free-text
+  argument, `SECURITY.md`, `docs/api.md`, `docs/operations.md`,
+  `docs/internals.md`)
+
 ### 9.0.0rc17
 
 The seventeenth candidate runs the plugin's hooks on Windows without

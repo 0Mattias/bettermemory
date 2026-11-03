@@ -33,7 +33,13 @@ from mcp.server.mcpserver import Context as _SDKContext
 
 from .. import identity
 from ..capture import token_of
-from ..claims import check_claim, claim_reason_is_indeterminate, parse_claims
+from ..claims import (
+    check_claim,
+    claim_reason_is_indeterminate,
+    parse_claim,
+    parse_claims,
+)
+from ..control_tokens import refuse_control_tokens
 from ..events import Recorder
 from ..models import Category, Confidence, Source, validate_scope
 from ..session import PendingUseToken, SessionState
@@ -299,6 +305,16 @@ def _validate_write_payload(
     }
 
 
+#: The way through for a claim carrying a control token (ENG-189): the
+#: token sits in a literal claim's value, which a claim of the path alone
+#: does not carry (a constant has no symbol form: `check_claim` reads
+#: `path::NAME` as a def or a class), or in a path, which no rewrite
+#: keeps true.
+_CLAIM_REMEDY = (
+    "Claim the path alone rather than a value it holds, or leave the claim out."
+)
+
+
 def _validate_declared_claims(
     claims: list[str],
     *,
@@ -331,7 +347,17 @@ def _validate_declared_claims(
 
     if not isinstance(claims, list) or not all(isinstance(s, str) for s in claims):
         raise ValueError("claims must be a list of strings if provided")
+    # A claim is kept on the record and read back by memory_show (ENG-189).
+    # The raw text first, since a claim that does not parse is quoted in
+    # the refusal; then the canonical form the record keeps, in which a
+    # literal's escape or adjacent strings (`'<\x7cim_' 'start\x7c>'`)
+    # can spell a token the raw text does not.
+    for index, raw in enumerate(claims):
+        refuse_control_tokens(f"claims[{index}]", raw, remedy=_CLAIM_REMEDY)
     parsed = parse_claims(claims)
+    for index, raw in enumerate(claims):
+        kept = parse_claim(raw).render()
+        refuse_control_tokens(f"claims[{index}]", kept, remedy=_CLAIM_REMEDY)
     if not parsed:
         return []
     if worktree_root is None:

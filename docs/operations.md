@@ -758,6 +758,31 @@ backup made since. Then fix the live record (`memory_update`, or
 page images in the store file and its WAL, the full-text index's pages,
 saved orphans, backups or exports: a clean scan is not a clean file.
 
+The same scan reports where a model's chat-template control token sits
+(since 9.0.0rc18, ENG-189): the tokens the write gates refuse in a body
+since 9.0.0rc14 and in the free-text arguments beside it (a removal's
+`reason`, the notes, `claims`) since 9.0.0rc18, and the tokens the user's
+quoted words and the event log's free-text fields keep by their bare names
+since then, which a store written before can hold as typed. Each finding
+names the same place, record and field, and the template family with an
+offset and a count, never the token; the JSON lists them under `control_tokens`,
+beside the credential `findings`, and the summary line counts the two
+apart. The scan exits 1 on either kind. A control token is no credential,
+so there is nothing to rotate: rewrite the field without it
+(`memory_update`, or `memory_verify` for claims and attestations) or
+remove the record, so recall, search and `memory_show` stop reading it to
+a model. The log keeps the earlier version, as it keeps a secret, and a
+log row that is no version of a record (an event, a membership row) has
+no record to rewrite: it is reported on every scan with `--log`. A path,
+a session, an id or a declared client or model name is kept as given,
+since the store compares it with its live value (a checkout whose
+directory name holds `[INST]` keeps it in every record's origin and every
+event's worktree stamp): those findings are grouped as `paths, ids and
+names`, marked `kept_as_given` in the JSON, and nothing rewrites them; a
+checkout moved to a path without the token, or a client declared under
+another name, keeps new rows clean. Add `--only credentials` to scan for
+credentials alone, or `--only control-tokens` for the tokens alone.
+
 ## Telemetry and product state
 
 Every event is a row of the store's signed log, and each row is one of
@@ -1016,7 +1041,9 @@ store ahead of a pinned `[storage] directory`. SECURITY.md has the rest.
    verify`, and back the keys directory up separately.
 7. **Ship the audit trail** with `log export` and a cursor, alert on
    `verified` false or null, and keep `log anchor` output off the host.
-8. **Scan for secrets** with `security scan --log` on a schedule, and
-   rotate anything it finds before cleaning the record.
+8. **Scan for secrets** with `security scan --log --only credentials`
+   on a schedule, and rotate anything it finds before cleaning the
+   record; run it without `--only` by hand, and rewrite or remove a
+   record it names for a control token.
 9. **After any config or managed-file change, restart the daemons**
    (`bettermemory down`; the next session starts one).

@@ -30,6 +30,7 @@ from typing import Any
 import pytest
 
 from bettermemory import events
+from bettermemory._frontmatter import normalise_body
 from bettermemory.builder import build_server
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
@@ -104,6 +105,20 @@ def test_a_legacy_turn_marker_at_a_turn_boundary_is_found(body: str) -> None:
     hits = find_control_tokens(body)
     assert [h.kind for h in hits] == ["anthropic"]
     assert hits[0].token in {"Human", "Assistant"}
+
+
+@pytest.mark.parametrize(
+    "body", ["a note\n\r\r\nHuman: what is the port?", "a note\n\r \r\nAssistant: 7397"]
+)
+def test_a_line_the_mirror_writes_blank_is_read_as_blank(body: str) -> None:
+    """The export mirror writes a body through `normalise_body`, which
+    strips the `\\r`s that end each line, so a line of `\\r`s, spaces and
+    tabs is a blank line there and the marker after it a turn boundary:
+    the body is judged by the text the mirror writes (ENG-189)."""
+    mirrored = normalise_body(body)
+    assert "\n\r\r\n" not in mirrored
+    assert [h.kind for h in find_control_tokens(body)] == ["anthropic"]
+    assert [h.kind for h in find_control_tokens(mirrored)] == ["anthropic"]
 
 
 @pytest.mark.parametrize(

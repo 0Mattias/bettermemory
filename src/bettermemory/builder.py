@@ -33,8 +33,10 @@ import build_server``) keeps working without churn.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from ._handlers import (
     DESC_EPISODE,
@@ -52,6 +54,7 @@ from ._handlers import (
 from . import identity
 from ._response import ResponseBuilder
 from .config import Config, load_config
+from .control_tokens import defang_control_tokens
 from .events import Recorder
 from .session import (
     SessionSource,
@@ -88,6 +91,27 @@ INSTRUCTIONS = (
     "settle as applied on their own. At a loop iteration's entry, call "
     "episode(action='handoff') first."
 )
+
+
+class _Served(MCPServer[Any]):
+    """The server, with each chat-template control token in a failed
+    call's text written as its bare name (ENG-189). The SDK checks a call's
+    arguments against the served schema before a tool runs, outside the
+    refusal wrapper (`_handlers._refusals_as_tool_errors`), and its error
+    quotes pydantic's ``input_value`` as sent: the round-2 review's probe
+    sent ``<|im_start|>`` as memory_write's `scopes`, memory_search's
+    `max_results` and memory_admin's and episode's `action`, and read it
+    back. The error keeps its type and cause, so the SDK still logs field
+    names alone for a rejected argument; only its text changes."""
+
+    async def call_tool(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await super().call_tool(*args, **kwargs)
+        except ToolError as exc:
+            named = defang_control_tokens(str(exc))
+            if named != str(exc):
+                exc.args = (named,)
+            raise
 
 
 def build_server(
@@ -169,7 +193,7 @@ def build_server(
     # `bettermemory.__version__` from being able to disagree.
     from . import __version__
 
-    mcp = MCPServer(
+    mcp = _Served(
         "bettermemory",
         # `version` is what a client receives as `serverInfo.version` on
         # `initialize`, and it must be passed explicitly. mcp 1.x's

@@ -106,6 +106,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from .. import identity
+from ..control_tokens import refuse_control_tokens
 from ..events import HARNESS_SESSION_FIELD
 from ..store import UNACCOUNTED
 from ..time_utils import parse_event_ts
@@ -115,6 +116,25 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
     from ..location import Caller
     from ..store import Store
+
+#: Why an explicit `prior_session_id` carrying a chat-template control
+#: token is refused (ENG-189), and the way through. No session id holds
+#: one: the server mints `sess_<hex>` (`session._new_session_id`) and a
+#: harness names a conversation by a UUID, so the call names no session,
+#: and the ``episode_handoff`` row would keep the token in the log, where
+#: no command erases it and every `security scan --log` would report it
+#: (the round-3 review's token sweep: the one argument that left a token
+#: in the store). Nothing reads the field back, so naming it would keep a
+#: renamed id that matches nothing either.
+_SESSION_ID_WHY = (
+    "No session id holds one (the server's are `sess_` and hex, a "
+    "harness's a UUID), so this names no session, and the event log would "
+    "keep it for good."
+)
+_SESSION_ID_REMEDY = (
+    "Pass the id the earlier session was given, or leave `prior_session_id` "
+    "out to hand off from the latest session in this checkout."
+)
 
 #: The rows that place a conversation in a checkout (decision B22): the
 #: session brief's and the prompt recall's, which carry the caller's
@@ -498,10 +518,17 @@ async def episode_handoff(
     with nothing visible to rewind to it is surfaced with `episodes: []`.
     An explicit `prior_session_id` is respected verbatim; the
     caller passing one in is explicit consent that they own the
-    cross-checkout concern.
+    cross-checkout concern. One carrying a chat-template control token is
+    refused (`_SESSION_ID_WHY`, ENG-189).
     """
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
+    refuse_control_tokens(
+        "prior_session_id",
+        prior_session_id,
+        why=_SESSION_ID_WHY,
+        remedy=_SESSION_ID_REMEDY,
+    )
 
     if max_episodes is None:
         max_episodes = 5

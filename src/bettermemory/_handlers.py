@@ -32,6 +32,7 @@ from pydantic.fields import FieldInfo
 from . import handlers as _handlers_pkg
 from ._response import ResponseBuilder
 from .config import Config
+from .control_tokens import defang_control_tokens, named_tokens
 from .events import Recorder
 from .handlers.admin import AdminAction
 from .handlers.episode import EpisodeAction
@@ -307,18 +308,32 @@ def _refusals_as_tool_errors(
     run (`_kept_or_retryable`), by what the call kept; one met outside it
     is a ``RetryableRefusal``. ``functools.wraps`` keeps the signature the
     SDK introspects for the served schema, and ``str(exc)`` is the text
-    the SDK forwarded before 2.1, so the wire form does not change."""
+    the SDK forwarded before 2.1, so the wire form does not change.
+
+    Each chat-template control token in the text, and in every string of
+    the reply, is written as its bare name (`control_tokens.named_tokens`,
+    ENG-189): both go to the model that reads the call's result. A refusal
+    can quote what the caller sent (an id, a scope, a review key, a claim)
+    or what the store or the worktree holds (a claim's value in the tree),
+    and a reply what the store keeps as given because it compares it: a
+    record's origin (a checkout's path) and actor (a declared client and
+    model) in memory_show and a search hit, the checkout a membership
+    question or a join names, a handoff's prior session, the id an
+    acknowledgement could not find. The refusals that name a token on
+    purpose name it by family and bare name already, and pass unchanged.
+    The SDK's own argument errors are named where the server answers a
+    call (`builder._Served`)."""
 
     @functools.wraps(fn)
     async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         try:
-            return await fn(*args, **kwargs)
+            return cast("_R", named_tokens(await fn(*args, **kwargs)))
         except ToolError:
             raise
         except ValueError as exc:
-            raise RefusedError(str(exc)) from exc
+            raise RefusedError(defang_control_tokens(str(exc))) from exc
         except _ABSENT as exc:
-            raise RefusedError(absent_text(exc)) from exc
+            raise RefusedError(defang_control_tokens(absent_text(exc))) from exc
         except sqlite3.OperationalError as exc:
             refusal = store_refusal(exc)
             if refusal is not None:

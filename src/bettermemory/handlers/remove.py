@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .. import standing as _standing
+from ..control_tokens import refuse_control_tokens
 from . import _guard
 from . import standing_review as _standing_review
 from ._shared import Context, _advance_turn
@@ -27,6 +28,9 @@ async def memory_remove(
     _advance_turn(state, deps.recorder)
     if not reason or not reason.strip():
         raise ValueError("reason must be a non-empty string")
+    # The tombstone keeps the reason, and a later write that overlaps the
+    # body reads it back in `removed_matches` (ENG-189).
+    refuse_control_tokens("reason", reason)
     # A standing memory is removed only on the user's words (unit RS-F7
     # part 5): the guard reads which of the ids are standing.
     refusal = _guard.guard(deps, "memory_remove", [id], said)

@@ -34,6 +34,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from ..control_tokens import refuse_control_tokens
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -89,6 +90,8 @@ async def memory_acknowledge_miss(
             f"{_MAX_REASON_LENGTH}. Write a one-line rationale; the ack "
             "reason lands in the event log, not a memory body."
         )
+    # The `miss_ack` row keeps the reason in the signed log (ENG-189).
+    refuse_control_tokens("reason", stripped_reason)
     target_event_id = event_id.strip()
 
     # Single pass over the event log. We need BOTH lookups (does the
@@ -244,6 +247,8 @@ async def acknowledge_misses_before(
     note = (reason or "").strip() or None
     if note is not None and len(note) > _MAX_REASON_LENGTH:
         raise ValueError(f"reason is over the {_MAX_REASON_LENGTH}-char cap")
+    # The cutoff row keeps it with telemetry on (ENG-189).
+    refuse_control_tokens("reason", note)
     deps.recorder.record(
         "silent_miss_cutoff",
         cutoff_ts=cutoff,

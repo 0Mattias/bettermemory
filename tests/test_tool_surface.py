@@ -55,7 +55,10 @@ NINE = {
 # memory_record_use's description lost its copy of the instructions'
 # "settle as applied on their own" sentence and memory_admin's
 # answer_standing clause its "answers the standing question", which the
-# call's response states, back to 7,986.
+# call's response states, back to 7,986. 9.0.0rc18 named the fields the
+# control-token refusal reads in memory_write's description ("control
+# tokens (content, claims)", ENG-189), 18 characters, and under O6 its
+# `supersedes` clause "ids this replaces" became "replaced ids": 7,999.
 SESSION_BUDGET_CHARS = 8_000
 
 # The parameters D1 removed with the groundedness gate. None may return.

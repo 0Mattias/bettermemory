@@ -95,6 +95,22 @@ orphans beside the store (named in the report: copied to `memory.sqlite`
 in a directory of its own, each scans with `--store`), backups and
 exports. The report names them because a clean scan of the records is
 not a clean file.
+
+The same pass reads every text for a model's chat-template control
+token (ENG-189), through the detector the write gates refuse a body by
+(`control_tokens.control_token_offsets`). A store written before
+9.0.0rc14, when no gate read a body for one, or before 9.0.0rc18, when
+none read `said`, a removal's reason or a note, can hold one, and every
+read that hands the text to a model hands it the token too. Each such
+finding is a `ControlTokenFinding` in a list of its own beside the
+credential findings, reported the way the refusals' events record them:
+the template family, with an offset and a count, and never the token nor
+its bare name. A control token is no credential, so its findings carry no
+acknowledgement (no flag passes the gate) and their remedy is the
+rewrite, not a rotation (`CONTROL_TOKEN_REMEDIATION`), except in a path,
+a session, an id or a declared name, which the store keeps as given and
+nothing rewrites (`CONTROL_TOKEN_IDENTITY_REMEDIATION`). Either kind of
+finding makes the scan `found`, exit 1.
 """
 
 from __future__ import annotations
@@ -105,12 +121,14 @@ import re
 import sqlite3
 import sys
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
 
+from .control_tokens import control_token_offsets, find_control_tokens
 from .credentials import _merged_secret_spans
+from .events import NAMED_EVENT_FIELDS
 from .log import iter_rows
 from .store import Store, orphans_beside, store_path
 
@@ -119,6 +137,11 @@ from .store import Store, orphans_beside, store_path
 # `conflicts` holds body quotes for the curation queue.
 TABLES = ("memories", "tombstones", "episodes", "conflicts")
 LOG = "log"
+
+# What a scan looks for, as `--only` names it: every kind by default.
+CREDENTIALS = "credentials"
+CONTROL_TOKENS = "control-tokens"
+KINDS = (CREDENTIALS, CONTROL_TOKENS)
 
 # Record states. `pruned` is a record no table holds any more: a pruned
 # tombstone, a deleted episode, a memory removed by a path that left no
@@ -179,7 +202,11 @@ _MASKED_KEY = "*"
 # `cf-` conflict id, a log kind). The id column and an event's `id` are
 # scanned text, and a row written outside the store can hold anything in
 # them or in a log row's kind, a secret or a terminal escape included, so
-# anything else, and a token a detector fires on, prints as `*`.
+# anything else, and a token a detector fires on, prints as `*`. The
+# class holds no delimiter a control token opens with, but it does spell
+# a turn marker (`Human:`), which the control-token detector fires on, so
+# that prints as `*` too (ENG-189). A JSON key's class (`_PLAIN_KEY_RE`)
+# holds no `:` and spells none.
 _PLAIN_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 
 # Rotation is the remedy for every location, and each text says so first:
@@ -220,6 +247,119 @@ REMEDIATION = {
         "the record leaves this copy where it is."
     ),
 }
+
+# A control token is no credential: there is nothing to rotate, and the
+# remedy is to stop the reads that put it in front of a model, the
+# table's. The signed log keeps a record's earlier versions after an
+# edit, a removal and a prune, a token as much as a secret, and no command
+# erases a log row (ENG-189).
+_TOKEN_LOGGED = (
+    "The signed log keeps the earlier version, in the store file and in "
+    "every backup of it, and no command erases a log row"
+)
+CONTROL_TOKEN_REMEDIATION = {
+    "memories": (
+        "Rewrite the field without the token, writing its bare name or "
+        "describing it in words (memory_update for the body or a link's "
+        "note, memory_verify for claims and attestations), or remove the "
+        "record (memory_remove), so recall, search and memory_show stop "
+        f"reading it into a session. {_TOKEN_LOGGED}."
+    ),
+    "tombstones": (
+        'A removed record is still read: memory_admin(action="tombstones") '
+        "lists it, and a write that overlaps it quotes its reason. "
+        "`bettermemory tombstones prune --older-than DAYS` (at least one day "
+        f"after the removal) drops the row. {_TOKEN_LOGGED}."
+    ),
+    "episodes": (
+        "The handoff reads an episode into the next session until the TTL "
+        "prunes it, and no command edits or removes a single episode: "
+        "`bettermemory episodes prune --ttl-days DAYS` drops whole sessions "
+        f"past the TTL. {_TOKEN_LOGGED}."
+    ),
+    "conflicts": (
+        "Fix the quoted record (memory_update or memory_remove): the conflict "
+        "scan refreshes a pending row's quote and drops a row whose record is "
+        "gone."
+    ),
+    LOG: (
+        "No command erases a log row: rewriting or removing the record stops "
+        "the tables' copy being read, and this one stays in the store file "
+        "and in every backup of it."
+    ),
+}
+
+# A log row that is no version of a record (an event, a membership row)
+# has no record to rewrite. In its free-text fields
+# (`events.NAMED_EVENT_FIELDS`) the event writer has kept each control
+# token by its bare name since 9.0.0rc18, and a join its quote
+# (`control_tokens.folded_quote`), so a token there was written before
+# that or outside the store, and the tool replies and hook text that read
+# the field to a model name it the same way (`control_tokens.named_tokens`).
+# Nothing can take it out of the file, so the remedy is to know it is
+# there, and `--only credentials` is how a scheduled scan stops reporting
+# it (ENG-189).
+CONTROL_TOKEN_LOG_ROW_REMEDIATION = (
+    "No command erases a log row, and this one is no version of a record: "
+    "an event or a membership row. In this field the event writer, and a "
+    "join for its quote, have kept a token by its bare name since "
+    "9.0.0rc18, so the row was written before that or outside the store, "
+    "and the tools that read the field back to a model name the token the "
+    "same way. It stays in the store file and in every backup of it, and "
+    "every scan with --log reports it; `--only credentials` scans for "
+    "credentials alone."
+)
+
+# A path, a session, an id or a declared name is kept as given, a token
+# and all, because the store compares it with the live value: a renamed
+# checkout path in an event lost the Stop audit's anchor, the
+# foreign-window filter and the handoff's quiet session (the round-2
+# review's `[INST]` probe), and a renamed client name no longer matched
+# memory_search's `client` filter. No command rewrites one: a record's
+# origin and actor are its writer's, an id is the record's. The tool
+# replies and the hooks' text name the token where they read the field to
+# a model (`control_tokens.named_tokens`). The fields: in a record table
+# and a record's version in the log, `_IDENTITY_FIELDS`; in any other log
+# row, every field the event writer does not read as text (ENG-189).
+CONTROL_TOKEN_IDENTITY_REMEDIATION = (
+    "Kept as given: a path, a session, an id or a declared client or model "
+    "name, which the store compares with the live value, or another field "
+    "of a log row that the event writer does not read as text. No command "
+    "rewrites it. A tool's reply and the hooks' text name the token where "
+    "they read the field to a model. Where it is a checkout's path or a "
+    "client's declared name, a checkout whose path holds no token, or a "
+    "client declared under another name, keeps it out of new rows; the "
+    "rows written stay in the store file and in every backup of it. "
+    "`--only credentials` scans for credentials alone."
+)
+
+#: The fields of a record, as a table row or a record's version in the
+#: log names them, that the store keeps as given
+#: (`CONTROL_TOKEN_IDENTITY_REMEDIATION`): the record's id and file name,
+#: its origin (a checkout's path and remote, mirrored in `origin_repo` and
+#: `origin_worktree`) and actor (the declared client and model, mirrored
+#: in `actor_client` and `actor_model`), an episode's session and swarm,
+#: a tombstone's removing session, a conflict's two record ids.
+_IDENTITY_FIELDS = frozenset(
+    {
+        "a_id",
+        "actor",
+        "actor_client",
+        "actor_model",
+        "b_id",
+        "filename",
+        "id",
+        "origin",
+        "origin_repo",
+        "origin_worktree",
+        "removed_session",
+        "session_id",
+        "swarm_id",
+    }
+)
+
+# A field path's keys: `top_hits[0].snippet` is `top_hits`, `snippet`.
+_PATH_KEYS_RE = re.compile(r"\.|\[\d+\]\.?")
 
 NOT_SCANNED = (
     "freed pages and earlier page images in the store file and its WAL",
@@ -274,36 +414,133 @@ class SecretFinding:
         }
 
 
+@dataclass(frozen=True)
+class ControlTokenFinding:
+    """One template family of control token in one field of one stored
+    copy (ENG-189).
+
+    The fields are `SecretFinding`'s, `kind` being the template family
+    (`chatml`, `llama2`, `anthropic`, ...), less `acknowledged`: no flag
+    passes the control-token gate. `offset` is the character offset of
+    the family's first token in the field and `occurrences` how many of
+    its tokens the field holds; neither carries the token, and nothing
+    here names it, not even by its bare name."""
+
+    location: str
+    record_id: str | None
+    seq: int | None
+    log_kind: str | None
+    field: str
+    kind: str
+    offset: int
+    occurrences: int
+    record_state: str | None
+    kept_as_given: bool = False
+
+    @property
+    def remediation(self) -> str:
+        if self.kept_as_given:
+            return CONTROL_TOKEN_IDENTITY_REMEDIATION
+        if self.location == LOG and self.log_kind not in _RECORD_PUTS:
+            return CONTROL_TOKEN_LOG_ROW_REMEDIATION
+        return CONTROL_TOKEN_REMEDIATION[self.location]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "location": self.location,
+            "record_id": self.record_id,
+            "seq": self.seq,
+            "log_kind": self.log_kind,
+            "field": self.field,
+            "kind": self.kind,
+            "offset": self.offset,
+            "occurrences": self.occurrences,
+            "record_state": self.record_state,
+            "kept_as_given": self.kept_as_given,
+            "remediation": self.remediation,
+        }
+
+
+def _kept_as_given(location: str, log_kind: str | None, field_name: str) -> bool:
+    """Whether a control-token finding's field is one the store keeps as
+    given (`CONTROL_TOKEN_IDENTITY_REMEDIATION`): in a record, one of
+    `_IDENTITY_FIELDS`; in a log row that is no version of a record, any
+    field but the free-text ones the event writer names
+    (`events.NAMED_EVENT_FIELDS`). A payload that is no JSON, which only a
+    writer outside the store leaves, is text."""
+    keys = [key for key in _PATH_KEYS_RE.split(field_name) if key]
+    if not keys:
+        return False
+    if location == LOG and log_kind not in _RECORD_PUTS:
+        if field_name == "payload":
+            return False
+        if keys[0] not in NAMED_EVENT_FIELDS:
+            return True
+        inside = NAMED_EVENT_FIELDS[keys[0]]
+        return inside is not None and (len(keys) < 2 or keys[1] not in inside)
+    if location == LOG and keys[0] == _RECORD_PUTS.get(log_kind or ""):
+        keys = keys[1:]
+    return bool(keys) and keys[0] in _IDENTITY_FIELDS
+
+
+def _per_location(
+    findings: list[SecretFinding] | list[ControlTokenFinding],
+) -> dict[str, int]:
+    """Findings per location, every location present."""
+    out = {name: 0 for name in (*TABLES, LOG)}
+    for finding in findings:
+        out[finding.location] += 1
+    return out
+
+
 @dataclass
 class ScanReport:
     """What `scan_store` read and found. `scanned` counts rows per table,
-    and log rows under ``"log"`` when the log was read."""
+    and log rows under ``"log"`` when the log was read. `findings` are the
+    credential findings, `control_tokens` the control-token ones, and
+    `kinds` what was looked for (`KINDS`, or the one `--only` names)."""
 
     path: str
     log_scanned: bool
     scanned: dict[str, int] = field(default_factory=dict)
     findings: list[SecretFinding] = field(default_factory=list)
     orphans: list[str] = field(default_factory=list)
+    control_tokens: list[ControlTokenFinding] = field(default_factory=list)
+    kinds: tuple[str, ...] = KINDS
 
     @property
     def status(self) -> str:
-        return "found" if self.findings else "clean"
+        return "found" if self.findings or self.control_tokens else "clean"
 
     def counts(self) -> dict[str, int]:
-        """Findings per location, every location present."""
-        out = {name: 0 for name in (*TABLES, LOG)}
-        for finding in self.findings:
-            out[finding.location] += 1
-        return out
+        """Credential findings per location, every location present."""
+        return _per_location(self.findings)
+
+    def control_token_counts(self) -> dict[str, int]:
+        """Control-token findings per location, every location present."""
+        return _per_location(self.control_tokens)
+
+    def only(self, kind: str) -> ScanReport:
+        """This report narrowed to one of `KINDS`, as `--only` asks: the
+        other kind's findings dropped, and `kinds` saying so."""
+        return replace(
+            self,
+            kinds=(kind,),
+            findings=list(self.findings) if kind == CREDENTIALS else [],
+            control_tokens=list(self.control_tokens) if kind == CONTROL_TOKENS else [],
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "path": self.path,
             "log_scanned": self.log_scanned,
+            "kinds": list(self.kinds),
             "scanned": dict(self.scanned),
             "counts": self.counts(),
             "findings": [finding.to_dict() for finding in self.findings],
+            "control_token_counts": self.control_token_counts(),
+            "control_tokens": [finding.to_dict() for finding in self.control_tokens],
             "orphans": list(self.orphans),
             "not_scanned": list(NOT_SCANNED),
         }
@@ -341,11 +578,16 @@ def _segment(key: object) -> str:
 
 def _shown(value: str | None) -> str | None:
     """A record id or a log kind as a finding prints it: as it is when it
-    is a plain token no detector fires on, `*` otherwise. The state and
-    acknowledgement lookups use the value as stored."""
+    is a plain token no detector fires on, the control-token detector
+    included, `*` otherwise. The state and acknowledgement lookups use the
+    value as stored."""
     if value is None:
         return None
-    if _PLAIN_TOKEN_RE.fullmatch(value) and not _merged_secret_spans(value):
+    if (
+        _PLAIN_TOKEN_RE.fullmatch(value)
+        and not _merged_secret_spans(value)
+        and not find_control_tokens(value)
+    ):
         return value
     return _MASKED_KEY
 
@@ -466,15 +708,17 @@ def _log_record_id(kind: str, payload: Any) -> str | None:
 
 def _scan_table(
     store: Store, table: str, acks: Mapping[str, frozenset[str]]
-) -> tuple[int, list[SecretFinding]]:
+) -> tuple[int, list[SecretFinding], list[ControlTokenFinding]]:
     """One record table in rowid order (tombstones in removal order, as
-    `Store.iter_tombstones` reads them): the rows read and the findings.
-    Only memories and tombstones pass the gate, so only they carry an
+    `Store.iter_tombstones` reads them): the rows read, the credential
+    findings and the control-token findings. Only memories and tombstones
+    pass the credential gate, so only their credential findings carry an
     acknowledgement."""
     gated = table in ("memories", "tombstones")
     order = "removed, rowid" if table == "tombstones" else "rowid"
     rows = 0
     findings: list[SecretFinding] = []
+    tokens: list[ControlTokenFinding] = []
     for row in store.conn.execute(f"SELECT * FROM {table} ORDER BY {order}"):
         rows += 1
         record_id = str(row["id"])
@@ -496,7 +740,22 @@ def _scan_table(
                         ),
                     )
                 )
-    return rows, findings
+            for family, (offset, count) in control_token_offsets(text).items():
+                tokens.append(
+                    ControlTokenFinding(
+                        location=table,
+                        record_id=_shown(record_id),
+                        seq=None,
+                        log_kind=None,
+                        field=field_name,
+                        kind=family,
+                        offset=offset,
+                        occurrences=count,
+                        record_state=_TABLE_STATE[table],
+                        kept_as_given=_kept_as_given(table, None, field_name),
+                    )
+                )
+    return rows, findings, tokens
 
 
 def _log_state(
@@ -517,21 +776,26 @@ def _log_state(
     return None
 
 
+#: One hit in a log row: (seq, log kind, record id, field, detector kind
+#: or template family, offset, count).
+_LogHit = tuple[int, str, str | None, str, str, int, int]
+
+
 def _scan_log(
     store: Store, acks: Mapping[str, frozenset[str]]
-) -> tuple[int, list[SecretFinding]]:
+) -> tuple[int, list[SecretFinding], list[ControlTokenFinding]]:
     """Every log row's payload in seq order, whatever its kind: the rows
-    read and the findings. A payload that is not JSON is scanned as text
-    under the field name ``payload``. The states are settled after the
-    walk, against every record the log's puts and deletes name, so an
-    event logged before its record's put (an imported v8 event) is judged
-    by the whole log."""
+    read, the credential findings and the control-token findings. A
+    payload that is not JSON is scanned as text under the field name
+    ``payload``. The states are settled after the walk, against every
+    record the log's puts and deletes name, so an event logged before its
+    record's put (an imported v8 event) is judged by the whole log."""
     live = _ids(store, "memories") | _ids(store, "episodes") | _ids(store, "conflicts")
     tombstoned = _ids(store, "tombstones")
     logged: set[str] = set()
     rows = 0
-    # (seq, log kind, record id, field, detector kind, offset, count)
-    hits: list[tuple[int, str, str | None, str, str, int, int]] = []
+    hits: list[_LogHit] = []
+    token_hits: list[_LogHit] = []
     for log_row in iter_rows(store.conn):
         rows += 1
         try:
@@ -544,18 +808,11 @@ def _scan_log(
         ):
             logged.add(record_id)
         for field_name, text in _distinct(_strings(payload, "")):
+            where = (log_row.seq, log_row.kind, record_id, field_name or "payload")
             for kind, (offset, count) in _hits(text).items():
-                hits.append(
-                    (
-                        log_row.seq,
-                        log_row.kind,
-                        record_id,
-                        field_name or "payload",
-                        kind,
-                        offset,
-                        count,
-                    )
-                )
+                hits.append((*where, kind, offset, count))
+            for family, (offset, count) in control_token_offsets(text).items():
+                token_hits.append((*where, family, offset, count))
     findings = [
         SecretFinding(
             location=LOG,
@@ -571,16 +828,32 @@ def _scan_log(
         )
         for seq, log_kind, record_id, field_name, kind, offset, count in hits
     ]
-    return rows, findings
+    tokens = [
+        ControlTokenFinding(
+            location=LOG,
+            record_id=_shown(record_id),
+            seq=seq,
+            log_kind=_shown(log_kind),
+            field=field_name,
+            kind=family,
+            offset=offset,
+            occurrences=count,
+            record_state=_log_state(record_id, live, tombstoned, logged),
+            kept_as_given=_kept_as_given(LOG, log_kind, field_name),
+        )
+        for seq, log_kind, record_id, field_name, family, offset, count in token_hits
+    ]
+    return rows, findings, tokens
 
 
 def scan_store(store: Store, *, include_log: bool = False) -> ScanReport:
-    """Scan `store`'s record tables, and its log with `include_log`.
+    """Scan `store`'s record tables, and its log with `include_log`, for
+    credentials and for control tokens.
 
     Reads only: the table pass is plain SELECTs, the log pass walks
     `log.iter_rows`, and the acknowledgements come from
-    `Store.events_of_kinds`. The findings are in table order, then log
-    order.
+    `Store.events_of_kinds`. Each list of findings is in table order, then
+    log order.
 
     Every pass reads one snapshot. The daemon writes while a scan runs,
     and in autocommit each SELECT sees the store as it was when that
@@ -603,13 +876,15 @@ def scan_store(store: Store, *, include_log: bool = False) -> ScanReport:
     try:
         acks = _acknowledgements(store)
         for table in TABLES:
-            rows, findings = _scan_table(store, table, acks)
+            rows, findings, tokens = _scan_table(store, table, acks)
             report.scanned[table] = rows
             report.findings.extend(findings)
+            report.control_tokens.extend(tokens)
         if include_log:
-            rows, findings = _scan_log(store, acks)
+            rows, findings, tokens = _scan_log(store, acks)
             report.scanned[LOG] = rows
             report.findings.extend(findings)
+            report.control_tokens.extend(tokens)
     finally:
         # An I/O error can end the transaction itself; ROLLBACK then has
         # nothing to end and would raise over the error that ended it.
@@ -634,28 +909,78 @@ def _count(count: int, location: str) -> str:
     return f"{count} {singular if count == 1 else plural}"
 
 
-def _findings(count: int) -> str:
-    return f"{count} finding" if count == 1 else f"{count} findings"
+def _findings(count: int, what: str = "") -> str:
+    noun = f"{what} finding" if what else "finding"
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def _finding_line(finding: SecretFinding) -> str:
+def _finding_line(finding: SecretFinding | ControlTokenFinding) -> str:
+    """One finding's line. A control-token finding names its template
+    family where a credential finding names its detector kind, and has no
+    acknowledgement to name."""
     hits = "" if finding.occurrences == 1 else f" ({finding.occurrences} hits)"
     where = f"{finding.field}: {finding.kind} at offset {finding.offset}{hits}"
+    ack = (
+        f"; {_ack_text(finding.acknowledged)}"
+        if isinstance(finding, SecretFinding)
+        else ""
+    )
     if finding.location != LOG:
-        return f"{finding.record_id} {where}; {_ack_text(finding.acknowledged)}"
+        return f"{finding.record_id} {where}{ack}"
     head = f"seq {finding.seq} {finding.log_kind}"
     if finding.record_id is not None:
         head += f" {finding.record_id}"
     state = "" if finding.record_state is None else f"; record {finding.record_state}"
-    return f"{head} {where}{state}; {_ack_text(finding.acknowledged)}"
+    return f"{head} {where}{state}{ack}"
+
+
+def _token_groups(report: ScanReport) -> list[str]:
+    """The control-token findings' lines, grouped by where they sit as the
+    credential findings are, each group headed as control tokens and
+    closed by its remedy: the log's rows in two groups, a record's
+    versions and the rows that are none (`CONTROL_TOKEN_LOG_ROW_REMEDIATION`),
+    and then, in each place, the paths, ids and names the store keeps as
+    given (`CONTROL_TOKEN_IDENTITY_REMEDIATION`)."""
+    lines: list[str] = []
+    places = [(t, CONTROL_TOKEN_REMEDIATION[t], t) for t in (*TABLES, LOG)]
+    places.append((LOG, CONTROL_TOKEN_LOG_ROW_REMEDIATION, "log rows of no record"))
+    places.extend(
+        (t, CONTROL_TOKEN_IDENTITY_REMEDIATION, f"{t} paths, ids and names")
+        for t in (*TABLES, LOG)
+    )
+    for location, remedy, label in places:
+        group = [
+            f
+            for f in report.control_tokens
+            if f.location == location and f.remediation == remedy
+        ]
+        if not group:
+            continue
+        lines.append("")
+        lines.append(f"  control tokens in {label}: {_findings(len(group))}")
+        lines.extend(f"    {_finding_line(f)}" for f in group)
+        lines.append(f"    {remedy}")
+    return lines
 
 
 def render_report(report: ScanReport) -> str:
     """The text form of a scan: one line per finding, grouped by where it
-    sits, each group closed by what to do about it. Never a value."""
-    total = len(report.findings)
+    sits, the credential findings first and the control-token ones after,
+    each group closed by what to do about it. The summary counts each
+    kind, or says a kind `--only` left out was not scanned. Never a value,
+    and never a control token."""
+    found = (
+        _findings(len(report.findings), "credential")
+        if CREDENTIALS in report.kinds
+        else "credentials not scanned"
+    )
+    tokens = (
+        _findings(len(report.control_tokens), "control-token")
+        if CONTROL_TOKENS in report.kinds
+        else "control tokens not scanned"
+    )
     lines = [
-        f"bettermemory security scan: {report.status}, {_findings(total)}",
+        f"bettermemory security scan: {report.status}, {found}, {tokens}",
         f"  store {report.path}",
     ]
     read = ", ".join(_count(report.scanned.get(t, 0), t) for t in TABLES)
@@ -672,6 +997,7 @@ def render_report(report: ScanReport) -> str:
         lines.append(f"  {location}: {_findings(len(group))}")
         lines.extend(f"    {_finding_line(f)}" for f in group)
         lines.append(f"    {REMEDIATION[location]}")
+    lines.extend(_token_groups(report))
     lines.append("")
     lines.append(f"  not scanned: {'; '.join(NOT_SCANNED)}")
     for name in report.orphans:
@@ -687,14 +1013,17 @@ def render_report(report: ScanReport) -> str:
 # ---------------------------------------------------------------------------
 
 _SCAN_HELP = (
-    "Find where a credential-shaped string persists in the store, using the "
-    "write gate's own detectors: every text field and JSON string of the "
+    "Find where a credential-shaped string or a model's chat-template "
+    "control token persists in the store, using the write gates' own "
+    "detectors: every text field and JSON string of the "
     "memories, tombstones, episodes and conflicts tables, and with --log "
     "every log row's payload (the log keeps every version of every record, "
     "after an edit, a removal and a prune). Each finding names the table or "
-    "log seq, the record, the field, the detector kind, the record's state "
-    "and whether the write was acknowledged; it never prints the value, "
-    "only an offset into the field. Read-only: the store is opened without "
+    "log seq, the record, the field, the detector kind (a control token's "
+    "template family), the record's state and, for a credential, whether "
+    "the write was acknowledged; it never prints the value or the token, "
+    "only an offset into the field; --only looks for one kind alone. "
+    "Read-only: the store is opened without "
     "rekeying and no row, record or key is written; opening a store file "
     "does switch one saved in rollback-journal mode to WAL, so a backup "
     "bundle's own file is refused (scan a copy of it). Exit 0 when nothing "
@@ -743,6 +1072,18 @@ def add_scan_parser(
         action="store_true",
         help="Emit the report as JSON instead of text.",
     )
+    parser.add_argument(
+        "--only",
+        dest="scan_only",
+        choices=KINDS,
+        default=None,
+        help=(
+            "Look for one kind alone, and exit 1 only on it: credentials, "
+            "or control tokens. A log row from before 9.0.0rc18 can hold a "
+            "control token no command erases, so a scheduled credential "
+            "scan with --log passes --only credentials. Default: both."
+        ),
+    )
     return parser
 
 
@@ -753,7 +1094,8 @@ def _fail(message: str) -> NoReturn:
 
 def run_scan(args: argparse.Namespace) -> None:
     """Dispatch handler for ``bettermemory security scan``. Always exits:
-    0 clean, 1 with findings, 2 when there is no store it can read."""
+    0 clean, 1 with findings of either kind, 2 when there is no store it
+    can read."""
     from .config import STORE_FILENAME, load_config
 
     store_arg = getattr(args, "scan_store", None)
@@ -806,14 +1148,23 @@ def run_scan(args: argparse.Namespace) -> None:
         _fail(f"cannot read the store at {path}: {exc}")
     finally:
         store.close()
+    only = getattr(args, "scan_only", None)
+    if only is not None:
+        report = report.only(only)
     if getattr(args, "scan_json", False):
         sys.stdout.write(json.dumps(report.to_dict(), indent=2) + "\n")
     else:
         sys.stdout.write(render_report(report))
-    raise SystemExit(1 if report.findings else 0)
+    raise SystemExit(1 if report.status == "found" else 0)
 
 
 __all__ = [
+    "CONTROL_TOKENS",
+    "CONTROL_TOKEN_IDENTITY_REMEDIATION",
+    "CONTROL_TOKEN_LOG_ROW_REMEDIATION",
+    "CONTROL_TOKEN_REMEDIATION",
+    "CREDENTIALS",
+    "KINDS",
     "LIVE",
     "LOG",
     "NOT_SCANNED",
@@ -821,6 +1172,7 @@ __all__ = [
     "REMEDIATION",
     "TABLES",
     "TOMBSTONED",
+    "ControlTokenFinding",
     "ScanReport",
     "SecretFinding",
     "add_scan_parser",

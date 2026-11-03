@@ -6,6 +6,7 @@ It lives apart from `recall.py` to keep that module under the package's
 2,000-line bound (ENG-96). Of the recall family it imports
 `recall_state` alone, for `RULE`, and never `recall`; `recall` imports
 it and re-exports `HookResult`, so `recall.HookResult` keeps its path.
+Beside it, `control_tokens`, which imports the standard library alone.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .control_tokens import defang_control_tokens
 from .recall_state import RULE
 
 
@@ -29,7 +31,15 @@ class HookResult:
     wrap beside it: which surface spoke, the ids it showed, the text's
     length, the rule and the id of the event that recorded the show (None
     when nothing was recorded; a resume's brief that omitted every
-    candidate records its row and carries the id with nothing shown)."""
+    candidate records its row and carries the id with nothing shown).
+
+    `stdout` is kept with each chat-template control token written as its
+    bare name (`control_tokens.defang_control_tokens`, ENG-189), whichever
+    surface built it: the harness puts it in the model's context, and its
+    lines can name what the store keeps as given (a checkout's path in a
+    membership question or a resolution's line, a project's name) and a
+    pointer's summary or snippet of a body written before 9.0.0rc14. A
+    `chars` that was the text's length is the named text's."""
 
     stdout: str
     surface: str
@@ -38,6 +48,14 @@ class HookResult:
     rule: str = RULE
     event_id: str | None = None
     membership: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        named = defang_control_tokens(self.stdout)
+        if named is self.stdout:
+            return
+        if self.chars == len(self.stdout):
+            object.__setattr__(self, "chars", len(named))
+        object.__setattr__(self, "stdout", named)
 
     @classmethod
     def empty(cls, surface: str) -> HookResult:

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .durability import canonical_marker
+from .control_tokens import named_tokens
 from .events import _event_id_list, is_audit_row
 from .models import Memory, first_summary_line
 from .origin import ReachableWalk, commits_since_anchor
@@ -156,6 +157,10 @@ def _parse_silent_miss_event(
             query_preview = preview_raw
     elif isinstance(probe_query, str):
         query_preview = probe_query[:32]
+    # The user's prompt: a row written before 9.0.0rc18 can preview a
+    # control token, which the report names by its bare name (ENG-189).
+    if query_preview is not None:
+        query_preview = named_tokens(query_preview)
     return (
         ensure_utc(parse_event_ts(ev.get("ts"))),
         top_hit_id,
@@ -612,11 +617,13 @@ class _StatsAccumulator:
         bucket = self._resolution_events_by_id.get(mid)
         if bucket is None:
             return
+        # A note a row kept before 9.0.0rc18 is read with each control
+        # token as its bare name: the report goes to a model (ENG-189).
         bucket.append(
             {
                 "kind": kind,
                 "ts": ts_str if isinstance(ts_str, str) else None,
-                "note": note if isinstance(note, str) else None,
+                "note": named_tokens(note) if isinstance(note, str) else None,
             }
         )
 

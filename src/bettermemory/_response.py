@@ -26,6 +26,7 @@ from . import _caches, githead
 from ._response_depends import _load_depends_targets, _resolve_depends
 from .credentials import CredentialMatch
 from .durability import TransientMatch
+from .control_tokens import named_tokens
 from .events import _event_id_items
 from .models import (
     MemoryHit,
@@ -1619,14 +1620,16 @@ class ResponseBuilder:
             for i, mid in _event_id_items(event.get("ids") or event.get("memory_ids")):
                 if mid not in hit_ids:
                     continue
+                # A row written before 9.0.0rc18 can hold a token in its
+                # note or excerpt, read here as its bare name (ENG-189).
                 per_id_events.setdefault(mid, []).append(
                     {
                         "ts": ts,
                         "outcome": event.get("outcome"),
                         "auto": bool(event.get("auto")),
                         "session": event.get("session") or event.get("session_id"),
-                        "note": event.get("note"),
-                        "claim_excerpt": _claim_at_index(event, i),
+                        "note": named_tokens(event.get("note")),
+                        "claim_excerpt": named_tokens(_claim_at_index(event, i)),
                     }
                 )
 

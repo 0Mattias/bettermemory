@@ -37,6 +37,7 @@ from bettermemory.secret_scan import (
     PRUNED,
     REMEDIATION,
     TOMBSTONED,
+    ControlTokenFinding,
     SecretFinding,
     _strings,
     add_scan_parser,
@@ -220,7 +221,10 @@ def test_clean_store_with_credential_prose_finds_nothing_and_exits_zero(
 
     code, out, _ = _run(capsys, "--log", "--store", str(store.path))
     assert code == 0
-    assert out.startswith("bettermemory security scan: clean, 0 findings\n")
+    assert out.startswith(
+        "bettermemory security scan: clean, 0 credential findings, "
+        "0 control-token findings\n"
+    )
     code, out, _ = _run(capsys, "--json", "--store", str(store.path))
     assert code == 0
     parsed = json.loads(out)
@@ -788,7 +792,7 @@ def test_the_scan_reads_one_snapshot(
 
     def restore_after_memories(
         scanned: Store, table: str, acks: Any
-    ) -> tuple[int, list[SecretFinding]]:
+    ) -> tuple[int, list[SecretFinding], list[ControlTokenFinding]]:
         out = scan_table(scanned, table, acks)
         if table == "memories":
             daemon.restore(memory.id)
@@ -959,7 +963,7 @@ def test_text_report_groups_findings_with_their_remediation(store: Store) -> Non
     store.tombstone(gone.id, reason="leaked")
 
     text = render_report(scan_store(store))
-    assert "found, 2 findings" in text
+    assert "found, 2 credential findings, 0 control-token findings" in text
     assert "scanned 1 memory, 1 tombstone, 0 episodes, 0 conflicts" in text
     assert "log not scanned (pass --log)" in text
     assert f"{live.id} body: aws-access-key-id at offset 12; no gated write" in text

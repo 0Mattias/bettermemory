@@ -25,6 +25,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from .. import identity, location, membership_lines
+from ..control_tokens import folded_quote
 from ..declare import declaring_model
 from ..history import quoted
 from ..membership import (
@@ -104,7 +105,11 @@ def _question(model: Membership, qid: str | None, checkout: str | None) -> Propo
 def _tether(
     deps: ToolHandlers, checkouts: list[str], said: str | None, what: str
 ) -> tuple[str, bool]:
-    """The user's words a join rests on, and whether the hook saw them."""
+    """The user's words a join rests on, as the join's row keeps them and
+    its reply returns them, and whether the hook saw them. The row keeps
+    each chat-template control token in them by its bare name
+    (`control_tokens.folded_quote`, ENG-189), and the hook's check reads
+    the words as typed or with each token named."""
     if said is None or not said.strip():
         raise ValueError(
             f"{what} merges two projects and rests on the user's words: pass "
@@ -112,11 +117,12 @@ def _tether(
             "`separate`"
         )
     quote = " ".join(said.split())
+    kept = folded_quote(quote)
     seen = [k for k in checkouts if WORDS.seen(deps.store.path, k)]
     if not seen:
-        return quote, False
+        return kept, False
     if any(WORDS.holds(deps.store.path, k, quote) for k in seen):
-        return quote, True
+        return kept, True
     raise ValueError(
         "`said` is not in any prompt the hook saw in this checkout (the last "
         "twenty, whitespace and case folded, eight characters or more): quote "

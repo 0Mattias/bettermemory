@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat, isoformat_optional
 from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
+from ..control_tokens import refuse_control_tokens
 from ..models import Memory
 from ..origin import head_sha
 from ..store import ConcurrentUpdateError
@@ -377,6 +378,12 @@ def _stamp(
     return memory
 
 
+#: The way through for an attestation carrying a control token
+#: (ENG-189): a path, a commit or a version string has no bare name to
+#: write instead.
+_ATTESTATION_REMEDY = "Leave the entry out."
+
+
 def _check_verify_args(
     note: str | None,
     verified_paths: list[str] | None,
@@ -393,6 +400,10 @@ def _check_verify_args(
             "The note is a short rationale for the verification, "
             "not a place to paste prose; trim it before recording."
         )
+    # The note rides the verify row, which the health report's resolution
+    # timeline reads back; the lists are kept on the record, which
+    # memory_show reads back (ENG-189).
+    refuse_control_tokens("note", note)
     for label, value in (
         ("verified_paths", verified_paths),
         ("verified_commits", verified_commits),
@@ -409,13 +420,14 @@ def _check_verify_args(
                 f"(got {len(value)}); a memory cites a handful of paths, "
                 "not a manifest"
             )
-        for item in value:
+        for index, item in enumerate(value):
             if len(item) > _MAX_VERIFIED_ITEM_LEN:
                 raise ValueError(
                     f"{label} entry is {len(item)} chars — cap is "
                     f"{_MAX_VERIFIED_ITEM_LEN}. Attestations are short "
                     "path/commit/version strings, not prose."
                 )
+            refuse_control_tokens(f"{label}[{index}]", item, remedy=_ATTESTATION_REMEDY)
 
 
 def _load_verify_snapshot(deps: ToolHandlers, memory_id: str) -> Memory:

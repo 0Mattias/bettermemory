@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from pydantic import ValidationError
 
 from . import _caches
-from .events import _redact_event_fields
+from .events import _redact_event_fields, named_event_fields
 from .identity import Actor
 from .log import (
     CAPTURE_KINDS,
@@ -268,7 +268,15 @@ def imported_event_keys(
     """``(ts, session, kind, payload text)`` of every telemetry row
     that names ``imported_from``: what a re-run of the importer skips.
     The payload text is the canonical one the row stores, so the
-    caller compares ``canonical_payload`` of what it would write."""
+    caller compares ``canonical_payload`` of what it would write.
+
+    A row is keyed with its free-text fields as the writer keeps them now
+    (`events.named_event_fields`): an earlier build imported a v8 event
+    with its control tokens as given, and the same event read again is
+    written with each by its bare name (ENG-189), so without it a re-run
+    imported every such event a second time (the round-2 review's
+    migrate probe). A row the naming leaves as it is keeps its stored
+    text."""
     needle = canonical_payload({"imported_from": imported_from})[1:-1]
     out: set[tuple[str, str | None, str, str]] = set()
     for row in self._conn.execute(
@@ -283,10 +291,24 @@ def imported_event_keys(
                 str(row["ts"]),
                 None if row["session"] is None else str(row["session"]),
                 kind,
-                str(row["payload"]),
+                _named_payload(str(row["payload"])),
             )
         )
     return out
+
+
+def _named_payload(text: str) -> str:
+    """A stored payload's text with its free-text fields named as the
+    writer names them (`events.named_event_fields`); `text` itself when
+    that changes nothing or it is no JSON object."""
+    try:
+        payload = json.loads(text)
+    except (ValueError, RecursionError):
+        return text
+    if not isinstance(payload, dict):
+        return text
+    named = named_event_fields(payload)
+    return text if named is payload else canonical_payload(named)
 
 
 def iter_events(self: Store, since_seq: int = 0) -> Iterator[dict[str, Any]]:

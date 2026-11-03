@@ -35,7 +35,7 @@ from .. import policy as _policy
 from .. import review as _review
 from .. import standing as _standing
 from .._response import isoformat
-from ..control_tokens import find_control_tokens
+from ..control_tokens import find_control_tokens, refuse_control_tokens
 from ..credentials import find_credential_markers
 from ..durability import find_transient_markers
 from ..models import (
@@ -950,6 +950,9 @@ def _new_links(
                 parsed_links.append(_MemoryLink.model_validate(entry))
             except (ValueError, KeyError) as exc:
                 raise ValueError(f"links[{i}] invalid: {exc}") from exc
+            # The note is kept on the record, and memory_show reads it back
+            # on both ends of the link (ENG-189).
+            refuse_control_tokens(f"links[{i}].note", parsed_links[-1].note)
             if parsed_links[-1].target_id == id:
                 raise ValueError(
                     f"links[{i}].target_id cannot equal the memory's own id "

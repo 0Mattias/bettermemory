@@ -48,6 +48,7 @@ from ..conflicts import (
     scan_conflicts,
     split_judgeable,
 )
+from ..control_tokens import refuse_control_tokens
 from ..models import LinkType, Memory, MemoryLink
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ..store_schema import absent_text
@@ -369,6 +370,9 @@ def _resolve_verdict(
         raise ValueError(
             f"resolve requires verdict='contradiction' or 'compatible', got {verdict!r}"
         )
+    # The note is kept on the conflict row and on the `contradicts` link,
+    # which memory_show reads back (ENG-189).
+    refuse_control_tokens("note", note)
     candidate = next((c for c in queue.pending() if c.id == candidate_id), None)
     if candidate is None:
         raise ValueError(

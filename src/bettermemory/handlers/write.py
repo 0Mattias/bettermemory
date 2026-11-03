@@ -119,15 +119,25 @@ log = logging.getLogger("bettermemory.handlers.write")
 # Description constants
 # ---------------------------------------------------------------------------
 
-
+# "control tokens (content, claims)" (ENG-189): the two fields of the
+# call the control-token refusal reads. `review.said` is the user's words,
+# kept with each token by its bare name rather than refused
+# (`control_tokens.folded_quote`), and this description may not name the
+# review (tests/test_tool_surface.py); every other field is an id, a
+# label, a number, a flag or a scope, whose checks admit none of a token's
+# delimiters (a scope is `models._SCOPE_RE`; a capture source names an
+# open batch's token or is refused unrecorded). The served surface had 14
+# of its 8,000 characters left; the clause takes 18, and "ids this
+# replaces" became "replaced ids", 5 fewer: 7,999.
 DESC_MEMORY_WRITE = (
     "Store a durable fact; call it proactively. `scopes`: narrow tags "
     "(projects:<name>, tools), never general. `category`: fact, "
     "user-inference (about the user) or ambient (context, never cited). "
-    "Gates refuse transient state, secrets, control tokens, user claims "
-    "filed as fact, scope mismatch and duplicates; each names its fix. "
+    "Gates refuse transient state, secrets, control tokens (content, "
+    "claims), user claims filed as fact, scope mismatch and duplicates; "
+    "each names its fix. "
     "`claims`: path or path::symbol bindings watched for drift. "
-    "`supersedes`: ids this replaces."
+    "`supersedes`: replaced ids."
 )
 
 

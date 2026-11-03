@@ -32,8 +32,9 @@ def add_subparser(
         "Security checks for this install. `security audit` reports whether "
         "the store, the key and the daemon's files are as SECURITY.md assumes; "
         "`security sandbox` prints Claude Code sandbox settings for this "
-        "host's paths; `security scan` finds credentials kept in the store. None "
-        "writes a row, a key or a file of its own."
+        "host's paths; `security scan` finds credentials and chat-template "
+        "control tokens kept in the store. None writes a row, a key or a file "
+        "of its own."
     )
     parser = sub.add_parser("security", help=help_text, description=help_text)
     security_sub = parser.add_subparsers(dest="security_cmd")

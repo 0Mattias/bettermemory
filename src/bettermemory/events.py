@@ -48,6 +48,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 from . import identity
+from .control_tokens import named_tokens
 from .credentials import secret_spans
 
 if TYPE_CHECKING:
@@ -716,8 +717,89 @@ def redact_query(text: str) -> dict[str, Any]:
     }
 
 
+#: The free-text fields of an event row, which the writer keeps with each
+#: chat-template control token by its bare name (ENG-189), as `KeptFields`
+#: reads: a field mapped to None is named whole (every string in it, at
+#: any depth), one mapped to keys only those keys inside it (a dict, or
+#: each dict of a list). The text a caller or a user typed and the text of
+#: a body: a search's query preview (`query`, and a hook probe's
+#: `probe_query`) and its `client_filter` and `model_filter`, which no
+#: reader joins on (the handler matched them before the row is written);
+#: the user's words (`said` on a ``standing_guard`` row, and inside a
+#: write's `review_answers`); a `note` (memory_verify, memory_record_use,
+#: a capture grade, the miss cutoff) and a `reason` (memory_remove,
+#: acknowledge_miss); memory_record_use's `claim_excerpts`; and each hit's
+#: `snippet` of a body in a hook probe's `top_hits`.
+#:
+#: An allow-list rather than a deny-list of identity keys, because the two
+#: fail differently. A text field it misses keeps its token in the row,
+#: where `bettermemory security scan --log` reports it and the tool reply
+#: or hook text that reads it to a model names it (`named_tokens`). An
+#: identity key a deny-list missed would be renamed in the row and no
+#: longer equal its live value, and every join on it fails silently: the
+#: round-2 review's `[INST]` checkout lost the Stop audit's anchor
+#: (`sessions._latest_in_process_session`), the foreign-window filter
+#: (`sessions.joined_sessions`), the handoff's quiet session
+#: (`episode_handoff._quiet_session`), the prompt recall's `here` join and
+#: the capture, review and counter joins on `worktree_root`,
+#: `transcript_path` and `checkout`. Everything else is kept as given: a
+#: path, a session, an id, a declared client or model name (`actor`,
+#: `client_model`), a scope. An explicit `prior_session_id` is an id no
+#: reader joins on: the handoff refuses one carrying a token instead.
+#: tests/test_named_control_tokens.py pins the list.
+NAMED_EVENT_FIELDS: KeptFields = _kept(
+    "claim_excerpts",
+    "client_filter",
+    "model_filter",
+    "note",
+    "probe_query",
+    "query",
+    "reason",
+    "said",
+    review_answers=("said",),
+    top_hits=("snippet",),
+)
+
+
+def named_event_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """`fields` with its free-text fields (`NAMED_EVENT_FIELDS`) written
+    with each control token by its bare name (`named_tokens`), and every
+    other field as it is; `fields` itself when no field changes. The
+    writer applies it to every row (`_redact_event_fields`); a re-run of
+    the v8 importer applies it to the rows an earlier build imported, so
+    a row kept with its token and the same event read again compare equal
+    (`Store.imported_event_keys`)."""
+    out: dict[str, Any] | None = None
+    for name, inside in NAMED_EVENT_FIELDS.items():
+        value = fields.get(name)
+        named = named_tokens(value) if inside is None else _named_inside(value, inside)
+        if named is not value:
+            out = dict(fields) if out is None else out
+            out[name] = named
+    return fields if out is None else out
+
+
+def _named_inside(value: Any, keys: frozenset[str]) -> Any:
+    """`value` with the entries under `keys` named (`named_tokens`) in it,
+    a dict, or in each dict of a list; `value` itself when none changes."""
+    if not isinstance(value, list):
+        return _named_entries(value, keys)
+    items = [_named_entries(item, keys) for item in value]
+    return value if all(n is v for n, v in zip(items, value, strict=True)) else items
+
+
+def _named_entries(value: Any, keys: frozenset[str]) -> Any:
+    """A dict with the entries under `keys` named; anything else as it is."""
+    if not isinstance(value, dict):
+        return value
+    entries = {k: named_tokens(v) if k in keys else v for k, v in value.items()}
+    return value if all(entries[k] is v for k, v in value.items()) else entries
+
+
 def _redact_event_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy of `fields` with redacted-text fields replaced.
+    """Return a copy of `fields` with redacted-text fields replaced, and
+    its free-text fields with each chat-template control token written as
+    its bare name (`named_event_fields`).
 
     Non-string values pass through untouched — the field set isn't
     guaranteed across producers and we don't want to silently drop a
@@ -728,7 +810,7 @@ def _redact_event_fields(fields: dict[str, Any]) -> dict[str, Any]:
         value = out.get(key)
         if isinstance(value, str):
             out[key] = redact_query(value)
-    return out
+    return named_event_fields(out)
 
 
 @dataclass
@@ -904,6 +986,7 @@ __all__ = [
     "HARNESS_SESSION_FIELD",
     "HARNESS_STAMPED_KINDS",
     "MEASUREMENT_KINDS",
+    "NAMED_EVENT_FIELDS",
     "OVERRIDABLE_REFUSALS",
     "OVERRIDE_EVIDENCE_KINDS",
     "ROW_KINDS",
@@ -918,6 +1001,7 @@ __all__ = [
     "deadline",
     "hook_body",
     "is_audit_row",
+    "named_event_fields",
     "prunable",
     "redact_query",
     "row_class",

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..control_tokens import refuse_control_tokens
 from ..models import is_valid_ulid
 from ._shared import (
     Context,
@@ -67,6 +68,9 @@ async def memory_record_use(
             "The note is a short rationale for the outcome, not a "
             "place to paste prose; trim it before recording."
         )
+    # The use row keeps the note and the excerpts, and memory_search reads
+    # them back in a hit's `recent_negative_outcomes` (ENG-189).
+    refuse_control_tokens("note", note)
 
     # `claim_excerpts` is the provenance signal (T1.1 of the 1.6 plan).
     # When provided, it's a list parallel to `memory_ids` with one
@@ -111,6 +115,7 @@ async def memory_record_use(
                     "cap is 500. Quote the load-bearing phrase, not "
                     "the whole body."
                 )
+            refuse_control_tokens(f"claim_excerpts[{i}]", excerpt)
             recorded_excerpts.append(excerpt)
 
     # The explicit outcome overrides any pending auto-commit. Pass

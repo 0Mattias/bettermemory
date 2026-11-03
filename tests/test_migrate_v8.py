@@ -28,7 +28,9 @@ from typing import Any
 
 import pytest
 
+from bettermemory import store_rows
 from bettermemory.eval import compute_report, render_report_markdown
+from bettermemory.events import redact_query
 from bettermemory.log import MIGRATE_V8, STORE_CREATED
 from bettermemory.migrate_v8 import MigrationReport, inventory, migrate
 from bettermemory.mirror import write_mirror
@@ -433,6 +435,50 @@ def test_new_v8_events_are_imported_by_a_later_run(
     assert report.events["found"] == total + 1
     assert report.events["imported"] == 1 and report.events["present"] == total
     assert report.log_rows == 2
+
+
+def _as_rc17(fields: dict[str, Any]) -> dict[str, Any]:
+    """The event writer before 9.0.0rc18: the query fields redacted, every
+    other string as the event gave it."""
+    return {
+        key: redact_query(value)
+        if key in ("query", "probe_query") and isinstance(value, str)
+        else value
+        for key, value in fields.items()
+    }
+
+
+def test_an_event_imported_with_a_token_is_not_imported_again(
+    v8: V8Fixture,
+    store_path: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The round-2 review's migrate probe: an earlier build imported a v8
+    `use` whose note carries a control token as given; the writer now
+    names it, and a re-run compared the two verbatim and imported the
+    event a second time (ENG-189)."""
+    _append_event(
+        v8.root,
+        {
+            "ts": "2026-09-27T00:00:00.000000Z",
+            "session": "sess_c",
+            "kind": "use",
+            "ids": [v8.plain.id],
+            "outcome": "contradicted",
+            "note": "the doc said <|im_start|> opens a turn",
+        },
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(store_rows, "_redact_event_fields", _as_rc17)
+        migrate(v8.root, store_path, keys_dir=keys_dir)
+    report = migrate(v8.root, store_path, keys_dir=keys_dir)
+    total = sum(v8.event_kinds.values()) + 1
+    assert (report.events["imported"], report.events["present"]) == (0, total)
+    assert report.log_rows == 0
+    with Store.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
+        notes = [ev.get("note") for ev in store.iter_events() if ev["kind"] == "use"]
+        assert notes.count("the doc said <|im_start|> opens a turn") == 1
 
 
 def test_verbatim_query_text_is_redacted_on_import(

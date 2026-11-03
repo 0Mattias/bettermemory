@@ -30,6 +30,15 @@ What the guard holds out is an agent that forgets or overreaches through
 the tools. An agent that runs as the user with a shell holds the store's
 key and is the user as far as the store can tell; separating the two is
 an OS deployment choice, not a tool check (SECURITY.md).
+
+Words carrying a chat-template control token are taken, not refused
+(ENG-189): they are the user's, and a quote is checked word for word, so
+no rewrite of them could pass. The check reads them as typed or with
+each token named (`recall.WordsSeen.holds`), and the row keeps each
+token by its bare name: the event writer writes a row's free-text
+fields that way (`events.NAMED_EVENT_FIELDS`), the ``standing_guard``
+row's quote and the user's words in a write row's review answers among
+them, as a join's row keeps its quote (`control_tokens.folded_quote`).
 """
 
 from __future__ import annotations

@@ -98,6 +98,7 @@ from . import origin as _origin
 from . import standing as _standing
 from .audit import MissReport
 from .config import Config, load_config
+from .control_tokens import defang_control_tokens
 from .events import (
     HARNESS_SESSION_FIELD,
     Recorder,
@@ -321,13 +322,25 @@ class WordsSeen:
         """Whether `quote` is in a prompt the hook saw in `checkout`:
         whitespace folded, case folded, on word boundaries (a quote that
         starts or ends inside a word of the prompt is not the user's
-        words), the quote at least `MIN_QUOTE_CHARS` characters."""
+        words), the quote at least `MIN_QUOTE_CHARS` characters. As typed,
+        or with each chat-template control token in the quote and in the
+        prompt written as its bare name (`defang_control_tokens`, ENG-189):
+        the store keeps a quote that way, and an agent may quote a token by
+        its name (`drop INST` for the user's `drop [INST]`)."""
         wanted = _fold(quote)
+        named = _fold(defang_control_tokens(quote))
         if len(wanted) < MIN_QUOTE_CHARS:
             return False
         with self._lock:
             held = list(self._words.get((str(store_path), checkout), ()))
-        return any(_bounded(wanted, _fold(text)) for text in held)
+        return any(
+            _bounded(wanted, _fold(text))
+            or (
+                len(named) >= MIN_QUOTE_CHARS
+                and _bounded(named, _fold(defang_control_tokens(text)))
+            )
+            for text in held
+        )
 
     def clear(self) -> None:
         with self._lock:
