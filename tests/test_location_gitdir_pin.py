@@ -61,7 +61,20 @@ def _separate(tmp_path: Path, name: str = "app") -> tuple[Path, Path]:
     _git(tmp_path, "init", "-q", "-b", "main", f"--separate-git-dir={sep}", str(tree))
     (tree / "main.py").write_text("print(1)\n", encoding="utf-8")
     _git(tree, "add", "-A")
-    _git(tree, "commit", "-q", "-m", "one")
+    # No auto maintenance: git's detached run after a commit writes and
+    # removes files in the git directory (objects/maintenance.lock) while
+    # a test compares its contents (seen on the macOS runner).
+    _git(
+        tree,
+        "-c",
+        "gc.auto=0",
+        "-c",
+        "maintenance.auto=false",
+        "commit",
+        "-q",
+        "-m",
+        "one",
+    )
     return tree, sep
 
 
@@ -220,6 +233,10 @@ def test_a_recorded_tree_that_names_another_git_directory_gives_way(
     tree, sep = _separate(tmp_path)
     assert _see(tree).state == REPO
     other_tree, other = _separate(tmp_path, "other")
+    # Replaced, not rewritten: git for Windows marks the `.git` file hidden
+    # (core.hideDotFiles), and Windows refuses to truncate a hidden file
+    # opened without that attribute (the Windows runner's PermissionError).
+    (tree / ".git").unlink()
     (tree / ".git").write_text(f"gitdir: {other}\n", encoding="utf-8")
     second = _plant(tmp_path / "work" / "second", sep)
 
