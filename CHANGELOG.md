@@ -33,6 +33,19 @@ Git Bash, where Claude Code runs them in PowerShell, keeps the path
 and refuses an unknown or removed id in plain words. The store takes no
 schema step.
 
+#### Changed
+
+- **The verify path cap and the body parse memo cap state their
+  evidence (ENG-171).** `_MAX_PATH_LENGTH` (512) gave a reason and
+  `BODY_PARSE_ENTRIES` (4,096) said what the memo does; neither said why
+  its value. Both were set without a measurement, and one on the owner's
+  store (2026-11-02, 9.0.0rc16, 1,447 memories) now prices them: the
+  longest of the 1,316 path candidates its bodies cite is 285
+  characters, none over 512, and a candidate past the cap is dropped
+  before any stat, so it is never flagged missing; at 4,096 entries the
+  two memos hold about 7.7 MB (about 471 and 1,417 bytes an entry), and
+  the store fits 2.8 times over. No value changed.
+
 #### Fixed
 
 - **The plugin's hooks run on Windows without Git Bash (ENG-185).**

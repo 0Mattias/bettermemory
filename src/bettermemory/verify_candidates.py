@@ -35,6 +35,22 @@ from . import _caches
 # real memories rarely cite more than 2-3 paths.
 
 _MAX_PATHS_PER_BODY = 8
+
+# The longest candidate kept, in characters once trimmed. Anything longer
+# is a pasted blob (an encoded token, a minified line), not a citation: it
+# is dropped before any stat, so it is never flagged missing, and the cap
+# can drop a claim but never make one. An absolute or home attestation
+# passes the same gate, so one past it reads as never given.
+#
+# Evidence: 512 was set without a measurement. Measured since on the
+# owner's store on 2026-11-02 (9.0.0rc16, 1,447 memories) with the cap
+# lifted to 10^6, the scan kept 1,316 candidates (at most
+# `_MAX_PATHS_PER_BODY` a body); the five longest are 152, 152, 152, 155
+# and 285 characters, so one is over 256 and none is over 512. The
+# systems' own limits: Windows' MAX_PATH is 260 (longer with the
+# long-path opt-in), macOS's PATH_MAX 1,024 and Linux's 4,096. So 512
+# keeps every path the store cites, and a real path between 512 and the
+# macOS or Linux limit goes unchecked; the store cites none.
 _MAX_PATH_LENGTH = 512
 
 # Hard cap on how many bytes of a body we scan for path candidates. The
@@ -457,6 +473,17 @@ class _ClaimKeys:
 # store, the parse runs outside it: two threads that miss on the same body
 # parse it once each and store equal values. Registered with `_caches`,
 # which empties it before each test.
+#
+# Evidence: 4,096 was set without a measurement. Measured since on the
+# owner's store on 2026-11-02 (9.0.0rc16, 1,447 memories; bodies a median
+# 2,673 characters, p95 11,137, longest 97,087) with tracemalloc (Python
+# 3.11, macOS), after every body was parsed once: `_CANDIDATES` held
+# 681,185 bytes, about 471 an entry, and `_ANCHORS` 2,050,599, about 1,417
+# an entry. So at the cap the two hold about 7.7 MB (4,096 of each, 1,888
+# bytes a pair). The store fits 2.8 times over, so a warm brief or search
+# parses no body again; a store past the cap evicts the least recently
+# used results and parses those bodies again when next read, which costs
+# time and changes no verdict, since the memo only saves work.
 BODY_PARSE_ENTRIES = 4096
 
 _BodyKey = tuple[bytes, tuple[str, ...], str]
