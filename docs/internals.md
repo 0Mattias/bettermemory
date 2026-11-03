@@ -1291,9 +1291,16 @@ appends a signed `store_restored` row to the restored log;
 steps that fill a bundle, the checks a verification runs and the plan a
 restore reads before it changes anything.
 `restore_lock.py` is the restore lock, on the store's directory, which a
-restore holds for its length and every writing open takes shared in
-`store._connect`, and the record a restore that did not finish leaves,
-which `backup unlock` removes. `audit_export.py` and `anchor.py` are
+restore holds for its length, every writing open takes shared in
+`store._connect` and every read-only open takes shared until it closes
+(on Windows the store file held open instead), and the record a restore
+that did not finish leaves, which `backup unlock` removes.
+`restore_rows.py` is the restore record beside the head and the
+`store_restored` rows its entries still lack, which the restore and the
+owner's open append while no record row stands after the restore, and
+withhold (`row_withheld`, naming the row that decided it) once one does,
+or where the file is not the history the restore put in place; a
+withheld entry is placed again once that row is gone. `audit_export.py` and `anchor.py` are
 `log export` and `log anchor` and the anchors `log verify --anchor`
 checks (`cli/log_cmd.py`). `history.py` is `memory history`
 (`cli/memory_move_cmd.py`), and `cli/stats_cmd.py` the usage report.
@@ -1709,13 +1716,28 @@ records the pinned `section.key` names, which `config show` labels
   history, and a byte-for-byte copy taken since the store last wrote
   carries it as the store does: the first owner's open of either binds
   the ring (Provenance, above).
-- A restore holds off every writing open through `store._connect`
-  (`restore_lock.py`); on Windows, and on a mount where `flock` cannot
-  lock a directory, an opener holds the lock only for its check, and a
-  process writing the file through a connection of its own is not held
-  off. A read-only command refuses to start while a restore runs, exit
-  75, but one that started before it can read the store between the
-  restore's steps.
+- The restore lock (`restore_lock.py`) is kept by bettermemory's own
+  openers: every writing open, every read, and the restore. A process
+  that writes the store file through a SQLite connection of its own
+  takes no part in it, and nothing holds it off: the restore's probe
+  refuses while such a connection has the file open and has read it.
+  What it writes is caught as any write without the key is (Tamper
+  evidence, above), a row it appends failing its MAC, but by the
+  restore only when it lands in the restored file before the restore's
+  own `log verify`, which then reads `tampered` and the restore reports
+  failed. A connection that opened the file before the probe holds the
+  file moved aside but opens `-wal` and `-shm` by name: what it writes,
+  or a checkpoint it runs, can corrupt either file or copy the restored
+  WAL into the moved-aside one, which no check on the log tells from
+  damage. A write after that verify comes after it, and the next `log
+  verify` of that file reads it as any write without the key. On a POSIX mount where
+  `flock` cannot lock a directory the lock is the restore's record file,
+  as on Windows, but a rename there goes through under an open file: a
+  connection that opened the store before a restore's swap and had not
+  read it at the restore's probe is not seen, since nothing on such a
+  mount holds a lock a restore could wait for (a `nolocks` NFS mount
+  answers ENOTSUP to SQLite's own locks too, and SQLite's WAL needs
+  locks that hold: one host per store, above).
 - The store's version keys are only what the file says. `meta` is not
   covered by the log's MACs, so an editor of the file can raise a minimum
   to keep builds out, or lower one. Builds from before the contract

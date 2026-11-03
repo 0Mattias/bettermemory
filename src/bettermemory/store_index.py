@@ -921,8 +921,16 @@ def doctor_check(directory: Path | None, report: IndexReport | None = None) -> C
             "index", "the store is a backup bundle's file", "copy it out first"
         )
     if report is None:
+        from .restore_lock import RestoreRunningError
+
         try:
             store = Store.open(path, read_only=True)
+        except RestoreRunningError:
+            return _not_checked(
+                "index",
+                "a restore of the store is running",
+                "run `bettermemory doctor` again when the restore has finished",
+            )
         except (ValueError, sqlite3.Error, OSError):
             return _not_checked(
                 "index", "the store does not open", "fix the store first"

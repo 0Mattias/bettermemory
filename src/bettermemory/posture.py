@@ -27,8 +27,12 @@ What the audit is not:
   fingerprint) through the read-only commands' open
   (`store_schema.connect_read_only`), which reads the file in place with
   ``mode=ro`` where that creates nothing, and a closed WAL-mode store from
-  a private copy, never the live file with ``immutable=1``. The log itself
-  is `bettermemory log verify`'s to check; the audit points at it.
+  a private copy, never the live file with ``immutable=1``. It reads them,
+  the key ring's files and the key under the restore lock, held shared as
+  every reader holds it (`restore_lock.reading`, ENG-208): no restore
+  runs between those reads, and while one runs the key is not checked, a
+  warning that says so. The log itself is `bettermemory log verify`'s to
+  check; the audit points at it.
 * **Not a network client.** The daemon check reads the state file and the
   pid, nothing more: this build binds 127.0.0.1 and no other address
   (`daemon.serve`'s ``host``, `_daemon_client.HOST`), and the state file
@@ -78,7 +82,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import _daemon_client, githead, sandbox_settings
+from . import _daemon_client, githead, restore_lock, sandbox_settings
 from ._git import run_git
 from .config import (
     ENV_DIR_OVERRIDE,
@@ -88,6 +92,7 @@ from .config import (
     Config,
 )
 from .log import STORE_ID_PATTERN, KeyRing
+from .restore_lock import RestoreRunningError
 
 # The Claude Code sandbox check lives in `posture_sandbox`, which imports
 # nothing from here. `Finding`, defined there, is not a patch point: the
@@ -197,31 +202,49 @@ def audit(*, cwd: Path | None = None, platform: str | None = None) -> Audit:
     findings.append(_selection(store_dir, rule))
     findings.extend(_overrides())
 
-    meta, meta_error, refused = _meta_or_error(store_file)
-    store_id = (meta or {}).get("store_id")
-    # The meta is whatever the store file says, and a ring is built for a
-    # well-formed id only (`log.KeyRing`): an id holding a path would have
-    # the ring checks read, and glob, outside the keys directory. A
-    # malformed id is the key check's one finding.
-    keyring = (
-        KeyRing(keys_dir, store_id)
-        if store_id and STORE_ID_PATTERN.fullmatch(store_id)
-        else None
-    )
-
-    findings.extend(
-        _modes(
-            platform=platform,
-            store_dir=store_dir,
-            store_file=store_file,
-            keys_dir=keys_dir,
-            keyring=keyring,
-            state_dir=state_dir,
+    # The store's meta, its key ring's files and the key are read under
+    # the restore lock, held shared as every reader holds it
+    # (`restore_lock.reading`): no restore runs between the reads, and
+    # while one runs the key is not checked (`_key_while_restoring`).
+    running: RestoreRunningError | None = None
+    try:
+        reader = restore_lock.reading(store_file)
+    except RestoreRunningError as exc:
+        reader, running = None, exc
+    try:
+        meta, meta_error, refused = (
+            (None, None, None) if running else _meta_or_error(store_file)
         )
-    )
-    findings.append(
-        _key(store_file, keys_dir, meta, meta_error, keyring, refused=refused)
-    )
+        store_id = (meta or {}).get("store_id")
+        # The meta is whatever the store file says, and a ring is built for
+        # a well-formed id only (`log.KeyRing`): an id holding a path would
+        # have the ring checks read, and glob, outside the keys directory. A
+        # malformed id is the key check's one finding.
+        keyring = (
+            KeyRing(keys_dir, store_id)
+            if store_id and STORE_ID_PATTERN.fullmatch(store_id)
+            else None
+        )
+
+        findings.extend(
+            _modes(
+                platform=platform,
+                store_dir=store_dir,
+                store_file=store_file,
+                keys_dir=keys_dir,
+                keyring=keyring,
+                state_dir=state_dir,
+                restoring=running,
+            )
+        )
+        findings.append(
+            _key_while_restoring(store_file, running)
+            if running is not None
+            else _key(store_file, keys_dir, meta, meta_error, keyring, refused=refused)
+        )
+    finally:
+        if reader is not None:
+            reader.close()
     findings.append(_placement(store_dir, keys_dir))
     findings.extend(_where(store_dir, store_file, keys_dir))
     findings.extend(_daemon(state_dir, store_file))
@@ -296,10 +319,14 @@ def _modes(
     keys_dir: Path,
     keyring: KeyRing | None,
     state_dir: Path,
+    restoring: RestoreRunningError | None = None,
 ) -> Iterator[Finding]:
     """Mode and owner of every file and directory SECURITY.md names, where
     it exists. A missing one is not a mode finding: the key's absence is
-    the key check's, and the rest are created on first use."""
+    the key check's, and the rest are created on first use. While a
+    restore of the store runs (`restoring`) the store's meta is not read,
+    so its key ring is not known, and each of the ring's files says it
+    was not checked (`_ring_while_restoring`) rather than going unsaid."""
     if platform == "win32":
         yield Finding(
             "mode",
@@ -323,6 +350,8 @@ def _modes(
         ),
         ("mode.keys_dir", "keys directory", keys_dir, True, False),
     ]
+    if keyring is None and restoring is not None:
+        yield from _ring_while_restoring(keys_dir, restoring)
     if keyring is not None:
         items.append(("mode.key", "key file", keyring.current_path(), False, True))
         # `<store_id>.<fingerprint prefix>.key`; the current key, with no
@@ -531,6 +560,49 @@ def _meta_or_error(
         return None, str(exc), exc
     except (sqlite3.Error, OSError) as exc:
         return None, str(exc), None
+
+
+#: The key ring's files `_modes` grades, by finding id and label: what
+#: `_ring_while_restoring` says it did not check.
+_RING_FILES: tuple[tuple[str, str], ...] = (
+    ("mode.key", "key file"),
+    ("mode.retired_key", "retired keys"),
+    ("mode.head", "head checkpoint"),
+    ("mode.origin", "origin anchor"),
+    ("mode.binding", "key ring binding"),
+)
+
+
+def _ring_while_restoring(
+    keys_dir: Path, running: RestoreRunningError
+) -> Iterator[Finding]:
+    """The key ring's mode findings while a restore of the store runs:
+    each one skipped, saying why. The store's id, which names the ring's
+    files, is read from the store's meta, which the restore is replacing
+    (`restore_lock.reading`), and the restore installs keys and rewrites
+    the head, the anchor and the binding as it goes."""
+    for finding_id, label in _RING_FILES:
+        yield Finding(
+            finding_id,
+            "skip",
+            f"{label} not checked: {running.why} (keys directory {keys_dir})",
+            path=str(keys_dir),
+            fix="run `bettermemory security audit` again when the restore has finished",
+        )
+
+
+def _key_while_restoring(store_file: Path, running: RestoreRunningError) -> Finding:
+    """The key check while a restore of the store runs: not made, a
+    warning. The store file, its key and its head are the restore's to
+    change until it finishes, and a key read part way may be the one the
+    restore is about to retire (`restore_lock.reading`)."""
+    return Finding(
+        "key.match",
+        "warn",
+        f"not checked: {running.why} ({store_file})",
+        path=str(store_file),
+        fix="run `bettermemory security audit` again when the restore has finished",
+    )
 
 
 def _key(

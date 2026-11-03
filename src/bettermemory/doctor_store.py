@@ -272,7 +272,12 @@ def check_store(ctx: _Context) -> list[Check]:
     check renders the state the open read (`store.Store.key_state`,
     `store_keys.key_state`) in its words, as posture's ``key.match``
     finding does: ok only when the key is present, a failure naming the
-    remedy when it is unreadable, missing, foreign or bound elsewhere."""
+    remedy when it is unreadable, missing, foreign or bound elsewhere.
+    While a restore of the store runs neither is checked (a warning each,
+    naming the restore): the open is refused then, and the file, its key
+    and its head are the restore's to change until it finishes (ENG-208;
+    the `restore` check says the restore runs)."""
+    from .restore_lock import RestoreRunningError
     from .store import (
         SCHEMA_VERSION,
         STORE_FILENAME,
@@ -292,7 +297,15 @@ def check_store(ctx: _Context) -> list[Check]:
     if bundle is not None:
         return bundle
     try:
+        # A reader's open: it waits a moment for a restore that holds the
+        # store and is refused while one runs, and holds every restore off
+        # until it closes (`restore_lock.reading`), so the counts, the key
+        # and the head below are one restore's.
         store = Store.open(path, read_only=True)
+    except RestoreRunningError:
+        why = "a restore of the store is running"
+        again = "run `bettermemory doctor` again when the restore has finished"
+        return [_not_checked("store", why, again), _not_checked("key", why, again)]
     except (ValueError, sqlite3.Error, OSError) as exc:
         return [
             Check(

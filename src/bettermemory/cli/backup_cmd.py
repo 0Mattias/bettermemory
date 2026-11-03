@@ -152,7 +152,8 @@ def add_subparser(
         "Running the restore again finishes it instead. Without --yes prints "
         "the record and changes nothing. "
         "Exit 0 when there is nothing to clear or it was cleared, 1 while a "
-        "restore holds the lock, 2 on a usage error, 3 when --yes was not given."
+        "restore holds the lock or a command reads or opens the store, 2 on a "
+        "usage error, 3 when --yes was not given."
     )
     unlock = backup_sub.add_parser("unlock", help=text, description=text)
     unlock.add_argument(
@@ -511,9 +512,15 @@ def render_restore(report: dict[str, Any]) -> str:
         lines.append(f"  store_restored row appended at seq {row['seq']}")
     elif status == "restored":
         lines.append(
-            "  no store_restored row: this build opens the restored store for "
-            "reading only (a schema step waits on it), and the restore record "
-            "keeps the entry"
+            "  no store_restored row yet: this build opens the restored store for "
+            "reading only (a schema step waits on it) in every open but the "
+            "owner's, which runs the step and appends the row; the restore "
+            "record keeps the entry meanwhile. Only a bettermemory without the "
+            "step writes to the store before that open: one from 9.0.0rc18 on "
+            "appends the row at its own owner open, and a record written first, "
+            "by a build before 9.0.0rc18 or by an open that is not the owner's, "
+            "withholds the row, as the next owner open says, the record keeping "
+            "the restore (row_withheld)"
         )
     log = report["log"]
     if log is not None:
@@ -543,17 +550,30 @@ def _unlock(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> Non
 
 def render_unlock(report: dict[str, Any]) -> str:
     """The text form of a `restore_lock.unlock` report."""
-    from ..restore_lock import describe
+    from ..restore_lock import HOLDER_READER, describe
 
     lock = report["lock"]
     marker = report["marker"]
     record = "" if marker is None else f" ({describe(marker)})"
-    line = {
-        "clear": f"nothing to clear: {lock} records no restore",
-        "held": (
+    if report.get("holder") == HOLDER_READER:
+        # The marker is the restore that did not finish; what holds the
+        # lock now is a command reading or opening the store.
+        held = (
+            f"a command is reading or opening the store, and holds {lock} until "
+            f"it has finished; run this again then. The lock records a restore "
+            f"that did not finish{record}"
+            if marker is not None
+            else f"a command is reading or opening the store, and holds {lock} "
+            "until it has finished; run this again then"
+        )
+    else:
+        held = (
             f"a restore holds {lock} now{record}; let it finish, or run this "
             "again once it has stopped"
-        ),
+        )
+    line = {
+        "clear": f"nothing to clear: {lock} records no restore",
+        "held": held,
         "planned": (
             f"{lock} records a restore that did not finish{record}; run again "
             "with --yes to clear it and open the store as it stands, or run "

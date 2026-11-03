@@ -123,7 +123,12 @@ def test_a_restored_store_this_build_reads_only_gets_no_row(
     """A store waiting on a schema step this build runs opens for reading
     only (``PRAGMA query_only``), as here, and writes nothing: the restore
     finishes without a row, the record keeps the entry, and the text says
-    so. (`tests/test_store_steps.py` restores such a store for real.)"""
+    so. It names the one writer that can come before the step's owner
+    open, a bettermemory without the step: this build's `key` commands,
+    `export` and `membership` open such a store for reading only too. And
+    it withholds the row only where that writer appends none: one from
+    9.0.0rc18 on appends it at its own owner open.
+    (`tests/test_store_steps.py` restores such a store for real.)"""
     store_file = tmp_path / "store" / STORE_FILENAME
     monkeypatch.setenv("BETTERMEMORY_DIR", str(store_file.parent))
     with Store.create(store_file) as created:
@@ -144,6 +149,11 @@ def test_a_restored_store_this_build_reads_only_gets_no_row(
     out = capsys.readouterr().out
     assert "backup restore: restored" in out
     assert "no store_restored row" in out
+    flat = " ".join(out.split())
+    assert "Only a bettermemory without the step writes to the store" in flat
+    assert "one from 9.0.0rc18 on appends the row at its own owner open" in flat
+    assert "by a build before 9.0.0rc18 or by an open that is not the owner's" in flat
+    assert "`membership`" not in flat
     monkeypatch.undo()
     with Store.open(store_file, read_only=True) as opened:
         assert opened.log_rows()[-1].kind != STORE_RESTORED

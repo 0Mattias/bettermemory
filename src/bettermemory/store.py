@@ -374,7 +374,9 @@ def _connect(path: Path) -> sqlite3.Connection:
     connection opened for another role sets its own,
     `Store.set_busy_timeout`), foreign keys on, autocommit off so every
     write is an explicit transaction, and owner-only modes on the file and
-    its WAL siblings."""
+    its WAL siblings. Admitted by the restore lock before all of it, and
+    checked by it again once the connection has read the store
+    (`restore_lock.admit`, ``confirm``)."""
     held = _restore_lock.admit(path)
     try:
         conn = sqlite3.connect(
@@ -397,6 +399,8 @@ def _connect(path: Path) -> sqlite3.Connection:
                 if sibling.exists():
                     with contextlib.suppress(OSError):
                         os.chmod(sibling, 0o600)
+            if held is not None:
+                held.confirm()
         except Exception:
             conn.close()
             raise
@@ -439,8 +443,11 @@ class Store:
     # Opened by `open(..., read_only=True)`, and the private copy's
     # directory it reads from (`connect_read_only`), removed by `close`
     # or, left open, when the store is collected or at exit (`_keep_copy`).
+    # `_reader`: a read-only open's hold on the restore lock, given back
+    # as it closes (`restore_lock.reading`); None for any other.
     _read_only: bool
     _scratch: Path | None
+    _reader: _restore_lock.Closeable | None
     _store_id: str
     _last_appended: LogRow | None
     # How many `_transaction` entries are open on this connection: 0 when
@@ -524,6 +531,7 @@ class Store:
         self._key_state = None
         self._read_only = False
         self._scratch = None
+        self._reader = None
         self._store_id = store_id
         self._last_appended = None
         self._tx_depth = 0
@@ -702,7 +710,10 @@ class Store:
         (`store_schema.connect_read_only`): no WAL switch, no chmod, no
         additive schema step (a reader finds a missing table empty), no
         ``-wal`` or ``-shm`` left behind, and every write fails in
-        SQLite. It never rekeys, so it takes no ``allow_rekey``."""
+        SQLite. It never rekeys, so it takes no ``allow_rekey``. It holds
+        every restore of the store off until it closes
+        (`restore_lock.reading`), and is refused while one runs:
+        `restore_lock.RestoreRunningError`."""
         from .store_open import _open_connected
 
         if read_only and allow_rekey:
@@ -711,10 +722,18 @@ class Store:
         if not path.is_file():
             raise FileNotFoundError(f"no store at {path}")
         scratch: Path | None = None
-        if read_only:
-            conn, scratch = connect_read_only(path, timeout=CLI_BUSY_TIMEOUT_SECONDS)
-        else:
-            conn = _connect(path)
+        reader = _restore_lock.reading(path) if read_only else None
+        try:
+            if read_only:
+                conn, scratch = connect_read_only(
+                    path, timeout=CLI_BUSY_TIMEOUT_SECONDS
+                )
+            else:
+                conn = _connect(path)
+        except BaseException:
+            if reader is not None:
+                reader.close()
+            raise
         try:
             return _open_connected(
                 cls,
@@ -725,11 +744,14 @@ class Store:
                 allow_rekey=allow_rekey,
                 strict_provenance=strict_provenance,
                 read_only=read_only,
+                hold=reader,
             )
         except Exception:
             conn.close()
             if scratch is not None:
                 shutil.rmtree(scratch, ignore_errors=True)
+            if reader is not None:
+                reader.close()
             raise
 
     @classmethod
@@ -999,17 +1021,28 @@ class Store:
             return
         self._settle_origin()
 
-    def _keep_copy(self, read_only: bool, scratch: Path | None) -> None:
-        # A full copy of the store must not outlive a store never closed.
-        self._read_only, self._scratch = read_only, scratch
+    def _keep_copy(
+        self,
+        read_only: bool,
+        scratch: Path | None,
+        reader: _restore_lock.Closeable | None = None,
+    ) -> None:
+        # A full copy of the store, and a hold on the restore lock, must not
+        # outlive a store never closed.
+        self._read_only, self._scratch, self._reader = read_only, scratch, reader
         if scratch is not None:
             weakref.finalize(self, remove_read_only_copy, self._conn, scratch)
+        if reader is not None:
+            weakref.finalize(self, reader.close)
 
     def close(self) -> None:
         self._conn.close()
         if self._scratch is not None:
             shutil.rmtree(self._scratch, ignore_errors=True)
             self._scratch = None
+        if self._reader is not None:
+            self._reader.close()
+            self._reader = None
 
     @property
     def busy_timeout(self) -> float:

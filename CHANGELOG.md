@@ -30,7 +30,12 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 The eighteenth candidate follows a `.git` file naming a
 `--separate-git-dir` directory only from that git directory's own
 working tree, and judges a `.git` that is a link as the pointer it is.
-The store takes no schema step.
+It closes four of the restore's rc14 Known limitations: a restore's
+`store_restored` row the restore could not write is appended by the
+next owner open, unless a record was written after the restore first, a
+read holds a restore off until it has read, and on Windows a writing
+open that races a restore is refused or stops it. The store takes no
+schema step.
 
 #### Changed
 
@@ -307,6 +312,143 @@ The store takes no schema step.
   origin repository or toplevel, so a write there declares no claims.
   The security audit and the key export still read a `.git` entry as git
   does, since a `git add` there follows it.
+
+- **A restore's `store_restored` row that the restore could not write is
+  appended by the next owner open (ENG-208).** A restore writes its
+  entry in the record beside the head before it opens the restored store
+  to append the row, and the entry names the row once it is on the log
+  (`row`, null until then, since 9.0.0rc14). A restore that failed
+  between the two left an entry with no row, which running the restore
+  again did not write, and a restore onto a store waiting on a schema
+  step, which the restore opens for reading only, appended none, nor did
+  the owner's open that later ran the step; 9.0.0rc14 listed both under
+  Known limitations. The owner's open (the daemon's, and every command's
+  that writes records but `membership`) now reads the record and
+  appends, in its order, the row each entry still lacks, with the
+  payload the restore would have written, and the record names it; a
+  restore run again appends the earlier restore's row before its own, so
+  the log tells the two in the order they ran. An entry gets its row
+  only on a log that holds the history its restore put in place: the row
+  at its `head_after` carries that MAC, and the file is not the history
+  the restore moved aside, put back by hand. The head the restore
+  replaced tells the two by MAC; only where the record names none past
+  the bundle's (`head_before` null, or not past `head_after`) does the
+  time the first row past the bundle's head was written tell instead, so
+  a clock stepped back after a restore costs no row where a MAC answers;
+  where the time tells, the warning says that row is stamped before the
+  restore and what the file may then be (the history the restore
+  replaced, or another copy of the store where it read no log here, or a
+  clock set back), and no later open places that file again while the
+  row stands. And it gets it only while no record row stands past the
+  bundle's head: `memory history` reads a `store_restored` row as a
+  rewind of every record that came before it, so a late row after a
+  record written since the restore (by 9.0.0rc14 to 9.0.0rc17 after a
+  failed restore and `backup unlock --yes`, which append no late row, or
+  by a `key` command, `export` or `membership`, whose opens append none)
+  would say the restore rewound that record. Every entry the open keeps
+  off its log is withheld: the entry keeps `row` null and gains
+  `row_withheld`, the row that decided it (its seq, kind and MAC) and
+  why (`record`, `replaced` or `elsewhere`), and a warning says so once.
+  It is looked at again, by that one row, at each owner open and
+  restore, and placed anew once the row is gone: a later restore that
+  takes the record off the log appends the withheld row before its own.
+  Nothing reads the missing row as damage: `log verify` reads the log
+  `ok` and lists the restores whose rows it holds, `doctor` does not
+  read the record, and `log export` still warns from the record of a
+  cursor inside the range the restore rewound, as for the entries
+  9.0.0rc14 to 9.0.0rc17 left. A row already on the log that its entry
+  does not name (the restore died before its record named it) is named,
+  not appended again, and two writing opens racing append one. No row
+  kind and no schema step; `row_withheld` is a new key in a record
+  entry, beside `row`, which 9.0.0rc14 to 9.0.0rc17 read only for its
+  seq and keep as it is when they rewrite the record.
+  (`src/bettermemory/restore_rows.py`, `tests/test_restore_row_late.py`)
+
+- **A read holds a restore off until it has read (ENG-208).** A
+  read-only command refused to start while a restore ran, but one that
+  started before it read the store file and the keys, head and anchor
+  beside it on either side of the restore's swap, and could call a
+  healthy restore `tampered`; `doctor`'s store check and `security
+  audit` read the store without even that check. Every read-only open
+  (`log verify`, `log export`, `log anchor`, `stats`, `memory history`,
+  `key show`, `doctor`, `security scan`, the audit's key check) now
+  takes the restore lock shared and holds it until it closes, where a
+  writing open holds it only through its open: a restore waits for it,
+  10 s as for an opener, and is refused, naming a process that opens or
+  reads the store. While a restore runs, `doctor`'s store, key and index
+  checks and the audit's key check say they did not check the store (a
+  warning each), the audit's mode checks of the key ring's files say
+  they were skipped, and `log verify`, `log export`, `log anchor`,
+  `stats`, `memory history` and `key export`'s check of its `--out`
+  still exit 75 (EX_TEMPFAIL). `key show` exits 1 and `security scan` 2
+  with the same refusal, as for any store they cannot read: those codes
+  are what a script or a CI gate reads from them (1 for no key to show, 2
+  for a store the scan cannot read), and a fourth code would read as
+  neither. `backup unlock --yes` run while a read holds the lock waits
+  for it as a restore does, then exits 1 saying a command is reading or
+  opening the store, not that the restore whose record it clears is
+  running. A process that writes the store file through a SQLite
+  connection of its own, not bettermemory's code, takes no lock, and no
+  lock can hold it off; the restore's probe refuses while it has the
+  file open and has read it, and rows it writes into the restored file
+  before the restore's own `log verify` fail their MAC there, so the
+  verify reads the restored store `tampered` and the restore reports
+  failed. That verify does not see a connection that opened the file
+  before the probe: it holds the moved-aside file but opens `-wal` and
+  `-shm` by name, so what it writes, or a checkpoint it runs, can
+  corrupt either file or copy the restored WAL into the moved-aside one.
+  Nor does it see a write after it, which the next `log verify` of the
+  file reads as any write without the key. The one write of
+  bettermemory's own outside `store._connect`, the daemon's handover
+  note, needs a live daemon, which the restore's daemon lock keeps out.
+  9.0.0rc14 listed these under Known limitations.
+  (`src/bettermemory/restore_lock.py`, `tests/test_restore_readers.py`)
+
+- **On Windows a writing open that races a restore is refused or stops
+  it (ENG-208).** Windows cannot lock a directory and `msvcrt` has no
+  shared lock, so there the restore lock is the record file a restore
+  makes, and an opener could only check it: one that checked just before
+  a restore took the lock, and opened the file just after the restore's
+  probe, met a store part restored; 9.0.0rc14 listed this under Known
+  limitations. The opener now holds the store file open from its check,
+  checks again behind the handle, and, opening to write, checks once
+  more when its connection has read the store, before it reads or writes
+  a record. Windows renames no file that is open, so a restore cannot
+  swap its file in while the handle is open: one that took the lock
+  before the opener's last check refuses the opener there, and its swap,
+  which tries its first rename again for 2 s and a second more, goes on
+  once the refused opener lets go; one that takes the lock after the
+  opener's connection has read the store meets that connection at its
+  probe and is refused; and a swap that meets a handle open past its
+  wait fails, in the probe's words, having changed nothing. No opener
+  writes after the probe of a restore that goes on: what it wrote before
+  is in the file the restore moves aside, and in the log end its record
+  keeps. A read holds the file open the same way until it closes. An
+  open or a read that finds no file to hold, where a swap is between its
+  moves, checks again before it connects and is refused while the
+  restore runs, rather than reading the restored file against keys and a
+  head not yet installed (`tampered` for a healthy restore) or having
+  SQLite make an empty file in the vacated name. `msvcrt` locks the
+  record file exclusively for every check, so a check behind the handle
+  looks again for up to 2 s while the lock is held (another opener's
+  check lets go in an instant; a restore holds on): two openers or reads
+  checking at once no longer refuse each other, nor does a read of a
+  store a restore did not finish (the `log verify` and `doctor` the
+  runbook asks for before `backup unlock --yes`) read the dead restore's
+  marker as one running. The swap waits only for a file held open
+  (`ERROR_SHARING_VIOLATION`): any other refusal to move the store
+  aside, an ACL's or a file pending deletion, is said as it is, at once.
+  A POSIX mount where `flock` cannot lock a directory uses the record
+  file too, and there a writing open checks again once it has read the
+  store and refuses a store file a restore swapped in meanwhile. What is
+  left there is a connection that opened the file before a restore's
+  swap and had not read it at the restore's probe: a rename there goes
+  through under an open file, and nothing on such a mount holds a lock a
+  restore could wait for (a `nolocks` NFS mount answers ENOTSUP to
+  SQLite's own locks as well, and SQLite's WAL needs locks that hold).
+  (`src/bettermemory/restore_lock.py`, `src/bettermemory/backup.py`,
+  `tests/test_restore_open_race.py`, whose `record` cases the Windows
+  leg runs natively)
 
 ### 9.0.0rc17
 
@@ -3940,41 +4082,11 @@ follows the candidates' testing.
   only.** `memory_update`'s `transient_warning` and its
   `markers_acknowledged` are audit rows now, but the override rate does
   not read update rows, as before.
-- **A restore holds off only the writers that open through
-  `store._connect`, and readers only as they start.** Every writing
-  opener in this package does (the daemon's handover row aside, which
-  only a live daemon writes, and the daemon locks keep it out of a
-  restore); a process that writes the file with its own SQLite
-  connection is not held off. A read-only command refuses to start
-  while a restore runs, but one that started before it may read the
-  store between its steps and report what it saw then; `doctor`'s store
-  check and `security audit` read the store without that check.
-- **On Windows a writing open holds the restore lock only for its
-  check.** Windows cannot lock a directory and `msvcrt` has no shared
-  lock, so the lock there is the record file a restore makes (as on a
-  POSIX mount where `flock` cannot lock a directory): an opener
-  that finds no record file goes on, and one that finds it takes its
-  lock, reads the record and gives the lock back, before SQLite opens
-  the file. An opener that checks just before a restore takes the lock,
-  and opens the file just after the restore's probe, is not seen;
-  Windows' refusal to rename a store file another process has open
-  stops the swap only when the open came first.
 - **After a restore onto a host with no copy of the store, `log export`
   warns every cursor past the restored head.** Where the replaced log
   ended is not known there, so a cursor taken after the restore, past
   its head, is warned too, with the same advice; the batches' `prev_mac`
   link tells the two apart.
-- **A restore that fails between its record and its row leaves an entry
-  with no row.** The restore record is written before the restored store
-  is opened to append the `store_restored` row; a failure in between
-  reports the restore failed and keeps the restore lock's record, and
-  running the restore again writes both.
-- **A restored store waiting on a schema step gets no `store_restored`
-  row.** A store restored under a build that has a step waiting on it
-  opens for reading only and writes nothing, so the restore appends no
-  row; the record beside the head keeps the entry, and the writing open
-  that later runs the step does not add one. (A bundle that needs a
-  later writer than the restoring build is refused instead.)
 
 ### 9.0.0rc13
 

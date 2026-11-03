@@ -22,6 +22,7 @@ import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from . import restore_rows
 from . import store as _store
 from .log import REKEY, KeyRing, Segment, fingerprint
 from .store_keys import KeyState, _signs_a_segment
@@ -32,6 +33,7 @@ from .store_schema import (
 )
 
 if TYPE_CHECKING:
+    from .restore_lock import Closeable
     from .store import Store
 
 
@@ -45,8 +47,9 @@ def _open_connected(
     allow_rekey: bool,
     strict_provenance: bool | None,
     read_only: bool,
+    hold: Closeable | None = None,
 ) -> Store:
-    """Read the connected store's meta and key and bind it as its owner, a reader or under a new key; takes the open's arguments and returns the store."""
+    """Read the connected store's meta and key and bind it as its owner, a reader or under a new key; takes the open's arguments and returns the store. `hold` is a read-only open's hold on the restore lock (`restore_lock.reading`), which the store keeps until it closes. The owner's open appends the ``store_restored`` row of any restore that could not (`restore_rows.settle`), after the origin anchor's upkeep."""
     meta = _store.read_store_meta(conn, path)
     store_id = meta.get("store_id")
     expected = meta.get("key_fingerprint")
@@ -88,10 +91,11 @@ def _open_connected(
             store_id,
             strict_provenance=strict_provenance,
         )
-        store._keep_copy(read_only, scratch)
+        store._keep_copy(read_only, scratch, hold)
         if allow_rekey:
             store._close_foreign_tail()
             store._settle_origin()
+            restore_rows.settle(store)
         return store
     if not allow_rekey or elsewhere is not None:
         return _open_reader(
@@ -108,6 +112,7 @@ def _open_connected(
             strict_provenance=strict_provenance,
             read_only=read_only,
             scratch=scratch,
+            hold=hold,
         )
     segments = _store.chain_segments(
         conn, keyring=keyring, current_fingerprint=expected, current_key=key
@@ -123,6 +128,7 @@ def _open_connected(
         )
         store._reclaim(segments, meta_fingerprint=expected)
         store._settle_origin()
+        restore_rows.settle(store)
         return store
     return _open_rekeyed(
         cls,
@@ -152,6 +158,7 @@ def _open_reader(
     strict_provenance: bool | None,
     read_only: bool,
     scratch: Path | None,
+    hold: Closeable | None,
 ) -> Store:
     """Bind the store for reading, keeping its key for checks where this machine has a history of it; returns the reader."""
     reader = cls._bind(
@@ -164,7 +171,7 @@ def _open_reader(
     )
     reader._bound_elsewhere = elsewhere
     reader._key_state = state
-    reader._keep_copy(read_only, scratch)
+    reader._keep_copy(read_only, scratch, hold)
     # Meta's fingerprint is only what the file says. When this
     # machine has a history of the store (its key ring holds
     # an origin anchor for it, or its key signs a segment of
@@ -238,4 +245,5 @@ def _open_rekeyed(
         fingerprint(key)[:16],
     )
     store._take_over_origin(rekeyed)
+    restore_rows.settle(store)
     return store

@@ -95,8 +95,13 @@ and anchor are now that file's, and a ring left bound to a store file
 elsewhere would open the restored one for reading only), records the
 rewind in ``<store_id>.backup_restore.json`` beside the head, appends a
 ``store_restored`` control row carrying the same entry to the restored
-log (`_append_restore_row`), and runs `log_verify` on the restored
-store, which must read ``ok``.
+log (`restore_rows.append_for`, which first appends the row of any
+earlier restore of this history that never got one), and runs
+`log_verify` on the restored store, which must read ``ok``. A store the
+restore opens for reading only (one waiting on a schema step this build
+runs) gets no row from it; the owner's writing open that runs the step
+appends it (`restore_rows.settle`), as it appends the row of a restore
+that failed between its record and its row.
 
 The order is chosen for what a failure leaves. The file swap is the step
 most likely to fail (Windows refuses to rename a file another process has
@@ -137,6 +142,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -154,6 +160,7 @@ from ._fsutil import (
     sqlite_file_uri,
 )
 from . import restore_lock
+from . import restore_rows as _restore_rows
 from .config import STORE_FILENAME
 from .log import (
     REKEY,
@@ -163,12 +170,12 @@ from .log import (
     HistoryOrigin,
     KeyRing,
     KeyUnreadableError,
-    append_history_replaced,
     canonical_payload,
     fingerprint,
     last_row,
     parse_origin,
 )
+from .restore_rows import restore_record_path
 from .time_utils import isoformat_utc
 
 if TYPE_CHECKING:
@@ -183,8 +190,8 @@ SNAPSHOT_NAME = STORE_FILENAME
 #: Where `create_backup` puts bundles when the caller names no directory:
 #: beside the store file, one directory per bundle under this one.
 BACKUPS_DIR_NAME = "backups"
-#: The rewind record beside the head: ``<store_id>.backup_restore.json``.
-RESTORE_RECORD_SUFFIX = ".backup_restore.json"
+#: The rewind record beside the head, ``<store_id>.backup_restore.json``
+#: (`restore_rows.restore_record_path`, re-exported here), and its format.
 RESTORE_RECORD_FORMAT = "bettermemory.backup_restore"
 #: What the manifest's signature is computed over, ahead of the manifest's
 #: canonical JSON. A log row's MAC input starts with a field marker byte
@@ -278,13 +285,6 @@ def default_backups_dir(store_file: Path) -> Path:
     return Path(store_file).parent / BACKUPS_DIR_NAME
 
 
-def restore_record_path(keys_dir: Path, store_id: str) -> Path:
-    """``<keys dir>/<store_id>.backup_restore.json``, beside the head it
-    records the rewinds of, named after the store as the key ring's files
-    are, since one keys directory serves every store on the host."""
-    return Path(keys_dir) / f"{store_id}{RESTORE_RECORD_SUFFIX}"
-
-
 def manifest_mac(key: bytes, manifest: Mapping[str, Any]) -> str:
     """The manifest's signature: HMAC-SHA256 under the store's key over the
     context string and the canonical JSON (`log.canonical_payload`) of every
@@ -335,6 +335,32 @@ def _sibling(path: Path, suffix: str) -> Path:
 
 
 _SIBLING_SUFFIXES = ("", "-wal", "-shm")
+#: How long past a check's wait (`restore_lock.OPEN_WAIT_SECONDS`) the
+#: swap's first rename is tried again on Windows while a handle holds the
+#: store file (`_move_aside`). A check behind a reader's or opener's
+#: handle, or a writing open's once its connection has read the store
+#: (`restore_lock._RecordCheck.confirm`), looks for up to that wait, then
+#: pauses once more (`restore_lock._POLL_SECONDS`, 50 ms), looks once more
+#: and closes its handles as it refuses; the rest of the second is for a
+#: loaded machine's scheduler (Windows' default timer tick is 15.6 ms). A
+#: handle open past it is a session's, or an opener's stalled between two
+#: of its checks for longer.
+_SWAP_MARGIN_SECONDS = 1.0
+#: How long the swap pauses between two tries of its first rename: as long
+#: as the check it waits for pauses between two looks
+#: (`restore_lock._POLL_SECONDS`). Each try on Windows also spends up to
+#: about 150 ms in `replace_atomic`'s own retries
+#: (`_fsutil._REPLACE_ATTEMPTS`, `_fsutil._REPLACE_BACKOFF_S`), so the
+#: rename is tried about every 0.2 s.
+_SWAP_POLL_SECONDS = 0.05
+#: Windows' ERROR_SHARING_VIOLATION: the ``winerror`` of the
+#: ``PermissionError`` a rename meets while another handle holds the file
+#: open without the share for deletion, SQLite's or a reader's or
+#: opener's (`restore_lock._store_handle`), the one refusal the swap waits
+#: out (`_move_aside`). ERROR_ACCESS_DENIED (5), from an ACL that denies
+#: the move or a file pending deletion, is a ``PermissionError`` too and
+#: no handle's.
+_SHARING_VIOLATION = 32
 
 
 def _tighten_wal_siblings(path: Path) -> None:
@@ -1291,35 +1317,6 @@ def _later_writer_refusal(verification: Mapping[str, Any]) -> str | None:
     )
 
 
-def _record_row(path: Path, entry: Mapping[str, Any], row: Mapping[str, Any]) -> None:
-    """Name `row`, the log row appended for `entry`, in `entry`'s place in
-    the record at `path`: the last entry of its kind, store id and time
-    with no row yet. The record is written before the row, so an entry
-    whose row never came stays ``row: null``. A record that no longer
-    reads, holds no such entry or cannot be written is left as it is: the
-    row is on the log either way (`log.history_replaced_row`)."""
-    keys = ("kind", "store_id", "restored_at")
-    with flock_excl(path):
-        try:
-            document = json.loads(bounded_read(path, _MANIFEST_CAP_BYTES))
-            restores = document["restores"]
-            found = [
-                item
-                for item in restores
-                if isinstance(item, dict)
-                and item.get("row") is None
-                and all(item.get(name) == entry.get(name) for name in keys)
-            ]
-        except (OSError, ValueError, KeyError, TypeError):
-            return
-        if not found:
-            return
-        found[-1]["row"] = dict(row)
-        encoded = json.dumps(document, indent=2, sort_keys=True) + "\n"
-        with contextlib.suppress(OSError):
-            _write_private(path, encoded.encode())
-
-
 def _append_record(path: Path, entry: Mapping[str, Any], stamp: str) -> None:
     """Add `entry` to the rewind record at `path`. A record that does not
     parse is moved aside, not overwritten, and a new one started."""
@@ -1355,13 +1352,27 @@ def _swap_in(
     move stands: a ``-wal`` put back beside a file it was never part of
     would be replayed into it, and the store aside would lose the rows only
     its WAL holds. Otherwise the store file goes back first, and a move
-    back that fails leaves the rest aside, as `moved` says."""
+    back that fails leaves the rest aside, as `moved` says.
+
+    Windows refuses to rename a file another handle has open without the
+    share for deletion, which neither SQLite nor Python's ``os.open``
+    gives: a connection, or a reader or opener holding the store file
+    (`restore_lock._store_handle`), makes the first rename fail with a
+    sharing violation. A reader or opener that checked the lock as this
+    restore took it holds the file only while it checks again
+    (`restore_lock._behind_handle`: behind its handle, and for a writing
+    open once more when its connection has read the store) and lets go
+    as the check refuses it, so the first rename is tried again until
+    that check's wait has passed (`_move_aside`); a handle open past it
+    is a session's, and the swap says so in the probe's words, nothing
+    moved. A rename refused for another reason (an ACL, a file pending
+    deletion) is said as it is, at once."""
     try:
         for suffix in _SIBLING_SUFFIXES:
             source = _sibling(store_file, suffix)
             if source.exists():
                 target = _sibling(aside, suffix)
-                replace_atomic(source, target)
+                _move_aside(source, target, first=not moved)
                 moved.append({"from": str(source), "to": str(target)})
         taken = [
             str(_sibling(store_file, s))
@@ -1385,6 +1396,55 @@ def _swap_in(
                 moved.remove(step)
         raise
     fsync_dir(store_file.parent)
+
+
+def _move_aside(source: Path, target: Path, *, first: bool) -> None:
+    """Rename `source` to `target`, a move of the swap (`_swap_in`), or
+    raise `BackupError`: naming the handle that holds the file when
+    Windows refuses the rename for one (a sharing violation,
+    `_SHARING_VIOLATION`), and, at the first refusal, what else refused
+    it (an ACL that denies the move, a file pending deletion, a directory
+    this account cannot write).
+
+    The first move (``first``: nothing moved yet, so the store file, or
+    whichever of its siblings is there first) is tried again while a
+    handle holds it, until `restore_lock.OPEN_WAIT_SECONDS` and
+    `_SWAP_MARGIN_SECONDS` have passed: each try is `replace_atomic`'s,
+    whose own retries take up to about 150 ms on Windows, and the next
+    comes `_SWAP_POLL_SECONDS` after it, so about every 0.2 s. A reader
+    or opener that checked the lock just before this restore took it
+    opens its handle on the store file and checks again behind it, and a
+    writing open checks once more when its connection has read the store
+    (`restore_lock._RecordCheck.confirm`); each check looks while the
+    lock is held for up to `restore_lock.OPEN_WAIT_SECONDS` (a checker of
+    the record file lets go in an instant, a restore holds on), then
+    refuses and closes its handles (`restore_lock._behind_handle`). A
+    restore whose probe, copy and digest take less than that reaches this
+    rename with a handle still open, and `replace_atomic`'s own retry
+    outlasts a millisecond race, not a check's wait: without this one the
+    restore failed there, having changed nothing, over a read or an open
+    that started as it did. The wait is read when called, as the check
+    reads it. A later move is not tried again: once the store file moved,
+    no handle had it open, and a ``-wal`` or ``-shm`` held now is a
+    connection's."""
+    deadline = time.monotonic()
+    if first:
+        deadline += restore_lock.OPEN_WAIT_SECONDS + _SWAP_MARGIN_SECONDS
+    while True:
+        try:
+            replace_atomic(source, target)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) != _SHARING_VIOLATION:
+                raise BackupError(f"cannot move {source} aside: {exc}") from exc
+            if time.monotonic() >= deadline:
+                raise BackupError(
+                    f"a process has {source} open, and Windows does not "
+                    "rename a file another process has open; close every "
+                    "session using bettermemory and run the restore again "
+                    f"({exc})"
+                ) from exc
+        time.sleep(_SWAP_POLL_SECONDS)
 
 
 def _self_signed_fingerprint(verification: Mapping[str, Any]) -> str | None:
@@ -1444,9 +1504,10 @@ def _take_restore_lock(
 ) -> restore_lock.RestoreLock | None:
     """The store's restore lock, held, with no process holding the store
     open (`restore_lock.probe`), or None with ``detail`` saying why: the
-    lock is held (another restore, or an opener that kept it), it cannot
-    be made, or a process has the store open. Every writing open is
-    refused from here until the lock is released (`restore_lock`)."""
+    lock is held (another restore, an opener that kept it, or a read that
+    holds it until it closes, `restore_lock.reading`), it cannot be made,
+    or a process has the store open. Every writing open and every read
+    is refused from here until the lock is released (`restore_lock`)."""
     lock = restore_lock.lock_path(store_file)
     try:
         ensure_owner_only_dir(store_file.parent, parents=True)
@@ -1457,8 +1518,9 @@ def _take_restore_lock(
     if held is None:
         report["detail"] = (
             f"another restore of {store_file} is running, or a process is "
-            f"opening the store (it holds {lock}); run the restore again when "
-            "it has finished"
+            f"opening or reading the store (it holds {lock}; a read-only "
+            "command such as `log verify` or `doctor` holds it while it "
+            "reads); run the restore again when it has finished"
         )
         return None
     report["lock"] = {"path": str(lock), "unfinished": held.previous, "kept": False}
@@ -1610,9 +1672,11 @@ def _apply_restore(
     held.mark(stage="verifying the restored store")
     restored = _store.Store.open(store_file, keys_dir=keys_root, allow_rekey=False)
     try:
-        report["row"] = append_history_replaced(restored, STORE_RESTORED, entry)
-        if report["row"] is not None:
-            _record_row(plan.record, entry, report["row"])
+        # The rows of earlier restores of this history that never got one
+        # first, then this one's (`restore_rows.append_for`); none on a
+        # store that opens for reading only, which the writing open that
+        # lifts that appends.
+        report["row"] = _restore_rows.append_for(restored, entry)
         report["log"] = restored.log_verify()
     finally:
         restored.close()

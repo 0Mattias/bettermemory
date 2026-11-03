@@ -1,5 +1,6 @@
 """The restore's closed limitations are gone from the docs, and the rc14
-notes say what each fix closed and what is left (ENG-103).
+notes say what each fix closed and what is left (ENG-103), as do the
+rc18 notes for the four residuals ENG-208 closed.
 
 9.0.0rc12 recorded that a restore was guarded only against the daemon and
 spawn locks, that its text output did not show the origin anchor, that a
@@ -68,19 +69,102 @@ def test_the_docs_no_longer_state_the_closed_limitations() -> None:
     )
 
 
-def test_the_residuals_are_rc14_known_limitations() -> None:
+def test_the_residual_left_is_an_rc14_known_limitation() -> None:
+    """The export cursor's residual is ENG-127's, and stays listed."""
     known = _section("9.0.0rc14").split("#### Known limitations", 1)[1]
-    for residual in (
-        "A restore holds off only the writers that open through `store._connect`, "
-        "and readers only as they start.",
-        "On Windows a writing open holds the restore lock only for its check.",
+    assert (
         "After a restore onto a host with no copy of the store, `log export` "
-        "warns every cursor past the restored head.",
-        "A restore that fails between its record and its row leaves an entry "
-        "with no row.",
-        "A restored store waiting on a schema step gets no `store_restored` row.",
+        "warns every cursor past the restored head." in known
+    )
+
+
+#: The rc14 Known limitations ENG-208 closed, as rc14 worded them.
+ENG208_CLOSED = (
+    "A restore holds off only the writers that open through `store._connect`, "
+    "and readers only as they start.",
+    "On Windows a writing open holds the restore lock only for its check.",
+    "A restore that fails between its record and its row leaves an entry with no row.",
+    "A restored store waiting on a schema step gets no `store_restored` row.",
+)
+
+
+def test_the_limitations_eng208_closed_leave_the_rc14_section_and_the_docs() -> None:
+    """ENG-208 closed four of the restore's rc14 residuals: the rc18 bullets
+    say what each closed and the boundary left, rc14's Known limitations no
+    longer list them, and internals.md and operations.md no longer state
+    them as limitations."""
+    known = _section("9.0.0rc14").split("#### Known limitations", 1)[1]
+    for closed in ENG208_CLOSED:
+        assert closed not in known, closed
+    fixed = _section("9.0.0rc18").split("#### Fixed", 1)[1]
+    for said in (
+        "A restore's `store_restored` row that the restore could not write is "
+        "appended by the next owner open (ENG-208).",
+        "A read holds a restore off until it has read (ENG-208).",
+        "On Windows a writing open that races a restore is refused or stops it "
+        "(ENG-208).",
+        "A process that writes the store file through a SQLite connection of its "
+        "own, not bettermemory's code, takes no lock, and no lock can hold it off",
     ):
-        assert residual in known, residual
+        assert said in fixed, said
+    assert fixed.count("9.0.0rc14 listed") >= 3
+    internals, operations = _doc("internals.md"), _doc("operations.md")
+    for stale in (
+        "an opener holds the lock only for its check",
+        "one that started before it can read the store between the restore's steps",
+        "a process writing the file through a connection of its own is not held off",
+    ):
+        assert stale not in internals, stale
+        assert stale not in operations, stale
+    assert "takes no part in it, and nothing holds it off" in internals
+    assert "One that started before the restore holds it off" in operations
+
+
+def test_the_eng208_docs_say_what_the_review_found() -> None:
+    """The ENG-208 review's corrections stand in the docs: the late row is
+    the owner open's and is withheld once a record came first; not every
+    read-only command exits 75; the restore's own `log verify` catches a
+    foreign writer's rows only in the restored file, before it ran. A
+    withhold the time decided names what else the file may be, under the
+    code's own test, not a missing or lagging checkpoint; a Windows swap
+    waits out a racing check's handle, and only a handle; and no text
+    says a Windows restore that an admitted opener races fails at its
+    swap, or that the handle kept every restore off."""
+    fixed = _section("9.0.0rc18").split("#### Fixed", 1)[1]
+    assert "the read-only commands still exit 75" not in fixed
+    assert "`key show` exits 1 and `security scan` 2" in fixed
+    assert "Every entry the open keeps off its log is withheld" in fixed
+    assert "exits 1 saying a command is reading or opening the store" in fixed
+    assert "(`head_before` null, or not past `head_after`)" in fixed
+    assert "another copy of the store where it read no log here" in fixed
+    assert "missing or behind the log does the time" not in fixed
+    assert "tries its first rename again for 2 s and a second more" in fixed
+    assert "a restore that takes the lock after that fails at its swap" not in fixed
+    assert "No opener writes after the probe of a restore that goes on" in fixed
+    assert "The swap waits only for a file held open" in fixed
+    operations = _doc("operations.md")
+    assert "from the first writing open after the unlock" not in operations
+    assert "row from the first owner open after the unlock" in operations
+    assert "the row is withheld: on the log it would stand" in operations
+    assert "(`head_before` null, or not past `head_after`)" in operations
+    assert "(`log_end_before` null), another copy of the store" in operations
+    api = _doc("api.md")
+    assert "so a restore that takes the lock later fails at its swap" not in api
+    assert "checks again behind the handle and once more when its connection" in api
+    from bettermemory import restore_lock
+
+    lock_doc = " ".join((restore_lock.__doc__ or "").split())
+    assert "is refused or stops the restore at its swap" not in lock_doc
+    assert "kept every restore off since then, and there is nothing" not in " ".join(
+        (restore_lock._RecordCheck.confirm.__doc__ or "").split()
+    )
+    security = _flat((REPO / "SECURITY.md").read_text(encoding="utf-8"))
+    assert "what it writes is caught as any write without the key is: its rows" not in (
+        security
+    )
+    assert "Rows it writes into the restored file before the restore's own" in (
+        security
+    )
 
 
 def test_the_limitations_the_fold_closed_are_gone() -> None:

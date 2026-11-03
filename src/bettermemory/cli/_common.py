@@ -97,18 +97,16 @@ def open_read_only(
     the snapshot as it is, but a bundle is checked with `backup verify`,
     and a writing command's open would rewrite the snapshot's header.
 
-    A store a restore holds is not read (`restore_lock.check_reader`): the
-    command ends with ``<store> is not opened: a restore is running; try
-    again when it has finished`` and exit 75
-    (`restore_lock.RESTORE_RUNNING_STATUS`), whatever `exit_code` is, so
-    `log verify` does not call a healthy restore tampered, and a gate on it
-    tells the two apart."""
+    A store a restore holds is not read: the open takes the restore lock
+    shared, and keeps every restore off until the store closes
+    (`restore_lock.reading`), so a restore cannot run between the
+    command's reads either. While one runs the command ends with ``<store>
+    is not opened: a restore is running; try again when it has finished``
+    and exit 75 (`restore_lock.RESTORE_RUNNING_STATUS`), whatever
+    `exit_code` is, so `log verify` does not call a healthy restore
+    tampered, and a gate on it tells the two apart."""
     from ..backup import bundle_refusal
-    from ..restore_lock import (
-        RESTORE_RUNNING_STATUS,
-        RestoreRunningError,
-        check_reader,
-    )
+    from ..restore_lock import RESTORE_RUNNING_STATUS, RestoreRunningError
 
     try:
         mode = path.stat().st_mode
@@ -122,11 +120,9 @@ def open_read_only(
     if refusal is not None:
         _refuse(parser, refusal, exit_code)
     try:
-        check_reader(path)
+        return Store.open(path, read_only=True)
     except RestoreRunningError as exc:
         _refuse(parser, str(exc), RESTORE_RUNNING_STATUS)
-    try:
-        return Store.open(path, read_only=True)
     except (ValueError, sqlite3.DatabaseError, OSError) as exc:
         _refuse(parser, f"cannot read the store at {path}: {exc}", exit_code)
 

@@ -235,7 +235,11 @@ While a restore of the store runs, `log verify`, `log export`, `log
 anchor`, `stats` and `memory history` read nothing and exit 75
 (EX_TEMPFAIL): `<store> is not opened: a restore is running; try again
 when it has finished`. A gate on `log verify` should try again on 75,
-not alert.
+not alert. `key show` (exit 1) and `security scan` (exit 2) refuse in
+the same words with the codes they give any store they cannot read.
+One that started before the restore holds it off until it
+has read what it reads: the restore waits for it and is refused, so
+run the restore again once the command is done.
 
 `doctor` checks the install, that the config loads, which rule chose
 the store, whether a restore of it runs or did not finish, the store
@@ -537,8 +541,10 @@ To restore:
 3. `bettermemory backup restore BUNDLE --yes` takes the store's restore
    lock (on the store directory; its record is
    `memory.sqlite.restore-lock`), refuses while any process has
-   the store open, which it reads off SQLite's own locks, and from then
-   on every writing open of the store is refused until it is done. It
+   the store open, which it reads off SQLite's own locks, or reads it
+   (a read-only command holds the lock until it is done), and from then
+   on every writing open and every read of the store is refused until it
+   is done. It
    moves `memory.sqlite`,
    `-wal` and `-shm` aside as `memory.sqlite.pre-restore-<UTC stamp>`
    (never deleted), copies the bundle's database in and checks it against
@@ -558,7 +564,34 @@ with the record and both ways out, exit 1. Run the same restore again
 to finish it, or `bettermemory backup unlock --yes` to keep the store as
 it stands (without `--yes` it shows the record); after an unlock, run
 `bettermemory log verify` and `bettermemory doctor`, since the store
-kept may be part restored.
+kept may be part restored. An unlock while a read-only command reads
+the store waits for it, then exits 1 saying a command is reading or
+opening the store: run it again when that is done. A restore that
+stopped after it wrote its record and before its `store_restored` row
+(the record names the row it wrote, `row`, null until then) gets the
+row from the first owner open after the unlock (the daemon's, or any
+command that writes records), or, run again, writes it before its own.
+The `key` commands, `export` and `membership` open the store without
+the owner's open and append no late row. If a record is written before
+the row (by one of those, or by a bettermemory before 9.0.0rc18, which
+appends no late row), the row is withheld: on the log it would stand
+after that record, and `memory history` would read it as a rewind of a
+record the restore never saw. The open says so once, the entry keeps
+`row` null with `row_withheld` naming that record's row and why, `log
+verify` still reads `ok`, and `log export` still warns from the record
+of a cursor inside the rewound range. Should a later restore take that
+record off the log, the withheld row is appended then, before the later
+restore's own. The moved-aside file, put back by hand, is withheld from
+the same way (`replaced`). Where the restore record names no replaced
+head past the bundle's (`head_before` null, or not past `head_after`),
+only the time of the first row past the bundle's head tells that file
+from the restored one: a row stamped before the restore withholds the
+row, and the warning says what the file may be: the history the
+restore replaced, or, where the restore read no log on this host
+(`log_end_before` null), another copy of the store, or the restored
+file under a clock set back after the restore. That row stays on the
+file, so the file is not placed again; the restore record keeps the
+restore either way.
 
 A restore into another store directory, while the store the bundle was
 taken from is still there, moves the key ring's binding to the restored
@@ -588,8 +621,14 @@ accepted as it stands. `log verify` lists both under `history
 replaced`, `log export` warns a cursor inside the range either left
 behind (and names it in its `--json` summary's `rewinds`), and
 `memory history` shows each in the history of every record older
-than it, as `rewound` and `accepted`. Which command follows which
-event:
+than it, as `rewound` and `accepted`. A restore that could not append
+its row (one onto a store waiting on a schema step, which it opens for
+reading only, or one that failed after its record) gets it from the
+owner's next open that can write, with the payload it would have had,
+while no record was written after the restore: its `restored_at` says
+when the restore ran, the row's own time when it was appended. One a
+record came before keeps no row (`row_withheld` in its entry, above).
+Which command follows which event:
 
 | What happened | What to run |
 |---|---|
