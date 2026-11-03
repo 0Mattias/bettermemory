@@ -56,6 +56,7 @@ from .test_membership_resolution import (
     neutral_git,
     no_birth,
     pytestmark,
+    remove,
 )
 
 __all__ = ["lab", "lab_of", "neutral_git", "no_birth", "pytestmark"]
@@ -316,7 +317,7 @@ def test_a_fresh_clone_on_a_superseded_checkouts_inode_is_not_that_checkout(
     )
     assert lab.model().checkout(joined.checkout).token_status == SUPERSEDED
 
-    shutil.rmtree(c_real)
+    remove(c_real)
     fresh = clone(line, tmp_path / "box" / "x", url=url)
     assert _file_token(fresh) is None
     res = Client(fresh, "/workspaces/x", machine).post(lab)
@@ -361,7 +362,7 @@ def test_a_superseded_checkout_restored_at_its_path_is_rekeyed(
     copy, kid = _superseded_and_reminted_unrecorded(tmp_path, lab)
     backup = tmp_path / "copy.bak"
     shutil.copytree(copy, backup, symlinks=True)
-    shutil.rmtree(copy)
+    remove(copy)
     os.rename(backup, copy)
 
     again = _resolve_unwritten(lab, copy)

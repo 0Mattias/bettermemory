@@ -165,14 +165,8 @@ def _tally(
             pid = self._canon(k.project)
             if pid in exclude or pid not in t.held:
                 continue
-            if k.token and (
-                not loc.token if k.token_superseded else loc.token != k.token
-            ):
-                # Another lineage at the old path: a re-clone. A superseded
-                # token's git directory may hold a re-mint the store was not
-                # told, so there only a missing token refutes, as
-                # `location.continuity` reads one (ENG-193).
-                continue
+            if k.token_refutes(loc.token):
+                continue  # another lineage at the old path: a re-clone
             if self.live_view(k) is None:
                 cands[pid].add(B)
                 t.rekey[pid] = k.id

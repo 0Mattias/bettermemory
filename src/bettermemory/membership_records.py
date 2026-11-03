@@ -518,6 +518,16 @@ class Checkout:
         one (ENG-193)."""
         return self.token_status == SUPERSEDED
 
+    def token_refutes(self, found: str | None) -> bool:
+        """Whether the token `found` at a git directory says it is another
+        lineage than this checkout's (the B witness, a re-clone at the old
+        path): any other token, or, for a superseded one whose re-mint the
+        store may have missed, no token at all (`location.continuity`;
+        ENG-193)."""
+        if not self.token:
+            return False
+        return not found if self.token_superseded else found != self.token
+
     def views_on(self, machine: str) -> list[View]:
         return sorted(
             (v for v in self.views if v.machine == machine), key=lambda v: v.order
