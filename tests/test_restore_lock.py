@@ -516,6 +516,32 @@ def test_another_thread_of_the_restoring_process_is_refused(
     assert result["status"] == "restored", result["detail"]
 
 
+class _Refused(Exception):
+    pass
+
+
+def test_a_failed_open_gives_its_hold_back_while_its_traceback_is_kept(
+    store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A writing open that fails after it was admitted gives its shared
+    hold on the restore lock back as it raises: a caller that keeps the
+    error keeps the open's frame, and a restore waited on that hold and
+    named another restore (cold review L2)."""
+    from bettermemory import restore_lock
+    from bettermemory import store as store_module
+
+    def refuse(conn: sqlite3.Connection, path: Path) -> None:
+        raise _Refused(path)
+
+    monkeypatch.setattr(store_module, "admit_store", refuse)
+    with pytest.raises(_Refused) as kept:
+        store_module._connect(store_file)
+    assert kept.value.__traceback__ is not None
+    lock = restore_lock.acquire(store_file, wait=0.5)
+    assert lock is not None
+    lock.release(clear=True)
+
+
 def test_a_store_switched_to_wal_by_its_open_is_seen_by_the_probe(
     store_file: Path,
 ) -> None:

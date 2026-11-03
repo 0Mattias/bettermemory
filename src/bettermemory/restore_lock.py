@@ -450,25 +450,33 @@ class RestoreRunningError(StoreRefusedError):
 
 
 class _SharedHold:
-    """An opener's shared hold on a restore lock, given back when the
-    object goes: `store._connect` keeps it in a local until it returns."""
+    """An opener's shared hold on a restore lock. `close` gives it back,
+    and `store._connect` calls it on its way out, raised or not, so a
+    failed open does not hold the lock for as long as something keeps its
+    traceback (a restore would wait on it and name another restore). An
+    object never closed gives it back when it goes."""
 
     __slots__ = ("_fd",)
 
     def __init__(self, fd: int) -> None:
         self._fd = fd
 
+    def close(self) -> None:
+        fd, self._fd = self._fd, -1
+        if fd >= 0:
+            with contextlib.suppress(OSError):
+                os.close(fd)
+
     def __del__(self) -> None:
-        with contextlib.suppress(OSError):
-            os.close(self._fd)
+        self.close()
 
 
-def admit(store_file: Path) -> object | None:
+def admit(store_file: Path) -> _SharedHold | None:
     """Admit a writing open of the store file `store_file`: the first thing
     `store._connect` does, before SQLite opens the file. Makes nothing.
-    Returns the shared hold on the restore lock, which the caller keeps
-    until the connection has read the store (`_connect` keeps it in a
-    local until it returns), or None when there is nothing to hold: this
+    Returns the shared hold on the restore lock, which the caller closes
+    once the connection has read the store (`_connect` closes it on its
+    way out, raised or not), or None when there is nothing to hold: this
     thread holds the lock itself (the restore's own open), the store's
     directory cannot be opened (no restore by this account can lock it
     either), or the lock is the record file (Windows, or a directory

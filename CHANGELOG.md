@@ -83,6 +83,14 @@ schema step.
   boundary does, and so does `bettermemory tombstones restore` after
   `error:`.
 
+- **A failed writing open gives the restore lock back at once
+  (ENG-103).** `store._connect` kept its shared hold on the restore lock
+  in a local, given back only when the object went, so an open that
+  failed after it was admitted (a store this build refuses, say) held
+  the lock for as long as anything kept its traceback, and a restore
+  waited its 10 s on it and named another restore. The hold is now
+  closed on the way out, raised or not.
+
 - **`bettermemory init` writes the link on PATH, not its target
   (ENG-185).** Init wrote the resolved target of the `bettermemory` it
   found on PATH into the client's MCP config. A Homebrew or Nix install

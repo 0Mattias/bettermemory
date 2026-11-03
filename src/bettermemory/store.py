@@ -220,6 +220,7 @@ from .store_keys import (
     _store_id_at as _store_id_at,
     configured_strict_provenance as configured_strict_provenance,
 )
+from . import restore_lock as _restore_lock
 from . import store_records as _records
 from .store_records import (
     CORROBORATION_CHECK_SQL as CORROBORATION_CHECK_SQL,
@@ -374,31 +375,35 @@ def _connect(path: Path) -> sqlite3.Connection:
     `Store.set_busy_timeout`), foreign keys on, autocommit off so every
     write is an explicit transaction, and owner-only modes on the file and
     its WAL siblings."""
-    _held = __import__("bettermemory.restore_lock").restore_lock.admit(path)
-    conn = sqlite3.connect(
-        str(path), timeout=CLI_BUSY_TIMEOUT_SECONDS, isolation_level=None
-    )
+    held = _restore_lock.admit(path)
     try:
-        admit_store(conn, path)
-        # A no-op on an existing store: the page size is fixed once the
-        # file holds a table, and WAL mode fixes it for good.
-        conn.execute(f"PRAGMA page_size = {PAGE_SIZE}")
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.executescript("PRAGMA journal_mode = WAL; PRAGMA schema_version")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.row_factory = sqlite3.Row
-        for sibling in (
-            path,
-            path.with_suffix(path.suffix + "-wal"),
-            path.with_suffix(path.suffix + "-shm"),
-        ):
-            if sibling.exists():
-                with contextlib.suppress(OSError):
-                    os.chmod(sibling, 0o600)
-    except Exception:
-        conn.close()
-        raise
-    return conn
+        conn = sqlite3.connect(
+            str(path), timeout=CLI_BUSY_TIMEOUT_SECONDS, isolation_level=None
+        )
+        try:
+            admit_store(conn, path)
+            # A no-op on an existing store: the page size is fixed once the
+            # file holds a table, and WAL mode fixes it for good.
+            conn.execute(f"PRAGMA page_size = {PAGE_SIZE}")
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.executescript("PRAGMA journal_mode = WAL; PRAGMA schema_version")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.row_factory = sqlite3.Row
+            for sibling in (
+                path,
+                path.with_suffix(path.suffix + "-wal"),
+                path.with_suffix(path.suffix + "-shm"),
+            ):
+                if sibling.exists():
+                    with contextlib.suppress(OSError):
+                        os.chmod(sibling, 0o600)
+        except Exception:
+            conn.close()
+            raise
+        return conn
+    finally:
+        if held is not None:
+            held.close()
 
 
 # ---------------------------------------------------------------------------
