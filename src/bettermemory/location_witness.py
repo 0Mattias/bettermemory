@@ -20,7 +20,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from . import checkout_token
-from .location_git import _FULL_HASH, PRIMARY, _key
+from .location_git import _FULL_HASH, PRIMARY, Reach, _key
 
 if TYPE_CHECKING:
     from .membership import Checkout, View
@@ -93,6 +93,8 @@ class AnsweredHistory:
         self._ancestry = {
             (str(a).lower(), str(d).lower()) for a, d in (answers.get("ancestry") or ())
         }
+        # A client before 9.0.0rc18 does not say: read as cut short.
+        self._ancestry_bounded = answers.get("ancestry_bounded") is not False
         raw_blobs = answers.get("blobs")
         self._blobs: dict[str, tuple[str, ...]] = {}
         if isinstance(raw_blobs, Mapping):
@@ -125,17 +127,21 @@ class AnsweredHistory:
     def parents(self, commit: str) -> Sequence[str]:
         return self._walk_entry(commit)[1]
 
-    def reachable_among(self, commits: Sequence[str]) -> dict[str, frozenset[str]]:
+    def reachable_among(self, commits: Sequence[str]) -> Reach:
         """The client's `reachable_among` over the commits it was asked
-        about; commits it was not asked about raise `NeedWitnesses`
-        naming them with those it was, so its next answer covers both."""
+        about, with whether its bound cut it short (ENG-203); commits it
+        was not asked about raise `NeedWitnesses` naming them with those
+        it was, so its next answer covers both."""
         wanted = {c.lower() for c in commits if _FULL_HASH.fullmatch(c.lower())}
         if not wanted <= self._ancestry_of:
             raise NeedWitnesses({"ancestry": sorted(self._ancestry_of | wanted)})
-        return {
-            c: frozenset(d for a, d in self._ancestry if a == c and d in wanted)
-            for c in wanted
-        }
+        return Reach(
+            {
+                c: frozenset(d for a, d in self._ancestry if a == c and d in wanted)
+                for c in wanted
+            },
+            bounded=self._ancestry_bounded,
+        )
 
     def blobs(self, commit: str) -> Sequence[str]:
         sha = commit.lower()

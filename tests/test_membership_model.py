@@ -21,6 +21,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -59,6 +60,7 @@ from bettermemory.membership import (
     UNREADABLE,
     Checkout,
     Declaration,
+    Declared,
     EpisodeRef,
     Home,
     InitStamp,
@@ -74,7 +76,7 @@ from bettermemory.membership import (
 )
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.store import RecordHome, Store
-from bettermemory.location_git import reachable_among
+from bettermemory.location_git import Reach, reachable_among
 from bettermemory.verify import Anchoring, detect_path_drift
 
 _NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -119,7 +121,7 @@ class History:
         found = self.commits.get(commit)
         return () if found is None else found.parents
 
-    def reachable_among(self, commits: Sequence[str]) -> dict[str, frozenset[str]]:
+    def reachable_among(self, commits: Sequence[str]) -> Reach:
         return reachable_among(self, commits)
 
     def blobs(self, commit: str) -> Sequence[str]:
@@ -1824,10 +1826,103 @@ def test_rung4_several_projects_on_unrelated_lines_ask_once(world: World) -> Non
     assert (res.outcome, res.rule) == (ASK, "ask:several_projects")
     assert set(res.candidates) == {pa.project, pb.project}
     assert res.lines[-1].startswith('bettermemory: "/w/both" may be')
-    # Review M G2: the question says the most specific line was read and
-    # not decided within the walk's bound.
-    assert "descends from another's within the 512 commits read" in res.lines[-1]
+    # Review M G2, ENG-203: the question says, per witness, what was found;
+    # the walk read both lines whole, so it names no bound.
+    assert (
+        '"a" (P001) and "b" (P002) each hold a witness commit that no other of '
+        "the tied projects' 2 witness commits was found to descend from."
+    ) in res.lines[-1]
+    assert "commits read" not in res.lines[-1]
     assert world.brief(res) == []
+
+
+def test_rung4_a_tie_the_walk_cut_short_names_its_bound(world: World) -> None:
+    """ENG-203: where the bound stopped the walk before it read every
+    commit the tied witnesses reach, the question says so."""
+    a = world.repo("/w/a", remote="example.invalid/acme/a")
+    b = world.repo("/w/b", remote="example.invalid/acme/b")
+    pa, pb = world.see(a), world.see(b)
+    both = _merged(world, a, b, "/w/both")
+    with mock.patch.object(History, "reachable_among", _cut_short):
+        res = world.see(both)
+    assert (res.outcome, res.rule) == (ASK, "ask:several_projects")
+    assert set(res.candidates) == {pa.project, pb.project}
+    assert (
+        "was found to descend from within the walk's bound (at most 512 commits read)."
+    ) in res.lines[-1]
+
+
+def _cut_short(self: History, commits: Sequence[str]) -> Reach:
+    """The walk stopped by its bound before it read a commit: no relation
+    found, and `Reach.bounded`."""
+    return reachable_among(self, commits, limit=0)
+
+
+def _fork_and_fresh_clone(world: World) -> tuple[Repo, Declared]:
+    """A template, a product cloned from it and declared its own project,
+    a commit on the product, and a fresh clone of the product: the clone
+    holds both projects' witnesses, the product's on the newer line."""
+    template = world.repo("/w/template", remote="example.invalid/acme/template")
+    world.see(template)
+    product = world.clone(template, "/w/product")
+    joined = world.see(product)
+    split = world.model.declare(
+        Declaration("new", "os:tester", checkout=joined.checkout, name="product")
+    )
+    product.commit()
+    world.see(product)
+    return world.clone(product, "/w/fresh"), split
+
+
+def test_rung4_git_orders_a_tie_the_walk_cut_short_outside_the_transaction(
+    world: World,
+) -> None:
+    """ENG-203: where the history can ask git (`IndependentReader`), a
+    first sight that ties rolls its transaction back, reads git's
+    ``merge-base --independent`` once with no transaction open on the
+    store, and runs the ladder again with git's answer: the product's
+    line, which the walk cut short could not order, is kept."""
+    fresh, split = _fork_and_fresh_clone(world)
+    asked: list[tuple[tuple[str, ...], bool]] = []
+
+    def independent(self: History, commits: Sequence[str]) -> frozenset[str]:
+        asked.append((tuple(commits), world.store.in_batch))
+        full = reachable_among(self, commits)
+        return frozenset(c for c in commits if not full[c])
+
+    with (
+        mock.patch.object(History, "reachable_among", _cut_short),
+        mock.patch.object(History, "independent", independent, create=True),
+    ):
+        res = world.see(fresh)
+
+    assert (res.outcome, res.project) == (SILENT, split.project)
+    assert [in_batch for _commits, in_batch in asked] == [False]
+
+
+def test_rung4_where_git_does_not_answer_the_walk_decides(world: World) -> None:
+    """ENG-203: git that does not answer (None: no binary, a timeout, a
+    non-zero exit) leaves the tie to the bounded walk, which asks; and a
+    resolution inside a caller's transaction, which cannot leave it to
+    spawn git, never asks git."""
+    fresh, _split = _fork_and_fresh_clone(world)
+    calls: list[tuple[str, ...]] = []
+
+    def silent(self: History, commits: Sequence[str]) -> None:
+        calls.append(tuple(commits))
+
+    with (
+        mock.patch.object(History, "reachable_among", _cut_short),
+        mock.patch.object(History, "independent", silent, create=True),
+    ):
+        res = world.see(fresh)
+        assert (res.outcome, res.rule) == (ASK, "ask:several_projects")
+        assert "(at most 512 commits read)" in res.lines[-1]
+        assert len(calls) == 1
+        with world.store.batch():
+            again = world.see(world.clone(fresh, "/w/again"))
+        assert (again.outcome, again.rule) == (ASK, "ask:several_projects")
+        assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------

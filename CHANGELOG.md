@@ -642,6 +642,71 @@ no schema step.
   deletions, about 0.1 ms a scope, where the whole-string index compared
   the whole scopes, over 32 characters, by length only.
   (`src/bettermemory/health_stats.py`)
+- **A tie of several projects is ordered past the ancestry walk's bound
+  where git reads the repository (ENG-203).** Since 9.0.0rc14 the rule
+  that picks the most specific of several tied projects reads one
+  traversal of 512 commits (ENG-151), shared evenly, about 512/n below
+  each of n tied witness commits, the oldest included. A project keeps
+  the 16 HEADs it was first seen at for its whole life, so a fork and its
+  upstream tied where the upstream was first seen more than about 512
+  commits down asked the user which project each new clone was, where an
+  unbounded walk joined the fork. Where the store's machine reads the
+  repository (the daemon, or a hook resolving in process), the rule now
+  asks git: `git merge-base --independent` names the witnesses no other
+  descends from, however far apart they lie. Git is run at most once a
+  resolution, only where the tied projects hold more than one witness,
+  and never with the store's write transaction open: the transaction
+  rolls back before anything is written, git runs, and the ladder runs
+  again with its answer. Git is held to the parent lines the commit
+  objects hold, as the traversal reads them: no replace refs, no
+  commit-graph and no grafts file, and the git runner's no-fetch pins
+  (ENG-218) cover the call. It answers within one second (11 to 70 ms
+  measured, 128 witnesses on two unrelated 10,000-commit lines among
+  them), and an answer naming a commit it was not handed is no answer. A
+  resolution that ties spawns one git process more, in the process that
+  resolves; a container's hook client runs no `merge-base`, its
+  traversal answering as before. Where git is not on PATH, does not answer in time,
+  exits non-zero, or would be handed more than 256 witnesses, and inside
+  a caller's own transaction, the traversal decides. The history reader
+  takes a commit's parents from the `parent` lines directly after its
+  `tree` line, as git does, so a commit with a `parent` line further down
+  is one commit to both. The traversal is breadth first from every tied
+  witness, as before, and now holds back each commit committed before the
+  oldest witness until every commit above is read: where committer times
+  never fall from parent to child, no path between two witnesses passes
+  below the oldest, so it finds every relation the even split found, and
+  more. Machines with skewed clocks date a parent after its child, and a
+  line fixed at the oldest witness lost ties the even split joined (up to
+  50 of 300 in the review's models of clock jitter, backdated commits and
+  random times). The line now drops by the largest rise of a parent over a
+  child the traversal has seen, and what it held above the lowered line
+  is read in turn; over the same models, three seeds of 300 each, it lost
+  none. Measured on a 20,000-commit line, a tie of 128 witnesses spanning
+  480 commits: 6,336 of the 8,128 relations and a question before, all
+  8,128 in 38 ms and the fork joined now; over 400 synthetic forks of a
+  young upstream, none decided by the even split and asked now; over 400
+  random merge DAGs, 7 decided that asked. A committer time far off (1970
+  or 2096 on one commit in fifty) can still cost relations the even split
+  found (139 over those 400 DAGs, no decision among them), and no time
+  makes one witness another's ancestor. A tie past the 512 commits, with
+  no git to ask, asks as before. The question now says what was found for
+  each project it keeps, a witness no other's was found to descend from,
+  and names the bound only where the bound cut the reading short, the
+  held-back commits included where a clock rose; a hook client's ancestry
+  answer says so too (`ancestry_bounded`), and one before 9.0.0rc18 is
+  read as cut short. The traversal also spreads a commit to its parents
+  again only when the witnesses it descends from have grown, and handles
+  at most 262,144 parent edges: 128 witnesses above 384 octopus merges of
+  2,000 parents took 4.8 s in the write transaction, and now under 30 ms,
+  whatever their times. A committer time is read as git reads it, a `-`
+  and a number past 64 bits included. A relation past the bound reads as
+  none, which keeps more projects and asks, never fewer, on a history
+  without cycles: a forged object store can close a cycle the bound reads
+  one way round, as before.
+  (`src/bettermemory/location_git.py`, `src/bettermemory/_git.py`,
+  `src/bettermemory/location.py`, `src/bettermemory/location_witness.py`,
+  `src/bettermemory/membership.py`, `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_resolve.py`, `docs/internals.md`)
 
 ### 9.0.0rc17
 
@@ -4014,7 +4079,11 @@ follows the candidates' testing.
   more than about 512 commits, asks where rc13 joined (after an
   unbounded walk). Asking is the safe side; the question names the bound
   it read (ENG-151). Reading newest witnesses first (committer date or
-  generation numbers) is filed.
+  generation numbers) is filed as ENG-203; 9.0.0rc18 asks git instead
+  where the store's machine reads the repository, which orders a tie
+  however far apart its witnesses lie, and elsewhere spends the bound
+  above the oldest witness, where a project used across more still
+  asks.
 - **A re-minted checkout token can still run ahead of the store.** The
   re-mint is written in the resolution's transaction (ENG-153), and
   three windows are left. A hook client before 9.0.0rc14 cannot answer

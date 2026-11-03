@@ -557,11 +557,39 @@ The first rung that answers decides (`Membership.resolve`):
    project, O of the folder with F re-keys the folder checkout to the git
    directory. Where several projects qualify: the stronger evidence, then
    the most specific line, else a question. The most specific line is
-   one breadth-first traversal from every tied witness commit, reading
-   `WALK_LIMIT` (512) commits in all (ENG-151), about 512/n below each of
-   n; a relation past it reads as none, so the projects it could not
-   order are kept and the question says the bound was read. With
-   `strict = true` a join resting on history without F or B asks.
+   the tied projects holding a witness commit no other held witness
+   descends from. Where the store's machine reads the repository and the
+   resolution is not inside a caller's transaction, git names those
+   witnesses (`git merge-base --independent`, ENG-203), with no bound on
+   how far apart they lie: the transaction rolls back before anything is
+   written (`NeedIndependent`), git runs once with no lock held, and the
+   ladder runs again with its answer; a tie on one shared witness asks
+   no git. Git is held to the parent lines the objects hold (no replace
+   refs, commit-graph or grafts file; the runner fetches nothing) and to
+   one second, and the history reader takes a commit's parents as git
+   does, from the `parent` lines directly after `tree`. Otherwise, or
+   where git does not answer or would be handed more than 256 witnesses,
+   one traversal from every tied witness commit decides, reading
+   `WALK_LIMIT` (512) commits (ENG-151) and at most `EDGE_LIMIT` parent
+   edges: breadth first, with no commit committed before a floor
+   expanded until every commit above it is read (ENG-203). The floor is
+   the oldest witness's time, less the largest rise of a parent over a
+   child that reached it seen so far. Where committer times never fall
+   from parent to child no path between two witnesses passes below the
+   oldest, so the bound goes where relations are; a clock skewed by no
+   more than the rise seen is read as breadth first reads it, and a
+   skewed or forged time can at worst spend the bound below the floor,
+   never add a relation. A
+   relation is only ever one the traversal read, parent by parent, and
+   one past the bound reads as none, so the projects it could not order
+   are kept and the question names the bound (`ancestry_bounded` in a
+   container client's answer; one before 9.0.0rc18 is read as cut
+   short). That keeps more projects, never fewer, on a history without
+   cycles; a forged object store can close a cycle the bound reads one
+   way round. A project keeps its 16 first witnesses for its whole life,
+   so where git cannot be asked, a fork and its upstream tied where the
+   upstream was first seen more than about 512 commits down still ask.
+   With `strict = true` a join resting on history without F or B asks.
 5. A contradiction, one witness, or content alone: ASK ONCE.
 6. No witness: NEW, line L2.
 

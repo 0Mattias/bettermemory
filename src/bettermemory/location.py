@@ -1206,8 +1206,9 @@ def answer(
     (design 8.7), added to the `answers` of earlier rounds: which of the
     named ids it holds, the commits of the model's rewritten-history walk
     with their fingerprints and parents, the ancestry among the commits
-    the question names (`reachable_among`, one bounded traversal, and only
-    when the question asks it: ENG-151), the blob sample of HEAD and the
+    the question names (`reachable_among`, one bounded traversal, only
+    when asked: ENG-151; ``ancestry_bounded`` says whether its bound cut
+    it short, ENG-203), the blob sample of HEAD and the
     asked commits, and the state of the named views, all read from its
     own files; each view as the daemon reads one (`bounded_reads`), a path
     that does not answer in `PROBE_BUDGET` ``unreachable``. A view whose
@@ -1252,6 +1253,7 @@ def answer(
             reach = history.reachable_among(among)
             out["ancestry_of"] = sorted(reach)
             out["ancestry"] = sorted([a, d] for a, ds in reach.items() for d in ds)
+            out["ancestry_bounded"] = reach.bounded
         blobs = dict(out.get("blobs") or {})
         for sha in [cap.head, *(question.get("blobs") or ())]:
             if sha:
@@ -1265,6 +1267,7 @@ def answer(
             # Nothing here to read: the commits asked about relate to none.
             out["ancestry_of"] = sorted(s for s in asked if _FULL_HASH.fullmatch(s))
             out["ancestry"] = []
+            out["ancestry_bounded"] = False
     views = dict(out.get("views") or {})
     jobs = [
         (path, tuple(sorted(kw.items())), functools.partial(view_state, path, **kw))

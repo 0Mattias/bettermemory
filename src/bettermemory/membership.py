@@ -181,11 +181,13 @@ from .membership_records import (
     HistoryReader,
     Home,
     ImportedProject,
+    IndependentReader,
     InitStamp,
     Liveness,
     Location,
     Machine,
     Manifest,
+    NeedIndependent,
     O,
     ObjectKey,
     PortableIdentity,
@@ -197,6 +199,7 @@ from .membership_records import (
     RecallAdmission,
     Resolution,
     S,
+    Specific,
     T,
     TokenWriter,
     UnresolvedProject,
@@ -287,6 +290,10 @@ class Membership:
         #: Liveness read before the write transaction (ENG-156), by what
         #: each read: None outside a resolution or a `liveness_held` span.
         self._live: dict[tuple[object, ...], str] | None = None
+        #: git's reading of tied witnesses (`_specific`), read before the
+        #: write transaction by the resolution that wanted it (ENG-203):
+        #: None where no resolution can read it outside its transaction.
+        self._ancestry: dict[tuple[str, ...], frozenset[str] | None] | None = None
 
     @classmethod
     def open(
@@ -1243,18 +1250,56 @@ class Membership:
 
     def _most_specific(self, loc: Location, held: Mapping[str, set[str]]) -> list[str]:
         """The projects whose held witnesses include one no other held
-        witness descends from: the most specific line. The ancestry is
-        one bounded traversal from every held witness at once
-        (`HistoryReader.reachable_among`, ENG-151), read inside the
-        resolution's write transaction; a relation past its bound reads
-        as none, which keeps more projects (and asks), never fewer."""
+        witness descends from: the most specific line (`_specific`)."""
+        return self._specific(loc, held).best
+
+    def _specific(self, loc: Location, held: Mapping[str, set[str]]) -> Specific:
+        """The most specific line of tied projects, and what was read to
+        find it. Where the history can ask git (`IndependentReader`) and the
+        resolution reads outside its transaction, git's ``merge-base
+        --independent`` names the witnesses no other descends from, however
+        far apart they lie (ENG-203); git is run once a resolution, before
+        the transaction (`NeedIndependent`). Otherwise, or where git does
+        not answer, one bounded traversal from every held witness at once
+        (`HistoryReader.reachable_among`, ENG-151) decides, read inside the
+        transaction: a relation past its bound reads as none, which keeps
+        more projects (and asks), never fewer, on a history whose objects
+        hash to their ids (a forged store can close a cycle the bound reads
+        one way round)."""
         history = loc.history
         shas = sorted(set().union(*held.values()))
         if history is None:
-            return sorted(held)
-        reach = history.reachable_among(shas)
-        top = {s for s in shas if not reach.get(s.lower())}
-        return sorted(p for p, ws in held.items() if ws & top)
+            return Specific(sorted(held), frozenset(shas), len(shas), False)
+        named = self._independent(history, tuple(sorted({s.lower() for s in shas})))
+        bounded = False
+        if named is not None:
+            top = frozenset(s for s in shas if s.lower() in named)
+        else:
+            reach = history.reachable_among(shas)
+            top = frozenset(s for s in shas if not reach.get(s.lower()))
+            bounded = bool(getattr(reach, "bounded", True))
+        best = sorted(p for p, ws in held.items() if ws & top)
+        return Specific(best, top, len(shas), bounded)
+
+    def _independent(
+        self, history: HistoryReader, shas: tuple[str, ...]
+    ) -> frozenset[str] | None:
+        """git's reading of `shas` for this resolution: the one read before
+        its transaction, or `NeedIndependent` to have it read there, once a
+        resolution; None (the traversal decides) for a history that cannot
+        ask git, a resolution that cannot leave its transaction, a second
+        set of witnesses, and a git that did not answer. One witness, which
+        the tied projects share, is its own answer: no rollback for git."""
+        if len(shas) < 2:
+            return frozenset(shas)
+        asked = self._ancestry
+        if asked is None or not isinstance(history, IndependentReader):
+            return None
+        if shas in asked:
+            return asked[shas]
+        if asked:
+            return None
+        raise NeedIndependent(shas)
 
     # The ladder of design 3.2 (membership_resolve.py).
     _tally = membership_resolve._tally

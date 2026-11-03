@@ -26,7 +26,7 @@ import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, runtime_checkable
 
 from ._paths import inside, norm
 from .store import RecordHome
@@ -382,10 +382,46 @@ class HistoryReader(Protocol):
 
     def reachable_among(self, commits: Sequence[str]) -> Mapping[str, Collection[str]]:
         """{commit: the other commits of `commits` it is reachable from},
-        keyed by the full ids given, in lowercase."""
+        keyed by the full ids given, in lowercase. A reader's answer may
+        say whether its bound cut it short (`location_git.Reach.bounded`,
+        ENG-203); one that does not say is read as cut short."""
         ...
 
     def blobs(self, commit: str) -> Sequence[str]: ...
+
+
+@runtime_checkable
+class IndependentReader(Protocol):
+    """A `HistoryReader` that can also ask git for the commits of a batch
+    no other of them reaches (`location_git.RepositoryHistory.independent`,
+    ENG-203): None where git does not answer. It spawns a process, so the
+    ladder reads it before its write transaction (`NeedIndependent`)."""
+
+    def independent(self, commits: Sequence[str]) -> frozenset[str] | None: ...
+
+
+class NeedIndependent(Exception):
+    """Raised inside a resolution's transaction where the most-specific
+    rule wants git's reading of `commits` (`IndependentReader`): the
+    transaction rolls back, the resolution reads it with no lock held and
+    runs again (`membership_resolve.resolve`)."""
+
+    def __init__(self, commits: tuple[str, ...]) -> None:
+        super().__init__("git reads the tied witnesses outside the transaction")
+        self.commits = commits
+
+
+class Specific(NamedTuple):
+    """What the most-specific rule read of tied projects
+    (`membership.Membership._specific`): the projects it keeps (`best`),
+    the witness commits no other was found to descend from (`top`) among
+    the `held` it read, and whether a bound cut the reading short
+    (`bounded`; never where git read them)."""
+
+    best: list[str]
+    top: frozenset[str]
+    held: int
+    bounded: bool
 
 
 @dataclass(frozen=True)

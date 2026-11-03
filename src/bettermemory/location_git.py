@@ -32,7 +32,7 @@ import re
 import stat
 import threading
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -114,10 +114,23 @@ CACHE_CAP = 256
 #: from a fresh reader: 512 commits in 55 ms, 128 in 14 ms, all 2,011 in 268
 #: ms. A witness older than the newest 512 commits is not reached by the walk,
 #: and the other witnesses decide. `reachable_among` (ENG-151) reads the
-#: same 512 commits in all, shared among the commits it starts from, about
-#: 512/n below each of n: on a 20,000-commit line, 128 tied witnesses five
-#: or more commits apart find no relation (review M G2), so the most
-#: specific line is not decided and the ladder asks.
+#: same 512 commits in all, breadth first from every tied witness at once,
+#: and expands no commit committed before the oldest witness, less the
+#: largest rise of a parent over a child it has seen, until every commit
+#: above that is read (ENG-203), where ENG-151 spent the bound evenly
+#: below each witness, the oldest's included. Measured from a fresh reader
+#: on a 20,000-commit line built by fast-import, a minute apart: a tie of
+#: 128 witnesses spanning 480 commits (one project's first 16 together, its
+#: newest 48 two apart from 165 commits above them, the other's 64 three
+#: apart above those) found 6,336 of the 8,128 relations and asked in
+#: 9.0.0rc17, and all 8,128 in 38 ms, joining; a young upstream's 64 three
+#: apart with the fork's first 16 just above and its newest 48 400 higher
+#: found 4,288 by both and joined. A tie whose witnesses lie further apart
+#: than the 512 commits read is not ordered by the traversal (on this
+#: repository's first-parent line, 128 witnesses five apart: 0 relations in
+#: rc17, 1 now); `RepositoryHistory.independent` asks git for it where the
+#: store's machine reads the repository, and elsewhere the most specific
+#: line is not decided and the ladder asks (review M G2).
 WALK_LIMIT = 512
 #: Blob ids sampled per witness commit, and their floor in bytes: small
 #: files (an empty ``__init__.py``) are shared by unrelated repositories.
@@ -148,8 +161,46 @@ NO_MACHINE = "<no machine>"
 #: exchanges took 1 round in 4, 2 in 10 and 3 in 2. Eight bounds a prompt
 #: at eight posts.
 EXCHANGE_ROUNDS = 8
+#: Parent edges `reachable_among` reads and spreads before it stops, beside
+#: its `WALK_LIMIT` commits: an octopus merge holds as many parents as its
+#: object holds lines (about 87,000 under `gitobjects`' 4 MiB object cap),
+#: and a commit is spread again each time its set of descendants grows.
+#: Measured (ENG-203, macOS) on this repository's history: the most an
+#: honest traversal handled was 67,655 edges (512 witnesses, consecutive
+#: commits, 72 ms), random merge DAGs of up to 512 witnesses at most 4,728.
+#: A hostile store (31 witnesses at depths 1 to 31 above 16 octopi of
+#: 50,000 parents) handled 3,200,244 edges in 306 ms without the bound and
+#: 300,154 in 33 ms with it (one commit's parents past the bound, read whole):
+#: the bound is about four times the most an honest traversal handled.
+EDGE_LIMIT = 1 << 18
+#: How long `RepositoryHistory.independent`'s ``git merge-base
+#: --independent`` may take; past it the traversal decides. Measured
+#: (ENG-203, macOS, git 2.54, packed, no commit-graph; idle and under a
+#: load average of 7): 11 to 70 ms in every case tried, among them 128
+#: witnesses on two unrelated 10,000-commit lines (57 to 70 ms, each walked
+#: to its root) and 128 on a 20,000-commit line whose oldest 16 are its
+#: root's (53 to 60 ms); git reads about 3 µs a commit, so a second covers
+#: about 300,000. The default of `_git.run_git`, as `origin.commit_reachable`'s
+#: ``merge-base --is-ancestor`` is bound.
+INDEPENDENT_SECONDS = 1.0
+#: The most witness commits `RepositoryHistory.independent` hands git on
+#: one command line; more go to the traversal. Windows' CreateProcess takes
+#: at most 32,767 characters: 256 SHA-256 ids and their spaces are 16,640,
+#: 512 are 33,280. A tie of four projects at `membership_records
+#: .WITNESS_BOUND` (64 each) fits.
+INDEPENDENT_MAX = 256
 
 _FULL_HASH = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+#: What `RepositoryHistory.independent` sets on its call: no grafts file
+#: (the null device stands for ``info/grafts``). No fetch is the runner's,
+#: on every call (`_git.NO_FETCH`, ENG-218).
+_UNGRAFTED = {"GIT_GRAFT_FILE": os.devnull}
+_INDEPENDENT_ARGS = ("merge-base", "--independent")
+#: git's ``timestamp_t``, a ``uintmax_t`` (git-compat-util.h): 64 bits on
+#: every platform git builds for, and where ``strtoumax`` saturates.
+_TIME_MAX = (1 << 64) - 1
+_DIGITS = re.compile(rb"[0-9]*")
+_HEX = re.compile(rb"[0-9a-fA-F]*")
 _HEAD_LIMIT = 1 << 16
 # Environment variables that move git's discovery; under any of them the
 # capture reads what they name and is never cached.
@@ -802,6 +853,7 @@ class RepositoryHistory:
         self._common = common_dir
         self._reader: gitobjects.ObjectReader | None = None
         self._parents: dict[str, tuple[str, ...]] = {}
+        self._committed: dict[str, int] = {}
 
     @property
     def reader(self) -> gitobjects.ObjectReader:
@@ -926,21 +978,69 @@ class RepositoryHistory:
             return hit
         body = self._commit_body(sha)
         found: tuple[str, ...] = ()
+        when = 0
         if body is not None:
-            head = body.split(b"\n\n", 1)[0]
-            found = tuple(
-                line[len(b"parent ") :].decode("ascii", errors="replace").strip()
-                for line in head.split(b"\n")
-                if line.startswith(b"parent ")
-            )
+            hexsz = 64 if len(sha) == 64 else 40
+            header = _parent_lines(body, hexsz)
+            found = () if header is None else header[0]
+            when = _committed_at(body, hexsz)
         self._parents[sha] = found
+        self._committed[sha] = when
         return found
 
-    def reachable_among(self, commits: Sequence[str]) -> dict[str, frozenset[str]]:
-        """`reachable_among` over this repository's parent lines (ENG-151):
-        one bounded traversal, a shallow boundary ending it as git's own
-        walk ends there."""
-        return reachable_among(self, commits)
+    def committed(self, commit: str) -> int:
+        """The commit's committer time (`_committed_at`), read from the
+        object its parents are read from, so ordering a commit costs no
+        read beyond its parents'."""
+        sha = commit.lower()
+        if sha not in self._committed:
+            self.parents(sha)
+        return self._committed[sha]
+
+    def reachable_among(self, commits: Sequence[str]) -> Reach:
+        """`reachable_among` over this repository's parent lines (ENG-151),
+        its committer times read with its parents (ENG-203): one bounded
+        traversal, a shallow boundary ending it as git's own walk ends there."""
+        return reachable_among(self, commits, committed=self.committed)
+
+    def independent(self, commits: Sequence[str]) -> frozenset[str] | None:
+        """The commits of `commits` (full ids) no other of them reaches, as
+        ``git merge-base --independent`` lists them (ENG-203): the
+        witnesses the most-specific rule keeps
+        (`membership.Membership._most_specific`), read with no bound on how
+        far apart they lie. Git is held to the parent lines the objects
+        hold, as this reader reads them (`_parent_lines`): no replace refs
+        (``--no-replace-objects``), no commit-graph (``core.commitGraph``
+        off: a graph file can name parents no object holds), no grafts
+        (``GIT_GRAFT_FILE`` the null device), and, as on every call the
+        runner makes, no fetch (`_git.NO_FETCH`, ENG-218); a shallow
+        boundary ends its walk as it ends this reader's. The ids are handed
+        to git sorted. None, and the bounded traversal decides, where git
+        cannot run or does not answer within `INDEPENDENT_SECONDS` (the
+        runner's WARNING, as for any call: a second is some 14 times the
+        slowest run measured, so a stall is worth a line), exits non-zero
+        (an object it cannot read) or names no commit or one it was not
+        given, and for more than `INDEPENDENT_MAX` commits. It spawns a
+        process, so the model reads it before the resolution's write
+        transaction, never inside it (`membership_resolve.resolve`)."""
+        given = sorted(
+            {c.lower() for c in commits if _FULL_HASH.fullmatch(c.lower()) is not None}
+        )
+        if len(given) < 2 or len(given) > INDEPENDENT_MAX:
+            return frozenset(given) if len(given) < 2 else None
+        args = ["--no-replace-objects", "-c", "core.commitGraph=false"]
+        args += [*_INDEPENDENT_ARGS, *given]
+        done = _git_runner.run_git(
+            args, git_dir=self._common, timeout=INDEPENDENT_SECONDS, env=_UNGRAFTED
+        )
+        if done is None:
+            return None
+        if done.returncode != 0:
+            _git_runner.log_nonzero_exit(_INDEPENDENT_ARGS, done, self._common)
+            return None
+        top = frozenset(line.strip().lower() for line in done.stdout.splitlines())
+        top -= {""}
+        return top if top and top <= set(given) else None
 
     def blobs(self, commit: str) -> Sequence[str]:
         """Up to `BLOBS_PER_WITNESS` blob ids of the commit's files (the
@@ -977,49 +1077,235 @@ class RepositoryHistory:
         return sorted(out)[:BLOBS_PER_WITNESS]
 
 
-def reachable_among(
-    history: Any, commits: Sequence[str], *, limit: int = WALK_LIMIT
-) -> dict[str, frozenset[str]]:
-    """{commit: the other commits of `commits` it is reachable from}, for
-    each full commit id given (lowercase; any other id is left out): the
-    given commits each one is an ancestor of, which the most-specific rule
-    reads (`membership.Membership._most_specific`) and a client answers the
-    daemon's ancestry question with (`location.answer`).
+class Reach(dict[str, frozenset[str]]):
+    """`reachable_among`'s answer: {commit: the given commits it is
+    reachable from}, with `bounded`, whether a bound stopped the traversal
+    while a commit that may hold a relation was still to read or to spread
+    (ENG-203), and `handled`, the parent edges it read and spread
+    (`EDGE_LIMIT`). Where `bounded` is false and committer times never fall
+    from parent to child, it holds every relation the unbounded walk
+    finds."""
 
-    One traversal of the parent lines from every given commit at once,
-    breadth first, each commit carrying the set of given commits that
-    reach it; the parents of a commit are read once, and of at most
-    `limit` commits (`WALK_LIMIT`, the rewritten-history walk's bound,
-    ENG-151). The pairwise walks this replaces read the whole history for
-    every pair that is not related, k(k-1) walks for k witnesses, inside
-    the resolution's write transaction. Past the bound a relation the
-    traversal did not reach reads as none: the most-specific rule then
-    keeps more candidates, and asks, never fewer."""
-    given = list(
-        dict.fromkeys(
-            c.lower() for c in commits if _FULL_HASH.fullmatch(c.lower()) is not None
-        )
+    def __init__(
+        self,
+        relations: Mapping[str, frozenset[str]],
+        *,
+        bounded: bool,
+        handled: int = 0,
+    ) -> None:
+        super().__init__(relations)
+        self.bounded = bounded
+        self.handled = handled
+
+
+def reachable_among(
+    history: Any,
+    commits: Sequence[str],
+    *,
+    limit: int = WALK_LIMIT,
+    edges: int = EDGE_LIMIT,
+    committed: Callable[[str], int] | None = None,
+) -> Reach:
+    """{commit: the given commits it is reachable from} over the full ids
+    of `commits`, in one traversal from all of them at once (ENG-151):
+    each commit's set of the given commits it descends from spreads to its
+    parents, breadth first, so the bound is spent below every witness
+    alike. A commit committed (`committed`; without it every commit reads
+    time 0) before a floor, the oldest given commit's time, is read and held
+    back, and expanded in a second pass once every commit above the floor
+    is (ENG-203): where committer times never fall from parent to child, no
+    path between two given commits passes below the oldest, so a commit
+    held back holds no relation among them and the bound is spent where
+    relations are. A clock is seldom that true: where a parent is seen
+    committed after a child that reached it, the floor drops by the largest
+    such rise seen so far and what it held above the new floor is released,
+    so a path through commits skewed by no more than that is read in the
+    first pass as breadth first reads it. A relation through a commit still
+    held back is found only if the bound lasts to it. A commit is spread
+    again only when its set has grown since it last spread.
+
+    It reads the parents of at most `limit` commits, each once: the given
+    commits first, sorted by id (where more are given than `limit`, the
+    first `limit` of them); a commit held back counts, read for its time.
+    It handles at most `edges` parent edges read and spread (`EDGE_LIMIT`),
+    and one commit's parents past them. `Reach.bounded` says whether a
+    bound stopped the first pass before every commit it reached was read
+    and spread, or stopped the second where a rise was seen: with times
+    that never fall from parent to child the second holds no relation.
+
+    A relation is one it read along parent edges, never one inferred, so
+    every relation it reports is the unbounded walk's, and one past a
+    bound reads as none. `membership.Membership._specific` reads none as
+    apart, which keeps more projects, never fewer, on a history without
+    cycles (any whose objects hash to their ids): a forged object store
+    can close a cycle the bound reads one way round (ENG-203)."""
+    given = sorted(
+        {c.lower() for c in commits if _FULL_HASH.fullmatch(c.lower()) is not None}
     )
     bit = {c: 1 << i for i, c in enumerate(given)}
     reach: dict[str, int] = dict(bit)
+    spread: dict[str, int] = {}
     lines: dict[str, tuple[str, ...]] = {}
-    todo = deque(given)
-    while todo:
-        sha = todo.popleft()
-        parents = lines.get(sha)
-        if parents is None:
-            if len(lines) >= limit:
+    times: dict[str, int] = {}
+    # The oldest committer time of a child that reached each commit.
+    child: dict[str, int] = {}
+    held: dict[str, None] = {}
+    todo: deque[str] = deque(given)
+    queued = set(given)
+    handled = rise = 0
+
+    def read(sha: str) -> bool:
+        nonlocal handled
+        if sha not in lines:
+            if len(lines) >= limit or handled >= edges:
+                return False
+            lines[sha] = tuple(p.lower() for p in history.parents(sha))
+            times[sha] = 0 if committed is None else committed(sha)
+            handled += len(lines[sha])
+        return True
+
+    def lower(by: int) -> None:
+        # A parent committed `by` after a child that reached it: lower the
+        # floor that much and release what it held above the new floor.
+        nonlocal rise
+        rise = by
+        for sha in [s for s in held if times[s] >= floor - rise]:
+            del held[sha]
+            if sha not in queued:
+                queued.add(sha)
+                todo.append(sha)
+
+    def reached(parent: str, when: int) -> None:
+        # A child committed at `when` reached `parent`; a parent read
+        # already and committed later shows how far the clock rose.
+        if when < child.get(parent, when + 1):
+            child[parent] = when
+            if times.get(parent, when) - when > rise:
+                lower(times[parent] - when)
+
+    floor = min((times[c] for c in given if read(c)), default=0)
+    bounded = cut = deep = False
+    while True:
+        while todo:
+            sha = todo.popleft()
+            queued.discard(sha)
+            if not read(sha):
+                bounded, cut = bounded or not deep, True
                 continue
-            parents = lines[sha] = tuple(p.lower() for p in history.parents(sha))
-        mask = reach[sha]
-        for p in parents:
-            old = reach.get(p, 0)
-            if old | mask != old:
-                reach[p] = old | mask
-                todo.append(p)
-    return {
-        c: frozenset(o for o in given if o != c and reach[c] & bit[o]) for c in given
-    }
+            when = times[sha]
+            if when - child.get(sha, when) > rise:
+                lower(when - child[sha])
+            if not deep and when < floor - rise:
+                held[sha] = None
+                for p in lines[sha]:
+                    reached(p, when)
+                continue
+            mask = reach[sha]
+            parents = lines[sha]
+            if spread.get(sha) == mask:
+                continue
+            if handled + len(parents) > edges:
+                bounded, cut = bounded or not deep, True
+                continue
+            handled += len(parents)
+            spread[sha] = mask
+            for p in parents:
+                reached(p, when)
+                old = reach.get(p, 0)
+                if old | mask != old:
+                    reach[p] = old | mask
+                    if p not in queued:
+                        queued.add(p)
+                        todo.append(p)
+        if deep or not held:
+            break
+        deep = True
+        todo.extend(held)
+        queued.update(held)
+        held.clear()
+    return Reach(
+        {c: frozenset(o for o in given if o != c and reach[c] & bit[o]) for c in given},
+        bounded=bounded or (cut and rise > 0),
+        handled=handled,
+    )
+
+
+def _committed_at(body: bytes, hexsz: int) -> int:
+    """The committer time of the commit whose object body is `body` (its
+    ids `hexsz` hex digits), as git's ``parse_commit_buffer`` and
+    ``parse_commit_date`` (commit.c, git 2.54) read it: past the ``tree``
+    line and the ``parent`` lines, each of fixed length, the next line must
+    start ``author`` and the one after it ``committer`` and end in a
+    newline; after that line's last ``>`` and any spaces, tabs and carriage
+    returns (git's ``isspace``), a digit or ``-`` starts the number, which
+    ``strtoumax`` reads into git's ``timestamp_t`` (`_TIME_MAX`): leading
+    zeros skipped, a ``-`` wrapping it modulo 2**64, a number past 2**64 - 1
+    saturating there. 0 where git reads none, and where git refuses the
+    object (a short or non-hex ``tree`` or ``parent`` line). The same as
+    ``git rev-list --no-walk --timestamp`` (git 2.54) on all 46 commits of
+    tests/test_location_reachable.py, written by ``hash-object
+    --literally`` (ENG-203). The time only orders `reachable_among`'s
+    traversal, so no value read here makes one commit reachable from
+    another."""
+    header = _parent_lines(body, hexsz)
+    if header is None:
+        return 0
+    at = header[1]
+    if not body.startswith(b"author", at):
+        return 0
+    at = body.find(b"\n", at) + 1
+    if at == 0 or not body.startswith(b"committer", at):
+        return 0
+    eol = body.find(b"\n", at)
+    mark = body.rfind(b">", at, eol)
+    if eol < 0 or mark < 0:
+        return 0
+    at = mark + 1
+    while at < eol and body[at] in b" \t\r":
+        at += 1
+    if at == eol or body[at] not in b"0123456789-":
+        return 0
+    minus = body[at] == 45
+    digits = _DIGITS.match(body, at + minus, eol)
+    run = b"" if digits is None else digits.group().lstrip(b"0")
+    if len(run) > 20:
+        return _TIME_MAX
+    value = int(run or b"0")
+    if value > _TIME_MAX:
+        return _TIME_MAX
+    return -value % (1 << 64) if minus else value
+
+
+def _parent_lines(body: bytes, hexsz: int) -> tuple[tuple[str, ...], int] | None:
+    """The parents of the commit whose object body is `body` (its ids
+    `hexsz` hex digits), and where its header goes on past them, as git's
+    ``parse_commit_buffer`` (commit.c, git 2.54) reads them: the ``tree``
+    line, then each ``parent`` line of fixed length directly after it; a
+    ``parent`` line anywhere else is no parent. None where git refuses the
+    object (a short or non-hex ``tree`` or ``parent`` line), so the
+    traversal and ``git merge-base`` read one parent list (ENG-203)."""
+    at = hexsz + 6
+    if not (body.startswith(b"tree ") and len(body) > at and body[at - 1] == 10):
+        return None
+    if not _hex_at(body, 5, hexsz):
+        return None
+    step = hexsz + 8
+    parents: list[str] = []
+    while at + step - 1 < len(body) and body.startswith(b"parent ", at):
+        if len(body) <= at + step or not _hex_at(body, at + 7, hexsz):
+            return None
+        if body[at + step - 1] != 10:
+            return None
+        parents.append(body[at + 7 : at + step - 1].decode("ascii").lower())
+        at += step
+    return tuple(parents), at
+
+
+def _hex_at(body: bytes, at: int, hexsz: int) -> bool:
+    """Whether `body` holds `hexsz` hex digits of either case at `at`, as
+    git's ``get_oid_hex_algop`` reads an object id there."""
+    found = _HEX.match(body, at, at + hexsz)
+    return found is not None and found.end() == at + hexsz
 
 
 def walk(

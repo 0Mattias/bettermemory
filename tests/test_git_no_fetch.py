@@ -137,6 +137,25 @@ def test_every_call_fetches_nothing_whatever_the_callers_environment(
         assert name not in env
 
 
+def test_a_callers_own_variables_cannot_loosen_the_pins_or_the_scrub() -> None:
+    """`run_git`'s `env` is set beneath the scrub and the pins (ENG-203's
+    review, L1): a caller handing in a transport, a lazy fetch or another
+    repository gets none of them, and its own variables still reach git."""
+    extra = {
+        "GIT_NO_LAZY_FETCH": "0",
+        "GIT_ALLOW_PROTOCOL": "ext",
+        "GIT_OPTIONAL_LOCKS": "1",
+        "GIT_GRAFT_FILE": os.devnull,
+        **{name: os.devnull for name in _git.SCRUBBED_ENV},
+    }
+    env = _git._environment(extra)
+    assert env["GIT_NO_LAZY_FETCH"] == "1"
+    assert env["GIT_ALLOW_PROTOCOL"] == ""
+    assert env["GIT_OPTIONAL_LOCKS"] == "0"
+    assert env["GIT_GRAFT_FILE"] == os.devnull
+    assert not set(_git.SCRUBBED_ENV) & set(env)
+
+
 def test_the_hostile_clone_runs_its_command_for_a_git_that_may_fetch(
     hostile: Hostile, monkeypatch: pytest.MonkeyPatch
 ) -> None:

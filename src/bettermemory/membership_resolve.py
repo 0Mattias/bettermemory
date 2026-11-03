@@ -79,10 +79,13 @@ from .membership_records import (
     D,
     F,
     H,
+    IndependentReader,
     Location,
+    NeedIndependent,
     R,
     Resolution,
     S,
+    Specific,
     T,
     View,
     manifest_match,
@@ -289,15 +292,36 @@ def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolut
     reads both for every location it resolves before it opens it
     (`membership_migrate._Run.prefetch`, ENG-204). A view not read before
     is read in the transaction, bounded; a declared folder not read
-    before is compared as stored."""
+    before is compared as stored. Where the most-specific rule wants
+    git's reading of tied witnesses (ENG-203), the transaction rolls back
+    before any token is written (`NeedIndependent`, raised ahead of a join
+    or a question), git reads them with no lock held, and the ladder runs
+    once more with the answer; inside a caller's transaction git is not
+    asked."""
+    outside = not self._store.in_batch
     with self.liveness_held():
-        if not self._store.in_batch:
+        if outside:
             self.prefetch_liveness(self._liveness_plan(loc))
             self.prefetch_declared([loc])
-        with self._call():
-            res = self._settle_unresolved(loc, self._resolve(loc, strict))
-            rows = tuple(self._rows)
-            remint = self._remint is not None
+        asked: dict[tuple[str, ...], frozenset[str] | None] | None = (
+            {} if outside else None
+        )
+        self._ancestry = asked
+        try:
+            while True:
+                try:
+                    with self._call():
+                        res = self._settle_unresolved(loc, self._resolve(loc, strict))
+                        rows = tuple(self._rows)
+                        remint = self._remint is not None
+                    break
+                except NeedIndependent as need:
+                    history = loc.history
+                    if asked is None or not isinstance(history, IndependentReader):
+                        raise
+                    asked[need.commits] = history.independent(need.commits)
+        finally:
+            self._ancestry = None
     return dataclasses.replace(res, rows=rows, remint_token=remint)
 
 
@@ -743,16 +767,17 @@ def _first_sight(
             for p in strong
             if not (_HISTORY & cands[p]) or F in cands[p] or B in cands[p]
         ]
-    unordered = 0
+    unordered: Specific | None = None
     if len(strong) > 1:
         top = max(strength[p] for p in strong)
         best = [p for p in strong if strength[p] == top]
         if len(best) > 1:
             held = {p: t.held[p] for p in best if p in t.held}
             if len(held) == len(best):
-                best = self._most_specific(loc, held)
+                spec = self._specific(loc, held)
+                best = spec.best
                 if len(best) > 1 and loc.history is not None:
-                    unordered = len(set().union(*held.values()))
+                    unordered = spec
         if len(best) == 1:
             strong = best
     if len(strong) == 1:
@@ -765,8 +790,10 @@ def _first_sight(
             + ", ".join(WORDS[c] for c in sorted(cands[p]) if c in WORDS)
             for p in sorted(strong)
         )
-        if unordered:
-            evidence += "; " + _unordered(unordered)
+        if unordered is not None:
+            evidence += "; " + _unordered(
+                unordered, [self._name(p) for p in unordered.best]
+            )
         res = self._ask(
             loc,
             sorted(strong),
@@ -1567,14 +1594,23 @@ def _declared_todo(
         return set()
 
 
-def _unordered(count: int) -> str:
-    """The words a several-projects question adds when the most specific
-    line was read and not decided (ENG-151, review M G2): the traversal
-    reads `WALK_LIMIT` commits in all, about ``WALK_LIMIT // count`` below
-    each of the `count` tied witness commits, so witnesses further apart
-    than that are not ordered and the ladder asks."""
-    depth = max(1, WALK_LIMIT // max(1, count))
-    return (
-        f"none of their {count} witness commits descends from another's within "
-        f"the {WALK_LIMIT} commits read (about {depth} below each)"
+def _unordered(spec: Specific, names: Sequence[str]) -> str:
+    """The words a several-projects question adds where the most specific
+    line did not decide (ENG-151, review M G2), said per witness, which
+    holds however the witnesses were read: each project it kept (`names`,
+    `Specific.best`) holds a witness commit no other of the tied projects'
+    witness commits was found to descend from. Only where a bound cut the
+    traversal short (`Specific.bounded`, ENG-203) does it add the bound,
+    since a relation past it is not known; a hook client before 9.0.0rc18
+    answering for a container does not say, and is read as cut short.
+    Where git read the witnesses, or the traversal read every commit they
+    reach on a history whose committer times never fall from parent to
+    child, the lines it names are apart."""
+    kept = " and ".join(names) if len(names) < 3 else ", ".join(names)
+    found = (
+        f"{kept} each hold a witness commit that no other of the tied projects' "
+        f"{spec.held} witness commits was found to descend from"
     )
+    if spec.bounded:
+        found += f" within the walk's bound (at most {WALK_LIMIT} commits read)"
+    return found
