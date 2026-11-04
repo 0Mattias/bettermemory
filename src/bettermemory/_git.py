@@ -146,24 +146,17 @@ def note_failed() -> None:
     _FAILED.count += 1
 
 
-#: Whether a CR before git's LF is a line end, not a part of the line: on
-#: Windows, where git can print CR LF and no name holds a CR.
-_CR_ENDS_LINES = os.name == "nt"
-
-
-def output_lines(stdout: str, *, cr_ends: bool | None = None) -> list[str]:
-    """git's `stdout` as lines, each with only its line end taken off: the
-    ``\\n``, and on Windows a ``\\r`` before it (`_CR_ENDS_LINES`, or
-    `cr_ends`), where git can print one and no name holds one. Never other
-    blank space, so a path git prints keeps the spaces and tabs that end
-    or begin a folder's or a file's name (``trail ``, ``tab\\t``), which a
-    ``strip`` took off, naming another path."""
-    lines = stdout.split("\n")
-    if lines[-1] == "":
-        lines.pop()
-    if _CR_ENDS_LINES if cr_ends is None else cr_ends:
-        return [line.removesuffix("\r") for line in lines]
-    return lines
+def printed_path(stdout: str) -> str:
+    """The one path git printed on `stdout` (``rev-parse
+    --show-toplevel``), with only the newline git ends it with taken off.
+    git prints such a path as it is, unquoted, so a ``strip`` took off the
+    space or tab a folder's name ends with (``trail ``), and a split into
+    lines cut a name holding a newline (``nl\\nx``) in two; each named
+    another path. No CR comes off: `run_git` reads git's output as text,
+    which has turned a CR LF, and any CR, into an LF already (a CR in a
+    folder's name reads as an LF there: a path that names nothing, which
+    no caller keeps as a root)."""
+    return stdout.removesuffix("\n")
 
 
 def subcommand(args: Sequence[str]) -> str:

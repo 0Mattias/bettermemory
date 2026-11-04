@@ -1,14 +1,18 @@
-"""A path git prints keeps the blank space its name ends or begins with.
+"""A path git prints keeps the blank space and the newlines its name holds.
 
-A folder may be named ``trail `` or ``tab\\t``. git prints its toplevel as
-it is, with a newline after it, and the origin family took the line with
-``strip``, which took the name's own space or tab off: the toplevel named
-another path, no folder membership roots the checkout at, and the origin
-kept no root, while `repo_toplevel_and_head`, answering from the files,
-named the folder. A file named ``note `` changed in a commit read as
-``note`` in the reachable walk the same way. Each reader now takes off
-the line end alone (`_git.output_lines`), and the security audit's read of
-a store's working tree with it.
+A folder may be named ``trail ``, ``tab\\t`` or ``nl\\nx``. git prints its
+toplevel as it is, with a newline after it, and the origin family took the
+line with ``strip``, which took the name's own space or tab off: the
+toplevel named another path, no folder membership roots the checkout at,
+and the origin kept no root, while `repo_toplevel_and_head`, answering
+from the files, named the folder. A file named ``note `` changed in a
+commit read as ``note`` in the reachable walk the same way. d1d6aa94 took
+the line end alone off (``output_lines``), which split a name holding a
+newline in two, and the origin of ``nl\\nx`` kept no root (review H). A
+path git prints alone now loses only the newline after it
+(`_git.printed_path`), the root before the hash is all before the last
+newline, and the walk splits lines only where git quotes every name that
+holds one; the security audit's read of a store's working tree with them.
 """
 
 from __future__ import annotations
@@ -35,16 +39,19 @@ def _neutral(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     neutral_git(tmp_path, monkeypatch)
 
 
-#: Windows takes no control character in a name, a tab included, and drops
-#: a space that ends one (Win32 path normalisation): those names are POSIX's.
+#: Windows takes no control character in a name (a tab, a newline, a CR),
+#: and drops a space that ends one (Win32 path normalisation): those names
+#: are POSIX's.
 _POSIX_NAME = pytest.mark.skipif(
-    os.name == "nt", reason="a Windows name holds no tab and ends in no space"
+    os.name == "nt", reason="a Windows name holds no control character"
 )
 
 NAMES = [
     pytest.param("trail ", id="trailing_space", marks=_POSIX_NAME),
     pytest.param("tab\t", id="trailing_tab", marks=_POSIX_NAME),
     pytest.param(" lead", id="leading_space"),
+    pytest.param("nl\nx", id="newline", marks=_POSIX_NAME),
+    pytest.param("end\n", id="trailing_newline", marks=_POSIX_NAME),
 ]
 
 
@@ -84,13 +91,16 @@ def test_a_folder_named_with_blank_space_keeps_its_root(
         pytest.param("note ", marks=_POSIX_NAME),
         " note",
         pytest.param("tab\tnote", marks=_POSIX_NAME),
+        pytest.param("nl\nnote", marks=_POSIX_NAME),
+        pytest.param("cr\rnote", marks=_POSIX_NAME),
     ],
 )
 def test_a_file_named_with_blank_space_is_touched_as_named(
     tmp_path: Path, name: str
 ) -> None:
     """The reachable walk reads a changed file's name whole: one a space
-    ends or begins (printed as it is) and one holding a tab (quoted)."""
+    ends or begins (printed as it is), and one holding a tab, a newline or
+    a CR (quoted, so on one line, and its escape undone)."""
     app = tmp_path / "work" / "app"
     checkout(app, remote=REMOTE)
     anchor = _head(app)
@@ -103,10 +113,13 @@ def test_a_file_named_with_blank_space_is_touched_as_named(
 
 
 @_POSIX_NAME
-def test_the_audit_reads_a_store_s_working_tree_whole(tmp_path: Path) -> None:
-    """A store inside a working tree whose folder's name ends in a space is
-    read as inside that tree."""
-    repo = tmp_path / "shared "
+@pytest.mark.parametrize("name", ["shared ", "shared\nnl"])
+def test_the_audit_reads_a_store_s_working_tree_whole(
+    tmp_path: Path, name: str
+) -> None:
+    """A store inside a working tree whose folder's name ends in a space,
+    or holds a newline, is read as inside that tree."""
+    repo = tmp_path / name
     store = repo / ".claude-memory"
     store.mkdir(parents=True)
     _git(repo, "init", "-q")
@@ -117,21 +130,28 @@ def test_the_audit_reads_a_store_s_working_tree_whole(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("stdout", "cr_ends", "lines"),
+    ("stdout", "path"),
     [
-        ("/w/trail \n", False, ["/w/trail "]),
-        ("/w/tab\t\n", False, ["/w/tab\t"]),
-        ("/w/a\r\n", False, ["/w/a\r"]),
-        ("/w/a\r\n", True, ["/w/a"]),
-        ("/w/a \r\n", True, ["/w/a "]),
-        ("/w/a\n0123\n", False, ["/w/a", "0123"]),
-        ("", False, []),
-        ("/w/no-end", False, ["/w/no-end"]),
+        ("/w/trail \n", "/w/trail "),
+        ("/w/tab\t\n", "/w/tab\t"),
+        ("/w/nl\nx\n", "/w/nl\nx"),
+        ("/w/end\n\n", "/w/end\n"),
+        ("/w/no-end", "/w/no-end"),
+        ("", ""),
     ],
 )
-def test_only_the_line_end_comes_off(
-    stdout: str, cr_ends: bool, lines: list[str]
-) -> None:
-    """The LF, and on Windows a CR before it (where no name holds one);
-    elsewhere a CR is the name's own."""
-    assert git_runner.output_lines(stdout, cr_ends=cr_ends) == lines
+def test_only_git_s_newline_comes_off(stdout: str, path: str) -> None:
+    """The one newline git ends the path with; never blank space, nor a
+    newline the name holds."""
+    assert git_runner.printed_path(stdout) == path
+
+
+def test_git_s_output_reaches_a_reader_with_no_cr(tmp_path: Path) -> None:
+    """`run_git` reads git's output as text, which turns a CR LF into an
+    LF, so no reader takes a CR off a line: git's own CR LF (here, a value
+    holding a CR printed before git's LF) reaches it as one LF."""
+    repo = checkout(tmp_path / "work" / "app")
+    _git(repo, "config", "x.y", "v\r")
+    done = git_runner.run_git(["config", "x.y"], cwd=repo)
+    assert done is not None and done.returncode == 0
+    assert done.stdout == "v\n", repr(done.stdout)

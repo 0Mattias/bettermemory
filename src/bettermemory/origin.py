@@ -784,10 +784,10 @@ def _git(
 ) -> str | None:
     """Run a git command from `cwd`. Returns trimmed stdout on success,
     or with `verbatim` stdout as git wrote it, for a caller that reads
-    paths from it (`_git_runner.output_lines`: a name may end in a space or
-    a tab); None on any failure. Short timeout so a hanging git never stalls a
-    memory_write — the write is the user-facing operation; origin is
-    nice-to-have. Built on `_git_result`, which keeps the two kinds of
+    paths from it (`_git_runner.printed_path`: a name may end in a space or
+    hold a newline); None on any failure. Short timeout so a hanging git
+    never stalls a memory_write — the write is the user-facing operation;
+    origin is nice-to-have. Built on `_git_result`, which keeps the two kinds of
     failure apart for the callers that need them apart.
 
     `empty_ok` splits "git ran fine, no output" from "git could not run":
@@ -946,9 +946,9 @@ def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool, str | None]:
             root,
         )
         return root, True, reason
-    # Only the line end comes off: a folder's name may end in a space.
-    printed = _git_runner.output_lines(result.stdout)
-    raw = printed[0] if len(printed) == 1 else ""
+    # Only git's newline comes off: a folder's name may end in a space or
+    # hold a newline.
+    raw = _git_runner.printed_path(result.stdout)
     if not raw or not _agreed(cwd, raw):
         return None, False, None
     try:
@@ -1002,9 +1002,8 @@ def repo_toplevel(cwd: Path | None) -> Path | None:
     if cwd is None:
         return None
     raw = _git(cwd, "rev-parse", "--show-toplevel", verbatim=True)
-    printed = [] if raw is None else _git_runner.output_lines(raw)
-    toplevel_raw = printed[0] if len(printed) == 1 else None
-    if toplevel_raw is None or not _agreed(cwd, toplevel_raw):
+    toplevel_raw = None if raw is None else _git_runner.printed_path(raw)
+    if not toplevel_raw or not _agreed(cwd, toplevel_raw):
         return None
     try:
         return Path(toplevel_raw).resolve()
@@ -1034,16 +1033,14 @@ def repo_toplevel_and_head(cwd: Path | None) -> tuple[Path, str] | None:
     raw = _git(cwd, "rev-parse", "--show-toplevel", "HEAD", verbatim=True)
     if raw is None:
         return None
-    # Only the line ends come off: the root's name may end in a space.
-    lines = _git_runner.output_lines(raw)
-    if (
-        len(lines) != 2
-        or not is_full_commit_sha(lines[1])
-        or not _agreed(cwd, lines[0])
-    ):
+    # git prints the root, then the hash, each with a newline after it: the
+    # root is all before the last newline, whatever its name holds (a space
+    # at its end, a newline).
+    root, _newline, head = _git_runner.printed_path(raw).rpartition("\n")
+    if not root or not is_full_commit_sha(head) or not _agreed(cwd, root):
         return None
     try:
-        return Path(lines[0]).resolve(), lines[1]
+        return Path(root).resolve(), head
     except OSError:
         return None
 
@@ -1347,9 +1344,13 @@ def _walk_reachable(toplevel: Path, anchor: str, head: str) -> ReachableWalk | N
     touched: dict[str, set[str]] = {}
     boundary: set[str] = set()
     current: str | None = None
-    # Only the line ends come off: a file's name may begin or end in a
-    # space or a tab, which git prints unquoted.
-    for line in _git_runner.output_lines(raw):
+    # One name a line, with only its newline taken off: git quotes a name
+    # holding a control character (a newline, a CR, a tab) or a quote, so
+    # no name spans two lines, and prints a space that begins or ends one
+    # as it is. Not -z, where git quotes nothing: the text read
+    # (`_git_runner.run_git`) turns a CR in a name into an LF, which the
+    # quoted form carries as its escape.
+    for line in raw.split("\n"):
         if line.startswith(_WALK_MARK):
             mark, sha = line[1:2], line[2:].strip().lower()
             if mark == "-":

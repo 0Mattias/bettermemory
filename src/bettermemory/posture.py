@@ -83,7 +83,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _daemon_client, githead, restore_lock, sandbox_settings
-from ._git import output_lines, run_git
+from ._git import printed_path, run_git
 from .config import (
     ENV_DIR_OVERRIDE,
     KEYS_DIR_ENV,
@@ -898,9 +898,9 @@ def git_finding(
     )
     if top_run is None:
         return Finding(finding_id, "skip", f"git could not run; {label} not checked")
-    printed = output_lines(top_run.stdout)
-    # Only the line end comes off: a folder's name may end in a space.
-    top_text = printed[0] if len(printed) == 1 else ""
+    # Only git's newline comes off: a folder's name may end in a space or
+    # hold a newline.
+    top_text = printed_path(top_run.stdout)
     if top_run.returncode != 0 or not top_text:
         # A non-zero exit is also git refusing a repository it will not read
         # (another account's, `safe.directory` unset): the files then hold
