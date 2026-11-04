@@ -947,24 +947,19 @@ def test_a_config_file_is_named_one_way(
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     assert location_git._machine_configs() == (str(main),)
 
-    # Where a path enters, it goes through `_native`: on POSIX, which has
-    # no other separator, only the calls tell.
-    seen: list[str] = []
-    native = gitconfig._native
-
-    def spy(path: str, flavour: Any = os.path) -> str:
-        seen.append(path)
-        return native(path, flavour)
-
-    monkeypatch.setattr(gitconfig, "_native", spy)
-    monkeypatch.setattr(location_git, "_native", spy)
-    gitconfig._config_values(str(main), stamped=True)
-    location_git._machine_configs()
-    assert seen == [
-        str(home) + "/a.inc",
-        os.path.join(str(tmp_path), "sub/b.inc"),
-        str(main),
-    ]
+    if os.path is not posixpath:
+        return
+    # POSIX has no other separator to write, so give it one, as Windows
+    # has "/": an include's target and a machine file spelled with it are
+    # spelled with "/" once read.
+    piped = tmp_path / "piped-gitconfig"
+    piped.write_text("[include]\n\tpath = sub|c.inc\n")
+    wanted = [str(piped), str(tmp_path / "sub" / "c.inc")]
+    monkeypatch.setattr(posixpath, "altsep", "|")
+    read = gitconfig._config_values(str(piped), stamped=True)
+    assert [p for p, _stamp in read.files or ()] == wanted
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", f"{tmp_path}|{piped.name}")
+    assert location_git._machine_configs() == (str(piped),)
 
 
 def test_a_change_to_a_config_file_read_reaches_a_cached_capture(
