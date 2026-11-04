@@ -180,25 +180,7 @@ def _tally(
     # B: this machine only; a checkout of the machine this one was copied
     # from may still be live there, so it joins as a new checkout instead.
     if loc.kind == PRIMARY and loc.born:
-        for v in self._store.membership_rows(
-            "checkout_views",
-            where={"machine": loc.machine, "path": _norm(loc.root or loc.cwd)},
-        ):
-            k = self.checkout(str(v["checkout"]))
-            if k.kind != PRIMARY or k.machine != loc.machine:
-                continue
-            if k.object_key == loc.object_key:
-                continue
-            pid = self._canon(k.project)
-            if pid in exclude or pid not in t.held:
-                continue
-            if k.token_refutes(loc.token) and not _view_made(self, k, loc.token):
-                # Another lineage at the old path, a re-clone; not a token
-                # another machine's view of its files wrote (ENG-215).
-                continue
-            if self.live_view(k) is None:
-                cands[pid].add(B)
-                t.rekey[pid] = k.id
+        _at_the_path(self, loc, t, cands, exclude)
     # Hb: the file contents of the witness commits, for a project the
     # file or the remote names where the history did not speak.
     named = [p for p, c in cands.items() if ({F, R} & c) and not ({H, HF} & c)]
@@ -274,6 +256,43 @@ def _tally(
                 )
     t.cands = {p: set(c) for p, c in cands.items()}
     return t
+
+
+def _at_the_path(
+    self: Membership,
+    loc: Location,
+    t: _Tally,
+    cands: MutableMapping[str, set[str]],
+    exclude: Collection[str],
+) -> None:
+    """B (`_tally`): a checkout of this machine recorded at the caller's
+    path, at another object, of a project that holds the caller's
+    commits, whose view holds it nowhere now. Another object includes the
+    same device and inode number without birth time to prove it the
+    recorded one, which rung 2 did not continue (an inode number can be
+    reused, E15; B20 joins it as the same object where it stands alone).
+    A token of another lineage refutes it (a re-clone), unless a view of
+    its files on another machine made or recorded that token (ENG-215)."""
+    for v in self._store.membership_rows(
+        "checkout_views",
+        where={"machine": loc.machine, "path": _norm(loc.root or loc.cwd)},
+    ):
+        k = self.checkout(str(v["checkout"]))
+        if k.kind != PRIMARY or k.machine != loc.machine:
+            continue
+        key = k.object_key
+        if key == loc.object_key and (
+            key is None or key.compare(loc.object_key) != UNPROVEN
+        ):
+            continue
+        pid = self._canon(k.project)
+        if pid in exclude or pid not in t.held:
+            continue
+        if k.token_refutes(loc.token) and not _view_made(self, k, loc.token):
+            continue
+        if self.live_view(k) is None:
+            cands[pid].add(B)
+            t.rekey[pid] = k.id
 
 
 def _strength(

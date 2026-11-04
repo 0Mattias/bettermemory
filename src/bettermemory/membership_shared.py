@@ -14,9 +14,10 @@ from the records of the other machines that see the same files:
 - `_shared_remint`, for rung 2 (`Membership._continuity`): a token at a
   checkout's own git directory is its re-mint where another machine's
   view of the same files made or recorded it (`_continues`);
-- `_view_made`, for B (`membership_resolve._tally`): the same without
-  the reading of the object here, as B reads a checkout at another
-  object at its path;
+- `_view_made`, for B (`membership_resolve._at_the_path`): the same
+  without the reading of the object here, as B reads a checkout at
+  another object at its path, or at its numbers with nothing to prove
+  it the recorded one;
 - `_restamped`: a checkout's init stamps as its object reads now, where
   birth time or the token proved it, so the files the rules compare
   follow a mode or an extended attribute set on them;
@@ -178,9 +179,10 @@ def _exact(stamps: Collection[Sequence[object]]) -> set[tuple[object, ...]]:
 def _view_made(self: Membership, k: Checkout, found: str | None) -> bool:
     """Whether a checkout of another machine that saw the same files as
     `k` (`_made_by`) made or recorded `found`: B's reading of a token at
-    the checkout's path, its object another (`membership_resolve._tally`).
-    One indexed read by token with no views (`_carriers`). False for no
-    token, `k`'s own, or a malformed one."""
+    the checkout's path, its object another or unproven
+    (`membership_resolve._at_the_path`). One indexed read by token with no
+    views (`_carriers`). False for no token, `k`'s own, or a malformed
+    one."""
     if not k.token or not checkout_token.valid(found) or found == k.token:
         return False
     if not k.stamps:

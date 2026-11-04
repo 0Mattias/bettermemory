@@ -253,7 +253,7 @@ def test_a_re_mint_in_a_copy_carried_into_the_checkout_is_not_the_hosts(
 
 
 @pytest.mark.parametrize("birth", ["birth", "no_birth"])
-def test_a_copy_on_the_freed_number_joins_the_tokens_project_or_is_asked(
+def test_a_copy_on_the_freed_number_is_asked_about_either_way(
     tmp_path: Path, lab: Lab, birth: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The container shares the host's git directory, is separated and
@@ -261,16 +261,18 @@ def test_a_copy_on_the_freed_number_joins_the_tokens_project_or_is_asked(
     copy (`cp -a`) whose git directory lands on the freed inode number
     (E15), its stamped files on numbers of their own. The copy holds the
     container's re-mint, and its stamps are not the host record's: never
-    the host's checkout. Without birth time it is a checkout of its own,
-    joined silently to the project of the container's checkout, whose
-    token it carries, with the commits (``join:H+T``), and none of the
-    host's memories delivered; with birth time (the copy's own) it is
-    asked about, B finding the host's checkout at the path and T the
-    container's project (``ask:several_projects``)."""
+    the host's checkout, and none of the host's memories delivered. It is
+    asked about, with birth time (the copy's own) and without: B finds
+    the host's checkout at the path, its object another or the same
+    numbers with nothing to prove them the recorded git directory, and T
+    the container's project (``ask:several_projects``). Before, without
+    birth time B passed over a checkout at the same numbers, and the copy
+    joined the container's project silently (``join:H+T``)."""
     if birth == "no_birth":
         monkeypatch.setattr(location, "REPORT_BIRTH", False)
         location.forget()
     line, box, hid, kid = _shared(tmp_path, lab, "line")
+    first = lab.model().checkout(hid).project
     _the_containers_re_mint(lab, box, kid, "recorded")
     found = _file_token(line)
     project = lab.model().checkout(kid).project
@@ -288,11 +290,40 @@ def test_a_copy_on_the_freed_number_joins_the_tokens_project_or_is_asked(
         res, admitted = lab.view(line)
 
     assert res.checkout not in (None, hid) and admitted == []
-    if birth == "no_birth":
-        assert (res.rule, res.outcome, res.project) == ("join:H+T", SILENT, project)
-    else:
-        assert (res.rule, res.outcome) == ("ask:several_projects", ASK)
+    assert (res.rule, res.outcome) == ("ask:several_projects", ASK)
+    assert res.proposal is not None
+    asked = lab.model().proposal(res.proposal).candidates
+    assert {lab.model().canonical(c) for c in asked} == {first, project}
     assert lab.model().checkout(hid).token != found
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_copy_on_the_freed_number_in_one_project_is_the_recorded_checkout(
+    tmp_path: Path, lab: Lab
+) -> None:
+    """The same copy on the freed number without birth time, where the
+    container re-minted without leaving the host's project (the store
+    missed the re-mint, and its next sighting recorded it): B, H and T
+    all name that one project, so B stands alone and the sighting joins
+    the host's checkout as the same object (B20, ``same_object``),
+    silently, as a copy at another number re-keys it with birth time.
+    Before, B passed over the same numbers and a second checkout was
+    registered in that project (``join:H+T``)."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    _the_containers_re_mint(lab, box, kid, "missed")
+    assert box.post(lab).checkout == kid
+    found = _file_token(line)
+    freed = location.object_key(str(line / ".git"))
+    assert found is not None and freed is not None
+    os.rename(line, tmp_path / "host" / "line-old")
+    copy(tmp_path / "host" / "line-old", line)
+    location.forget()
+
+    with posing(line / ".git", freed):
+        res, admitted = lab.view(line)
+
+    assert (res.checkout, res.outcome) == (hid, SILENT)
+    assert res.rule == "same_object:B+H+T" and admitted == ["h1"]
 
 
 @pytest.mark.usefixtures("no_birth")
@@ -307,11 +338,13 @@ def test_a_copy_on_reused_numbers_passes_only_where_the_other_side_read_it(
     stamps read there but for their ctimes. The container re-minted the
     original over the share. Where the container has not read the copy
     (``unseen``), no record of it holds the copy's ctimes: not the host's
-    checkout, the copy joined silently to the container's project
-    (``join:H+T``). Where the container's record read the copy since
-    (``seen_by_the_container``), it is the host's checkout: a stated
-    property, no more than ENG-205's own lineage accepts of a copy on the
-    freed number that carries the checkout's re-mint."""
+    checkout, and asked about, B finding the host's checkout at the same
+    numbers and T the container's project (``ask:several_projects``;
+    before, B passed over the same numbers and the copy joined the
+    container's project silently). Where the container's record read the
+    copy since (``seen_by_the_container``), it is the host's checkout: a
+    stated property, no more than ENG-205's own lineage accepts of a copy
+    on the freed number that carries the checkout's re-mint."""
     line, box, hid, kid = _shared(tmp_path, lab, "line")
     _the_containers_re_mint(lab, box, kid, "recorded")
     found = _file_token(line)
@@ -342,7 +375,7 @@ def test_a_copy_on_reused_numbers_passes_only_where_the_other_side_read_it(
         res, admitted = lab.view(line)
 
     if seen == "unseen":
-        assert (res.rule, res.outcome) == ("join:H+T", SILENT)
+        assert (res.rule, res.outcome) == ("ask:several_projects", ASK)
         assert res.checkout != hid and admitted == []
         assert lab.model().checkout(hid).token != found
     else:
@@ -727,21 +760,32 @@ def test_a_linked_worktree_reads_the_other_sides_re_mint_either_way(
 # ---------------------------------------------------------------------------
 
 
-def _without_the_rule(
-    lab: Lab, line: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[str, str]:
-    """The host's sighting as 9.0.0rc18 resolved it, the rule off: a
-    second checkout of its git directory, joined to the container's
-    project. That checkout and the token found."""
+def _rc18_registered(lab: Lab, line: Path) -> tuple[str, str]:
+    """What 9.0.0rc18 wrote at the host's sighting after the container's
+    re-mint, built in the store as its rung 4 wrote it, with no ladder of
+    this release read (its rung 2 and B read the token otherwise now): a
+    second checkout of this machine at the host's object, its stamps and
+    the token found, in the project of the container's checkout recording
+    that token; its view at the path; ``checkout_registered`` with the
+    rule ``join:H+T``; and ``resolution_joined``. That checkout and the
+    token found."""
     found = _file_token(line)
     assert found is not None
     location.forget()
-    with monkeypatch.context() as mp:
-        mp.setattr(Membership, "_shared_remint", lambda *_a, **_k: False)
-        before, _admitted = lab.view(line)
-    assert before.rule == "join:H+T" and before.checkout is not None
+    cap = capture(str(line), write_token=False, use_cache=False)
+    loc = location.to_location(cap, machine=lab.identity.id)
+    model = lab.model()
+    carriers = [k for k in model.checkouts(token=found) if k.machine != lab.identity.id]
+    assert len(carriers) == 1 and loc.token == found
+    project = model.canonical(carriers[0].project)
+    assert project is not None
+    with model._call():
+        k = model._register(loc, project, "join:H+T")
+        model._event(
+            "resolution_joined", checkout=k.id, project=project, witnesses=["H", "T"]
+        )
     location.forget()
-    return before.checkout, found
+    return k.id, found
 
 
 @pytest.mark.usefixtures("no_birth")
@@ -762,7 +806,7 @@ def test_a_second_checkout_an_earlier_release_registered_yields_to_the_first(
     delivered there again."""
     line, box, hid, kid = _shared(tmp_path, lab, "line")
     _the_containers_re_mint(lab, box, kid, "recorded")
-    dup, found = _without_the_rule(lab, line, monkeypatch)
+    dup, found = _rc18_registered(lab, line)
     assert dup != hid
     if files == "ctime_moved_since":
         _ctime_moved(line)
@@ -789,7 +833,7 @@ def test_a_second_checkout_a_declaration_named_is_kept(
     is kept."""
     line, box, _hid, kid = _shared(tmp_path, lab, "line")
     _the_containers_re_mint(lab, box, kid, "recorded")
-    dup, _found = _without_the_rule(lab, line, monkeypatch)
+    dup, _found = _rc18_registered(lab, line)
     target = lab.model().checkout(dup).project if action == "join" else None
     lab._declaring().declare(
         Declaration(action, "os:tester", checkout=dup, target=target, name="kept")
@@ -836,7 +880,7 @@ def test_a_second_checkout_holding_records_is_asked_about_not_healed(
     line, box, hid, kid = _shared(tmp_path, lab, "line")
     first = lab.model().checkout(hid).project
     _the_containers_re_mint(lab, box, kid, "recorded")
-    dup, found = _without_the_rule(lab, line, monkeypatch)
+    dup, found = _rc18_registered(lab, line)
     project = lab.model().checkout(dup).project
     _written_at(lab, "h2", line, monkeypatch)
     assert lab.checkout_of("h2") == dup and project != first
@@ -905,7 +949,7 @@ def test_a_second_checkout_in_the_first_ones_project_yields_with_its_records(
     first = lab.model().checkout(hid).project
     _the_containers_re_mint(lab, box, kid, "missed")
     assert box.post(lab).checkout == kid
-    dup, found = _without_the_rule(lab, line, monkeypatch)
+    dup, found = _rc18_registered(lab, line)
     _written_at(lab, "h2", line, monkeypatch)
     assert lab.model().checkout(dup).project == first
     assert lab.checkout_of("h2") == dup
@@ -931,7 +975,7 @@ def test_a_second_checkout_a_project_was_absorbed_at_is_kept(
     line, box, hid, kid = _shared(tmp_path, lab, "line")
     first = lab.model().checkout(hid).project
     _the_containers_re_mint(lab, box, kid, "recorded")
-    dup, _found = _without_the_rule(lab, line, monkeypatch)
+    dup, _found = _rc18_registered(lab, line)
     project = lab.model().checkout(dup).project
     lab._declaring().declare(
         Declaration("absorb", "agent:s", checkout=dup, target=first)
@@ -958,7 +1002,7 @@ def test_a_second_checkout_its_project_file_names_is_kept(
     (``object+remint``, a file contradiction), over the declaration."""
     line, box, _hid, kid = _shared(tmp_path, lab, "line")
     _the_containers_re_mint(lab, box, kid, "recorded")
-    dup, _found = _without_the_rule(lab, line, monkeypatch)
+    dup, _found = _rc18_registered(lab, line)
     with monkeypatch.context() as mp:
         mp.setattr(Membership, "_shared_remint", lambda *_a, **_k: False)
         lab.init_file(line, "line")
@@ -1000,7 +1044,7 @@ def test_a_question_on_a_second_checkout_keeps_it_where_it_asks_its_project(
     second checkout."""
     line, box, hid, kid = _shared(tmp_path, lab, "line")
     _the_containers_re_mint(lab, box, kid, "recorded")
-    dup, _found = _without_the_rule(lab, line, monkeypatch)
+    dup, _found = _rc18_registered(lab, line)
     project = lab.model().checkout(dup).project
     if records == "written":
         _written_at(lab, "h2", line, monkeypatch)
@@ -1052,7 +1096,7 @@ def test_a_second_checkout_outside_the_tokens_project_is_kept(
     line, box, hid, kid = _shared(tmp_path, lab, "line")
     first = lab.model().checkout(hid).project
     _the_containers_re_mint(lab, box, kid, "recorded")
-    dup, found = _without_the_rule(lab, line, monkeypatch)
+    dup, found = _rc18_registered(lab, line)
     lab._declaring(box.identity).declare(
         Declaration("join", "os:tester", checkout=kid, target=first)
     )

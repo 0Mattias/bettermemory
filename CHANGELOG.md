@@ -1427,9 +1427,12 @@ eighteenth was built.
   and sizes that lands with its stamped files on the freed numbers, and
   that the other side's record has read since, is read as the checkout,
   no more than ENG-205's own lineage accepts; one no record has read is
-  a checkout of its own, joined silently to the token's project
-  (`join:H+T`) without birth time and asked about
-  (`ask:several_projects`) with it. A record's stamps now follow its
+  asked about (`ask:several_projects`), with birth time and without, as
+  B now reads a checkout at the path's device and inode number that
+  rung 2 did not continue, without birth time to prove it the recorded
+  git directory, as at another object (an inode number can be reused,
+  E15), where it passed over it and the copy joined the token's
+  project silently (`join:H+T`). A record's stamps now follow its
   files at each sighting birth time, its token or a re-mint proves; a
   linked worktree's git
   directory, which holds neither `description` nor `info/exclude`, is
@@ -1441,7 +1444,10 @@ eighteenth was built.
   the stamps match within it. B reads such a token as over a bind mount:
   the host's repository restored at its path, carrying the container's
   re-mint, is asked about (`ask:several_projects`), where it joined the
-  container's project silently. A second checkout 9.0.0rc18 registered
+  container's project silently; where every witness names one project,
+  a copy on the freed number without birth time is the recorded
+  checkout (`same_object`), as one at another number is re-keyed with
+  birth time. A second checkout 9.0.0rc18 registered
   this way, by a silent join on the token into the project of the other
   machine's checkout recording it, that no one chose (no question about
   its project, open or answered, where a changed remote's is about

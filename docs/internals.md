@@ -1152,13 +1152,16 @@ checkout's stamps read there but for their ctimes; the copy carries the
 other machine's re-mint, and where that machine's record has read the
 copy since, it is read as the checkout, as ENG-205's own lineage already
 reads a copy on the freed number that carries the checkout's own
-re-mint. Where no record has read the copy, it is not the checkout:
-without birth time it is a checkout of its own, joined silently to the
-project of the checkout whose token it carries, with the commits
-(`join:H+T`), and none of the first checkout's memories delivered; with
-birth time (the copy's own) it is asked about, B finding the first
-checkout at the path and T the other machine's project
-(`ask:several_projects`).
+re-mint. Where no record has read the copy, it is not the checkout, and
+it is asked about, with birth time (the copy's own) and without: B finds
+the first checkout at the path and T the other machine's project
+(`ask:several_projects`), none of the first checkout's memories
+delivered until answered. Without birth time B reads a checkout at the
+same device and inode number that rung 2 did not continue as at another
+object (`membership_resolve._at_the_path`): nothing proves it the
+recorded git directory, and an inode number can be reused (E15). Before,
+B passed over it, and the copy joined the other machine's project
+silently (`join:H+T`).
 
 The stamps follow the files. A sighting that birth time, the token or a
 re-mint proves takes the init stamps its object reads now where they
@@ -1181,13 +1184,17 @@ stamped file's times to the whole second (a share that rounds them), the
 two match within that second (`_same_file`).
 
 B reads such a token as over a bind mount. The host's repository at its
-path as another object (moved to another volume and back, restored),
-carrying a token a view of its files made or recorded, is not a
-re-clone: B finds the checkout at the path, T the project of the
+path as another object (moved to another volume and back, restored, or
+on the same numbers without birth time to prove it the recorded git
+directory), carrying a token a view of its files made or recorded, is
+not a re-clone: B finds the checkout at the path, T the project of the
 checkout recording the token, and the sighting is asked
 (`ask:several_projects`), with birth time and without. Before, over a
 VM-backed share the token refuted B and the host joined the container's
-project silently.
+project silently. Where B stands alone at the same numbers (no other
+project's witness), it joins the recorded checkout as the same object
+(B20, `same_object`), as it does where the numbers match and only one
+side reads a birth time.
 
 A store that met this before 9.0.0rc19 holds a second checkout of the
 host's git directory, registered after the container's re-mint and
