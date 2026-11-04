@@ -707,7 +707,12 @@ def _weak_tier_evaluation(
     are local are streamed and the rest counted
     (`origin_patch.local_patch_window`, ENG-220); the counted commits'
     paths are marked in the index before the claims are read, and the
-    whole-window rule reads the local commits' implications alone.
+    whole-window rule reads the local commits' implications alone. The
+    marks can fire a claim a full clone leaves quiet (the trees show an
+    empty or binary file's deletion, which the patch prints without a
+    ``/dev/null`` header), and its implications would hide the full
+    clone's whole window; so in a split the whole window is counted when
+    any fired claim implicates no commit.
     """
     if len(shas) > MAX_PATCH_STREAM_COMMITS:
         return [], None
@@ -740,6 +745,7 @@ def _weak_tier_evaluation(
     window = set(shas)
     drifted: list[str] = []
     implicated: set[str] = set()
+    bare = False
     for claim in claims:
         result = claim_level_drift(claim, index)
         if not result["weak"]:
@@ -750,8 +756,9 @@ def _weak_tier_evaluation(
         if claim.kind in ("path", "absent"):
             for sha_set in index["changed_text"].get(claim.rel_path, {}).values():
                 claim_shas |= sha_set
+        bare = bare or not claim_shas & window
         implicated |= claim_shas
-    if drifted and not implicated:
+    if drifted and (not implicated or (split is not None and bare)):
         implicated = set(window)
     if split is not None:
         implicated |= split.counted

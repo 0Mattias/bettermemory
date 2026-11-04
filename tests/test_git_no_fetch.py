@@ -21,9 +21,10 @@ change to git's default ``-/+Subproject commit`` lines.
 
 Where that stream fails on a blob a partial clone lacks, claim drift asks
 which of the window's blobs are local (`origin_patch.local_patch_window`,
-ENG-220): its ``log --raw`` reads trees alone, and its ``cat-file
---batch-check`` would fetch each blob it is asked about, so the blobless
-clone shows that one fetches nothing either.
+ENG-220): its ``log --raw`` reads trees alone, which a treeless clone
+lacks, and its ``cat-file --batch-check`` would fetch each blob it is
+asked about, so a treeless and the blobless clone show that neither
+fetches.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _git, gitsystem, location, location_git
+from bettermemory import _git, gitsystem, location, location_git, origin_patch
 from bettermemory.location_git import RepositoryHistory
 from bettermemory.origin_patch import PatchWindow, local_patch_window
 
@@ -540,3 +541,66 @@ def test_the_local_patch_split_reads_a_missing_blob_as_missing(
     else:
         assert window is None
     assert blobless.read_first() is None
+
+
+class Treeless:
+    """The blobless clone's source cloned treeless (``--filter=tree:0``):
+    the clone holds every commit and only its checkout's trees and blobs,
+    so the tree of HEAD's parent, which the split's ``log --raw`` diffs
+    against, is one a read must fetch."""
+
+    def __init__(self, base: Path) -> None:
+        source = base / "source"
+        self.parent_tree = _plain_git(source, "rev-parse", "HEAD~1^{tree}")
+        self.commits = _plain_git(source, "log", "--format=%H").split()
+        self.repo = base / "treeless"
+        _plain_git(
+            base, "clone", "-q", "--filter=tree:0", source.as_uri(), str(self.repo)
+        )
+
+    def holds_parent_tree(self) -> bool:
+        done = _git.run_git(
+            ["cat-file", "-e", self.parent_tree], cwd=self.repo, timeout=10.0
+        )
+        assert done is not None
+        return done.returncode == 0
+
+    def listing(self) -> object:
+        return origin_patch._changes(self.repo, self.commits, ["a.txt"])
+
+
+@pytest.fixture
+def treeless(blobless: Blobless, tmp_path: Path) -> Treeless:
+    return Treeless(tmp_path)
+
+
+def test_the_split_listing_fetches_a_treeless_clones_trees_for_a_git_that_may(
+    treeless: Treeless, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control for the split's ``log --raw`` (ENG-220's review): in a
+    treeless clone it diffs trees the clone lacks, and with neither setting
+    git fetches them and lists the changes."""
+    assert not treeless.holds_parent_tree(), "premise: the clone lacks it"
+    with monkeypatch.context() as unpinned:
+        unpinned.setattr(_git, "NO_FETCH", {})
+        assert treeless.listing() is not None
+    assert treeless.holds_parent_tree()
+
+
+@pytest.mark.parametrize(
+    "kept",
+    [None, {"GIT_ALLOW_PROTOCOL": ""}, {"GIT_NO_LAZY_FETCH": "1"}],
+    ids=["both", "GIT_ALLOW_PROTOCOL", "GIT_NO_LAZY_FETCH"],
+)
+def test_the_split_listing_fetches_no_tree_a_treeless_clone_lacks(
+    treeless: Treeless, monkeypatch: pytest.MonkeyPatch, kept: dict[str, str] | None
+) -> None:
+    """Under either setting the listing fails on the tree the clone lacks,
+    which the split reads as no answer (the per-file count), and the tree
+    is still absent."""
+    if kept is not None:
+        if "GIT_NO_LAZY_FETCH" in kept and _git_version() < (2, 44):
+            pytest.skip("GIT_NO_LAZY_FETCH is read from git 2.44")
+        monkeypatch.setattr(_git, "NO_FETCH", kept)
+    assert treeless.listing() is None
+    assert not treeless.holds_parent_tree()

@@ -8,9 +8,10 @@ per-file count and named no claim. `origin_patch.local_patch_window` now
 streams the commits whose blobs are local and counts the rest per file, and
 the count is never below a full clone's.
 
-Each clone is a blobless ``file://`` clone of a scratch repository, so the
-tests run on every platform. The test's own plain git fetches the blobs a
-case needs local, as a user's checkout or diff would.
+Each clone is a ``file://`` clone of a scratch repository built with git's
+plumbing, so a commit can hold a symbolic link, a gitlink or a binary file
+on every platform. The test's own plain git fetches the blobs a case needs
+local, as a user's checkout or diff would.
 """
 
 from __future__ import annotations
@@ -58,19 +59,32 @@ _T0 = datetime(2025, 1, 1, tzinfo=timezone.utc)
 _VERIFIED = _T0 + timedelta(hours=1)
 
 _FOO = "src/mod.py::foo"
+_BAZ = "src/other.py::baz"
 _GONE = "src/gone.py"
+_F = "src/f.py"
+_X, _Y, _Z = "src/x.py", "src/y.py", "src/z.py::foo"
+
+#: A file's text or bytes, a symbolic link (``("link", target)``), a gitlink
+#: (``("gitlink", commit)``), or None for a deletion.
+Entry = str | bytes | tuple[str, str] | None
+#: The commits of a history, each the paths it writes.
+History = list[dict[str, Entry]]
 
 
 def _module(foo: str, bar: int) -> str:
     return f"def foo({foo}):\n    return 0\n\n\ndef bar():\n    return {bar}\n"
 
 
-def _gone(n: int) -> str:
-    return f"SETTING_NUMBER_ONE = 'a value long enough {n}'\n"
+def _other(n: int) -> str:
+    return f"def baz():\n    return {n}\n"
 
 
-#: The commits of a history, each the files it writes (None deletes one).
-History = list[dict[str, str | None]]
+def _long(n: int) -> str:
+    return f"THIS_IS_A_LONG_LINE_{n} = 'padding padding padding'\n"
+
+
+_Z0 = "def foo():\n    return 0\n"
+_Z1 = "def foo():\n    return 1111111111111\n"
 
 #: The symbol window: the first commit changes foo's def line, the other
 #: three bar's body.
@@ -81,13 +95,59 @@ _SYMBOL: History = [
     {"src/mod.py": _module("flag=False", 2)},
     {"src/mod.py": _module("flag=False", 3)},
 ]
+#: Two claimed files: mod.py's foo changes in the first commit and bar in
+#: the second; other.py's baz changes only in body, twice.
+_TWO: History = [
+    {"src/mod.py": _module("", 0), "src/other.py": _other(0)},
+    {"src/mod.py": _module("flag=False", 0)},
+    {"src/mod.py": _module("flag=False", 1)},
+    {"src/other.py": _other(1)},
+    {"src/other.py": _other(2)},
+]
 #: The path window: gone.py is edited twice and then deleted.
 _PATH: History = [
-    {"src/gone.py": _gone(0), "src/keep.py": "x = 0\n"},
-    {"src/gone.py": _gone(1)},
-    {"src/gone.py": _gone(2)},
+    {"src/gone.py": _long(0), "src/keep.py": "x = 0\n"},
+    {"src/gone.py": _long(1)},
+    {"src/gone.py": _long(2)},
     {"src/gone.py": None},
 ]
+#: f.py edited twice, made a symbolic link, then a file again.
+_TO_LINK: History = [
+    {_F: _long(0)},
+    {_F: _long(1)},
+    {_F: _long(2)},
+    {_F: ("link", "some/long/symlink/target/one.py")},
+    {_F: _long(4)},
+]
+#: f.py edited twice, then made a gitlink.
+_TO_GITLINK: History = [
+    {_F: _long(0)},
+    {_F: _long(1)},
+    {_F: _long(2)},
+    {_F: ("gitlink", "1" * 40)},
+]
+#: x.py (short lines) is deleted in a local commit, so its path claim fires
+#: implicating nothing; y.py is made binary or empty and deleted in counted
+#: commits, a deletion the patch prints without a ``/dev/null`` header.
+_BARE: dict[str, History] = {
+    "binary": [
+        {_X: "a = 1\n", _Y: _long(0), "src/z.py": _Z0},
+        {_Y: _long(1)},
+        {"src/z.py": _Z1},
+        {_X: None},
+        {_Y: b"\x00binary\x00" * 4},
+        {_Y: None},
+    ],
+    "empty": [
+        {_X: "a = 1\n", _Y: _long(0), "src/z.py": _Z0},
+        {_Y: _long(1)},
+        {"src/z.py": _Z1},
+        {_X: None},
+        {_Y: ""},
+        {_Y: None, "src/z.py": _Z1 + "#" + _long(7)},
+        {"src/z.py": _Z1 + "#" + _long(8)},
+    ],
+}
 
 
 @pytest.fixture(autouse=True)
@@ -122,56 +182,85 @@ def _plain(repo: Path, *args: str, when: datetime | None = None) -> str:
     return done.stdout.strip()
 
 
+def _object(repo: Path, data: bytes) -> str:
+    done = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"],
+        cwd=repo,
+        input=data,
+        capture_output=True,
+        check=True,
+    )
+    return done.stdout.decode().strip()
+
+
 class Partial:
     """A source repository whose first commit is verified and whose later
-    commits are the window, and a blobless ``file://`` clone of it.
+    commits are the window, and a ``file://`` clone of it.
 
     `commits` are the window's commits, oldest first, and `blobs[i]` the
-    blob of `path` the i-th commit of the history left (the first commit
-    is 0), where it left one."""
+    blobs, by path, of the tree the i-th commit of the history left (the
+    first commit is 0)."""
 
-    def __init__(self, base: Path, history: History, path: str):
-        self.source = base / "source"
+    def __init__(self, base: Path, history: History) -> None:
+        self.base = Path(os.path.realpath(base))
+        self.source = self.base / "source"
         self.source.mkdir()
         _plain(self.source, "init", "-q")
         _plain(self.source, "config", "uploadpack.allowFilter", "true")
         shas: list[str] = []
-        self.blobs: list[str | None] = []
+        self.blobs: list[dict[str, str]] = []
         for i, files in enumerate(history):
+            for rel, entry in files.items():
+                self._stage(rel, entry)
             when = _T0 if i == 0 else _VERIFIED + timedelta(hours=i)
-            for rel, text in files.items():
-                target = self.source / rel
-                if text is None:
-                    target.unlink()
-                    continue
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(text.encode())
-            _plain(self.source, "add", "-A")
             _plain(self.source, "commit", "-q", "-m", f"c{i}", when=when)
             shas.append(_plain(self.source, "rev-parse", "HEAD"))
-            listed = _plain(self.source, "ls-tree", "HEAD", "--", path)
-            self.blobs.append(listed.split()[2] if listed else None)
+            self.blobs.append(self._tree_blobs())
         self.anchor = shas[0]
         self.commits = shas[1:]
-        self.repo = Path(os.path.realpath(base)) / "clone"
+        self.repo = self.base / "clone"
+
+    def _stage(self, rel: str, entry: Entry) -> None:
+        if entry is None:
+            _plain(self.source, "update-index", "--force-remove", "--", rel)
+            return
+        if isinstance(entry, tuple) and entry[0] == "gitlink":
+            mode, oid = "160000", entry[1]
+        elif isinstance(entry, tuple):
+            mode, oid = "120000", _object(self.source, entry[1].encode())
+        else:
+            data = entry if isinstance(entry, bytes) else entry.encode()
+            mode, oid = "100644", _object(self.source, data)
+        _plain(
+            self.source, "update-index", "--add", "--cacheinfo", f"{mode},{oid},{rel}"
+        )
+
+    def _tree_blobs(self) -> dict[str, str]:
+        blobs: dict[str, str] = {}
+        for line in _plain(self.source, "ls-tree", "-r", "HEAD").splitlines():
+            meta, _, path = line.partition("\t")
+            _, kind, oid = meta.split()
+            if kind == "blob":
+                blobs[path] = oid
+        return blobs
 
     def clone(self, *, blobless: bool = True) -> Path:
         args = ["clone", "-q"]
         if blobless:
             args.append("--filter=blob:none")
-        _plain(self.source.parent, *args, self.source.as_uri(), str(self.repo))
+        _plain(self.base, *args, self.source.as_uri(), str(self.repo))
         return self.repo
 
-    def fetch(self, *versions: int) -> None:
-        """Make local the blobs the given commits of the history left."""
+    def fetch(self, *versions: int, path: str | None = None) -> None:
+        """Make local the blobs of the trees the given commits of the
+        history left, or of `path` in them alone."""
         for i in versions:
-            blob = self.blobs[i]
-            assert blob is not None
-            _plain(self.repo, "cat-file", "blob", blob)
+            for name, blob in self.blobs[i].items():
+                if path is None or name == path:
+                    _plain(self.repo, "cat-file", "blob", blob)
 
-    def held(self, blob: str | None) -> bool:
+    def held(self, blob: str) -> bool:
         """Whether the clone holds `blob`, asked with the no-fetch pins."""
-        assert blob is not None
         done = _git.run_git(["cat-file", "-e", blob], cwd=self.repo, timeout=10.0)
         assert done is not None
         return done.returncode == 0
@@ -198,25 +287,45 @@ class Partial:
 
 
 _BASES = [BASIS_REACHABILITY, BASIS_AUTHOR_DATE]
+_CLONES = pytest.mark.parametrize(
+    "blobless",
+    [pytest.param(True, marks=needs_lazy_fetch_pin), False],
+    ids=["blobless", "full"],
+)
 
 
 @pytest.mark.parametrize("basis", _BASES)
 def test_a_full_clone_narrows_to_the_claim(tmp_path: Path, basis: str) -> None:
     """The control: one commit changed foo's def line, so one escalates."""
-    partial = Partial(tmp_path, _SYMBOL, "src/mod.py")
+    partial = Partial(tmp_path, _SYMBOL)
     partial.clone(blobless=False)
     resolved = partial.resolve([_FOO], basis)
     assert (resolved.count, resolved.claims_drifted) == (1, (_FOO,))
 
 
+@needs_lazy_fetch_pin
 @pytest.mark.parametrize("basis", _BASES)
-def test_a_blobless_window_whose_blobs_are_all_local_narrows_as_a_full_clone(
+def test_a_claim_whose_blobs_are_all_local_narrows_as_in_a_full_clone(
     tmp_path: Path, basis: str
 ) -> None:
-    partial = Partial(tmp_path, _SYMBOL, "src/mod.py")
+    """Several claims in one window. Every blob of mod.py's window is
+    local, so its two commits are streamed and foo's def line escalates
+    one, as in a full clone; other.py's two commits read blobs the clone
+    lacks and are counted. 3, and foo named; 9.0.0rc18 counted all four
+    and named nothing, and a full clone counts 1."""
+    partial = Partial(tmp_path, _TWO)
     partial.clone()
-    partial.fetch(0, 1, 2, 3)
-    resolved = partial.resolve([_FOO], basis)
+    partial.fetch(0, 1, path="src/mod.py")
+    assert not partial.held(partial.blobs[3]["src/other.py"]), "premise"
+    resolved = partial.resolve([_FOO, _BAZ], basis)
+    assert (resolved.count, resolved.claims_drifted) == (3, (_FOO,))
+
+
+@pytest.mark.parametrize("basis", _BASES)
+def test_the_several_claims_window_in_a_full_clone(tmp_path: Path, basis: str) -> None:
+    partial = Partial(tmp_path, _TWO)
+    partial.clone(blobless=False)
+    resolved = partial.resolve([_FOO, _BAZ], basis)
     assert (resolved.count, resolved.claims_drifted) == (1, (_FOO,))
 
 
@@ -231,13 +340,14 @@ def test_a_window_with_blobs_missing_narrows_over_the_local_commits(
     fourth read the third commit's blob, which the clone lacks: each is
     counted, as the per-file count counts it. 3, where the per-file count
     is 4 and a full clone's 1; and foo is named."""
-    partial = Partial(tmp_path, _SYMBOL, "src/mod.py")
+    partial = Partial(tmp_path, _SYMBOL)
     partial.clone()
     partial.fetch(0, 1, 2)
-    assert not partial.held(partial.blobs[3]), "premise: the clone lacks it"
+    missing = partial.blobs[3]["src/mod.py"]
+    assert not partial.held(missing), "premise: the clone lacks it"
     resolved = partial.resolve([_FOO], basis)
     assert (resolved.count, resolved.claims_drifted) == (3, (_FOO,))
-    assert not partial.held(partial.blobs[3]), "no call fetched it"
+    assert not partial.held(missing), "no call fetched it"
 
 
 @pytest.mark.parametrize("basis", _BASES)
@@ -247,19 +357,15 @@ def test_a_window_with_no_local_commit_counts_every_commit_per_file(
     """A fresh blobless clone holds only the checkout's blobs, so every
     window commit reads one it lacks: the per-file count, as in
     9.0.0rc18, and nothing is fetched."""
-    partial = Partial(tmp_path, _SYMBOL, "src/mod.py")
+    partial = Partial(tmp_path, _SYMBOL)
     partial.clone()
     resolved = partial.resolve([_FOO], basis)
     assert (resolved.count, resolved.claims_drifted) == (4, ())
-    assert not any(partial.held(blob) for blob in partial.blobs[:4])
+    assert not any(partial.held(tree["src/mod.py"]) for tree in partial.blobs[:4])
 
 
 @pytest.mark.parametrize("basis", _BASES)
-@pytest.mark.parametrize(
-    "blobless",
-    [pytest.param(True, marks=needs_lazy_fetch_pin), False],
-    ids=["blobless", "full"],
-)
+@_CLONES
 def test_a_deletion_in_a_counted_commit_still_counts_the_local_lines(
     tmp_path: Path, basis: str, blobless: bool
 ) -> None:
@@ -268,22 +374,116 @@ def test_a_deletion_in_a_counted_commit_still_counts_the_local_lines(
     clone lacks, so it is counted, not streamed; the trees show the
     deletion, so the claim still fires and the streamed edit is counted
     too: 3, as in a full clone, never 2."""
-    partial = Partial(tmp_path, _PATH, "src/gone.py")
+    partial = Partial(tmp_path, _PATH)
     partial.clone(blobless=blobless)
     if blobless:
         partial.fetch(0, 1)
-        assert not partial.held(partial.blobs[2]), "premise: the clone lacks it"
+        assert not partial.held(partial.blobs[2][_GONE]), "premise"
     resolved = partial.resolve([_GONE], basis)
     assert (resolved.count, resolved.claims_drifted) == (3, (_GONE,))
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@pytest.mark.parametrize(
+    ("history", "local", "expected"),
+    [(_TO_LINK, (0, 1, 2), 4), (_TO_GITLINK, (0, 1), 3)],
+    ids=["symlink", "gitlink"],
+)
+@_CLONES
+def test_a_typechange_in_a_counted_commit_fires_the_path_claim(
+    tmp_path: Path,
+    basis: str,
+    history: History,
+    local: tuple[int, ...],
+    expected: int,
+    blobless: bool,
+) -> None:
+    """A file made a symbolic link or a gitlink: the patch prints the
+    file's deletion (``+++ /dev/null``) and the new entry's creation, so a
+    full clone's path claim fires and implicates every commit carrying
+    lines for the path. The typechange reads a blob the clone lacks and is
+    counted; its trees show a typechange (``T``), which the split marks as
+    the deletion it prints, so the claim fires there too and the streamed
+    edits count, as in a full clone."""
+    partial = Partial(tmp_path, history)
+    partial.clone(blobless=blobless)
+    if blobless:
+        partial.fetch(*local)
+    resolved = partial.resolve([_F], basis)
+    assert (resolved.count, resolved.claims_drifted) == (expected, (_F,))
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@pytest.mark.parametrize(
+    ("kind", "local", "expected"),
+    [("binary", (0, 1, 2, 3), 5), ("empty", (0, 1, 2, 3, 4), 6)],
+)
+@_CLONES
+def test_a_claim_only_the_trees_fire_keeps_the_whole_window(
+    tmp_path: Path,
+    basis: str,
+    kind: str,
+    local: tuple[int, ...],
+    expected: int,
+    blobless: bool,
+) -> None:
+    """x.py's deletion is local and carries no line long enough to index,
+    so its path claim fires implicating nothing, and a full clone counts
+    the whole window. y.py's deletion, of a binary or empty file, is
+    printed without a ``/dev/null`` header, so a full clone's y claim
+    stays quiet; the split's trees show it, so y fires there and
+    implicates its local edit. The whole window is still counted: in a
+    split, any fired claim that implicates nothing takes it."""
+    partial = Partial(tmp_path, _BARE[kind])
+    partial.clone(blobless=blobless)
+    if blobless:
+        partial.fetch(*local)
+    resolved = partial.resolve([_X, _Y, _Z], basis)
+    assert resolved.count == expected
+    assert _X in resolved.claims_drifted
 
 
 def test_a_window_whose_blobs_are_all_local_is_not_split(tmp_path: Path) -> None:
     """Every blob local: the one-call stream did not fail for want of a
     blob, so the split does not answer for it, and the caller keeps the
     per-file count."""
-    partial = Partial(tmp_path, _SYMBOL, "src/mod.py")
+    partial = Partial(tmp_path, _SYMBOL)
     repo = partial.clone(blobless=False)
     assert local_patch_window(repo, partial.commits, ["src/mod.py"]) is None
+
+
+def _split_evaluation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stream: str,
+    claims: list[str],
+) -> tuple[list[str], set[str] | None]:
+    """`_weak_tier_evaluation` over commits a, b and c, the stream failing
+    and the split streaming a and b and counting c."""
+    window = PatchWindow(
+        stream=stream,
+        counted=frozenset({"c" * 40}),
+        touched=frozenset(),
+        deleted=frozenset(),
+    )
+    monkeypatch.setattr(verify_mod, "commit_patch_stream", lambda *a, **k: None)
+    monkeypatch.setattr(verify_mod, "local_patch_window", lambda *a, **k: window)
+    shas = ["a" * 40, "b" * 40, "c" * 40]
+    specs = sorted({parse_claim(raw).rel_path for raw in claims})
+    return verify_mod._weak_tier_evaluation(
+        tmp_path, shas, specs, load_claims(claims), None
+    )
+
+
+def _deletion(path: str, line: str = "") -> str:
+    hunk = f"@@ -1 +0,0 @@\n-{line}\n" if line else ""
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        "deleted file mode 100644\n"
+        f"--- a/{path}\n"
+        "+++ /dev/null\n"
+        f"{hunk}"
+    )
 
 
 def test_the_whole_window_rule_reads_the_local_commits_alone(
@@ -292,42 +492,41 @@ def test_the_whole_window_rule_reads_the_local_commits_alone(
     """A claim fired over the local commits that implicates none of them
     (a deletion with no lines) counts the whole window, the counted
     commits included, as it would over the whole window."""
+    stream = f"{COMMIT_MARK}{'a' * 40}\n{_deletion(_X)}{COMMIT_MARK}{'b' * 40}\n"
+    drifted, implicated = _split_evaluation(monkeypatch, tmp_path, stream, [_X])
+    assert drifted == [_X]
+    assert implicated == {"a" * 40, "b" * 40, "c" * 40}
+
+
+def test_in_a_split_one_bare_claim_takes_the_whole_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """x fires implicating nothing while y implicates a: in a split the
+    whole window is counted all the same, since y may have fired on a mark
+    a full clone does not see, where x alone would have taken the whole
+    window."""
     stream = (
-        f"{COMMIT_MARK}{'a' * 40}\n"
-        "diff --git a/src/x.py b/src/x.py\n"
-        "deleted file mode 100644\n"
-        "--- a/src/x.py\n"
-        "+++ /dev/null\n"
-        f"{COMMIT_MARK}{'b' * 40}\n"
+        f"{COMMIT_MARK}{'a' * 40}\n{_deletion(_Y, _long(0).strip())}"
+        f"{COMMIT_MARK}{'b' * 40}\n{_deletion(_X)}"
     )
-    window = PatchWindow(
-        stream=stream,
-        counted=frozenset({"c" * 40}),
-        touched=frozenset({"src/x.py"}),
-        deleted=frozenset(),
-    )
-    monkeypatch.setattr(verify_mod, "commit_patch_stream", lambda *a, **k: None)
-    monkeypatch.setattr(verify_mod, "local_patch_window", lambda *a, **k: window)
-    shas = ["a" * 40, "b" * 40, "c" * 40]
-    drifted, implicated = verify_mod._weak_tier_evaluation(
-        tmp_path, shas, ["src/x.py"], load_claims(["src/x.py"]), None
-    )
-    assert drifted == ["src/x.py"]
-    assert implicated == set(shas)
+    drifted, implicated = _split_evaluation(monkeypatch, tmp_path, stream, [_X, _Y])
+    assert sorted(drifted) == [_X, _Y]
+    assert implicated == {"a" * 40, "b" * 40, "c" * 40}
 
 
-def test_a_gitlink_and_a_quoted_path_in_the_raw_listing(
+def test_the_raw_listing_reads_gitlinks_typechanges_and_quoted_paths(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A gitlink's object is a commit of the submodule, never a blob of the
-    repository, so it is not asked for; a path git still quotes is read as
-    the path it names."""
+    repository, so it is not asked for; a typechange keeps its status; a
+    path git still quotes is read as the path it names."""
     sha = "d" * 40
     blob = "e" * 40
     module = "f" * 40
     raw = (
         f"{COMMIT_MARK}{sha}\n\n"
         f":160000 160000 {module} {'1' * 40} M\tvendor/lib\n"
+        f":100644 160000 {blob} {module} T\tsrc/f.py\n"
         f':000000 100644 {"0" * 40} {blob} A\t"src/we\\"ird.py"\n'
     )
     monkeypatch.setattr(origin, "_git", lambda *a, **k: raw)
@@ -335,11 +534,13 @@ def test_a_gitlink_and_a_quoted_path_in_the_raw_listing(
     assert changes == {
         sha: [
             origin_patch.Change("vendor/lib", "M", ()),
+            origin_patch.Change("src/f.py", "T", (blob,)),
             origin_patch.Change('src/we"ird.py', "A", (blob,)),
         ]
     }
 
 
-def test_the_claim_the_tests_name_is_a_governed_symbol_claim() -> None:
-    claim = parse_claim(_FOO)
-    assert (claim.kind, claim.rel_path) == ("symbol", "src/mod.py")
+def test_the_claims_the_tests_name_are_governed() -> None:
+    assert parse_claim(_FOO).kind == "symbol"
+    assert parse_claim(_F).kind == "path"
+    assert parse_claim(_Z).kind == "symbol"

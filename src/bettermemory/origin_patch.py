@@ -22,13 +22,20 @@ A claim's verdict over the local commits alone is not always its verdict
 over the window: a path claim fires on its file's deletion and then
 implicates every commit carrying lines for the file, and the weak tier
 counts the whole window when a fired claim implicates no commit. So the
-paths each counted commit changed, and the ones it deleted, are marked in
-the index before the claims are read (`PatchWindow.mark`): a claim the
-trees show fired fires, and what it implicates among the local commits is
-counted. What the trees cannot show (a binding line a counted commit
-touched) implicates only that commit, which is counted. The count is never
-below the full clone's; a claim is named where a local commit, or a
-counted commit's trees, show it fired.
+paths each counted commit changed, and the ones it deleted or changed the
+type of (a typechange's patch deletes the old file: a file made a symbolic
+link or a gitlink), are marked in the index before the claims are read
+(`PatchWindow.mark`): a claim the trees show fired fires, and what it
+implicates among the local commits is counted. What the trees cannot show
+(a binding line a counted commit touched) implicates only that commit,
+which is counted. The trees show more deletions than the patch prints (an
+empty or binary file's deletion prints no ``/dev/null`` header), so a claim
+can fire here that a full clone leaves quiet and implicate a local commit;
+the caller therefore counts the whole window in a split whenever any fired
+claim implicates no commit, not only when none implicates one
+(`verify._weak_tier_evaluation`). The count is never below the full
+clone's; a claim is named where a local commit, or a counted commit's
+trees, show it fired.
 
 Measured on a 1,000-commit window of one file (git 2.54, macOS, median of
 5): in a full clone the one-call stream took 47 ms and a stream per commit
@@ -82,7 +89,8 @@ class PatchWindow:
     `stream` is `origin.commit_patch_stream`'s over the local commits, ""
     where none is; `counted` the commits a blob the clone lacks keeps out of
     it, each counted as the per-file count counts it; `touched` the paths
-    those commits changed and `deleted` the ones they deleted."""
+    those commits changed and `deleted` the ones they deleted or changed
+    the type of."""
 
     stream: str
     counted: frozenset[str]
@@ -144,7 +152,9 @@ def local_patch_window(
         stream=stream,
         counted=frozenset(counted),
         touched=frozenset(change.path for change in mine),
-        deleted=frozenset(change.path for change in mine if change.status == "D"),
+        deleted=frozenset(
+            change.path for change in mine if change.status in ("D", "T")
+        ),
     )
 
 

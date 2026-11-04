@@ -188,10 +188,15 @@ eighteenth was built.
   `git cat-file --batch-check`, under the same no-fetch settings, says
   which the clone holds; the stream runs again over the commits whose
   blobs are all local, and every other commit is counted as the per-file
-  count counts it, never skipped. The paths the counted commits changed
-  and deleted are marked before the claims are read, so a claim their
-  trees show fired (a claimed file deleted in a counted commit) fires and
-  implicates the local commits it would: the count is never below a full
+  count counts it, never skipped. The paths the counted commits changed,
+  and those they deleted or changed the type of (a typechange's patch
+  deletes the old file: a file made a symbolic link or a gitlink), are
+  marked before the claims are read, so a claim their trees show fired
+  fires and implicates the local commits it would. The trees also show a
+  deletion the patch prints without a `/dev/null` header (an empty or
+  binary file's), so in a split any fired claim that implicates no commit
+  counts the whole window: a claim only the marks fire cannot hide the
+  whole window a full clone counts. The count is never below a full
   clone's. So a window whose blobs are all local narrows as in a full
   clone, and one with some missing narrows over its local commits, the
   ones the user's own git has checked out or diffed: in the tests' symbol
