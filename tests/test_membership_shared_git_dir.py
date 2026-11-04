@@ -276,6 +276,8 @@ def test_a_copy_on_the_freed_number_joins_the_tokens_project_or_is_asked(
     copy(tmp_path / "host" / "line-old", line)
     own = location.object_key(str(line / ".git"))
     assert own is not None and _file_token(line) == found
+    if birth == "birth" and own[2] is None:
+        pytest.skip("no birth time here: BETTERMEMORY_TEST_NO_BIRTH, or the disk")
     location.forget()
 
     with posing(line / ".git", (freed[0], freed[1], own[2])):
