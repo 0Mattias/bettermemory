@@ -724,6 +724,44 @@ def test_the_size_bound_sums_the_blobs_the_clone_holds(tmp_path: Path) -> None:
     assert not origin_patch.too_large(nowhere, partial.commits, specs)
 
 
+@pytest.mark.parametrize("posix", [True, False], ids=["posix", "off-posix"])
+def test_the_size_bound_s_sum_is_kept_until_the_head_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posix: bool
+) -> None:
+    """The bound's listing and check are kept on POSIX alone, where
+    `githead` settles the common directory, so off POSIX every full-clone
+    evaluation paid two git processes for it on every search (ENG-220's
+    re-review). The sum is kept under the head and the history's guard,
+    which answer on every platform: a second read runs no git, a bound
+    moved since reads the kept sum, and a commit reads it again."""
+    partial = Partial(tmp_path, _SYMBOL)
+    repo = partial.clone(blobless=False)
+    if not posix:
+        monkeypatch.setattr(githead, "_POSIX", False)
+        assert githead.gitdir_at(repo) is None, "premise: githead declines"
+    specs = [f":(literal){_MOD_PATH}"]
+    read = _read_by(_SYMBOL, _MOD_PATH)
+    calls: list[str] = []
+    real = origin._git
+
+    def spy(cwd: Path, *args: str, **kwargs: Any) -> str | None:
+        calls.append(_git.subcommand(args))
+        return real(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin, "_git", spy)
+    monkeypatch.setattr(origin_patch, "MAX_PATCH_STREAM_BYTES", read)
+    assert not origin_patch.too_large(repo, partial.commits, specs, toplevel=repo)
+    assert calls == ["log", "cat-file"]
+    calls.clear()
+    assert not origin_patch.too_large(repo, partial.commits, specs, toplevel=repo)
+    monkeypatch.setattr(origin_patch, "MAX_PATCH_STREAM_BYTES", read - 1)
+    assert origin_patch.too_large(repo, partial.commits, specs, toplevel=repo)
+    assert calls == []
+    _plain(repo, "commit", "-q", "--allow-empty", "-m", "later")
+    assert origin_patch.too_large(repo, partial.commits, specs, toplevel=repo)
+    assert calls == ([] if posix else ["log", "cat-file"])
+
+
 @needs_lazy_fetch_pin
 def test_the_split_keeps_its_listing_and_check_until_a_pack_arrives(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

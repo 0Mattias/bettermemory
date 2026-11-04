@@ -116,13 +116,38 @@ MAX_PATCH_STREAM_BYTES = 32 * 1024 * 1024
 # miss: a blob that arrives loose reads as missing and its commit is
 # counted, and one that went reads as held and fails the local stream,
 # which declines the split. Off POSIX and wherever `githead` declines,
-# nothing is kept. Bounded LRU, emptied before each test (`_caches`).
+# nothing is kept: the key needs the pack directory of the common
+# directory git reads, which `githead.gitdir_at` settles from the files on
+# POSIX alone (git on Windows also reads ownership and names by rules the
+# package does not replicate), and a listing is read only after a stream
+# failed, in a partial clone. Bounded LRU, emptied before each test
+# (`_caches`).
 _MEMO_CAP = 256
 _MemoKey: TypeAlias = tuple[str, tuple[object, ...], tuple[str, ...], tuple[str, ...]]
 #: A window's changes per commit, and the size of each blob the clone holds.
 _Listed: TypeAlias = tuple[dict[str, list["Change"]], Mapping[str, int]]
 _MEMO: OrderedDict[_MemoKey, _Listed] = OrderedDict()
 _MEMO_LOCK = threading.Lock()
+
+# The bytes a window's patch reads (`too_large`), memoised per process on
+# every platform, where the listing and check above are kept on POSIX
+# alone: every full-clone evaluation of a governed claim reads the bound,
+# and off POSIX paid its two git processes on every search (ENG-220's
+# re-review). Keyed as the history's dates are, on the root and head
+# `githead.locate` reads (`origin_history.located_key`) and the files that
+# change which commits a head reaches (`origin_history.history_guard`),
+# both of which answer off POSIX, with the commits and pathspecs. A
+# commit, a shallow clone deepened or a replace ref written moves the key.
+# What it does not see is a blob fetched or dropped under the same head:
+# the sizes summed are of the blobs the clone held when the bound was
+# read, so a window read under the bound after its blobs arrive is read
+# whole within the patch's own 5 s bound, and one past it keeps the
+# per-file count, the two answers the bound chooses between and both
+# sound. Bounded as `_MEMO` is, and emptied with it.
+_ReadKey: TypeAlias = tuple[
+    origin_history.Key, origin_history.Guard, tuple[str, ...], tuple[str, ...]
+]
+_READ: OrderedDict[_ReadKey, int] = OrderedDict()
 _STAMPED = (
     ("objects", "pack"),
     ("objects", "info", "alternates"),
@@ -135,6 +160,7 @@ _STAMPED = (
 def _clear_memo() -> None:
     with _MEMO_LOCK:
         _MEMO.clear()
+        _READ.clear()
 
 
 @dataclass(frozen=True)
@@ -181,7 +207,9 @@ def too_large(
     keeps the per-file count without reading the patch. False where git
     could not list or check them, and the patch is read as before; a blob
     the clone lacks is not summed, since no patch reads it (the stream
-    fails on it, and the split reads only the local commits)."""
+    fails on it, and the split reads only the local commits). The sum is
+    kept under the head and the history's guard (`_READ`), on every
+    platform."""
     if cwd is None or not shas or not pathspecs:
         return False
     if len(shas) > origin.MAX_PATCH_STREAM_COMMITS:
@@ -190,6 +218,13 @@ def too_large(
         toplevel = origin.repo_toplevel(cwd)
         if toplevel is None:
             return False
+    key = _read_key(toplevel, shas, pathspecs)
+    if key is not None:
+        with _MEMO_LOCK:
+            kept = _READ.get(key)
+            if kept is not None:
+                _READ.move_to_end(key)
+                return kept > MAX_PATCH_STREAM_BYTES
     listed = _listed(toplevel, shas, pathspecs)
     if listed is None:
         return False
@@ -200,7 +235,33 @@ def too_large(
         for change in found
         for blob in change.blobs
     )
+    if key is not None:
+        with _MEMO_LOCK:
+            _READ[key] = read
+            _READ.move_to_end(key)
+            while len(_READ) > _MEMO_CAP:
+                _READ.popitem(last=False)
     return read > MAX_PATCH_STREAM_BYTES
+
+
+def _read_key(
+    toplevel: Path, shas: Sequence[str], pathspecs: list[str]
+) -> _ReadKey | None:
+    """`_READ`'s key for a window, or None where the files settle no head
+    or guard (a variable that moves git's discovery, a head the files do
+    not name), and the bound is read uncached."""
+    located = origin_history.located_key(toplevel)
+    if located is None:
+        return None
+    guard = origin_history.history_guard(Path(located[0]))
+    if guard is None:
+        return None
+    return (
+        located,
+        guard,
+        tuple(sha.lower() for sha in shas),
+        tuple(pathspecs),
+    )
 
 
 def local_patch_window(

@@ -270,6 +270,21 @@ eighteenth was built.
   below). (`src/bettermemory/origin.py`,
   `src/bettermemory/origin_history.py`)
 
+- **The size bound on a claim's patch is read once per head, on every
+  platform (ENG-220).** Every full-clone evaluation of a claimed file
+  summed the sizes of the blobs its patch would read, from one `git log
+  --raw` and one `git cat-file --batch-check`, which are kept with the
+  repository's packs on POSIX alone (`githead` settles no common
+  directory elsewhere), so on Windows each claimed hit paid two git
+  processes on every search. The sum is now kept under the head and the
+  history's guard, the key the history's dates are kept under, which
+  answers there too (`origin_patch._READ`); a commit, a deepened shallow
+  clone or a replace ref written reads it again. A blob fetched under the
+  same head is summed at the next head: a window read under the bound is
+  read whole, within the patch's own 5 s bound, and one past it keeps the
+  per-file count. (`src/bettermemory/origin_patch.py`,
+  `tests/test_origin_patch.py`)
+
 #### Fixed
 
 - **Nothing a repository sets makes a changed claim read fresh
