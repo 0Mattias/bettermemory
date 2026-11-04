@@ -520,6 +520,26 @@ eighteenth was built.
   `src/bettermemory/verify.py`, `docs/api.md`,
   `tests/test_origin_as_stored.py`)
 
+- **A walk that meets its timeout keeps the conservative count, never
+  the author-date one (ENG-220).** The reachable walk from a stamp's
+  head (`git log --name-only <anchor>..<head>`) has 5 s, and one that met
+  it came back as no walk: the hit was then counted on author dates,
+  which a rebased or back-dated commit moves, so foo's def line changed
+  on top of the verified head under a commit authored before the verify
+  read 0 where the walk reads 1. A walk whose names meet their timeout
+  now lists its commits alone, with no diff read, and claim drift keeps
+  that whole length on the reachable basis (`ReachableWalk.listed`,
+  which moved to `origin_history`); where that listing meets its timeout
+  too, the search hit and `memory_show` omit the count and the health
+  rollup leaves the memory out, as where git cannot read the history
+  (`origin_history.unwalked`). A later hit at the anchor in the same
+  pass runs no walk again, and the search keeps the value for a minute,
+  as it keeps other timeouts'. (`src/bettermemory/origin.py`,
+  `src/bettermemory/origin_history.py`, `src/bettermemory/_git.py`,
+  `src/bettermemory/verify.py`, `src/bettermemory/verify_basis.py`,
+  `src/bettermemory/_response.py`, `src/bettermemory/health_stats.py`,
+  `tests/test_origin_as_stored.py`)
+
 - **The migration homes a record in a part below a folder whose question
   was answered where a session there resolves (ENG-222).** A folder
   holding a copy of a part's file and other content is asked about at

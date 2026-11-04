@@ -193,6 +193,14 @@ def note_failed() -> None:
     _FAILED.count += 1
 
 
+def note_timed_out() -> None:
+    """Count, on the calling thread, a timeout a caller remembered from an
+    earlier call and serves again without running git, as a failure and a
+    timeout both, as `run_git` counts one."""
+    _FAILED.count += 1
+    _TIMED_OUT.count += 1
+
+
 def printed_path(stdout: str) -> str:
     """The one path git printed on `stdout` (``rev-parse
     --show-toplevel``), with only the line end git ends it with taken off.

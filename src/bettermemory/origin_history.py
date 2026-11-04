@@ -11,7 +11,8 @@ the repository sets (`AS_STORED_ENV`, `AS_STORED_CONFIG`, `AS_STORED_DIFF`,
 head already read does not (``<old>..<new>``); this module keeps what was
 read, per repository root and head, with the stamps of the files that
 change which commits a head reaches without moving it (`history_guard`),
-and remembers for a while each read that failed.
+and remembers for a while each read that failed. The reachable walk
+`origin.commits_since_anchor` returns is a `ReachableWalk`, defined here.
 
 This module lives apart from `origin.py` to keep each module under the
 package's 2,000-line bound (ENG-96). It imports the standard library,
@@ -24,7 +25,7 @@ import os
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -392,6 +393,89 @@ def cuts(start: Path, *, walk: bool = False) -> frozenset[str] | None:
     )
 
 
+@dataclass(frozen=True)
+class ReachableWalk:
+    """The commits reachable from `head` but not from `anchor` — the
+    range ``anchor..HEAD`` — with the paths each one changed
+    (`origin.commits_since_anchor`).
+
+    Built only when `anchor` is an ancestor of `head` (or is `head`
+    itself, an empty walk), so `commits` is exactly what has landed on
+    top of the verified tree state: a branch authored before the stamp
+    and merged after it is in here, which is what the author-date count
+    cannot say. `touched` maps a repo-relative path to the commits in
+    the range whose diff carried it; a merge commit contributes nothing
+    there, as `git log --name-only` shows no diff for one, so its
+    branch's own commits carry the paths.
+
+    `listed` is False for a walk whose names met their timeout and whose
+    commits were listed alone: it names no path (`touched` is empty), every
+    commit reads as touching each (`shas_touching`), and claim drift keeps
+    its whole length, never the author-date count (ENG-220's review, round
+    C).
+    """
+
+    anchor: str
+    head: str
+    commits: tuple[str, ...]
+    touched: Mapping[str, frozenset[str]]
+    listed: bool = True
+
+    def shas_touching(self, pathspecs: Sequence[str]) -> set[str]:
+        """The commits in the range that changed a file matching any of
+        `pathspecs` — repo-root-relative forward-slash specs, the output
+        of `resolve_repo_pathspecs`, each a file or a directory prefix.
+        A path is a file or a directory in git, never both, so an exact
+        hit skips the prefix scan. Every commit, for a walk that did not
+        list its names."""
+        if not self.listed:
+            return set(self.commits)
+        out: set[str] = set()
+        for spec in pathspecs:
+            exact = self.touched.get(spec)
+            if exact is not None:
+                out |= exact
+                continue
+            prefix = spec.rstrip("/") + "/"
+            for path, shas in self.touched.items():
+                if path.startswith(prefix):
+                    out |= shas
+        return out
+
+
+#: What one pass over many memories remembers of each walk no memo keeps,
+#: by (root, anchor, head) (`origin.commits_since_anchor`): the walk; for one
+#: that came back None, whether a git process failed for it; None for one
+#: whose names and listing both met their timeout.
+Walked: TypeAlias = dict[tuple[str, str, str], "ReachableWalk | bool | None"]
+
+
+class _Unwalked(threading.local):
+    """The walks on the current thread that `origin.commits_since_anchor`
+    gave up on. Read through `unwalked`."""
+
+    count = 0
+
+
+_UNWALKED = _Unwalked()
+
+
+def unwalked() -> int:
+    """How many reachable walks on the current thread met their timeout
+    twice, with their names and as the listing of their commits alone
+    (`origin.commits_since_anchor`), served from a pass's `Walked` too. A
+    caller that reads this before and after a walk and finds it moved
+    omits the count, as where git cannot read the history, and never reads
+    the author dates in its place: a rebased or back-dated commit moves
+    them (ENG-220's review, round C)."""
+    return _UNWALKED.count
+
+
+def note_unwalked() -> None:
+    """Count, on the calling thread, a walk given up on (`unwalked`)."""
+    _UNWALKED.count += 1
+
+
 __all__ = [
     "AS_STORED_CONFIG",
     "AS_STORED_DIFF",
@@ -399,15 +483,19 @@ __all__ = [
     "AS_STORED_PATHS",
     "Guard",
     "Key",
+    "ReachableWalk",
+    "Walked",
     "author_dates",
     "base_for",
     "cuts",
     "history_guard",
     "instant",
     "located_key",
+    "note_unwalked",
     "read_lines",
     "recall",
     "remember",
     "remember_failure",
     "seconds",
+    "unwalked",
 ]

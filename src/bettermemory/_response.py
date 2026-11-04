@@ -50,6 +50,7 @@ from .origin import (
     toplevel_and_head_from_files,
     walk_files_signature,
 )
+from .origin_history import Walked, unwalked
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .time_utils import parse_event_ts
@@ -403,7 +404,7 @@ class _DriftPass:
         # The walks of this pass no memo keeps: several hits at one dead
         # anchor fork one walk, and so do several at one anchor where the
         # walk memo cannot key the walk (`commits_since_anchor`).
-        self._walked: dict[tuple[str, str, str], ReachableWalk | bool] = {}
+        self._walked: Walked = {}
         # The files the hits key on: the repository's attribute files read
         # once per pass, the working tree's once per set of governed
         # files, the files beside the walk once per pass; and the stamps
@@ -1824,7 +1825,7 @@ def _resolve_hit_drift(
     claims: Sequence[Claim],
     since: datetime,
     verified_head: str | None,
-    walked: dict[tuple[str, str, str], ReachableWalk | bool],
+    walked: Walked,
 ) -> ResolvedCommitDrift | None:
     """One hit's commit drift as `ResponseBuilder.attach_commit_drift_
     counts` stamps it: the count, the basis it was measured on and the
@@ -1843,9 +1844,15 @@ def _resolve_hit_drift(
     # bisect otherwise.
     walk: ReachableWalk | None = None
     if verified_head is not None and head is not None:
+        given_up = unwalked()
         walk = commits_since_anchor(
             cwd, verified_head, toplevel=toplevel, head=head, walked=walked
         )
+        if walk is None and unwalked() != given_up:
+            # The walk and the listing of its commits both met their
+            # timeout: omitted, as where the history cannot be read, never
+            # counted off the author dates (`origin_history.unwalked`).
+            return None
     if walk is not None:
         count = len(walk.commits)
         basis = BASIS_REACHABILITY

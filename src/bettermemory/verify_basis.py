@@ -26,6 +26,7 @@ from .origin import (
     commits_since_anchor,
     repo_toplevel_and_head,
 )
+from .origin_history import unwalked
 
 # The axis a commit-drift count was measured on, carried as `basis` on
 # every block the four surfaces emit, so they cannot disagree about which
@@ -58,9 +59,15 @@ def _count_since_verify(
         located = repo_toplevel_and_head(cwd_path)
         if located is not None:
             toplevel, head = located
+            given_up = unwalked()
             walk = commits_since_anchor(
                 cwd_path, verified_head, toplevel=toplevel, head=head
             )
+            if walk is None and unwalked() != given_up:
+                # The walk and its listing met their timeout: the count is
+                # omitted, never read off the author dates
+                # (`origin_history.unwalked`).
+                return None
     if walk is not None:
         count = len(walk.commits)
         basis = BASIS_REACHABILITY

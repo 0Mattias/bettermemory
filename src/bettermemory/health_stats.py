@@ -26,7 +26,8 @@ from .durability import canonical_marker
 from .control_tokens import named_tokens
 from .events import _event_id_list, is_audit_row
 from .models import Memory, first_summary_line
-from .origin import ReachableWalk, commits_since_anchor
+from .origin import commits_since_anchor
+from .origin_history import Walked, unwalked
 from .claims import load_claims
 from .verify import BASIS_AUTHOR_DATE, BASIS_REACHABILITY, resolve_commit_drift
 from .time_utils import ensure_utc, parse_event_ts
@@ -932,7 +933,7 @@ def _drift_rows_for_candidates(
     # The walks of this pass no memo keeps (`commits_since_anchor`): a store
     # verified at one dead anchor forks one walk for it, and so does one
     # anchor where the walk memo cannot key the walk.
-    walked: dict[tuple[str, str, str], ReachableWalk | bool] = {}
+    walked: Walked = {}
     for stats in candidates:
         since = stats.last_verified_at
         assert since is not None  # callers filter on this
@@ -949,9 +950,15 @@ def _drift_rows_for_candidates(
         walk = None
         anchor = verified_head_by_id.get(stats.id) if verified_head_by_id else None
         if anchor is not None and head is not None:
+            given_up = unwalked()
             walk = commits_since_anchor(
                 root, anchor, toplevel=toplevel, head=head, walked=walked
             )
+            if walk is None and unwalked() != given_up:
+                # The walk and its listing met their timeout: no row, as
+                # the per-memory surfaces omit the count, never one counted
+                # off the author dates (`origin_history.unwalked`).
+                continue
         if walk is not None:
             count = len(walk.commits)
             basis = BASIS_REACHABILITY

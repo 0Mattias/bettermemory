@@ -932,7 +932,8 @@ def _resolve_reachable(
     Three-valued like the author-date core, with the same fallbacks in
     the same direction: None when every anchor escapes the repo (not
     applicable), the walk's whole length when git cannot resolve the
-    pathspecs (conservative, never silence). A range that touched no
+    pathspecs or the walk listed no names (conservative, never silence).
+    A range that touched no
     anchor is the one question the walk cannot settle alone — an
     untouched real file reads clean/0, a PHANTOM spec (a citation that
     resolves to a path no commit ever touched) is not applicable, and
@@ -953,6 +954,11 @@ def _resolve_reachable(
         # a path in it. The memory's claims are real but not about this
         # repo's code.
         return None
+    if not walk.listed:
+        # The walk's names met their timeout and its commits were listed
+        # alone: each counts, as where git cannot resolve the pathspecs,
+        # never the author dates (ENG-220's review, round C).
+        return conservative
     spell = spelled(
         cwd,
         [*ungoverned, *governed],

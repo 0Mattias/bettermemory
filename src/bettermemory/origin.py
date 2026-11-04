@@ -47,7 +47,6 @@ import subprocess
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -93,6 +92,11 @@ from .origin_gitfiles import (
     _index_gitmodules as _index_gitmodules,
     _spelled_as_git as _spelled_as_git,
 )
+
+# The reachable walk's type lives in `origin_history`, beside the history
+# reads, to keep this module under the 2,000-line bound.
+from .origin_history import ReachableWalk as ReachableWalk
+from .origin_history import Walked as Walked
 
 # The model lives in `origin_model`, which imports nothing from here.
 from .origin_model import Origin as Origin
@@ -1135,45 +1139,6 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
     return False if head_sha(cwd) is not None else None
 
 
-@dataclass(frozen=True)
-class ReachableWalk:
-    """The commits reachable from `head` but not from `anchor` — the
-    range ``anchor..HEAD`` — with the paths each one changed.
-
-    Built only when `anchor` is an ancestor of `head` (or is `head`
-    itself, an empty walk), so `commits` is exactly what has landed on
-    top of the verified tree state: a branch authored before the stamp
-    and merged after it is in here, which is what the author-date count
-    cannot say. `touched` maps a repo-relative path to the commits in
-    the range whose diff carried it; a merge commit contributes nothing
-    there, as `git log --name-only` shows no diff for one, so its
-    branch's own commits carry the paths.
-    """
-
-    anchor: str
-    head: str
-    commits: tuple[str, ...]
-    touched: Mapping[str, frozenset[str]]
-
-    def shas_touching(self, pathspecs: Sequence[str]) -> set[str]:
-        """The commits in the range that changed a file matching any of
-        `pathspecs` — repo-root-relative forward-slash specs, the output
-        of `resolve_repo_pathspecs`, each a file or a directory prefix.
-        A path is a file or a directory in git, never both, so an exact
-        hit skips the prefix scan."""
-        out: set[str] = set()
-        for spec in pathspecs:
-            exact = self.touched.get(spec)
-            if exact is not None:
-                out |= exact
-                continue
-            prefix = spec.rstrip("/") + "/"
-            for path, shas in self.touched.items():
-                if path.startswith(prefix):
-                    out |= shas
-        return out
-
-
 # The reachable walk is memoised per process, keyed on (root, anchor,
 # head) and the files beside the history that decide what its listing
 # shows (`walk_files_signature`: the repository's config, the working
@@ -1201,7 +1166,8 @@ class ReachableWalk:
 # memoised walk until the head moves; while files are created and removed
 # in the root steadily, no walk is kept (`_hold_directory`). Bounded so a
 # store with many distinct anchors cannot grow it without limit. Only a
-# walk is stored, never a None: a None is also what a git process that
+# walk that listed its names is stored, never a None nor the commits
+# listed alone after a timeout: a None is also what a git process that
 # failed yields (an object briefly unreadable, a timeout), and the
 # fallback taken on a failure must not outlive the call that met it. A
 # caller that resolves many memories in one pass keeps the Nones for that
@@ -1239,7 +1205,7 @@ def commits_since_anchor(
     *,
     toplevel: Path | None = None,
     head: str | None = None,
-    walked: dict[tuple[str, str, str], ReachableWalk | bool] | None = None,
+    walked: Walked | None = None,
 ) -> ReachableWalk | None:
     """The reachable walk from `anchor` to HEAD, or None when the count
     must fall back to author-date space.
@@ -1260,12 +1226,20 @@ def commits_since_anchor(
     `walked`, a mapping the caller keeps for one pass over many memories,
     remembers per (root, anchor, head) what no memo keeps: each walk that
     came back None, as whether a git process failed for it, and each walk
-    the process-wide memo could not key (the stamps unreadable). A later
-    call for the same key in that pass returns the remembered walk, or
-    None without a process, counting the failure again on the calling
-    thread (`failed_git_calls`), so a caller that keeps a value only when
-    no git call failed judges every hit at that anchor as it judged the
-    first.
+    the process-wide memo could not key (the stamps unreadable) or did not
+    list its names. A later call for the same key in that pass returns the
+    remembered walk, or None without a process, counting the failure again
+    on the calling thread (`failed_git_calls`), so a caller that keeps a
+    value only when no git call failed judges every hit at that anchor as
+    it judged the first.
+
+    A walk whose names meet their timeout falls back to its commits listed
+    alone, with no diff (`ReachableWalk.listed` False), whose whole length
+    claim drift keeps; it is not memoised past the pass. Where that listing
+    meets its timeout too, the walk is given up on (`origin_history.
+    unwalked`) and the caller omits the count: it never reads the author
+    dates in its place, which a rebased or back-dated commit moves
+    (ENG-220's review, round C).
 
     None, and the author-date fallback, when: `anchor` is not a full
     hash (never handed to git as a revision), git cannot answer, the
@@ -1296,16 +1270,29 @@ def commits_since_anchor(
         seen = walked[within]
         if isinstance(seen, ReachableWalk):
             return seen
-        if seen:
+        if seen is None:
+            _git_runner.note_timed_out()
+            origin_history.note_unwalked()
+        elif seen:
             _git_runner.note_failed()
         return None
     failed = _git_runner.failed_calls()
+    timed_out = _git_runner.timed_out_calls()
     walk = _walk_reachable(toplevel, anchor, head)
+    if walk is None and _git_runner.timed_out_calls() != timed_out:
+        # The names met their timeout: the commits alone, no diff read.
+        timed_out = _git_runner.timed_out_calls()
+        walk = _walk_reachable(toplevel, anchor, head, names=False)
+        if walk is None and _git_runner.timed_out_calls() != timed_out:
+            origin_history.note_unwalked()
+            if walked is not None:
+                walked[within] = None
+            return None
     if walk is None:
         if walked is not None:
             walked[within] = _git_runner.failed_calls() != failed
         return None
-    if key is None:
+    if key is None or not walk.listed:
         if walked is not None:
             walked[within] = walk
         return walk
@@ -1317,28 +1304,28 @@ def commits_since_anchor(
     return walk
 
 
-def _walk_reachable(toplevel: Path, anchor: str, head: str) -> ReachableWalk | None:
+def _walk_reachable(
+    toplevel: Path, anchor: str, head: str, *, names: bool = True
+) -> ReachableWalk | None:
     """The walk from `anchor` to `head`, both named: the memo keys it on
     `head`, so the range must end there even if HEAD has moved since the
-    caller read it."""
+    caller read it. Without `names`, the commits alone, no diff read."""
     if anchor == head:
         return ReachableWalk(anchor=anchor, head=head, commits=(), touched={})
+    # Non-ASCII paths arrive as their UTF-8 spelling rather than
+    # octal-escaped, so they compare equal to a resolved pathspec; the
+    # residual quoting git still applies (embedded quotes, control bytes)
+    # is decoded below. A rename is a change to BOTH paths: the cited old
+    # path stops existing, which is exactly what a memory about it should
+    # see.
+    named = (*origin_history.AS_STORED_DIFF, "--no-renames", "--name-only")
     raw = _git(
         toplevel,
-        # Non-ASCII paths arrive as their UTF-8 spelling rather than
-        # octal-escaped, so they compare equal to a resolved pathspec;
-        # the residual quoting git still applies (embedded quotes,
-        # control bytes) is decoded below.
-        "-c",
-        "core.quotePath=false",
+        *(("-c", "core.quotePath=false") if names else ()),
         "log",
-        *origin_history.AS_STORED_DIFF,
         "--boundary",
-        # A rename is a change to BOTH paths: the cited old path stops
-        # existing, which is exactly what a memory about it should see.
-        "--no-renames",
         f"--format={_WALK_MARK}%m%H",
-        "--name-only",
+        *(named if names else ()),
         f"{anchor}..{head}",
         timeout=5.0,
         empty_ok=True,
@@ -1397,6 +1384,7 @@ def _walk_reachable(toplevel: Path, anchor: str, head: str) -> ReachableWalk | N
         head=head,
         commits=tuple(commits),
         touched={path: frozenset(shas) for path, shas in touched.items()},
+        listed=names,
     )
 
 

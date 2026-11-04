@@ -28,6 +28,7 @@ import unicodedata
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1161,3 +1162,138 @@ def test_a_claim_holding_a_control_character_is_not_read(
         walk=walk,
     )
     assert count == want
+
+
+# ---------------------------------------------------------------------------
+# A walk that times out fails closed (ENG-220's review, round C)
+# ---------------------------------------------------------------------------
+
+
+def _timing_out(monkeypatch: pytest.MonkeyPatch, *flags: str) -> list[list[str]]:
+    """Every git process whose argv holds one of `flags` meets its timeout;
+    the argvs that did, in order."""
+    real = subprocess.run
+    met: list[list[str]] = []
+
+    def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if any(flag in argv for flag in flags):
+            met.append(list(argv))
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return met
+
+
+def _rebased(repo: Path) -> str:
+    """foo's def line changes on top of the verified head under a commit
+    authored before the verify (a rebased or back-dated one), and bar's
+    body after it; the anchor."""
+    anchor = _commit(repo, {_MOD: _module("", 0)}, -2)
+    _commit(repo, {_MOD: _module("flag=False", 0)}, -1)
+    _commit(repo, {_MOD: _module("flag=False", 1)}, 1)
+    return anchor
+
+
+def _seen(got: ResolvedCommitDrift | None) -> tuple[int, tuple[str, ...], str] | None:
+    return None if got is None else (got.count, got.claims_drifted, got.basis)
+
+
+def test_a_walk_whose_names_time_out_keeps_the_conservative_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """foo's def line changes on top of the verified head under a commit
+    authored before the verify: the walk reads it, 1 with foo named, and
+    the author dates miss it, 0. Where the walk's names meet their
+    timeout, the hit read those dates, 0; its commits are now listed
+    alone and each counts, 2 on the reachable basis, and no date is read.
+    Kept for the pass (`walked`) and out of the walk memo."""
+    repo = _repository(tmp_path)
+    anchor = _rebased(repo)
+    assert _seen(_hit(repo, [_FOO], anchor)) == (1, (_FOO,), verify.BASIS_REACHABILITY)
+    dated = _seen(_hit(repo, [_FOO], None))
+    assert dated == (0, (), verify.BASIS_AUTHOR_DATE), "premise: the dates miss it"
+    met = _timing_out(monkeypatch, "--name-only")
+    assert _seen(_hit(repo, [_FOO], anchor)) == (2, (), verify.BASIS_REACHABILITY)
+    assert len(met) == 1 and not origin._WALK_MEMO
+    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
+    head = _plain(repo, "rev-parse", "HEAD")
+    first = origin.commits_since_anchor(
+        repo, anchor, toplevel=repo, head=head, walked=walked
+    )
+    assert first is not None and not first.listed and len(first.commits) == 2
+    assert first.touched == {} and first.shas_touching(["x"]) == set(first.commits)
+    again = origin.commits_since_anchor(
+        repo, anchor, toplevel=repo, head=head, walked=walked
+    )
+    assert again is first and len(met) == 2, "one walk for the pass"
+
+
+def test_a_walk_whose_listing_times_out_too_omits_the_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The walk's names and the listing of its commits alone both meet
+    their timeout: the count is omitted on the search hit (foo claimed,
+    which the author dates read as 0), on `memory_show`, and in the health
+    rollup (src/mod.py cited, which the dates read as 1 where the walk
+    reads 2), never read off the author dates that miss the rebased
+    commit. A later hit at the anchor in the same pass runs no walk and
+    omits its count too, counted as a timeout."""
+    from bettermemory import health_stats, verify_basis
+    from bettermemory.health_model import MemoryStats
+
+    repo = _repository(tmp_path)
+    anchor = _rebased(repo)
+    head = _plain(repo, "rev-parse", "HEAD")
+    stats = MemoryStats(
+        id="m",
+        scopes=[],
+        summary="s",
+        created=_VERIFIED,
+        updated=_VERIFIED,
+        last_verified_at=_VERIFIED,
+    )
+
+    def rollup() -> list[int]:
+        _caches.clear_all()
+        history = origin.commit_author_timestamps(repo)
+        assert history is not None
+        rows = health_stats._drift_rows_for_candidates(
+            [stats],
+            root=repo,
+            timestamps=history,
+            toplevel=repo,
+            anchor_paths_by_id={"m": (_MOD,)},
+            claims_by_id=None,
+            verified_head_by_id={"m": anchor},
+            head=head,
+        )
+        return [row.commits_since_verify for row in rows]
+
+    assert rollup() == [2], "premise: the walk reads both commits"
+    met = _timing_out(monkeypatch, "--boundary")
+    assert _hit(repo, [_FOO], anchor) is None
+    assert len(met) == 2, "the walk, then its listing"
+    _caches.clear_all()
+    assert verify_basis._count_since_verify(repo, _VERIFIED, anchor) is None
+    assert rollup() == []
+    _caches.clear_all()
+    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
+    for _ in range(2):
+        timed_out = _git.timed_out_calls()
+        unwalked = origin_history.unwalked()
+        got = _response._resolve_hit_drift(
+            cwd=repo,
+            toplevel=repo,
+            head=head,
+            timestamps=lambda: origin.commit_author_timestamps(repo),
+            anchors=(),
+            claims=load_claims([_FOO]),
+            since=_VERIFIED,
+            verified_head=anchor,
+            walked=walked,
+        )
+        assert got is None
+        assert origin_history.unwalked() == unwalked + 1
+        assert _git.timed_out_calls() > timed_out
+    assert len(met) == 2 * 3 + 2, "the second hit ran no walk"
