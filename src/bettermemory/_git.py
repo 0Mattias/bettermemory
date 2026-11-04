@@ -16,8 +16,9 @@ call here, with all four properties:
   environment points at, and its walk tests each folder by that folder's
   own ``objects`` as membership's does (ENG-193); ``GIT_ALTERNATE_OBJECT_DIRECTORIES``
   and ``GIT_SHALLOW_FILE`` go too, for the same reason; a caller's own
-  variables (`run_git`'s `env`) are set on it first, so none of them
-  puts back a variable removed here or undoes a setting below;
+  variables (`run_git`'s `env`, and its `unset`, removed) are applied to
+  it first, so none of them puts back a variable removed here or undoes
+  a setting below;
 * ``GIT_NO_LAZY_FETCH=1`` and an empty ``GIT_ALLOW_PROTOCOL`` are set, so
   no call fetches: a repository whose own config makes it a partial clone
   of an ``ext::`` remote (``protocol.ext.allow=always``) otherwise has git
@@ -48,7 +49,7 @@ import os
 import subprocess
 import threading
 from pathlib import Path
-from typing import Literal, Mapping, Sequence, overload
+from typing import Collection, Literal, Mapping, Sequence, overload
 
 log = logging.getLogger("bettermemory._git")
 
@@ -155,8 +156,12 @@ def subcommand(args: Sequence[str]) -> str:
     return args[i] if i < len(args) else ""
 
 
-def _environment(extra: Mapping[str, str] | None = None) -> dict[str, str]:
+def _environment(
+    extra: Mapping[str, str] | None = None, unset: Collection[str] = ()
+) -> dict[str, str]:
     env = dict(os.environ)
+    for name in unset:
+        env.pop(name, None)
     env.update(extra or {})
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env.update(NO_FETCH)
@@ -175,6 +180,7 @@ def run_git(
     timeout: float = 1.0,
     text: Literal[True] = True,
     env: Mapping[str, str] | None = None,
+    unset: Collection[str] = (),
 ) -> subprocess.CompletedProcess[str] | None: ...
 
 
@@ -188,6 +194,7 @@ def run_git(
     timeout: float = 1.0,
     text: Literal[False],
     env: Mapping[str, str] | None = None,
+    unset: Collection[str] = (),
 ) -> subprocess.CompletedProcess[bytes] | None: ...
 
 
@@ -200,13 +207,15 @@ def run_git(
     timeout: float = 1.0,
     text: bool = True,
     env: Mapping[str, str] | None = None,
+    unset: Collection[str] = (),
 ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes] | None:
     """Run ``git <args>`` against the repository at `cwd` or, with
     `git_dir`, the repository directory itself (``--git-dir``), under the
     scrubbed environment and the pins, within `timeout` seconds; `env`'s
-    variables are set beneath the scrub and the pins, which they cannot
-    loosen (`location_git.RepositoryHistory.independent` sets the grafts
-    file to the null device, ENG-203). The
+    variables are set, and `unset`'s removed, beneath the scrub and the
+    pins, which neither can loosen (`location_git.RepositoryHistory.independent`
+    sets the grafts file to the null device, ENG-203; `gitsystem` asks git
+    for its own system config without the caller's override, ENG-207). The
     completed process, exit code and output intact, for the caller to
     read; None ONLY when git could not run at all, logged at WARNING and
     counted."""
@@ -227,7 +236,7 @@ def run_git(
                 errors="replace",
                 timeout=timeout,
                 check=False,
-                env=_environment(env),
+                env=_environment(env, unset),
             )
         return subprocess.run(
             command,
@@ -236,7 +245,7 @@ def run_git(
             capture_output=True,
             timeout=timeout,
             check=False,
-            env=_environment(env),
+            env=_environment(env, unset),
         )
     except FileNotFoundError as exc:
         # On POSIX the spawn raises the same error for a working directory

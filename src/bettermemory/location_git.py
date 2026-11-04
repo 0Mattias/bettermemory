@@ -18,9 +18,10 @@ never the reverse. The hook client loads it with `location`, so it
 imports only the standard library and the readers `_caches`, `_git`,
 `_location_probe`, `githead`, `gitconfig`, `gitobjects`, `location_reads`
 and `project_file`, which import the standard library and each other
-alone, and `gitfile_rule`, which reads records through `gitdir_pin`,
-which writes through `_fsutil` and reads the state directory through
-`_daemon_client` (both loaded on every hook already); never `location`
+alone, and `gitfile_rule` and `gitsystem`, which read records through
+`gitdir_pin` and their own, which write through `_fsutil` and read the
+state directory through `_daemon_client` (both loaded on every hook
+already); never `location`
 itself, the model, the store or the config
 (tests/test_membership_capture.py pins that set).
 """
@@ -33,14 +34,14 @@ import stat
 import threading
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import _caches, githead, gitobjects, project_file
+from . import _caches, githead, gitobjects, gitsystem, project_file
 from . import _git as _git_runner
 from ._location_probe import INDETERMINATE, TOKEN_VERSION
-from .gitconfig import _config_values, _home, _truthy
+from .gitconfig import Stamp, _config_values, _home, _truthy
 from .gitfile_rule import (
     _common_of,
     _foreign_commondir,
@@ -219,17 +220,51 @@ Key = tuple[str, str, str | None]
 # ---------------------------------------------------------------------------
 
 # The reader of one config file and its includes (`_config_values`) is
-# `gitconfig`'s, imported above; the global files and the remotes are read
-# here.
+# `gitconfig`'s, imported above; the system and global files and the
+# remotes are read here.
+
+
+def _env_true(raw: str) -> bool:
+    """A variable git reads with ``git_env_bool`` set to `raw`: a boolean
+    as git spells one, else an integer, true when it is not 0. A value
+    that is neither stops git; it reads as true here, so nothing is read
+    that git would not read."""
+    told = _truthy([raw])
+    if told is not None:
+        return told
+    try:
+        return int(raw.strip()) != 0
+    except ValueError:
+        return True
+
+
+def _system_configs() -> list[str]:
+    """The system config files git reads, in its order, as config.c finds
+    them (ENG-207): none under GIT_CONFIG_NOSYSTEM set true; else the
+    files the git on PATH reads of its own build (Apple's developer
+    directory's, `gitsystem.Sources.own`), then the file GIT_CONFIG_SYSTEM
+    names (none where it is empty, which git cannot open), else the one
+    that git was built to read. Only a repository with a remote asks
+    (`_rewrites`), and `gitsystem` asks git once for each PATH and keeps
+    the answer in the state directory, so a capture spawns no git while
+    the answer stands (design 8.9, E16)."""
+    raw = os.environ.get("GIT_CONFIG_NOSYSTEM")
+    if raw is not None and _env_true(raw):
+        return []
+    found = gitsystem.sources()
+    named = os.environ.get("GIT_CONFIG_SYSTEM")
+    system = found.system if named is None else named
+    return [*found.own, *([system] if system else [])]
 
 
 def _global_configs() -> list[str]:
     """The global config files git reads, in its order: the one
-    GIT_CONFIG_GLOBAL names alone, else ``$XDG_CONFIG_HOME/git/config``
-    (``~/.config/git/config``) and then ``~/.gitconfig``."""
+    GIT_CONFIG_GLOBAL names alone (none where it is empty, which git cannot
+    open), else ``$XDG_CONFIG_HOME/git/config`` (``~/.config/git/config``)
+    and then ``~/.gitconfig``."""
     named = os.environ.get("GIT_CONFIG_GLOBAL")
-    if named:
-        return [named]
+    if named is not None:
+        return [named] if named else []
     home = _home()
     xdg = os.environ.get("XDG_CONFIG_HOME")
     out = [os.path.join(xdg, "git", "config")] if xdg else []
@@ -240,14 +275,33 @@ def _global_configs() -> list[str]:
     return out
 
 
-def remote_urls(common_dir: str, git_dir: str) -> list[str]:
-    """Every remote URL in the repository's config, as written and, where a
-    ``url.<base>.insteadOf`` prefix in the global or the repository's
-    config matches it, as git rewrites it (the longest prefix wins, as in
-    remote.c's ``alias_url``): ENG-160. Both are kept, so a checkout keyed
-    on the alias before matches as it did, and a clone of the URL the
-    alias stands for matches too. The system config is not read."""
-    values = _config_values(os.path.join(common_dir, "config"), git_dir=git_dir)
+#: A config file as a read stamped it (`gitconfig.ConfigValues.files`).
+ConfigFile = tuple[str, Stamp | None]
+
+
+def _rewrites(
+    common_dir: str, git_dir: str
+) -> tuple[list[tuple[str, str | None]], list[ConfigFile]]:
+    """Each remote URL in the repository's config with the URL git
+    rewrites it to, where a ``url.<base>.insteadOf`` prefix in the system,
+    the global or the repository's config matches it (the longest prefix
+    wins, the first read of equal ones, as in remote.c's ``alias_url``;
+    ENG-160, the system's since ENG-207), else None; and every config file
+    read for them, stamped, the files each includes with it, but for the
+    repository's own config, which the capture's signature stamps
+    already (`location.signature`). A repository with no remote reads its
+    own config alone. The config a process's environment gives git
+    (``GIT_CONFIG_COUNT`` and its keys, ``GIT_CONFIG_PARAMETERS`` from
+    ``git -c``) is not read: it is the setting of one shell, not of the
+    repository or the machine, and the hook client or the daemon that
+    captures is not the shell that runs git."""
+    values = _config_values(
+        os.path.join(common_dir, "config"),
+        git_dir=git_dir,
+        stamped=True,
+        stamp_self=False,
+    )
+    files = list(values.files or ())
     urls = [
         u
         for (section, _sub, key), found in values.items()
@@ -255,25 +309,63 @@ def remote_urls(common_dir: str, git_dir: str) -> list[str]:
         for u in found
     ]
     if not urls:
-        return []
+        return [], files
     rules: list[tuple[str, str]] = []
-    for config in [
-        *(_config_values(p, git_dir=git_dir) for p in _global_configs()),
-        values,
-    ]:
+    configs = [
+        _config_values(p, git_dir=git_dir, stamped=True)
+        for p in [*_system_configs(), *_global_configs()]
+    ]
+    for config in configs:
+        files.extend(config.files or ())
+    for config in [*configs, values]:
         for (section, sub, key), found in config.items():
             if section == "url" and sub is not None and key == "insteadof":
                 rules.extend((prefix, sub) for prefix in found if prefix)
-    out = list(urls)
+    out: list[tuple[str, str | None]] = []
     for url in urls:
         best = max(
             (r for r in rules if url.startswith(r[0])),
             key=lambda r: len(r[0]),
             default=None,
         )
-        if best is not None:
-            out.append(best[1] + url[len(best[0]) :])
-    return out
+        out.append((url, None if best is None else best[1] + url[len(best[0]) :]))
+    return out, files
+
+
+def remote_urls(common_dir: str, git_dir: str) -> list[str]:
+    """Every remote URL in the repository's config, as written and, where a
+    ``url.<base>.insteadOf`` prefix in the system, the global or the
+    repository's config matches it, as git rewrites it (`_rewrites`):
+    ENG-160. Both are kept, so a checkout keyed on the alias before
+    matches as it did, and a clone of the URL the alias stands for
+    matches too."""
+    spellings, _files = _rewrites(common_dir, git_dir)
+    return [u for u, _ in spellings] + [r for _, r in spellings if r is not None]
+
+
+@dataclass(frozen=True)
+class RemoteKeys:
+    """A repository's remotes as a capture keys them (`read_remotes`):
+    every key, and the config files read for them (`_rewrites`)."""
+
+    keys: tuple[str, ...]
+    files: tuple[ConfigFile, ...]
+
+
+def read_remotes(
+    common_dir: str, git_dir: str, key: Callable[[str], str | None]
+) -> RemoteKeys:
+    """The keys (`key` of each URL) of the repository's remotes, each as
+    written and as git rewrites it (`remote_urls`). The config files read
+    for them are kept with their stamps, so a capture kept against them is
+    read again once one changes (`gitconfig.unchanged`; ENG-207)."""
+    spellings, files = _rewrites(common_dir, git_dir)
+    keys: set[str] = set()
+    for url, rewritten in spellings:
+        for spelling in (url, rewritten):
+            found = key(spelling) if spelling is not None else None
+            keys.update([found] if found else [])
+    return RemoteKeys(keys=tuple(sorted(keys)), files=tuple(files))
 
 
 # ---------------------------------------------------------------------------
@@ -486,10 +578,13 @@ class Capture:
     ``detail`` then names the file. ``cwd_key`` and ``hostname`` let the
     daemon tell whether it reads the same object at ``cwd``.
     ``kept_apart`` is set where the repository was reached through a
-    ``.git`` entry naming a git directory kept apart (`kept_apart`), and
+    ``.git`` entry naming a git directory kept apart (`kept_apart`),
     ``tree_recorded`` where this capture made the first record of its
-    working tree (`record_working_tree`, ENG-206); neither is part of the
-    token."""
+    working tree (`record_working_tree`, ENG-206), and ``config_files``
+    holds the config files read for the remotes besides the repository's
+    own, stamped, which a kept capture is checked against (ENG-207);
+    none of these three is part of the token, and the last is no part of
+    what a capture equals."""
 
     cwd: str
     state: str
@@ -519,6 +614,7 @@ class Capture:
     hostname: str | None = None
     kept_apart: bool = False
     tree_recorded: bool = False
+    config_files: tuple[ConfigFile, ...] = field(default=(), compare=False, repr=False)
 
     @property
     def born(self) -> bool:

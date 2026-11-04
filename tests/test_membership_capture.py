@@ -676,6 +676,7 @@ print(json.dumps(sorted(sys.modules)))
         "bettermemory.githead",
         "bettermemory.gitdir_pin",
         "bettermemory.gitobjects",
+        "bettermemory.gitsystem",
         "bettermemory.location",
         "bettermemory.location_git",
         "bettermemory.location_reads",

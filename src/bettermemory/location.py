@@ -83,7 +83,7 @@ from ._location_probe import (
     probe,
     view_path,
 )
-from .gitconfig import _config_values  # with the `.git` rule below: ENG-193
+from .gitconfig import _config_values, unchanged  # the `.git` rule below: ENG-193
 from .machine import _identity_from  # the client's machine as posted
 from .machine import identity_to_json as identity_to_json  # the hook client's
 from .gitfile_rule import (
@@ -142,7 +142,7 @@ from .location_git import (
     bounded_read,
     bounded_reads,
     _at_dotgit,
-    remote_urls,
+    read_remotes,
 )
 from .location_git import (
     _GIT_TIMEOUT_SECONDS as _GIT_TIMEOUT_SECONDS,
@@ -620,9 +620,9 @@ def _capture_uncached(
     head, branch = _resolve_head(git)
     tips = _ref_tips(git)
     base = git.root or git.git_dir
-    # Each remote as written and as its insteadOf rewrites it (ENG-160).
-    urls = remote_urls(git.common_dir, git.git_dir)
-    keys = sorted({k for k in (remote_key(u, base) for u in urls) if k})
+    # Each remote as written and as its insteadOf rewrites it (ENG-160),
+    # and the config files read for it (ENG-207).
+    remotes = read_remotes(git.common_dir, git.git_dir, lambda u: remote_key(u, base))
     token, written, status = _token_fields(git, write_token=write_token)
     # A git directory kept apart (`kept`, read above) keeps no pointer back
     # to its tree, so `capture` records the folder followed in the state
@@ -650,7 +650,8 @@ def _capture_uncached(
         head=head,
         branch=branch,
         ref_tips=tips,
-        remote_keys=tuple(keys),
+        remote_keys=remotes.keys,
+        config_files=remotes.files,
         shallow=os.path.isfile(os.path.join(git.common_dir, "shallow")),
         token=token,
         token_written=written,
@@ -887,7 +888,8 @@ def capture(
     record_tree: bool = True,
 ) -> Capture:
     """The capture of `cwd` (design 3.1), from the cache while its
-    signature reads as it did and it is younger than `CACHE_SECONDS` on
+    signature reads as it did, the config files read for its remotes
+    stamp as they did (ENG-207) and it is younger than `CACHE_SECONDS` on
     both clocks. `write_token` is the policy switch
     (``membership.write_token``); `budget` the seconds a fetch of an
     evicted HEAD or config may take; `manifest` whether the content
@@ -944,6 +946,7 @@ def _capture_cached(
             entry is not None
             and entry.signature == before
             and _fresh(entry.monotonic, entry.wall, now, wall)
+            and unchanged(entry.capture.config_files)
         ):
             return entry.capture
     got = _capture_uncached(

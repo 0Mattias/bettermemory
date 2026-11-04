@@ -4,9 +4,11 @@
 followed in place as git's ``config.c`` follows them (``include.path``,
 and ``includeIf.<condition>.path`` where the condition is ``gitdir:`` or
 ``gitdir/i:``), into a `ConfigValues` that says where it read less than
-git would (`ConfigValues.complete`) and which names an include sets under
-a condition not evaluated here (`ConfigValues.undecided`); `_truthy` reads
-a boolean value as git does.
+git would (`ConfigValues.complete`), which names an include sets under a
+condition not evaluated here (`ConfigValues.undecided`) and each file it
+read or looked for, stamped as it read it (`ConfigValues.files`), so a
+reader kept against them sees a change to any (`unchanged`, ENG-207);
+`_truthy` reads a boolean value as git does.
 
 The reader lives apart from `location_git`, which read it alone before,
 because the rule a ``.git`` entry is followed by (`gitfile_rule`) reads a
@@ -62,6 +64,11 @@ _SECTION = re.compile(r'^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]')
 
 #: A config variable's name: section, subsection, key.
 _Name = tuple[str, str | None, str]
+#: A config file's stamp, the fields `githead.stamp` reads of a path:
+#: ``(st_mtime_ns, st_ctime_ns, st_size, st_ino, st_mode)``; `_UNSTATED`
+#: where the path could not be stat-ed, None where nothing is there.
+Stamp = tuple[int, int, int, int, int]
+_UNSTATED: Stamp = (-1, -1, -1, -1, -1)
 #: git's bound on nested includes (``MAX_INCLUDE_DEPTH`` in config.c), past
 #: which git refuses the configuration.
 _INCLUDE_DEPTH = 10
@@ -89,12 +96,20 @@ class ConfigValues(dict[_Name, list[str]]):
     stands, as git stops at its depth; what was read before stands. `undecided` holds the names an include sets under a
     condition not evaluated here (``onbranch:``, ``hasconfig:``, a
     ``gitdir:`` with no git directory given); their values are not
-    taken."""
+    taken. `files`, for a read asked to stamp (`_config_values`'s
+    `stamped`), holds each file the read opened or looked for, in the
+    order it did, with its stamp taken before it was opened (a change
+    after it reads as a change to what was read): None for one that was
+    not there, which git skips and whose creation changes what git reads
+    (ENG-207); an include under a condition not evaluated is not among
+    them, since none of its values is taken. It is None for a read not
+    asked to stamp."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, stamped: bool = False) -> None:
         super().__init__()
         self.complete = True
         self.undecided: set[_Name] = set()
+        self.files: list[tuple[str, Stamp | None]] | None = [] if stamped else None
 
 
 class _Overflow(Exception):
@@ -104,14 +119,22 @@ class _Overflow(Exception):
 
 @dataclass
 class _Reading:
-    """One `_config_values` read: the files it has taken, and the
-    identity (device, inode) of each file open on the include chain."""
+    """One `_config_values` read: the files it has taken, the identity
+    (device, inode) of each file open on the include chain, and whether a
+    stamped read stamps its own file."""
 
     files: int = 0
     chain: list[tuple[int, int]] = field(default_factory=list)
+    stamp_self: bool = True
 
 
-def _config_values(path: str, *, git_dir: str | None = None) -> ConfigValues:
+def _config_values(
+    path: str,
+    *,
+    git_dir: str | None = None,
+    stamped: bool = False,
+    stamp_self: bool = True,
+) -> ConfigValues:
     """``{(section, subsection, key): values}`` of a git config file, read
     as bytes and bounded, its includes followed in place as git follows
     them (ENG-160): ``include.path``, and ``includeIf.<condition>.path``
@@ -119,10 +142,13 @@ def _config_values(path: str, *, git_dir: str | None = None) -> ConfigValues:
     `git_dir`. Section and key names are lower case. An include past
     git's depth, one naming a file it is read from, or one past
     `_INCLUDE_FILES` files stops the read (review M D3): the values read
-    before stand, and the answer is incomplete."""
-    out = ConfigValues()
+    before stand, and the answer is incomplete. `stamped` has the answer
+    name each file read and its stamp (`ConfigValues.files`, ENG-207),
+    `path` itself left out with `stamp_self` off (a caller that stamps it
+    already)."""
+    out = ConfigValues(stamped=stamped)
     try:
-        _read_config(path, out, git_dir, 0, _Reading())
+        _read_config(path, out, git_dir, 0, _Reading(stamp_self=stamp_self))
     except _Overflow:
         out.complete = False
     return out
@@ -183,10 +209,16 @@ def _read_config(
 ) -> None:
     """Parse the config file `path` into `out`, its includes in place;
     `_Overflow` past `_INCLUDE_FILES` files, or where `path` is a file
-    the include chain is read from (compared as filesystem objects)."""
+    the include chain is read from (compared as filesystem objects). For
+    a stamped read the file goes to `out.files` stamped before it is
+    opened (`ConfigValues.files`), so a change after the stamp reads as a
+    change to what was read; the read's own file only where
+    `reading.stamp_self` says so."""
     reading.files += 1
     if reading.files > _INCLUDE_FILES:
         raise _Overflow(path)
+    if out.files is not None and (depth or reading.stamp_self):
+        out.files.append((path, file_stamp(path)))
     identity: list[tuple[int, int]] = []
     data = _config_bytes(path, out, identity)
     if data is None:
@@ -283,6 +315,32 @@ def _include(
     finally:
         out.undecided.update(maybe, maybe.undecided)
         out.complete = out.complete and maybe.complete
+
+
+def file_stamp(path: str) -> Stamp | None:
+    """The stamp of the file at `path` now (`Stamp`): None where nothing
+    is there, `_UNSTATED` where it cannot be stat-ed."""
+    try:
+        st = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except (OSError, ValueError):
+        return _UNSTATED
+    return (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino, st.st_mode)
+
+
+def unchanged(files: Sequence[tuple[str, Stamp | None]]) -> bool:
+    """Whether each of `files` (`ConfigValues.files`, of one read or
+    several) stamps now as it did when it was read: a file written,
+    replaced, created or removed since reads as changed (ENG-207). A file
+    named twice is stamped once."""
+    seen: dict[str, Stamp | None] = {}
+    for path, was in files:
+        if path not in seen:
+            seen[path] = file_stamp(path)
+        if seen[path] != was:
+            return False
+    return True
 
 
 def _home() -> str | None:

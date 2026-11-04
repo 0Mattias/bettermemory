@@ -370,7 +370,7 @@ Membership is a delivery policy, not the boundary around the store: any process 
 
 ### 8.9 Performance
 
-- Per prompt at the membership step (E16, counted): steady state 0 git spawns and 12 stat calls (rc3: 0 and 20; round 1's design: 10, the two added are the token and the in-repository file walk); first prompt after a cache clear 3 spawns and 43 stats (rc3: 4 and 40); first sight of a copy 3 and 60.
+- Per prompt at the membership step (E16, counted): steady state 0 git spawns and 12 stat calls (rc3: 0 and 20; round 1's design: 10, the two added are the token and the in-repository file walk), and since 9.0.0rc19 (ENG-207) one stat more for each config file read for the checkout's remotes besides its own config, against which a kept capture is checked: 15 stat and 2 lstat calls with a home folder's three global files and macOS's two system files, the count `tests/test_membership_cost.py` bounds; a hook client, a new process each prompt, asks git which system files it reads once for a PATH and keeps the answer in the state directory (`gitsystem`); first prompt after a cache clear 3 spawns and 43 stats (rc3: 4 and 40); first sight of a copy 3 and 60.
 - At scale (E29, measured here on the prototype): a known checkout among 10,000 is one index lookup (0.070 ms); first sight over 64,003 witnesses is one batch, 0 spawns and 188.0 ms with the object reader against 1 spawn and 1572.1 ms through `git cat-file --batch-check`; 301 sightings keep 64 witnesses (237 released); the brief over 1,000,000 records is one indexed join.
 - The prompt arm of `bench/daemon/latency.py` was not run: the owner's rule asks for his yes before a bench run. Prediction: p50 within 2 ms of rc3 at known checkouts.
 

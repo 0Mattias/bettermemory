@@ -196,6 +196,44 @@ eighteenth was built.
   (`src/bettermemory/membership_resolve.py`,
   `tests/test_membership_asked_folder.py`, `docs/internals.md`)
 
+- **The capture reads the system git config as git does, and a cached
+  capture sees a changed config at once (ENG-207).** 9.0.0rc14 listed
+  three Known limitations of the capture's own config reader; these two
+  are closed. The system config files are now found as git finds them:
+  none under `GIT_CONFIG_NOSYSTEM` set true; else the files the git on
+  PATH reads of its own build first (Apple's git reads its developer
+  directory's gitconfig, which `GIT_CONFIG_SYSTEM` does not replace),
+  then the file `GIT_CONFIG_SYSTEM` names, else the one that git was
+  built to read. git names them (`git var GIT_CONFIG_SYSTEM`, and `git
+  config --list --show-scope --show-origin` with the system and global
+  files at the null device), asked at the root within the capture's
+  0.3 s fetch budget, only for a repository with a remote; a hook
+  client, a new process each prompt, does not ask again while the
+  answer kept in the state directory for its PATH stands (the git
+  binary unchanged, under an hour old), so a prompt spawns no git for
+  it. A git that does not answer, or none on PATH, reads as naming
+  `/etc/gitconfig` (none on Windows) for a minute. Each file is read
+  with its includes under the reader's size, depth and file bounds, so
+  a remote alias set there keys the remote as git fetches it, an equal
+  prefix read first winning as in git. An empty `GIT_CONFIG_GLOBAL` now
+  names no file, as for git, where it read `~/.gitconfig`. A cached
+  capture waited for the repository's own files to change before it saw
+  a new rule in the global config; it is now kept against every config
+  file read for its remotes, the files they and the repository's config
+  include too, each stamped before it was read, so one written, created
+  or removed is read at the next capture. Each such file costs a kept
+  capture one stat: a steady prompt makes 17 stat calls (15 `os.stat`, 2
+  `os.lstat`) with a home folder's three global files and macOS's two
+  system files, where E16 counted 12 (`docs/internals.md`,
+  `docs/membership-design.md`). The config a shell's environment gives
+  git (`GIT_CONFIG_COUNT`, `git -c`) is not read: it is not the
+  repository's or the machine's. `_git.run_git` takes `unset`, applied
+  beneath its scrub and pins like `env`. (`src/bettermemory/gitsystem.py`,
+  `src/bettermemory/gitconfig.py`, `src/bettermemory/location_git.py`,
+  `src/bettermemory/location.py`, `src/bettermemory/_git.py`,
+  `tests/test_location_git_config.py`, `tests/test_membership_cost.py`,
+  `tests/test_git_no_fetch.py`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a

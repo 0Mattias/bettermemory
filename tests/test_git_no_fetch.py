@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _git, location, location_git
+from bettermemory import _git, gitsystem, location, location_git
 from bettermemory.location_git import RepositoryHistory
 
 _POSIX = os.name == "posix"
@@ -138,10 +138,14 @@ def test_every_call_fetches_nothing_whatever_the_callers_environment(
         assert name not in env
 
 
-def test_a_callers_own_variables_cannot_loosen_the_pins_or_the_scrub() -> None:
+def test_a_callers_own_variables_cannot_loosen_the_pins_or_the_scrub(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`run_git`'s `env` is set beneath the scrub and the pins (ENG-203's
     review, L1): a caller handing in a transport, a lazy fetch or another
-    repository gets none of them, and its own variables still reach git."""
+    repository gets none of them, and its own variables still reach git.
+    Its `unset` (ENG-207) removes a variable of the process beneath them
+    as well, and cannot remove a pin."""
     extra = {
         "GIT_NO_LAZY_FETCH": "0",
         "GIT_ALLOW_PROTOCOL": "ext",
@@ -155,6 +159,55 @@ def test_a_callers_own_variables_cannot_loosen_the_pins_or_the_scrub() -> None:
     assert env["GIT_OPTIONAL_LOCKS"] == "0"
     assert env["GIT_GRAFT_FILE"] == os.devnull
     assert not set(_git.SCRUBBED_ENV) & set(env)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    pinned = ("GIT_NO_LAZY_FETCH", "GIT_ALLOW_PROTOCOL", "GIT_OPTIONAL_LOCKS")
+    env = _git._environment(unset=(*pinned, "GIT_CONFIG_SYSTEM"))
+    assert [env[name] for name in pinned] == ["1", "", "0"]
+    assert "GIT_CONFIG_SYSTEM" not in env
+    assert "GIT_CONFIG_SYSTEM" in _git._environment()
+
+
+def test_the_system_config_questions_run_at_the_root_under_the_pins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207: `gitsystem` asks the git on PATH which system config
+    files it reads, with the runner's pins, scrub and no-fetch variables,
+    at the root, so the config of the repository a process stands in
+    never reaches git; the caller's GIT_CONFIG_SYSTEM is unset for ``git
+    var`` and the system and global files are the null device for the
+    listing."""
+    _plain_git(tmp_path, "init", "-q")
+    calls: list[tuple[list[str], object, dict[str, str]]] = []
+    real = subprocess.run
+
+    def run(command: list[str], **kw: object) -> object:
+        env = kw.get("env")
+        calls.append(
+            (list(command), kw.get("cwd"), dict(env) if isinstance(env, dict) else {})
+        )
+        return real(command, **kw)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(gitsystem, "ASK_SECONDS", 30.0)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "mine"))
+    monkeypatch.chdir(tmp_path)
+    answer = gitsystem._ask("key", 0.0)
+    assert answer.ok and answer.sources.system != str(tmp_path / "mine")
+    assert [c[0][1 + len(_git.PINS) :] for c in calls] == [
+        list(gitsystem._VAR),
+        list(gitsystem._LIST),
+    ]
+    for command, cwd, env in calls:
+        assert command[: 1 + len(_git.PINS)] == ["git", *_git.PINS]
+        assert cwd == os.path.abspath(os.sep)
+        assert (env["GIT_NO_LAZY_FETCH"], env["GIT_ALLOW_PROTOCOL"]) == ("1", "")
+        assert not set(_git.SCRUBBED_ENV) & set(env)
+    assert "GIT_CONFIG_SYSTEM" not in calls[0][2]
+    assert (
+        calls[1][2]["GIT_CONFIG_SYSTEM"]
+        == calls[1][2]["GIT_CONFIG_GLOBAL"]
+        == os.devnull
+    )
 
 
 def test_the_hostile_clone_runs_its_command_for_a_git_that_may_fetch(

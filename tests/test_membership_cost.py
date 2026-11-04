@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import location
+from bettermemory import _caches, location
 from bettermemory.config import Config
 from bettermemory.location import resolve_here
 from bettermemory.machine import MachineIdentity, open_machine
@@ -43,6 +43,10 @@ pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on 
 
 _NOW = datetime.fromtimestamp(1_800_000_000, tz=timezone.utc)
 _URL = "https://example.invalid/acme/game.git"
+#: The steady prompt's stat calls at a known checkout with no config file
+#: read for its remotes (E16, tests/test_membership_capture.py); each such
+#: file adds one (ENG-207).
+_BASE_STATS = 10
 
 
 @pytest.fixture(autouse=True)
@@ -272,10 +276,13 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     recorded, since the migration writes no token, and from then on by
     the token that sighting wrote. Measured on macOS (APFS, the test's
     temporary directory), with birth time and without: the migration 0
-    spawns; the steady prompt 0 spawns, 11 os.stat and 1 os.lstat calls
-    (the same as at a checkout no migration registered,
-    tests/test_membership_capture.py, where the ``.git`` entry's
-    ``lstat`` since ENG-206 is the ``stat`` it was)."""
+    spawns; the steady prompt 0 spawns, 11 os.stat and 2 os.lstat calls:
+    the 10 and 2 of a checkout no migration registered
+    (tests/test_membership_capture.py, where the ``.git`` entry's
+    ``lstat`` since ENG-206 is the ``stat`` it was) and one stat for the
+    one config file read for its remote, the global config this test
+    names, whose stamp a kept capture is checked against since ENG-207
+    (`test_e16_a_config_file_read_costs_one_stat_and_no_git`)."""
     store, identity, config = lab
     synthetic = _synthetic(store, identity.id, projects=20, checkouts_each=10)
     repo = make_repo(tmp_path.resolve() / "Developer" / "game", remote=_URL)
@@ -325,8 +332,63 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     assert results[0].checkout == root.checkout
     assert warm.spawns == 0
     # Discovery reads HEAD with lstat, git's test (ENG-193): the total of 12
-    # stays, as the steady state's E16 test in test_membership_capture says.
-    assert warm.stats <= 10 and warm.lstats <= 2
+    # stays, as the steady state's E16 test in test_membership_capture says,
+    # with one stat more for each config file read for the remotes besides
+    # the repository's own (ENG-207): here the one GIT_CONFIG_GLOBAL names.
+    files = location.capture(str(repo), write_token=False).config_files
+    assert len(files) == 1
+    assert warm.stats <= _BASE_STATS + len(files) and warm.lstats <= 2
+
+
+def test_e16_a_config_file_read_costs_one_stat_and_no_git(
+    tmp_path: Path,
+    lab: tuple[Store, MachineIdentity, Config],
+    counted: Callable[[Callable[[], object]], _Counts],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E16 under the configuration git reads on a developer's machine
+    (ENG-207's review, R3 and R4): no variable naming a config file, an
+    XDG folder with no config in it, a ``~/.gitconfig`` including a file
+    that is not there, and the system files the git on PATH names (on
+    macOS the developer directory's and ``/etc/gitconfig``). A kept
+    capture is checked against each config file read for its remote, so
+    the steady prompt makes the 10 stat calls of a checkout with no
+    remote and one for each of those files, and no more lstat calls; and
+    a new process (the caches cleared, as a hook client starts each
+    prompt) asks git nothing while the state directory's record of the
+    system files stands (`gitsystem`). Measured on macOS: 15 stat and 2
+    lstat calls, 5 files; the new process 0 spawns."""
+    store, identity, config = lab
+    repo = make_repo(tmp_path / "game", remote=_URL)
+    home = tmp_path / "home"
+    (home / ".config" / "git").mkdir(parents=True)
+    (home / ".gitconfig").write_text("[include]\n\tpath = ~/.gitconfig.local\n")
+    monkeypatch.setenv("HOME", str(home))
+    for name in (
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_SYSTEM",
+        "XDG_CONFIG_HOME",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    resolve_here(store, config, str(repo), identity=identity)
+    resolve_here(store, config, str(repo), identity=identity)
+    files = [p for p, _ in location.capture(str(repo), write_token=False).config_files]
+    assert {
+        str(home / ".config" / "git" / "config"),
+        str(home / ".gitconfig"),
+        str(home / ".gitconfig.local"),
+    } <= set(files), files
+    warm = counted(lambda: resolve_here(store, config, str(repo), identity=identity))
+    print(f"steady: spawns={warm.spawns} stat={warm.stats} lstat={warm.lstats}")
+    print(f"config files: {len(files)}")
+    assert warm.spawns == 0
+    assert warm.stats <= _BASE_STATS + len(files) and warm.lstats <= 2
+
+    _caches.clear_all()
+    fresh = counted(lambda: location.capture(str(repo), write_token=False))
+    print(f"new process: spawns={fresh.spawns}")
+    assert fresh.spawns == 0
 
 
 # ---------------------------------------------------------------------------

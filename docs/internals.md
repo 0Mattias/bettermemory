@@ -471,10 +471,51 @@ are read from loose objects, pack indexes and packs (`gitobjects.py`),
 with `git cat-file --batch-check` only where that reader reports itself
 incomplete. Repository configuration (the remote URLs, `core.worktree`
 and `core.bare`, the files `include.path` and `includeIf "gitdir:"`
-name, and the global config's `url.<base>.insteadOf`; ENG-160) is read
-as bytes by the module's own bounded parser, never through git, so
-git's `safe.directory` refusal never applies; the system config is not
-read. A `.git` file is followed only
+name, and `url.<base>.insteadOf` from the system, the global and the
+repository's config; ENG-160, ENG-207) is read as bytes by the module's
+own bounded parser, never through git, so git's `safe.directory`
+refusal never applies. The system config files are found as git finds
+them (`gitsystem.py`): none under `GIT_CONFIG_NOSYSTEM` set true; else
+the files the git on PATH reads of its own build first (Apple's git
+reads its developer directory's `usr/share/git-core/gitconfig`, which
+`GIT_CONFIG_SYSTEM` does not replace; git for Windows has read
+`%PROGRAMDATA%\Git\config`), then the file `GIT_CONFIG_SYSTEM` names
+(none where it is empty), else the file that git was built to read.
+Where those are is built into the binary, so git is asked: `git var
+GIT_CONFIG_SYSTEM` (git 2.42 and later) names the system file, and `git
+config --list --show-scope --show-origin -z`, with the system and global
+files at the null device, the build's own files that hold an entry
+(git 2.26 and later). Both run at the root, with the caller's
+`GIT_CONFIG_SYSTEM` unset, within 0.3 s together (the capture's fetch
+budget), only for a repository with a remote. A hook client is a new
+process each prompt, so the answer is kept in the state directory
+(`git-config-sources.json`) for the PATH, as its digest, with the stamp
+of the git binary found on that PATH; a capture stats that binary and
+asks again only where it changed, the answer is an hour old, or none is
+recorded. A git that does not answer in time or cannot run, or none on
+PATH, reads as naming `/etc/gitconfig` (none on Windows, whose git keeps
+its file in its own installation) and no file of its own, for a minute.
+Not read: a file of the build's own that was missing or empty when git
+was asked, until it is asked again; and the config a process's
+environment gives git (`GIT_CONFIG_COUNT` with its `GIT_CONFIG_KEY_<n>`
+and `GIT_CONFIG_VALUE_<n>`, `GIT_CONFIG_PARAMETERS` from `git -c`),
+which is one shell's setting, not the repository's or the machine's: the
+hook client or daemon that captures is not the shell that runs git. The
+global config is the file `GIT_CONFIG_GLOBAL` names (none where it is
+empty), else `$XDG_CONFIG_HOME/git/config` and `~/.gitconfig`. Each is
+read with the same bounds as the repository's own: the size bound,
+git's include depth and the 64-file bound. A remote is keyed as written
+and as the longest `insteadOf` prefix rewrites it (the first read of
+equal prefixes, the build's own files before the system file before the
+global before the repository's, as git takes them). A capture is cached
+against its signature and against every config file read for its
+remotes, the files each includes too, each stamped (mtime, ctime, size,
+inode, mode) before it was read, a missing one as missing: a change to
+the global or the system config, or a file one of them or the
+repository's own config includes, created, written or removed, is read
+at the next capture (ENG-207); the repository's own config is in the
+signature. Each such file costs a kept capture one stat (E16). A `.git`
+file is followed only
 where git's own pointers say the folder is its git directory's working
 tree (ENG-158): a linked worktree's git directory registered at
 `<common>/worktrees/<name>` that names the file back, a git directory
@@ -525,7 +566,7 @@ fact:
 | H | holds witness commits of the project | the project's bounded witness set, asked of the history reader in one batch | one witness: asks once |
 | Hf | holds commits with a witness's fingerprint (sha256 of the author and committer lines and the message) | the repository's commits, where no witness commit is held | with H and Hb, one history witness |
 | Hb | holds the file contents of witness commits: at least 2 blobs and half of one witness's sample | up to 8 blobs per witness | counts only beside H, Hf or R; never with a project file alone |
-| R | names a remote key of the project | every remote URL in the config file and the files it includes, not only `origin`, each keyed as written and as the longest `insteadOf` prefix rewrites it; a `file://` or path remote names the views seen there | one witness: asks once |
+| R | names a remote key of the project | every remote URL in the config file and the files it includes, not only `origin`, each keyed as written and as the longest `insteadOf` prefix in the system, global or repository config rewrites it; a `file://` or path remote names the views seen there | one witness: asks once |
 | D | names a remote declared for the project in a shallow clone | `declared_remotes`, written by a `join` answering a remote-only question in a shallow clone | counts for a shallow caller |
 | F | carries a project file bound to the project | `bettermemory.toml` at the repository's root | one witness: asks once; with R, two only where history cannot speak (unborn, shallow) |
 | T | carries the checkout token of one of the project's checkouts | `info/bettermemory` in the git directory | two only when caller and project are both commit-less and no live checkout carries it; dropped when history disagrees |
