@@ -570,30 +570,49 @@ symlink or another case is the same), a
 a `core.worktree` naming another folder, a separate git directory whose
 recorded tree is another folder and a bare repository read as no
 repository, and the walk goes on upward. A git directory's working tree
-is read where git reads it: its `config`, and `config.worktree` after it
-where the config sets `extensions.worktreeConfig`; a NUL byte that hides
-one of its names from this reader (git ends a name there, so
-`[core "worktree\0"]` sets `core.worktree`) or cuts its value refuses
-it. A folder's own `.git`
-directory is followed only where its config gives that folder as the
-working tree (ENG-211, `gitfile_rule.own_refusal`): a `core.worktree`
-naming another folder, absolute or relative to the git directory as git
-takes it, makes git read that folder as the toplevel, and git writes no
-pointer back from it, so a planted config could move a checkout's root
-to any folder; one naming nothing (git dies there) and a `core.bare` of
-true (git reads no working tree) are refused with it. A walk started
-inside a git directory reads it as its parent's `.git`, or as a bare
-repository, only where its config names no working tree or names that
-parent (`gitfile_rule.inside_refusal`): a submodule's git directory
-under `modules/`, whose `core.worktree` names the submodule's tree, is
-passed over. Such an own `.git` directory's config is judged by what was
-read: git reads these names from the file alone, no include, and a
-config past the 1 MiB bound is an ordinary repository's, so neither
-refuses it (a `.git` file's target whose config could not be read whole
-is refused, as above). Where membership refuses the entry the origin
-family runs no git, so membership and an origin's `worktree_root` never
-name two roots for one checkout. Each witness is one observable
-fact:
+is read as git reads it (ENG-211, `gitfile_rule.tree_format`, after
+setup.c's `check_repository_format_gently`, git 2.54): `config` in the
+common directory, parsed as git's own parser parses a file
+(`gitconfig.git_entries`: LF alone ends a line, CR LF is LF and a lone
+CR, VT, FF or any other byte is no line end, a backslash before a newline
+joins the next line onto a value, a byte order mark is dropped, a name
+is cut at a NUL byte, so `[core "worktree\0"]` sets `core.worktree`),
+whole and with no include followed, and then `config.worktree` in the
+git directory under `extensions.worktreeConfig`. A config without
+`core.repositoryformatversion`, or with one below 0, sets neither
+`core.worktree` nor `core.bare` (git clears the format); a linked
+worktree's takes them only from its `config.worktree`; a file git cannot
+parse, a value git dies on (an empty `core.worktree`, one with no value,
+a `core.bare` that is no boolean, a format version above 1), a file that
+cannot be read and one over 2 MiB give no reading, and the git directory
+is refused (fail closed). A folder's own `.git` directory is followed
+only where git puts its working tree at that folder or puts none
+(`gitfile_rule.own_refusal`): a `core.worktree` naming another folder,
+absolute or relative to the git directory as git takes it, makes git
+read that folder as the toplevel, and git writes no pointer back from
+it, so a planted config could move a checkout's root to any folder; one
+naming nothing and a `core.bare` of true (git reads no working tree)
+are refused with it. A walk started inside a git directory reads it as
+its parent's `.git`, or as a bare repository, only where its config
+names no working tree or names that parent
+(`gitfile_rule.inside_reading`); otherwise (a submodule's git directory
+under `modules/`) the walk stops there with no repository. git's walk
+stops there too, and roots in the tree the config names, which
+membership never follows from inside a git directory: no pointer there
+says the session is that tree's. Two mechanisms keep membership and an
+origin's `worktree_root` from naming two roots for one checkout: where
+membership refuses the entry git's walk reaches, the origin family runs
+no git (`discovery_refusal`); where git runs, `rev-parse
+--show-toplevel` is kept only where it names the folder membership roots
+the repository at, compared as a filesystem object
+(`gitfile_rule.toplevel_agrees`), and the origin is that of a folder
+outside any repository otherwise. The second holds whatever the first
+misreads, since git reads the config itself; what the reading decides is
+only whether the record carries a root, never a second one. The
+security audit tells, without a warning, a bare repository cloned into
+`.git` with its linked worktrees beside it, whose folder git reads no
+working tree in, and the inside of a submodule's git directory.
+Each witness is one observable fact:
 
 | Code | The witness | Read from | Alone |
 | --- | --- | --- | --- |

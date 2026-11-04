@@ -944,7 +944,8 @@ def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool, str | None]:
     settle it). Git exiting non-zero where the files hold no repository
     either ("not a git repository") is the measured no this probe has
     always reported as None. `refusal` is the first line git wrote when
-    it refused, None otherwise.
+    it refused, None otherwise. A toplevel that is not the folder
+    membership roots the checkout at is None too (`_agreed`, ENG-211).
 
     A path that is not a directory here (a declared workspace this host
     does not hold, a directory removed under a hook, a file) is not
@@ -984,12 +985,25 @@ def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool, str | None]:
         )
         return root, True, reason
     raw = result.stdout.strip()
-    if not raw:
+    if not raw or not _agreed(cwd, raw):
         return None, False, None
     try:
         return str(Path(raw).resolve()), False, None
     except OSError:
         return raw, False, None
+
+
+def _agreed(cwd: Path, toplevel: str) -> bool:
+    """Whether the `toplevel` git printed for `cwd` is the folder
+    membership roots the checkout at (`gitfile_rule.toplevel_agrees`): an
+    origin keeps no other, so a record never carries a root membership's
+    reading of the repository's config missed (ENG-211)."""
+    if gitfile_rule.toplevel_agrees(os.fspath(cwd), toplevel):
+        return True
+    log.info(
+        "git names %s for %s, not membership's root; no origin is kept", toplevel, cwd
+    )
+    return False
 
 
 def _git_worktree_root(cwd: Path) -> str | None:
@@ -1024,7 +1038,7 @@ def repo_toplevel(cwd: Path | None) -> Path | None:
     if cwd is None:
         return None
     toplevel_raw = _git(cwd, "rev-parse", "--show-toplevel")
-    if toplevel_raw is None:
+    if toplevel_raw is None or not _agreed(cwd, toplevel_raw):
         return None
     try:
         return Path(toplevel_raw).resolve()
@@ -1055,7 +1069,11 @@ def repo_toplevel_and_head(cwd: Path | None) -> tuple[Path, str] | None:
     if raw is None:
         return None
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
-    if len(lines) != 2 or not is_full_commit_sha(lines[1]):
+    if (
+        len(lines) != 2
+        or not is_full_commit_sha(lines[1])
+        or not _agreed(cwd, lines[0])
+    ):
         return None
     try:
         return Path(lines[0]).resolve(), lines[1]

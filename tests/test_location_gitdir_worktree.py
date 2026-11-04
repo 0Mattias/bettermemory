@@ -12,7 +12,8 @@ config names from the checkout's own, and the shape is refused by both
 readers: membership passes over the entry, and the origin family runs no
 git where it would read it. A ``core.worktree`` naming the folder itself,
 absolute or relative, keeps both on it, and so does a config past the
-bound that names none.
+remotes' bound that names none. The config is read as git reads a
+repository's format (tests/test_location_gitdir_format.py).
 
 The repositories are real, built with git under ``tmp_path``; the state
 directory is the test's own (``tests/conftest.py``).
@@ -185,8 +186,8 @@ def test_a_config_that_moves_the_tree_off_the_folder_is_refused_by_both_readers(
     the folder holding it: ``core.bare`` true (git reads none, and the
     origin was indeterminate), a ``core.worktree`` naming nothing (git dies
     there), one in ``config.worktree`` under ``extensions.worktreeConfig``,
-    which git reads after the config, and one a NUL byte hides from this
-    reader. Each is refused by both readers."""
+    which git reads after the config, and one set through a NUL byte that
+    ends the name, as git ends it. Each is refused by both readers."""
     app = checkout(tmp_path / "work" / "app", remote=REMOTE)
     other = tmp_path / "work" / "other"
     other.mkdir()
@@ -247,12 +248,13 @@ def test_a_separate_git_directory_naming_another_tree_in_its_worktree_config_is_
 
 
 @pytest.mark.parametrize("names", [False, True])
-def test_a_config_past_the_bound_is_judged_by_what_was_read(
+def test_a_config_past_the_remote_bound_is_read_whole(
     tmp_path: Path, names: bool
 ) -> None:
-    """A config grown past the 1 MiB bound (a branch section per branch) is
-    an ordinary repository's, and git reads a ``core.worktree`` from it, no
-    include, where it stands: the part within the bound is judged, so a
+    """A config grown past the 1 MiB the remotes are read within (a branch
+    section per branch) is an ordinary repository's, and git reads a
+    ``core.worktree`` from it wherever it stands: it is read whole (within
+    `gitconfig._FORMAT_LIMIT`, tests/test_location_gitdir_format.py), so a
     checkout whose config names no working tree stays followed by both
     readers, and one whose config names another folder is refused."""
     app = checkout(tmp_path / "work" / "app", remote=REMOTE)

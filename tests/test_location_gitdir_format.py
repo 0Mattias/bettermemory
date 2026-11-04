@@ -1,0 +1,497 @@
+"""A git directory's working tree, read as git reads it (ENG-211).
+
+ENG-211 refused a git directory whose config moves git's working tree off
+the folder holding it, and read that config through the reader of
+remotes, which splits lines wherever Python does, follows includes and
+reads 1 MiB of a file. git reads a repository's format otherwise
+(setup.c's ``read_repository_format``): LF alone ends a line, a backslash
+before it joins the next one, a leading byte order mark is dropped, no
+include is followed and the whole file is read. Each of those let a config
+name another folder to git and none to the rule, and membership rooted the
+checkout at the folder while git, and the origin, rooted it in the other.
+
+The rule now reads the names that decide the root as git does
+(`gitfile_rule.tree_format`, `gitconfig.git_entries`), and an origin keeps
+only a toplevel that is the folder membership roots the checkout at
+(`gitfile_rule.toplevel_agrees`), so the two never name two roots whatever
+that reading misses. Every expectation is git's own answer first, read from
+a real git: its toplevel, and the variables ``git config --list`` lists.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from bettermemory import _git as git_runner
+from bettermemory import gitconfig, githead, location, location_audit, origin
+from bettermemory.config import Config, StorageConfig
+from bettermemory.events import Recorder
+from bettermemory.server import build_server
+from bettermemory.session import SessionState
+from bettermemory.store import Store
+
+from . import test_location_gitdir_worktree as gitdir_worktree
+from ._mcp import call_tool
+from .test_location_gitdir_worktree import (
+    REMOTE,
+    _inside,
+    _membership,
+    _no_origin,
+    _same,
+    _set,
+)
+from .test_membership_security import _git, checkout, neutral_git
+
+pytestmark = gitdir_worktree.pytestmark
+
+
+@pytest.fixture(autouse=True)
+def _neutral(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No user or system git configuration, git's walk stopped above
+    `tmp_path` (`neutral_git`)."""
+    neutral_git(tmp_path, monkeypatch)
+
+
+@pytest.fixture(name="runs")
+def _runs(monkeypatch: pytest.MonkeyPatch) -> list[Path | None]:
+    """The folder of every git process the package starts from here on."""
+    seen: list[Path | None] = []
+    real = git_runner.run_git
+
+    def spy(args: Any, **kwargs: Any) -> Any:
+        cwd = kwargs.get("cwd")
+        seen.append(None if cwd is None else Path(cwd))
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(git_runner, "run_git", spy)
+    return seen
+
+
+def _toplevel(where: Path) -> subprocess.CompletedProcess[str]:
+    """git's own answer for `where`: ``rev-parse --show-toplevel``."""
+    return subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=where,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _git_names(where: Path, other: Path) -> None:
+    done = _toplevel(where)
+    assert done.returncode == 0, done.stderr
+    assert _same(done.stdout.strip(), other), done.stdout
+
+
+def _apps(tmp_path: Path) -> tuple[Path, Path]:
+    """A checkout with a remote, and another checkout of the user's that a
+    config may name."""
+    app = checkout(tmp_path / "work" / "app", remote=REMOTE)
+    other = checkout(tmp_path / "work" / "other")
+    return app, other
+
+
+def _padding(sections: int) -> bytes:
+    return b"".join(
+        b'[branch "b%d"]\n\tremote = origin\n\tmerge = refs/heads/b%d\n' % (i, i)
+        for i in range(sections)
+    )
+
+
+#: Each spelling of ``core.worktree = <other>`` git reads and the rule's
+#: earlier reader did not, as a change to the config's bytes.
+SPELLINGS: dict[str, Callable[[bytes, bytes], bytes]] = {
+    "continuation": lambda c, o: c + b"[core]\n\tx = y\\\n[other]\n\tworktree = " + o,
+    "lone_cr": lambda c, o: c + b"[core]\n\tx = y\r[other]\n\tworktree = " + o,
+    "vt": lambda c, o: c + b"[core]\n\tx = y\x0b[other]\n\tworktree = " + o,
+    "ff": lambda c, o: c + b"[core]\n\tx = y\x0c[other]\n\tworktree = " + o,
+    "fs": lambda c, o: c + b"[core]\n\tx = y\x1c[other]\n\tworktree = " + o,
+    "nel": lambda c, o: c + b"[core]\n\tx = y\xc2\x85[other]\n\tworktree = " + o,
+    "line_separator": lambda c, o: (
+        c + b"[core]\n\tx = y\xe2\x80\xa8[o]\n\tworktree = " + o
+    ),
+    "byte_order_mark": lambda c, o: b"\xef\xbb\xbf" + c + b"[core]\n\tworktree = " + o,
+    "case": lambda c, o: c + b"[CORE]\n\tWorkTree = " + o,
+    "on_the_header_line": lambda c, o: c + b"[core]worktree=" + o,
+    "crlf": lambda c, o: c + b"[core]\r\n\tworktree = " + o + b"\r\n",
+    "include_after": lambda c, o: (
+        c + b"[core]\n\tworktree = " + o + b"\n[include]\n\tpath = back.inc\n"
+    ),
+    "include_if_after": lambda c, o: (
+        c
+        + b"[core]\n\tworktree = "
+        + o
+        + b'\n[includeIf "gitdir:**"]\n\tpath = back.inc\n'
+    ),
+    "past_a_mebibyte": lambda c, o: c + _padding(30000) + b"[core]\n\tworktree = " + o,
+}
+
+
+@pytest.mark.parametrize("how", list(SPELLINGS))
+def test_each_spelling_git_reads_is_refused_by_both_readers(
+    tmp_path: Path, runs: list[Path | None], how: str
+) -> None:
+    """The review's spellings: each names another folder as the working
+    tree to git (its toplevel says so) and was read by the rule as naming
+    none, an include setting it back to the folder, or the folder past the
+    1 MiB the rule read. Each is now refused: membership passes over the
+    entry, and the origin is a folder's outside any repository, no git
+    run."""
+    app, other = _apps(tmp_path)
+    config = app / ".git" / "config"
+    (app / ".git" / "back.inc").write_text("[core]\n\tworktree = ..\n")
+    config.write_bytes(SPELLINGS[how](config.read_bytes(), os.fsencode(other)) + b"\n")
+    _git_names(app, other)
+    runs.clear()
+
+    assert _membership(app).state == location.OUTSIDE
+    _no_origin(app)
+    assert [cwd for cwd in runs if _inside(cwd, app)] == []
+
+
+#: Config texts git parses, or refuses, in the ways the rule's parse follows:
+#: values (quotes, escapes, comments, trimmed and kept blank space, a NUL
+#: byte), names (case, subsections, the older dotted form, a NUL byte),
+#: headers and keys git refuses, the end of the file, a partial byte order
+#: mark, and the spellings above.
+TEXTS: list[bytes] = [
+    b'[a]\n\tk\n\tv = 1\n\tn = x\\ny\n[b "s\x00t"]\n\tz = q\x00r\n',
+    b'[a]\n\tq = " a ; b " ; c\n\tr = a "" \n\ts = "x"y"z"\n\tt = \\t\\b\\\\\\"\n',
+    b"[a]\n\tu = a \\\n  b\n\tw = a ; c \\\n\tx = 1\n",
+    b'[A "Sub\\\\Q\\"x"]\n\tK-1 = v\n[A.B]\n\tk = v\n',
+    b"[a]\n\tk = v\\",
+    b"[a]\n\tk = v",
+    b"[a]\n\tk\t=\tv\r\n\tj = w\r",
+    b'[ "x"]\n\ty = 1\n',
+    b"k = before any section\n[a]\n",
+    b"[a]\n\tk = \x0bv\x0c\n",
+    b'[a]\n\tk = \xff\xfe\n[b "\xc3\xa9"]\n\tz = 1\n',
+    b"[]\n",
+    b"[a\n",
+    b'[a "x" ]\n',
+    b"[a]\n\t1k = v\n",
+    b"[a]\n\tk\x00 = v\n",
+    b"[a]\n\tk = \\q\n",
+    b'[a]\n\tk = "open\n',
+    b"[a]\n\tk\r= v\n",
+    b"\xef\xbb[a]\n",
+    b"\xef\xbb\xbf\xef\xbb\xbf[a]\n",
+    *(
+        spell(b"[core]\n\tbare = false\n", b"/elsewhere") + b"\n"
+        for spell in SPELLINGS.values()
+    ),
+]
+
+
+@pytest.mark.parametrize("text", TEXTS, ids=range(len(TEXTS)))
+def test_the_parse_is_git_s(tmp_path: Path, text: bytes) -> None:
+    """`gitconfig.git_entries` reads a file as git's parser does: the
+    variables ``git config --file <f> --list --null`` lists (each name, and
+    each value as git's callbacks see it, up to a NUL byte; no include
+    followed), and none where git refuses the file."""
+    path = tmp_path / "config"
+    path.write_bytes(text)
+    done = subprocess.run(
+        ["git", "config", "--file", str(path), "--list", "--null"],
+        capture_output=True,
+    )
+    ours = gitconfig.git_entries(text)
+    if done.returncode != 0:
+        assert b"bad config" in done.stderr, done.stderr
+        assert ours is None
+        return
+    listed = [
+        (item.split(b"\n", 1)[0], item.split(b"\n", 1)[1] if b"\n" in item else None)
+        for item in done.stdout.split(b"\0")[:-1]
+    ]
+    assert ours is not None
+    assert [
+        (name, None if value is None else value.split(b"\0", 1)[0])
+        for name, value in ours
+    ] == listed
+
+
+@pytest.mark.parametrize(
+    ("value", "number"),
+    [
+        (b"0", 0),
+        (b"1", 1),
+        (b"0x0", 0),
+        (b"-1", -1),
+        (b"\x0b1", 1),
+        (b"1k", 1024),
+        (b"2097151k", 2097151 * 1024),
+        (b"08", None),
+        (b"0xg", None),
+        (b"", None),
+        (None, None),
+        (b"2147483648", None),
+        (b"-2097152k", None),
+    ],
+)
+def test_a_number_is_read_as_git_reads_it(
+    value: bytes | None, number: int | None
+) -> None:
+    """``git_config_int``: ``strtoimax`` in base 0, a unit, within an int,
+    and git dying (None) on anything else; checked against git where it
+    decides a root (the format version, below)."""
+    assert gitconfig.git_int(value) == number
+
+
+def _without_version(app: Path, tail: bytes) -> None:
+    config = app / ".git" / "config"
+    body = config.read_bytes()
+    assert b"\trepositoryformatversion = 0\n" in body
+    config.write_bytes(body.replace(b"\trepositoryformatversion = 0\n", b"") + tail)
+
+
+@pytest.mark.parametrize("how", ["worktree", "bare", "negative"])
+def test_a_config_git_reads_no_format_from_leaves_the_tree_at_the_folder(
+    tmp_path: Path, how: str
+) -> None:
+    """git takes neither ``core.worktree`` nor ``core.bare`` from a config
+    with no ``core.repositoryformatversion``, or one below 0
+    (``read_repository_format`` clears the format): git roots the checkout
+    at the folder, and both readers do too. The rule refused it."""
+    app, other = _apps(tmp_path)
+    tail = {
+        "worktree": b"[core]\n\tworktree = " + os.fsencode(other) + b"\n",
+        "bare": b"[core]\n\tbare = true\n",
+        "negative": b"[core]\n\trepositoryformatversion = -1\n\tworktree = "
+        + os.fsencode(other)
+        + b"\n",
+    }[how]
+    _without_version(app, tail)
+    _git_names(app, app)
+
+    cap = _membership(app)
+    assert cap.state == location.REPO and _same(cap.root, app), cap
+    got = origin.capture(app)
+    assert got.repo == REMOTE and _same(got.worktree_root, app)
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        b"[core]\n\tworktree =\n",
+        b'[core]\n\tworktree = ""\n',
+        b"[core]\n\tworktree\n",
+        b"[core]\n\tbare = maybe\n",
+        b"[core]\n\trepositoryformatversion = 2\n",
+        b"[core]\n\tx = \\q\n",
+    ],
+    ids=["empty", "empty_quoted", "no_value", "no_boolean", "version_2", "bad_line"],
+)
+def test_a_config_git_dies_on_is_refused_by_both_readers(
+    tmp_path: Path, runs: list[Path | None], tail: bytes
+) -> None:
+    """An empty ``core.worktree`` (git dies: "cannot chdir to ''"), one with
+    no value, a ``core.bare`` that is no boolean, a format version git does
+    not read and a line git cannot parse: git names no toplevel, and
+    neither reader names a root. The rule followed the folder at the first
+    two (an empty value read as none)."""
+    app, _other = _apps(tmp_path)
+    config = app / ".git" / "config"
+    config.write_bytes(config.read_bytes() + tail)
+    assert _toplevel(app).returncode != 0
+    runs.clear()
+
+    assert _membership(app).state == location.OUTSIDE
+    _no_origin(app)
+    assert [cwd for cwd in runs if _inside(cwd, app)] == []
+
+
+def test_a_config_past_the_format_bound_is_refused(tmp_path: Path) -> None:
+    """git reads a config of any size; one past `gitconfig._FORMAT_LIMIT`
+    is not read here, and is refused (fail closed) rather than judged by a
+    part of it."""
+    app, _other = _apps(tmp_path)
+    config = app / ".git" / "config"
+    config.write_bytes(config.read_bytes() + _padding(40000))
+    assert config.stat().st_size > gitconfig._FORMAT_LIMIT
+    _git_names(app, app)
+
+    assert _membership(app).state == location.OUTSIDE
+    _no_origin(app)
+
+
+def test_a_worktree_s_config_worktree_is_read_where_git_reads_it(
+    tmp_path: Path, runs: list[Path | None]
+) -> None:
+    """A linked worktree's git directory takes ``core.worktree`` from its own
+    ``config.worktree`` under ``extensions.worktreeConfig`` (git roots the
+    worktree in the folder it names), and from the common config not at
+    all without it: the first is refused, the second leaves the worktree
+    where git keeps it."""
+    main, other = _apps(tmp_path)
+    tree = tmp_path / "work" / "tree"
+    _git(main, "worktree", "add", "-q", str(tree), "-b", "tree")
+    with (main / ".git" / "config").open("ab") as fh:
+        fh.write(b"[core]\n\tworktree = " + os.fsencode(other) + b"\n")
+    _git_names(tree, tree)
+    assert _same(_membership(tree).root, tree)
+    assert _same(origin.capture(tree).worktree_root, tree)
+
+    _set(main / ".git", "extensions.worktreeConfig", "true")
+    own = main / ".git" / "worktrees" / "tree" / "config.worktree"
+    own.write_text(f"[core]\n\tworktree = {other}\n", encoding="utf-8")
+    _git_names(tree, other)
+    runs.clear()
+    assert _membership(tree).state == location.OUTSIDE
+    _no_origin(tree)
+    assert [cwd for cwd in runs if _inside(cwd, tree)] == []
+
+
+async def test_an_origin_keeps_no_toplevel_membership_does_not_root_at(
+    tmp_path: Path,
+    memory_dir: Path,
+    runs: list[Path | None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard that holds whatever the rule's reading of a config misses:
+    with the parse made to miss ``core.worktree``, membership roots the
+    checkout at its folder, git runs there and names the other folder, and
+    the origin keeps no toplevel (`gitfile_rule.toplevel_agrees`). A write
+    whose claim holds only in the other folder is refused, and nothing is
+    stored."""
+    app, _ = _apps(tmp_path)
+    other = checkout(tmp_path / "work" / "other2", files={"only_there.txt": "x\n"})
+    _set(app / ".git", "core.worktree", str(other))
+    _git_names(app, other)
+    real = gitconfig.read_git_config
+
+    def missing(path: str) -> gitconfig.GitConfigRead:
+        read = real(path)
+        kept = tuple(e for e in read.entries if e[0] != b"core.worktree")
+        return gitconfig.GitConfigRead(kept, read.why)
+
+    monkeypatch.setattr(gitconfig, "read_git_config", missing)
+    cap = _membership(app)
+    assert cap.state == location.REPO and _same(cap.root, app), cap
+    runs.clear()
+
+    got = origin.capture(app)
+    assert any(_inside(cwd, app) for cwd in runs), "git ran: the rule missed it"
+    assert (got.worktree_root, got.repo, got.git_indeterminate) == (None, None, False)
+    assert origin.repo_toplevel(app) is None
+    assert origin.repo_toplevel_and_head(app) is None
+
+    import bettermemory._handlers as handlers_module
+
+    monkeypatch.setattr(
+        handlers_module, "capture_origin", lambda cwd=None: origin.capture(app)
+    )
+    store = Store(memory_dir)
+    state = SessionState()
+    server = build_server(
+        config=Config(storage=StorageConfig(directory=str(memory_dir))),
+        store=store,
+        state=state,
+        recorder=Recorder(store=store, session_id=state.session_id),
+    )
+    write: dict[str, Any] = {
+        "content": "the setting lives in only_there.txt",
+        "scopes": ["tools"],
+        "claims": ["only_there.txt"],
+    }
+    with pytest.raises(Exception, match="not inside a git worktree"):
+        await call_tool(server, "memory_write", write)
+    assert store.load_all() == []
+
+
+def test_a_session_inside_a_submodule_s_git_directory_joins_no_project(
+    tmp_path: Path, runs: list[Path | None]
+) -> None:
+    """Inside ``.git/modules/<sub>``, git reads a git directory whose
+    ``core.worktree`` names the submodule's tree, and roots there; the rule
+    refuses that directory, and membership's walk went on to the
+    superproject's ``.git`` and rooted the session there. It stops where
+    git's walk stops: no project, no origin, and the audit says where
+    sessions belong without a warning. (9.0.0rc18 read the directory as a
+    bare repository keyed on itself.)"""
+    lib = checkout(tmp_path / "src" / "lib")
+    sup = checkout(tmp_path / "work" / "super", remote=REMOTE)
+    _git(
+        sup,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(lib),
+        "sub",
+    )
+    modules = sup / ".git" / "modules" / "sub"
+    for here in (modules, modules / "refs"):
+        _git_names(here, sup / "sub")
+        runs.clear()
+        cap = _membership(here)
+        assert cap.state == location.OUTSIDE and cap.root is None, cap
+        _no_origin(here)
+        assert [cwd for cwd in runs if _inside(cwd, sup)] == []
+        found = location_audit.gitfile_posture(str(here))
+        assert found["status"] == "info", found
+        assert "sessions belong in the working tree" in found["summary"]
+        assert "fix" not in found
+    assert _same(_membership(sup / "sub").root, sup / "sub")
+    assert _same(origin.capture(sup / "sub").worktree_root, sup / "sub")
+
+
+def test_a_git_directory_named_otherwise_joins_no_project_from_inside(
+    tmp_path: Path, runs: list[Path | None]
+) -> None:
+    """Inside a git directory that is not a ``.git`` and whose
+    ``core.worktree`` names the folder holding it (``GIT_DIR=x/meta.git
+    GIT_WORK_TREE=x git init`` writes one), git roots at that folder.
+    The folder holds no ``.git``, so neither reader finds a repository
+    there, and inside the git directory membership joins none either: it
+    follows a ``core.worktree`` from inside a git directory only where it
+    is a ``.git`` naming the folder above, the folder's own repository."""
+    tree = checkout(tmp_path / "work" / "x")
+    meta = tree / "meta.git"
+    (tree / ".git").rename(meta)
+    _git(tree, "--git-dir", str(meta), "config", "core.worktree", "..")
+    assert _toplevel(tree).returncode != 0
+    assert _membership(tree).state == location.OUTSIDE
+    for here in (meta, meta / "refs"):
+        _git_names(here, tree)
+        runs.clear()
+        cap = _membership(here)
+        assert cap.state == location.OUTSIDE and cap.root is None, cap
+        _no_origin(here)
+        assert [cwd for cwd in runs if _inside(cwd, tree)] == []
+        found = location_audit.gitfile_posture(str(here))
+        assert found["status"] == "info", found
+        assert "sessions belong in the working tree" in found["summary"]
+
+
+def test_a_bare_repository_cloned_into_dot_git_is_told_not_warned(
+    tmp_path: Path,
+) -> None:
+    """``git clone --bare <url> proj/.git`` with ``git worktree add main``
+    beside it: git reads no working tree in ``proj``, and neither reader
+    roots one there; each worktree is its own checkout. The audit warned,
+    with a fix to remove ``core.bare`` that would break the layout; it now
+    says the sessions belong inside a worktree, and suggests no change."""
+    src = checkout(tmp_path / "src" / "app", remote=REMOTE)
+    proj = tmp_path / "work" / "proj"
+    proj.mkdir(parents=True)
+    _git(proj, "clone", "-q", "--bare", str(src), ".git")
+    _git(proj, "worktree", "add", "-q", "main", "main")
+    assert "must be run in a work tree" in _toplevel(proj).stderr
+    _git_names(proj / "main", proj / "main")
+
+    assert _membership(proj).state == location.OUTSIDE
+    assert githead.locate(proj) is None
+    assert _same(_membership(proj / "main").root, proj / "main")
+    found = location_audit.gitfile_posture(str(proj))
+    assert found["status"] == "info", found
+    assert "sessions belong inside one of the worktrees" in found["summary"]
+    assert os.fspath(proj / "main") in found["summary"]
+    assert "fix" not in found and "core.bare" not in str(found)

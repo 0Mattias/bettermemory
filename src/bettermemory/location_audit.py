@@ -17,7 +17,7 @@ import os
 from typing import Any
 
 from . import gitdir_pin
-from .gitfile_rule import UNREAD_TREE, _recorded_reading
+from .gitfile_rule import UNREAD_TREE, _recorded_reading, _small_text, names_git_dir
 from .location import kept_apart
 from .location_git import _discover
 
@@ -37,8 +37,12 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
     where the repository found is a ``.git`` file naming a git directory
     kept apart (``--separate-git-dir``) with no working tree recorded for
     it yet (`gitdir_pin`, ENG-206), which the next capture here records,
-    so until then the first folder seen naming it becomes its tree;
-    ``ok`` otherwise; ``skip`` with no working directory. A recorded tree
+    so until then the first folder seen naming it becomes its tree, and
+    where every refusal is of a layout that is no plant (`_layout`: a bare
+    repository cloned into ``.git`` with its linked worktrees beside it,
+    the inside of a submodule's git directory), which says where sessions
+    belong and no fix touches its config; ``ok``
+    otherwise; ``skip`` with no working directory. A recorded tree
     that stopped answering since discovery read it warns as discovery's
     refusal would. Reads only."""
     try:
@@ -68,6 +72,11 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
             record = (pin, here)
         else:
             refused.append((found.dotgit, found.git_dir, why))
+    # A layout that is no plant, where sessions belong elsewhere (`_layout`),
+    # is told, never warned of, and no fix touches its config.
+    layouts = [(r[0], _layout(*r)) for r in refused]
+    told = next(((path, said) for path, said in layouts if said), None)
+    refused = [r for r, (_, said) in zip(refused, layouts, strict=True) if not said]
     if refused:
         first, target, why = refused[0]
         return {
@@ -82,6 +91,14 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
                     {"dotgit": d, "target": t, "reason": w} for d, t, w in refused
                 ],
             },
+        }
+    if told is not None:
+        return {
+            "id": GITFILE_FINDING,
+            "status": "info",
+            "summary": told[1],
+            "path": told[0],
+            "details": {"cwd": start},
         }
     dotgit = None if found is None else found.dotgit
     details: dict[str, Any] = {"cwd": start, "dotgit": dotgit}
@@ -148,6 +165,62 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
     }
 
 
+def _layout(refused: str, target: str, why: str) -> str | None:
+    """The finding's summary where the refusal `why` of `refused` (which
+    names the git directory `target`) is of a layout that is no plant and
+    where a session belongs elsewhere, None otherwise (ENG-211): a bare
+    repository cloned into ``.git`` with its linked worktrees beside it
+    (``git clone --bare <url> .git``, then ``git worktree add``,
+    `_linked_trees`), whose folder git reads no working tree in, and the
+    inside of a git directory other than a ``.git`` whose config names its
+    working tree (a submodule's under ``.git/modules``), which git roots in
+    that tree and membership joins nothing from. Neither is followed, a
+    session belongs in a working tree, and no config there wants a
+    change."""
+    if refused != target:
+        return None
+    trees = _linked_trees(target, why)
+    if trees:
+        return (
+            f"{target} is a bare repository whose working trees are its linked "
+            f"worktrees ({', '.join(trees)}): git reads no working tree in "
+            f"{os.path.dirname(target)}, and sessions belong inside one of the "
+            "worktrees"
+        )
+    if os.path.basename(target) != ".git" and why.endswith("(core.worktree)"):
+        return (
+            f"{target} is the inside of a git directory, where membership "
+            f"joins no project ({why}): sessions belong in the working tree "
+            "it names"
+        )
+    return None
+
+
+def _linked_trees(target: str, why: str) -> list[str]:
+    """The working trees of the linked worktrees registered under the git
+    directory `target`, where it is a folder's ``.git`` refused for its
+    ``core.bare`` (`gitfile_rule.own_refusal`): a bare repository cloned
+    into ``.git`` with ``git worktree add`` run beside it. Each is the
+    folder of the ``.git`` that a ``<target>/worktrees/<name>/gitdir`` file
+    names and that names that directory back
+    (`gitfile_rule.names_git_dir`). Empty for any other refusal."""
+    if os.path.basename(target) != ".git" or not why.endswith("(core.bare)"):
+        return []
+    trees: list[str] = []
+    try:
+        with os.scandir(os.path.join(target, "worktrees")) as entries:
+            for entry in entries:
+                back = _small_text(os.path.join(entry.path, "gitdir"))
+                if not back:
+                    continue
+                dotgit = os.path.normpath(os.path.join(entry.path, back))
+                if names_git_dir(dotgit, entry.path):
+                    trees.append(os.path.dirname(dotgit))
+    except OSError:
+        return []
+    return sorted(trees)
+
+
 def _gitfile_fix(refused: str, why: str, target: str) -> str:
     """The warning's fix for the refused `.git` file or folder `refused`,
     which names the git directory `target`, not followed for the reason
@@ -162,17 +235,18 @@ def _gitfile_fix(refused: str, why: str, target: str) -> str:
     itself refused for what its own config names (`gitfile_rule.own_refusal`
     and `inside_refusal`, ENG-211), it says how to make that config name
     this folder."""
-    if refused == target and why.startswith(f"{target}'s config names "):
+    if refused == target and why.startswith(f"{target}'s config "):
         return (
             "git reads it as a git directory whose working tree is not the "
-            "folder it sits in: its config names another folder (core.worktree) "
-            "or none (core.bare), or holds a NUL byte, past which git reads "
-            "names this check does not. A git command here acts on the tree it "
-            "names, and neither membership nor the origin of a record written "
-            "here follows it. If this folder is its working tree, remove "
-            "core.worktree, a core.bare of true and any NUL byte from that "
-            "config; the next session here follows it. If it came from an "
-            "archive, a copy or someone else, remove it."
+            "folder it sits in: its config names another folder or an empty "
+            "one (core.worktree) or none (core.bare), or it is a config git "
+            "dies on or larger than this check reads. A git command here acts "
+            "on the tree it names, or fails, and neither membership nor the "
+            "origin of a record written here follows it. If this folder is its "
+            "working tree, remove core.worktree and a core.bare of true from "
+            "that config (git config --unset), or mend what git reports on it; "
+            "the next session here follows it. If it came from an archive, a "
+            "copy or someone else, remove it."
         )
     plant = (
         "its .git file"

@@ -83,7 +83,7 @@ from ._location_probe import (
     probe,
     view_path,
 )
-from .gitconfig import _config_values, unchanged  # the `.git` rule below: ENG-193
+from .gitconfig import unchanged  # a kept capture's config files: ENG-207
 from .machine import _identity_from  # the client's machine as posted
 from .machine import identity_to_json as identity_to_json  # the hook client's
 from .gitfile_rule import (
@@ -95,6 +95,7 @@ from .gitfile_rule import (
     _recorded_reading,
     _recorded_refusal,
     earliest_naming,
+    tree_format,
 )
 
 # The vocabulary, discovery, the capture model and the history reader live
@@ -671,8 +672,8 @@ def kept_apart(found: _Git) -> bool:
     resolved) was reached through a ``.git`` entry naming a git directory
     kept apart (``--separate-git-dir``): a primary checkout found from a
     ``.git`` entry that is not a directory of its own (a file, or a link)
-    whose config names no ``core.worktree``, so git keeps no pointer back
-    to its tree."""
+    whose config names no ``core.worktree`` git reads (`tree_format`), so
+    git keeps no pointer back to its tree."""
     if found.kind != PRIMARY or found.dotgit in (None, found.git_dir):
         # Found at its own `.git` directory, or not from a `.git` entry.
         return False
@@ -684,10 +685,7 @@ def kept_apart(found: _Git) -> bool:
         return False
     if stat.S_ISDIR(own.st_mode) and not _is_link(own):
         return False
-    config = os.path.join(found.git_dir, "config")
-    return not _config_values(config, git_dir=found.git_dir).get(
-        ("core", None, "worktree")
-    )
+    return tree_format(found.git_dir).worktree is None
 
 
 def record_working_tree(git_dir: str, tree: str) -> str:

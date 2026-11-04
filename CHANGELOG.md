@@ -78,27 +78,51 @@ eighteenth was built.
   membership and the origin disagreed too: a `core.worktree` naming
   nothing (git dies there; the origin was indeterminate), a `core.bare`
   of true in a folder's own `.git` (git reads no working tree), and a
-  walk started inside a git directory whose config names a working tree
-  other than the parent membership roots it at (a submodule's git
-  directory under `.git/modules/`). A `core.worktree` naming the folder
-  itself, by its path or as `..`, is followed by both as before. The
-  config is read where git reads these names, `config.worktree` too
-  under `extensions.worktreeConfig`, so a `.git` file whose git
-  directory names another tree there is refused as well, and so is a
-  config whose NUL byte hides one of these names (git ends a name there,
-  so `[core "worktree\0"]` sets `core.worktree`); a folder's own config
-  past the 1 MiB bound is judged by what was read within it, as git
-  reads it, no include, rather than refused. A checkout set up this
-  way loses its membership at that folder: remove `core.worktree` (and a
-  `core.bare` of true) from its config if the folder is its working tree,
-  as `bettermemory security audit` there now says. Each prompt at a
-  checkout reads its `.git` directory's config once more (one open,
-  about 35 µs). (`src/bettermemory/gitfile_rule.py`,
-  `src/bettermemory/location_git.py`,
-  `src/bettermemory/location_audit.py`, `docs/internals.md`,
-  `SECURITY.md`, `tests/test_location_gitdir_worktree.py`,
-  `tests/test_membership_capture.py`, `tests/test_commit_drift_cache.py`,
-  `tests/test_origin_cache.py`, `tests/test_origin_refused.py`)
+  walk started inside a git directory whose config names a working tree,
+  unless it is a `.git` naming the folder above it (a submodule's git
+  directory under `.git/modules/`), where membership's walk now stops
+  with no project: git's walk stops there too and roots the session in
+  the tree that config names, which membership does not follow from
+  inside a git directory (9.0.0rc18 read that directory as a bare
+  repository keyed on itself). A
+  `core.worktree` naming the folder itself, by its path or as `..`, is
+  followed by both as before. The config is read as git reads a
+  repository's format (`gitfile_rule.tree_format`): parsed as git's own
+  parser parses a file, byte by byte (LF alone ends a line, so a lone
+  CR, VT, FF, NEL or U+2028 inside a value hides nothing; a backslash
+  before a newline joins the next line; a leading byte order mark is
+  dropped; a name ends at a NUL byte, so `[core "worktree\0"]` sets
+  `core.worktree`), whole up to 2 MiB with no include followed, and
+  `config.worktree` after it under `extensions.worktreeConfig`, a linked
+  worktree's included. A config with no `core.repositoryformatversion`
+  (or one below 0) moves nothing, as git takes neither name from it, and
+  is followed; one git dies on (an empty `core.worktree`, a value git
+  cannot read, a version above 1, a line git cannot parse), and one over
+  2 MiB or that cannot be read, is refused. That reading is not what keeps
+  the two readers apart: where git runs, an origin keeps `rev-parse
+  --show-toplevel` only where it names the folder membership roots the
+  checkout at, compared as a filesystem object
+  (`gitfile_rule.toplevel_agrees`), and records no root otherwise, so a
+  record never carries a root other than membership's whatever the
+  reading misses. A checkout set up this way loses its membership at that
+  folder: remove `core.worktree` (and a `core.bare` of true) from its
+  config if the folder is its working tree, as `bettermemory security
+  audit` there now says. The audit tells, as info and with no fix, a bare
+  repository cloned into `.git` with its linked worktrees beside it
+  (`git clone --bare <url> .git`, then `git worktree add`), whose
+  `core.bare` git needs and whose folder git reads no working tree in,
+  and the inside of a submodule's git directory: sessions belong in a
+  worktree. Each prompt at a checkout reads its `.git` directory's config
+  once more (one open, about 35 µs), and an origin captured where git
+  runs walks the folders above it once more. (`src/bettermemory/gitconfig.py`,
+  `src/bettermemory/gitfile_rule.py`, `src/bettermemory/location_git.py`,
+  `src/bettermemory/location.py`, `src/bettermemory/location_audit.py`,
+  `src/bettermemory/origin.py`, `docs/internals.md`, `SECURITY.md`,
+  `tests/test_location_gitdir_worktree.py`,
+  `tests/test_location_gitdir_format.py`,
+  `tests/test_location_git_config.py`, `tests/test_membership_capture.py`,
+  `tests/test_commit_drift_cache.py`, `tests/test_origin_cache.py`,
+  `tests/test_origin_refused.py`)
 
 #### Fixed
 

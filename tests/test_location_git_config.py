@@ -179,14 +179,18 @@ def test_a_remote_is_keyed_as_insteadof_rewrites_it_too(tmp_path: Path) -> None:
     assert "github.com/acme/lib" not in keys
 
 
-def test_a_gitfile_target_whose_config_cannot_be_read_whole_is_refused(
+def test_a_gitfile_target_s_working_tree_is_read_as_git_reads_its_format(
     tmp_path: Path,
 ) -> None:
-    """A ``.git`` file naming a ``--separate-git-dir`` is followed; once its
-    config moves the working tree elsewhere through an include, it is
-    refused, as it is when such an include stands under a condition not
-    evaluated here, or when the config is over the bound. An include under
-    such a condition that does not name the tree leaves it followed."""
+    """A ``.git`` file naming a ``--separate-git-dir`` is followed where
+    git roots the tree at its folder, and git reads a git directory's
+    working tree from its config file alone (setup.c's
+    ``read_repository_format``, ENG-211): an include, under a condition or
+    not, that sets ``core.worktree`` moves nothing, and git's toplevel says
+    so, while a ``core.worktree`` in the file naming another folder is
+    refused whatever an include sets after it. A config past the 1 MiB
+    remote bound is read whole for it; one past `gitconfig._FORMAT_LIMIT`
+    is refused (fail closed)."""
     tree, sep, other = tmp_path / "tree", tmp_path / "sep", tmp_path / "other"
     other.mkdir()
     _git(tmp_path, "init", "-q", "-b", "main", f"--separate-git-dir={sep}", str(tree))
@@ -197,14 +201,25 @@ def test_a_gitfile_target_whose_config_cannot_be_read_whole_is_refused(
         config.write_text(original + extra, encoding="utf-8")
         return gitfile_rule.gitfile_refusal(str(tree), str(tree / ".git"), str(sep))
 
+    def toplevel() -> Path:
+        return Path(_git(tree, "rev-parse", "--show-toplevel")).resolve()
+
     (sep / "tree.inc").write_text(f"[core]\n\tworktree = {other.as_posix()}\n")
-    (sep / "user.inc").write_text("[user]\n\tname = Someone\n")
+    (sep / "back.inc").write_text(f"[core]\n\tworktree = {tree.as_posix()}\n")
     assert refusal("") is None
-    assert refusal("[include]\n\tpath = tree.inc\n") is not None
-    assert refusal('[includeIf "onbranch:main"]\n\tpath = tree.inc\n') is not None
-    assert refusal('[includeIf "onbranch:main"]\n\tpath = user.inc\n') is None
+    for include in ("[include]", '[includeIf "onbranch:main"]'):
+        assert refusal(f"{include}\n\tpath = tree.inc\n") is None
+        assert toplevel() == tree.resolve()
+    named = f"[core]\n\tworktree = {other.as_posix()}\n[include]\n\tpath = back.inc\n"
+    assert refusal(named) is not None
+    assert toplevel() == other.resolve()
     padding = "".join(f'[branch "b{i}"]\n\tremote = origin\n' for i in range(40000))
-    assert refusal(padding) is not None
+    assert len(padding) > 1 << 20
+    assert refusal(padding) is None
+    assert refusal(padding + f"[core]\n\tworktree = {other.as_posix()}\n") is not None
+    over = "".join(f'[branch "b{i}"]\n\tremote = origin\n' for i in range(70000))
+    assert len(over) > gitconfig._FORMAT_LIMIT
+    assert "larger than" in (refusal(over) or "")
 
 
 def test_an_include_naming_a_fifo_does_not_wait(tmp_path: Path) -> None:

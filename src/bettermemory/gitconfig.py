@@ -477,3 +477,270 @@ def _truthy(values: Sequence[str] | None) -> bool | None:
     if last in ("false", "no", "off", "0", ""):
         return False
     return None
+
+
+# ---------------------------------------------------------------------------
+# git's own parse of one config file, for the repository format (ENG-211)
+# ---------------------------------------------------------------------------
+
+#: The bytes a config file read for the repository's format may hold
+#: (`read_git_config`). git reads any size; one larger is not read here,
+#: and the git directory is refused (fail closed, ENG-211). Twice the
+#: bound `_config_values` reads remotes within, so a config of 30,000
+#: branch sections (1.8 MB, tests/test_location_git_config.py) is read
+#: whole. Measured (`git_entries`, macOS, Python 3.13): 11 us for a config
+#: `git init` and one remote write (302 B), 86 ms for those 1.8 MB, and at
+#: most about 0.55 s for 2 MiB built to be slow (a one-letter key a line;
+#: 0.63 s for `gitfile_rule.tree_format`'s whole read of it).
+_FORMAT_LIMIT = 1 << 21
+_UTF8_BOM = b"\xef\xbb\xbf"
+# Blank space and comments between entries: git's isspace (space, tab, LF
+# and CR, not VT or FF) and a comment to the end of its line.
+_BETWEEN = re.compile(rb"(?:[ \t\n\r]+|[#;][^\n]*)*")
+# A section header (config.c's ``get_base_var`` and
+# ``get_extended_base_var``): a name of key characters and dots, closed at
+# once, or followed by blank space other than a newline and a quoted
+# subsection, in which a backslash keeps the next character, closed at once.
+_HEADER = re.compile(rb'\[([A-Za-z0-9.-]*)(?:(\])|[ \t\r]+"((?:[^"\\\n]|\\[^\n])*)"\])')
+_SUB_ESCAPE = re.compile(rb"\\(.)", re.DOTALL)
+# A key (``get_value``): a letter, then letters, digits and dashes, then
+# spaces and tabs.
+_KEY = re.compile(rb"([A-Za-z][A-Za-z0-9-]*)[ \t]*")
+# A value with no backslash and no quote, to its comment and its newline:
+# the run before the comment is the value, git's blank space trimmed at
+# both ends.
+_PLAIN = re.compile(rb"([^\n\\\"#;]*)(?:[#;][^\n]*)?(?:\n|\Z)")
+_TRIM = b" \t\r"
+_ESCAPES = {0x74: 0x09, 0x62: 0x08, 0x6E: 0x0A, 0x5C: 0x5C, 0x22: 0x22}
+
+#: One variable as git's callbacks see it: its name, as ``strcmp`` compares
+#: it (lower case but for a subsection, cut at a NUL byte), and its value
+#: as written, None for a key with no ``=``.
+Entry = tuple[bytes, bytes | None]
+
+
+@dataclass(frozen=True)
+class GitConfigRead:
+    """`read_git_config`'s answer: the `entries` git reads from a file, in
+    order, or `why` they are not known (the file is larger than
+    `_FORMAT_LIMIT`, cannot be read, is no regular file, or git's parse of
+    it fails, where git dies), and then no entries."""
+
+    entries: tuple[Entry, ...] = ()
+    why: str | None = None
+
+
+def read_git_config(path: str) -> GitConfigRead:
+    """The variables the config file `path` sets, read whole and parsed as
+    git parses it (`git_entries`), with no include followed: git's read of
+    a repository's format (setup.c's ``read_repository_format``) follows
+    none, nor reads a global or system file (ENG-211). A file that does not
+    exist sets nothing, as git reads it. The open does not block, so a FIFO
+    fails instead of waiting."""
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    try:
+        fd = os.open(path, flags)
+    except (FileNotFoundError, NotADirectoryError):
+        return GitConfigRead()
+    except (OSError, ValueError) as exc:
+        return GitConfigRead(why=f"{path} could not be read ({type(exc).__name__})")
+    chunks: list[bytes] = []
+    size = 0
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return GitConfigRead(why=f"{path} is not a regular file")
+        while size <= _FORMAT_LIMIT:
+            chunk = os.read(fd, _FORMAT_LIMIT + 1 - size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError as exc:
+        return GitConfigRead(why=f"{path} could not be read ({type(exc).__name__})")
+    finally:
+        os.close(fd)
+    if size > _FORMAT_LIMIT:
+        return GitConfigRead(why=f"{path} is larger than {_FORMAT_LIMIT >> 20} MiB")
+    entries = git_entries(b"".join(chunks))
+    if entries is None:
+        return GitConfigRead(why=f"{path} is a config git cannot parse")
+    return GitConfigRead(tuple(entries))
+
+
+def git_entries(data: bytes) -> list[Entry] | None:
+    """The variables the config file `data` sets, in order, as git's own
+    parser reads them (config.c's ``git_parse_source``, ``get_next_char``,
+    ``get_base_var``, ``get_value`` and ``parse_value``; checked against
+    git 2.54), or None where that parse fails ("bad config line") and git
+    dies.
+
+    It is read as git reads it, byte by byte, not by lines: a leading
+    UTF-8 byte order mark is dropped (a part of one fails); CR LF is LF and
+    a lone CR is blank space, as space and tab are, but not VT, FF or any
+    other byte Python splits lines at; a backslash before a newline joins
+    the next line onto a value outside a comment, inside quotes too; a
+    section header may be followed by a key on its line; the end of the
+    file ends a line. A name is lower case but for a quoted subsection,
+    whose escapes are undone, and is cut at its first NUL byte, as git's
+    ``strcmp`` reads it: ``[core "worktree\\0"]`` names ``core.worktree``.
+    A value is kept as written (`_value`), NUL bytes and all."""
+    if data.startswith(_UTF8_BOM):
+        data = data[len(_UTF8_BOM) :]
+    elif data[:1] == _UTF8_BOM[:1]:
+        return None
+    text = data.replace(b"\r\n", b"\n")
+    out: list[Entry] = []
+    stem = b""
+    pos, end = 0, len(text)
+    while True:
+        between = _BETWEEN.match(text, pos)
+        pos = end if between is None else between.end()
+        if pos >= end:
+            return out
+        if text[pos] == 0x5B:  # "["
+            header = _HEADER.match(text, pos)
+            if header is None:
+                return None
+            name, closed, sub = header.groups()
+            if closed is not None and not name:
+                return None
+            stem = name.lower() + b"."
+            if closed is None:
+                stem += _SUB_ESCAPE.sub(rb"\1", sub) + b"."
+            pos = header.end()
+            continue
+        key = _KEY.match(text, pos)
+        if key is None:
+            return None
+        pos = key.end()
+        value: bytes | None = None
+        if pos < end and text[pos] == 0x3D:  # "="
+            read = _value(text, pos + 1)
+            if read is None:
+                return None
+            value, pos = read
+        elif pos < end and text[pos] != 0x0A:
+            return None
+        else:
+            pos += 1
+        out.append(((stem + key.group(1).lower()).split(b"\0", 1)[0], value))
+
+
+def _value(text: bytes, pos: int) -> tuple[bytes, int] | None:
+    """The value that starts at `pos`, and the position past the newline
+    ending it (config.c's ``parse_value``), or None where git refuses it: a
+    quote open at its newline, or an escape other than ``\\t``, ``\\b``,
+    ``\\n``, ``\\\\`` and ``\\"``. Blank space before it is skipped and
+    after it trimmed, unless a quote follows (``a ""`` keeps its space);
+    quotes group, a ``#`` or ``;`` outside them starts a comment to the
+    newline, and a backslash before a newline joins the lines."""
+    plain = _PLAIN.match(text, pos)
+    if plain is not None:
+        return plain.group(1).strip(_TRIM), plain.end()
+    out = bytearray()
+    end = len(text)
+    quote = comment = False
+    trim = 0
+    while True:
+        c = text[pos] if pos < end else 0x0A
+        pos += 1
+        if c == 0x0A:
+            if quote:
+                return None
+            if trim:
+                del out[trim:]
+            return bytes(out), pos
+        if comment:
+            continue
+        if c in _TRIM and not quote:
+            if not trim:
+                trim = len(out)
+            if out:
+                out.append(c)
+            continue
+        if not quote and c in (0x23, 0x3B):  # "#" ";"
+            comment = True
+            continue
+        trim = 0
+        if c == 0x5C:  # a backslash
+            c = text[pos] if pos < end else 0x0A
+            pos += 1
+            if c == 0x0A:
+                continue
+            if c not in _ESCAPES:
+                return None
+            out.append(_ESCAPES[c])
+        elif c == 0x22:
+            quote = not quote
+        else:
+            out.append(c)
+
+
+# C's isspace, which ``strtoimax`` skips before a number.
+_C_SPACE = b" \t\n\v\f\r"
+_INT_MAX = (1 << 31) - 1
+_INTMAX_MAX = (1 << 63) - 1
+_UNITS = {b"": 1, b"k": 1 << 10, b"m": 1 << 20, b"g": 1 << 30}
+_HEX = re.compile(rb"0[xX]([0-9A-Fa-f]+)")
+_OCTAL = re.compile(rb"0[0-7]*")
+_DECIMAL = re.compile(rb"[0-9]*")
+
+
+def git_int(value: bytes | None) -> int | None:
+    """The int git reads from a config value (config.c's
+    ``git_config_int``: ``strtoimax`` in base 0, so ``0x`` is hex and a
+    leading ``0`` octal, then a unit ``k``, ``m`` or ``g`` in either case,
+    within an int), or None where git dies on it, as on no value."""
+    if value is None:
+        return None
+    text = value.split(b"\0", 1)[0]
+    i, n = 0, len(text)
+    while i < n and text[i] in _C_SPACE:
+        i += 1
+    sign = 1
+    if i < n and text[i] in b"+-":
+        sign = -1 if text[i] == 0x2D else 1
+        i += 1
+    hexed = _HEX.match(text, i)
+    if hexed is not None:
+        digits, base, after = hexed.group(1), 16, hexed.end()
+    else:
+        base = 8 if text[i : i + 1] == b"0" else 10
+        found = (_OCTAL if base == 8 else _DECIMAL).match(text, i)
+        assert found is not None
+        digits, after = found.group(0), found.end()
+    if not digits:
+        return None
+    number = sign * int(digits, base)
+    factor = _UNITS.get(text[after:].lower())
+    if factor is None or not -_INTMAX_MAX - 1 <= number <= _INTMAX_MAX:
+        return None
+    if (number < 0 and -(_INT_MAX // factor) > number) or (
+        number > 0 and _INT_MAX // factor < number
+    ):
+        return None
+    return number * factor
+
+
+def git_bool(value: bytes | None) -> bool | None:
+    """The boolean git reads from a config value (``git_config_bool``):
+    true with no value, false where empty, ``true``, ``yes``, ``on``,
+    ``false``, ``no`` and ``off`` in any case, else an int that is not
+    zero (`git_int`); None where git dies on it."""
+    if value is None:
+        return True
+    text = value.split(b"\0", 1)[0]
+    if not text:
+        return False
+    word = text.lower()
+    if word in (b"true", b"yes", b"on"):
+        return True
+    if word in (b"false", b"no", b"off"):
+        return False
+    number = git_int(text)
+    return None if number is None else number != 0
