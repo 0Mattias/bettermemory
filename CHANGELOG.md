@@ -1376,6 +1376,53 @@ eighteenth was built.
   `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
   `tests/test_membership_alias.py`, `tests/test_membership_lines.py`)
 
+- **A git directory a host and a VM-backed container share stays one
+  checkout per machine when either side re-mints its token (ENG-215).**
+  A re-mint names the token it replaces and the git directory's device
+  and inode number as the store records them for its writer's machine
+  (ENG-205), so over a Linux bind mount, which shows host and container
+  one device and inode number, each machine's record reads the other's
+  re-mint as its own. A share a VM-backed runtime makes (virtiofs under
+  Docker Desktop and OrbStack, gRPC FUSE) shows them other numbers:
+  measured on OrbStack, a git directory at device 16777234 inode
+  410511702 on the host was device 36 inode 11818 in the container, with
+  no birth time there and every file's mtime and ctime the host's to the
+  nanosecond. A record without birth time on its side so missed the
+  other machine's re-mint, whether the store recorded it or not. Probed
+  end to end (a daemon on the host with birth time switched off, the hook
+  client in an OrbStack container): after the container's checkout was
+  separated and re-minted, the host's next session registered a second
+  checkout of its git directory, joined silently (T+H+R) to the
+  container's declared project, so the host's memories were no longer
+  delivered there; where the store missed the re-mint, the host was
+  asked about it. And a container, which reads no birth time over the
+  share, did the same after the host separated its own checkout
+  (`project new`), with birth time on the host (macOS): the container's
+  token, superseded by the history, was re-minted once more. Rung 2 now
+  reads such a token as the checkout's re-mint (rule `object+remint`,
+  silent, the sighting recording it) where the checkout's init stamps
+  read there now, inode number included, so the object is the recorded
+  git directory; a checkout of another machine recording the checkout's
+  token or the one found shares an init stamp with it by name, mtime,
+  ctime and size, the inode number left out, so it saw the same files
+  and is a view of the same git directory, as no copy keeps a ctime; and
+  the token is a re-mint of the checkout's token in that checkout's git
+  directory. Each machine's record keeps its own project, as over a bind
+  mount. A re-mint made in a copy (an image built with `.git`) never
+  passes for the host's checkout, even with its token synced into the
+  host's git directory, and a copy landed on the checkout's freed inode
+  number is refused as before. The rule costs one indexed read by token,
+  made only where the token found is neither recorded nor the checkout's
+  own re-mint. It cannot read a git directory without `description` and
+  `info/exclude`, a file whose ctime moved since either machine first
+  saw it, or a share that rounds the times, where a second checkout is
+  registered as before; a view's liveness and B still read the
+  checkout's own lineage, so a view whose git directory the other
+  machine re-minted reads as replaced until its own machine next sees
+  it. (`src/bettermemory/membership_resolve.py`,
+  `src/bettermemory/membership.py`, `docs/internals.md`,
+  `tests/test_membership_shared_git_dir.py`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a

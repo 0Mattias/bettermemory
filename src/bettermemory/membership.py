@@ -1074,7 +1074,8 @@ class Membership:
         the object is another (E15; ENG-193). A token there that names the
         recorded token and object as the ones it replaced is the
         checkout's re-mint the store missed (`checkout_token.succeeds`,
-        ENG-205); the sighting records it (`_observe`)."""
+        ENG-205), or one another machine's view of it made
+        (`_shared_remint`, ENG-215); the sighting records it (`_observe`)."""
         superseded = k.token_superseded
         here = _found_token(k, loc)
         return continuity(
@@ -1087,7 +1088,10 @@ class Membership:
             holds=lambda commits: self._holds(loc, commits),
             confirms=lambda: self._confirms(k, loc),
             superseded=superseded,
-            reminted=lambda: checkout_token.succeeds(here, k.lineage),
+            reminted=lambda: (
+                checkout_token.succeeds(here, k.lineage)
+                or self._shared_remint(k, loc, here)
+            ),
         )
 
     def _confirms(self, k: Checkout, loc: Location) -> bool:
@@ -1351,6 +1355,7 @@ class Membership:
     _resolve_folder = membership_resolve._resolve_folder
     _declared_folder = membership_resolve._declared_folder
     _liveness_plan = membership_resolve._liveness_plan
+    _shared_remint = membership_resolve._shared_remint
     prefetch_liveness = membership_resolve.prefetch_liveness
     prefetch_declared = membership_resolve.prefetch_declared
 

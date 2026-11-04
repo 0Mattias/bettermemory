@@ -1079,6 +1079,52 @@ Linux bind mount shows a host and a container one git directory at one
 device and inode number, both machines' records of it read a re-mint
 either side makes as their own, as both read the one token file.
 
+A share a VM-backed runtime makes shows them other numbers (ENG-215):
+Docker Desktop for Linux shares host folders into its VM through
+virtiofs, Docker Desktop on a Mac through virtiofs or gRPC FUSE, and
+OrbStack through virtiofs. Measured on OrbStack (2026-11-04, `-v` of a
+folder under `/private/tmp`, mounted `virtiofs` in the container): a git
+directory at device 16777234 inode 410511702 on the macOS host was
+device 36 inode 11818 in the container, the same in a second container
+and at another mount point; no birth time there (statx sets no
+`STATX_BTIME`); and each file's mtime, ctime and size the host's to the
+nanosecond, its inode number the share's own. So a re-mint names its
+writer's lineage alone, and without birth time the other machine's
+record did not read it as its own: a host whose filesystem gives none
+(NFS, ext3) registered a second checkout of its git directory after the
+container re-minted it, joined to the project the container's checkout
+was declared into, and a container (no birth time over the share) did
+the same after the host re-minted, its token re-minted once more. Rung 2
+now reads such a token as the checkout's re-mint
+(`membership_resolve._shared_remint`, the rule `object+remint`) where
+three things hold: the checkout's init stamps are read there now, inode
+number included (A2: the object is the recorded git directory, not a
+copy on its freed number, whose files have new ctimes and inodes); a
+checkout of another machine that records the checkout's token, or the
+token found, shares an init stamp with it by name, mtime, ctime and
+size, the inode number left out (it saw the same files, so it is a view
+of the same git directory: no copy keeps a file's ctime); and the token
+found is a re-mint of the checkout's token in that checkout's git
+directory (`succeeds` over its device and inode number). Each machine's
+record keeps its own project, as over a bind mount, whether the store
+recorded the re-mint or missed it. A re-mint in a copy of the git
+directory (an image built with `.git`) never passes for the checkout,
+even with its token synced into the checkout's git directory, and a copy
+landed on the checkout's freed inode number is refused as before. One
+indexed read by token, made only where the token found is neither
+recorded nor the checkout's own re-mint. Where the rule cannot read: a
+git directory without `description` and `info/exclude` (a template
+folder lacking both) has no stamps, so it is as before; a file whose
+ctime moved since either machine first saw it (an extended attribute or
+a mode set on it) gives no common stamp, and neither does a share that
+rounds the times, so the second checkout is registered as before; on a
+filesystem that keeps times to the second or coarser, a copy made within
+the tick of the init and carrying the checkout's token would read as the
+same files. A view's liveness (the daemon's read and the client's
+answer) and B read the checkout's own lineage only, so until the view's
+own machine next sees it at its path, a view whose git directory the
+other machine re-minted reads as replaced there.
+
 What a re-mint that names its lineage leaves in place, writing nothing
 and reporting it as `exists`, depends on its caller. A hook client
 (`location_witness.remint_answer`, and its re-mint after the final

@@ -5,7 +5,9 @@
 `_first_sight` takes a new checkout to `_join`, `_ask` or `_new`,
 `_observe` adds what a sighting shows, and `_subproject` and
 `_resolve_folder` read nested project files and plain folders;
-`_asked_folder` finds the folder a question is open about after rung 2.
+`_asked_folder` finds the folder a question is open about after rung 2;
+`_shared_remint` reads, for rung 2, a re-mint another machine's view of
+the same git directory made (ENG-215).
 
 Each function takes the model as `self: Membership` and reaches its state
 (`_store`, `_rows`, `_remint`) and core methods through it; the class
@@ -15,11 +17,12 @@ imports the standard library, the records, lines and rows modules,
 `history` (for `quoted`, which writes a value the evidence of a question
 names as the lines write theirs, ENG-193), `location` (for `view_path`,
 and `_evicted` for the token read again, `_token_now`), `checkout_token`
-(that read), `location_git` (for the bounded read of a declared folder,
-`prefetch_declared`, and of the token), `location_witness` (for the
-exchange's one question of the planned views, `prefetch_liveness`),
-`membership_alias` (an alias clone's join, `_observe`, ENG-207), and
-`membership` only under TYPE_CHECKING.
+(that read, and the lineage a re-mint names), `location_git` (for the
+bounded read of a declared folder, `prefetch_declared`, and of the
+token), `location_witness` (for the exchange's one question of the
+planned views, `prefetch_liveness`), `membership_alias` (an alias
+clone's join, `_observe`, ENG-207), and `membership` only under
+TYPE_CHECKING.
 """
 
 from __future__ import annotations
@@ -405,6 +408,57 @@ def _token_read(git_dir: str) -> str | None:
     except OSError:
         return None
     return None if got is UNANSWERED else got
+
+
+def _shared_remint(
+    self: Membership, k: Checkout, loc: Location, found: str | None
+) -> bool:
+    """Whether `found`, a token at `k`'s object that `k` does not record
+    and that names no lineage of `k`'s own, is `k`'s re-mint made through
+    another machine's view of the same git directory (ENG-215). Over a
+    share a VM-backed container runtime makes (virtiofs, gRPC FUSE), the
+    host and the container number one git directory with other devices
+    and inodes, so the lineage a re-mint names is its writer's alone
+    (`checkout_token.successor`). Three things must hold:
+
+    - `k`'s init stamps read here now, inode number included (A2: the
+      object is the recorded git directory, not a copy on its freed
+      number, which has new ctimes and inodes);
+    - a checkout of another machine recording `k`'s token or `found`
+      shares an init stamp with `k` by name, mtime, ctime and size (the
+      inode number each namespace numbers its own way): it saw the same
+      files, so it is a view of this git directory, not a copy of it, as
+      no copy keeps a file's ctime;
+    - `found` is a re-mint of `k`'s token in that checkout's git directory
+      (`checkout_token.succeeds` over its device and inode number).
+
+    One indexed read by token, made only for a sighting without birth time
+    whose token is neither recorded nor `k`'s own re-mint."""
+    if not k.token or not checkout_token.valid(found) or found == k.token:
+        return False
+    if not {tuple(s) for s in k.stamps} & {tuple(s) for s in loc.stamps}:
+        return False
+    files = _stamped_files(k.stamps)
+    for other in self._checkouts(column_in=("token", sorted({k.token, found}))):
+        key = other.object_key
+        if (
+            other.machine == k.machine
+            or key is None
+            or not files & _stamped_files(other.stamps)
+        ):
+            continue
+        made = checkout_token.lineage(k.token, (key.device, key.inode))
+        if checkout_token.succeeds(found, made):
+            return True
+    return False
+
+
+def _stamped_files(
+    stamps: Collection[Sequence[object]],
+) -> set[tuple[object, object, object, object]]:
+    """Init stamps as two machines' namespaces can share them: the name,
+    mtime, ctime and size, without the inode number (`_shared_remint`)."""
+    return {(s[0], s[2], s[3], s[4]) for s in stamps if len(s) == 5}
 
 
 def _liveness_plan(self: Membership, loc: Location) -> list[tuple[Checkout, View]]:
