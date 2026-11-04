@@ -638,31 +638,32 @@ eighteenth was built.
   config --list --show-scope --show-origin` with the system and global
   files at the null device), asked at the root within the capture's
   0.3 s fetch budget, only for a repository with a remote; a hook
-  client, a new process each prompt, does not ask again while the
-  answer kept in the state directory for its PATH stands (the git
-  binary unchanged, under an hour old), so a prompt spawns no git for
-  it. A git that does not answer, or none on PATH, reads for a minute
-  as the last answer git gave for that PATH, and as naming
+  client, a new process each prompt, does not ask again while the answer
+  kept in the state directory for its PATH stands (the git binary
+  unchanged, under an hour old, and on macOS the developer directory
+  `DEVELOPER_DIR` or `xcode-select` names the same), so a prompt spawns
+  no git for it. A git that does not answer, or none on PATH, reads for
+  a minute as the last answer git gave for that PATH, and as naming
   `/etc/gitconfig` (none on Windows) where it never answered; a failed
   ask is never recorded over git's answer. Each file is read with its
   includes under the reader's size, depth and file bounds, so a remote
   alias set there keys the remote as git fetches it, an equal prefix
-  read first winning as in git. An empty `GIT_CONFIG_GLOBAL` now
-  names no file, as for git, where it read `~/.gitconfig`. A cached
-  capture waited for the repository's own files to change before it saw
-  a new rule in the global config; it is now kept against every config
-  file read for its remotes, the files they and the repository's config
+  read first winning as in git. An empty `GIT_CONFIG_GLOBAL` now names
+  no file, as for git, where it read `~/.gitconfig`. A cached capture
+  waited for the repository's own files to change before it saw a new
+  rule in the global config; it is now kept against every config file
+  read for its remotes, the files they and the repository's config
   include too, each stamped before it was read, so one written, created
   or removed is read at the next capture, and against the system and
   global files git names, so one taken while git did not answer is read
   again once it does. Each such file costs a kept capture one stat: a
-  steady prompt makes 17 stat calls (15 `os.stat`, 2 `os.lstat`) with
-  a home folder's three global files and macOS's two system files,
-  where E16 counted 12 (`docs/internals.md`,
-  `docs/membership-design.md`). The config a shell's environment gives
-  git (`GIT_CONFIG_COUNT`, `git -c`) is not read: it is not the
-  repository's or the machine's. `_git.run_git` takes `unset`, applied
-  beneath its scrub and pins like `env`. (`src/bettermemory/gitsystem.py`,
+  steady prompt makes 17 stat calls (15 `os.stat`, 2 `os.lstat`) with a
+  home folder's three global files and macOS's two system files, where
+  E16 counted 12 (`docs/internals.md`, `docs/membership-design.md`). The
+  config a shell's environment gives git (`GIT_CONFIG_COUNT`, `git -c`)
+  is not read: it is not the repository's or the machine's.
+  `_git.run_git` takes `unset`, applied beneath its scrub and pins like
+  `env`. (`src/bettermemory/gitsystem.py`,
   `src/bettermemory/gitconfig.py`, `src/bettermemory/location_git.py`,
   `src/bettermemory/location.py`, `src/bettermemory/_git.py`,
   `tests/test_location_git_config.py`, `tests/test_membership_cost.py`,

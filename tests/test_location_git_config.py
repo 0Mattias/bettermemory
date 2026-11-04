@@ -723,6 +723,47 @@ def test_a_capture_taken_under_the_fallback_is_read_again_once_git_answers(
     assert location.capture(str(repo), write_token=False) is again
 
 
+def test_the_developer_directory_names_the_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's review: Apple's ``/usr/bin/git`` is a shim whose stamp
+    does not change when ``xcode-select --switch`` or DEVELOPER_DIR picks
+    another developer directory, whose git reads another gitconfig of its
+    own. On macOS both are in the record's key (one readlink, no
+    process), so a switch is asked of git at once, and switching back
+    asks nothing; elsewhere neither is read."""
+    fake = _FakeGit(monkeypatch, tmp_path / "git")
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to(tmp_path / "Xcode")
+    monkeypatch.setattr(gitsystem, "XCODE_SELECT_LINK", str(link))
+    monkeypatch.setattr(gitsystem, "_MACOS", True)
+    monkeypatch.delenv("DEVELOPER_DIR", raising=False)
+
+    def asks() -> int:
+        before = len(fake.asked)
+        gitsystem.sources()
+        return len(fake.asked) - before
+
+    assert asks() == 2
+    assert asks() == 0
+    link.unlink()
+    link.symlink_to(tmp_path / "CommandLineTools")
+    assert asks() == 2
+    monkeypatch.setenv("DEVELOPER_DIR", str(tmp_path / "Beta"))
+    assert asks() == 2
+    monkeypatch.delenv("DEVELOPER_DIR")
+    link.unlink()
+    link.symlink_to(tmp_path / "Xcode")
+    _caches.clear_all()
+    assert asks() == 0
+
+    monkeypatch.setattr(gitsystem, "_MACOS", False)
+    assert gitsystem._developer() == ""
+    assert asks() == 2
+    link.unlink()
+    assert asks() == 0
+
+
 def test_the_files_a_build_reads_are_read_off_gits_listing() -> None:
     """`gitsystem._own_files`: the files at system or unknown scope, in
     git's order, each once; never a global, local or command line entry,

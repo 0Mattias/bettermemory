@@ -18,10 +18,11 @@ system or unknown scope (git 2.26 and later). `sources` answers both.
 A hook client is a new process each prompt, and asking costs a git
 process for each question (13 ms each measured, ENG-207), so the answer
 is kept in the state directory (`RECORD`), for the PATH it was asked
-under, with the stamp of the git binary found on that PATH then; a
-capture reads the record and stats that binary, and asks git again only
-where the binary stamps otherwise, the answer is older than
-`REASK_SECONDS` or none is recorded. Both questions together are bound by `ASK_SECONDS`, the
+under (on macOS with the developer directory, `_developer`), with the
+stamp of the git binary found on that PATH then; a capture reads the
+record and stats that binary, and asks git again only where the binary
+stamps otherwise, the answer is older than `REASK_SECONDS` or none is
+recorded. Both questions together are bound by `ASK_SECONDS`, the
 capture's own fetch budget. A git that does not answer within it or
 cannot run, or none on PATH, reads as the last answer git gave for that
 PATH (`_kept`: one a racing process recorded meanwhile, else the
@@ -41,6 +42,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -83,6 +85,12 @@ _OWN_MAX = 8
 #: one of ours, and is not read.
 _MAX_BYTES = 1 << 16
 _MAX_PATH = 4096
+#: The link ``xcode-select --switch`` points at the developer directory
+#: Apple's ``/usr/bin/git`` shim runs git from, where DEVELOPER_DIR is
+#: unset (`_developer`).
+XCODE_SELECT_LINK = "/var/db/xcode_select_link"
+#: Whether this is macOS, where `_developer` reads the developer directory.
+_MACOS = sys.platform == "darwin"
 
 
 @dataclass(frozen=True)
@@ -151,10 +159,30 @@ def sources(*, stamp: bool = True) -> Sources:
 
 
 def _key(path: str | None) -> str:
-    """A PATH's name in the record: its digest, so the record holds no
-    PATH; an unset PATH is named apart from an empty one."""
-    raw = "\0" if path is None else path
+    """A PATH's name in the record: its digest, with the developer
+    directory's on macOS (`_developer`), so the record holds no PATH; an
+    unset PATH is named apart from an empty one."""
+    raw = ("\0" if path is None else path) + "\0" + _developer()
     return hashlib.sha256(raw.encode("utf-8", "surrogatepass")).hexdigest()[:32]
+
+
+def _developer() -> str:
+    """On macOS, the developer directory Apple's ``/usr/bin/git`` shim
+    runs git from, whose build reads that directory's gitconfig: the one
+    DEVELOPER_DIR names, else the target of `XCODE_SELECT_LINK` (one
+    readlink, no process). The shim's own stamp does not change with
+    either, so each is in the record's key, and a switch is asked of git
+    at once. Without either, xcrun's default (Xcode where it is
+    installed, else the command line tools) is not read: a change there
+    is asked within `REASK_SECONDS`. Elsewhere, nothing."""
+    if not _MACOS:
+        return ""
+    named = os.environ.get("DEVELOPER_DIR")
+    try:
+        selected = os.readlink(XCODE_SELECT_LINK)
+    except (OSError, ValueError):
+        selected = None
+    return "\0".join("\1" if x is None else x for x in (named, selected))
 
 
 def _current(answer: _Answer, now: float, *, stamp: bool = True) -> bool:

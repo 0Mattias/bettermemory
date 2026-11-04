@@ -492,13 +492,18 @@ process each prompt, so the answer is kept in the state directory
 (`git-config-sources.json`) for the PATH, as its digest, with the stamp
 of the git binary found on that PATH; a capture stats that binary and
 asks again only where it changed, the answer is an hour old, or none is
-recorded. A git that does not answer in time or cannot run, or none on
-PATH, reads as the last answer git gave for the PATH (one a racing
-process recorded meanwhile, else the process's or the record's), and
-where it never answered as naming `/etc/gitconfig` (none on Windows,
-whose git keeps its file in its own installation) and no file of its
-own; either way for a minute, and a failed ask is never recorded over
-git's answer (ENG-207's review, R6). Not read: a file of the build's
+recorded. On macOS the key holds the developer directory too
+(`DEVELOPER_DIR`, else the target of `/var/db/xcode_select_link`, one
+readlink), since `/usr/bin/git` is a shim whose stamp does not change
+when `xcode-select --switch` picks another; xcrun's default, where
+neither names one, is asked within the hour. A git that does not answer
+in time or cannot run, or none on PATH, reads as the last answer git
+gave for the PATH (one a racing process recorded meanwhile, else the
+process's or the record's), and where it never answered as naming
+`/etc/gitconfig` (none on Windows, whose git keeps its file in its own
+installation) and no file of its own; either way for a minute, and a
+failed ask is never recorded over git's answer (ENG-207's review, R6).
+Not read: a file of the build's
 own that was missing or empty when git was asked, until it is asked
 again; and the config a process's environment gives git
 (`GIT_CONFIG_COUNT` with its `GIT_CONFIG_KEY_<n>` and
