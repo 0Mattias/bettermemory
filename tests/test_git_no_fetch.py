@@ -212,7 +212,11 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     git = shutil.which("git")
     assert git is not None
     assert answer.ok and answer.sources.system != str(tmp_path / "mine")
-    assert (answer.sources.legacy, answer.sources.resets) == (True, True)
+    # One of the answers a build gives (git 2.54 here: (True, True)); the
+    # planted empty insteadOf, had it reached the probe, would have made
+    # the URL another and the answer none.
+    said = (answer.sources.legacy, answer.sources.resets)
+    assert said in gitsystem._REMOTE_ANSWERS.values()
     probe = gitsystem._probe_repository()
     assert probe is not None
     assert [c[0][1 + len(_git.PINS) :] for c in calls] == [
