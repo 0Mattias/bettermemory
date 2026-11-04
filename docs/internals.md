@@ -1157,7 +1157,8 @@ only: a capture with the token write off.
   about that checkout is open, answered or was never asked (ENG-222), so
   a part of the enclosing project declared below the folder keeps its
   records in a later run too, where a session in the part receives
-  them, after the folder's question is answered as before it.
+  them, after the folder's question is answered as before it; so does a
+  part of the enclosing project declared inside another part's folder.
   A store migrated before this rule keeps its homes, since the migration
   homes only records with none: a record `cwd_in_root` homed in what is
   now a part's folder stays with the enclosing project, whose records a

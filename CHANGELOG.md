@@ -64,8 +64,8 @@ eighteenth was built.
 - **The migration homes a record in a part below a folder whose question
   was answered where a session there resolves (ENG-222).** A folder
   holding a copy of a part's file and other content is asked about at
-  its first sight, which leaves a checkout with a view at that folder.
-  A later migration run finds that view as the root of a record written
+  its first sight, which leaves a checkout with a view at that folder. A
+  later migration run finds that view as the root of a record written
   below it, and the 9.0.0rc18 ENG-212 entry read such a record at a
   location of its own also against the root outside that checkout's
   views only while the question was open. So with a part of the
@@ -79,6 +79,10 @@ eighteenth was built.
   whatever that checkout's questions, so those records go to the part in
   both cases and both modes. A record at the folder itself, or below it
   at no location of its own, still goes by D4 to the checkout's project.
+  The read reaches past the copy too: a part of the enclosing project
+  declared inside another part's folder (`novel/chapter` declared before
+  `novel` was) had its records go to `novel` by D4, and now they go to
+  `chapter`, where a session there resolves.
   (`src/bettermemory/membership_migrate.py`,
   `tests/test_membership_migrate_parts.py`, `docs/internals.md`)
 

@@ -40,7 +40,8 @@ asked once; what the question leaves is counted, and a later run's record
 there goes to the provisional project through the view it left. A part
 declared below that copy is still found, in the same run and in a later
 one, after an earlier run or a session asked at the copy, and after the
-question was answered either way (ENG-222); and a moved
+question was answered either way (ENG-222), as is a part declared inside
+another part's folder; and a moved
 copy's records keep D4 while one at its old path keeps the asked
 checkout, whose views the run does not pass over.
 """
@@ -133,10 +134,11 @@ def _resolutions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def _declare(store: Store, known: Resolution, folder: Path, name: str) -> str:
-    """A part of `known`'s project declared in `folder`, a new folder below
-    its root, as `project init` there declares it (B17, I31), from
-    9.0.0rc14 on: its folder stored as a view records it. The part."""
-    folder.mkdir()
+    """A part of `known`'s project declared in `folder`, a folder below its
+    root (made where it is not there yet), as `project init` there declares
+    it (B17, I31), from 9.0.0rc14 on: its folder stored as a view records
+    it. The part."""
+    folder.mkdir(exist_ok=True)
     model = Membership(store, location.process_machine().id)
     written = project_file.write(folder, name=name)
     location.forget()
@@ -677,6 +679,40 @@ def test_a_part_below_a_copy_whose_question_was_answered_keeps_its_records(
     assert (t.projects, t.proposals) == (0, 0)
     assert _pending(store) == []
     assert _live(store, config, deep)[0] == essay
+
+
+def test_a_part_declared_inside_another_parts_folder_keeps_its_records(
+    tmp_path: Path, lab: tuple[Store, Config]
+) -> None:
+    """`Writing/novel/chapter` declared a part of `Writing` while `novel`
+    held no file, and `novel` declared a part afterwards, which a session
+    there saw (a view). Records at `chapter` and at `chapter/deep` find
+    `novel`'s view as their root, and `chapter`'s file is no part of
+    `novel`'s; but the gate reads them against the root outside that view
+    too, and they go to `chapter`, as a session there resolves, in both
+    birth modes. No question is open about `novel`'s checkout: gated only
+    while one was, they went by D4 to `novel` (ENG-222)."""
+    store, config = lab
+    outer, known = _writing(tmp_path, store, config)
+    inner = outer / "novel"
+    inner.mkdir()
+    chapter = _declare(store, known, inner / "chapter", "chapter")
+    novel = _declare(store, known, inner, "novel")
+    assert _live(store, config, inner) == (novel, "declared_folder")
+    (inner / "chapter" / "deep").mkdir()
+    ids = [
+        _rootless(store, inner / "chapter", "in the chapter"),
+        _rootless(store, inner / "chapter" / "deep", "below the chapter"),
+    ]
+    location.forget()
+
+    report = migrate(store, location.process_machine(), now=lambda: _NOW)
+
+    homes = _homes(report)
+    assert [homes[i][0] for i in ids] == [chapter] * 2, (homes, novel)
+    assert homes[ids[0]][2] == "migration:cwd:declared_folder"
+    assert (report.totals.projects, report.totals.proposals) == (0, 0)
+    assert _live(store, config, inner / "chapter" / "deep")[0] == chapter
 
 
 def test_a_moved_copy_keeps_its_old_paths_records_with_its_question(
