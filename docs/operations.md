@@ -436,6 +436,129 @@ What the daemon's log and the clients say when something is wrong:
   record; for a copy put back on purpose, `bettermemory log
   accept-history --yes` rewinds the head on the record.
 
+## Capacity
+
+How large a store bettermemory serves well was measured by the scale
+bench (`bench/scale/`, ENG-109). It builds synthetic stores at 1, 10 and
+100 times the shape of a store in daily use for six weeks (1,475
+memories, 355 episodes, 40,789 log rows and 3,913 membership rows in 13
+tables, over a dozen projects): sessions recorded through the MCP tools
+and the hook bodies, replayed in time order through the store's own
+write and sign code, so `log verify` passes on each. Their history
+spans 42 days at 1x and 420 days at 10x and at 100x, so a day at 100x
+holds ten times the rows of a day at 10x. The bench times the hook
+and tool bodies in process, as a daemon worker runs them, without the
+hop from the hook's client to the daemon, and runs the whole-store
+commands as the CLI. The readings are from one machine (Apple M3 Pro,
+12 cores, 18 GB, macOS), each arm started with the 1-minute load
+average under 4; the result files under `bench/scale/results/` name the
+commit they measured.
+
+| Store | 1x | 10x | 100x |
+| --- | --- | --- | --- |
+| Memories | 1,499 | 14,933 | 147,578 |
+| Episodes | 341 | 3,673 | 35,242 |
+| Log rows | 39,473 | 396,645 | 3,945,178 |
+| Membership rows | 3,807 | 37,888 | 373,073 |
+| Projects, checkouts | 12, 14 | 38, 48 | 120, 152 |
+| File | 89 MB | 780 MB | 7.4 GB |
+
+| p50 / p95, ms | Budget | 1x | 10x | 100x |
+| --- | --- | --- | --- | --- |
+| Session start, a first start | 13,000 | 84 / 129 | 852 / 960 | 84,680 / 89,927 |
+| Session start, with a transcript to probe | 13,000 | 55 / 74 | 531 / 650 | 78,967 / 84,774 |
+| Prompt hook | 8,000 | 46 / 63 | 332 / 503 | 80,332 / 127,298 |
+| Stop hook, in a whole session | 13,000 | 58 / 74 | 367 / 615 | 100,543 / 105,187 |
+| `memory_search` | 60,000 | 11 / 26 | 23 / 38 | 191 / 254 |
+| `memory_write`, the first call | 60,000 | 207 / 265 | 3,863 / 4,545 | 32,485 / 49,215 |
+| `memory_write`, with its review answered | | 438 / 940 | 14,655 / 16,658 | 112,100 / 196,192 |
+| Resolution of a known checkout | | 0.3 / 3.5 | 0.4 / 2.4 | 2.5 / 3.6 |
+| First sight of a repository | | 5.1 / 6.1 | 5.5 / 5.9 | 9.9 / 51.8 |
+
+A hook's budget is the time its body has for its store rows
+(`hook_budget_seconds`: the harness's timeout or the client's wait for
+the daemon, the shorter, less 2 s). A tool call's is the stdio shim's
+wait for the daemon's reply, 60 s; a write with its review answered is
+two to four calls. The stop hook was timed inside the whole sessions the
+bench runs (22 calls at 1x and at 10x, 2 at 100x), the others on their
+own, 10 to 90 calls each (the result files give each count).
+
+| Wall time, peak RSS | 1x | 10x | 100x |
+| --- | --- | --- | --- |
+| `log verify` | 1.9 s, 176 MB | 8.4 s, 886 MB | stopped at the 2.6 GB cap, 10.6 s in |
+| `backup create` | 1.2 s, 107 MB | 1.9 s, 101 MB | 16.1 s, 103 MB |
+| `backup verify` | 1.8 s, 159 MB | 8.4 s, 885 MB | stopped at the 2.6 GB cap, 19.0 s in |
+
+The supported envelope is 10x: 15,000 memories, 400,000 log rows and a
+0.8 GB file. There every hook answers in under a second at p95, well
+inside its budget, a search in under 40 ms, and `log verify` and
+`backup verify` in under 10 s and 1 GB. The one slow path at 10x is a
+write: 15 s with its review answered, 4.5 s for its first call at p95.
+At 100x nothing a session waits for works: every hook takes six to
+sixteen times its budget. Interpolated on a log-log line between the
+10x and 100x readings, the hooks cross their budgets at about 40x: a
+first session start at 39x at p50 and 38x at p95, the prompt hook at
+38x and 32x, the stop hook at 43x and 39x. The first call of a write
+reaches the shim's 60 s only past 100x (at about 120x at p95, by the
+same line carried on).
+
+Beyond 10x, four things degrade:
+
+- **The hooks grow with the log.** A new session's start reads every
+  row of the kinds a session's recall state is rebuilt from, whatever
+  its session: `session_events_of_kinds` finds them through the kind
+  index and compares the session on each row. The prompt hook's reads
+  of its window (`events_of_kinds`) do the same with the stamp, so they
+  read every row of their kinds too. Both hooks read every `use` row of
+  the log for the contradictions among their hits (`contradicted_at`),
+  and session start loads every memory for the brief's search pool and
+  reads every active record for the standing backlog line. At 10x
+  session start took ten times as long as at 1x, and the prompt hook
+  seven times. At 100x the 7.4 GB file no longer fit in the memory the
+  machine had free (about 4 GB), so those reads went to the disk, and
+  each hook took 80 to 130 s. One profiled session start there took 88 s,
+  28 s of it on the CPU: 48 s walking 1,913,550 rows for a new session's
+  recall state to find none, 14 s in the contradiction read and 12 s
+  loading the search pool. One prompt took 79 s, 17 s on the CPU: 58 s
+  walking 2,157,052 rows for the 3,455 its window holds.
+- **A write grows with the memories.** The duplicate gate loads every
+  memory and tokenizes each one's content on every call
+  (`search_dedup`), and the review's supersession check
+  (`supersession.detect_supersession`) compares every active memory
+  again. Their token cache holds 5,000 bodies (`RAW_TOKEN_SET_ENTRIES`),
+  so past 5,000 memories every call tokenizes them all again. A write
+  with its review answered took 33 times as long at 10x as at 1x, and
+  112 s at 100x; one write under the profiler at 100x spent 271 s of
+  its 454 s of CPU tokenizing. The bench's synthetic bodies share more
+  words than real ones, so more pairs pass the supersession check's
+  first test than a real store's would.
+- **`log verify` and `backup verify` hold the whole log in memory.**
+  The chain check lists every row and the fold replays every table in
+  memory, so the peak RSS grows with the store: 176 MB at 1x, 886 MB at
+  10x. At 100x both passed the bench's 2.6 GB cap (set from the memory
+  the machine had free) and were stopped: `log verify` held 1 GB at
+  3.7 s and 2 GB at 6.8 s. At the 2 KB a log row it grew by from 1x to
+  10x, it needs about 8 GB at 100x. `backup create` copies the store and
+  stays near 100 MB at every size.
+- **Concurrent calls share one process's CPU.** Four tool workers, four
+  hook workers and the CLI on one store for 90 s (`contend`): the lock
+  is not where the time goes. A write transaction waited for it 25 ms at
+  p95 at 1x and 17 ms at 10x, never more than 0.5 s. The calls run in
+  one process, and each took many times its time alone: at 1x a prompt
+  hook 3.8 s at p50, a session start 2.8 s and a write 32 s; at 10x a
+  session start 30 s, past its budget, and two hooks that reached their
+  state row after their budget ran out failed busy at once
+  (`StoreBusy`) instead of waiting for the lock. The arm was not run at
+  100x, where a hook alone is past its budget.
+
+Membership resolution barely grows with the store: a first sight takes
+5 to 10 ms at p50 from 1x to 100x. ENG-159's arm at 400 projects (300
+commit-less repositories and 100 provisional projects) reads a
+commit-less first sight's content candidates in 4 store reads and
+20.4 ms at p50, against 1,201 reads and 73.4 ms on the tree before
+ENG-159's fix, and health in 5 reads and 10.2 ms, against 104 reads and
+26.5 ms.
+
 ## Backup and restore
 
 `bettermemory export` is not a backup: it carries the memories and

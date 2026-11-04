@@ -1,0 +1,293 @@
+{
+  "at": "2026-11-04T05:59:02.593572Z",
+  "commit": "5cf6e16ed92d8166048df7a235cc10d11864490e",
+  "contend": {
+    "calls": {
+      "episode": {
+        "max_ms": 158.03,
+        "mean_ms": 80.77,
+        "min_ms": 53.99,
+        "n": 7,
+        "p50_ms": 75.61,
+        "p95_ms": 158.03,
+        "p99_ms": 158.03
+      },
+      "hook_prompt": {
+        "max_ms": 8733.76,
+        "mean_ms": 3734.77,
+        "min_ms": 3.5,
+        "n": 41,
+        "p50_ms": 3801.17,
+        "p95_ms": 7556.15,
+        "p99_ms": 8733.76
+      },
+      "hook_session_start": {
+        "max_ms": 3464.9,
+        "mean_ms": 2545.29,
+        "min_ms": 407.65,
+        "n": 11,
+        "p50_ms": 2839.1,
+        "p95_ms": 3464.9,
+        "p99_ms": 3464.9
+      },
+      "hook_stop": {
+        "max_ms": 9021.13,
+        "mean_ms": 4825.9,
+        "min_ms": 781.32,
+        "n": 41,
+        "p50_ms": 4517.16,
+        "p95_ms": 8212.79,
+        "p99_ms": 9021.13
+      },
+      "memory_record_use": {
+        "max_ms": 2673.5,
+        "mean_ms": 453.91,
+        "min_ms": 3.21,
+        "n": 6,
+        "p50_ms": 11.33,
+        "p95_ms": 2673.5,
+        "p99_ms": 2673.5
+      },
+      "memory_search": {
+        "max_ms": 3798.3,
+        "mean_ms": 2049.09,
+        "min_ms": 980.78,
+        "n": 6,
+        "p50_ms": 1759.86,
+        "p95_ms": 3798.3,
+        "p99_ms": 3798.3
+      },
+      "memory_write": {
+        "max_ms": 46493.69,
+        "mean_ms": 27781.43,
+        "min_ms": 11035.16,
+        "n": 13,
+        "p50_ms": 32040.12,
+        "p95_ms": 43652.4,
+        "p99_ms": 46493.69
+      }
+    },
+    "census": {
+      "checkouts": 41,
+      "episodes": 239,
+      "file_mb": 75.9,
+      "log_kinds": {
+        "checkout_put": 55,
+        "checkout_registered": 41,
+        "checkout_view_put": 41,
+        "conflict_put": 154,
+        "episode_delete": 104,
+        "episode_handoff": 97,
+        "episode_put": 343,
+        "episode_write": 236,
+        "home_put": 2135,
+        "machine_put": 1,
+        "memory_delete": 254,
+        "memory_put": 2345,
+        "project_minted": 39,
+        "project_put": 39,
+        "project_remote_put": 26,
+        "project_witness_put": 26,
+        "prompt_recall": 3817,
+        "recall_held": 2297,
+        "remove": 351,
+        "resolution_joined": 2,
+        "resolution_new": 39,
+        "returned_delete": 1,
+        "returned_put": 2,
+        "review_issued": 3745,
+        "search": 2674,
+        "search_miss": 236,
+        "session_brief": 1083,
+        "show": 878,
+        "standing_put": 1934,
+        "store_created": 1,
+        "tombstone_put": 254,
+        "turn_audited": 7785,
+        "update": 807,
+        "use": 6495,
+        "verification_put": 257,
+        "verify": 257,
+        "witness_put": 26,
+        "write": 1701
+      },
+      "log_rows": 40578,
+      "log_span": [
+        "2026-09-23T02:37:56.739790Z",
+        "2026-11-04T05:28:07.092068Z"
+      ],
+      "membership_rows": 4000,
+      "membership_tables": {
+        "checkout_views": 41,
+        "checkouts": 41,
+        "declared_remotes": 0,
+        "homes": 2135,
+        "machines": 1,
+        "project_blobs": 0,
+        "project_files": 0,
+        "project_remotes": 26,
+        "project_witnesses": 26,
+        "projects": 39,
+        "proposals": 0,
+        "returned": 1,
+        "standing": 1690
+      },
+      "memories": 1538,
+      "projects": 39,
+      "sessions": 2338,
+      "tombstones": 254
+    },
+    "cli": {
+      "exits": [
+        "0"
+      ],
+      "failed": [],
+      "lock_waits": {
+        "all": {
+          "failed": {},
+          "max_ms": 387.1,
+          "mean_ms": 1.54,
+          "min_ms": 0.01,
+          "n": 1581,
+          "over_1s": 0,
+          "p50_ms": 0.01,
+          "p95_ms": 0.03,
+          "p99_ms": 26.71
+        },
+        "cli": {
+          "failed": {},
+          "max_ms": 387.1,
+          "mean_ms": 1.54,
+          "min_ms": 0.01,
+          "n": 1581,
+          "over_1s": 0,
+          "p50_ms": 0.01,
+          "p95_ms": 0.03,
+          "p99_ms": 26.71
+        }
+      },
+      "runs": 1054,
+      "wall": {
+        "backup create": {
+          "max_ms": 219.0,
+          "mean_ms": 150.58,
+          "min_ms": 113.0,
+          "n": 264,
+          "p50_ms": 151.0,
+          "p95_ms": 183.0,
+          "p99_ms": 198.0
+        },
+        "rename-scope tooling": {
+          "max_ms": 441.0,
+          "mean_ms": 62.32,
+          "min_ms": 49.0,
+          "n": 263,
+          "p50_ms": 57.0,
+          "p95_ms": 81.0,
+          "p99_ms": 170.0
+        },
+        "rename-scope tools": {
+          "max_ms": 344.0,
+          "mean_ms": 61.94,
+          "min_ms": 50.0,
+          "n": 264,
+          "p50_ms": 58.0,
+          "p95_ms": 68.0,
+          "p99_ms": 86.0
+        },
+        "stats --json": {
+          "max_ms": 99.0,
+          "mean_ms": 66.97,
+          "min_ms": 48.0,
+          "n": 263,
+          "p50_ms": 67.0,
+          "p95_ms": 80.0,
+          "p99_ms": 87.0
+        }
+      }
+    },
+    "cli_tail": "",
+    "errors": {},
+    "loads": {
+      "contend": {
+        "load_end": [
+          6.62,
+          3.85,
+          3.93
+        ],
+        "load_start": [
+          1.84,
+          2.37,
+          3.48
+        ],
+        "wall_s": 95.9
+      }
+    },
+    "lock_waits": {
+      "all": {
+        "failed": {},
+        "max_ms": 488.42,
+        "mean_ms": 4.87,
+        "min_ms": 0.01,
+        "n": 416,
+        "over_1s": 0,
+        "p50_ms": 0.15,
+        "p95_ms": 24.91,
+        "p99_ms": 53.62
+      },
+      "hook": {
+        "failed": {},
+        "max_ms": 488.42,
+        "mean_ms": 4.05,
+        "min_ms": 0.01,
+        "n": 238,
+        "over_1s": 0,
+        "p50_ms": 0.15,
+        "p95_ms": 12.39,
+        "p99_ms": 47.03
+      },
+      "tool": {
+        "failed": {},
+        "max_ms": 292.9,
+        "mean_ms": 5.97,
+        "min_ms": 0.01,
+        "n": 178,
+        "over_1s": 0,
+        "p50_ms": 0.14,
+        "p95_ms": 27.12,
+        "p99_ms": 70.08
+      }
+    },
+    "quiet": true,
+    "quiet_waits": [
+      {
+        "arm": "contend",
+        "loads_at_start": [
+          1.84,
+          2.37,
+          3.48
+        ],
+        "polls": 1,
+        "quiet_at_start": true,
+        "waited_s": 0.0
+      }
+    ],
+    "scale": 1.0,
+    "seconds": 90.0,
+    "tcp_connects": [],
+    "threads_alive": 0,
+    "warning_samples": [],
+    "warnings": {}
+  },
+  "machine": {
+    "cpu": "Apple M3 Pro",
+    "cpus": 12,
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13",
+    "ram_gb": 18.0
+  },
+  "program_sha256": "055f512c92743ad1fdcdb7ad9eef69540f04809ef03cb8ca883aed6314fd6032",
+  "src": "src",
+  "src_dirty": false,
+  "version": "9.0.0rc18"
+}

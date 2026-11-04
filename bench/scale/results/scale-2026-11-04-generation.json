@@ -1,0 +1,458 @@
+{
+  "at": "2026-11-04T09:30:10.610363Z",
+  "calibration": {
+    "per_session_s": 1.115,
+    "rows": 3064,
+    "rows_per_second": 34.4,
+    "seconds": 89.19,
+    "sessions": 80,
+    "sessions_per_second": 0.897,
+    "statuses": {
+      "episode": 17,
+      "handoff": 7,
+      "remove:ok": 18,
+      "remove:refused_standing": 6,
+      "update:committed": 20,
+      "update:refused_standing": 4,
+      "verify:ok": 17,
+      "write:committed": 110,
+      "write:refused_standing": 4
+    },
+    "tcp_connects": [],
+    "timings": {
+      "memory_search": {
+        "max_ms": 100.55,
+        "mean_ms": 22.33,
+        "min_ms": 7.09,
+        "n": 183,
+        "p50_ms": 18.41,
+        "p95_ms": 46.52,
+        "p99_ms": 91.8
+      },
+      "memory_write": {
+        "max_ms": 1144.43,
+        "mean_ms": 397.39,
+        "min_ms": 117.43,
+        "n": 114,
+        "p50_ms": 315.13,
+        "p95_ms": 781.74,
+        "p99_ms": 888.89
+      },
+      "prompt": {
+        "max_ms": 131.23,
+        "mean_ms": 25.81,
+        "min_ms": 0.33,
+        "n": 541,
+        "p50_ms": 22.0,
+        "p95_ms": 60.65,
+        "p99_ms": 98.12
+      },
+      "session_start": {
+        "max_ms": 80.43,
+        "mean_ms": 34.12,
+        "min_ms": 3.19,
+        "n": 80,
+        "p50_ms": 35.02,
+        "p95_ms": 69.37,
+        "p99_ms": 72.72
+      },
+      "stop": {
+        "max_ms": 130.93,
+        "mean_ms": 34.64,
+        "min_ms": 8.58,
+        "n": 541,
+        "p50_ms": 31.12,
+        "p95_ms": 64.37,
+        "p99_ms": 91.24
+      }
+    }
+  },
+  "commit": "5cf6e16ed92d8166048df7a235cc10d11864490e",
+  "live_shape": {
+    "episodes": 355,
+    "log_rows": 40789,
+    "membership_rows": 3913,
+    "membership_tables": 13,
+    "memories": 1475
+  },
+  "machine": {
+    "cpu": "Apple M3 Pro",
+    "cpus": 12,
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13",
+    "ram_gb": 18.0
+  },
+  "program_sha256": "b7fa59a44d9b56a9466a40edbef1499619326b58205f2b06372d564c428e325c",
+  "scales": {
+    "100x": {
+      "api_estimate_hours": 9902.93,
+      "api_session_s_at_scale": 617.013,
+      "build_commit": "5cf6e16ed92d8166048df7a235cc10d11864490e",
+      "census": {
+        "checkouts": 152,
+        "episodes": 35242,
+        "file_mb": 7444.8,
+        "log_rows": 3945178,
+        "log_span": [
+          "2025-09-10T02:41:25.961100Z",
+          "2026-11-04T04:09:41.646490Z"
+        ],
+        "membership_rows": 373073,
+        "membership_tables": {
+          "checkout_views": 152,
+          "checkouts": 152,
+          "declared_remotes": 0,
+          "homes": 208743,
+          "machines": 1,
+          "project_blobs": 0,
+          "project_files": 0,
+          "project_remotes": 105,
+          "project_witnesses": 108,
+          "projects": 120,
+          "proposals": 0,
+          "returned": 68,
+          "standing": 163624
+        },
+        "memories": 147578,
+        "projects": 120,
+        "sessions": 219276,
+        "tombstones": 25923
+      },
+      "log_kinds": {
+        "checkout_put": 152,
+        "checkout_registered": 152,
+        "checkout_view_put": 152,
+        "episode_handoff": 10056,
+        "episode_put": 35242,
+        "episode_write": 24291,
+        "home_put": 208743,
+        "machine_put": 1,
+        "memory_delete": 25923,
+        "memory_put": 227200,
+        "project_minted": 120,
+        "project_put": 120,
+        "project_remote_put": 105,
+        "project_witness_put": 108,
+        "prompt_recall": 381225,
+        "recall_held": 221403,
+        "remove": 34594,
+        "resolution_joined": 32,
+        "resolution_new": 120,
+        "returned_delete": 4,
+        "returned_put": 72,
+        "review_issued": 361243,
+        "search": 264632,
+        "search_miss": 23046,
+        "session_brief": 96745,
+        "show": 88360,
+        "standing_put": 187682,
+        "store_created": 1,
+        "tombstone_put": 25923,
+        "turn_audited": 780625,
+        "update": 78354,
+        "use": 654880,
+        "verification_put": 24670,
+        "verify": 24670,
+        "witness_put": 108,
+        "write": 164424
+      },
+      "log_verify": {
+        "available_mb_at_start": 4216.4,
+        "capped": true,
+        "exit": -9,
+        "gb_at_s": {
+          "1": 3.7,
+          "2": 6.8
+        },
+        "peak_rss_mb": 2754.0,
+        "rss_cap_mb": 2600.0,
+        "status": null,
+        "stderr_tail": "",
+        "wall_s": 10.6
+      },
+      "planned": {
+        "imported": 14848,
+        "imported_episodes": 895,
+        "imported_standing": 0.0,
+        "projects": 120,
+        "rates": {
+          "episodes": 0.3,
+          "new": 1.375,
+          "removed": 0.225,
+          "rows": 33.875,
+          "standing": 1.625
+        },
+        "scale": 100.0,
+        "sessions": 115350,
+        "span_days": 420.0
+      },
+      "replay": {
+        "counts": {
+          "episodes": 34347,
+          "imported": 14848,
+          "imported_episodes": 895,
+          "removed": 25923,
+          "rows": 3945177,
+          "sights": 154,
+          "skipped:checkout_put": 17180,
+          "skipped:conflict_put": 493648,
+          "standing": 29029,
+          "updated": 29029,
+          "verified": 24670,
+          "written": 158653
+        },
+        "peak_rss_mb": 89.5,
+        "rows_per_second": 3679.1,
+        "seconds": {
+          "optimize": 9.4,
+          "replay": 1072.3,
+          "repositories": 13.7
+        },
+        "tcp_connects": []
+      }
+    },
+    "10x": {
+      "api_estimate_hours": 38.58,
+      "api_session_s_at_scale": 22.988,
+      "build_commit": "5cf6e16ed92d8166048df7a235cc10d11864490e",
+      "census": {
+        "checkouts": 48,
+        "episodes": 3673,
+        "file_mb": 780.0,
+        "log_rows": 396645,
+        "log_span": [
+          "2025-09-10T02:38:52.669244Z",
+          "2026-11-04T03:09:27.691061Z"
+        ],
+        "membership_rows": 37888,
+        "membership_tables": {
+          "checkout_views": 48,
+          "checkouts": 48,
+          "declared_remotes": 0,
+          "homes": 21167,
+          "machines": 1,
+          "project_blobs": 0,
+          "project_files": 0,
+          "project_remotes": 34,
+          "project_witnesses": 35,
+          "projects": 38,
+          "proposals": 0,
+          "returned": 5,
+          "standing": 16512
+        },
+        "memories": 14933,
+        "projects": 38,
+        "sessions": 21882,
+        "tombstones": 2561
+      },
+      "log_kinds": {
+        "checkout_put": 48,
+        "checkout_registered": 48,
+        "checkout_view_put": 48,
+        "episode_handoff": 1038,
+        "episode_put": 3673,
+        "episode_write": 2542,
+        "home_put": 21167,
+        "machine_put": 1,
+        "memory_delete": 2561,
+        "memory_put": 22885,
+        "project_minted": 38,
+        "project_put": 38,
+        "project_remote_put": 34,
+        "project_witness_put": 35,
+        "prompt_recall": 38147,
+        "recall_held": 21876,
+        "remove": 3405,
+        "resolution_joined": 10,
+        "resolution_new": 38,
+        "returned_delete": 1,
+        "returned_put": 6,
+        "review_issued": 36046,
+        "search": 26436,
+        "search_miss": 2363,
+        "session_brief": 9593,
+        "show": 8818,
+        "standing_put": 18874,
+        "store_created": 1,
+        "tombstone_put": 2561,
+        "turn_audited": 78543,
+        "update": 7720,
+        "use": 66380,
+        "verification_put": 2514,
+        "verify": 2514,
+        "witness_put": 35,
+        "write": 16608
+      },
+      "log_verify": {
+        "exit": 0,
+        "peak_rss_mb": 882.4,
+        "status": "ok",
+        "stderr_tail": "",
+        "wall_s": 20.29
+      },
+      "planned": {
+        "imported": 1497,
+        "imported_episodes": 93,
+        "imported_standing": 0.0,
+        "projects": 38,
+        "rates": {
+          "episodes": 0.3,
+          "new": 1.375,
+          "removed": 0.225,
+          "rows": 33.875,
+          "standing": 1.625
+        },
+        "scale": 10.0,
+        "sessions": 11524,
+        "span_days": 420.0
+      },
+      "replay": {
+        "counts": {
+          "episodes": 3580,
+          "imported": 1497,
+          "imported_episodes": 93,
+          "removed": 2561,
+          "rows": 396644,
+          "sights": 50,
+          "skipped:checkout_put": 1762,
+          "skipped:conflict_put": 49324,
+          "standing": 2877,
+          "updated": 2877,
+          "verified": 2514,
+          "written": 15997
+        },
+        "peak_rss_mb": 74.3,
+        "rows_per_second": 5749.3,
+        "seconds": {
+          "optimize": 0.7,
+          "replay": 69.0,
+          "repositories": 4.4
+        },
+        "tcp_connects": []
+      }
+    },
+    "1x": {
+      "api_estimate_hours": 0.43,
+      "api_session_s_at_scale": 1.554,
+      "build_commit": "5cf6e16ed92d8166048df7a235cc10d11864490e",
+      "census": {
+        "checkouts": 14,
+        "episodes": 341,
+        "file_mb": 89.0,
+        "log_rows": 39473,
+        "log_span": [
+          "2026-09-23T02:37:56.739790Z",
+          "2026-11-04T03:11:10.017281Z"
+        ],
+        "membership_rows": 3807,
+        "membership_tables": {
+          "checkout_views": 14,
+          "checkouts": 14,
+          "declared_remotes": 0,
+          "homes": 2094,
+          "machines": 1,
+          "project_blobs": 0,
+          "project_files": 0,
+          "project_remotes": 10,
+          "project_witnesses": 10,
+          "projects": 12,
+          "proposals": 0,
+          "returned": 1,
+          "standing": 1651
+        },
+        "memories": 1499,
+        "projects": 12,
+        "sessions": 2183,
+        "tombstones": 254
+      },
+      "log_kinds": {
+        "checkout_put": 14,
+        "checkout_registered": 14,
+        "checkout_view_put": 14,
+        "episode_handoff": 96,
+        "episode_put": 341,
+        "episode_write": 235,
+        "home_put": 2094,
+        "machine_put": 1,
+        "memory_delete": 254,
+        "memory_put": 2305,
+        "project_minted": 12,
+        "project_put": 12,
+        "project_remote_put": 10,
+        "project_witness_put": 10,
+        "prompt_recall": 3733,
+        "recall_held": 2284,
+        "remove": 351,
+        "resolution_joined": 2,
+        "resolution_new": 12,
+        "returned_delete": 1,
+        "returned_put": 2,
+        "review_issued": 3629,
+        "search": 2607,
+        "search_miss": 236,
+        "session_brief": 960,
+        "show": 877,
+        "standing_put": 1894,
+        "store_created": 1,
+        "tombstone_put": 254,
+        "turn_audited": 7763,
+        "update": 804,
+        "use": 6466,
+        "verification_put": 257,
+        "verify": 257,
+        "witness_put": 10,
+        "write": 1661
+      },
+      "log_verify": {
+        "exit": 0,
+        "peak_rss_mb": 168.7,
+        "status": "ok",
+        "stderr_tail": "",
+        "wall_s": 2.61
+      },
+      "planned": {
+        "imported": 154,
+        "imported_episodes": 10,
+        "imported_standing": 0.0,
+        "projects": 12,
+        "rates": {
+          "episodes": 0.3,
+          "new": 1.375,
+          "removed": 0.225,
+          "rows": 33.875,
+          "standing": 1.625
+        },
+        "scale": 1.0,
+        "sessions": 1149,
+        "span_days": 42.0
+      },
+      "replay": {
+        "counts": {
+          "episodes": 331,
+          "imported": 154,
+          "imported_episodes": 10,
+          "removed": 254,
+          "rows": 39472,
+          "sights": 16,
+          "skipped:checkout_put": 169,
+          "skipped:conflict_put": 4821,
+          "standing": 295,
+          "updated": 295,
+          "verified": 257,
+          "written": 1599
+        },
+        "peak_rss_mb": 77.2,
+        "rows_per_second": 8496.3,
+        "seconds": {
+          "optimize": 0.0,
+          "replay": 4.6,
+          "repositories": 1.3
+        },
+        "tcp_connects": []
+      }
+    }
+  },
+  "src": "src",
+  "src_dirty": false,
+  "version": "9.0.0rc18"
+}

@@ -1,0 +1,85 @@
+{
+  "at": "2026-11-04T06:43:48.126166Z",
+  "commit": "5cf6e16ed92d8166048df7a235cc10d11864490e",
+  "machine": {
+    "cpu": "Apple M3 Pro",
+    "cpus": 12,
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13",
+    "ram_gb": 18.0
+  },
+  "members": {
+    "build_s": 13.5,
+    "commitless": 300,
+    "content_candidates": {
+      "max_ms": 78.62,
+      "mean_ms": 73.62,
+      "min_ms": 71.98,
+      "n": 30,
+      "p50_ms": 73.4,
+      "p95_ms": 75.74,
+      "p99_ms": 78.62,
+      "store_reads": [
+        1201
+      ]
+    },
+    "first_sight_commitless": {
+      "max_ms": 75.75,
+      "mean_ms": 69.09,
+      "min_ms": 66.29,
+      "n": 10,
+      "p50_ms": 68.5,
+      "p95_ms": 75.75,
+      "p99_ms": 75.75
+    },
+    "health": {
+      "max_ms": 26.98,
+      "mean_ms": 26.53,
+      "min_ms": 25.92,
+      "n": 10,
+      "p50_ms": 26.49,
+      "p95_ms": 26.98,
+      "p99_ms": 26.98,
+      "store_reads": [
+        104
+      ]
+    },
+    "loads": {
+      "members": {
+        "load_end": [
+          2.56,
+          4.06,
+          4.93
+        ],
+        "load_start": [
+          2.61,
+          4.09,
+          4.95
+        ],
+        "wall_s": 4.54
+      }
+    },
+    "projects": 400,
+    "quiet": true,
+    "quiet_waits": [
+      {
+        "arm": "members",
+        "loads_at_start": [
+          2.61,
+          4.09,
+          4.95
+        ],
+        "polls": 1,
+        "quiet_at_start": true,
+        "waited_s": 0.0
+      }
+    ],
+    "tcp_connects": [],
+    "tree": "8512962346a312fbf0b7460de7ea972a02f72780",
+    "unresolved": 100
+  },
+  "program_sha256": "055f512c92743ad1fdcdb7ad9eef69540f04809ef03cb8ca883aed6314fd6032",
+  "src": "BENCH_SCALE_SRC",
+  "src_dirty": false,
+  "version": "9.0.0rc18"
+}

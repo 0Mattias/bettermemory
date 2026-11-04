@@ -1,0 +1,306 @@
+{
+  "at": "2026-11-04T06:04:14.187833Z",
+  "commit": "5cf6e16ed92d8166048df7a235cc10d11864490e",
+  "contend": {
+    "calls": {
+      "episode": {
+        "max_ms": 166.14,
+        "mean_ms": 105.18,
+        "min_ms": 68.74,
+        "n": 5,
+        "p50_ms": 93.3,
+        "p95_ms": 166.14,
+        "p99_ms": 166.14
+      },
+      "hook_prompt": {
+        "max_ms": 27337.26,
+        "mean_ms": 9726.16,
+        "min_ms": 3.5,
+        "n": 8,
+        "p50_ms": 6289.15,
+        "p95_ms": 27337.26,
+        "p99_ms": 27337.26
+      },
+      "hook_session_start": {
+        "max_ms": 30809.62,
+        "mean_ms": 22201.92,
+        "min_ms": 5462.44,
+        "n": 3,
+        "p50_ms": 30333.7,
+        "p95_ms": 30809.62,
+        "p99_ms": 30809.62
+      },
+      "hook_stop": {
+        "max_ms": 38502.24,
+        "mean_ms": 23583.08,
+        "min_ms": 9369.07,
+        "n": 9,
+        "p50_ms": 24611.33,
+        "p95_ms": 38502.24,
+        "p99_ms": 38502.24
+      },
+      "memory_record_use": {
+        "max_ms": 4.74,
+        "mean_ms": 4.74,
+        "min_ms": 4.74,
+        "n": 1,
+        "p50_ms": 4.74,
+        "p95_ms": 4.74,
+        "p99_ms": 4.74
+      },
+      "memory_search": {
+        "max_ms": 7703.55,
+        "mean_ms": 7703.55,
+        "min_ms": 7703.55,
+        "n": 1,
+        "p50_ms": 7703.55,
+        "p95_ms": 7703.55,
+        "p99_ms": 7703.55
+      },
+      "memory_write": {
+        "max_ms": 127034.15,
+        "mean_ms": 110832.99,
+        "min_ms": 96541.85,
+        "n": 4,
+        "p50_ms": 109877.98,
+        "p95_ms": 127034.15,
+        "p99_ms": 127034.15
+      }
+    },
+    "census": {
+      "checkouts": 75,
+      "episodes": 267,
+      "file_mb": 744.7,
+      "log_kinds": {
+        "checkout_put": 116,
+        "checkout_registered": 75,
+        "checkout_view_put": 75,
+        "conflict_put": 152,
+        "episode_delete": 3408,
+        "episode_handoff": 1039,
+        "episode_put": 3675,
+        "episode_write": 2543,
+        "home_put": 21206,
+        "machine_put": 1,
+        "memory_delete": 2561,
+        "memory_put": 22922,
+        "project_minted": 65,
+        "project_put": 65,
+        "project_remote_put": 50,
+        "project_witness_put": 51,
+        "prompt_recall": 38235,
+        "recall_held": 21891,
+        "remove": 3405,
+        "resolution_joined": 10,
+        "resolution_new": 65,
+        "returned_delete": 1,
+        "returned_put": 6,
+        "review_issued": 36177,
+        "search": 26503,
+        "search_miss": 2363,
+        "session_brief": 9734,
+        "show": 8819,
+        "standing_put": 18911,
+        "store_created": 1,
+        "tombstone_put": 2561,
+        "turn_audited": 78565,
+        "update": 7721,
+        "use": 66405,
+        "verification_put": 2514,
+        "verify": 2514,
+        "witness_put": 51,
+        "write": 16648
+      },
+      "log_rows": 401104,
+      "log_span": [
+        "2025-09-10T02:38:52.669244Z",
+        "2026-11-04T05:57:06.503004Z"
+      ],
+      "membership_rows": 38077,
+      "membership_tables": {
+        "checkout_views": 75,
+        "checkouts": 75,
+        "declared_remotes": 0,
+        "homes": 21206,
+        "machines": 1,
+        "project_blobs": 0,
+        "project_files": 0,
+        "project_remotes": 50,
+        "project_witnesses": 51,
+        "projects": 65,
+        "proposals": 0,
+        "returned": 5,
+        "standing": 16549
+      },
+      "memories": 14970,
+      "projects": 65,
+      "sessions": 22051,
+      "tombstones": 2561
+    },
+    "cli": {
+      "exits": [
+        "0"
+      ],
+      "failed": [],
+      "lock_waits": {
+        "all": {
+          "failed": {},
+          "max_ms": 174.64,
+          "mean_ms": 1.29,
+          "min_ms": 0.01,
+          "n": 176,
+          "over_1s": 0,
+          "p50_ms": 0.02,
+          "p95_ms": 0.06,
+          "p99_ms": 22.07
+        },
+        "cli": {
+          "failed": {},
+          "max_ms": 174.64,
+          "mean_ms": 1.29,
+          "min_ms": 0.01,
+          "n": 176,
+          "over_1s": 0,
+          "p50_ms": 0.02,
+          "p95_ms": 0.06,
+          "p99_ms": 22.07
+        }
+      },
+      "runs": 94,
+      "wall": {
+        "backup create": {
+          "max_ms": 5519.0,
+          "mean_ms": 2148.62,
+          "min_ms": 1129.0,
+          "n": 24,
+          "p50_ms": 1677.5,
+          "p95_ms": 3722.0,
+          "p99_ms": 5519.0
+        },
+        "rename-scope tooling": {
+          "max_ms": 1690.0,
+          "mean_ms": 653.91,
+          "min_ms": 394.0,
+          "n": 23,
+          "p50_ms": 502.0,
+          "p95_ms": 1488.0,
+          "p99_ms": 1690.0
+        },
+        "rename-scope tools": {
+          "max_ms": 1010.0,
+          "mean_ms": 559.92,
+          "min_ms": 381.0,
+          "n": 24,
+          "p50_ms": 522.5,
+          "p95_ms": 781.0,
+          "p99_ms": 1010.0
+        },
+        "stats --json": {
+          "max_ms": 1826.0,
+          "mean_ms": 454.13,
+          "min_ms": 175.0,
+          "n": 23,
+          "p50_ms": 222.0,
+          "p95_ms": 1378.0,
+          "p99_ms": 1826.0
+        }
+      }
+    },
+    "cli_tail": "",
+    "errors": {
+      "hook_prompt:busy": 1,
+      "hook_session_start:busy": 1
+    },
+    "loads": {
+      "contend": {
+        "load_end": [
+          11.04,
+          6.07,
+          4.68
+        ],
+        "load_start": [
+          1.7,
+          2.87,
+          3.5
+        ],
+        "wall_s": 128.41
+      }
+    },
+    "lock_waits": {
+      "all": {
+        "failed": {
+          "busy": 2
+        },
+        "max_ms": 104.16,
+        "mean_ms": 4.05,
+        "min_ms": 0.01,
+        "n": 112,
+        "over_1s": 0,
+        "p50_ms": 0.14,
+        "p95_ms": 17.13,
+        "p99_ms": 103.35
+      },
+      "hook": {
+        "failed": {
+          "busy": 2
+        },
+        "max_ms": 103.35,
+        "mean_ms": 5.23,
+        "min_ms": 0.01,
+        "n": 51,
+        "over_1s": 0,
+        "p50_ms": 0.23,
+        "p95_ms": 41.45,
+        "p99_ms": 103.35
+      },
+      "tool": {
+        "failed": {},
+        "max_ms": 104.16,
+        "mean_ms": 3.07,
+        "min_ms": 0.01,
+        "n": 61,
+        "over_1s": 0,
+        "p50_ms": 0.08,
+        "p95_ms": 12.13,
+        "p99_ms": 45.07
+      }
+    },
+    "quiet": true,
+    "quiet_waits": [
+      {
+        "arm": "contend",
+        "loads_at_start": [
+          1.85,
+          2.92,
+          3.52
+        ],
+        "polls": 2,
+        "quiet_at_start": true,
+        "waited_s": 180.0
+      }
+    ],
+    "scale": 10.0,
+    "seconds": 90.0,
+    "tcp_connects": [],
+    "threads_alive": 0,
+    "warning_samples": [
+      "state row session_brief not recorded, the call fails: OperationalError: database is locked",
+      "state row prompt_recall not recorded, the call fails: OperationalError: database is locked"
+    ],
+    "warnings": {
+      "state row prompt_recall": 1,
+      "state row session_brief": 1
+    }
+  },
+  "machine": {
+    "cpu": "Apple M3 Pro",
+    "cpus": 12,
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13",
+    "ram_gb": 18.0
+  },
+  "program_sha256": "055f512c92743ad1fdcdb7ad9eef69540f04809ef03cb8ca883aed6314fd6032",
+  "src": "src",
+  "src_dirty": false,
+  "version": "9.0.0rc18"
+}

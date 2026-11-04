@@ -25,6 +25,14 @@ standing threshold's weighted kappa against the judges) and
 `rsf7-update-relation-2026-10-23.json` (the update answer read as a
 replacement on 60 long records).
 
+A result also names the program that wrote it in `program_sha256`, where
+the program records one. The scale bench's timed results
+(`scale/results/scale-2026-11-04-x*-measure.json`, `-contend.json` and
+`-eng159-*.json`) carry `055f512c9274...`, the hash of its five files
+before `costs.py`, the profiler, was added; that file leaves the five as
+they were, and the profiles and the generation reading carry the hash
+with it.
+
 ## Programs
 
 | Program | Measures |
@@ -37,6 +45,7 @@ replacement on 60 long records).
 | `recall/` | The session brief and prompt recall on a sealed copy of a real store. |
 | `retrieval/` | recall@k on a committed, blind-authored gold set. |
 | `rot/` | Memory rot: claims checked against real repositories at pinned commits, pooled. |
+| `scale/` | Capacity: synthetic stores at 1x, 10x and 100x of the live store's shape, built through the store's own write and sign code; the hooks, tools, brief and membership resolution on each, the peak RSS of `log verify` and `backup`, a concurrent-writer arm, ENG-159's members reading at 400 projects, and one profiled call of each slow path (`costs.py`). |
 | `toolcost/` | The tool-schema context cost an MCP server charges on every turn. |
 | `llm.py`, `storage.py`, `swarm.py`, `interval.py`, `claims.py` | Shared: the model client, the storage latency bench, the fleet-concurrency bench, confidence intervals, claim parsing. |
 

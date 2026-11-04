@@ -134,6 +134,45 @@ eighteenth was built.
   `tests/test_commit_drift_cache.py`, `tests/test_origin_cache.py`,
   `tests/test_origin_refused.py`)
 
+- **A scale bench measures a store at 1x, 10x and 100x of one in daily
+  use, and the operations guide states the envelope (ENG-109).**
+  `bench/scale/` builds synthetic stores of 1,499, 14,933 and 147,578
+  memories (39,473, 396,645 and 3,945,178 log rows; 89 MB, 780 MB and
+  7.4 GB) through the product's write paths: sessions recorded through
+  the MCP tools and the hook bodies, replayed in time order through the
+  store's own write and sign code in batched transactions: the public
+  API, 0.9 sessions a second on a 1x store and slower as it grows, would
+  have taken an estimated 39 hours for 10x and 9,900 for 100x. On each
+  it times the hooks, the tools, the brief and membership resolution,
+  the peak RSS of `log verify`, `backup create` and `backup verify`, and
+  four tool workers, four hook workers and the CLI at once, every arm
+  started on a machine whose 1-minute load was under 4; one call of each
+  slow path is profiled at 10x and 100x, and the hooks' event reads are
+  timed on a clone against the shapes a fix would give them (at 100x a
+  new session's state rows in 0.6 ms through an index on `log(session,
+  kind)`, against 51 s, with the same rows). The operations guide's
+  "Capacity" section gives the readings and the supported envelope, 10x,
+  and names what degrades beyond it. Session start grows with the log
+  (84 ms at p50 at 1x, 852 ms at 10x, 85 s at 100x, where the file no
+  longer fit in the free memory), and every hook crosses its budget at
+  about 40x, interpolated between the 10x and 100x readings. A write
+  with its review answered grows with the memories (0.44 s, 14.7 s,
+  112 s). The peak RSS of `log verify` grows with the store (176 MB,
+  886 MB, and past the bench's 2.6 GB cap at 100x, where it was
+  stopped). Concurrent calls share one process's CPU while their lock
+  waits stay short (p95 25 ms at 1x, 17 ms at 10x). ENG-159's
+  arm at 400 projects reads a commit-less first sight's content
+  candidates in 4 store reads and 20.4 ms, against 1,201 reads and
+  73.4 ms on the tree before that fix, and health in 5 reads and
+  10.2 ms, against 104 and 26.5 ms. ENG-159's entry (9.0.0rc14) names 3
+  reads and 7.0 ms; the 4 are of the projects, their witnesses, the
+  checkouts and the checkouts' views, the count the test of it allows
+  (`tests/test_membership_members_index.py`); the bench times the call
+  under the liveness hold with the projects read cold, and the gap to
+  7.0 ms is not explained here. The product does not change.
+  (`bench/scale/`, `bench/README.md`, `docs/operations.md`,
+  `tests/test_bench_scale.py`)
+
 #### Fixed
 
 - **The migration homes a record in a part below a folder whose question

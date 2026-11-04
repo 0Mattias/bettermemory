@@ -1,0 +1,752 @@
+{
+  "at": "2026-11-04T10:00:45.069772Z",
+  "commit": "5cf6e16ed92d8166048df7a235cc10d11864490e",
+  "machine": {
+    "cpu": "Apple M3 Pro",
+    "cpus": 12,
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13",
+    "ram_gb": 18.0
+  },
+  "program_sha256": "c32906747bac1e17978f9defab6a8daedd18585b7f86db1e5ac5205fc38cb87d",
+  "shapes": {
+    "available_mb": 4439.2,
+    "cases": [
+      {
+        "case": "new session",
+        "now": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log INDEXED BY log_by_kind WHERE kind IN (?,?,?,?,?,?) AND session = ? ORDER BY seq",
+        "plans": {
+          "log(session, kind)": [
+            "SEARCH log USING INDEX log_by_session_kind (session=? AND kind=?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "now": [
+            "SEARCH log USING INDEX log_by_kind (kind=?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ]
+        },
+        "read": "session_events_of_kinds",
+        "readings": {
+          "log(session, kind)": [
+            {
+              "load_end": [
+                5.72,
+                6.56,
+                5.85
+              ],
+              "load_start": [
+                5.72,
+                6.56,
+                5.85
+              ],
+              "ms": 0.62,
+              "rows": 0,
+              "rows_sha256": "e3b0c44298fc1c14"
+            },
+            {
+              "load_end": [
+                5.42,
+                6.27,
+                5.78
+              ],
+              "load_start": [
+                5.42,
+                6.27,
+                5.78
+              ],
+              "ms": 0.56,
+              "rows": 0,
+              "rows_sha256": "e3b0c44298fc1c14"
+            }
+          ],
+          "now": [
+            {
+              "load_end": [
+                5.72,
+                6.56,
+                5.85
+              ],
+              "load_start": [
+                6.56,
+                6.81,
+                5.89
+              ],
+              "ms": 51301.11,
+              "rows": 0,
+              "rows_sha256": "e3b0c44298fc1c14"
+            },
+            {
+              "load_end": [
+                5.42,
+                6.27,
+                5.78
+              ],
+              "load_start": [
+                5.72,
+                6.56,
+                5.85
+              ],
+              "ms": 54671.54,
+              "rows": 0,
+              "rows_sha256": "e3b0c44298fc1c14"
+            }
+          ]
+        },
+        "shapes": {
+          "log(session, kind)": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log WHERE kind IN (?,?,?,?,?,?) AND session = ? ORDER BY seq"
+        },
+        "summary": {
+          "log(session, kind)": {
+            "new_ms": [
+              0.62,
+              0.56
+            ],
+            "now_ms": [
+              51301.11,
+              54671.54
+            ],
+            "same_rows": true,
+            "times_faster": 91609.1
+          }
+        }
+      },
+      {
+        "case": "busiest session",
+        "now": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log INDEXED BY log_by_kind WHERE kind IN (?,?,?,?,?,?) AND session = ? ORDER BY seq",
+        "plans": {
+          "log(session, kind)": [
+            "SEARCH log USING INDEX log_by_session_kind (session=? AND kind=?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "now": [
+            "SEARCH log USING INDEX log_by_kind (kind=?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ]
+        },
+        "read": "session_events_of_kinds",
+        "readings": {
+          "log(session, kind)": [
+            {
+              "load_end": [
+                7.03,
+                6.54,
+                5.91
+              ],
+              "load_start": [
+                7.03,
+                6.54,
+                5.91
+              ],
+              "ms": 7.02,
+              "rows": 73,
+              "rows_sha256": "c6f7f57abd0f5df2"
+            },
+            {
+              "load_end": [
+                8.65,
+                7.07,
+                6.15
+              ],
+              "load_start": [
+                8.65,
+                7.07,
+                6.15
+              ],
+              "ms": 5.86,
+              "rows": 73,
+              "rows_sha256": "c6f7f57abd0f5df2"
+            }
+          ],
+          "now": [
+            {
+              "load_end": [
+                7.03,
+                6.54,
+                5.91
+              ],
+              "load_start": [
+                5.42,
+                6.27,
+                5.78
+              ],
+              "ms": 60576.92,
+              "rows": 73,
+              "rows_sha256": "c6f7f57abd0f5df2"
+            },
+            {
+              "load_end": [
+                8.65,
+                7.07,
+                6.15
+              ],
+              "load_start": [
+                7.03,
+                6.54,
+                5.91
+              ],
+              "ms": 63228.09,
+              "rows": 73,
+              "rows_sha256": "c6f7f57abd0f5df2"
+            }
+          ]
+        },
+        "shapes": {
+          "log(session, kind)": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log WHERE kind IN (?,?,?,?,?,?) AND session = ? ORDER BY seq"
+        },
+        "summary": {
+          "log(session, kind)": {
+            "new_ms": [
+              7.02,
+              5.86
+            ],
+            "now_ms": [
+              60576.92,
+              63228.09
+            ],
+            "same_rows": true,
+            "times_faster": 10337.4
+          }
+        }
+      },
+      {
+        "case": "1 kinds, cut 2026-11-03T09:38:33",
+        "kinds": [
+          "turn_audited"
+        ],
+        "now": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log INDEXED BY log_by_kind WHERE kind IN (?) AND substr(ts, 1, 19) >= ? ORDER BY seq",
+        "plans": {
+          "log(kind, ts)": [
+            "SEARCH log USING INDEX log_by_kind (kind=?)"
+          ],
+          "log(kind, ts), named": [
+            "SEARCH log USING INDEX log_by_kind_ts (kind=? AND ts>?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "log_by_ts, no new index": [
+            "SEARCH log USING INDEX log_by_ts (ts>?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "now": [
+            "SEARCH log USING INDEX log_by_kind (kind=?)"
+          ]
+        },
+        "read": "events_of_kinds",
+        "readings": {
+          "log(kind, ts)": [
+            {
+              "load_end": [
+                8.34,
+                7.14,
+                6.21
+              ],
+              "load_start": [
+                8.15,
+                7.05,
+                6.17
+              ],
+              "ms": 15275.76,
+              "rows": 1240,
+              "rows_sha256": "8f9b6d2a6cb33976"
+            },
+            {
+              "load_end": [
+                7.43,
+                7.05,
+                6.21
+              ],
+              "load_start": [
+                7.97,
+                7.12,
+                6.22
+              ],
+              "ms": 16911.16,
+              "rows": 1240,
+              "rows_sha256": "8f9b6d2a6cb33976"
+            }
+          ],
+          "log(kind, ts), named": [
+            {
+              "load_end": [
+                8.34,
+                7.14,
+                6.21
+              ],
+              "load_start": [
+                8.34,
+                7.14,
+                6.21
+              ],
+              "ms": 3.4,
+              "rows": 1240,
+              "rows_sha256": "8f9b6d2a6cb33976"
+            },
+            {
+              "load_end": [
+                7.43,
+                7.05,
+                6.21
+              ],
+              "load_start": [
+                7.43,
+                7.05,
+                6.21
+              ],
+              "ms": 3.45,
+              "rows": 1240,
+              "rows_sha256": "8f9b6d2a6cb33976"
+            }
+          ],
+          "log_by_ts, no new index": [
+            {
+              "load_end": [
+                8.34,
+                7.14,
+                6.21
+              ],
+              "load_start": [
+                8.34,
+                7.14,
+                6.21
+              ],
+              "ms": 8.92,
+              "rows": 1240,
+              "rows_sha256": "8f9b6d2a6cb33976"
+            },
+            {
+              "load_end": [
+                7.43,
+                7.05,
+                6.21
+              ],
+              "load_start": [
+                7.43,
+                7.05,
+                6.21
+              ],
+              "ms": 8.5,
+              "rows": 1240,
+              "rows_sha256": "8f9b6d2a6cb33976"
+            }
+          ],
+          "now": [
+            {
+              "load_end": [
+                8.15,
+                7.05,
+                6.17
+              ],
+              "load_start": [
+                8.65,
+                7.07,
+                6.15
+              ],
+              "ms": 18635.47,
+              "rows": 1240,
+              "rows_sha256": "8f9b6d2a6cb33976"
+            },
+            {
+              "load_end": [
+                7.97,
+                7.12,
+                6.22
+              ],
+              "load_start": [
+                8.34,
+                7.14,
+                6.21
+              ],
+              "ms": 15980.16,
+              "rows": 1240,
+              "rows_sha256": "8f9b6d2a6cb33976"
+            }
+          ]
+        },
+        "shapes": {
+          "log(kind, ts)": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log WHERE kind IN (?) AND ts >= ? ORDER BY seq",
+          "log(kind, ts), named": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log INDEXED BY log_by_kind_ts WHERE kind IN (?) AND ts >= ? ORDER BY seq",
+          "log_by_ts, no new index": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log INDEXED BY log_by_ts WHERE kind IN (?) AND ts >= ? ORDER BY seq"
+        },
+        "summary": {
+          "log(kind, ts)": {
+            "new_ms": [
+              15275.76,
+              16911.16
+            ],
+            "now_ms": [
+              18635.47,
+              15980.16
+            ],
+            "same_rows": true,
+            "times_faster": 1.0
+          },
+          "log(kind, ts), named": {
+            "new_ms": [
+              3.4,
+              3.45
+            ],
+            "now_ms": [
+              18635.47,
+              15980.16
+            ],
+            "same_rows": true,
+            "times_faster": 4700.0
+          },
+          "log_by_ts, no new index": {
+            "new_ms": [
+              8.92,
+              8.5
+            ],
+            "now_ms": [
+              18635.47,
+              15980.16
+            ],
+            "same_rows": true,
+            "times_faster": 1880.0
+          }
+        }
+      },
+      {
+        "case": "6 kinds, cut 2026-11-03T09:38:33",
+        "kinds": [
+          "list",
+          "list_active",
+          "search",
+          "show",
+          "update",
+          "write"
+        ],
+        "now": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log INDEXED BY log_by_kind WHERE kind IN (?,?,?,?,?,?) AND substr(ts, 1, 19) >= ? ORDER BY seq",
+        "plans": {
+          "log(kind, ts)": [
+            "SEARCH log USING INDEX log_by_kind_ts (kind=? AND ts>?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "log(kind, ts), named": [
+            "SEARCH log USING INDEX log_by_kind_ts (kind=? AND ts>?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "log_by_ts, no new index": [
+            "SEARCH log USING INDEX log_by_ts (ts>?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ],
+          "now": [
+            "SEARCH log USING INDEX log_by_kind (kind=?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ]
+        },
+        "read": "events_of_kinds",
+        "readings": {
+          "log(kind, ts)": [
+            {
+              "load_end": [
+                7.28,
+                7.05,
+                6.25
+              ],
+              "load_start": [
+                7.28,
+                7.05,
+                6.25
+              ],
+              "ms": 22.05,
+              "rows": 976,
+              "rows_sha256": "f5794b7b4b1d98f1"
+            },
+            {
+              "load_end": [
+                12.07,
+                8.15,
+                6.67
+              ],
+              "load_start": [
+                12.07,
+                8.15,
+                6.67
+              ],
+              "ms": 26.92,
+              "rows": 976,
+              "rows_sha256": "f5794b7b4b1d98f1"
+            }
+          ],
+          "log(kind, ts), named": [
+            {
+              "load_end": [
+                7.28,
+                7.05,
+                6.25
+              ],
+              "load_start": [
+                7.28,
+                7.05,
+                6.25
+              ],
+              "ms": 7.42,
+              "rows": 976,
+              "rows_sha256": "f5794b7b4b1d98f1"
+            },
+            {
+              "load_end": [
+                12.07,
+                8.15,
+                6.67
+              ],
+              "load_start": [
+                12.07,
+                8.15,
+                6.67
+              ],
+              "ms": 8.62,
+              "rows": 976,
+              "rows_sha256": "f5794b7b4b1d98f1"
+            }
+          ],
+          "log_by_ts, no new index": [
+            {
+              "load_end": [
+                7.28,
+                7.05,
+                6.25
+              ],
+              "load_start": [
+                7.28,
+                7.05,
+                6.25
+              ],
+              "ms": 23.34,
+              "rows": 976,
+              "rows_sha256": "f5794b7b4b1d98f1"
+            },
+            {
+              "load_end": [
+                12.07,
+                8.15,
+                6.67
+              ],
+              "load_start": [
+                12.07,
+                8.15,
+                6.67
+              ],
+              "ms": 24.3,
+              "rows": 976,
+              "rows_sha256": "f5794b7b4b1d98f1"
+            }
+          ],
+          "now": [
+            {
+              "load_end": [
+                7.28,
+                7.05,
+                6.25
+              ],
+              "load_start": [
+                7.43,
+                7.05,
+                6.21
+              ],
+              "ms": 32947.15,
+              "rows": 976,
+              "rows_sha256": "f5794b7b4b1d98f1"
+            },
+            {
+              "load_end": [
+                12.07,
+                8.15,
+                6.67
+              ],
+              "load_start": [
+                7.28,
+                7.05,
+                6.25
+              ],
+              "ms": 33619.73,
+              "rows": 976,
+              "rows_sha256": "f5794b7b4b1d98f1"
+            }
+          ]
+        },
+        "shapes": {
+          "log(kind, ts)": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log WHERE kind IN (?,?,?,?,?,?) AND ts >= ? ORDER BY seq",
+          "log(kind, ts), named": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log INDEXED BY log_by_kind_ts WHERE kind IN (?,?,?,?,?,?) AND ts >= ? ORDER BY seq",
+          "log_by_ts, no new index": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log INDEXED BY log_by_ts WHERE kind IN (?,?,?,?,?,?) AND ts >= ? ORDER BY seq"
+        },
+        "summary": {
+          "log(kind, ts)": {
+            "new_ms": [
+              22.05,
+              26.92
+            ],
+            "now_ms": [
+              32947.15,
+              33619.73
+            ],
+            "same_rows": true,
+            "times_faster": 1494.2
+          },
+          "log(kind, ts), named": {
+            "new_ms": [
+              7.42,
+              8.62
+            ],
+            "now_ms": [
+              32947.15,
+              33619.73
+            ],
+            "same_rows": true,
+            "times_faster": 4440.3
+          },
+          "log_by_ts, no new index": {
+            "new_ms": [
+              23.34,
+              24.3
+            ],
+            "now_ms": [
+              32947.15,
+              33619.73
+            ],
+            "same_rows": true,
+            "times_faster": 1411.6
+          }
+        }
+      },
+      {
+        "case": "every use row, against the rows since seq 3939140",
+        "now": "SELECT ts, payload FROM log INDEXED BY log_by_kind WHERE kind = 'use' AND json_valid(payload) AND json_extract(payload, '$.outcome') = 'contradicted' ORDER BY seq",
+        "plans": {
+          "now": [
+            "SEARCH log USING INDEX log_by_kind (kind=?)"
+          ],
+          "rows since the last read": [
+            "SEARCH log USING INDEX log_by_kind (kind=? AND seq>?)"
+          ]
+        },
+        "read": "contradicted_at",
+        "readings": {
+          "now": [
+            {
+              "load_end": [
+                11.89,
+                8.31,
+                6.75
+              ],
+              "load_start": [
+                12.07,
+                8.15,
+                6.67
+              ],
+              "ms": 15297.58,
+              "rows": 0,
+              "rows_sha256": "e3b0c44298fc1c14"
+            },
+            {
+              "load_end": [
+                10.64,
+                8.21,
+                6.75
+              ],
+              "load_start": [
+                11.89,
+                8.31,
+                6.75
+              ],
+              "ms": 15096.19,
+              "rows": 0,
+              "rows_sha256": "e3b0c44298fc1c14"
+            }
+          ],
+          "rows since the last read": [
+            {
+              "load_end": [
+                11.89,
+                8.31,
+                6.75
+              ],
+              "load_start": [
+                11.89,
+                8.31,
+                6.75
+              ],
+              "ms": 1.59,
+              "rows": 0,
+              "rows_sha256": "e3b0c44298fc1c14"
+            },
+            {
+              "load_end": [
+                10.64,
+                8.21,
+                6.75
+              ],
+              "load_start": [
+                10.64,
+                8.21,
+                6.75
+              ],
+              "ms": 1.39,
+              "rows": 0,
+              "rows_sha256": "e3b0c44298fc1c14"
+            }
+          ]
+        },
+        "same_rows_expected": false,
+        "shapes": {
+          "rows since the last read": "SELECT ts, payload FROM log INDEXED BY log_by_kind WHERE kind = 'use' AND json_valid(payload) AND json_extract(payload, '$.outcome') = 'contradicted' AND seq >= 3939140 ORDER BY seq"
+        },
+        "summary": {
+          "rows since the last read": {
+            "new_ms": [
+              1.59,
+              1.39
+            ],
+            "now_ms": [
+              15297.58,
+              15096.19
+            ],
+            "same_rows": true,
+            "times_faster": 10860.6
+          }
+        }
+      }
+    ],
+    "indexes": {
+      "log_by_kind_ts": {
+        "build_s": 19.79,
+        "load_end": [
+          8.13,
+          7.05,
+          5.9
+        ],
+        "load_start": [
+          7.6,
+          6.88,
+          5.82
+        ],
+        "mb": 183.3,
+        "sql": "CREATE INDEX log_by_kind_ts ON log(kind, ts)"
+      },
+      "log_by_session_kind": {
+        "build_s": 20.37,
+        "load_end": [
+          7.6,
+          6.88,
+          5.82
+        ],
+        "load_start": [
+          7.18,
+          6.76,
+          5.75
+        ],
+        "mb": 201.5,
+        "sql": "CREATE INDEX log_by_session_kind ON log(session, kind)"
+      }
+    },
+    "log_rows": 3945552,
+    "optimize_s": 7.35,
+    "page_size": 8192,
+    "profile": "scale-2026-11-04-x100-profile.json",
+    "scale": 100.0,
+    "tcp_connects": []
+  },
+  "src": "src",
+  "src_dirty": false,
+  "version": "9.0.0rc18"
+}

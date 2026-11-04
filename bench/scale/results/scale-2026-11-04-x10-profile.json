@@ -1,0 +1,923 @@
+{
+  "at": "2026-11-04T09:34:03.426129Z",
+  "commit": "5cf6e16ed92d8166048df7a235cc10d11864490e",
+  "machine": {
+    "cpu": "Apple M3 Pro",
+    "cpus": 12,
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13",
+    "ram_gb": 18.0
+  },
+  "profile": {
+    "available_mb": 4855.7,
+    "loads": {
+      "load_end": [
+        4.59,
+        4.04,
+        4.03
+      ],
+      "load_start": [
+        3.75,
+        3.81,
+        3.96
+      ]
+    },
+    "plans": {
+      "events_of_kinds": {
+        "plan": [
+          "SEARCH log USING INDEX log_by_kind (kind=?)",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "sql": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log WHERE kind IN (?,?) AND substr(ts, 1, 19) >= ? ORDER BY seq"
+      },
+      "indexes": [
+        "CREATE INDEX log_by_kind ON log(kind, seq)",
+        "CREATE INDEX log_by_mac ON log(mac)",
+        "CREATE INDEX log_by_ts ON log(ts)",
+        "CREATE INDEX log_corroborations ON log(session)\n    WHERE kind = 'memory_put'"
+      ],
+      "session_events_of_kinds": {
+        "plan": [
+          "SEARCH log USING INDEX log_by_kind (kind=?)",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ],
+        "sql": "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log WHERE kind IN (?,?) AND session = ? ORDER BY seq"
+      }
+    },
+    "prompt": {
+      "cpu_s": 0.63,
+      "delivered": 3,
+      "event_reads": [
+        {
+          "cut": "2026-11-03T09:33:10",
+          "kinds": [
+            "turn_audited"
+          ],
+          "read": "events_of_kinds",
+          "rows_returned": 123
+        },
+        {
+          "cut": "2026-11-03T09:33:10",
+          "kinds": [
+            "turn_audited"
+          ],
+          "read": "events_of_kinds",
+          "rows_returned": 123
+        },
+        {
+          "cut": "2026-11-03T09:33:10",
+          "kinds": [
+            "list",
+            "list_active",
+            "search",
+            "show",
+            "update",
+            "write"
+          ],
+          "read": "events_of_kinds",
+          "rows_returned": 185
+        }
+      ],
+      "top": {
+        "by_cumulative": [
+          {
+            "calls": 1,
+            "cumtime_s": 0.675,
+            "function": "bettermemory/events.py:636(body)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.675,
+            "function": "bettermemory/recall.py:1415(prompt_recall)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.318,
+            "function": "bettermemory/recall_settle.py:48(_probe_message)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.318,
+            "function": "bettermemory/recall_prompt.py:160(_prompt_probe)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.279,
+            "function": "bettermemory/audit.py:1200(_probe_hits)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.279,
+            "function": "bettermemory/search.py:1698(search)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.279,
+            "function": "bettermemory/audit.py:917(probe_for_miss)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.277,
+            "function": "bettermemory/search.py:1593(_rank_candidates)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.263,
+            "function": "bettermemory/search_steps.py:108(_fetch_corpus_stats)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.263,
+            "function": "bettermemory/handlers/search.py:366(_corpus_stats)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.263,
+            "function": "bettermemory/store.py:1624(document_frequencies)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.263,
+            "function": "bettermemory/store_index.py:262(_memoised_document_frequencies)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 434,
+            "cumtime_s": 0.252,
+            "function": "bettermemory/store_events.py:409(events_of_kinds)",
+            "tottime_s": 0.002
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.213,
+            "function": "bettermemory/recall.py:1699(_choose_hits)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 14,
+            "cumtime_s": 0.201,
+            "function": "bettermemory/store.py:1723(_term_masks)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 28,
+            "cumtime_s": 0.201,
+            "function": "bettermemory/store.py:1727(rows_matching)",
+            "tottime_s": 0.16
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.138,
+            "function": "bettermemory/recall_prompt.py:124(_settle_before_probe)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.114,
+            "function": "bettermemory/recall.py:1678(_seen_in_segment)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.114,
+            "function": "bettermemory/recall.py:1339(_seen_in_log)",
+            "tottime_s": 0.001
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.098,
+            "function": "bettermemory/store_index.py:372(contradicted_at)",
+            "tottime_s": 0.0
+          }
+        ],
+        "by_own_time": [
+          {
+            "calls": 133,
+            "cumtime_s": 0.38,
+            "function": "~:0(<method 'execute' of 'sqlite3.Connection' objects>)",
+            "tottime_s": 0.38
+          },
+          {
+            "calls": 28,
+            "cumtime_s": 0.201,
+            "function": "bettermemory/store.py:1727(rows_matching)",
+            "tottime_s": 0.16
+          },
+          {
+            "calls": 182337,
+            "cumtime_s": 0.027,
+            "function": "~:0(<method 'get' of 'dict' objects>)",
+            "tottime_s": 0.027
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.06,
+            "function": "bettermemory/store.py:1686(_read_doc_freq_inputs)",
+            "tottime_s": 0.027
+          },
+          {
+            "calls": 169709,
+            "cumtime_s": 0.009,
+            "function": "~:0(<method 'append' of 'list' objects>)",
+            "tottime_s": 0.009
+          },
+          {
+            "calls": 15853,
+            "cumtime_s": 0.022,
+            "function": "decoder.py:340(decode)",
+            "tottime_s": 0.009
+          },
+          {
+            "calls": 107,
+            "cumtime_s": 0.01,
+            "function": "bettermemory/store_index.py:121(_row_mask)",
+            "tottime_s": 0.009
+          },
+          {
+            "calls": 15853,
+            "cumtime_s": 0.007,
+            "function": "decoder.py:351(raw_decode)",
+            "tottime_s": 0.007
+          },
+          {
+            "calls": 15853,
+            "cumtime_s": 0.03,
+            "function": "__init__.py:304(loads)",
+            "tottime_s": 0.006
+          },
+          {
+            "calls": 31819,
+            "cumtime_s": 0.004,
+            "function": "~:0(<method 'match' of 're.Pattern' objects>)",
+            "tottime_s": 0.004
+          },
+          {
+            "calls": 4136,
+            "cumtime_s": 0.006,
+            "function": "bettermemory/search_lexicon.py:618(_stem_segment)",
+            "tottime_s": 0.004
+          },
+          {
+            "calls": 15429,
+            "cumtime_s": 0.028,
+            "function": "bettermemory/store_rows.py:97(_load_json)",
+            "tottime_s": 0.003
+          },
+          {
+            "calls": 26429,
+            "cumtime_s": 0.002,
+            "function": "~:0(<method 'endswith' of 'str' objects>)",
+            "tottime_s": 0.002
+          },
+          {
+            "calls": 32041,
+            "cumtime_s": 0.002,
+            "function": "~:0(<built-in method builtins.isinstance>)",
+            "tottime_s": 0.002
+          },
+          {
+            "calls": 48310,
+            "cumtime_s": 0.002,
+            "function": "~:0(<built-in method builtins.len>)",
+            "tottime_s": 0.002
+          },
+          {
+            "calls": 894,
+            "cumtime_s": 0.002,
+            "function": "~:0(<method 'sub' of 're.Pattern' objects>)",
+            "tottime_s": 0.002
+          },
+          {
+            "calls": 31706,
+            "cumtime_s": 0.002,
+            "function": "~:0(<method 'end' of 're.Match' objects>)",
+            "tottime_s": 0.002
+          },
+          {
+            "calls": 434,
+            "cumtime_s": 0.252,
+            "function": "bettermemory/store_events.py:409(events_of_kinds)",
+            "tottime_s": 0.002
+          },
+          {
+            "calls": 16033,
+            "cumtime_s": 0.001,
+            "function": "~:0(<method 'startswith' of 'str' objects>)",
+            "tottime_s": 0.001
+          },
+          {
+            "calls": 176,
+            "cumtime_s": 0.001,
+            "function": "~:0(<method 'findall' of 're.Pattern' objects>)",
+            "tottime_s": 0.001
+          }
+        ]
+      },
+      "waiting_s": 0.04,
+      "walked": [
+        {
+          "calls": 2,
+          "cuts": [
+            "2026-11-03T09:33:10",
+            "2026-11-03T09:33:10"
+          ],
+          "kinds": [
+            "turn_audited"
+          ],
+          "read": "events_of_kinds",
+          "rows_in_window_all_kinds": 43574,
+          "rows_returned": 246,
+          "rows_walked": 157148
+        },
+        {
+          "calls": 1,
+          "cuts": [
+            "2026-11-03T09:33:10"
+          ],
+          "kinds": [
+            "list",
+            "list_active",
+            "search",
+            "show",
+            "update",
+            "write"
+          ],
+          "read": "events_of_kinds",
+          "rows_in_window_all_kinds": 21787,
+          "rows_returned": 185,
+          "rows_walked": 59697
+        }
+      ],
+      "wall_s": 0.67
+    },
+    "quiet": true,
+    "quiet_wait": {
+      "loads_at_start": [
+        3.75,
+        3.81,
+        3.96
+      ],
+      "polls": 2,
+      "quiet_at_start": true,
+      "waited_s": 180.0
+    },
+    "reviewed_write": {
+      "calls": 5,
+      "cpu_s": 52.25,
+      "event_reads": [],
+      "status": "committed",
+      "top": {
+        "by_cumulative": [
+          {
+            "calls": 5,
+            "cumtime_s": 52.354,
+            "function": "bettermemory/builder.py:107(call_tool)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 52.352,
+            "function": "bettermemory/_handlers.py:327(wrapper)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 52.339,
+            "function": "bettermemory/_handlers.py:497(memory_write)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 52.339,
+            "function": "bettermemory/_handlers.py:434(_run)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 52.339,
+            "function": "bettermemory/_handlers.py:276(_kept_or_retryable)",
+            "tottime_s": 0.054
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 52.285,
+            "function": "bettermemory/handlers/write.py:512(memory_write)",
+            "tottime_s": 0.001
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 30.796,
+            "function": "bettermemory/handlers/write.py:1302(_reviewed_write)",
+            "tottime_s": 0.004
+          },
+          {
+            "calls": 1929788,
+            "cumtime_s": 30.605,
+            "function": "bettermemory/search_lexicon.py:706(tokenize)",
+            "tottime_s": 0.369
+          },
+          {
+            "calls": 1929788,
+            "cumtime_s": 30.236,
+            "function": "bettermemory/search_lexicon.py:756(_tokenize_impl)",
+            "tottime_s": 2.129
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 28.571,
+            "function": "bettermemory/review.py:420(related_for)",
+            "tottime_s": 0.01
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 28.147,
+            "function": "bettermemory/supersession.py:490(detect_supersession)",
+            "tottime_s": 0.18
+          },
+          {
+            "calls": 215475,
+            "cumtime_s": 22.784,
+            "function": "bettermemory/search_dedup.py:133(raw_content_tokens)",
+            "tottime_s": 0.459
+          },
+          {
+            "calls": 162621,
+            "cumtime_s": 22.165,
+            "function": "bettermemory/search_dedup.py:88(_raw_content_token_set)",
+            "tottime_s": 0.31
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 21.482,
+            "function": "bettermemory/handlers/write_gates.py:785(apply_write_gates)",
+            "tottime_s": 0.048
+          },
+          {
+            "calls": 11531515,
+            "cumtime_s": 18.494,
+            "function": "bettermemory/search_lexicon.py:695(_stem_token)",
+            "tottime_s": 1.712
+          },
+          {
+            "calls": 11531515,
+            "cumtime_s": 16.782,
+            "function": "bettermemory/search_lexicon.py:618(_stem_segment)",
+            "tottime_s": 10.596
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 15.582,
+            "function": "bettermemory/handlers/write_gates.py:553(evaluate)",
+            "tottime_s": 0.001
+          },
+          {
+            "calls": 10,
+            "cumtime_s": 14.766,
+            "function": "bettermemory/search_dedup.py:290(_score_similar_jaccard)",
+            "tottime_s": 0.099
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 12.634,
+            "function": "bettermemory/search_dedup.py:232(find_similar)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 5,
+            "cumtime_s": 12.634,
+            "function": "bettermemory/search_dedup.py:384(_find_similar_jaccard)",
+            "tottime_s": 0.0
+          }
+        ],
+        "by_own_time": [
+          {
+            "calls": 11531515,
+            "cumtime_s": 16.782,
+            "function": "bettermemory/search_lexicon.py:618(_stem_segment)",
+            "tottime_s": 10.596
+          },
+          {
+            "calls": 9798781,
+            "cumtime_s": 5.997,
+            "function": "~:0(<method 'sub' of 're.Pattern' objects>)",
+            "tottime_s": 5.997
+          },
+          {
+            "calls": 64843015,
+            "cumtime_s": 3.936,
+            "function": "~:0(<method 'endswith' of 'str' objects>)",
+            "tottime_s": 3.936
+          },
+          {
+            "calls": 1929788,
+            "cumtime_s": 30.236,
+            "function": "bettermemory/search_lexicon.py:756(_tokenize_impl)",
+            "tottime_s": 2.129
+          },
+          {
+            "calls": 1998388,
+            "cumtime_s": 2.056,
+            "function": "~:0(<method 'findall' of 're.Pattern' objects>)",
+            "tottime_s": 2.056
+          },
+          {
+            "calls": 140460,
+            "cumtime_s": 3.822,
+            "function": "bettermemory/search_dedup.py:151(_pairwise_content_jaccard)",
+            "tottime_s": 1.99
+          },
+          {
+            "calls": 38932495,
+            "cumtime_s": 1.8,
+            "function": "~:0(<built-in method builtins.len>)",
+            "tottime_s": 1.8
+          },
+          {
+            "calls": 11531515,
+            "cumtime_s": 18.494,
+            "function": "bettermemory/search_lexicon.py:695(_stem_token)",
+            "tottime_s": 1.712
+          },
+          {
+            "calls": 1929788,
+            "cumtime_s": 7.469,
+            "function": "bettermemory/search_lexicon.py:745(_fold_ascii_safe)",
+            "tottime_s": 1.339
+          },
+          {
+            "calls": 109257,
+            "cumtime_s": 1.27,
+            "function": "~:0(<method 'split' of 're.Pattern' objects>)",
+            "tottime_s": 1.27
+          },
+          {
+            "calls": 11894245,
+            "cumtime_s": 1.609,
+            "function": "bettermemory/supersession.py:155(<genexpr>)",
+            "tottime_s": 1.114
+          },
+          {
+            "calls": 5440634,
+            "cumtime_s": 1.286,
+            "function": "~:0(<method 'update' of 'set' objects>)",
+            "tottime_s": 1.009
+          },
+          {
+            "calls": 13287638,
+            "cumtime_s": 0.96,
+            "function": "~:0(<method 'get' of 'dict' objects>)",
+            "tottime_s": 0.96
+          },
+          {
+            "calls": 1355315,
+            "cumtime_s": 1.826,
+            "function": "decoder.py:340(decode)",
+            "tottime_s": 0.954
+          },
+          {
+            "calls": 154378,
+            "cumtime_s": 5.602,
+            "function": "bettermemory/store_rows.py:323(_row_to_memory)",
+            "tottime_s": 0.835
+          },
+          {
+            "calls": 364903,
+            "cumtime_s": 2.149,
+            "function": "~:0(<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>)",
+            "tottime_s": 0.748
+          },
+          {
+            "calls": 1749697,
+            "cumtime_s": 2.336,
+            "function": "~:0(<built-in method builtins.any>)",
+            "tottime_s": 0.731
+          },
+          {
+            "calls": 34320,
+            "cumtime_s": 3.326,
+            "function": "bettermemory/supersession.py:149(_numeric_token_set)",
+            "tottime_s": 0.63
+          },
+          {
+            "calls": 4653176,
+            "cumtime_s": 0.595,
+            "function": "~:0(<method 'match' of 're.Pattern' objects>)",
+            "tottime_s": 0.595
+          },
+          {
+            "calls": 34280,
+            "cumtime_s": 9.554,
+            "function": "bettermemory/supersession.py:460(_surface_forms)",
+            "tottime_s": 0.576
+          }
+        ]
+      },
+      "waiting_s": 0.11,
+      "wall_s": 52.36
+    },
+    "scale": 10.0,
+    "session_start": {
+      "cpu_s": 1.98,
+      "event_reads": [
+        {
+          "kinds": [
+            "prompt_recall",
+            "review_unanswered",
+            "segment_opened",
+            "session_brief",
+            "turn_audited",
+            "use"
+          ],
+          "read": "session_events_of_kinds",
+          "rows_returned": 0
+        }
+      ],
+      "pointers": 16,
+      "top": {
+        "by_cumulative": [
+          {
+            "calls": 1,
+            "cumtime_s": 4.322,
+            "function": "bettermemory/events.py:636(body)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 4.322,
+            "function": "bettermemory/recall.py:685(session_brief)",
+            "tottime_s": 0.002
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 2.152,
+            "function": "bettermemory/store_events.py:432(session_events_of_kinds)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 2.152,
+            "function": "bettermemory/recall_state.py:606(pending_compaction)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 2.152,
+            "function": "bettermemory/recall.py:841(_open_brief_segment)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 2.152,
+            "function": "bettermemory/recall.py:501(confirm_compaction)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 2.152,
+            "function": "bettermemory/recall_state.py:429(rebuild_session)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 2,
+            "cumtime_s": 2.152,
+            "function": "bettermemory/recall_state.py:542(_entry)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 1.44,
+            "function": "bettermemory/recall.py:959(_brief_in_segment)",
+            "tottime_s": 0.008
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 1.384,
+            "function": "bettermemory/recall.py:387(_select_brief)",
+            "tottime_s": 0.007
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.719,
+            "function": "bettermemory/recall.py:832(_brief_lead_lines)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.718,
+            "function": "bettermemory/standing.py:234(backlog)",
+            "tottime_s": 0.004
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.718,
+            "function": "bettermemory/recall_admission.py:288(standing_line)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 4,
+            "cumtime_s": 0.716,
+            "function": "bettermemory/store_records.py:227(standing_rows)",
+            "tottime_s": 0.657
+          },
+          {
+            "calls": 17173,
+            "cumtime_s": 0.608,
+            "function": "bettermemory/store_rows.py:323(_row_to_memory)",
+            "tottime_s": 0.092
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.587,
+            "function": "bettermemory/store_records.py:899(load_all)",
+            "tottime_s": 0.001
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.587,
+            "function": "bettermemory/handlers/search.py:172(resolve_search_pool)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 1,
+            "cumtime_s": 0.587,
+            "function": "bettermemory/_handlers.py:127(load_search_candidates)",
+            "tottime_s": 0.0
+          },
+          {
+            "calls": 14976,
+            "cumtime_s": 0.586,
+            "function": "bettermemory/store_records.py:328(iter_memories)",
+            "tottime_s": 0.054
+          },
+          {
+            "calls": 171849,
+            "cumtime_s": 0.351,
+            "function": "bettermemory/store_rows.py:97(_load_json)",
+            "tottime_s": 0.031
+          }
+        ],
+        "by_own_time": [
+          {
+            "calls": 12475,
+            "cumtime_s": 2.364,
+            "function": "~:0(<method 'execute' of 'sqlite3.Connection' objects>)",
+            "tottime_s": 2.364
+          },
+          {
+            "calls": 4,
+            "cumtime_s": 0.716,
+            "function": "bettermemory/store_records.py:227(standing_rows)",
+            "tottime_s": 0.657
+          },
+          {
+            "calls": 175198,
+            "cumtime_s": 0.249,
+            "function": "decoder.py:340(decode)",
+            "tottime_s": 0.13
+          },
+          {
+            "calls": 17173,
+            "cumtime_s": 0.608,
+            "function": "bettermemory/store_rows.py:323(_row_to_memory)",
+            "tottime_s": 0.092
+          },
+          {
+            "calls": 3,
+            "cumtime_s": 0.222,
+            "function": "bettermemory/membership_queries.py:74(homes)",
+            "tottime_s": 0.072
+          },
+          {
+            "calls": 37828,
+            "cumtime_s": 0.202,
+            "function": "~:0(<method 'validate_python' of 'pydantic_core._pydantic_core.SchemaValidator' objects>)",
+            "tottime_s": 0.072
+          },
+          {
+            "calls": 175198,
+            "cumtime_s": 0.336,
+            "function": "__init__.py:304(loads)",
+            "tottime_s": 0.065
+          },
+          {
+            "calls": 14976,
+            "cumtime_s": 0.586,
+            "function": "bettermemory/store_records.py:328(iter_memories)",
+            "tottime_s": 0.054
+          },
+          {
+            "calls": 384952,
+            "cumtime_s": 0.049,
+            "function": "~:0(<method 'match' of 're.Pattern' objects>)",
+            "tottime_s": 0.049
+          },
+          {
+            "calls": 175198,
+            "cumtime_s": 0.046,
+            "function": "decoder.py:351(raw_decode)",
+            "tottime_s": 0.046
+          },
+          {
+            "calls": 171849,
+            "cumtime_s": 0.351,
+            "function": "bettermemory/store_rows.py:97(_load_json)",
+            "tottime_s": 0.031
+          },
+          {
+            "calls": 8,
+            "cumtime_s": 0.028,
+            "function": "~:0(<method 'poll' of 'select.poll' objects>)",
+            "tottime_s": 0.028
+          },
+          {
+            "calls": 17174,
+            "cumtime_s": 0.067,
+            "function": "_model_construction.py:361(init_private_attributes)",
+            "tottime_s": 0.027
+          },
+          {
+            "calls": 29,
+            "cumtime_s": 0.04,
+            "function": "bettermemory/store_membership.py:81(membership_rows)",
+            "tottime_s": 0.027
+          },
+          {
+            "calls": 350402,
+            "cumtime_s": 0.022,
+            "function": "~:0(<method 'end' of 're.Match' objects>)",
+            "tottime_s": 0.022
+          },
+          {
+            "calls": 7094,
+            "cumtime_s": 0.035,
+            "function": "bettermemory/membership.py:474(<genexpr>)",
+            "tottime_s": 0.02
+          },
+          {
+            "calls": 14977,
+            "cumtime_s": 0.092,
+            "function": "bettermemory/membership.py:1703(_home_from)",
+            "tottime_s": 0.019
+          },
+          {
+            "calls": 2,
+            "cumtime_s": 0.058,
+            "function": "bettermemory/recall_brief.py:116(_ranked)",
+            "tottime_s": 0.019
+          },
+          {
+            "calls": 350634,
+            "cumtime_s": 0.018,
+            "function": "~:0(<built-in method builtins.len>)",
+            "tottime_s": 0.018
+          },
+          {
+            "calls": 12334,
+            "cumtime_s": 0.018,
+            "function": "~:0(<method 'fetchone' of 'sqlite3.Cursor' objects>)",
+            "tottime_s": 0.018
+          }
+        ]
+      },
+      "waiting_s": 2.34,
+      "walked": [
+        {
+          "calls": 1,
+          "kinds": [
+            "prompt_recall",
+            "review_unanswered",
+            "segment_opened",
+            "session_brief",
+            "turn_audited",
+            "use"
+          ],
+          "read": "session_events_of_kinds",
+          "rows_returned": 0,
+          "rows_walked": 192965
+        }
+      ],
+      "wall_s": 4.32
+    },
+    "store": {
+      "file_mb": 769.9,
+      "log_rows": 417944,
+      "memories": 14976
+    },
+    "tcp_connects": []
+  },
+  "program_sha256": "b7fa59a44d9b56a9466a40edbef1499619326b58205f2b06372d564c428e325c",
+  "src": "src",
+  "src_dirty": false,
+  "version": "9.0.0rc18"
+}
