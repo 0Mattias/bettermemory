@@ -591,12 +591,12 @@ parse, a value git dies on (an empty `core.worktree`, one with no value,
 a `core.bare` that is no boolean, a format version above 1), a file that
 cannot be read and one over 2 MiB give no reading, and the git directory
 is refused (fail closed). The reading of those four names is kept with
-the file's stamp (device, inode, size, modification and change times,
-type; `gitconfig._FORMAT_MEMO`, 256 files), so a judgment of a git
-directory whose config is unchanged opens it and parses nothing; a file
-changed less than two seconds before its read, where a write within one
-tick of the filesystem's clock may leave the stamp as it was, is parsed
-at each read. A folder's own `.git` directory is followed
+a digest of the bytes it was parsed from (`gitconfig._FORMAT_MEMO`, 256
+files), so a judgment of a git directory whose config is unchanged reads
+it whole and parses nothing. No clock decides it: a rewrite that leaves
+the file's inode, size and times as they were (a server whose clock runs
+behind, whole-second times) changes its bytes, and is parsed again. A
+folder's own `.git` directory is followed
 only where git puts its working tree at that folder or puts none
 (`gitfile_rule.own_refusal`): a `core.worktree` naming another folder,
 absolute or relative to the git directory as git takes it, makes git

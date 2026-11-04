@@ -6,16 +6,21 @@ judgment of the directory: once a warm membership capture, twice a warm
 origin capture and nine times a cold one. A config of 2 MiB built to be
 slow cost 0.6, 1.2 and 5.8 seconds there, against git's 0.12 (review G).
 `gitconfig.read_git_config` now keeps the reading of the four names the
-format takes with the file's stamp (device, inode, size, modification and
-change times, type), and a read of the file unchanged parses nothing; a
-file changed within `_FORMAT_MEMO_SETTLED_NS` of its read, where a write
-may leave the stamp as it was, is parsed again.
+format takes with the digest of the bytes it parsed, and a read that
+finds the same bytes parses nothing. It was kept first by the file's
+stamp (device, inode, size, both times, type) once the file had not
+changed for two seconds; a server whose clock runs behind this host's,
+with whole-second times (sshfs), let a same-size rewrite leave the stamp
+as it was and the stale reading stand (review H). The digest consults no
+clock.
 """
 
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -49,15 +54,8 @@ def _parses(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return seen
 
 
-@pytest.fixture(name="settled")
-def _settled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A config written by the test is kept at once, as one older than the
-    window is (`gitconfig._FORMAT_MEMO_SETTLED_NS`)."""
-    monkeypatch.setattr(gitconfig, "_FORMAT_MEMO_SETTLED_NS", 0)
-
-
 def test_a_second_read_of_an_unchanged_config_parses_nothing(
-    tmp_path: Path, parses: list[int], settled: None
+    tmp_path: Path, parses: list[int]
 ) -> None:
     """The first judgment parses a config of 1.8 MB; the next, membership's
     captures and the origin's capture parse nothing more and read the same
@@ -83,11 +81,10 @@ def test_a_second_read_of_an_unchanged_config_parses_nothing(
 
 @pytest.mark.parametrize("how", ["git_config", "in_place"])
 def test_a_rewritten_config_is_read_again(
-    tmp_path: Path, parses: list[int], settled: None, how: str
+    tmp_path: Path, parses: list[int], how: str
 ) -> None:
     """A config git rewrites (a new file renamed over it) and one written in
-    place at the same size are both parsed again, and the change is read:
-    the stamp holds the inode, the size and both times."""
+    place at the same size are both parsed again, and the change is read."""
     app, other = _apps(tmp_path)
     git_dir = app / ".git"
     config = git_dir / "config"
@@ -109,22 +106,68 @@ def test_a_rewritten_config_is_read_again(
     assert len(parses) == 2
 
 
-def test_a_config_changed_just_now_is_parsed_at_each_read(
+def test_a_config_written_just_now_is_kept_at_once(
     tmp_path: Path, parses: list[int]
 ) -> None:
-    """Within the window a write within one tick of the filesystem's clock
-    may leave the stamp as it was, so the reading is not kept."""
+    """No clock decides what is kept: a config written a moment before its
+    first read is parsed once, however recent its times."""
     app, _other = _apps(tmp_path)
     for _ in range(2):
         gitfile_rule.tree_format(str(app / ".git"))
+    assert len(parses) == 1
+
+
+def test_a_rewrite_that_leaves_the_stamp_as_it_was_is_read_again(
+    tmp_path: Path, parses: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The review's case: a server whose clock runs an hour behind this
+    host's, with whole-second times (sshfs), so the config reads as long
+    settled at its first read, and a rewrite in place at the same size
+    within the server's second, which leaves the inode, the size and both
+    times as they were. The server's stat answers the same at both reads
+    (the change time too, which no test can set: `fstat` answers it), and
+    the change is read: the digest is of the bytes."""
+    app, _other = _apps(tmp_path)
+    git_dir = app / ".git"
+    config = git_dir / "config"
+    behind = (time.time_ns() // 1_000_000_000 - 3600) * 1_000_000_000
+    os.utime(config, ns=(behind, behind))
+    first = os.stat(config)
+    server = SimpleNamespace(
+        st_mode=first.st_mode,
+        st_dev=first.st_dev,
+        st_ino=first.st_ino,
+        st_size=first.st_size,
+        st_mtime_ns=behind,
+        st_ctime_ns=behind,
+    )
+    real = os.fstat
+
+    def as_the_server(fd: int) -> Any:
+        found = real(fd)
+        return server if os.path.samestat(found, first) else found
+
+    monkeypatch.setattr(os, "fstat", as_the_server)
+    assert gitfile_rule.tree_format(str(git_dir)).bare is False
+    assert len(parses) == 1
+
+    body = config.read_bytes()
+    with open(config, "r+b") as fh:
+        fh.seek(body.index(b"bare = false"))
+        fh.write(b"bare =  true")
+    os.utime(config, ns=(behind, behind))
+    after = os.stat(config)
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+        first.st_ino,
+        first.st_size,
+        first.st_mtime_ns,
+    )
+    assert gitfile_rule.tree_format(str(git_dir)).bare is True
     assert len(parses) == 2
 
 
 def test_the_memo_is_bounded(
-    tmp_path: Path,
-    parses: list[int],
-    settled: None,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, parses: list[int], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The oldest reading used is dropped past `_FORMAT_MEMO_SIZE` paths,
     and read again when asked for."""
