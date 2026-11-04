@@ -378,9 +378,10 @@ REASON_SAID: dict[str, str] = {
     ),
     DUPLICATE_CHECKOUT: (
         "this checkout is a second record of a git directory another machine "
-        "shares, registered by 9.0.0rc18 or earlier after that machine re-minted "
-        "its token, while the first record is in the first project named; what "
-        "was written here since stays in this checkout's project until answered"
+        "shares, registered by a sighting that did not read that machine's "
+        "re-mint of the token as the first record's, while the first record is "
+        "in the first project named; what was written here since stays in this "
+        "checkout's project until answered"
     ),
     LEGACY_NO_LIVE_CHECKOUT: (
         "the records of a project whose folder is gone may belong to it: this "
@@ -454,15 +455,20 @@ def line_restated(
             f"of its own: {separate}"
         )
     elif kind == DUPLICATE_CHECKOUT:
-        first = (
-            _answer(question, "join", candidates[0][1], said=True)
-            if candidates
+        # The candidates are the first record's project and this
+        # checkout's own (`membership_shared._ask_which`).
+        ids = [p for _n, p in candidates]
+        first, own = (
+            _answer(question, "join", ids[i], said=True)
+            if len(ids) > i
             else "(no project to join)"
+            for i in (0, 1)
         )
         options = (
             "The first record's project, this checkout and what was written "
-            f"here moving there, when the user says so: {first}; keep it where "
-            f"it is: {separate}"
+            f"here moving there, when the user says so: {first}; this "
+            f"checkout's own, where it is, when the user says so: {own}; a new "
+            f"project of its own, with what was written here: {separate}"
         )
     elif kind == IMPORT:
         options = (

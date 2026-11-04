@@ -312,7 +312,8 @@ def _answer_join(
         self._move_checkout(k, target, by)
     elif pr.kind == DUPLICATE_CHECKOUT:
         # The first record's project: this checkout and its records move
-        # there (ENG-215); its own project keeps it where it is.
+        # there (ENG-215); joining its own keeps it where it is, and
+        # ``new`` makes it a project of its own (`_answer_new`).
         if target != mine:
             self._move_checkout(k, target, by)
     else:
@@ -385,7 +386,10 @@ def _answer_new(
         )
         self._close(pr, "new", by)
         return sp.id
-    if pr.kind == REMOTE_DIVERGED:
+    if pr.kind in (REMOTE_DIVERGED, DUPLICATE_CHECKOUT):
+        # A project of its own: the checkout and what was written there
+        # (a second record of a shared git directory, ENG-215, keeps its
+        # project by joining it).
         self._close(pr, "new", by)
         mine = self._split(k, decl.name or self._checkout_name(k), by)
         if decl.file_id is not None:

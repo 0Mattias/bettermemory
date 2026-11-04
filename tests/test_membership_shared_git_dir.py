@@ -809,25 +809,33 @@ def _written_at(
 
 
 @pytest.mark.usefixtures("no_birth")
-@pytest.mark.parametrize("answer", ["first", "keep"])
+@pytest.mark.parametrize(
+    "answer", ["join_first", "join_own", "separate", "project_new", "unanswered"]
+)
 def test_a_second_checkout_holding_records_is_asked_about_not_healed(
     tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, answer: str
 ) -> None:
     """The same second checkout, where the user wrote h2 since. The heal
     would hide it: the host's next sighting stays there, h2 delivered,
-    and asks naming the first record's project and its own
-    (``duplicate_checkout``). Joining the first record's project
-    (``first``) moves the checkout and h2 there, h1 and h2 delivered;
-    keeping it (``keep``) leaves it where it is. Either is silent from
-    then on. Before, the heal took the first checkout silently, h1
-    delivered and h2 not, with no line saying so."""
+    and asks (``duplicate_checkout``), its line offering the first
+    record's project, the checkout's own and a new one, in that order.
+    Joining the first record's project moves the checkout and h2 there,
+    h1 and h2 delivered; joining its own keeps it where it is; the
+    separate answer (the agent's, naming the question) and `bettermemory
+    project new` (naming none) make the checkout and h2 a project of
+    their own, its token re-minted. Each is silent from then on, and the
+    first checkout stays in its project; unanswered, the same question is
+    asked again. Before, the heal took the first checkout silently, h1
+    delivered and h2 not, with no line saying so; and `project new` only
+    closed the question, the checkout and h2 left in the container's
+    project."""
     line, box, hid, kid = _shared(tmp_path, lab, "line")
     first = lab.model().checkout(hid).project
     _the_containers_re_mint(lab, box, kid, "recorded")
-    dup, _found = _without_the_rule(lab, line, monkeypatch)
+    dup, found = _without_the_rule(lab, line, monkeypatch)
     project = lab.model().checkout(dup).project
     _written_at(lab, "h2", line, monkeypatch)
-    assert lab.checkout_of("h2") == dup
+    assert lab.checkout_of("h2") == dup and project != first
 
     res, admitted = lab.view(line)
 
@@ -835,23 +843,75 @@ def test_a_second_checkout_holding_records_is_asked_about_not_healed(
     assert admitted == ["h2"] and res.proposal is not None
     asked = lab.model().proposal(res.proposal)
     assert (asked.kind, asked.candidates) == (DUPLICATE_CHECKOUT, (first, project))
-    assert any(res.proposal in line_ for line_ in res.lines)
-    lab._declaring().declare(
-        Declaration(
-            "join" if answer == "first" else "new",
-            "os:tester",
-            checkout=dup,
-            proposal=res.proposal,
-            target=first if answer == "first" else None,
-        )
-    )
+    shown = [x for x in res.lines if res.proposal in x]
+    calls = [
+        f'answer="join", target="{first}"',
+        f'answer="join", target="{project}"',
+        'answer="separate"',
+    ]
+    at = [shown[0].find(call) for call in calls] if len(shown) == 1 else []
+    assert -1 not in at and at == sorted(at) and len(at) == 3, shown
+    decl = {
+        "join_first": Declaration(
+            "join", "os:tester", checkout=dup, proposal=res.proposal, target=first
+        ),
+        "join_own": Declaration(
+            "join", "os:tester", checkout=dup, proposal=res.proposal, target=project
+        ),
+        "separate": Declaration("new", "agent:s", checkout=dup, proposal=res.proposal),
+        "project_new": Declaration("new", "os:tester", checkout=dup, name="mine"),
+    }.get(answer)
+    if decl is not None:
+        lab._declaring().declare(decl)
     location.forget()
+
     after, admitted = lab.view(line)
-    assert (after.checkout, after.outcome) == (dup, SILENT)
-    if answer == "first":
-        assert after.project == first and admitted == ["h1", "h2"]
+
+    assert after.checkout == dup
+    assert admitted == (["h1", "h2"] if answer == "join_first" else ["h2"])
+    if answer == "unanswered":
+        assert (after.outcome, after.proposal) == (ASK, res.proposal)
+        assert lab.model().proposal(res.proposal).state == "open"
+        return
+    answered = {"join_first": f"join:{first}", "join_own": f"join:{project}"}
+    assert lab.model().proposal(res.proposal).answer == answered.get(answer, "new")
+    assert after.outcome == SILENT and lab.model().checkout(hid).project == first
+    if answer in answered:
+        assert after.project == (first if answer == "join_first" else project)
+        assert lab.model().checkout(dup).token == found
     else:
-        assert after.project == project and admitted == ["h2"]
+        assert after.project not in (first, project)
+        assert lab.project_of("h2") == after.project
+        assert lab.model().checkout(dup).token != found
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_second_checkout_in_the_first_ones_project_yields_with_its_records(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The container re-minted without leaving the host's project (the
+    store missed the re-mint, and the container's next sighting recorded
+    it): 9.0.0rc18 registered the second checkout in the first one's
+    project, and h2 was written at it. Taking the first checkout hides
+    nothing, h2's project being the first's, so the sighting yields to
+    it, h1 and h2 delivered, and asks nothing. Before, it stayed at the
+    second checkout and asked a question naming that one project
+    twice."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    first = lab.model().checkout(hid).project
+    _the_containers_re_mint(lab, box, kid, "missed")
+    assert box.post(lab).checkout == kid
+    dup, found = _without_the_rule(lab, line, monkeypatch)
+    _written_at(lab, "h2", line, monkeypatch)
+    assert lab.model().checkout(dup).project == first
+    assert lab.checkout_of("h2") == dup
+
+    res, admitted = lab.view(line)
+
+    assert (res.checkout, res.outcome, res.rule) == (hid, SILENT, "object+remint")
+    assert admitted == ["h1", "h2"] and res.proposal is None
+    assert lab.model().checkout(hid).token == found
+    assert not [p for p in lab.model().pending() if p.checkout == dup]
 
 
 @pytest.mark.usefixtures("no_birth")

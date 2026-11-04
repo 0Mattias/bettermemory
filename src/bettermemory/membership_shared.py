@@ -21,10 +21,10 @@ from the records of the other machines that see the same files:
   birth time or the token proved it, so the files the rules compare
   follow a mode or an extended attribute set on them;
 - `_healed` and `_ask_which`: of two records of one git directory, the
-  earlier one, where the later one is the second checkout a resolution
-  that could not tell such a re-mint registered (9.0.0rc18 and earlier)
-  and no one chose it; a question naming both projects where records
-  were written at it since.
+  earlier one, where the later one is the second checkout a sighting
+  that did not read such a re-mint registered (9.0.0rc18 and earlier
+  could not) and no one chose it; a question naming both projects where
+  records were written at it since in another project than the first's.
 
 The init stamps are what tells a view from a copy: the name, mtime, ctime
 and size of `description`, `info/exclude` and a linked worktree's
@@ -264,12 +264,14 @@ def _healed(self: Membership, kept: Checkout, later: Checkout, loc: Location) ->
     """What rung 2 reads of `kept`, which `_shared_remint` continues, and
     `later`, a later record of the same object on this machine that
     records the token found (which ENG-205's order would take), where
-    `later` is the second checkout a resolution that could not read the
-    other machine's re-mint registered (9.0.0rc18 and earlier, or while
-    the stamps had moved). `HEAL` (`kept`, silently) where all of these
-    hold and `later` holds no records; `ASK_WHICH` (`later`, with a
-    question naming both projects, `_ask_which`) where they hold and it
-    holds some; else the empty string (`later`):
+    `later` is the second checkout a sighting that did not read the other
+    machine's re-mint registered (9.0.0rc18 and earlier, which could not;
+    or one that read no stamp of `kept` there then). `HEAL` (`kept`,
+    silently) where all of these hold and `later` holds no records, or
+    holds them in `kept`'s project, where `kept`'s sightings deliver
+    them; `ASK_WHICH` (`later`, with a question naming both projects,
+    `_ask_which`) where they hold and it holds some in another; else the
+    empty string (`later`):
 
     - `kept` is continued by another machine's re-mint (`_continues`),
       not its own (`checkout_token.succeeds` over its own lineage fails):
@@ -301,8 +303,11 @@ def _healed(self: Membership, kept: Checkout, later: Checkout, loc: Location) ->
         for c in carriers
         if c.token == found and c.machine != kept.machine
     }
-    if self._canon(later.project) not in projects or _chosen(self, kept, later, loc):
+    mine = self._canon(later.project)
+    if mine not in projects or _chosen(self, kept, later, loc):
         return ""
+    if mine == self._canon(kept.project):
+        return HEAL
     if self._store.membership_rows("homes", where={"checkout": later.id}):
         return ASK_WHICH
     return HEAL
@@ -363,10 +368,13 @@ def _by_declaration(payload: Mapping[str, Any]) -> bool:
 
 def _ask_which(self: Membership, later: Checkout, first: Checkout) -> None:
     """The question about `later`, a second record of `first`'s git
-    directory that holds records written since (`_healed`): the first
-    record's project, where an answer joining it moves `later` and its
-    records (`membership_declare._answer_join`), and `later`'s own, where
-    it stays until answered. One per checkout (`_open_proposal`)."""
+    directory that holds records written since in another project
+    (`_healed`): the first record's project, where an answer joining it
+    moves `later` and its records (`membership_declare._answer_join`), and
+    `later`'s own, where joining it keeps `later` and where it stays until
+    answered; the separate answer (``project new``) makes `later` and its
+    records a project of their own (`membership_declare._answer_new`). One
+    per checkout (`_open_proposal`)."""
     theirs, mine = self._canon(first.project), self._canon(later.project)
     named = [(self.project(x).name, x) for x in (theirs, mine)]
     self._open_proposal(

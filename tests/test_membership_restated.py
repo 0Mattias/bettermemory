@@ -177,6 +177,15 @@ _HELD = (
     "written here stays with this folder."
 )
 _FIRST_ANSWERS = f" Same project, when the user says so: {_JOIN}; separate: {_SEPARATE}"
+#: Said of a second record of a shared git directory (ENG-215): what is
+#: true of every one, whichever release registered it.
+_DUPLICATE_SAID = (
+    "this checkout is a second record of a git directory another machine "
+    "shares, registered by a sighting that did not read that machine's "
+    "re-mint of the token as the first record's, while the first record is "
+    "in the first project named; what was written here since stays in this "
+    "checkout's project until answered"
+)
 _FILED_ANSWERS = (
     f" Same project, when the user says so: {_JOIN}; separate: bettermemory "
     "project init --new (a fresh project file)"
@@ -256,13 +265,11 @@ _PINNED: list[tuple[str, str, str, str]] = [
     (
         DUPLICATE_CHECKOUT,
         DUPLICATE_CHECKOUT,
-        "this checkout is a second record of a git directory another machine "
-        "shares, registered by 9.0.0rc18 or earlier after that machine re-minted "
-        "its token, while the first record is in the first project named; what "
-        "was written here since stays in this checkout's project until answered",
+        _DUPLICATE_SAID,
         " The first record's project, this checkout and what was written here "
-        f"moving there, when the user says so: {_JOIN}; keep it where it is: "
-        f"{_SEPARATE}",
+        f"moving there, when the user says so: {_JOIN}; this checkout's own, "
+        "where it is, when the user says so: (no project to join); a new "
+        f"project of its own, with what was written here: {_SEPARATE}",
     ),
     (
         LEGACY,
@@ -326,6 +333,27 @@ def test_a_restated_question_says_its_reasons_sentence_and_its_kinds_answers(
         f"bettermemory: question {_Q}, restated from what it stores, asks about "
         f'project "app" ({_P}): {sentence}.{answers}'
     )
+
+
+def test_a_duplicate_checkouts_restatement_offers_three_answers() -> None:
+    """A second record's question (ENG-215), as `_ask_which` opens it with
+    the first record's project and its own: joining the first moves it
+    there, joining its own keeps it where it is, each on the user's
+    words, and the separate answer makes it a project of its own."""
+    line = membership_lines.line_restated(
+        _Q, DUPLICATE_CHECKOUT, DUPLICATE_CHECKOUT, [("app", _P), ("box", "P009")]
+    )
+
+    own = _JOIN.replace(_P, "P009")
+    assert line == (
+        f"bettermemory: question {_Q}, restated from what it stores, asks about "
+        f'project "app" ({_P}) or "box" (P009): {_DUPLICATE_SAID}. The first '
+        "record's project, this checkout and what was written here moving "
+        f"there, when the user says so: {_JOIN}; this checkout's own, where it "
+        f"is, when the user says so: {own}; a new project of its own, with what "
+        f"was written here: {_SEPARATE}"
+    )
+    assert _skeleton(line).count("memory_admin(") == 3, line
 
 
 def test_a_restatement_of_an_unknown_reason_or_a_gone_project_still_reads() -> None:

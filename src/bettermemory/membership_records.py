@@ -149,10 +149,12 @@ FIRST_SIGHT = "first_sight"
 FILE_CONTRADICTION = "file_contradiction"
 REMOTE_DIVERGED = "remote_diverged"
 SUBPROJECT_CONTRADICTION = "subproject_contradiction"
-#: A second record of a git directory another machine shares, which a
-#: resolution that could not read that machine's re-mint registered
-#: (9.0.0rc18 and earlier) and which holds records written since: the
-#: question names the first record's project and its own (ENG-215).
+#: A second record of a git directory another machine shares, registered
+#: by a sighting that did not read that machine's re-mint of the token as
+#: the first record's, in another project than the first record's, and
+#: holding records written since: the question names the first record's
+#: project and its own, and a new project of its own is its separate
+#: answer (ENG-215).
 DUPLICATE_CHECKOUT = "duplicate_checkout"
 LEGACY = "legacy"
 IMPORT = "import"

@@ -1208,13 +1208,22 @@ continued the first. Where nothing was written at the second checkout
 since (its homes, one indexed read), rung 2 takes the first, silently;
 the healed sighting records the token there, which then comes first, so
 the heal is read once, and the second checkout stays, idle. Where
-records were written at it, taking the first would hide them, so the
-sighting stays at the second, its records delivered, and asks
-(`duplicate_checkout`, `_ask_which`), naming the first checkout's
+records were written at it in the first checkout's project (the other
+machine's checkout recording the token is in that project too), the
+first's sightings deliver them, so the heal is the same. Where records
+were written at it in another project, taking the first would hide
+them, so the sighting stays at the second, its records delivered, and
+asks (`duplicate_checkout`, `_ask_which`), naming the first checkout's
 project and its own: joining the first's moves the second checkout and
-its records there, as a declared move does; keeping it (`separate`, or
-joining its own) leaves it where it is. Either way the question is read
-as a choice from then on.
+its records there, as a declared move does; joining its own keeps it
+where it is; the separate answer (the agent's `separate`,
+`bettermemory project new` or `project init --new`) makes it and its
+records a project of their own, its token re-minted, as a separation
+does. Whichever is answered, the question is read as a choice from then
+on. Its line says what is true of every such checkout, whichever
+release registered it: a sighting that did not read the other machine's
+re-mint as the first record's (9.0.0rc18 could not; this release does
+not where the first record's stamps are not read there).
 
 Cost: one read of the checkouts' token index, with no views, at each
 reading of rung 2 where the token found is neither recorded nor the

@@ -1446,11 +1446,13 @@ eighteenth was built.
   machine's checkout recording it, that no one chose (no question about
   it, no log row about it a declaration wrote, an absorb among them, and
   no project file bound to its project), yields to the first checkout at
-  the host's next sighting where nothing was written at it since, the
-  first recording the token and so staying first. Where records were
-  written at it, the sighting stays there and asks
-  (`duplicate_checkout`), naming the first checkout's project, joining
-  which moves the second checkout and its records there, and its own.
+  the host's next sighting where nothing was written at it since, or
+  only in the first checkout's project, the first recording the token
+  and so staying first. Where records were written at it in another
+  project, the sighting stays there and asks (`duplicate_checkout`):
+  joining the first checkout's project moves the second checkout and
+  its records there, joining its own keeps it, and the separate answer
+  (`project new`) makes it a project of its own with its records.
   The rule costs one read of the
   checkouts' token index, with no views, at each reading of rung 2 where
   the token found is neither recorded nor the checkout's own re-mint
