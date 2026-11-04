@@ -131,6 +131,7 @@ from .origin import (
     repo_toplevel,
     resolve_repo_pathspecs,
 )
+from .origin_patch import local_patch_window
 from .verify_basis import BASIS_AUTHOR_DATE, BASIS_REACHABILITY, _count_since_verify
 
 # The path-drift scan lives in `verify_anchoring` and `verify_candidates`,
@@ -700,14 +701,24 @@ def _weak_tier_evaluation(
     all-blank-line file — attributes the whole window rather than
     silently contributing zero to a count whose `weak` verdict just
     said "drifted".
+
+    Where the stream fails, as it does on a blob a partial clone lacks
+    (no git the package runs fetches), the window's commits whose blobs
+    are local are streamed and the rest counted
+    (`origin_patch.local_patch_window`, ENG-220); the counted commits'
+    paths are marked in the index before the claims are read, and the
+    whole-window rule reads the local commits' implications alone.
     """
     if len(shas) > MAX_PATCH_STREAM_COMMITS:
         return [], None
-    stream = commit_patch_stream(
-        cwd, shas, _literal_pathspecs(specs), toplevel=toplevel
-    )
+    pathspecs = _literal_pathspecs(specs)
+    stream = commit_patch_stream(cwd, shas, pathspecs, toplevel=toplevel)
+    split = None
     if stream is None:
-        return [], None
+        split = local_patch_window(cwd, shas, pathspecs, toplevel=toplevel)
+        if split is None:
+            return [], None
+        stream = split.stream
     index = build_binding_index(stream)
     # A stream the parser could not read is an infrastructure failure,
     # not a clean window. `build_binding_index` COUNTS a malformed hunk
@@ -724,6 +735,8 @@ def _weak_tier_evaluation(
     # and file-less, so it demotes too: the merge DID touch the spec.
     if index["parse_mismatches"] or (stream.strip() and not index["files"]):
         return [], None
+    if split is not None:
+        split.mark(index)
     window = set(shas)
     drifted: list[str] = []
     implicated: set[str] = set()
@@ -740,6 +753,8 @@ def _weak_tier_evaluation(
         implicated |= claim_shas
     if drifted and not implicated:
         implicated = set(window)
+    if split is not None:
+        implicated |= split.counted
     return drifted, implicated & window
 
 

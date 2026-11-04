@@ -693,7 +693,7 @@ def failed_git_calls() -> int:
 
 
 def _git_result(
-    cwd: Path, *args: str, timeout: float = 1.0
+    cwd: Path, *args: str, timeout: float = 1.0, stdin: bytes | None = None
 ) -> subprocess.CompletedProcess[str] | None:
     """Run a git command from `cwd` and return the completed process, or
     None ONLY when git could not run at all — no binary on PATH, the
@@ -753,7 +753,7 @@ def _git_result(
             stdout="",
             stderr=f"fatal: not a git repository: {why}\n",
         )
-    return _git_runner.run_git(args, cwd=cwd, timeout=timeout)
+    return _git_runner.run_git(args, cwd=cwd, timeout=timeout, stdin=stdin)
 
 
 def follow_unsettled(found: Origin) -> bool:
@@ -781,6 +781,7 @@ def _git(
     timeout: float = 1.0,
     empty_ok: bool = False,
     verbatim: bool = False,
+    stdin: bytes | None = None,
 ) -> str | None:
     """Run a git command from `cwd`. Returns trimmed stdout on success,
     or with `verbatim` stdout as git wrote it, for a caller that reads
@@ -797,6 +798,7 @@ def _git(
     exit, missing binary, timeout — still None). Default False keeps the
     historical ``out or None`` collapse every other caller relies on.
     Every None is counted on the calling thread (`failed_git_calls`).
+    `stdin` is written to git's standard input (`cat-file --batch-check`).
 
     Failure logging is tiered so the common "not a repo" case stays
     silent while operationally interesting failures (missing binary,
@@ -807,7 +809,7 @@ def _git(
     from a non-repo cwd, which is fully expected (memories written
     outside any repo get `repo=None`).
     """
-    result = _git_result(cwd, *args, timeout=timeout)
+    result = _git_result(cwd, *args, timeout=timeout, stdin=stdin)
     if result is None:
         _UNANSWERED.count += 1
         return None
@@ -1866,7 +1868,9 @@ def commit_patch_stream(
     collide with it. Returns the raw stream ("" is a real value: the
     named commits touched the specs only in merge diffs, which `-p`
     skips), or None on any git failure — the caller falls back to the
-    incumbent count, never under-counting on infrastructure failure.
+    incumbent count, never under-counting on infrastructure failure. A
+    blob a partial clone lacks fails it too, and the caller then streams
+    the commits whose blobs are local (`origin_patch`, ENG-220).
 
     The timeout is 5s rather than `_git`'s 1s default: a patch log over
     a bounded SHA list is more work than a `%aI` format log, and this

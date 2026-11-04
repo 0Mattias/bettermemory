@@ -18,6 +18,12 @@ The one diff reader, `origin.commit_patch_stream`, had git start a git in
 a submodule whenever ``diff.submodule=diff`` was set, and that git runs
 the submodule's own ``diff.external``; `_git.PINS` keeps a gitlink's
 change to git's default ``-/+Subproject commit`` lines.
+
+Where that stream fails on a blob a partial clone lacks, claim drift asks
+which of the window's blobs are local (`origin_patch.local_patch_window`,
+ENG-220): its ``log --raw`` reads trees alone, and its ``cat-file
+--batch-check`` would fetch each blob it is asked about, so the blobless
+clone shows that one fetches nothing either.
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ import pytest
 
 from bettermemory import _git, gitsystem, location, location_git
 from bettermemory.location_git import RepositoryHistory
+from bettermemory.origin_patch import PatchWindow, local_patch_window
 
 _POSIX = os.name == "posix"
 
@@ -487,3 +494,49 @@ def test_a_clients_tie_answer_runs_git_under_the_pins_the_daemons_call_has(
     assert env["GIT_GRAFT_FILE"] == os.devnull
     assert not set(_git.SCRUBBED_ENV) & set(env)
     assert timeout == location_git.INDEPENDENT_SECONDS
+
+
+def _split(blobless: Blobless) -> PatchWindow | None:
+    commits = _plain_git(blobless.repo, "log", "--format=%H").split()
+    return local_patch_window(blobless.repo, commits, ["a.txt"])
+
+
+def test_the_local_patch_split_fetches_the_blobs_for_a_git_that_may(
+    blobless: Blobless, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control for claim drift's split in a partial clone (ENG-220):
+    with neither setting, its ``cat-file --batch-check`` fetches every blob
+    the window's diffs read, so none is missing and the split declines;
+    a read with the settings back then finds the first blob local."""
+    with monkeypatch.context() as unpinned:
+        unpinned.setattr(_git, "NO_FETCH", {})
+        assert _split(blobless) is None
+    assert blobless.read_first() == "v0\n"
+
+
+@pytest.mark.parametrize(
+    "kept",
+    [None, {"GIT_ALLOW_PROTOCOL": ""}, {"GIT_NO_LAZY_FETCH": "1"}],
+    ids=["both", "GIT_ALLOW_PROTOCOL", "GIT_NO_LAZY_FETCH"],
+)
+def test_the_local_patch_split_reads_a_missing_blob_as_missing(
+    blobless: Blobless, monkeypatch: pytest.MonkeyPatch, kept: dict[str, str] | None
+) -> None:
+    """The split's ``log --raw`` and ``cat-file --batch-check`` fetch
+    nothing, and the first blob is still absent. Where git reads
+    ``GIT_NO_LAZY_FETCH``, the check names each blob the clone lacks as
+    missing: every commit reads one, so each is counted and none streamed.
+    Under the empty ``GIT_ALLOW_PROTOCOL`` alone, the setting an older git
+    is held by, git tries the fetch, is refused the transport and ends
+    the check, and the split declines: the per-file count, as before."""
+    if kept is not None:
+        if "GIT_NO_LAZY_FETCH" in kept and _git_version() < (2, 44):
+            pytest.skip("GIT_NO_LAZY_FETCH is read from git 2.44")
+        monkeypatch.setattr(_git, "NO_FETCH", kept)
+    window = _split(blobless)
+    if "GIT_NO_LAZY_FETCH" in _git.NO_FETCH and _git_version() >= (2, 44):
+        assert window is not None
+        assert (window.stream, len(window.counted)) == ("", 3)
+    else:
+        assert window is None
+    assert blobless.read_first() is None

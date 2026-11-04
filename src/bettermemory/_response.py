@@ -287,9 +287,12 @@ class _DriftPass:
     memo keeps a walk that came back None. A hit whose walk,
     path-filtered log or patch stream fails on every search (a stamp
     naming a commit the repository lacks, a walk that times out, a
-    textconv driver that fails, a partial clone whose promisor remote
-    is offline) therefore resolves again on every search and forks
-    what a cold search forks for it. The other way round, a memoised
+    textconv driver that fails, a window of a partial clone whose patch
+    reads a blob the clone lacks, since no git the package runs fetches:
+    its local commits are narrowed after the stream fails,
+    `origin_patch.local_patch_window`) therefore resolves again on every
+    search and forks what a cold search forks for it, the split's two
+    calls included. The other way round, a memoised
     hit serves the value computed when git answered, so a failure that
     strikes a later search (an object made unreadable after the value
     was kept) is not observed on that hit, where the uncached code

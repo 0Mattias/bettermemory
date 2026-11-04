@@ -177,6 +177,42 @@ eighteenth was built.
   (`bench/scale/`, `bench/README.md`, `docs/operations.md`,
   `tests/test_bench_scale.py`)
 
+- **Claim drift in a partial clone narrows over the commits whose blobs
+  are local (ENG-220).** No git the package runs fetches since 9.0.0rc18,
+  so the one `git log -p` claim drift reads over a window failed on the
+  first blob a partial clone lacks, and the governed half took the claimed
+  files' per-file count without naming a claim: nearly every window of a
+  blobless clone (`--filter=blob:none`), as 9.0.0rc18's ENG-218 entry
+  says. Where that stream fails, one `git log --raw` over the same commits
+  lists the blobs each one's diff reads, from the trees alone, and one
+  `git cat-file --batch-check`, under the same no-fetch settings, says
+  which the clone holds; the stream runs again over the commits whose
+  blobs are all local, and every other commit is counted as the per-file
+  count counts it, never skipped. The paths the counted commits changed
+  and deleted are marked before the claims are read, so a claim their
+  trees show fired (a claimed file deleted in a counted commit) fires and
+  implicates the local commits it would: the count is never below a full
+  clone's. So a window whose blobs are all local narrows as in a full
+  clone, and one with some missing narrows over its local commits, the
+  ones the user's own git has checked out or diffed: in the tests' symbol
+  window a full clone counts 1, a fresh blobless clone 4 (each commit
+  reads a blob it lacks, as before), and the same clone with half the
+  window's blobs local 3, naming the claim. A window whose blobs the check
+  finds all local failed for another reason and keeps the per-file count;
+  so does every window on git before 2.44, which ignores
+  `GIT_NO_LAZY_FETCH` and ends the check at the first blob the clone
+  lacks. A treeless clone (`--filter=tree:0`) keeps the unfiltered count:
+  it holds the trees of the commits it checked out and none of their
+  parents', so a split by local trees would recover nearly no commit. A
+  window that took the split is not memoised, as no value computed after a
+  failed git call is. Measured on a 1,000-commit window of one file, with
+  half its blobs local: the split 101 ms, a stream per commit 15.3 s; a
+  full clone's one-call stream, which still runs alone, 47 ms.
+  (`src/bettermemory/origin_patch.py`, `src/bettermemory/verify.py`,
+  `src/bettermemory/origin.py`, `src/bettermemory/_response.py`,
+  `docs/api.md`, `docs/internals.md`, `tests/test_origin_patch.py`,
+  `tests/test_git_no_fetch.py`)
+
 #### Fixed
 
 - **The migration homes a record in a part below a folder whose question
