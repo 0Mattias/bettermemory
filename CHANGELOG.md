@@ -486,6 +486,18 @@ eighteenth was built.
   (`src/bettermemory/_git.py`, `src/bettermemory/origin.py`,
   `src/bettermemory/posture.py`, `tests/test_origin_name_space.py`)
 
+- **Claim drift reads an edit of a last line without a newline (ENG-220
+  review).** Git prints `\ No newline at end of file` after such a line,
+  and after the removed one inside the hunk, where the `-U0` parser
+  (`claims.build_binding_index`) counted it as a hunk line: the hunk
+  ended before its added line, read as a mismatch, and the whole window
+  took the claimed files' per-file count, so an edit at the end of a file
+  with no final newline never narrowed to its claim. The marker is now
+  skipped without being counted. The count was never too low, only
+  coarser. `bench/rot` parses with the same function, so a run of it
+  indexes such windows where it scored them as unreadable.
+  (`src/bettermemory/claims.py`, `tests/test_claims.py`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a

@@ -708,6 +708,10 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
     `minus == b and plus == d` check turns a malformed parse into a loud
     failure instead of a quietly under-counting detector. That matters
     because file content can itself contain `diff --git` and `@@` lines.
+    A ``\\ No newline at end of file`` marker is not a hunk line and is
+    not counted as one: it follows the removed side's last line, mid-hunk,
+    wherever an edit reaches a last line without a newline, and counted
+    there it ended the hunk one line early and read as a mismatch.
     """
     bindings: dict[tuple[str, str, str], dict[str, Any]] = {}
     changed_text: dict[str, dict[str, set[str]]] = {}
@@ -759,9 +763,7 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
         removed = int(match.group(2) or 1)
         added = int(match.group(4) or 1)
         minus = plus = 0
-        for _ in range(removed + added):
-            if i >= len(lines):
-                break
+        while minus + plus < removed + added and i < len(lines):
             body_line = lines[i]
             i += 1
             if body_line.startswith("\\"):

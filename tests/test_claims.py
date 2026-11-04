@@ -14,6 +14,8 @@ branch the bench corpus never contains
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -412,6 +414,62 @@ def test_absent_claim_stays_quiet_on_unrelated_churn() -> None:
     result = claim_level_drift(parse_claim("!pkg/gone.py"), index)
     assert result["weak"] is False
     assert result["strict"] is False
+
+
+def test_a_no_newline_marker_mid_hunk_is_not_a_hunk_line() -> None:
+    """An edit of a last line without a newline: git prints ``\\ No
+    newline at end of file`` after the removed line, inside the hunk, and
+    again after the added one. Counted as a hunk line, the first ended the
+    hunk before the added line, a mismatch that sent the whole window to
+    the per-file count, and the added binding was never indexed."""
+    stream = (
+        f"{_MARK}sha1\n"
+        "diff --git a/pkg/mod.py b/pkg/mod.py\n"
+        "--- a/pkg/mod.py\n"
+        "+++ b/pkg/mod.py\n"
+        "@@ -2 +2 @@\n"
+        "-TIMEOUT_SECONDS = 30\n"
+        "\\ No newline at end of file\n"
+        "+TIMEOUT_SECONDS = 45\n"
+        "\\ No newline at end of file\n"
+    )
+    index = build_binding_index(stream)
+    assert (index["hunks"], index["parse_mismatches"]) == (1, 0)
+    entry = index["bindings"][("pkg/mod.py", "assign", "TIMEOUT_SECONDS")]
+    assert (entry["removes"], entry["adds"]) == (1, 1)
+    assert entry["rhs_added"] == {"45"}
+    result = claim_level_drift(parse_claim("pkg/mod.py::TIMEOUT_SECONDS=30"), index)
+    assert (result["weak"], result["strict"]) == (True, True)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+def test_a_patch_of_a_last_line_without_a_newline_parses_exactly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same, from git's own patch stream."""
+    from bettermemory import origin
+
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    config = tmp_path / "gitconfig"
+    config.write_text("[user]\n\tname = A\n\temail = a@a\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> str:
+        done = subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+        return done.stdout.decode().strip()
+
+    git("init", "-q")
+    for value in (30, 45):
+        (repo / "mod.py").write_bytes(f"import os\nTIMEOUT_SECONDS = {value}".encode())
+        git("add", "mod.py")
+        git("commit", "-q", "-m", f"c{value}")
+    stream = origin.commit_patch_stream(repo, [git("rev-parse", "HEAD")], ["mod.py"])
+    assert stream is not None and "\\ No newline at end of file" in stream
+    index = build_binding_index(stream)
+    assert (index["hunks"], index["parse_mismatches"]) == (1, 0)
+    assert index["bindings"][("mod.py", "assign", "TIMEOUT_SECONDS")]["adds"] == 1
 
 
 def test_presence_path_claim_unmoved_by_the_absent_branch() -> None:
