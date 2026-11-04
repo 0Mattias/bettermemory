@@ -959,12 +959,9 @@ def _resolve_reachable(
         # alone: each counts, as where git cannot resolve the pathspecs,
         # never the author dates (ENG-220's review, round C).
         return conservative
+    # Spelled as the anchor's tree, which the claims were verified against.
     spell = spelled(
-        cwd,
-        [*ungoverned, *governed],
-        toplevel=toplevel,
-        head=walk.head,
-        touched=walk.touched,
+        cwd, [*ungoverned, *governed], toplevel=toplevel, anchor=walk.anchor
     )
     if spell.declined:
         # A path past the spellings bound the tree holds in no whole form.
@@ -1042,7 +1039,7 @@ def _resolve_with_claims(
         since = since.replace(tzinfo=timezone.utc)
 
     spell = spelled(
-        cwd, [*ungoverned, *governed], toplevel=toplevel, head="HEAD", since=since
+        cwd, [*ungoverned, *governed], toplevel=toplevel, anchor=None, since=since
     )
     if spell.declined:
         # A path past the spellings bound the tree holds in no whole form.
@@ -1193,7 +1190,7 @@ def resolve_commit_drift_count(
         # Git answered: every anchor escapes this repo. The memory's
         # claims are real but not about this repo's code.
         return None
-    spell = spelled(cwd, specs, toplevel=toplevel, head="HEAD", since=since)
+    spell = spelled(cwd, specs, toplevel=toplevel, anchor=None, since=since)
     if spell.declined:
         return unfiltered
     touching = commit_author_timestamps_touching_pathspecs(
@@ -1315,7 +1312,7 @@ def _quiescent_drift_applicable(
     combined = list(dict.fromkeys((*specs, *governed)))
     if not combined:
         return False
-    spell = spelled(cwd, combined, toplevel=toplevel, head="HEAD")
+    spell = spelled(cwd, combined, toplevel=toplevel, anchor=None)
     if spell.declined:
         # A path past the spellings bound the tree holds in no whole form:
         # never read as not applicable.

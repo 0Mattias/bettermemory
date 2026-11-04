@@ -655,18 +655,22 @@ def test_twins_read_each_claim_on_its_own_file(
     """A tree that stores both spellings of one name holds two files
     (twins), which a filesystem that ignores normalisation shows as one;
     `change` is made to one of them. A claim spelled as the changed twin
-    fires (`_COUNTED`), and one spelled as the kept twin reads 0, on both
-    bases. Read under every spelling, the change to the twin the claim
-    does not use fired it too, an over-count (ENG-220's review, round C):
-    a claim is read under its own spelling wherever the tree holds it
-    (`verify_spelling.spelled`)."""
+    fires (`_COUNTED`) on both bases. One spelled as the kept twin reads 0
+    on the walk, which reads a claim under its own spelling where the
+    anchor's tree, the tree it was verified against, holds it (ENG-220's
+    review, round C, and round D for the tree); read under every spelling,
+    the change to the other twin fired it too. Dates have no such tree and
+    read every spelling, so there the kept twin's claim fires as the
+    changed one's does: an over-count on the fallback basis, never an
+    undercount (`verify_spelling.spelled`)."""
     other = "NFD" if claimed == "NFC" else "NFC"
     repo = _repository(tmp_path)
     twins = [_SPELLED[other], _SPELLED[claimed]]
     anchor = _accented(repo, twins if on == "changed" else twins[::-1], change)
     claim = _SPELLED[claimed] + ("::foo" if change == "edit" else "")
-    truth = (_COUNTED[change], (claim,)) if on == "changed" else (0, ())
-    assert _both(repo, [claim, _QUIET], anchor) == [truth] * 2
+    fired = (_COUNTED[change], (claim,))
+    walked = fired if on == "changed" else (0, ())
+    assert _both(repo, [claim, _QUIET], anchor) == [walked, fired]
 
 
 def _twins(repo: Path) -> str:
@@ -686,26 +690,91 @@ def _twins(repo: Path) -> str:
 
 
 @pytest.mark.parametrize(
-    ("claim", "truth"),
+    ("claim", "walked", "dated"),
     [
-        (_SPELLED["NFC"] + "::foo", 1),
-        (_SPELLED["NFD"] + "::foo", 1),
-        (_SPELLED["NFD"], 0),
-        (_SPELLED["NFC"], 1),
+        (_SPELLED["NFC"] + "::foo", 1, 2),
+        (_SPELLED["NFD"] + "::foo", 1, 2),
+        (_SPELLED["NFD"], 0, 1),
+        (_SPELLED["NFC"], 1, 1),
     ],
 )
 def test_twins_one_edited_and_the_other_deleted_read_exactly(
-    tmp_path: Path, claim: str, truth: int
+    tmp_path: Path, claim: str, walked: int, dated: int
 ) -> None:
     """The review's twins (round C): foo's def line changes in the
-    decomposed twin, and the composed one is deleted. foo on either twin
-    is its one commit, 1; the decomposed path, never deleted, 0; the
-    composed path, deleted, 1; on both bases. Read under every spelling,
-    foo on either read both commits, 2, and the decomposed path 1 with
-    the claim named, for the other file's deletion."""
+    decomposed twin, and the composed one is deleted. On the walk, foo on
+    either twin is its one commit, 1; the decomposed path, never deleted,
+    0; the composed path, deleted, 1. Dates read every spelling (round D):
+    foo on either reads both commits, 2, and the decomposed path 1 with
+    the claim named, for the other file's deletion; never under the
+    walk's."""
     repo = _repository(tmp_path)
     anchor = _twins(repo)
-    assert _both(repo, [claim], anchor) == [(truth, (claim,) if truth else ())] * 2
+    assert _both(repo, [claim], anchor) == [
+        (count, (claim,) if count else ()) for count in (walked, dated)
+    ]
+
+
+def _verified_decomposed(repo: Path, then: str, hours: float) -> str:
+    """The anchor holds café.py decomposed alone, the file a composed
+    claim on it was verified against; after the verify foo's def line
+    changes in it, and then (`then`), `hours` after the verify, a composed
+    twin without foo is added beside it, or the file is renamed to its
+    composed spelling as it stands. The anchor."""
+    body = _object(repo, _module("", 0).encode())
+    _index_info(repo, [("100644", body, _SPELLED["NFD"])])
+    _plain(repo, "commit", "-q", "-m", "anchor", when=_VERIFIED - timedelta(hours=1))
+    anchor = _plain(repo, "rev-parse", "HEAD")
+    edited = _object(repo, _module("flag=False", 0).encode())
+    _index_info(repo, [("100644", edited, _SPELLED["NFD"])])
+    _plain(repo, "commit", "-q", "-m", "edit", when=_VERIFIED + timedelta(hours=1))
+    if then == "twin":
+        twin = _object(repo, b"X = 1\n")
+        _index_info(repo, [("100644", twin, _SPELLED["NFC"])])
+    else:
+        _index_info(
+            repo,
+            [("0", "0" * 40, _SPELLED["NFD"]), ("100644", edited, _SPELLED["NFC"])],
+        )
+    _plain(repo, "commit", "-q", "-m", then, when=_VERIFIED + timedelta(hours=hours))
+    return anchor
+
+
+@pytest.mark.parametrize(
+    ("then", "hours", "claimed", "cited"),
+    [
+        ("twin", 2, (1, 1), (2, 2)),
+        ("rename", 2, (2, 2), (2, 2)),
+        ("rename", -0.5, (2, 1), (2, 1)),
+    ],
+    ids=["twin", "rename", "back-dated rename"],
+)
+def test_a_claim_is_spelled_as_the_tree_it_was_verified_against(
+    tmp_path: Path,
+    then: str,
+    hours: float,
+    claimed: tuple[int, int],
+    cited: tuple[int, int],
+) -> None:
+    """foo claimed composed on a file the anchor holds decomposed alone, and
+    its def line changed there after the verify. Then a composed twin
+    without foo is added, or the file is renamed to the composed spelling.
+    The head's tree holds the claim's own spelling either way, and read
+    under it alone the edit was missed: the twin read 0 on both bases, the
+    rename 1, and the rename back-dated 1 on the walk and 0 on dates
+    (ENG-220's review, round D). Spelled as the anchor's tree, which does
+    not hold the composed name, every spelling is read on the walk: the
+    edit counts, 1, and the rename's deletion and creation of foo's def
+    another, 2. Dates read every spelling and count what was authored
+    after the verify: the back-dated rename is missed there, as every
+    back-dated commit is, never the edit. The file cited composed, with no
+    claim, counts each commit that touched either spelling the same way."""
+    repo = _repository(tmp_path)
+    anchor = _verified_decomposed(repo, then, hours)
+    claim = _SPELLED["NFC"] + "::foo"
+    assert _both(repo, [claim], anchor) == [(count, (claim,)) for count in claimed]
+    got = _both(repo, [], anchor, (_SPELLED["NFC"],))
+    assert got == [(count, ()) for count in cited]
 
 
 #: A file seven accented components deep, past the spellings bound
@@ -750,6 +819,21 @@ def test_a_tree_mixing_forms_past_the_bound_keeps_the_conservative_count(
     expected = (2, ()) if truth == "conservative" else (1, (claim,))
     claims = [claim, _QUIET] if beside else [claim]
     assert _both(repo, claims, anchor) == [expected] * 2
+
+
+def test_a_whole_form_past_the_bound_deleted_since_the_stamp_is_read(
+    tmp_path: Path,
+) -> None:
+    """foo claimed composed on a file past the spellings bound that the
+    anchor stores decomposed, deleted after the verify, and two.py's bar
+    edited: the walk reads the anchor's tree, which holds a whole form, and
+    dates the deletion, authored after the stamp, of one the head no longer
+    holds; foo's commit, 1, on both bases. Declined for the head's tree
+    alone, dates kept the conservative count, 2."""
+    repo = _repository(tmp_path)
+    anchor = _accented(repo, [unicodedata.normalize("NFD", _DEEP)], "delete")
+    claim = unicodedata.normalize("NFC", _DEEP) + "::foo"
+    assert _both(repo, [claim, _QUIET], anchor) == [(1, (claim,))] * 2
 
 
 def test_a_cited_path_mixing_forms_past_the_bound_keeps_the_conservative_count(

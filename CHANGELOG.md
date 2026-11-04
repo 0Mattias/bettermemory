@@ -496,26 +496,33 @@ eighteenth was built.
   (`src/bettermemory/claims.py`, `src/bettermemory/verify.py`,
   `docs/api.md`, `tests/test_origin_as_stored.py`)
 
-- **A tree that stores both spellings of a name reads each claim on its
-  own file, and a path past the spellings bound keeps the conservative
-  count (ENG-220).** Read under every spelling of its path, a claim on
-  one of two files a tree stores under the two spellings of one name
-  (twins) counted the other file's changes too: foo on either twin read
-  2 where its own commit is 1, and the decomposed path, never deleted,
-  read 1 with the claim named, for the composed twin's deletion. A spec
-  is now read under its own spelling wherever the tree holds it, in the
-  head's tree (one `cat-file --batch-check` for every spec with another
-  spelling) or among the paths the window changed, and under its other
-  spellings only where the tree holds neither, so twins read exactly and
-  a single file stored in the other form still matches; where git does
-  not answer, every spelling is read, as before. Past the bound of 64
-  spellings only a path's whole forms are looked for
-  (`claims.spellings_capped`), and a file whose components mix the two
-  forms matched none of them: its claim read 0 beside another claim and
-  alone as not applicable, and a cited path the same. The read now
-  declines to the conservative count where the tree holds such a path
-  in no whole form, on both bases, in the anchor-only count and in the
-  quiescent check (`verify_spelling.spelled`).
+- **On the walk, a tree that stores both spellings of a name reads each
+  claim on its own file, and a path past the spellings bound keeps the
+  conservative count (ENG-220).** Read under every spelling of its path,
+  a claim on one of two files a tree stores under the two spellings of
+  one name (twins) counted the other file's changes too: foo on either
+  twin read 2 where its own commit is 1, and the decomposed path, never
+  deleted, read 1 with the claim named, for the composed twin's
+  deletion. On the reachable basis a spec is now read under its own
+  spelling where the anchor's tree holds it, the tree the claim was
+  verified against (one `cat-file --batch-check` for every
+  spec with another spelling), and under every spelling otherwise, so
+  twins read exactly and a single file stored in the other form still
+  matches; where git does not answer, every spelling is read, as before.
+  The tree is the anchor's, not the head's: the head's held the claim's
+  own spelling once the window added a composed twin beside the
+  decomposed file the claim was verified against, or renamed that file
+  to the composed spelling, and the edit made before read 0 and 1 where
+  the walk counts 1 and 2 (the review's round D). Dates have no anchor
+  and read every spelling, an over-count on twins on the fallback basis,
+  never an undercount. Past the bound of 64 spellings only a path's
+  whole forms are looked for (`claims.spellings_capped`), and a file
+  whose components mix the two forms matched none of them: its claim
+  read 0 beside another claim and alone as not applicable, and a cited
+  path the same. The read now declines to the conservative count where
+  the anchor's tree, or on dates the head's and the window since the
+  stamp, holds such a path in no whole form, in the anchor-only count
+  and in the quiescent check too (`verify_spelling.spelled`).
   (`src/bettermemory/verify_spelling.py`, `src/bettermemory/claims.py`,
   `src/bettermemory/verify.py`, `docs/api.md`,
   `tests/test_origin_as_stored.py`)

@@ -1,15 +1,16 @@
 """Which spelling of a path claim drift reads (ENG-220's review, round C).
 
 A tree stores a name as the git that committed it read it: decomposed where
-a git on macOS did not precompose, composed elsewhere. A claim or a cited
-path is read under its own spelling wherever the tree holds it, in the
-head's tree or among the paths the window changed (a file deleted there);
-only where the tree holds neither is it read under every other spelling of
-its name (`claims.stored_spellings`). A tree that stores both spellings as
-two files (twins) then reads each spec on its own file, and a single file
-stored in the other form still matches. Past the spellings bound
-(`claims.spellings_capped`), a path the tree holds in none of its whole
-forms is not looked for in the mixed ones: the read declines, and the hit
+a git on macOS did not precompose, composed elsewhere. On the reachable
+basis a claim or a cited path is read under its own spelling wherever the
+anchor's tree holds it, the tree it was verified against; only where that
+tree does not is it read under every spelling of its name
+(`claims.stored_spellings`). A tree that stores both spellings as two
+files (twins) then reads each spec on its own file, and a single file
+stored in the other form still matches. On dates there is no anchor, and
+every spelling is read. Past the spellings bound
+(`claims.spellings_capped`), a path no tree looked at holds in a whole
+form is not looked for in the mixed ones: the read declines, and the hit
 keeps the conservative count, never not-applicable.
 
 `literal_pathspecs` spells the chosen names for git (``:(literal)``).
@@ -89,24 +90,28 @@ def spelled(
     specs: Sequence[str],
     *,
     toplevel: Path | None,
-    head: str,
-    touched: Mapping[str, object] | None = None,
+    anchor: str | None,
     since: datetime | None = None,
 ) -> Spelled:
-    """The spellings to read `specs` under, for the window that ends at
-    `head` (a hash, or ``HEAD`` where the logs read it): each spec its own
-    where `head`'s tree holds it or the window changed it, and otherwise
-    every spelling of its name. The window's changed paths are the walk's
-    (`touched`) on the reachable basis; on dates, a spec the tree does not
-    hold is changed in the window where a commit authored after `since`
-    touched it. A spec with one spelling (ASCII, or a name normalisation
-    leaves as it is) costs nothing; the others cost one ``cat-file`` for
-    them all, and on dates one log for each the tree does not hold.
+    """The spellings to read `specs` under. On the reachable basis `anchor`
+    is the walk's anchor, the commit the stamp recorded, whose tree holds
+    the file each claim was verified against: a spec is read under its own
+    spelling where that tree holds it, and under every spelling of its name
+    otherwise, whatever the window did after (a twin added, the file renamed
+    to the other form, both of which the head's tree read as the claim's
+    own and missed the change made before). On dates there is no such
+    commit (`anchor` None), and every spelling is read: twins may
+    over-count there, never under (ENG-220's review, round D). A spec with
+    one spelling (ASCII, or a name normalisation leaves as it is) costs
+    nothing; on the reachable basis the others cost one ``cat-file`` for
+    them all.
 
-    Where git does not answer, a spec is read under every spelling, as
-    before the exact spelling was preferred: twins may over-count there,
-    never under. A spec past the spellings bound that neither the tree nor
-    the window holds in any whole form declines the read."""
+    Past the spellings bound (`claims.spellings_capped`) only a path's whole
+    forms are looked for, in the anchor's tree, or on dates in the head's or
+    among the paths a commit authored after `since` changed (one log): where
+    none holds one the read declines, and so it does where git does not
+    answer. A spec under the bound is read under every spelling where git
+    does not answer."""
     variant = [
         spec
         for spec in dict.fromkeys(specs)
@@ -114,27 +119,33 @@ def spelled(
     ]
     if not variant:
         return Spelled()
+    capped = [spec for spec in variant if spellings_capped(spec)]
+    if anchor is None and not capped:
+        return Spelled({spec: stored_spellings(spec) for spec in variant})
     if toplevel is None:
         toplevel = origin.repo_toplevel(cwd)
     looked = {
         name
-        for spec in variant
+        for spec in (variant if anchor is not None else capped)
         for name in (stored_spellings(spec) if spellings_capped(spec) else (spec,))
     }
-    held = None if toplevel is None else _held(toplevel, head, looked)
+    tree = anchor if anchor is not None else "HEAD"
+    held = None if toplevel is None else _held(toplevel, tree, looked)
     chosen: dict[str, tuple[str, ...]] = {}
     declined = False
     for spec in variant:
-        if (held is not None and spec in held) or _changed(
-            cwd, spec, toplevel, touched, since
-        ):
+        forms = stored_spellings(spec)
+        if anchor is not None and held is not None and spec in held:
             chosen[spec] = (spec,)
         elif not spellings_capped(spec):
-            chosen[spec] = stored_spellings(spec)
+            chosen[spec] = forms
+        elif (held is not None and any(form in held for form in forms)) or (
+            anchor is None and _changed(cwd, forms, toplevel, since)
+        ):
+            chosen[spec] = forms
         else:
-            present = tuple(n for n in stored_spellings(spec) if held and n in held)
-            chosen[spec] = present
-            declined = declined or not present
+            chosen[spec] = ()
+            declined = True
     return Spelled(chosen, declined)
 
 
@@ -169,24 +180,15 @@ def _held(toplevel: Path, head: str, names: set[str]) -> set[str] | None:
 
 
 def _changed(
-    cwd: Path,
-    spec: str,
-    toplevel: Path | None,
-    touched: Mapping[str, object] | None,
-    since: datetime | None,
+    cwd: Path, names: Sequence[str], toplevel: Path | None, since: datetime | None
 ) -> bool:
-    """Whether the window changed `spec` under its own spelling: a path the
-    walk lists, or one below it for a folder; on dates, a commit authored
-    after `since` that touched it."""
-    if touched is not None:
-        prefix = spec.rstrip("/") + "/"
-        return spec in touched or any(path.startswith(prefix) for path in touched)
+    """Whether a commit authored after `since` touched one of `names`."""
     if since is None:
         return False
     if since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
     pairs = origin.commit_author_sha_pairs_touching_pathspecs(
-        cwd, literal_pathspecs([spec]), toplevel=toplevel
+        cwd, literal_pathspecs(names), toplevel=toplevel
     )
     return pairs is not None and bool(pairs) and pairs[-1][0] > since
 
