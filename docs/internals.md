@@ -1222,23 +1222,40 @@ With birth time the sighting that registered it would have
 continued the first. Where nothing was written at the second checkout
 since (its homes, one indexed read), rung 2 takes the first, silently;
 the healed sighting records the token there, which then comes first, so
-the heal is read once, and the second checkout stays, idle. Where
-records were written at it in the first checkout's project (the other
-machine's checkout recording the token is in that project too), the
-first's sightings deliver them, so the heal is the same. Where records
-were written at it in another project, taking the first would hide
-them, so the sighting stays at the second, its records delivered, and
-asks (`duplicate_checkout`, `_ask_which`), naming the first checkout's
-project and its own: joining the first's moves the second checkout and
-its records there, as a declared move does; joining its own keeps it
-where it is; the separate answer (the agent's `separate`,
-`bettermemory project new` or `project init --new`) makes it and its
-records a project of their own, its token re-minted, as a separation
-does. Whichever is answered, the question is read as a choice from then
-on. Its line says what is true of every such checkout, whichever
-release registered it: a sighting that did not read the other machine's
-re-mint as the first record's (9.0.0rc18 could not; this release does
-not where the first record's stamps are not read there).
+the heal is read once. Where records were written at it in the first
+checkout's project (the other machine's checkout recording the token is
+in that project too), the first's sightings deliver them, so the heal is
+the same. Where records were written at it in another project, taking
+the first would hide them, so the sighting stays at the second, its
+records delivered, and asks (`duplicate_checkout`, `_ask_which`), naming
+the first checkout's project and its own: joining the first's moves the
+second checkout and its records there, as a declared move does; joining
+its own keeps it where it is; the separate answer (the agent's
+`separate`, `bettermemory project new` or `project init --new`) makes it
+and its records a project of their own, its token re-minted, as a
+separation does. Whichever is answered, the question is read as a
+choice from then on. Its line says what is true of every such checkout,
+whichever release registered it: a sighting that did not read the other
+machine's re-mint as the first record's (9.0.0rc18 could not; this
+release does not where the first record's stamps are not read there).
+
+A heal and an answer joining the first checkout's project each leave
+one record of the git directory that the sightings read and one that
+none reads from then on: the second after a heal, the first after the
+answer (the sightings resolve the second, the answer a choice there).
+That one is retired into the other (`_retire_into`): each record homed
+at it is homed at the one read, in the project its home names (the
+same either way), its views at that one's paths are deleted, and it is
+retired (its row kept, `checkout_retired` naming the one it went into
+and why). So a later move of the checkout at the path (`project new`,
+`project join`) carries every record written there, where the one left
+behind kept its own in the old project, and a sighting of another
+object at the path (a restore) finds one checkout there for B to
+re-key. The rows are of kinds 9.0.0rc18 reads: a home's and a
+checkout's put, a view's deletion, and `checkout_retired`, whose extra
+fields it passes over. Joining its own project or the separate answer
+leaves both records: the two are in other projects by the user's
+answer, and the first one's records stay in the first project.
 
 Cost: one read of the checkouts' token index, with no views, at each
 reading of rung 2 where the token found is neither recorded nor the

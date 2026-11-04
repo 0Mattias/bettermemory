@@ -312,10 +312,16 @@ def _answer_join(
         self._move_checkout(k, target, by)
     elif pr.kind == DUPLICATE_CHECKOUT:
         # The first record's project: this checkout and its records move
-        # there (ENG-215); joining its own keeps it where it is, and
-        # ``new`` makes it a project of its own (`_answer_new`).
+        # there (ENG-215), and the first record, which no sighting reads
+        # from now on, is retired into it with its own records, so a
+        # later move carries them; joining its own keeps it where it is,
+        # and ``new`` makes it a project of its own (`_answer_new`).
         if target != mine:
             self._move_checkout(k, target, by)
+            first = str(pr.evidence.get("first") or "")
+            idle = self.checkout(first) if first else None
+            if idle is not None and self._canon(idle.project) == target:
+                self._retire_into(idle, self.checkout(k.id), by)
     else:
         evidence = set(pr.evidence.get(target) or ())
         shallow = (

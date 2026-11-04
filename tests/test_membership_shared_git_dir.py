@@ -966,6 +966,104 @@ def test_a_second_checkout_in_the_first_ones_project_yields_with_its_records(
 
 
 @pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("then", ["project_new", "join_other"])
+@pytest.mark.parametrize("settled", ["heal", "join_first"])
+def test_two_records_settled_into_one_carry_both_ones_records(
+    tmp_path: Path,
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+    settled: str,
+    then: str,
+) -> None:
+    """Two records of the host's git directory settled into one: by the
+    heal, h2 written at the second in the first one's project; or by
+    joining the first record's project at the second one's question, h1
+    at the first. The record no sighting reads from then on is retired
+    into the one they read: its records homed there, its view at the
+    path gone, a ``checkout_retired`` row naming the one kept. So when
+    the user then moves that checkout (`project new` there, or `project
+    join` into another project), h1 and h2, both written at that path,
+    go with it and are delivered there. Before, the one left behind
+    kept its own, in the old project."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    first = lab.model().checkout(hid).project
+    _the_containers_re_mint(
+        lab, box, kid, "missed" if settled == "heal" else "recorded"
+    )
+    if settled == "heal":
+        assert box.post(lab).checkout == kid
+    dup, _found = _rc18_registered(lab, line)
+    _written_at(lab, "h2", line, monkeypatch)
+    res, admitted = lab.view(line)
+    kept, idle = (hid, dup) if settled == "heal" else (dup, hid)
+    if settled == "join_first":
+        assert res.proposal is not None
+        lab._declaring().declare(
+            Declaration(
+                "join", "os:tester", checkout=dup, proposal=res.proposal, target=first
+            )
+        )
+        location.forget()
+        res, admitted = lab.view(line)
+    assert (res.checkout, admitted) == (kept, ["h1", "h2"])
+    assert lab.checkout_of("h1") == lab.checkout_of("h2") == kept
+    gone = lab.model().checkout(idle)
+    assert gone.retired and not gone.views_on(lab.identity.id)
+    retired = [
+        json.loads(r.payload) for r in lab.store.membership_log(["checkout_retired"])
+    ]
+    assert [(r["checkout"], r.get("into")) for r in retired] == [(idle, kept)]
+    if then == "project_new":
+        decl = Declaration("new", "os:tester", checkout=kept, name="mine")
+    else:
+        other = lab.write("r1", make_repo(tmp_path / "r", commits=1)).project
+        decl = Declaration("join", "os:tester", checkout=kept, target=other)
+    lab._declaring().declare(decl)
+    location.forget()
+
+    after, admitted = lab.view(line)
+
+    assert after.checkout == kept and {"h1", "h2"} <= set(admitted)
+    assert lab.project_of("h1") == lab.project_of("h2") != first
+    assert lab.model().canonical(lab.project_of("h2")) == lab.model().canonical(
+        after.project
+    )
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_retired_record_is_not_re_keyed_at_its_old_path(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After the heal settled the second record into the first (one
+    project, h2 written at the second), the host's repository comes back
+    at its path as another object (moved to another volume and back):
+    B re-keys the record at the path, which is the first alone, its
+    view the only one there, so it keeps h1 and h2 and a `project new`
+    there takes both. Had the retired record kept its view, B would have
+    re-keyed that one, which holds nothing now, and left h1 and h2
+    behind."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    _the_containers_re_mint(lab, box, kid, "missed")
+    assert box.post(lab).checkout == kid
+    dup, _found = _rc18_registered(lab, line)
+    _written_at(lab, "h2", line, monkeypatch)
+    healed, _admitted = lab.view(line)
+    assert healed.checkout == hid and lab.model().checkout(dup).retired
+    os.rename(line, tmp_path / "host" / "line-away")
+    copy(tmp_path / "host" / "line-away", line)
+    location.forget()
+
+    res, admitted = lab.view(line)
+
+    assert res.rule.startswith("rekeyed:") and "B" in res.rule.split(":")[1]
+    assert (res.checkout, admitted) == (hid, ["h1", "h2"])
+    lab._declaring().declare(Declaration("new", "os:tester", checkout=hid, name="m"))
+    location.forget()
+    after, admitted = lab.view(line)
+    assert (after.checkout, admitted) == (hid, ["h1", "h2"])
+
+
+@pytest.mark.usefixtures("no_birth")
 def test_a_second_checkout_a_project_was_absorbed_at_is_kept(
     tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
 ) -> None:

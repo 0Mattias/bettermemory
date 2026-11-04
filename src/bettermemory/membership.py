@@ -1324,6 +1324,7 @@ class Membership:
     _liveness_plan = membership_resolve._liveness_plan
     _by_object = membership_resolve._by_object
     _shared_remint = membership_shared._shared_remint
+    _retire_into = membership_shared._retire_into
     prefetch_liveness = membership_resolve.prefetch_liveness
     prefetch_declared = membership_resolve.prefetch_declared
 

@@ -1461,7 +1461,14 @@ eighteenth was built.
   project, the sighting stays there and asks (`duplicate_checkout`):
   joining the first checkout's project moves the second checkout and
   its records there, joining its own keeps it, and the separate answer
-  (`project new`) makes it a project of its own with its records.
+  (`project new`) makes it a project of its own with its records. A
+  heal, and an answer joining the first checkout's project, retire the
+  record no sighting reads from then on into the one they read: its
+  records are homed there, so a later `project new` or `project join`
+  at the path carries every record written there, where the one left
+  behind kept its own in the old project; and its view at the path is
+  deleted, so a restore there re-keys the one read (rows of kinds
+  9.0.0rc18 reads: it verifies, opens, reads and writes such a store).
   The rule costs one read of the
   checkouts' token index, with no views, at each reading of rung 2 where
   the token found is neither recorded nor the checkout's own re-mint

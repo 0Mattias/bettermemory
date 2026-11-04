@@ -64,6 +64,7 @@ from .membership_records import (
     Checkout,
     Location,
     _found_token,
+    _norm,
 )
 from .membership_rows import _checkout_from
 
@@ -308,7 +309,8 @@ def _healed(self: Membership, kept: Checkout, later: Checkout, loc: Location) ->
     through another machine's view, so with birth time the sighting that
     registered `later` would have continued `kept`. A healed sighting
     records the token on `kept`, which then comes first in order, so this
-    is read once; `later` stays, idle. Reads only: the token index (the
+    is read once; `later` is retired into it (`_retire_into`, in the
+    resolution's transaction). Reads only: the token index (the
     rule's own read), and where the rest holds the root file's binding,
     `later`'s questions, the log rows naming it and its homes, each
     indexed or filtered on `later` in SQL."""
@@ -438,3 +440,31 @@ def _ask_which(self: Membership, later: Checkout, first: Checkout) -> None:
         line=lambda q: line_restated(q, DUPLICATE_CHECKOUT, DUPLICATE_CHECKOUT, named),
         signature=None,
     )
+
+
+def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> None:
+    """`idle`, a second record of `kept`'s git directory that no sighting
+    reads from now on, folded into `kept`: after a heal (`kept` the first
+    record, `_healed`) or an answer joining the first record's project
+    (`kept` the second, which the sightings resolve,
+    `membership_declare._answer_join`). Each record homed at `idle` is
+    homed at `kept`, in the project its home names, which is `kept`'s
+    either way, so nothing delivered changes and a later move of `kept`
+    (`project new`, `project join`) carries it; `idle`'s views on its
+    machine at a path of `kept`'s are deleted, so that path is `kept`'s
+    alone (B reads no other checkout there); and `idle` is retired, its
+    row kept, with a ``checkout_retired`` row naming `kept` and `by`. The
+    rows are of kinds 9.0.0rc18 reads (a home's and a checkout's put, a
+    view's deletion, ``checkout_retired``). One indexed read of `idle`'s
+    homes."""
+    for row in self._store.membership_rows("homes", where={"checkout": idle.id}):
+        self._put("home", {**row, "checkout": kept.id, "rule": f"{row['rule']}|{by}"})
+    paths = {_norm(v.path) for v in kept.views_on(idle.machine)}
+    for v in idle.views_on(idle.machine):
+        if _norm(v.path) in paths:
+            self._delete(
+                "checkout_view",
+                {"checkout": idle.id, "machine": v.machine, "path": v.path},
+            )
+    self._put_checkout(dataclasses.replace(idle, retired=True))
+    self._event("checkout_retired", checkout=idle.id, into=kept.id, evidence=by)
