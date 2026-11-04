@@ -49,7 +49,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import TypeAlias
@@ -1045,8 +1045,9 @@ def repo_toplevel_and_head(cwd: Path | None) -> tuple[Path, str] | None:
         return None
     # git prints the root, then the hash, each with a newline after it: the
     # root is all before the last newline, whatever its name holds (a space
-    # at its end, a newline).
-    root, _newline, head = _git_runner.printed_path(raw).rpartition("\n")
+    # at its end, a newline), its line end taken off as a printed path's.
+    root, newline, head = _git_runner.printed_path(raw).rpartition("\n")
+    root = _git_runner.printed_path(root + newline)
     if not root or not is_full_commit_sha(head) or not _agreed(cwd, root):
         return None
     try:
@@ -1360,20 +1361,22 @@ def _walk_reachable(toplevel: Path, anchor: str, head: str) -> ReachableWalk | N
     # One name a line, with only its newline taken off: git quotes a name
     # holding a control character (a newline, a CR, a tab) or a quote, so
     # no name spans two lines, and prints a space that begins or ends one
-    # as it is. Not -z, where git quotes nothing: the text read
-    # (`_git_runner.run_git`) turns a CR in a name into an LF, which the
-    # quoted form carries as its escape.
+    # as it is. A CR in a name is carried as its escape, and git's output is
+    # read with every CR kept (`_git_runner.run_git`), so no CR ends a line.
     for line in raw.split("\n"):
         if line.startswith(_WALK_MARK):
             mark, sha = line[1:2], line[2:].strip().lower()
+            if not is_full_commit_sha(sha):
+                # A mark git printed names a commit: one that names none
+                # was garbled, and its commit would drop out of the count.
+                _git_runner.note_failed()
+                return None
             if mark == "-":
                 boundary.add(sha)
                 current = None
-            elif is_full_commit_sha(sha):
+            else:
                 commits.append(sha)
                 current = sha
-            else:
-                current = None
             continue
         path = line
         if not path or current is None:
@@ -1570,18 +1573,18 @@ def commit_author_timestamps(
             _git_runner.note_failed()
             return None
         return _read_author_timestamps(cwd, "HEAD")
-    stored, failed = origin_history.recall(key)
+    guard = origin_history.history_guard(Path(key[0]))
+    stored, failed = origin_history.recall(key, guard)
     if stored is not None:
         return stored
     if not failed and origin_history.cuts(Path(key[0])) != frozenset():
         # A shallow file's cut: the commits behind it, whose dates git
         # does not read, may be the window's (ENG-220's review).
-        origin_history.remember_failure(key)
+        origin_history.remember_failure(key, guard)
         failed = True
     if failed:
         _git_runner.note_failed()
         return None
-    guard = origin_history.history_guard(Path(key[0]))
     base = None if guard is None else origin_history.base_for(key[0], guard)
     dates = None
     if base is not None:
@@ -1589,7 +1592,7 @@ def commit_author_timestamps(
     if dates is None:
         dates = _read_author_timestamps(cwd, key[1])
     if dates is None or not origin_history.remember(key, dates, guard):
-        origin_history.remember_failure(key)
+        origin_history.remember_failure(key, guard)
     return dates
 
 
@@ -1605,16 +1608,15 @@ def _read_author_timestamps(cwd: Path, revision: str) -> list[datetime] | None:
     # collapsing a real count into the omitted/conservative branch. Same
     # ceiling `commit_patch_stream` already runs at.
     raw = _git(cwd, "log", "--format=%at", revision, timeout=5.0)
-    if raw is None:
-        return None
-    out = origin_history.author_dates(
-        [
-            value
-            for line in raw.splitlines()
-            if (value := origin_history.seconds(line)) is not None
-        ]
+    values = (
+        None if raw is None else origin_history.read_lines(raw, origin_history.seconds)
     )
-    return out or None
+    if not values:
+        if raw is not None:
+            # A line that reads as no date declines the read.
+            _git_runner.note_failed()
+        return None
+    return origin_history.author_dates(values)
 
 
 def _extended_author_timestamps(
@@ -1639,17 +1641,21 @@ def _extended_author_timestamps(
     )
     if result is None or result.returncode != 0:
         return None
-    added: list[int] = []
-    reaches = False
-    for line in result.stdout.splitlines():
-        sha, _, stamp = line[1:].partition(" ")
-        if line.startswith("-"):
-            reaches = reaches or sha == base_head
-        elif (value := origin_history.seconds(stamp)) is not None:
-            added.append(value)
-    if not reaches:
+    lines = origin_history.read_lines(result.stdout, _marked_seconds)
+    if lines is None or (False, base_head, 0) not in lines:
         return None
+    added = [value for listed, _, value in lines if listed]
     return sorted(base + origin_history.author_dates(added))
+
+
+def _marked_seconds(line: str) -> tuple[bool, str, int] | None:
+    """A ``%m%H %at`` line as (listed, hash, seconds): `listed` False for a
+    boundary commit, whose seconds read 0. None for any other line."""
+    sha, _, stamp = line[1:].partition(" ")
+    value = origin_history.seconds(stamp)
+    if line[:1] not in "-<>" or not is_full_commit_sha(sha) or value is None:
+        return None
+    return line[0] != "-", sha, value if line[0] != "-" else 0
 
 
 def commit_author_timestamps_touching_pathspecs(
@@ -1721,23 +1727,14 @@ def commit_author_timestamps_touching_pathspecs(
     if not raw:
         # Clean exit, empty log — no commit touches any spec (phantom).
         return []
-    out: list[datetime] = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ts = datetime.fromisoformat(line)
-        except ValueError:
-            continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        out.append(ts)
+    out = origin_history.read_lines(raw, origin_history.instant)
     if not out:
-        # Non-empty stdout that parsed to nothing is a git oddity, not an
-        # answer. `None` (not `[]`) keeps it from minting the phantom
-        # not-applicable exemption — the clean-empty case already returned
-        # `[]` above, off `empty_ok`. Same split as the old `out or None`.
+        # A line that reads as no date declines the read (dropped, it
+        # shrank the count, ENG-220's review), and so does non-empty stdout
+        # that parsed to nothing: `None` (not `[]`) keeps it from minting
+        # the phantom not-applicable exemption — the clean-empty case
+        # already returned `[]` above, off `empty_ok`.
+        _git_runner.note_failed()
         return None
     out.sort(key=_instant)
     return out
@@ -1788,28 +1785,21 @@ def commit_author_sha_pairs_touching_pathspecs(
         return None
     if not raw:
         return []
-    out: list[tuple[datetime, str]] = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        stamp, _, sha = line.partition(" ")
-        sha = sha.strip()
-        if not sha:
-            continue
-        try:
-            ts = datetime.fromisoformat(stamp)
-        except ValueError:
-            continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        out.append((ts, sha))
+    out = origin_history.read_lines(raw, _dated_sha)
     if not out:
-        # Mirrors the timestamps sibling: non-empty stdout that parsed to
+        # Mirrors the timestamps sibling: a line that reads as no date and
+        # hash declines the read, and non-empty stdout that parsed to
         # nothing is a git oddity, not a clean phantom.
+        _git_runner.note_failed()
         return None
     out.sort(key=lambda pair: _instant(pair[0]))
     return out
+
+
+def _dated_sha(line: str) -> tuple[datetime, str] | None:
+    stamp, _, sha = line.strip().partition(" ")
+    when = origin_history.instant(stamp)
+    return None if when is None or not is_full_commit_sha(sha) else (when, sha)
 
 
 # Ceiling on how many named commits `commit_patch_stream` will fetch

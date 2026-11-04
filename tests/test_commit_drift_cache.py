@@ -575,12 +575,19 @@ def test_the_memo_is_bounded(
     assert len(_response._DRIFT_MEMO) == 2
 
 
-def test_a_git_process_that_could_not_run_is_not_memoised(
-    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("failure", ["timeout", "could-not-run"])
+def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    """A timeout folds into the conservative count, which is what the
-    uncached code answers on that call and not on the next. The memo
-    keeps no value computed across such a failure."""
+    """A failure folds into the conservative count, which is what the
+    uncached code answers on that call. A git that could not run may run
+    on the next, so the memo keeps no value computed across it. A timeout
+    is what the same call meets again on the same history, so its value is
+    kept under the row's key for a minute, and the next search forks
+    nothing for the row; then the row is resolved again (ENG-220's
+    review)."""
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     repo = _repo(tmp_path)
     _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n", "notes1.md": "b\n"})
     store = Store(memory_dir)
@@ -594,12 +601,14 @@ def test_a_git_process_that_could_not_run_is_not_memoised(
     memories = store.load_all()
     real_run = subprocess.run
 
-    def filtered_log_times_out(argv: Any, *args: Any, **kwargs: Any) -> Any:
-        if "--" in argv:
+    def filtered_log_fails(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if "--" not in argv:
+            return real_run(argv, *args, **kwargs)
+        if failure == "timeout":
             raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
-        return real_run(argv, *args, **kwargs)
+        raise OSError("no such process")
 
-    monkeypatch.setattr(subprocess, "run", filtered_log_times_out)
+    monkeypatch.setattr(subprocess, "run", filtered_log_fails)
     hits = run_search(memories, "widget rule", max_results=50)
     builder = ResponseBuilder(stale_after_days=30)
     out = [builder.hit_to_dict(hit, now=_NOW) for hit in hits]
@@ -610,6 +619,11 @@ def test_a_git_process_that_could_not_run_is_not_memoised(
     assert _by_id(out)[memory_id]["commit_drift_count"] == 2, "the unfiltered fallback"
 
     after, calls = _attach(memories, caller, monkeypatch)
+    if failure == "timeout":
+        assert _by_id(after)[memory_id]["commit_drift_count"] == 2, "kept a minute"
+        assert calls == [], "the row forks nothing"
+        clock[0] += _response._TIMED_OUT_SECONDS
+        after, calls = _attach(memories, caller, monkeypatch)
     assert _by_id(after)[memory_id]["commit_drift_count"] == 1
     assert calls, "resolved again once git could run"
 

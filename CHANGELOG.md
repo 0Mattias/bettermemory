@@ -307,19 +307,18 @@ eighteenth was built.
   `log.date`, `log.abbrevCommit`, `core.abbrev` and the notes refs
   (each log names its format); `diff.context` (`-U0`); `diff.external`
   and a driver's `textconv` (off); `diff.submodule` and
-  `log.showSignature` (pinned since 9.0.0rc18); `diff.orderFile` and
+  `log.showSignature` (pinned since 9.0.0rc18);
   `diff.suppressBlankEmpty`; `log.diffMerges` (no merge is diffed);
   `log.mailmap` and `mailmap.file` (no name is read); a driver's
   `funcname` and `xfuncname` (the hunk header's context is not read);
   `core.ignoreCase`, and the `GIT_LITERAL_PATHSPECS`,
   `GIT_GLOB_PATHSPECS` and `GIT_NOGLOB_PATHSPECS` variables (each
-  pathspec is read as the path it spells, ENG-183). Only up: `diff.algorithm`,
-  `diff.indentHeuristic` and a driver's `algorithm`, which move only
-  lines whose text is unchanged, so a binding can read touched but not
-  untouched; `i18n.logOutputEncoding`, which leaves what each format
-  prints as it is in an encoding that extends ASCII, and in one that
-  does not (UTF-16) fails the parse, and the count is omitted; and
-  `GIT_ICASE_PATHSPECS`, which matches more paths. The memo keys still
+  pathspec is read as the path it spells, ENG-183). Only up:
+  `diff.algorithm`, `diff.indentHeuristic` and a driver's `algorithm`,
+  which move only lines whose text is unchanged, so a binding can read
+  touched but not untouched; and `GIT_ICASE_PATHSPECS`, which matches
+  more paths. `i18n.logOutputEncoding` and `diff.orderFile` are pinned
+  (the fix below). The memo keys still
   stamp the files these settings live in, so a hit is read again when
   one moves. (`src/bettermemory/origin_history.py`,
   `src/bettermemory/origin.py`, `src/bettermemory/origin_patch.py`,
@@ -371,6 +370,54 @@ eighteenth was built.
   `src/bettermemory/origin_patch.py`, `src/bettermemory/origin_history.py`,
   `src/bettermemory/_git.py`, `tests/test_claims.py`,
   `tests/test_origin_patch.py`, `tests/test_origin_as_stored.py`)
+
+- **A carriage return in a file, a log's output encoding and a missing
+  order file hide no changed claim (ENG-220).** Git's output was read in
+  text mode, whose universal newlines turn a lone `\r` into a line
+  break: a committed line holding `\r` and then the `\x01` record mark
+  and a hash read as a commit of its own, and one holding `\r` and then
+  `--- a/<another path>` as that file's header, so the hunk that changed
+  a claim went to a commit outside the window or to another file, and
+  the count read 0 on both bases. Every git the package runs is now read
+  as bytes and decoded with each `\r` kept, and the readers split on line
+  feeds alone (`_git.run_git`); a file whose lines end in CRLF reads as
+  it did. A path git prints alone (`_git.printed_path`) keeps a CR its
+  name ends in: git ends a line with an LF alone, on Windows too (Git for
+  Windows sets its standard streams to binary mode), and on Windows,
+  where no name holds a CR, one before that LF comes off with it.
+  `i18n.logOutputEncoding` (or `i18n.commitEncoding`, which
+  stands in for it) re-encoded every line a format prints, and in UTF-7
+  the walk's `\x01` mark and the `+` of a date east of UTC were spelled
+  otherwise: the walk declined and those dates were dropped, so a claim
+  counted 0 against 1, and a memory that cites a file and claims nothing
+  2 against 4. Every origin call pins it to UTF-8; a commit's own
+  `encoding` header re-encodes only its message, which no format prints.
+  A line a log's format did not print (a date, a hash, a walk's mark
+  that reads as none) now declines the read, as a failed git call, where
+  it was dropped and the count read lower, and an author date past what
+  a datetime holds reads as the latest one, where it was skipped.
+  `diff.orderFile` naming no file failed every diff git printed, so the
+  walk declined and the dates counted every commit to the claimed file,
+  4 against 1: `-O` with the null device, an empty order, outranks it.
+  Every file has been diffed as text since this candidate's fix above,
+  so a large binary's patch was read and parsed whole, and near 100 MB
+  it met the 5 s bound, on every search: the sizes of the blobs a
+  window's patch reads are now summed first, from one listing and one
+  `cat-file --batch-check` (kept with the repository's packs, 20 to 30
+  ms cold), and past 32 MiB no patch is read and the hit keeps the
+  per-file count (`origin_patch.MAX_PATCH_STREAM_BYTES`,
+  `docs/operations.md`). A hit whose every failed git call timed out
+  keeps its conservative count under its key for a minute, so it pays
+  the bound once a minute, not on every search; any other failure is
+  still never kept. And a shallow clone's failed whole-history read is
+  remembered with the stamp of its `shallow` file, so a clone deepened
+  (`git fetch --unshallow` or `--deepen`) is read at once, not after up
+  to a minute. (`src/bettermemory/_git.py`, `src/bettermemory/origin.py`,
+  `src/bettermemory/origin_history.py`, `src/bettermemory/origin_patch.py`,
+  `src/bettermemory/verify.py`, `src/bettermemory/_response.py`,
+  `docs/api.md`, `docs/internals.md`, `docs/operations.md`,
+  `tests/test_origin_as_stored.py`, `tests/test_origin_patch.py`,
+  `tests/test_commit_drift_cache.py`, `tests/test_origin_name_space.py`)
 
 - **The migration homes a record in a part below a folder whose question
   was answered where a session there resolves (ENG-222).** A folder
@@ -626,9 +673,10 @@ eighteenth was built.
   alone now loses only the newline after it (`_git.printed_path`), so a
   folder named `nl\nx` keeps its root too, and the root git prints
   before HEAD's hash is all before the last newline. The walk reads one
-  name a line, as git quotes any name that holds a newline or a CR. A CR
-  in a folder's name still reads as a newline (git's output is read as
-  text), and the origin keeps no root there.
+  name a line, as git quotes any name that holds a newline or a CR. A
+  folder whose name ends in a CR keeps its root too, since git's output
+  is read with every CR kept (the ENG-220 entry above); on Windows, where
+  no name holds a CR, one before git's newline comes off with it.
   (`src/bettermemory/_git.py`, `src/bettermemory/origin.py`,
   `src/bettermemory/posture.py`, `tests/test_origin_name_space.py`)
 

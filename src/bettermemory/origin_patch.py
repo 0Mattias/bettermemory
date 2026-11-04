@@ -28,11 +28,11 @@ link or a gitlink), are marked in the index before the claims are read
 (`PatchWindow.mark`): a claim the trees show fired fires, and what it
 implicates among the local commits is counted. What the trees cannot show
 (a binding line a counted commit touched) implicates only that commit,
-which is counted. The trees show more deletions than the patch prints (an
-empty or binary file's deletion prints no ``/dev/null`` header), so a claim
-can fire here that a full clone leaves quiet and implicate a local commit;
-the caller therefore counts the whole window in a split whenever any fired
-claim implicates no commit, not only when none implicates one
+which is counted. A claim the trees fire implicates no local commit where
+the counted commit alone carried its change, which a full clone's patch
+names, and the claims beside it can implicate local commits; the caller
+therefore counts the whole window in a split whenever any fired claim
+implicates no commit, not only when none implicates one
 (`verify._weak_tier_evaluation`). The count is never below the full
 clone's; a claim is named where a local commit, or a counted commit's
 trees, show it fired.
@@ -54,6 +54,12 @@ pathspec readers need the trees on each spec's path for every commit and
 its parent, and such a clone holds the trees of the commits it checked out
 and none of their parents', so a split by local trees would recover nearly
 no commit, at a tree walk per path component.
+
+The same listing and check bound what any patch reads (`too_large`): the
+patch diffs every file as text (``--text``, ENG-220), a large binary file's
+lines included, so the sizes the check reports are summed over the blobs
+each commit's diff reads, and past `MAX_PATCH_STREAM_BYTES` no patch is
+read and the window keeps the per-file count.
 """
 
 from __future__ import annotations
@@ -61,9 +67,10 @@ from __future__ import annotations
 import os
 import threading
 from collections import OrderedDict
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, TypeAlias
 
 from . import _caches, githead, origin, origin_history
@@ -74,9 +81,26 @@ from .origin_gitfiles import _unquote_c_path
 #: blob of this repository, and the patch prints it without reading it.
 _GITLINK = "160000"
 
-# The split's listing and check, memoised per process: the window's
-# changes and the blobs among them the clone held, keyed on the common
-# directory, the commits, the pathspecs and the stamps (`githead.stamp`) of
+#: The most bytes of blob one patch reads: the sizes ``cat-file`` reports,
+#: summed over the blobs each commit's diff reads (both sides of a change,
+#: once per commit). A patch costs what git reads and what it prints, and a
+#: binary or rewritten file prints about what it read. Measured through
+#: `origin.commit_patch_stream` and the parse (git 2.54, macOS, M3 Pro,
+#: packed objects): a 5 MB binary file changed three times (29 MiB read) in
+#: 140 ms, and rewritten three times in 520 ms; a 5 MB file of short
+#: assignment lines rewritten three times in 2.8 s, nearly all of it the
+#: parse; a 1 MB binary changed 64 times (122 MiB read, a 93 MB patch) in
+#: 1.5 s. Past the bound no patch is read: a 20 MB binary changed three
+#: times (114 MiB), and a window of 256 one-line edits to a 200 KB file
+#: (98 MiB), whose patch is small, where the per-file count is loud
+#: already; 64 such edits (24 MiB) are read.
+MAX_PATCH_STREAM_BYTES = 32 * 1024 * 1024
+
+# The listing and check, memoised per process: the window's changes and
+# the blobs among them the clone held, with their sizes, which the size
+# bound reads before any patch (`too_large`) and the split after a failed
+# one, keyed on the common directory, the commits, the pathspecs and the
+# stamps (`githead.stamp`) of
 # what decides them: the pack directory, which every fetch of the missing
 # objects writes a pack into, the alternates file, the config, and the
 # shallow file, which changes which parent a commit is diffed against.
@@ -95,9 +119,9 @@ _GITLINK = "160000"
 # nothing is kept. Bounded LRU, emptied before each test (`_caches`).
 _MEMO_CAP = 256
 _MemoKey: TypeAlias = tuple[str, tuple[object, ...], tuple[str, ...], tuple[str, ...]]
-_MEMO: OrderedDict[_MemoKey, tuple[dict[str, list[Change]], frozenset[str]]] = (
-    OrderedDict()
-)
+#: A window's changes per commit, and the size of each blob the clone holds.
+_Listed: TypeAlias = tuple[dict[str, list["Change"]], Mapping[str, int]]
+_MEMO: OrderedDict[_MemoKey, _Listed] = OrderedDict()
 _MEMO_LOCK = threading.Lock()
 _STAMPED = (
     ("objects", "pack"),
@@ -143,6 +167,40 @@ class PatchWindow:
         index of `stream`, so a claim the trees show fired fires."""
         index["files"] = set(index["files"]) | self.touched
         index["deleted"] = set(index["deleted"]) | self.deleted
+
+
+def too_large(
+    cwd: Path | None,
+    shas: Sequence[str],
+    pathspecs: list[str],
+    *,
+    toplevel: Path | None = None,
+) -> bool:
+    """Whether the blobs a patch of `shas` under `pathspecs` reads, as the
+    clone holds them, sum past `MAX_PATCH_STREAM_BYTES`: the caller then
+    keeps the per-file count without reading the patch. False where git
+    could not list or check them, and the patch is read as before; a blob
+    the clone lacks is not summed, since no patch reads it (the stream
+    fails on it, and the split reads only the local commits)."""
+    if cwd is None or not shas or not pathspecs:
+        return False
+    if len(shas) > origin.MAX_PATCH_STREAM_COMMITS:
+        return False
+    if toplevel is None:
+        toplevel = origin.repo_toplevel(cwd)
+        if toplevel is None:
+            return False
+    listed = _listed(toplevel, shas, pathspecs)
+    if listed is None:
+        return False
+    changes, held = listed
+    read = sum(
+        held.get(blob, 0)
+        for found in changes.values()
+        for change in found
+        for blob in change.blobs
+    )
+    return read > MAX_PATCH_STREAM_BYTES
 
 
 def local_patch_window(
@@ -196,10 +254,11 @@ def local_patch_window(
 
 def _listed(
     toplevel: Path, shas: Sequence[str], pathspecs: list[str]
-) -> tuple[dict[str, list[Change]], frozenset[str]] | None:
+) -> _Listed | None:
     """The window's changes (`_changes`) and the blobs among them the clone
-    holds (`_held`), from the memo where its key holds; None where git did
-    not answer, which is not kept."""
+    holds, with their sizes (`_held`), from the memo where its key holds;
+    None where git did not answer, which is not kept. The value is shared:
+    no caller changes it."""
     key = _memo_key(toplevel, shas, pathspecs)
     if key is not None:
         with _MEMO_LOCK:
@@ -213,10 +272,10 @@ def _listed(
     blobs = {
         blob for found in changes.values() for change in found for blob in change.blobs
     }
-    held = _held(toplevel, blobs) if blobs else set()
+    held = _held(toplevel, blobs) if blobs else {}
     if held is None:
         return None
-    listed = (changes, frozenset(held))
+    listed = (changes, MappingProxyType(held))
     if key is not None:
         with _MEMO_LOCK:
             _MEMO[key] = listed
@@ -311,12 +370,12 @@ def _changes(
     return changes
 
 
-def _held(toplevel: Path, blobs: Collection[str]) -> set[str] | None:
-    """The blobs among `blobs` the clone holds: ``cat-file --batch-check``
-    names each with its type where it is present and as ``missing`` where
-    it is not, which a partial clone's missing blob reads as under the
-    no-fetch pins. A blob it does not report present counts as missing.
-    None where git did not answer."""
+def _held(toplevel: Path, blobs: Collection[str]) -> dict[str, int] | None:
+    """The blobs among `blobs` the clone holds, with their sizes: ``cat-file
+    --batch-check`` names each with its type and size where it is present
+    and as ``missing`` where it is not, which a partial clone's missing blob
+    reads as under the no-fetch pins. A blob it does not report present
+    counts as missing. None where git did not answer."""
     raw = origin._git(
         toplevel,
         "cat-file",
@@ -327,12 +386,18 @@ def _held(toplevel: Path, blobs: Collection[str]) -> set[str] | None:
     )
     if raw is None:
         return None
-    held: set[str] = set()
-    for line in raw.splitlines():
+    held: dict[str, int] = {}
+    for line in raw.split("\n"):
         fields = line.split()
-        if len(fields) == 3 and fields[1] == "blob":
-            held.add(fields[0].lower())
+        if len(fields) == 3 and fields[1] == "blob" and fields[2].isdigit():
+            held[fields[0].lower()] = int(fields[2])
     return held
 
 
-__all__ = ["Change", "PatchWindow", "local_patch_window"]
+__all__ = [
+    "MAX_PATCH_STREAM_BYTES",
+    "Change",
+    "PatchWindow",
+    "local_patch_window",
+    "too_large",
+]

@@ -13,6 +13,9 @@ path git prints alone now loses only the newline after it
 (`_git.printed_path`), the root before the hash is all before the last
 newline, and the walk splits lines only where git quotes every name that
 holds one; the security audit's read of a store's working tree with them.
+A name ending in a CR keeps it as well, since git's output is decoded from
+its bytes (ENG-220's re-review); only on Windows, where no name holds one,
+does a CR before git's newline come off.
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ NAMES = [
     pytest.param(" lead", id="leading_space"),
     pytest.param("nl\nx", id="newline", marks=_POSIX_NAME),
     pytest.param("end\n", id="trailing_newline", marks=_POSIX_NAME),
+    pytest.param("cr\r", id="trailing_cr", marks=_POSIX_NAME),
 ]
 
 
@@ -71,8 +75,8 @@ def test_a_folder_named_with_blank_space_keeps_its_root(
     app = tmp_path / "work" / name
     checkout(app, remote=REMOTE)
     printed = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], cwd=app, capture_output=True, text=True
-    ).stdout
+        ["git", "rev-parse", "--show-toplevel"], cwd=app, capture_output=True
+    ).stdout.decode()
     assert printed.endswith(name + "\n"), repr(printed)
 
     assert _same(_membership(app).root, app)
@@ -146,12 +150,36 @@ def test_only_git_s_newline_comes_off(stdout: str, path: str) -> None:
     assert git_runner.printed_path(stdout) == path
 
 
-def test_git_s_output_reaches_a_reader_with_no_cr(tmp_path: Path) -> None:
-    """`run_git` reads git's output as text, which turns a CR LF into an
-    LF, so no reader takes a CR off a line: git's own CR LF (here, a value
-    holding a CR printed before git's LF) reaches it as one LF."""
+@pytest.mark.parametrize("windows", [False, True], ids=["posix", "windows"])
+@pytest.mark.parametrize(
+    ("stdout", "posix", "windows_path"),
+    [
+        ("/w/cr\r\n", "/w/cr\r", "/w/cr"),
+        ("/w/cr\r", "/w/cr\r", "/w/cr\r"),
+        ("/w/plain\n", "/w/plain", "/w/plain"),
+    ],
+)
+def test_a_cr_before_git_s_newline_comes_off_on_windows_alone(
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: str,
+    posix: str,
+    windows_path: str,
+    windows: bool,
+) -> None:
+    """git ends a line with an LF alone, on Windows too, so a CR before it
+    is the name's own, which a POSIX name may end in. On Windows, where no
+    name holds a CR, one before the LF comes off with it; nowhere else."""
+    monkeypatch.setattr(git_runner, "_WINDOWS", windows)
+    assert git_runner.printed_path(stdout) == (windows_path if windows else posix)
+
+
+def test_git_s_output_reaches_a_reader_with_its_cr(tmp_path: Path) -> None:
+    """`run_git` decodes git's output from its bytes, every CR kept (it
+    read text once, which turned a CR LF into an LF and a name ending in a
+    CR into another): a value holding a CR, printed before git's LF,
+    reaches the reader as git wrote it."""
     repo = checkout(tmp_path / "work" / "app")
     _git(repo, "config", "x.y", "v\r")
     done = git_runner.run_git(["config", "x.y"], cwd=repo)
     assert done is not None and done.returncode == 0
-    assert done.stdout == "v\n", repr(done.stdout)
+    assert done.stdout == "v\r\n", repr(done.stdout)

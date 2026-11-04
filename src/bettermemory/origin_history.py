@@ -24,10 +24,11 @@ import os
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TypeAlias
+from typing import TypeAlias, TypeVar
 
 from . import _caches, githead
 
@@ -64,6 +65,18 @@ from . import _caches, githead
 #   config or the .gitmodules) drop a gitlink's change from a diff, its
 #   deletion included: ``--ignore-submodules=none`` on every diff, which
 #   only the command line puts above the .gitmodules.
+# - ``i18n.logOutputEncoding`` (or ``i18n.commitEncoding``, which stands
+#   in for it) re-encodes every line a format prints: in UTF-7 the walk's
+#   and the patch's ``\x01`` mark and the ``+`` of an author date east of
+#   UTC are spelled otherwise, so the walk declined and the dates that
+#   carried one were dropped, and a claim counted 0 where it changed once.
+#   Pinned to UTF-8, a format prints what the package reads; a commit's
+#   own ``encoding`` header re-encodes only its message, which no format
+#   prints.
+# - ``diff.orderFile`` naming no file fails every diff, so the walk, the
+#   listing and the patch declined: ``-O`` with the null device, an empty
+#   order, outranks it. A file it names only orders a commit's files,
+#   which the readers take in any order.
 #
 # The settings the review found to move no count, or only up (the hit
 # then counts more, declines or is omitted), are listed in the rc19
@@ -80,10 +93,12 @@ AS_STORED_CONFIG = (
     "log.follow=false",
     "-c",
     "diff.renames=false",
+    "-c",
+    "i18n.logOutputEncoding=UTF-8",
 )
 #: On every log that prints a diff (the walk's ``--name-only``, the split's
 #: ``--raw``, the patch stream's ``-p``), after the subcommand.
-AS_STORED_DIFF = ("--text", "--ignore-submodules=none")
+AS_STORED_DIFF = ("--text", "--ignore-submodules=none", f"-O{os.devnull}")
 #: On every log given a claim's or an anchor's paths, before the
 #: subcommand. On macOS ``core.precomposeUnicode=true`` rewrites each
 #: argument git is given in decomposed Unicode to its composed form, so a
@@ -126,7 +141,11 @@ _TIMESTAMPS_MEMO_SLOTS = 2_000_000
 # minute for a caller that asks on every row of every search, which then
 # spends at most 5 s a minute on it (a twelfth of its time) where it spent
 # up to 5 s per row; a failure that clears on its own (a lock, an object
-# briefly unreadable) is read again within the minute.
+# briefly unreadable) is read again within the minute. A failure is kept with
+# the `history_guard` read before it and answers only under an equal one, so
+# a shallow clone deepened (``fetch --unshallow``, ``--deepen``), which
+# rewrites or removes the ``shallow`` file, is read at once (ENG-220's
+# review).
 _FAILURE_SECONDS = 60.0
 
 
@@ -144,7 +163,7 @@ class _Entry:
 # outside it. Registered with `_caches`, which empties both before each
 # test.
 _TIMESTAMPS_MEMO: OrderedDict[Key, _Entry] = OrderedDict()
-_TIMESTAMPS_FAILED: OrderedDict[Key, float] = OrderedDict()
+_TIMESTAMPS_FAILED: OrderedDict[Key, tuple[float, Guard | None]] = OrderedDict()
 _TIMESTAMPS_MEMO_LOCK = threading.Lock()
 
 
@@ -155,18 +174,21 @@ def _clear_timestamps_memo() -> None:
         _TIMESTAMPS_FAILED.clear()
 
 
-def recall(key: Key) -> tuple[list[datetime] | None, bool]:
+def recall(key: Key, guard: Guard | None) -> tuple[list[datetime] | None, bool]:
     """``(dates, failed)`` for `key`: the dates kept for it (the stored list
     itself), or None; and whether a read for it failed less than
-    `_FAILURE_SECONDS` ago, where none is kept."""
+    `_FAILURE_SECONDS` ago under `guard`, where none is kept."""
     with _TIMESTAMPS_MEMO_LOCK:
         entry = _TIMESTAMPS_MEMO.get(key)
         if entry is not None:
             _TIMESTAMPS_MEMO.move_to_end(key)
             return entry.dates, False
-        failed_at = _TIMESTAMPS_FAILED.get(key)
-        if failed_at is not None:
-            if 0.0 <= time.monotonic() - failed_at < _FAILURE_SECONDS:
+        failed = _TIMESTAMPS_FAILED.get(key)
+        if failed is not None:
+            failed_at, failed_under = failed
+            if failed_under == guard and (
+                0.0 <= time.monotonic() - failed_at < _FAILURE_SECONDS
+            ):
                 return None, True
             del _TIMESTAMPS_FAILED[key]
     return None, False
@@ -205,10 +227,10 @@ def remember(key: Key, dates: list[datetime], guard: Guard | None) -> bool:
     return True
 
 
-def remember_failure(key: Key) -> None:
-    """Remember that a read for `key` failed, now."""
+def remember_failure(key: Key, guard: Guard | None) -> None:
+    """Remember that a read for `key` failed, now, under `guard`."""
     with _TIMESTAMPS_MEMO_LOCK:
-        _TIMESTAMPS_FAILED[key] = time.monotonic()
+        _TIMESTAMPS_FAILED[key] = (time.monotonic(), guard)
         _TIMESTAMPS_FAILED.move_to_end(key)
         while len(_TIMESTAMPS_FAILED) > _TIMESTAMPS_MEMO_CAP:
             _TIMESTAMPS_FAILED.popitem(last=False)
@@ -219,6 +241,8 @@ def remember_failure(key: Key) -> None:
 # platform (``datetime.fromtimestamp`` refuses a negative one on Windows), and
 # every date of a history shares its one tzinfo.
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_LATEST = datetime.max.replace(tzinfo=timezone.utc)
+_EARLIEST = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def seconds(text: str) -> int | None:
@@ -227,15 +251,46 @@ def seconds(text: str) -> int | None:
     return int(text) if text.isascii() and text.isdigit() else None
 
 
+def instant(text: str) -> datetime | None:
+    """The instant a ``%aI`` date spells, in UTC where it names no offset,
+    or None for any other text."""
+    try:
+        when = datetime.fromisoformat(text.strip())
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
+
+
+_Read = TypeVar("_Read")
+
+
+def read_lines(raw: str, read: Callable[[str], _Read | None]) -> list[_Read] | None:
+    """`read` of each line of `raw` that is not blank, or None where any
+    reads as None. Git prints every line of a log's format, so a line that
+    reads as none (a date a re-encoding spelled otherwise, a mark it
+    garbled) declines the whole read, never drops out of the count
+    (ENG-220's review). The lines are split on line feeds alone."""
+    out: list[_Read] = []
+    for line in raw.split("\n"):
+        if not line.strip():
+            continue
+        value = read(line)
+        if value is None:
+            return None
+        out.append(value)
+    return out
+
+
 def author_dates(values: list[int]) -> list[datetime]:
     """`values`, author dates in ``%at`` seconds, as ascending UTC
-    datetimes; a value past what a datetime holds is skipped."""
+    datetimes; a value past what a datetime holds reads as the latest
+    (or the earliest) one, so a commit is never dropped from a count."""
     out: list[datetime] = []
     for value in sorted(values):
         try:
             out.append(_EPOCH + timedelta(seconds=value))
         except OverflowError:
-            continue
+            out.append(_LATEST if value > 0 else _EARLIEST)
     return out
 
 
@@ -348,7 +403,9 @@ __all__ = [
     "base_for",
     "cuts",
     "history_guard",
+    "instant",
     "located_key",
+    "read_lines",
     "recall",
     "remember",
     "remember_failure",

@@ -540,6 +540,120 @@ def test_a_mode_change_alone_fires_no_claim(
     assert (resolved.count, resolved.claims_drifted) == (0, ())
 
 
+_MOD_PATH = "src/mod.py"
+#: src/mod.py before the window, its first line a comment.
+_CR_BEFORE = "# header line\n\n\n\n\ndef foo():\n    return 0\n"
+
+
+def _cr_history(first: str, *, crlf: bool = False) -> History:
+    """src/mod.py's first line made `first` and foo's def line changed in
+    one commit; with `crlf`, both versions end each line with CRLF."""
+    after = _CR_BEFORE.replace("# header line", first).replace("foo()", "foo(x)")
+    if crlf:
+        return [
+            {"src/mod.py": _CR_BEFORE.replace("\n", "\r\n")},
+            {"src/mod.py": after.replace("\n", "\r\n")},
+        ]
+    return [{"src/mod.py": _CR_BEFORE}, {"src/mod.py": after}]
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@pytest.mark.parametrize(
+    "history",
+    [
+        pytest.param(_cr_history("# a\rb"), id="lone"),
+        pytest.param(_cr_history("# header line", crlf=True), id="crlf"),
+        pytest.param(_cr_history(f"# note\r{COMMIT_MARK}{'f' * 40}"), id="mark"),
+        pytest.param(_cr_history("# note\r--- a/src/other.py"), id="header"),
+    ],
+)
+@_CLONES
+def test_a_carriage_return_in_a_file_is_its_content(
+    tmp_path: Path, basis: str, history: History, blobless: bool
+) -> None:
+    """One commit changes foo's def line and the file's first line, which
+    now holds a carriage return: 1, foo named, on both bases, in a full
+    clone and in a blobless one that holds the blobs. Git read in text mode
+    turned a lone ``\\r`` into a line break, so the first line's tail read
+    as a line of the patch: a record mark there moved foo's hunk to a
+    commit outside the window, and a ``---`` line moved it to another file,
+    and the count read 0. Git's output is decoded from its bytes now, every
+    ``\\r`` kept (`_git.run_git`); a file whose lines end in CRLF reads as
+    it did, its ``\\r`` at each line's end."""
+    partial = Partial(tmp_path, history)
+    partial.clone(blobless=blobless)
+    if blobless:
+        partial.fetch(0, 1)
+    resolved = partial.resolve([_FOO], basis)
+    assert (resolved.count, resolved.claims_drifted) == (1, (_FOO,))
+
+
+def _read_by(history: History, path: str) -> int:
+    """The bytes a patch of the window reads for `path`: both sides of each
+    commit's change."""
+    sizes = [len(files.get(path, "") or "") for files in history]
+    return sum(before + after for before, after in zip(sizes, sizes[1:]))
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@_CLONES
+def test_a_patch_past_the_size_bound_is_not_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, basis: str, blobless: bool
+) -> None:
+    """Every file is diffed as text, a large binary's lines included, so the
+    blobs a window's patch reads are summed from the sizes the check
+    reports (`origin_patch.too_large`). At the bound the patch is read and
+    the count narrowed: 1, foo named. One byte past it no patch is read,
+    and the hit keeps the per-file count, every commit of the window and
+    no claim named, which is never below the narrowed one."""
+    partial = Partial(tmp_path, _SYMBOL)
+    partial.clone(blobless=blobless)
+    if blobless:
+        partial.fetch(0, 1, 2, 3, 4)
+    read = _read_by(_SYMBOL, _MOD_PATH)
+    calls: list[tuple[str, ...]] = []
+    real = origin._git
+
+    def spy(cwd: Path, *args: str, **kwargs: Any) -> str | None:
+        calls.append(args)
+        return real(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin, "_git", spy)
+    monkeypatch.setattr(origin_patch, "MAX_PATCH_STREAM_BYTES", read)
+    resolved = partial.resolve([_FOO], basis)
+    assert (resolved.count, resolved.claims_drifted) == (1, (_FOO,))
+    assert any("-p" in args for args in calls), "premise: the patch is read"
+    _caches.clear_all()
+    calls.clear()
+    monkeypatch.setattr(origin_patch, "MAX_PATCH_STREAM_BYTES", read - 1)
+    resolved = partial.resolve([_FOO], basis)
+    assert (resolved.count, resolved.claims_drifted) == (4, ())
+    assert not any("-p" in args for args in calls)
+
+
+@needs_lazy_fetch_pin
+def test_the_size_bound_sums_the_blobs_the_clone_holds(tmp_path: Path) -> None:
+    """A blob the clone lacks is not summed, since no patch reads it: the
+    stream fails on it and the split reads the local commits alone. Where
+    git cannot list the window, nothing is known past the bound and the
+    patch is read as before."""
+    partial = Partial(tmp_path, _SYMBOL)
+    repo = partial.clone()
+    specs = [f":(literal){_MOD_PATH}"]
+    held = len(_SYMBOL[-1][_MOD_PATH] or "")
+    assert partial.held(partial.blobs[4][_MOD_PATH]), "premise: the checkout's blob"
+    assert not partial.held(partial.blobs[3][_MOD_PATH]), "premise: one it lacks"
+    for bound, over in ((held, False), (held - 1, True)):
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(origin_patch, "MAX_PATCH_STREAM_BYTES", bound)
+            _caches.clear_all()
+            got = origin_patch.too_large(repo, partial.commits, specs, toplevel=repo)
+            assert got is over
+    nowhere = tmp_path / "nowhere"
+    nowhere.mkdir()
+    assert not origin_patch.too_large(nowhere, partial.commits, specs)
+
+
 @needs_lazy_fetch_pin
 def test_the_split_keeps_its_listing_and_check_until_a_pack_arrives(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

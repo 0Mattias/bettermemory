@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import bisect
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from . import _caches, githead
+from ._git import timed_out_calls
 from ._response_depends import _load_depends_targets, _resolve_depends
 from .credentials import CredentialMatch
 from .durability import TransientMatch
@@ -127,7 +129,9 @@ SIMILAR_HITS_SHOWN = 5
 # .gitmodules, in the working tree or the index where git reads it, every
 # row's; a write to the index that leaves .gitmodules as it was changes
 # none. A value computed while a git process failed is never stored
-# (`origin.failed_git_calls`), and a search during which the head, a keyed
+# (`origin.failed_git_calls`), save one whose every failure was a timeout,
+# kept apart for `_TIMED_OUT_SECONDS` (`_DRIFT_TIMED_OUT`), and a search
+# during which the head, a keyed
 # file or the index moved, even to move back, stores nothing
 # (`_files_held`, `githead.signature`). What the key does not see
 # (git's configuration outside the repository's config file, a shallow
@@ -153,30 +157,61 @@ _DriftKey: TypeAlias = tuple[
 _DRIFT_MEMO: OrderedDict[_DriftKey, ResolvedCommitDrift | None] = OrderedDict()
 _DRIFT_MEMO_LOCK = threading.Lock()
 
+# The resolutions a git timeout cut short, by key, with when each was kept
+# (`time.monotonic`): the conservative count the timeout folded into (a walk,
+# a path-filtered log or a patch stream past its 5 s bound), which the same
+# call on the same history meets again, so a hit whose window times out
+# paid the bound on every search (ENG-220's review).
+# Kept only where every failure of the resolution was a timeout
+# (`_git.timed_out_calls`), under the key a value is kept under and the same
+# checks at the end of the search; for a minute, as a failed whole-history
+# read is (`origin_history._FAILURE_SECONDS`), so a timeout a loaded host
+# met clears within it. Bounded as `_DRIFT_MEMO` is, and emptied with it.
+_TIMED_OUT_SECONDS = 60.0
+_DRIFT_TIMED_OUT: OrderedDict[_DriftKey, tuple[float, ResolvedCommitDrift | None]] = (
+    OrderedDict()
+)
+
 
 @_caches.register
 def _clear_drift_memo() -> None:
     with _DRIFT_MEMO_LOCK:
         _DRIFT_MEMO.clear()
+        _DRIFT_TIMED_OUT.clear()
 
 
 def _recall_drift(key: _DriftKey) -> tuple[bool, ResolvedCommitDrift | None]:
-    """Whether the per-hit memo holds `key`, and the value it holds; a hit
-    becomes the most recently used entry."""
+    """Whether the per-hit memo holds `key`, and the value it holds (or a
+    timeout's, less than `_TIMED_OUT_SECONDS` old); a hit becomes the most
+    recently used entry."""
     with _DRIFT_MEMO_LOCK:
         if key in _DRIFT_MEMO:
             _DRIFT_MEMO.move_to_end(key)
             return True, _DRIFT_MEMO[key]
+        timed_out = _DRIFT_TIMED_OUT.get(key)
+        if timed_out is not None:
+            if 0.0 <= time.monotonic() - timed_out[0] < _TIMED_OUT_SECONDS:
+                return True, timed_out[1]
+            del _DRIFT_TIMED_OUT[key]
     return False, None
 
 
-def _remember_drift(resolved: dict[_DriftKey, ResolvedCommitDrift | None]) -> None:
-    """Merge one search's resolutions into the per-hit memo and evict the
-    least recently used entries past `_DRIFT_MEMO_CAP`."""
+def _remember_drift(
+    resolved: dict[_DriftKey, ResolvedCommitDrift | None],
+    timed_out: dict[_DriftKey, ResolvedCommitDrift | None],
+) -> None:
+    """Merge one search's resolutions, and those a timeout cut short, into
+    the per-hit memo and evict the least recently used entries past
+    `_DRIFT_MEMO_CAP`."""
+    now = time.monotonic()
     with _DRIFT_MEMO_LOCK:
         _DRIFT_MEMO.update(resolved)
-        while len(_DRIFT_MEMO) > _DRIFT_MEMO_CAP:
-            _DRIFT_MEMO.popitem(last=False)
+        for key, value in timed_out.items():
+            _DRIFT_TIMED_OUT[key] = (now, value)
+            _DRIFT_TIMED_OUT.move_to_end(key)
+        for memo in (_DRIFT_MEMO, _DRIFT_TIMED_OUT):
+            while len(memo) > _DRIFT_MEMO_CAP:
+                memo.popitem(last=False)
 
 
 # Stands for the repository-wide attribute files before a search has read
@@ -284,21 +319,23 @@ class _DriftPass:
     index that leaves ``.gitmodules`` as it was (``git add`` of another
     file, a ``git status`` that refreshes the index) changes no key.
 
-    A failure is never memoised, at a cost. A value is not kept when
-    any git process its resolution ran failed, whether git exited
-    non-zero or could not run (the fallback taken on a failure is what
-    the uncached code answers on that call and not the next), and no
+    A failure is not memoised, at a cost, save a timeout. A value is not
+    kept when any git process its resolution ran failed, whether git
+    exited non-zero or could not run (the fallback taken on a failure is
+    what the uncached code answers on that call and not the next), and no
     memo keeps a walk that came back None. A hit whose walk,
     path-filtered log or patch stream fails on every search (a stamp
-    naming a commit the repository lacks, a walk that times out, a
-    textconv driver that fails, a window of a partial clone whose patch
-    reads a blob the clone lacks, since no git the package runs fetches:
-    its local commits are narrowed after the stream fails,
-    `origin_patch.local_patch_window`) therefore resolves again on every
-    search and forks what a cold search forks for it, less the split's
-    listing and check, which `origin_patch` keeps while the object store
-    holds still. The other way round, a memoised
-    hit serves the value computed when git answered, so a failure that
+    naming a commit the repository lacks, a textconv driver that fails, a
+    window of a partial clone whose patch reads a blob the clone lacks,
+    since no git the package runs fetches: its local commits are narrowed
+    after the stream fails, `origin_patch.local_patch_window`) therefore
+    resolves again on every search and forks what a cold search forks for
+    it, less the split's listing and check, which `origin_patch` keeps
+    while the object store holds still. A resolution whose every failure
+    was a timeout (a walk, a log or a patch past its 5 s bound) is kept
+    for a minute under its key (`_DRIFT_TIMED_OUT`), so such a hit pays
+    the bound once a minute, not on every search. The other way round, a
+    memoised hit serves the value computed when git answered, so a failure that
     strikes a later search (an object made unreadable after the value
     was kept) is not observed on that hit, where the uncached code
     would take the fallback.
@@ -360,8 +397,9 @@ class _DriftPass:
         self._located: tuple[Path, str] | None = None
         self._located_read = False
         # What this pass resolved, stored at the end if nothing it is keyed
-        # on moved while it ran.
+        # on moved while it ran; and what a timeout cut short, kept a while.
         self._resolved: dict[_DriftKey, ResolvedCommitDrift | None] = {}
+        self._timed_out: dict[_DriftKey, ResolvedCommitDrift | None] = {}
         # The walks of this pass no memo keeps: several hits at one dead
         # anchor fork one walk, and so do several at one anchor where the
         # walk memo cannot key the walk (`commits_since_anchor`).
@@ -454,16 +492,19 @@ class _DriftPass:
             found, resolved = _recall_drift(key)
             if found:
                 return True, resolved
-            if key in self._resolved:
-                return True, self._resolved[key]
+            for kept in (self._resolved, self._timed_out):
+                if key in kept:
+                    return True, kept[key]
         if not resolve:
             return False, None
         # Kept only when every git process the resolution ran answered: a
         # fallback taken on a failure is what the uncached code serves on
-        # this call and not on the next.
+        # this call and not on the next. A timeout's is what the same call
+        # meets again, and is kept a while (`_DRIFT_TIMED_OUT`).
         if self.settled is not None and self._signature is None:
             self._signature = githead.signature(self.cwd)
         failed = failed_git_calls()
+        timed_out = timed_out_calls()
         located = self.located()
         resolved = _resolve_hit_drift(
             cwd=self.cwd,
@@ -476,8 +517,12 @@ class _DriftPass:
             verified_head=record.verified_head,
             walked=self._walked,
         )
-        if key is not None and failed_git_calls() == failed:
-            self._resolved[key] = resolved
+        if key is not None:
+            moved = failed_git_calls() - failed
+            if not moved:
+                self._resolved[key] = resolved
+            elif moved == timed_out_calls() - timed_out:
+                self._timed_out[key] = resolved
         return True, resolved
 
     def _key(
@@ -541,7 +586,7 @@ class _DriftPass:
     def unstored(self) -> int:
         """How many resolutions this pass holds that `store` has not yet
         merged into `_DRIFT_MEMO`."""
-        return len(self._resolved)
+        return len(self._resolved) + len(self._timed_out)
 
     def store(self) -> bool:
         """Merge this pass's resolutions into `_DRIFT_MEMO`, while what
@@ -565,7 +610,7 @@ class _DriftPass:
         on it fails too, so a stamp moved back by hand never readmits a
         resolution computed across the move, and the caller opens a new
         pass to go on."""
-        if not self._resolved:
+        if not self._resolved and not self._timed_out:
             return not self._broken
         if (
             not self._broken
@@ -581,10 +626,10 @@ class _DriftPass:
                 self._held_directories,
             )
         ):
-            _remember_drift(self._resolved)
-            self._resolved = {}
+            _remember_drift(self._resolved, self._timed_out)
+            self._resolved, self._timed_out = {}, {}
             return True
-        self._resolved = {}
+        self._resolved, self._timed_out = {}, {}
         self._broken = True
         return False
 

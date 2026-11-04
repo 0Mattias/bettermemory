@@ -35,13 +35,20 @@ call here, with all four properties:
 * stdout and stderr are UTF-8 with ``errors="replace"`` (git emits UTF-8,
   paths especially; a bare ``text=True`` would decode with the locale's
   encoding, cp1252 on Windows, and mojibake every non-ASCII path) or raw
-  bytes for a caller that parses objects (``text=False``);
+  bytes for a caller that parses objects (``text=False``). The text is
+  decoded from the bytes as git wrote them, every carriage return kept:
+  git ends each line with a line feed alone, on Windows too, and a
+  carriage return is content (a file's line in a patch, a path ``-z``
+  lists), which universal newlines turned into a line break, so a
+  file's ``\\r`` followed by a record mark or a ``---`` line read as that
+  mark or that header (ENG-220's review). A caller splits on ``\\n``;
 * a call git could not run at all (no binary on PATH, the timeout, an
   OSError from the spawn) comes back None with a WARNING, and is
   counted (`unanswered_calls` for the process, `failed_calls` for the
-  calling thread); a non-zero exit is an ANSWER ("not a repository",
-  "not an ancestor") and comes back as the completed process for the
-  caller to read, `log_nonzero_exit` noting it at DEBUG.
+  calling thread, and `timed_out_calls` for a timeout); a non-zero exit
+  is an ANSWER ("not a repository", "not an ancestor") and comes back as
+  the completed process for the caller to read, `log_nonzero_exit`
+  noting it at DEBUG.
 """
 
 from __future__ import annotations
@@ -120,6 +127,9 @@ PINS = (
     "diff.submodule=short",
 )
 
+#: Whether this is Windows, where no file name holds a CR (`printed_path`).
+_WINDOWS = os.name == "nt"
+
 # How many git invocations could not run at all since import, on any
 # thread. Read through `unanswered_calls`.
 _unanswered = 0
@@ -134,6 +144,16 @@ class _Failed(threading.local):
 
 
 _FAILED = _Failed()
+
+
+class _TimedOut(threading.local):
+    """The number of git calls on the current thread that `run_git` ended
+    at their timeout. Read through `timed_out_calls`."""
+
+    count = 0
+
+
+_TIMED_OUT = _TimedOut()
 
 
 def unanswered_calls() -> int:
@@ -158,6 +178,15 @@ def failed_calls() -> int:
     return _FAILED.count
 
 
+def timed_out_calls() -> int:
+    """How many git calls on the current thread `run_git` ended at their
+    timeout; each is also counted in `failed_calls`. A memo that keeps a
+    value only when no call failed can tell from the two counts that
+    every failure meanwhile was a timeout, which the same call meets
+    again on the same history (`_response._DriftPass`)."""
+    return _TIMED_OUT.count
+
+
 def note_failed() -> None:
     """Count, on the calling thread, an answer the caller folded into a
     failure."""
@@ -166,15 +195,21 @@ def note_failed() -> None:
 
 def printed_path(stdout: str) -> str:
     """The one path git printed on `stdout` (``rev-parse
-    --show-toplevel``), with only the newline git ends it with taken off.
+    --show-toplevel``), with only the line end git ends it with taken off.
     git prints such a path as it is, unquoted, so a ``strip`` took off the
     space or tab a folder's name ends with (``trail ``), and a split into
     lines cut a name holding a newline (``nl\\nx``) in two; each named
-    another path. No CR comes off: `run_git` reads git's output as text,
-    which has turned a CR LF, and any CR, into an LF already (a CR in a
-    folder's name reads as an LF there: a path that names nothing, which
-    no caller keeps as a root)."""
-    return stdout.removesuffix("\n")
+    another path. `run_git` keeps every CR git writes, and git ends a line
+    with an LF alone, on Windows too (Git for Windows sets its standard
+    streams to binary mode as it starts, ``compat/mingw.c``): a CR before
+    the LF is the name's own, which a POSIX name may end in, and is kept
+    (the text read once turned that CR LF into an LF, and the name into
+    another). On Windows, where no file name holds a CR, one before the LF
+    comes off too, should a git there end its line with CR LF."""
+    path = stdout.removesuffix("\n")
+    if _WINDOWS and path != stdout:
+        path = path.removesuffix("\r")
+    return path
 
 
 def subcommand(args: Sequence[str]) -> str:
@@ -257,19 +292,7 @@ def run_git(
     command.extend(args)
     where = str(cwd) if cwd is not None else git_dir
     try:
-        if text:
-            return subprocess.run(
-                command,
-                cwd=None if cwd is None else str(cwd),
-                input=None if stdin is None else stdin.decode("utf-8", "replace"),
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-                check=False,
-                env=_environment(env, unset),
-            )
-        return subprocess.run(
+        done = subprocess.run(
             command,
             cwd=None if cwd is None else str(cwd),
             input=stdin,
@@ -277,6 +300,16 @@ def run_git(
             timeout=timeout,
             check=False,
             env=_environment(env, unset),
+        )
+        if not text:
+            return done
+        # Decoded from the bytes, never in text mode: universal newlines
+        # would read a carriage return in a file's content as a line break.
+        return subprocess.CompletedProcess(
+            done.args,
+            done.returncode,
+            stdout=done.stdout.decode("utf-8", "replace"),
+            stderr=done.stderr.decode("utf-8", "replace"),
         )
     except FileNotFoundError as exc:
         # On POSIX the spawn raises the same error for a working directory
@@ -289,6 +322,7 @@ def run_git(
         log.warning(
             "git %s timed out after %ss in %s", subcommand(args), timeout, where
         )
+        _TIMED_OUT.count += 1
     except OSError as exc:
         log.warning("git invocation failed in %s: %s", where, exc)
     _unanswered += 1

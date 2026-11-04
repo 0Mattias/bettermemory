@@ -18,12 +18,15 @@ helpers; the graph is forged by rewriting its chunks in place.
 
 from __future__ import annotations
 
+import os
 import shutil
 import struct
 import subprocess
 import sys
+import time
 import unicodedata
-from datetime import timedelta
+from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -154,6 +157,13 @@ def _commit(
 ) -> str:
     """A commit of `files` (None deletes one, ``("gitlink", commit)`` is a
     gitlink) dated `hours` after the verify, or before it where negative."""
+    _stage(repo, files)
+    when = _VERIFIED + timedelta(hours=hours)
+    _plain(repo, "commit", "-q", "--allow-empty", "-m", f"at {hours}", when=when)
+    return _plain(repo, "rev-parse", "HEAD")
+
+
+def _stage(repo: Path, files: Mapping[str, str | tuple[str, str] | None]) -> None:
     for rel, text in files.items():
         if text is None:
             _plain(repo, "update-index", "--force-remove", "--", rel)
@@ -163,13 +173,13 @@ def _commit(
         else:
             oid = _object(repo, text.encode())
             _plain(repo, "update-index", "--add", "--cacheinfo", f"100644,{oid},{rel}")
-    when = _VERIFIED + timedelta(hours=hours)
-    _plain(repo, "commit", "-q", "--allow-empty", "-m", f"at {hours}", when=when)
-    return _plain(repo, "rev-parse", "HEAD")
 
 
 def _hit(
-    repo: Path, claims: list[str], verified_head: str | None
+    repo: Path,
+    claims: list[str],
+    verified_head: str | None,
+    anchors: tuple[str, ...] = (),
 ) -> ResolvedCommitDrift | None:
     """One search hit's drift, cold, as the recall path resolves it: on
     the walk from `verified_head` where it answers, else on dates."""
@@ -179,7 +189,7 @@ def _hit(
         toplevel=repo,
         head=_plain(repo, "rev-parse", "HEAD"),
         timestamps=lambda: origin.commit_author_timestamps(repo),
-        anchors=(),
+        anchors=anchors,
         claims=load_claims(claims),
         since=_VERIFIED,
         verified_head=verified_head,
@@ -295,13 +305,13 @@ def _repository(tmp_path: Path) -> Path:
 
 
 def _both(
-    repo: Path, claims: list[str], anchor: str
+    repo: Path, claims: list[str], anchor: str, anchors: tuple[str, ...] = ()
 ) -> list[tuple[int, tuple[str, ...]] | None]:
     """The hit's count and the claims it names, cold, on the walk from
     `anchor` and on dates."""
     out: list[tuple[int, tuple[str, ...]] | None] = []
     for head in (anchor, None):
-        got = _hit(repo, claims, head)
+        got = _hit(repo, claims, head, anchors)
         out.append(None if got is None else (got.count, got.claims_drifted))
     return out
 
@@ -547,3 +557,237 @@ def test_a_decomposed_path_is_matched_as_stored(tmp_path: Path) -> None:
     shown = _plain(repo, "log", "--format=%H", "--", f":(literal){stored}")
     assert not shown, "premise: git's own log misses the decomposed path"
     assert _both(repo, claims, anchor) == truth
+
+
+# ---------------------------------------------------------------------------
+# What a format prints, and how its lines are read (ENG-220's re-review)
+# ---------------------------------------------------------------------------
+
+
+def _dated(
+    repo: Path,
+    files: Mapping[str, str | tuple[str, str] | None],
+    hours: float,
+    offset: str,
+    *,
+    encoding: str | None = None,
+    message: bytes = b"m\n",
+) -> str:
+    """`_commit` with the author at `offset` from UTC, and the message's
+    bytes stored in `encoding` (git's ``encoding`` header)."""
+    _stage(repo, files)
+    when = _VERIFIED + timedelta(hours=hours)
+    stamp = f"@{int(when.timestamp())} {offset}"
+    env = dict(
+        os.environ,
+        GIT_AUTHOR_NAME="Fixture",
+        GIT_AUTHOR_EMAIL="fixture@example.invalid",
+        GIT_COMMITTER_NAME="Fixture",
+        GIT_COMMITTER_EMAIL="fixture@example.invalid",
+        GIT_AUTHOR_DATE=stamp,
+        GIT_COMMITTER_DATE=stamp,
+    )
+    pin = ["-c", f"i18n.commitEncoding={encoding}"] if encoding else []
+    subprocess.run(
+        ["git", *pin, "commit", "-q", "--allow-empty", "-F", "-"],
+        cwd=repo,
+        input=message,
+        env=env,
+        capture_output=True,
+        check=True,
+    )
+    return _plain(repo, "rev-parse", "HEAD")
+
+
+def _east_and_west(
+    repo: Path, *, encoding: str | None = None, message: bytes = b"m\n"
+) -> str:
+    """A history whose authors sit east and west of UTC: bar's body edited
+    (UTC-5), foo's def line changed (UTC+2), two.py's bar edited (UTC+9).
+    The anchor, at UTC, is returned."""
+    anchor = _dated(repo, {_MOD: _module("", 0), _BESIDE: _module("", 0)}, -1, "+0000")
+    for files, hours, offset in (
+        ({_MOD: _module("", 1)}, 1, "-0500"),
+        ({_MOD: _module("flag=False", 1)}, 2, "+0200"),
+        ({_BESIDE: _module("", 1)}, 3, "+0900"),
+    ):
+        _dated(repo, files, hours, offset, encoding=encoding, message=message)
+    return anchor
+
+
+@pytest.mark.parametrize("key", ["i18n.logOutputEncoding", "i18n.commitEncoding"])
+def test_a_log_output_encoding_moves_no_count(tmp_path: Path, key: str) -> None:
+    """foo's def line changes once, and src/mod.py twice, after the verify:
+    a claim on foo counts 1, foo named, and a memory that cites src/mod.py
+    and claims nothing counts 2, on both bases. Git re-encodes every line a
+    format prints into ``i18n.logOutputEncoding`` (``i18n.commitEncoding``
+    where that is unset): in UTF-7 the walk's ``\\x01`` mark and the ``+``
+    of a date east of UTC are spelled otherwise, so the walk declined and
+    the dates carrying a ``+`` dropped out: the claim counted 0 and the
+    citing memory 2 against 4. Every origin call prints UTF-8
+    (`origin_history.AS_STORED_CONFIG`)."""
+    repo = _repository(tmp_path)
+    anchor = _east_and_west(repo)
+    claims = [_FOO, _QUIET]
+    truth = _both(repo, claims, anchor)
+    cited = _both(repo, [], anchor, (_MOD,))
+    assert truth == [(1, (_FOO,))] * 2
+    assert cited == [(2, ())] * 2
+    _plain(repo, "config", key, "UTF-7")
+    dates = _plain(repo, "log", "--format=%aI")
+    assert "+-02:00" in dates, "premise: git's own log re-encodes the dates"
+    assert _both(repo, claims, anchor) == truth
+    assert _both(repo, [], anchor, (_MOD,)) == cited
+
+
+@pytest.mark.parametrize(
+    ("encoding", "message"),
+    [("ISO-8859-1", "café +1 \x01\n".encode("latin-1")), ("UTF-7", b"a+-b\n")],
+    ids=["latin-1", "utf-7"],
+)
+def test_a_commits_stored_encoding_moves_no_count(
+    tmp_path: Path, encoding: str, message: bytes
+) -> None:
+    """The window's commits store their messages in an encoding other than
+    UTF-8, named in each commit's ``encoding`` header. Git re-encodes a
+    message into the output encoding, and no format the package reads
+    prints a message, so the counts are those of the same history in
+    UTF-8: 1, foo named, and 2 for the citing memory, on both bases."""
+    repo = _repository(tmp_path)
+    anchor = _east_and_west(repo, encoding=encoding, message=message)
+    stored = subprocess.run(
+        ["git", "cat-file", "commit", "HEAD"], cwd=repo, capture_output=True
+    ).stdout
+    assert f"encoding {encoding}\n".encode() in stored, "premise: the header"
+    assert _both(repo, [_FOO, _QUIET], anchor) == [(1, (_FOO,))] * 2
+    assert _both(repo, [], anchor, (_MOD,)) == [(2, ())] * 2
+
+
+_SHA = "a" * 40
+
+
+@pytest.mark.parametrize(
+    ("reader", "raw"),
+    [
+        ("dates", "2025-01-01T02:00:00-05:00\n2025-01-01T03:00:00+-02:00"),
+        ("pairs", f"2025-01-01T02:00:00-05:00 {_SHA}\n2025-01-01T03:00:00Z"),
+        ("pairs", f"2025-01-01T02:00:00-05:00 {_SHA}\n2025-01-01T03:00:00Z abc"),
+        ("whole", "1735700400\n+AAE-1735704000"),
+        ("walk", f"\x01-{_SHA}\n\x01>{_SHA[:39]}\nsrc/mod.py"),
+    ],
+    ids=["a garbled offset", "no hash", "a short hash", "a garbled date", "a mark"],
+)
+def test_a_line_the_format_did_not_print_declines_the_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: str, raw: str
+) -> None:
+    """Git prints every line of a log's format. A line that reads as none
+    (a date a re-encoding spelled otherwise, a hash or a mark it garbled)
+    dropped out of the count, which read lower; it declines the read now,
+    counted as a failed git call, so the hit keeps its fallback and no memo
+    keeps the value."""
+    monkeypatch.setattr(origin, "_git", lambda *a, **k: raw)
+    failed = origin.failed_git_calls()
+    got: object
+    if reader == "dates":
+        got = origin.commit_author_timestamps_touching_pathspecs(
+            tmp_path, ["src/mod.py"], toplevel=tmp_path
+        )
+    elif reader == "pairs":
+        got = origin.commit_author_sha_pairs_touching_pathspecs(
+            tmp_path, ["src/mod.py"], toplevel=tmp_path
+        )
+    elif reader == "whole":
+        got = origin._read_author_timestamps(tmp_path, "HEAD")
+    else:
+        got = origin._walk_reachable(tmp_path, _SHA, "b" * 40)
+    assert got is None
+    assert origin.failed_git_calls() == failed + 1
+
+
+def test_an_extension_with_a_garbled_line_reads_the_history_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dates a head adds to an earlier head's are read the same way: a
+    line that reads as none sends the caller to the whole history."""
+    raw = f"-{_SHA} 1735700400\n>{'b' * 40} +AAE-1735704000\n"
+    done = subprocess.CompletedProcess(["git"], 0, stdout=raw, stderr="")
+    monkeypatch.setattr(origin, "_git_result", lambda *a, **k: done)
+    assert origin._extended_author_timestamps(tmp_path, _SHA, [], "b" * 40) is None
+    done.stdout = raw.replace("+AAE-", "")
+    got = origin._extended_author_timestamps(tmp_path, _SHA, [], "b" * 40)
+    assert got == [datetime(2025, 1, 1, 4, tzinfo=timezone.utc)]
+
+
+def test_a_date_past_what_a_datetime_holds_is_counted() -> None:
+    """A forged author date past year 9999 was skipped, and its commit,
+    after any verify, dropped out of the count; it reads as the latest
+    date now, and one before year 1 as the earliest."""
+    got = origin_history.author_dates([10**15, 0, -(10**15)])
+    assert got == [
+        datetime.min.replace(tzinfo=timezone.utc),
+        datetime(1970, 1, 1, tzinfo=timezone.utc),
+        datetime.max.replace(tzinfo=timezone.utc),
+    ]
+
+
+@pytest.mark.parametrize("order", ["missing", "reversed"])
+def test_an_order_file_moves_no_count(tmp_path: Path, order: str) -> None:
+    """foo's def line changes after the verify, and two.py's bar is edited:
+    1, foo named, on both bases. ``diff.orderFile`` naming a file that is
+    not there failed every diff git printed, so the walk declined and the
+    dates counted the claimed file's commits; one that names a file only
+    orders a commit's files. ``-O`` with the null device, an empty order,
+    outranks it (`origin_history.AS_STORED_DIFF`)."""
+    repo = _repository(tmp_path)
+    anchor = _commit(repo, {_MOD: _module("", 0), _BESIDE: _module("", 0)}, -1)
+    _commit(repo, {_MOD: _module("", 1), _BESIDE: _module("", 1)}, 1)
+    _commit(repo, {_MOD: _module("flag=False", 1)}, 2)
+    claims = [_FOO, _QUIET]
+    truth = _both(repo, claims, anchor)
+    assert truth == [(1, (_FOO,))] * 2
+    named = tmp_path / "order"
+    if order == "reversed":
+        named.write_text(f"{_BESIDE}\n{_MOD}\n")
+    _plain(repo, "config", "diff.orderFile", str(named))
+    shown = subprocess.run(
+        ["git", "log", "--name-only", "-1"], cwd=repo, capture_output=True
+    )
+    assert (shown.returncode != 0) is (order == "missing"), "premise"
+    assert _both(repo, claims, anchor) == truth
+
+
+@pytest.mark.parametrize("deepen", ["--unshallow", "--deepen=5"])
+def test_a_deepened_clone_is_read_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, deepen: str
+) -> None:
+    """A shallow clone's whole-history dates are not read, and the failure
+    is remembered for a minute. It is remembered with the stamp of the
+    shallow file, so a clone deepened within the minute, which rewrites or
+    removes the file, is read at once, in the same process and at the same
+    head: its dates are a full clone's."""
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    partial = Partial(tmp_path, _LATE)
+    full = tmp_path / "full"
+    _plain(tmp_path, "clone", "-q", partial.source.as_uri(), str(full))
+    shallow = tmp_path / "shallow"
+    _plain(tmp_path, "clone", "-q", "--depth=3", partial.source.as_uri(), str(shallow))
+    every = origin.commit_author_timestamps(full)
+    assert every is not None and len(every) == len(_LATE)
+    assert origin.commit_author_timestamps(shallow) is None
+    assert origin.commit_author_timestamps(shallow) is None, "remembered"
+    _plain(shallow, "fetch", "-q", deepen)
+    assert origin.commit_author_timestamps(shallow) == every
+
+
+def test_git_output_keeps_its_carriage_returns(tmp_path: Path) -> None:
+    """`_git.run_git` decodes git's output from its bytes: a ``\\r`` in a
+    blob, alone or before a line feed, reads as written, and only a line
+    feed ends a line."""
+    repo = _repository(tmp_path)
+    data = b"a\rb\r\nc\n"
+    blob = _object(repo, data)
+    done = _git.run_git(["cat-file", "blob", blob], cwd=repo)
+    assert done is not None and done.stdout == data.decode()
+    raw = _git.run_git(["cat-file", "blob", blob], cwd=repo, text=False)
+    assert raw is not None and raw.stdout == data

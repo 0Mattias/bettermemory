@@ -1586,9 +1586,14 @@ rest counted per file, in `origin_patch.py`; every git `origin.py` runs
 reads the history as its objects hold it, past the repository's replace
 refs, grafts file and commit-graph, and past what its config,
 `.gitmodules` and attribute files set that could hide a change (a root
-commit's diff, a rename, a binary file's or a gitlink's change; the
-pins are `origin_history.AS_STORED_ENV`, `AS_STORED_CONFIG` and
-`AS_STORED_DIFF`), and reads no count behind a shallow
+commit's diff, a rename, a binary file's or a gitlink's change, an
+output encoding, a missing order file; the pins are
+`origin_history.AS_STORED_ENV`, `AS_STORED_CONFIG`, `AS_STORED_DIFF`
+and `AS_STORED_PATHS`), reads git's output from its bytes with every
+carriage return kept (`_git.run_git`), declines a read with a line its
+format did not print (`origin_history.read_lines`), reads no patch
+whose blobs sum past `origin_patch.MAX_PATCH_STREAM_BYTES`, and reads
+no count behind a shallow
 file's cut, `origin_history.cuts`: there the count is omitted, never a
 measured 0), with
 `symbols.py` for advisory symbol citations, and

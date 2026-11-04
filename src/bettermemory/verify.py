@@ -131,7 +131,7 @@ from .origin import (
     repo_toplevel,
     resolve_repo_pathspecs,
 )
-from .origin_patch import local_patch_window
+from .origin_patch import local_patch_window, too_large
 from .verify_basis import BASIS_AUTHOR_DATE, BASIS_REACHABILITY, _count_since_verify
 
 # The path-drift scan lives in `verify_anchoring` and `verify_candidates`,
@@ -685,7 +685,8 @@ def _weak_tier_evaluation(
 
     Returns `(drifted_renders, implicated_shas)`, or `(…, None)` when
     the patch stream could not be fetched or the window exceeds
-    `MAX_PATCH_STREAM_COMMITS` — the caller falls back to incumbent
+    `MAX_PATCH_STREAM_COMMITS`, or the blobs its patch reads sum past
+    `origin_patch.MAX_PATCH_STREAM_BYTES` — the caller falls back to incumbent
     per-file counting for the governed half (never under-count on
     infrastructure failure; a hundreds-of-commits window is loudly
     drifted under either signal, so precision there buys nothing).
@@ -707,16 +708,19 @@ def _weak_tier_evaluation(
     are local are streamed and the rest counted
     (`origin_patch.local_patch_window`, ENG-220); the counted commits'
     paths are marked in the index before the claims are read, and the
-    whole-window rule reads the local commits' implications alone. The
-    marks can fire a claim a full clone leaves quiet (the trees show an
-    empty or binary file's deletion, which the patch prints without a
-    ``/dev/null`` header), and its implications would hide the full
-    clone's whole window; so in a split the whole window is counted when
-    any fired claim implicates no commit.
+    whole-window rule reads the local commits' implications alone. A
+    claim the marks fire implicates no local commit, and its implications
+    alone would hide a whole window a full clone counts; so in a split
+    the whole window is counted when any fired claim implicates no
+    commit.
     """
     if len(shas) > MAX_PATCH_STREAM_COMMITS:
         return [], None
     pathspecs = _literal_pathspecs(specs)
+    if too_large(cwd, shas, pathspecs, toplevel=toplevel):
+        # Every file is diffed as text, a large binary's lines included:
+        # past the bound the patch is not read (ENG-220's review).
+        return [], None
     stream = commit_patch_stream(cwd, shas, pathspecs, toplevel=toplevel)
     split = None
     if stream is None:

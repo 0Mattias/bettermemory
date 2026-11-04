@@ -478,6 +478,30 @@ The three bounds are extrapolated from the 60,000-commit runs, not
 measured at those sizes. In a repository near them, a memory verified at
 a recent head keeps its walk short, and its hit on the walk's basis.
 
+A hit with a claim also reads the claimed files' changed lines, as one
+patch over the commits since the stamp, of at most 256 commits. Every
+file is diffed as text, a binary one included, so the patch of a large
+binary file is about as large as the file. Before it is read, the
+sizes of the blobs it would read are summed (one `git log --raw` and one
+`git cat-file --batch-check`, about 20–30 ms cold, kept with the
+repository's packs); past **32 MiB** the patch is not read and the hit
+keeps the claimed files' per-file count, which is never lower. Measured
+on the author's machine (git 2.54, packed objects), through the read and
+the parse:
+
+| Window | Blobs read | Read and parsed in |
+| --- | --- | --- |
+| A 5 MB binary file changed 3 times | 29 MiB | 140 ms |
+| The same file rewritten whole 3 times | 29 MiB | 520 ms |
+| A 5 MB file of short assignment lines rewritten 3 times | 29 MiB | 2.8 s |
+| 64 one-line edits to a 200 KB file | 24 MiB | 23 ms |
+| A 20 MB binary file changed 3 times | 114 MiB | not read |
+| 256 one-line edits to a 200 KB file | 98 MiB | not read |
+
+A call that runs out of its 5 s bound folds into the conservative count
+as any failed read does; the hit's resolution is then kept for a minute
+under its key, so the searches of that minute do not pay the bound again.
+
 ## Capacity
 
 How large a store bettermemory serves well was measured by the scale
