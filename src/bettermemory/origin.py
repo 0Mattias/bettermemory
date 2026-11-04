@@ -611,11 +611,14 @@ _WORKTREE_GONE_ERRNOS = frozenset(
     {errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG}
 )
 
-# Windows-only companion, for the codes CPython does not fold into one
-# of the errnos above. Both are path-intrinsic in the same sense:
-# ERROR_INVALID_NAME (123) is "that syntax cannot name anything",
-# ERROR_CANT_RESOLVE_FILENAME (1921) is the reparse-point cycle.
-# `pathlib` treats both as not-exists too, and we match it there.
+# Windows: an error with a Windows code is told by that code alone, since
+# CPython folds a share or drive that does not answer into ENOENT
+# (ERROR_BAD_NETPATH 53, ERROR_BAD_NET_NAME 67, ERROR_INVALID_DRIVE 15).
+# Gone are the path-intrinsic codes: ERROR_FILE_NOT_FOUND (2),
+# ERROR_PATH_NOT_FOUND (3), ERROR_INVALID_NAME (123, "that syntax cannot
+# name anything"), ERROR_FILENAME_EXCED_RANGE (206, ENAMETOOLONG),
+# ERROR_DIRECTORY (267, ENOTDIR) and ERROR_CANT_RESOLVE_FILENAME (1921, the
+# reparse-point cycle). `gitfile_rule._gone` reads them so (ENG-217).
 #
 # Where we deliberately DIVERGE from `pathlib`: ERROR_NOT_READY (21) —
 # "the drive exists but is not accessible", i.e. a removable or
@@ -623,7 +626,7 @@ _WORKTREE_GONE_ERRNOS = frozenset(
 # not-exists; for an isolation boundary that is the unmounted-volume
 # fail-open this classification exists to close, so it lands in
 # "cannot tell".
-_WORKTREE_GONE_WINERRORS = frozenset({123, 1921})
+_WORKTREE_GONE_WINERRORS = frozenset({2, 3, 123, 206, 267, 1921})
 
 
 def _worktree_root_is_gone(worktree: str) -> bool:
@@ -640,7 +643,11 @@ def _worktree_root_is_gone(worktree: str) -> bool:
         return True
     except OSError as exc:
         winerror: object = getattr(exc, "winerror", None)
-        if exc.errno in _WORKTREE_GONE_ERRNOS or winerror in _WORKTREE_GONE_WINERRORS:
+        if (
+            winerror in _WORKTREE_GONE_WINERRORS
+            if isinstance(winerror, int)
+            else exc.errno in _WORKTREE_GONE_ERRNOS
+        ):
             return True
         # Indeterminate. Log it: "my project's memories went dark" and
         # "a stale mount is quietly widening auto-scope" are both

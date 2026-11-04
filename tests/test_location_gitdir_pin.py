@@ -989,12 +989,37 @@ def test_a_view_that_raised_takes_the_record(
     assert _same(gitfile_rule.earliest_naming([later], None, str(sep)), tree)
 
 
-class _WindowsError(OSError):
-    """An OSError carrying a Windows code, as CPython raises on Windows."""
+def _windows_error(winerror: int, number: int = errno.EINVAL) -> OSError:
+    """An OSError carrying the Windows code `winerror`, of the class
+    CPython raises for the errno `number` it folds the code into: a share
+    that does not answer (ERROR_BAD_NETPATH 53) is a FileNotFoundError
+    there, as a path that names nothing is."""
+    error = OSError(number, "a Windows error")
+    setattr(error, "winerror", winerror)  # noqa: B010 (no such attribute off Windows)
+    return error
 
-    def __init__(self, winerror: int) -> None:
-        super().__init__(errno.EINVAL, "a Windows error")
-        self.winerror = winerror
+
+#: The Windows codes of a path that names nothing (ENG-217): each folded
+#: by CPython into ENOENT or ENOTDIR, or into neither.
+_WINDOWS_GONE = {
+    "ERROR_FILE_NOT_FOUND": (2, errno.ENOENT),
+    "ERROR_PATH_NOT_FOUND": (3, errno.ENOENT),
+    "ERROR_INVALID_NAME": (123, errno.EINVAL),
+    "ERROR_FILENAME_EXCED_RANGE": (206, errno.ENOENT),
+    "ERROR_DIRECTORY": (267, errno.ENOTDIR),
+    "ERROR_CANT_RESOLVE_FILENAME": (1921, errno.EINVAL),
+}
+#: The Windows codes of a share, drive or volume that does not answer,
+#: which CPython folds into ENOENT (and so FileNotFoundError) or into an
+#: errno that tells nothing, and of a refused access.
+_WINDOWS_UNKNOWN = {
+    "ERROR_BAD_NETPATH": (53, errno.ENOENT),
+    "ERROR_BAD_NET_NAME": (67, errno.ENOENT),
+    "ERROR_INVALID_DRIVE": (15, errno.ENOENT),
+    "ERROR_NOT_READY": (21, errno.EINVAL),
+    "ERROR_NETWORK_UNREACHABLE": (1231, errno.EINVAL),
+    "ERROR_ACCESS_DENIED": (5, errno.EACCES),
+}
 
 
 @pytest.mark.parametrize(
@@ -1006,9 +1031,14 @@ class _WindowsError(OSError):
         pytest.param(OSError(errno.ENAMETOOLONG, "x"), "gone", id="ENAMETOOLONG"),
         pytest.param(FileNotFoundError(), "gone", id="FileNotFoundError-bare"),
         pytest.param(ValueError("embedded null byte"), "gone", id="ValueError"),
-        pytest.param(_WindowsError(123), "gone", id="ERROR_INVALID_NAME"),
-        pytest.param(_WindowsError(1921), "gone", id="ERROR_CANT_RESOLVE_FILENAME"),
-        pytest.param(_WindowsError(21), "unknown", id="ERROR_NOT_READY"),
+        *(
+            pytest.param(_windows_error(*code), "gone", id=name)
+            for name, code in _WINDOWS_GONE.items()
+        ),
+        *(
+            pytest.param(_windows_error(*code), "unknown", id=name)
+            for name, code in _WINDOWS_UNKNOWN.items()
+        ),
         *(
             pytest.param(OSError(getattr(errno, name), "x"), "unknown", id=name)
             for name in ("ENOTCONN", "EIO", "ESTALE", "EACCES", "EPERM", "ETIMEDOUT")
@@ -1026,12 +1056,13 @@ def test_only_an_answer_that_nothing_is_there_reads_as_gone(
 ) -> None:
     """ENG-217: a ``.git`` whose read fails reads as gone only where the
     OS answered that nothing is at the path (ENOENT, ENOTDIR, ELOOP,
-    ENAMETOOLONG, a path it cannot be asked about, and the Windows codes
-    CPython folds into none of them), as origin reads a worktree root's
-    liveness; any other error, at whichever read it comes, cannot tell
-    what is there, so a view takes the record and a recorded tree keeps
-    it. ERROR_NOT_READY, a volume not ready, which `pathlib` reads as
-    absent, cannot tell either."""
+    ENAMETOOLONG, a path it cannot be asked about), as origin reads a
+    worktree root's liveness; any other error, at whichever read it comes,
+    cannot tell what is there, so a view takes the record and a recorded
+    tree keeps it. An error with a Windows code is told by the code alone,
+    on every platform here: a share that does not answer (53, 67, 15) is a
+    FileNotFoundError on Windows and cannot tell, and ERROR_NOT_READY, a
+    volume not ready, which `pathlib` reads as absent, cannot tell either."""
     tree, sep = _separate(tmp_path)
     entry = str(tree / ".git")
     reads: dict[str, Callable[..., Any]] = {
@@ -1053,11 +1084,27 @@ def test_only_an_answer_that_nothing_is_there_reads_as_gone(
     assert gitfile_rule._entry_names(entry, str(sep)) == verdict
 
 
-def test_the_errors_that_read_as_gone_are_origins() -> None:
+def test_the_errors_that_read_as_gone_are_origins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The one classification of a failed read as gone: membership's rule
-    and origin's worktree liveness read the same errors so."""
+    and origin's worktree liveness read the same errors so, a Windows code
+    by itself in both."""
     assert gitfile_rule._GONE_ERRNOS == origin._WORKTREE_GONE_ERRNOS
     assert gitfile_rule._GONE_WINERRORS == origin._WORKTREE_GONE_WINERRORS
+    for table, gone in ((_WINDOWS_GONE, True), (_WINDOWS_UNKNOWN, False)):
+        for code in table.values():
+            error = _windows_error(*code)
+
+            def failing(
+                path: Any, *args: Any, error: OSError = error, **kw: Any
+            ) -> Any:
+                raise error
+
+            assert gitfile_rule._gone(error) is gone, code
+            with monkeypatch.context() as patch:
+                patch.setattr(os, "stat", failing)
+                assert origin._worktree_root_is_gone("/somewhere") is gone, code
 
 
 @pytest.mark.parametrize(

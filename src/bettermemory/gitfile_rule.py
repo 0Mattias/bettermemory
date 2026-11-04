@@ -73,15 +73,22 @@ _WINDOWS_RECALL = 0x00040000 | 0x00400000
 # The errors in which the OS answered that nothing is at a path, as origin
 # reads a worktree root's liveness (`origin._WORKTREE_GONE_ERRNOS`, whose
 # comment gives each; tests/test_location_gitdir_pin.py holds the two
-# equal): ENOENT, ENOTDIR, ELOOP and ENAMETOOLONG, and on Windows the codes
-# CPython folds into none of them, ERROR_INVALID_NAME (123) and the
-# reparse-point cycle ERROR_CANT_RESOLVE_FILENAME (1921). Each is a
-# property of the path as it is spelled, which a share that fails does not
-# give and an unmount does give (the mount point's folder is empty). Every
-# other error (ENOTCONN, EIO, ESTALE, EACCES, EPERM, ETIMEDOUT, and any a
-# platform adds) cannot tell what is there (`_entry_names`, ENG-217).
+# equal): ENOENT, ENOTDIR, ELOOP and ENAMETOOLONG. Each is a property of
+# the path as it is spelled, which a share that fails does not give and an
+# unmount does give (the mount point's folder is empty). Every other error
+# (ENOTCONN, EIO, ESTALE, EACCES, EPERM, ETIMEDOUT, and any a platform
+# adds) cannot tell what is there (`_entry_names`, ENG-217).
 _GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG})
-_GONE_WINERRORS = frozenset({123, 1921})
+# On Windows the error is told by its code alone (`_gone`): CPython folds
+# a share or drive that does not answer into ENOENT (ERROR_BAD_NETPATH 53,
+# ERROR_BAD_NET_NAME 67, ERROR_INVALID_DRIVE 15), and so into
+# FileNotFoundError, which a path that names nothing gives. Gone are only the
+# codes of the path itself: ERROR_FILE_NOT_FOUND (2), ERROR_PATH_NOT_FOUND
+# (3), ERROR_INVALID_NAME (123), ERROR_FILENAME_EXCED_RANGE (206, the
+# Windows ENAMETOOLONG), ERROR_DIRECTORY (267, a file where a folder is
+# named: ENOTDIR) and the reparse-point cycle ERROR_CANT_RESOLVE_FILENAME
+# (1921, ELOOP).
+_GONE_WINERRORS = frozenset({2, 3, 123, 206, 267, 1921})
 #: The ends of the refusals whose recorded working tree could not be read or
 #: did not answer (`_recorded_reading`): the security audit's fix for them
 #: says how the record is freed (`location_audit._gitfile_fix`, ENG-217).
@@ -568,15 +575,21 @@ def _entry_names(entry: str, git_dir: str) -> str:
 
 def _gone(exc: OSError | ValueError) -> bool:
     """Whether the error `exc`, raised by a read of a path, is the OS's
-    answer that nothing is there (`_GONE_ERRNOS`): a ValueError is a path
-    the OS cannot be asked about (an embedded NUL), where nothing can be,
-    as `origin._worktree_root_is_gone` reads it."""
-    if not isinstance(exc, OSError) or isinstance(
-        exc, (FileNotFoundError, NotADirectoryError)
-    ):
+    answer that nothing is there: a ValueError is a path the OS cannot be
+    asked about (an embedded NUL), where nothing can be, as
+    `origin._worktree_root_is_gone` reads it. An error with a Windows code
+    is told by that code alone (`_GONE_WINERRORS`), never by the errno or
+    the exception class CPython folds it into, so a share that does not
+    answer is not gone (ENG-217); any other by its errno (`_GONE_ERRNOS`)."""
+    if not isinstance(exc, OSError):
         return True
     winerror: object = getattr(exc, "winerror", None)
-    return exc.errno in _GONE_ERRNOS or winerror in _GONE_WINERRORS
+    if isinstance(winerror, int):
+        return winerror in _GONE_WINERRORS
+    return (
+        isinstance(exc, (FileNotFoundError, NotADirectoryError))
+        or exc.errno in _GONE_ERRNOS
+    )
 
 
 def _names_folder(raw: str, base: str, directory: str) -> bool | None:

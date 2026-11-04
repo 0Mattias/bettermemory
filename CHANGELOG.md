@@ -296,14 +296,21 @@ eighteenth was built.
   share, bring the placeholder back to this disk, or make it readable.
   A placeholder is told by its stat and still never read. A `.git` reads
   as gone only where its read fails with ENOENT, ENOTDIR, ELOOP or
-  ENAMETOOLONG (on Windows also ERROR_INVALID_NAME and
-  ERROR_CANT_RESOLVE_FILENAME), the errors origin already reads a
-  worktree root's liveness by; any other error cannot tell what is there.
-  So a recorded tree whose path now loops through symbolic links, or is
-  too long to name, gives way as a removed one does, where it refused
-  the follow. docs/internals.md said that a view that cannot be read at
-  the first record is passed over; it now states this rule.
-  (`src/bettermemory/gitfile_rule.py`,
+  ENAMETOOLONG, the errors origin already reads a worktree root's
+  liveness by; any other error cannot tell what is there. On Windows the
+  error's own code decides, never the errno CPython folds it into: a
+  share or drive that does not answer (ERROR_BAD_NETPATH,
+  ERROR_BAD_NET_NAME, ERROR_INVALID_DRIVE) raises FileNotFoundError
+  there, and read as gone it handed the record to the next folder, the
+  shape this fixes. Gone are ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND,
+  ERROR_INVALID_NAME, ERROR_FILENAME_EXCED_RANGE (the Windows
+  ENAMETOOLONG), ERROR_DIRECTORY (ENOTDIR) and ERROR_CANT_RESOLVE_FILENAME
+  (ELOOP), and origin's worktree liveness reads them the same way. So a
+  recorded tree whose path now loops through symbolic links, or is too
+  long to name, gives way as a removed one does, where it refused the
+  follow. docs/internals.md said that a view that cannot be read at the
+  first record is passed over; it now states this rule.
+  (`src/bettermemory/gitfile_rule.py`, `src/bettermemory/origin.py`,
   `src/bettermemory/location_audit.py`, `src/bettermemory/location.py`,
   `docs/internals.md`, `tests/test_location_gitdir_pin.py`)
 

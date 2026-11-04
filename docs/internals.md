@@ -531,9 +531,14 @@ names it, cannot be read or does not answer within half a second (read
 on a worker thread, as every recorded path is, ENG-156); a recorded tree
 moved, removed or pointed at another git directory gives way to the next
 one followed. A `.git` is gone where its read fails with ENOENT,
-ENOTDIR, ELOOP or ENAMETOOLONG (on Windows also ERROR_INVALID_NAME and
-ERROR_CANT_RESOLVE_FILENAME), the errors in which the OS answers that
-nothing is at the path, as origin reads a worktree root's liveness; any
+ENOTDIR, ELOOP or ENAMETOOLONG, the errors in which the OS answers that
+nothing is at the path, as origin reads a worktree root's liveness; on
+Windows the error's own code decides, never the errno CPython folds it
+into, since a share that does not answer (ERROR_BAD_NETPATH,
+ERROR_BAD_NET_NAME, ERROR_INVALID_DRIVE) is ENOENT there too: gone are
+ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_INVALID_NAME,
+ERROR_FILENAME_EXCED_RANGE, ERROR_DIRECTORY and
+ERROR_CANT_RESOLVE_FILENAME (`gitfile_rule._gone`); any
 other error (a share answering ENOTCONN, EIO or ESTALE, EACCES, EPERM)
 cannot be read, and so is a file provider's placeholder (SF_DATALESS on
 macOS, the recall attributes on Windows), which is not read, since a
