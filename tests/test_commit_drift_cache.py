@@ -585,7 +585,11 @@ def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
     is what the same call meets again on the same history, so its value is
     kept under the row's key for a minute, and the next search forks
     nothing for the row; then the row is resolved again (ENG-220's
-    review)."""
+    review). Where the files settle no key for the row (off POSIX, where
+    `origin.toplevel_and_head_from_files` declines), no row is kept, a
+    timeout's neither, and the next search resolves it again: the
+    assertion of the minute held on Windows only for a key the row never
+    had."""
     clock = [1000.0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     repo = _repo(tmp_path)
@@ -618,8 +622,10 @@ def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
     monkeypatch.setattr(subprocess, "run", real_run)
     assert _by_id(out)[memory_id]["commit_drift_count"] == 2, "the unfiltered fallback"
 
+    keyed = origin.toplevel_and_head_from_files(repo) is not None
+    assert keyed == (os.name == "posix" and githead._POSIX), "premise: who keys"
     after, calls = _attach(memories, caller, monkeypatch)
-    if failure == "timeout":
+    if failure == "timeout" and keyed:
         assert _by_id(after)[memory_id]["commit_drift_count"] == 2, "kept a minute"
         assert calls == [], "the row forks nothing"
         clock[0] += _response._TIMED_OUT_SECONDS
