@@ -810,7 +810,10 @@ def _is_str_list(value: object) -> TypeGuard[list[str]]:
 def _value_findings(
     role: str, path: _config.ConfigSource, section: str, key: str, value: object
 ) -> list[Finding]:
-    """What is wrong with one value the loader reads, if anything."""
+    """What is wrong with one value the loader reads, if anything. Each
+    finding shows the value as the line writes it (`_shown`), as the
+    loader's own refusal does: ``"inf"``, quoted, is not the number
+    ``inf`` it parses to (ENG-221)."""
     label = f"[{section}] {key}"
     if (section, key) == ("policy", "forbid_acknowledge") and _is_str_list(value):
         return _acknowledge_findings(role, value)
@@ -853,7 +856,7 @@ def _value_findings(
                     role,
                     section,
                     key,
-                    f"{label} = {parsed} is outside 1..{MAX_SEARCH_RESULTS}; "
+                    f"{label} = {_shown(value)} is outside 1..{MAX_SEARCH_RESULTS}; "
                     f"searches read it as {clamped}.",
                     f"write a value from 1 to {MAX_SEARCH_RESULTS}",
                 )
@@ -868,15 +871,16 @@ def _value_findings(
                     role,
                     section,
                     key,
-                    f"{label} = {written} is below {_config.MIN_CHECKPOINT_TOKENS}; "
-                    f"the loader raises it to {_config.MIN_CHECKPOINT_TOKENS}.",
+                    f"{label} = {_shown(value)} is below "
+                    f"{_config.MIN_CHECKPOINT_TOKENS}; the loader raises it to "
+                    f"{_config.MIN_CHECKPOINT_TOKENS}.",
                     f"write {_config.MIN_CHECKPOINT_TOKENS} or more",
                 )
             )
     elif (section, key) == ("behavior", "cold_endorsement_ratio_threshold"):
-        findings.extend(_ratio_threshold_findings(role, label, parsed))
+        findings.extend(_ratio_threshold_findings(role, label, value, parsed))
     elif (section, key) == ("daemon", "port"):
-        findings.extend(_port_findings(role, parsed))
+        findings.extend(_port_findings(role, value, parsed))
     elif section == "scopes" and isinstance(parsed, list):
         findings.extend(_scope_findings(role, key, parsed))
     elif (section, key) == ("storage", "directory") and isinstance(parsed, str):
@@ -912,15 +916,17 @@ def _system_dir_findings(role: str, directory: str) -> list[Finding]:
     ]
 
 
-def _ratio_threshold_findings(role: str, label: str, written: float) -> list[Finding]:
+def _ratio_threshold_findings(
+    role: str, label: str, value: object, parsed: float
+) -> list[Finding]:
     """`[behavior] cold_endorsement_ratio_threshold` outside 0 to 1, or
     NaN: both reports read it through `health_model.clamp_ratio_threshold`
     as the nearer end, or 0, which the line does not say (ENG-192, review
-    R3)."""
+    R3). `value` is the line as written, `parsed` the number it loads as."""
     from ..health_model import clamp_ratio_threshold
 
-    read = clamp_ratio_threshold(written)
-    if read == written:
+    read = clamp_ratio_threshold(parsed)
+    if read == parsed:
         return []
     return [
         Finding(
@@ -929,7 +935,7 @@ def _ratio_threshold_findings(role: str, label: str, written: float) -> list[Fin
             role,
             "behavior",
             "cold_endorsement_ratio_threshold",
-            f"{label} = {_shown(written)} is not a fraction from 0 to 1; the "
+            f"{label} = {_shown(value)} is not a fraction from 0 to 1; the "
             f"health report and `bettermemory eval` read it as {_shown(read)}.",
             "write a fraction from 0.0 to 1.0",
         )
@@ -944,7 +950,9 @@ def _fallback_hint(section: str, key: str) -> str:
     return "write true or false"
 
 
-def _port_findings(role: str, port: int) -> list[Finding]:
+def _port_findings(role: str, value: object, port: int) -> list[Finding]:
+    """`[daemon] port` outside what a socket binds, or privileged. `value`
+    is the line as written, `port` the integer it loads as."""
     if not 0 <= port <= _PORT_MAX:
         return [
             Finding(
@@ -953,8 +961,8 @@ def _port_findings(role: str, port: int) -> list[Finding]:
                 role,
                 "daemon",
                 "port",
-                f"[daemon] port = {port} is outside 0..{_PORT_MAX}; the daemon "
-                "cannot bind it and does not start.",
+                f"[daemon] port = {_shown(value)} is outside 0..{_PORT_MAX}; "
+                "the daemon cannot bind it and does not start.",
                 f"a port from 1024 to {_PORT_MAX}, or 0 for an ephemeral one",
             )
         ]
@@ -966,7 +974,7 @@ def _port_findings(role: str, port: int) -> list[Finding]:
                 role,
                 "daemon",
                 "port",
-                f"[daemon] port = {port} is a privileged port; where an "
+                f"[daemon] port = {_shown(value)} is a privileged port; where an "
                 "unprivileged process may not bind it (Linux, by default) the "
                 "daemon binds an ephemeral port instead.",
                 f"a port from 1024 to {_PORT_MAX}",

@@ -32,6 +32,33 @@ eighteenth was built.
 
 #### Changed
 
+- **A numeric config key refuses a boolean (ENG-221).** Python counts a
+  boolean as an integer, so `true` written for a key that takes a number
+  (`cold_endorsement_ratio_threshold = true`, `port = true`) loaded as 1,
+  and `false` as 0, without a warning, and `bettermemory config check`,
+  which reads each line through the loader, found nothing. Every numeric
+  key now refuses a boolean as it refuses a list or a string that is no
+  number, in config.toml and in the managed file: the load stops with
+  the located error (`malformed config in <path>: [daemon] port = true
+  must be an integer`; `must be a number` for a key that takes a
+  fraction), so no daemon starts on it, and `config check` reports an
+  `invalid_value` error in the same words. A config that relied on
+  `true` reading as 1, or `false` as 0, no longer loads: write the number
+  itself, `1` or `0` (`1.0` or `0.0` for a fraction). A config.toml line
+  for a key the managed file pins is still dropped unread, so a boolean
+  there draws the pinned-key notice and does not stop the load; the
+  9.0.0rc14 entry counted "a boolean read as a number" among the lossy
+  coercions that draw it, and such a line is now a refusal, which draws
+  it too. `config check` also prints the value of a `clamped` finding, and
+  of a `[daemon] port` it warns of, as the line writes it, as
+  `invalid_value` already did, where it printed the number parsed from it
+  (a quoted `"inf"` as `inf`). The new test derives the numeric keys from
+  `Config`'s own dataclasses, so a key a later release adds is covered
+  without a new test. (`src/bettermemory/config.py`,
+  `src/bettermemory/cli/config_cmd.py`, `docs/internals.md`,
+  `tests/test_config_numeric_values.py`,
+  `tests/test_pin_notice_as_loaded.py`)
+
 #### Fixed
 
 ### 9.0.0rc18

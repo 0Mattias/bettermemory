@@ -1929,7 +1929,11 @@ release that removed it and why. It is then ignored. A section written
 as anything but a table, a TOML syntax error, or a file that is not
 UTF-8 stops the load with a `ValueError` that names the file (`malformed
 config in <path>: ...`); a leading byte-order mark is accepted. A
-misspelled section or key is ignored without a word, and a switch
+numeric key (`port`, `default_max_results`, `checkpoint_tokens` and the
+rest) takes a TOML integer or float, or a string that reads as one, and
+anything else stops the load the same way, a boolean among them since
+9.0.0rc19: Python counts `true` as 1, and the loader read it so without
+a word. A misspelled section or key is ignored without a word, and a switch
 written as anything but a TOML boolean or one of the strings `"true"`,
 `"false"`, `"yes"`, `"no"`, `"on"`, `"off"`, `"1"` and `"0"` falls back
 to its default the same way (an unknown `search_mode` or `prompt_recall`

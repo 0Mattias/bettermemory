@@ -839,16 +839,18 @@ def _coerce_int(
 ) -> int:
     """Coerce a TOML value to ``int``, raising a located ValueError on a
     non-numeric value rather than letting a bare ``int(...)`` escape
-    ``load_config``. Valid-input behaviour is identical to the prior bare
-    ``int(...)``: a real int (or bool, an int subclass) passes through; a
-    numeric string parses; a float truncates. ``None`` (key absent) yields
-    ``default``. A boolean, and a float the truncation changes, are noted
-    as not read as written (`_trial_note`)."""
+    ``load_config``. A real int passes through; a numeric string parses;
+    a float truncates, noted as not read as written (`_trial_note`) when
+    the truncation changes it. ``None`` (key absent) yields ``default``.
+
+    A boolean is refused, as a string that is no number is. Python's
+    ``bool`` is an ``int``, so ``port = true`` loaded as 1, and ``false``
+    as 0, without a word, and `bettermemory config check`, which reads a
+    line through this, found nothing (ENG-221)."""
     if value is None:
         return default
     if isinstance(value, bool):
-        _trial_note(f"{value!r} read as the integer {int(value)}")
-        return int(value)
+        raise ValueError(_malformed_config_msg(label, value, config_path, "an integer"))
     if isinstance(value, int):
         return value
     if isinstance(value, float):
@@ -1001,13 +1003,12 @@ def _coerce_float(
 ) -> float:
     """Coerce a TOML value to ``float``, raising a located ValueError on a
     non-numeric value (cf. ``_coerce_int``). Valid-input behaviour matches
-    the prior bare ``float(...)``; a boolean is noted as not read as
-    written (`_trial_note`)."""
+    the prior bare ``float(...)``; a boolean, which read as 1.0 or 0.0,
+    is refused as `_coerce_int` refuses one (ENG-221)."""
     if value is None:
         return default
     if isinstance(value, bool):
-        _trial_note(f"{value!r} read as the number {float(value)}")
-        return float(value)
+        raise ValueError(_malformed_config_msg(label, value, config_path, "a number"))
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):

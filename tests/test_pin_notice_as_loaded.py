@@ -106,8 +106,8 @@ def _pin_notices(caplog: pytest.LogCaptureFixture) -> list[str]:
             "[behavior]\nprompt_recall = false\n",
             False,
         ),
-        # Lossy numeric coercions are not the line as written: a float the
-        # integer truncates, and a boolean read as a number.
+        # A float the integer truncates is not the line as written, and a
+        # boolean, which a numeric key refuses (ENG-221), restates no pin.
         ("[daemon]\nport = 7400\n", "[daemon]\nport = 7400.9\n", True),
         ("[daemon]\nport = 7400\n", "[daemon]\nport = 7400.0\n", False),
         (
