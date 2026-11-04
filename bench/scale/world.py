@@ -21,7 +21,6 @@ import json
 import os
 import platform
 import random
-import resource
 import secrets
 import socket
 import statistics
@@ -546,6 +545,8 @@ def run_measured(
 
 
 def self_peak_rss_mb() -> float:
+    import resource  # POSIX only: imported here so the build runs on Windows
+
     unit = 1 if sys.platform == "darwin" else 1024
     return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit / 1e6, 1)
 
