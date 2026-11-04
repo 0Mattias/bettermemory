@@ -363,6 +363,19 @@ eighteenth was built.
   `src/bettermemory/claims.py`, `docs/internals.md`,
   `tests/test_location_path_gone.py`, `tests/test_location_gitdir_pin.py`)
 
+- **A checkout whose folder's name ends in a space or a tab keeps its
+  origin's root.** git prints a toplevel as it is, and the origin family
+  took the line with `strip`, which took the name's own space or tab off
+  (`trail ` read as `trail`), naming no folder: 9.0.0rc18 kept that as
+  the origin's root, and the toplevel check above kept none, while
+  `repo_toplevel_and_head` answered from the files with the folder. A file whose name begins or ends in a space, changed in a
+  commit, was read without it in the reachable walk commit drift counts
+  by, and the security audit's read of the working tree around a store
+  lost the space the same way. Each now takes off the line end alone
+  (`_git.output_lines`: the LF, and on Windows a CR before it).
+  (`src/bettermemory/_git.py`, `src/bettermemory/origin.py`,
+  `src/bettermemory/posture.py`, `tests/test_origin_name_space.py`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a
