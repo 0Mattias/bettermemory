@@ -764,6 +764,26 @@ def test_the_developer_directory_names_the_answer(
     assert asks() == 0
 
 
+@pytest.mark.skipif(os.name != "posix", reason="the null device is a file on POSIX")
+def test_a_kept_capture_outlives_a_write_to_the_null_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's review, round 3: GIT_CONFIG_GLOBAL at the null device,
+    as CI and this suite set it. The device's times move with every write
+    to it on macOS, and a capture kept against its stamp was read again
+    at random. A file that is no regular file is stamped by its inode and
+    type alone (`gitconfig.file_stamp`): the reader takes nothing from it."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    repo = _repo(tmp_path / "cached")
+    _git(repo, "remote", "add", "origin", "https://example.invalid/acme/lib")
+    first = location.capture(str(repo), write_token=False)
+    assert os.devnull in [path for path, _stamp in first.config_files]
+    for _ in range(3):
+        subprocess.run(["sh", "-c", f"echo moved > {os.devnull}"], check=True)
+        assert location.capture(str(repo), write_token=False) is first
+    assert gitconfig.file_stamp(os.devnull) == gitconfig.file_stamp(os.devnull)
+
+
 def test_the_files_a_build_reads_are_read_off_gits_listing() -> None:
     """`gitsystem._own_files`: the files at system or unknown scope, in
     git's order, each once; never a global, local or command line entry,

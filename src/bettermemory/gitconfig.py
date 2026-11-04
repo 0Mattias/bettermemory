@@ -327,11 +327,17 @@ def _include(
 
 def file_stamp(path: str) -> Stamp | None:
     """The stamp of the file at `path` now (`Stamp`): None where nothing
-    is there (`path_missing`), `_UNSTATED` where it cannot be stat-ed."""
+    is there (`path_missing`), `_UNSTATED` where it cannot be stat-ed. A
+    file that is no regular file (the null device GIT_CONFIG_GLOBAL names
+    in CI, a FIFO) is stamped by its inode and type alone: the reader
+    takes no value from it, and the null device's times move with every
+    write to it."""
     try:
         st = os.stat(path)
     except (OSError, ValueError) as exc:
         return None if path_missing(exc) else _UNSTATED
+    if not stat.S_ISREG(st.st_mode):
+        return (0, 0, 0, st.st_ino, st.st_mode)
     return (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino, st.st_mode)
 
 
