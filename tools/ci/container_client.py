@@ -26,7 +26,12 @@ and prints one JSON object on stdout:
   birth time (None where statx reports none).
 
 The package is imported from the source tree the container mounts
-(PYTHONPATH); only the hook client's standard-library modules load.
+(PYTHONPATH); only the hook client's standard-library modules load. The
+cross-release job runs ``capture`` and ``answer`` under the previous
+release's interpreter instead (``python -I``, its install imported), as
+the client of that release, against this checkout's daemon
+(tests/test_cross_release_exchange.py); those two steps keep to what
+every 9.0 release's `location` and `machine` offer.
 """
 
 from __future__ import annotations

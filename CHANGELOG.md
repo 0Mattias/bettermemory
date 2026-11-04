@@ -151,10 +151,18 @@ eighteenth was built.
   round with no rollback to ask git. A daemon before 9.0.0rc19 never
   asks, and ignores the client's key. The ENG-203 entry's "a container's
   hook client runs no `merge-base`" no longer holds for a client of this
-  candidate. (`src/bettermemory/location_witness.py`,
+  candidate. CI's `cross-release` job now also runs the previous
+  release's hook client over the exchange against this checkout's
+  daemon, on a tie past the traversal's bound and on a part's declared
+  folder (ENG-213): each step of the client runs under the previous
+  release's own interpreter, and the job fails where that client does
+  not settle within its rounds, is asked what it does not answer, or
+  leaves anything kept. (`src/bettermemory/location_witness.py`,
   `src/bettermemory/location.py`, `src/bettermemory/location_git.py`,
   `src/bettermemory/membership_records.py`,
-  `src/bettermemory/membership_resolve.py`, `docs/internals.md`)
+  `src/bettermemory/membership_resolve.py`, `docs/internals.md`,
+  `tests/test_cross_release_exchange.py`, `tools/ci/container_client.py`,
+  `.github/workflows/ci.yml`)
 
 - **Without birth time a folder asked about on its project file alone is
   asked once, not at every session (ENG-219).** Where the filesystem

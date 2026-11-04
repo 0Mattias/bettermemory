@@ -178,7 +178,9 @@ def test_main_reads_a_document_and_prints_the_choice(
 def test_the_cross_release_job_names_the_installs_the_test_reads() -> None:
     """The job's test step sets both variables tests/test_cross_release.py
     reads, under the names the builds script prints, so a rename cannot
-    leave the test skipped on a green job."""
+    leave the test skipped on a green job; and the step runs
+    tests/test_cross_release_exchange.py too, which reads the previous
+    release's by tests/test_cross_release.py's name."""
     from . import test_cross_release
 
     names = {test_cross_release.PREVIOUS_ENV, test_cross_release.NEXT_ENV}
@@ -190,3 +192,4 @@ def test_the_cross_release_job_names_the_installs_the_test_reads() -> None:
     ]
     assert len(runs) == 1, runs
     assert names <= set(runs[0].get("env") or {}), runs[0]
+    assert "tests/test_cross_release_exchange.py" in str(runs[0]["run"]), runs[0]

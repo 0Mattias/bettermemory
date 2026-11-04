@@ -322,6 +322,13 @@ jobs:
   # child of the test runs in a sandbox under its tmp_path; the test
   # checks where each build resolves its store, keys, config and state
   # before it starts a daemon.
+  #
+  # tests/test_cross_release_exchange.py runs the previous release's hook
+  # client over the witness exchange (design 8.7) against this checkout's
+  # daemon, a tie past the traversal's bound and a declared folder: each
+  # client step is tools/ci/container_client.py under the previous
+  # release's interpreter, and the daemon's half is this checkout's
+  # resolve_hook in the test's process.
   cross-release:
     name: cross-release (previous release against this checkout)
     runs-on: ubuntu-latest
@@ -377,7 +384,9 @@ jobs:
         env:
           BETTERMEMORY_CI_PREVIOUS: ${{ steps.builds.outputs.BETTERMEMORY_CI_PREVIOUS }}
           BETTERMEMORY_CI_NEXT: ${{ steps.builds.outputs.BETTERMEMORY_CI_NEXT }}
-        run: uv run pytest -p no:cacheprovider -rA tests/test_cross_release.py
+        run: >-
+          uv run pytest -p no:cacheprovider -rA tests/test_cross_release.py
+          tests/test_cross_release_exchange.py
 
   # The membership legs (RS-F6, design 8.7, plan phase 7): the
   # environments the design argued, run for real on ubuntu-latest. Each
