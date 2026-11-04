@@ -368,10 +368,10 @@ class PlantedSubmodule:
 
     def patch(self) -> str | None:
         from bettermemory import origin
-        from bettermemory.verify import _literal_pathspecs
+        from bettermemory.verify_spelling import literal_pathspecs
 
         return origin.commit_patch_stream(
-            self.repo, [self.bump], _literal_pathspecs(["README.md"])
+            self.repo, [self.bump], literal_pathspecs(["README.md"])
         )
 
 
