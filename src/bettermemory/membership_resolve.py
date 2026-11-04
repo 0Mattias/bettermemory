@@ -310,10 +310,12 @@ def resolve(
     git's reading of tied witnesses (ENG-203), the transaction rolls back
     before any token is written (`NeedIndependent`, raised ahead of a join
     or a question), git reads them with no lock held, and the ladder runs
-    once more with the answer; inside a caller's transaction git is not
-    asked. A capture that may predate another resolution's re-mint is read
-    again in each attempt's transaction (`_token_now`), since another
-    process can re-mint while git is asked."""
+    once more with the answer; in the witness exchange the client's git
+    reads them, asked in a round of its own (`AnsweredHistory.independent`,
+    ENG-216); inside a caller's transaction git is not asked. A capture
+    that may predate another resolution's re-mint is read again in each
+    attempt's transaction (`_token_now`), since another process can
+    re-mint while git is asked."""
     outside = not self._store.in_batch
     with self.liveness_held():
         if outside:

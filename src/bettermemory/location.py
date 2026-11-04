@@ -167,6 +167,7 @@ from .location_witness import (
     ExchangeReads as ExchangeReads,  # resolve_hook's declared folders, below
     NeedWitnesses as NeedWitnesses,  # tests/test_membership_resolution.py
     asked_views as asked_views,  # answer's view questions, below
+    independent_answer as independent_answer,  # answer's ENG-216 question, below
     remint_answer as remint_answer,  # answer's re-mint question, below
 )
 
@@ -1234,7 +1235,8 @@ def answer(
     re-mint replaced that first (`remint_answer`, ENG-205), and answers
     the token and status, which the daemon records in the resolution's
     transaction (`AnsweredToken`); ``remint_ok`` says it answers that. It
-    names back the exchange the question names (`ExchangeReads`, ENG-213)."""
+    names back the exchange the question names (`ExchangeReads`, ENG-213),
+    and runs git for tied witnesses when asked (`independent_answer`)."""
     out: dict[str, Any] = {k: v for k, v in answers.items()}
     out["remint_ok"] = True
     out["exchange"] = question.get("exchange")
@@ -1245,6 +1247,7 @@ def answer(
         if cap.common_dir and cap.state == REPO
         else None
     )
+    out.update(independent_answer(question, out, history))
     asked = set(out.get("asked") or ())
     held = set(out.get("held") or ())
     wanted = [str(x).lower() for x in question.get("held") or ()]

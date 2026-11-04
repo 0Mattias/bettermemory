@@ -24,7 +24,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -32,7 +32,13 @@ from typing import Any
 
 import pytest
 
-from bettermemory import checkout_token, location, membership, project_file
+from bettermemory import (
+    checkout_token,
+    location,
+    location_git,
+    membership,
+    project_file,
+)
 from bettermemory.config import Config, MembershipConfig
 from bettermemory.history import quoted
 from bettermemory.location import (
@@ -3620,6 +3626,97 @@ def test_i40_a_clone_or_a_copy_inside_a_container(tmp_path: Path, lab: Lab) -> N
     res = box_e.post(lab)
     assert (res.outcome, res.rule) == (SILENT, "join:H+T")
     assert "h1" in lab.admitted(res)
+
+
+@dataclass
+class _Asked(Container):
+    """A container client that keeps each question it answers. With
+    `before_rc19` it plays a client before 9.0.0rc19: it leaves a question
+    for git's reading of tied witnesses unread and says nothing of it."""
+
+    before_rc19: bool = False
+    asked: list[dict[str, Any]] = field(default_factory=list)
+
+    def answer(
+        self,
+        cap: location.Capture,
+        question: Mapping[str, Any],
+        answers: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        self.asked.append(dict(question))
+        if self.before_rc19:
+            question = {k: v for k, v in question.items() if k != "independent"}
+        out = super().answer(cap, question, answers)
+        if self.before_rc19:
+            out = {k: v for k, v in out.items() if not k.startswith("independent")}
+        return out
+
+
+def _cut_short(
+    self: location.RepositoryHistory, commits: Sequence[str]
+) -> location_git.Reach:
+    """The traversal stopped by its bound before it read a commit, as a
+    tie further apart than it reads stops it: no relation, and bounded."""
+    return location_git.reachable_among(self, commits, limit=0)
+
+
+def test_e10_a_tie_in_a_container_is_ordered_as_on_the_host(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-216 (E10, design 8.7): a template, a product cloned from it and
+    declared a project of its own, a commit on the product; a new clone of
+    the product holds both projects' witnesses, and the bounded traversal
+    cannot order them (cut short here, as a fork and an upstream first seen
+    far apart cut it). On the host git orders the tie (ENG-203) and the
+    clone joins the product. A clone in a container, whose paths the
+    daemon cannot read, is asked once for its own git's reading of the
+    tied witnesses (``independent``), never for the traversal's, and joins
+    the product by the same rule. A client before 9.0.0rc19 is never asked
+    it; its traversal decides, as before, and the clone asks which project
+    it is, naming the bound."""
+    monkeypatch.setattr(location.RepositoryHistory, "reachable_among", _cut_short)
+    template = make_repo(tmp_path / "host" / "template", commits=2, remote=_DEVC)
+    lab.write("t1", template)
+    product = clone(template, tmp_path / "host" / "product", url=_DEVC)
+    joined = lab.caller(product).resolution
+    assert joined.project == lab.project_of("t1") and joined.checkout is not None
+    declared = lab._declaring().declare(
+        Declaration("new", _PRINCIPAL, checkout=joined.checkout, name="product")
+    )
+    location.forget()
+    commit(product)
+    lab.write("p1", product)
+    assert lab.project_of("p1") == declared.project != lab.project_of("t1")
+
+    on_host = lab.caller(clone(product, tmp_path / "host" / "fresh", url=_DEVC))
+    host = on_host.resolution
+    box = _Asked(
+        clone(product, tmp_path / "box" / "fresh", url=_DEVC),
+        "/work/fresh",
+        _container_machine(lab, "container-a"),
+    )
+    there = box.post(lab)
+    older = _Asked(
+        clone(product, tmp_path / "older" / "fresh", url=_DEVC),
+        "/work/fresh",
+        _container_machine(lab, "container-b"),
+        before_rc19=True,
+    )
+    asked = older.post(lab)
+
+    assert (host.outcome, host.project) == (SILENT, declared.project)
+    assert (there.outcome, there.project, there.rule) == (
+        host.outcome,
+        host.project,
+        host.rule,
+    )
+    tied = [q["independent"] for q in box.asked if "independent" in q]
+    assert len(tied) == 1 and len(tied[0]) > 1
+    assert not any("ancestry" in q for q in box.asked)
+    assert (asked.outcome, asked.rule) == (ASK, "ask:several_projects")
+    assert set(asked.candidates) == {declared.project, lab.project_of("t1")}
+    assert "(at most 512 commits read)" in asked.lines[-1]
+    assert any("ancestry" in q for q in older.asked)
 
 
 def test_i41_throwaway_containers_cloning_with_the_committed_file(

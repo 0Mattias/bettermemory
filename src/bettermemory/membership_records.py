@@ -396,7 +396,8 @@ class HistoryReader(Protocol):
 class IndependentReader(Protocol):
     """A `HistoryReader` that can also ask git for the commits of a batch
     no other of them reaches (`location_git.RepositoryHistory.independent`,
-    ENG-203): None where git does not answer. It spawns a process, so the
+    ENG-203; a hook client's git, `location_witness.AnsweredHistory`,
+    ENG-216): None where git does not answer. It spawns a process, so the
     ladder reads it before its write transaction (`NeedIndependent`)."""
 
     def independent(self, commits: Sequence[str]) -> frozenset[str] | None: ...

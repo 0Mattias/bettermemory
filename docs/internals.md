@@ -564,7 +564,11 @@ The first rung that answers decides (`Membership.resolve`):
    how far apart they lie: the transaction rolls back before anything is
    written (`NeedIndependent`), git runs once with no lock held, and the
    ladder runs again with its answer; a tie on one shared witness asks
-   no git. Git is held to the parent lines the objects hold (no replace
+   no git. Where the daemon cannot read the repository (a container's),
+   the witness exchange asks the hook client instead, once, in a round of
+   its own (``independent``, ENG-216): the client runs the same call in
+   its own namespace, and only a client that says it answers
+   (``independent_ok``, from 9.0.0rc19) is asked. Git is held to the parent lines the objects hold (no replace
    refs, commit-graph or grafts file; the runner fetches nothing) and to
    one second, and the history reader takes a commit's parents as git
    does, from the `parent` lines directly after `tree`. Otherwise, or
@@ -587,8 +591,9 @@ The first rung that answers decides (`Membership.resolve`):
    short). That keeps more projects, never fewer, on a history without
    cycles; a forged object store can close a cycle the bound reads one
    way round. A project keeps its 16 first witnesses for its whole life,
-   so where git cannot be asked, a fork and its upstream tied where the
-   upstream was first seen more than about 512 commits down still ask.
+   so where git cannot be asked (no git, a client before 9.0.0rc19), a
+   fork and its upstream tied where the upstream was first seen more
+   than about 512 commits down still ask.
    With `strict = true` a join resting on history without F or B asks.
 5. A contradiction, one witness, or content alone: ASK ONCE.
 6. No witness: NEW, line L2.

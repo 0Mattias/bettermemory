@@ -1038,6 +1038,153 @@ def test_where_git_does_not_answer_the_traversal_decides(
     assert RepositoryHistory(common).independent(witnesses) is None
 
 
+def _ordered(
+    reader: Any, held: dict[str, set[str]], tmp_path: Path
+) -> tuple[list[str], list[tuple[str, ...]]]:
+    """The most-specific rule as a resolution outside a caller's transaction
+    runs it: where it wants git (`NeedIndependent`), git's answer read
+    from `reader` and the rule run again. The projects kept, and the sets
+    of witnesses git was asked about."""
+    store = Store(tmp_path / "store")
+    asked: list[tuple[str, ...]] = []
+    try:
+        model = Membership(store, "machine")
+        loc = Location(machine="machine", cwd="/w/fork", state="repo", history=reader)
+        model._ancestry = {}
+        try:
+            return model._most_specific(loc, held), asked
+        except membership_records.NeedIndependent as need:
+            asked.append(need.commits)
+            model._ancestry[need.commits] = reader.independent(need.commits)
+        return model._most_specific(loc, held), asked
+    finally:
+        store.close()
+
+
+def _before_rc19(answers: dict[str, Any]) -> dict[str, Any]:
+    """`answers` as a hook client before 9.0.0rc19 posts them: nothing said
+    of git's reading of tied witnesses."""
+    return {k: v for k, v in answers.items() if not k.startswith("independent")}
+
+
+@pytestmark_git
+def test_a_container_client_orders_a_tie_past_the_bound_as_git_on_the_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-216: the tie of ENG-203's headline, a fork and its upstream whose
+    witnesses lie further apart than the traversal reads, where the
+    repository is one the daemon cannot read (a container's). The client
+    says it answers git's reading (``independent_ok``); the daemon asks it
+    of the tied witnesses once (``independent``), and the client runs the
+    call the host runs (`RepositoryHistory.independent`), in its own
+    namespace: its answer, read back through `AnsweredHistory`, names the
+    witness the host's git names, and the rule keeps the fork as on the
+    host. A client before 9.0.0rc19 says nothing, is never asked, and its
+    traversal, cut short by the bound, keeps both lines and asks, as
+    before."""
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    line = _fast_line(repo, 2_000)
+    held, witnesses = _apart(line)
+    cap = capture(str(repo), write_token=False, use_cache=False)
+    assert cap.common_dir is not None
+    host = RepositoryHistory(cap.common_dir)
+    newest = max(witnesses, key=line.index)
+    answers = location.answer({"held": witnesses}, {}, cap)
+    assert answers["independent_ok"] is True and "independent" not in answers
+
+    with pytest.raises(location.NeedWitnesses) as need:
+        location.AnsweredHistory(answers).independent(witnesses)
+    assert need.value.question == {"independent": sorted(witnesses)}
+    answers = location.answer(need.value.question, answers, cap)
+    client = location.AnsweredHistory(answers)
+
+    assert client.independent(witnesses) == host.independent(witnesses)
+    assert client.independent(witnesses) == frozenset({newest})
+    on_host = _ordered(host, held, tmp_path / "host")
+    in_container = _ordered(client, held, tmp_path / "container")
+    assert on_host == in_container == (["P2"], [tuple(sorted(witnesses))])
+
+    older = _before_rc19(answers)
+    assert location.AnsweredHistory(older).independent(witnesses) is None
+    with pytest.raises(location.NeedWitnesses) as need:
+        _ordered(location.AnsweredHistory(older), held, tmp_path / "older")
+    assert sorted(need.value.question) == ["ancestry"]
+    older = _before_rc19(location.answer(need.value.question, older, cap))
+    assert older["ancestry_bounded"] is True
+    kept, asked = _ordered(location.AnsweredHistory(older), held, tmp_path / "old")
+    assert kept == ["P1", "P2"]
+    assert asked == [tuple(sorted(witnesses))]
+
+
+def test_a_client_answer_that_names_no_commit_it_was_asked_about_is_none() -> None:
+    """ENG-216: the daemon reads a client's git answer as it reads its own
+    git's (`RepositoryHistory.independent`): one naming a commit it was
+    not asked about, or none, is no answer, and the traversal decides;
+    one set is never asked of more than `INDEPENDENT_MAX` commits, and a
+    single commit is its own answer."""
+    a, b, c = _sha(1), _sha(2), _sha(3)
+    told = {
+        "independent_ok": True,
+        "independent": [
+            {"of": [a, b], "top": [c]},
+            {"of": [a, c], "top": []},
+            {"of": [b, c], "top": [c]},
+            {"of": "garbage"},
+        ],
+    }
+    answered = location.AnsweredHistory(told)
+
+    assert answered.independent([b, a]) is None
+    assert answered.independent([c, a]) is None
+    assert answered.independent([c, b, b.upper()]) == frozenset({c})
+    assert answered.independent([a]) == frozenset({a})
+    assert answered.independent([_sha(i) for i in range(INDEPENDENT_MAX + 1)]) is None
+    with pytest.raises(location.NeedWitnesses):
+        answered.independent([a, b, c])
+
+
+@pytestmark_git
+def test_the_client_runs_git_only_when_a_tie_asks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-216: the client spawns its ``merge-base --independent`` only for
+    the daemon's ``independent`` question, once each time it is asked;
+    every other answer says it can (``independent_ok``) and runs nothing
+    more, and an answer given in an earlier round is kept beside the next
+    one's."""
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    line = _fast_line(repo, 6)
+    cap = capture(str(repo), write_token=False, use_cache=False)
+    calls: list[tuple[str, ...]] = []
+    real = RepositoryHistory.independent
+
+    def counted(self: RepositoryHistory, commits: Sequence[str]) -> Any:
+        calls.append(tuple(commits))
+        return real(self, commits)
+
+    monkeypatch.setattr(RepositoryHistory, "independent", counted)
+    answers = location.answer({"held": line}, {}, cap)
+    answers = location.answer({"ancestry": line[:3], "blobs": [line[0]]}, answers, cap)
+    assert calls == []
+    assert answers["independent_ok"] is True
+
+    answers = location.answer({"independent": [line[1], line[4]]}, answers, cap)
+    answers = location.answer({"independent": [line[0], line[2]]}, answers, cap)
+    answers = location.answer({"held": [line[5]]}, answers, cap)
+
+    assert calls == [tuple(sorted([line[1], line[4]])), tuple(sorted(line[0:3:2]))]
+    assert answers["independent"] == [
+        {"of": sorted([line[1], line[4]]), "top": [line[4]]},
+        {"of": sorted([line[0], line[2]]), "top": [line[2]]},
+    ]
+
+
 def _two_roots(repo: Path) -> tuple[str, str]:
     """Two unrelated root commits in a new repository, P and X, X
     committed a hundred seconds after P."""

@@ -154,8 +154,9 @@ NO_CWD = "<no working directory>"
 NO_MACHINE = "<no machine>"
 #: Rounds of the witness exchange a client answers before it stops (a
 #: prompt's hook then goes on without its resolution). Each round answers
-#: one kind of question (held, walk, ancestry, blobs, views, remint) and the
-#: answers accumulate; measured over the exchanges the suite runs
+#: one kind of question (held, walk, ancestry or, from 9.0.0rc19, git's
+#: reading of tied witnesses, blobs, views, remint) and the answers
+#: accumulate; measured over the exchanges the suite runs
 #: (tests/test_hook.py, test_membership_remint, test_membership_security,
 #: test_membership_resolution, test_location_reachable; ENG-160): 16
 #: exchanges took 1 round in 4, 2 in 10 and 3 in 2. Eight bounds a prompt
@@ -1022,7 +1023,9 @@ class RepositoryHistory:
         (an object it cannot read) or names no commit or one it was not
         given, and for more than `INDEPENDENT_MAX` commits. It spawns a
         process, so the model reads it before the resolution's write
-        transaction, never inside it (`membership_resolve.resolve`)."""
+        transaction, never inside it (`membership_resolve.resolve`). A hook
+        client the daemon cannot read for runs it when asked, in its own
+        namespace (`location_witness.independent_answer`, ENG-216)."""
         given = sorted(
             {c.lower() for c in commits if _FULL_HASH.fullmatch(c.lower()) is not None}
         )

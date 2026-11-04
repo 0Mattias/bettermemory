@@ -109,6 +109,36 @@ eighteenth was built.
   `src/bettermemory/location_witness.py`, `src/bettermemory/location.py`,
   `docs/internals.md`)
 
+- **A tie in a container is ordered by git as on the host (ENG-216).**
+  Since 9.0.0rc18 git orders the witnesses of several tied projects
+  (`git merge-base --independent`, ENG-203) where the store's machine
+  reads the repository. Where it cannot, a container whose checkout the
+  daemon on the host cannot see, the hook client answering over the
+  witness exchange, the bounded traversal still decided: it reads at most
+  512 commits, so a fork and an upstream first seen far apart, or a
+  history whose committer times fall from parent to child, asked at every
+  new clone there and joined on the host. The daemon now asks the client
+  for git's reading of the tied witnesses (`independent`), once a
+  resolution, in the round that would have asked for the traversal's, and
+  the client runs the call the daemon runs on a repository it reads, in
+  its own namespace: no replace refs, commit-graph or grafts file, no
+  fetch, one second and at most 256 witnesses. Its answer is read as the
+  daemon reads its own git's, and where it names no witness or one not
+  asked, or git did not answer, the traversal decides as before. A tie
+  in a container now joins by the rule a tie on the host joins by; the
+  client spawns one more git only when a resolution ties, and the
+  exchange takes as many rounds as before (two questions in the
+  measured tie: the held commits, then git's reading in place of the
+  traversal's), one more where the client's git does not answer. Only a client that says it answers
+  (`independent_ok`, from 9.0.0rc19) is asked: one before it is not, and
+  its traversal decides as before; a daemon before it never asks, and
+  ignores the client's key. The ENG-203 entry's "a container's hook
+  client runs no `merge-base`" no longer holds for a client of this
+  candidate. (`src/bettermemory/location_witness.py`,
+  `src/bettermemory/location.py`, `src/bettermemory/location_git.py`,
+  `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_resolve.py`, `docs/internals.md`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a

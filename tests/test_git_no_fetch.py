@@ -25,10 +25,11 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from bettermemory import _git
+from bettermemory import _git, location, location_git
 from bettermemory.location_git import RepositoryHistory
 
 _POSIX = os.name == "posix"
@@ -387,3 +388,49 @@ def test_a_blob_a_partial_clone_lacks_reads_as_absent_on_every_platform(
             pytest.skip("GIT_NO_LAZY_FETCH is read from git 2.44")
         monkeypatch.setattr(_git, "NO_FETCH", kept)
     assert blobless.read_first() is None
+
+
+def test_a_clients_tie_answer_runs_git_under_the_pins_the_daemons_call_has(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-216: a hook client asked for git's reading of tied witnesses
+    (`location.answer`, ``independent``) runs the daemon's own call
+    (`RepositoryHistory.independent`) through `run_git`: both no-fetch
+    pins and the scrub, no replace refs, no commit-graph, no grafts file,
+    and its one-second bound. A blobless clone shows it on every platform,
+    Windows included."""
+    config = tmp_path / "global.cfg"
+    config.write_text("")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    monkeypatch.setenv("GIT_NO_LAZY_FETCH", "0")
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "ext:file")
+    clone = Blobless(tmp_path).repo
+    head = _plain_git(clone, "rev-parse", "HEAD")
+    root = _plain_git(clone, "rev-list", "--max-parents=0", "HEAD")
+    calls: list[tuple[list[str], dict[str, str], float]] = []
+    real = subprocess.run
+
+    def spy(command: list[str], *args: Any, **kwargs: Any) -> Any:
+        calls.append((list(command), dict(kwargs["env"]), kwargs["timeout"]))
+        return real(command, *args, **kwargs)
+
+    cap = location.capture(str(clone), write_token=False, use_cache=False)
+    monkeypatch.setattr(subprocess, "run", spy)
+
+    answers = location.answer({"independent": [root, head]}, {}, cap)
+
+    assert answers["independent"] == [{"of": sorted([root, head]), "top": [head]}]
+    (command, env, timeout), *_ = [c for c in calls if "merge-base" in c[0]]
+    assert command[command.index("merge-base") :] == [
+        "merge-base",
+        "--independent",
+        *sorted([root, head]),
+    ]
+    assert "--no-replace-objects" in command
+    assert "core.commitGraph=false" in command
+    assert env["GIT_NO_LAZY_FETCH"] == "1"
+    assert env["GIT_ALLOW_PROTOCOL"] == ""
+    assert env["GIT_GRAFT_FILE"] == os.devnull
+    assert not set(_git.SCRUBBED_ENV) & set(env)
+    assert timeout == location_git.INDEPENDENT_SECONDS

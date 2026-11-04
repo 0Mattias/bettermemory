@@ -6,15 +6,17 @@ what the client sent instead: `AnsweredHistory` (the history),
 re-mint the store already recorded) and `AnsweredLiveness` (a view's
 liveness); and the client's reading of a view question (`asked_views`),
 its answer to a re-mint question (`remint_answer`) and whether that
-answer found another session's re-mint (`remint_refused`); and what the
-daemon read itself for one exchange, kept from round to round
-(`ExchangeReads`).
+answer found another session's re-mint (`remint_refused`), and its
+answer to a question for git's reading of tied witnesses
+(`independent_answer`); and what the daemon read itself for one
+exchange, kept from round to round (`ExchangeReads`).
 
 They live apart from `location.py` to keep that module under the
 package's 2,000-line bound (ENG-96). They import nothing from
 `location`: the standard library, `checkout_token` and `location_git`'s
-hash pattern, kinds, `Capture` and object-key reader, with the
-membership types they annotate under TYPE_CHECKING. `location` imports
+hash pattern, kinds, bounds, `Capture`, history reader and object-key
+reader, with the membership types they annotate under TYPE_CHECKING.
+`location` imports
 this module and re-exports the four readers under their old names, so a
 hook loads it only with `location`, for the exchange.
 """
@@ -30,7 +32,16 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from . import checkout_token
-from .location_git import _FULL_HASH, BARE, PRIMARY, Capture, Reach, _key
+from .location_git import (
+    _FULL_HASH,
+    BARE,
+    INDEPENDENT_MAX,
+    PRIMARY,
+    Capture,
+    Reach,
+    RepositoryHistory,
+    _key,
+)
 
 if TYPE_CHECKING:
     from .membership import Checkout, Location, Membership, View
@@ -85,7 +96,9 @@ class AnsweredHistory:
     `NeedWitnesses` naming it, so the daemon reads none of the client's
     paths. The first question for held commits names every witness id the
     caller passed, so one round answers the model's one batch (design
-    3.2)."""
+    3.2). It is a `membership_records.IndependentReader`: git's reading
+    of tied witnesses is asked of a client that says it answers one
+    (`independent`, ENG-216)."""
 
     def __init__(self, answers: Mapping[str, Any]) -> None:
         self._asked = {str(x).lower() for x in answers.get("asked") or ()}
@@ -110,6 +123,9 @@ class AnsweredHistory:
         if isinstance(raw_blobs, Mapping):
             for sha, ids in raw_blobs.items():
                 self._blobs[str(sha).lower()] = tuple(str(i).lower() for i in ids or ())
+        # A client before 9.0.0rc19 does not say: the traversal decides.
+        self._independent_ok = answers.get("independent_ok") is True
+        self._independent = _independent_answers(answers.get("independent"))
 
     def _ids(self, ids: Sequence[str]) -> set[str]:
         wanted = {i.lower() for i in ids}
@@ -159,6 +175,76 @@ class AnsweredHistory:
         if hit is not None:
             return hit
         raise NeedWitnesses({"blobs": [sha]})
+
+    def independent(self, commits: Sequence[str]) -> frozenset[str] | None:
+        """The commits of `commits` (full ids) no other of them reaches, as
+        the client's ``git merge-base --independent`` named them in its own
+        namespace (`independent_answer`, ENG-216): the call the daemon
+        makes where it reads the repository
+        (`location_git.RepositoryHistory.independent`). A set not answered
+        yet raises `NeedWitnesses` naming it; the resolution asks before
+        its transaction (`membership_resolve.resolve`), so its round ends
+        there. None, and the bounded traversal decides as before, for a
+        client before 9.0.0rc19 (no ``independent_ok``), where the
+        client's git did not answer, and for more than `INDEPENDENT_MAX`
+        commits, which are never asked."""
+        given = tuple(
+            sorted({c.lower() for c in commits if _FULL_HASH.fullmatch(c.lower())})
+        )
+        if len(given) < 2:
+            return frozenset(given)
+        if len(given) > INDEPENDENT_MAX or not self._independent_ok:
+            return None
+        if given in self._independent:
+            return self._independent[given]
+        raise NeedWitnesses({"independent": list(given)})
+
+
+def _independent_answers(raw: Any) -> dict[tuple[str, ...], frozenset[str] | None]:
+    """The client's answers to the daemon's ``independent`` questions, by
+    the commits asked: each ``{"of": [...], "top": [...] or null}``, where a
+    ``top`` that names no commit, or one not asked, is no answer (None), as
+    the daemon reads its own git's (`RepositoryHistory.independent`).
+    Malformed entries are left out."""
+    out: dict[tuple[str, ...], frozenset[str] | None] = {}
+    for entry in raw if isinstance(raw, list) else ():
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("of"), list):
+            continue
+        of = tuple(sorted({str(c).lower() for c in entry["of"]}))
+        top = entry.get("top")
+        named = (
+            frozenset(str(c).lower() for c in top) if isinstance(top, list) else None
+        )
+        out[of] = named if named and named <= set(of) else None
+    return out
+
+
+def independent_answer(
+    question: Mapping[str, Any],
+    answers: Mapping[str, Any],
+    history: RepositoryHistory | None,
+) -> dict[str, Any]:
+    """What the client adds to its answers for git's reading of tied
+    witnesses (ENG-216): ``independent_ok``, which says it answers the
+    question, and, where the question names commits (``independent``), the
+    ones ``merge-base --independent`` names among them, read in its own
+    namespace by the call the daemon makes on a repository it reads
+    (`RepositoryHistory.independent`: no replace refs, commit-graph or
+    grafts, no fetch, one second, at most `INDEPENDENT_MAX` ids), kept
+    beside the answers of earlier rounds. Git runs only when asked, which
+    is when a resolution ties; ``top`` is null where git did not answer or
+    no repository is here, and the daemon's traversal decides."""
+    out: dict[str, Any] = {"independent_ok": True}
+    kept = [e for e in answers.get("independent") or () if isinstance(e, Mapping)]
+    asked = question.get("independent")
+    if isinstance(asked, list) and asked:
+        of = sorted({str(c).lower() for c in asked})
+        top = None if history is None else history.independent(of)
+        kept = [e for e in kept if e.get("of") != of]
+        kept.append({"of": of, "top": None if top is None else sorted(top)})
+    if kept:
+        out["independent"] = kept
+    return out
 
 
 class AnsweredToken:
