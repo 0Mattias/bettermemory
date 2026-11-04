@@ -549,7 +549,18 @@ The first rung that answers decides (`Membership.resolve`):
    prompt decides. Outside any repository and any project file: global.
 1. A declaration: an answered question, `project init`, `memory move`.
 2. O: the same checkout. A new path adds a view (`checkout_moved` or
-   `checkout_view_added`).
+   `checkout_view_added`). Without birth time a folder checkout's object
+   is confirmed by its project file bound to the checkout's project
+   (B20). Where no checkout is continued, a folder asked about on its
+   file alone (rung 5) is the checkout its question is still open
+   about, where the folder shows the evidence it was asked on (its
+   signature, the file) at a path the checkout was seen at
+   (`membership_resolve._asked_folder`): later sessions there are asked
+   that question rather than each opening a provisional project and a
+   question of their own (ENG-219). A checkout birth time or a bound
+   file continues comes first, so one an answer settled outranks a
+   question left open beside it; the folder moved, with another file, or
+   with another birth time is asked about again.
 3. S: another checkout of the same project (a linked worktree).
 4. Two independent witnesses agreeing, nothing contradicting: the
    project (`resolution_joined` with the witnesses). With B the recorded
@@ -1140,25 +1151,25 @@ only: a capture with the token write off.
   it: a provisional project, a checkout with a view at that folder, and
   an open `one_witness` question naming the part, which `project
   pending`, the health report and `project show` of the part list, and
-  which only sessions at that folder are asked; without birth time,
-  later sessions at that folder each open their own question until
-  ENG-219. The records after it find that view as their root and keep
-  the home it replaced (`_Run._d4_home`), with no second resolution; one
-  below it at a location of its own (a project file between, or another
-  repository) goes through the gate against that home, as before. A
-  later run, like a run after a session asked at that folder, finds the
-  view as a root: a record written at that folder since, or below it at
-  no location of its own, goes to that checkout's project by D4: the
-  provisional project while the question is open, the project a session
-  there joins where birth time is read, and once it is answered the
-  project its answer gave the checkout. Below any root at a location of
-  its own (`_Run._own_below`), the gate also reads the cwd against the
-  next root outside that root's checkout's views, whether a question
-  about that checkout is open, answered or was never asked (ENG-222), so
-  a part of the enclosing project declared below the folder keeps its
-  records in a later run too, where a session in the part receives
-  them, after the folder's question is answered as before it; so does a
-  part of the enclosing project declared inside another part's folder.
+  which only sessions at that folder are asked, each that one question,
+  without birth time too (ENG-219, ladder rung 2). The records after it
+  find that view as their root and keep the home it replaced
+  (`_Run._d4_home`), with no second resolution; one below it at a
+  location of its own (a project file between, or another repository)
+  goes through the gate against that home, as before. A later run, like
+  a run after a session asked at that folder, finds the view as a root:
+  a record written at that folder since, or below it at no location of
+  its own, goes to that checkout's project by D4: the provisional
+  project while the question is open, the project a session there joins,
+  and once it is answered the project its answer gave the checkout.
+  Below any root at a location of its own (`_Run._own_below`), the gate
+  also reads the cwd against the next root outside that root's
+  checkout's views, whether a question about that checkout is open,
+  answered or was never asked (ENG-222), so a part of the enclosing
+  project declared below the folder keeps its records in a later run
+  too, where a session in the part receives them, after the folder's
+  question is answered as before it; so does a part of the enclosing
+  project declared inside another part's folder.
   A store migrated before this rule keeps its homes, since the migration
   homes only records with none: a record `cwd_in_root` homed in what is
   now a part's folder stays with the enclosing project, whose records a

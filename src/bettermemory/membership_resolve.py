@@ -4,7 +4,8 @@
 `_tally` collects each project's witnesses and `_strength` counts them,
 `_first_sight` takes a new checkout to `_join`, `_ask` or `_new`,
 `_observe` adds what a sighting shows, and `_subproject` and
-`_resolve_folder` read nested project files and plain folders.
+`_resolve_folder` read nested project files and plain folders;
+`_asked_folder` finds the folder a question is open about after rung 2.
 
 Each function takes the model as `self: Membership` and reaches its state
 (`_store`, `_rows`, `_remint`) and core methods through it; the class
@@ -72,6 +73,7 @@ from .membership_records import (
     SILENT,
     SUBPROJECT_CONTRADICTION,
     SUPERSEDED,
+    UNPROVEN,
     UNREADABLE,
     UNRESOLVED,
     WALK_LIMIT,
@@ -1415,6 +1417,8 @@ def _resolve_folder(
             tenant=tenant,
         )
     k, _how = self._by_object(loc)
+    if k is None:
+        k = _asked_folder(self, loc)
     if k is not None and k.kind == FOLDER:
         k = self._touch_view(k, loc)
         if loc.manifest is not None and loc.manifest != k.manifest:
@@ -1530,6 +1534,51 @@ def _resolve_folder(
         tenant,
         [],
     )
+
+
+def _asked_folder(self: Membership, loc: Location) -> Checkout | None:
+    """The folder checkout this folder was asked about (rung 5, `_ask`),
+    where rung 2 continued none (`Membership._by_object`): one with its
+    device and inode number that birth time cannot tell apart from it
+    (``unproven``), seen at this path on this machine, whose first-sight
+    question is still open on the evidence the folder shows now (its
+    signature: the project file's id); the first in order. An asked
+    checkout's file names the project asked about, never its provisional
+    one, so without birth time B20's witness (the file bound to the
+    checkout's project, `Membership._confirms`) never continued it, and
+    each session there opened a project and a question of its own
+    (ENG-219). It is read only after rung 2, so a checkout birth time
+    proves, or one a user's answer settled (its file bound to its
+    project), always comes first: an open question left beside an answered
+    one (duplicates a build before this left, a folder moved, asked and
+    answered at its new path, then moved back) is not asked again. Another
+    copy of the file is another object; the folder at another path, or
+    with another file, is asked about again."""
+    key, rf = loc.object_key, loc.root_file
+    if key is None or rf is None:
+        return None
+    here = loc.root or loc.cwd
+    asked = _signature(loc)
+    for k in self._checkouts(
+        where={
+            "machine": loc.machine,
+            "object_device": key.device,
+            "object_inode": key.inode,
+        }
+    ):
+        if (
+            k.kind != FOLDER
+            or k.object_key is None
+            or k.object_key.compare(key) != UNPROVEN
+            or not any(_same_path(v.path, here) for v in k.views_on(loc.machine))
+        ):
+            continue
+        if any(
+            pr.kind == FIRST_SIGHT and pr.signature == asked
+            for pr in self._open_proposals(k.id)
+        ):
+            return k
+    return None
 
 
 def _declared_folder(

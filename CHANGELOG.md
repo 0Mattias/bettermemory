@@ -143,6 +143,38 @@ eighteenth was built.
   `src/bettermemory/membership_records.py`,
   `src/bettermemory/membership_resolve.py`, `docs/internals.md`)
 
+- **Without birth time a folder asked about on its project file alone is
+  asked once, not at every session (ENG-219).** Where the filesystem
+  reports no birth time (NFS, SMB, some containers), rung 2 continues a
+  folder checkout with the folder's device and inode number only where
+  its project file is bound to the checkout's project (decision B20). A
+  folder the ladder asks about on that file alone, such as one holding a
+  copy of a part's file and other content, gets a provisional project,
+  while its file names the project asked about, never that one, so
+  nothing continued it: each session there minted another provisional
+  project and opened another `one_witness` question (three sessions,
+  three projects and three open questions), where with birth time the
+  second session finds the first one's checkout by its folder's object.
+  Where rung 2 continues no checkout, the ladder now takes the one the
+  folder was asked about: of its device and inode number, seen at its
+  path, its first-sight question still open on the evidence the folder
+  shows (the question's signature, which names the file's id). So the
+  second and later sessions there, and in folders below it, resolve to
+  the first session's provisional checkout and are asked its question,
+  with no new project or question, in both modes; so are sessions at a
+  folder a migration run asked about, which the 9.0.0rc18 ENG-212 entry
+  said opened their own questions. Since it is read after rung 2, a
+  checkout birth time or a bound file continues comes first, so one a
+  user's answer joined to the part outranks a question left open beside
+  it: duplicates an earlier build left there, or a folder asked about
+  and answered at the path it was moved to, then moved back, resolve
+  silently to the answered checkout as before. A copy of the file
+  elsewhere, the folder at another path (moved), the folder with another
+  file, and a folder whose birth time tells it from the asked one are
+  asked about again.
+  (`src/bettermemory/membership_resolve.py`,
+  `tests/test_membership_asked_folder.py`, `docs/internals.md`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a

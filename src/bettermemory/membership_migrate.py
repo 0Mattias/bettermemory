@@ -1636,8 +1636,8 @@ class _Run:
         about), and the records after it there would find that view as
         their root, and the provisional project it names. They keep the
         home the view replaced (`passed_over`), as the first record did: at
-        that location with no second resolution (a session there is asked;
-        without birth time the ladder would ask again, ENG-219), and below
+        that location with no second resolution (a session there is asked
+        that question, with birth time or without, ENG-219), and below
         it at a location of its own (a project file between, or another
         repository) through the gate against that home. Only a view the
         resolution added is kept so, the root the cwd is found in after it,

@@ -507,10 +507,10 @@ def test_every_record_at_a_folder_the_ladder_asks_about_keeps_d4(
     view at the copy's folder, and one open question about that checkout
     (``one_witness``). The next record at the copy, and one in a folder
     below it, find that view as their root; they keep the enclosing project
-    too, and the ladder is not asked again (without birth time it would
-    ask again, ENG-219). A later run finds the view the first one left, and
-    a record written at the copy since goes to the provisional project the
-    question is about, by D4, as a session there joins it."""
+    too, and the ladder is not asked again. A later run finds the view the
+    first one left, and a record written at the copy since goes to the
+    provisional project the question is about, by D4, as a session there
+    joins it, with birth time and without (ENG-219)."""
     store, config = lab
     copy, known, part = _copy_of_a_part(tmp_path, store, config)
     (copy / "notes").mkdir()
@@ -728,8 +728,9 @@ def test_a_moved_copy_keeps_its_old_paths_records_with_its_question(
     and gives it a view there; passing that checkout over everywhere would
     send the record at `copyA` to the enclosing project. Without it the
     ladder cannot tell the moved folder is that checkout's (its file names
-    the part, not the asked project), asks about it again (ENG-219) and
-    registers a checkout of its own there, which has no other view."""
+    the part, not the asked project, and the open question confirms the
+    checkout only at a path it was seen at, ENG-219), asks about it again
+    and registers a checkout of its own there, which has no other view."""
     store, config = lab
     copy, known, _part = _copy_of_a_part(tmp_path, store, config)
     asked = _live(store, config, copy)
