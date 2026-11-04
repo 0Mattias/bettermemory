@@ -666,7 +666,14 @@ eighteenth was built.
   is stamped by its kind alone, since its times move with every write.
   The capture reads `config.worktree` after the repository's config
   where `extensions.worktreeConfig` is set, as git does, so a remote or
-  a rule set there is the repository's. The origin cache
+  a rule set there is the repository's; git takes the extension from
+  the common config file alone, as its read of the repository's format
+  does (no include followed, cleared where no
+  `core.repositoryformatversion` is set), and so does the capture, which
+  took it through an include too and keyed a remote `git remote` does
+  not list; where git dies on that format, no remote is read. Where git
+  does not read `config.worktree`, an origin hit no longer states it,
+  one stat fewer. The origin cache
   (`origin.capture`), which saw a rule in the global config or in a file
   the repository's config includes only once its ten minutes ran out, is
   kept against the same config files, the machine's and the

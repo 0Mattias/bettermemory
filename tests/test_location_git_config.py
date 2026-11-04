@@ -229,6 +229,101 @@ def test_config_worktree_is_read_where_git_reads_it(tmp_path: Path) -> None:
     assert location.capture(str(repo), write_token=False) is added
 
 
+#: How the common config spells ``extensions.worktreeConfig`` in each
+#: case below, and whether git 2.54 then reads ``config.worktree``.
+_WORKTREE_SPELLINGS = {
+    "common": ("[extensions]\n\tworktreeConfig = true\n", True),
+    "bare-key": ("[extensions]\n\tworktreeConfig\n", True),
+    "last-false": (
+        "[extensions]\n\tworktreeConfig = true\n\tworktreeConfig = no\n",
+        False,
+    ),
+    "subsection": ('[extensions "x"]\n\tworktreeConfig = true\n', False),
+    "include": ("[include]\n\tpath = {inc}\n", False),
+    "unversioned": ("[extensions]\n\tworktreeConfig = true\n", False),
+    "negative": (
+        "[core]\n\trepositoryformatversion = -2\n[extensions]\n\tworktreeConfig = true\n",
+        True,
+    ),
+    "version-1": (
+        "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tworktreeConfig = true\n",
+        True,
+    ),
+}
+
+
+@pytest.mark.parametrize("spelled", sorted(_WORKTREE_SPELLINGS))
+def test_config_worktree_is_read_where_the_common_config_itself_says(
+    tmp_path: Path, spelled: str
+) -> None:
+    """The reviewer's R14: git takes ``extensions.worktreeConfig`` from the
+    common config file alone, as its read of a format takes it (setup.c,
+    no include followed), and clears it where no
+    ``core.repositoryformatversion`` is set; the capture took it from
+    the config as read with its includes, so an include that set it had a
+    remote in ``config.worktree`` keyed that ``git remote`` does not list.
+    It reads it as git does now (`gitfile_rule.reads_worktree_config`):
+    each spelling keys the remote exactly where git lists it."""
+    repo = _repo(tmp_path / "wt")
+    _git(repo, "remote", "add", "origin", "https://example.invalid/team/origin")
+    (repo / ".git" / "config.worktree").write_text(
+        '[remote "wt"]\n\turl = https://example.invalid/team/wt\n', encoding="utf-8"
+    )
+    config = repo / ".git" / "config"
+    text, read = _WORKTREE_SPELLINGS[spelled]
+    if spelled == "unversioned":
+        _git(repo, "config", "--unset", "core.repositoryformatversion")
+    elif spelled in ("negative", "version-1"):
+        _git(repo, "config", "--unset", "core.repositoryformatversion")
+    inc = tmp_path / "ext.inc"
+    inc.write_text("[extensions]\n\tworktreeConfig = true\n", encoding="utf-8")
+    _append(config, text.format(inc=inc.as_posix()))
+    listed = _git_remotes(repo)
+    assert ("wt" in listed) is read, "premise: git 2.54 reads it so"
+    keys = _keys(repo)
+    assert "example.invalid/team/origin" in keys
+    assert ("example.invalid/team/wt" in keys) is read
+
+
+@pytest.mark.parametrize(
+    "spelled",
+    [
+        "[core]\n\trepositoryformatversion = 2\n",
+        "[extensions]\n\tworktreeConfig = maybe\n",
+        "[extensions]\n\tworktreeConfig = true\n[bad\n",
+    ],
+    ids=["version-2", "not-a-boolean", "bad-line"],
+)
+def test_a_format_git_dies_on_keys_no_remote(tmp_path: Path, spelled: str) -> None:
+    """Where the common config sets a format git dies on (a version above
+    1, an ``extensions.worktreeConfig`` that is no boolean, a line git's
+    parser refuses), git reads no remote of the repository. The capture
+    refuses the repository there already (`gitfile_rule.tree_format`), and
+    the reading of its remotes, which read the ones its own parse found,
+    reads none now either (`location_git._repository_config`); both read
+    them again once the config is mended, its stamp in the capture's
+    signature."""
+    repo = _repo(tmp_path / "dies")
+    _git(repo, "remote", "add", "origin", "https://example.invalid/team/origin")
+    config = repo / ".git" / "config"
+    mended = config.read_text(encoding="utf-8")
+    if "repositoryformatversion" in spelled:
+        _git(repo, "config", "--unset", "core.repositoryformatversion")
+    _append(config, spelled)
+    done = subprocess.run(["git", "remote"], cwd=repo, capture_output=True, text=True)
+    assert done.returncode != 0, "premise: git dies on the format"
+    assert location.capture(str(repo), write_token=False).remote_keys == ()
+    gitdir = str(repo / ".git")
+    assert location_git.remote_urls(gitdir, gitdir) == []
+    config.write_text(mended, encoding="utf-8")
+    assert _git_remotes(repo) == {"origin": ["https://example.invalid/team/origin"]}
+    keys = location.capture(str(repo), write_token=False).remote_keys
+    assert "example.invalid/team/origin" in keys
+    assert location_git.remote_urls(gitdir, gitdir) == [
+        "https://example.invalid/team/origin"
+    ]
+
+
 def test_a_gitfile_target_s_working_tree_is_read_as_git_reads_its_format(
     tmp_path: Path,
 ) -> None:

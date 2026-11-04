@@ -564,7 +564,12 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     directory. Measured on macOS (APFS), the same at any depth of the
     temporary directory, as (os.stat, os.lstat, opens, os.access) on so
     many paths: steady state 0 spawns, (10, 2, 3, 2) on 12 paths; after a
-    commit 0 spawns, (41, 17, 33, 6) on 22. ENG-211 reads a folder's own
+    commit 0 spawns, (41, 17, 34, 6) on 22. The fresh capture opens the
+    common config once more than it did (33), for its format alone,
+    whether git reads ``config.worktree`` (ENG-207's review, R14:
+    `gitfile_rule.reads_worktree_config`, no include followed, which the
+    reading of the remotes, includes and all, cannot answer); a steady
+    prompt reads it not at all. ENG-211 reads a folder's own
     ``.git`` directory's config (its ``core.worktree`` and ``core.bare``)
     at each judgment of it: one open a prompt, by the signature's walk
     (about 35 microseconds), and three after a commit, by the signatures
@@ -606,7 +611,7 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     report("after a commit", moved)
     assert moved.spawns == 0
     assert moved.stats <= 41 and moved.lstats <= 17 and len(moved.files) <= 22
-    assert moved.opens <= 33 and moved.accesses <= 6
+    assert moved.opens <= 34 and moved.accesses <= 6
 
 
 # ---------------------------------------------------------------------------

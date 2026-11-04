@@ -272,35 +272,21 @@ def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFor
         where, has_common = common or _git_common(git_dir)
     except _Unsettled:
         return TreeFormat(f"git cannot read {os.path.join(git_dir, 'commondir')}")
-    path = os.path.join(where, "config")
-    read = gitconfig.read_git_config(path, _FORMAT_NAMES)
-    if read.why is not None:
-        return TreeFormat(read.why)
-    version, worktree_config = -1, False
-    taken: dict[bytes, bytes | None] = {}
-    for name, value in read.entries:
-        if name == _VERSION:
-            number = gitconfig.git_int(value)
-            if number is None:
-                return TreeFormat(_dies(path, name))
-            version = number
-        elif name == _WORKTREE_CONFIG:
-            flag = gitconfig.git_bool(value)
-            if flag is None:
-                return TreeFormat(_dies(path, name))
-            worktree_config = flag
-        elif not _take(name, value, taken):
-            return TreeFormat(_dies(path, name))
+    read = _common_format(where)
+    if isinstance(read, str):
+        return TreeFormat(read)
+    version, worktree_config, taken = read
     if version < 0:
         return TreeFormat()
     if version > 1:
+        path = os.path.join(where, "config")
         return TreeFormat(f"{path} sets a repository format version git does not read")
     if worktree_config:
         path = os.path.join(git_dir, "config.worktree")
-        read = gitconfig.read_git_config(path, _FORMAT_NAMES)
-        if read.why is not None:
-            return TreeFormat(read.why)
-        for name, value in read.entries:
+        own = gitconfig.read_git_config(path, _FORMAT_NAMES)
+        if own.why is not None:
+            return TreeFormat(own.why)
+        for name, value in own.entries:
             if not _take(name, value, taken):
                 return TreeFormat(_dies(path, name))
     elif has_common:
@@ -310,6 +296,60 @@ def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFor
         worktree=None if worktree is None else os.fsdecode(worktree.split(b"\0", 1)[0]),
         bare=_BARE in taken and gitconfig.git_bool(taken[_BARE]) is True,
     )
+
+
+def _common_format(
+    common_dir: str,
+) -> tuple[int, bool, dict[bytes, bytes | None]] | str:
+    """The format the config in `common_dir` gives a git directory, as
+    setup.c's ``read_repository_format`` reads it (`tree_format`): its
+    ``core.repositoryformatversion`` (-1 where it is not set), its
+    ``extensions.worktreeConfig`` and the ``core.bare`` and
+    ``core.worktree`` it sets (`_take`), the last of each standing; or why
+    it is not known: a value git dies on, a file git cannot parse, one
+    larger than `gitconfig._FORMAT_LIMIT` and one that cannot be read."""
+    path = os.path.join(common_dir, "config")
+    read = gitconfig.read_git_config(path, _FORMAT_NAMES)
+    if read.why is not None:
+        return read.why
+    version, worktree_config = -1, False
+    taken: dict[bytes, bytes | None] = {}
+    for name, value in read.entries:
+        if name == _VERSION:
+            number = gitconfig.git_int(value)
+            if number is None:
+                return _dies(path, name)
+            version = number
+        elif name == _WORKTREE_CONFIG:
+            flag = gitconfig.git_bool(value)
+            if flag is None:
+                return _dies(path, name)
+            worktree_config = flag
+        elif not _take(name, value, taken):
+            return _dies(path, name)
+    return version, worktree_config, taken
+
+
+def reads_worktree_config(common_dir: str) -> bool | None:
+    """Whether git reads ``config.worktree`` in a git directory of the
+    repository whose common directory is `common_dir`, after its common
+    config, for every variable (ENG-207's review, R14): where the common
+    config file itself sets ``extensions.worktreeConfig`` true, read as
+    setup.c reads a format (`_common_format`: no include followed, so one
+    an include sets is not taken, as git does not take it) and as git
+    then keeps it: a ``core.repositoryformatversion`` that is not set
+    clears it (``read_repository_format``), and git 2.54 keeps it under
+    any other version it reads. None where git dies on that config: a
+    version above 1, a value or a file git refuses (`_common_format`),
+    where git reads no variable of the repository at all. Checked against
+    git's ``git remote`` (tests/test_location_git_config.py)."""
+    read = _common_format(common_dir)
+    if isinstance(read, str):
+        return None
+    version, worktree_config, _taken = read
+    if version > 1:
+        return None
+    return worktree_config and version != -1
 
 
 def _take(name: bytes, value: bytes | None, taken: dict[bytes, bytes | None]) -> bool:

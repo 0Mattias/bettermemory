@@ -389,8 +389,7 @@ def _capture_signature(start: Path) -> githead.Signature:
     HEAD's chain reads, packed-refs, config and the variables that move
     discovery), from the repository `githead.locate` finds where githead's
     discovery declines (`origin_gitfiles.capture_files`: off POSIX, and in
-    another account's repository), with the stamp of config.worktree, where git reads
-    core.worktree under extensions.worktreeConfig; the root spelled as git
+    another account's repository); the root spelled as git
     prints it (`_spelled_as_git`: the kernel's path on macOS, so a rename
     of the root or a directory above it that changes only the case or the
     Unicode normalisation of a name, under which the caller's old spelling
@@ -400,10 +399,10 @@ def _capture_signature(start: Path) -> githead.Signature:
     the common directory; and the machine's git config, the global and
     system files git reads and the files they include, stamped
     (`location_git.machine_config_stamps`, ENG-207), and the repository's
-    own, its config and config.worktree under extensions.worktreeConfig
-    with the files each includes (`location_git.repository_config_stamps`),
-    so an insteadOf rule or a remote set in any is seen as a location
-    capture sees it. Where the files do not settle the repository,
+    own, its config and, where git reads it, config.worktree (whose
+    core.worktree git reads too), with the files each includes
+    (`location_git.repository_config_stamps`), so an insteadOf rule or a
+    remote set in any is seen as a location capture sees it. Where the files do not settle the repository,
     the base signature already equals no other; where a stamp or the
     spelling cannot be read, a new object makes this one equal no other
     either."""
@@ -411,8 +410,7 @@ def _capture_signature(start: Path) -> githead.Signature:
     if gd is None:
         return base
     try:
-        extra: list[object] = [githead.stamp(gd.gitdir / "config.worktree")]
-        extra.append(machine_config_stamps(str(gd.gitdir)))
+        extra: list[object] = [machine_config_stamps(str(gd.gitdir))]
         extra.append(repository_config_stamps(str(gd.commondir), str(gd.gitdir)))
         spelled = _spelled_as_git(gd.worktree_root)
         extra.append(object() if spelled is None else str(spelled))
@@ -432,7 +430,8 @@ def _capture_signature(start: Path) -> githead.Signature:
 # than ORIGIN_CACHE_SECONDS on both clocks and the directory's signature
 # equals the entry's. The signature (`_capture_signature`) holds the git
 # directory the walk from the directory reaches, the bytes of its HEAD, the
-# stamps of its config, of config.worktree, of HEAD itself, of the loose
+# stamps of its config, of config.worktree where git reads it, of HEAD
+# itself, of the loose
 # refs HEAD's chain reads, of packed-refs and of the ref files that decide
 # the branch's short name, the root spelled as git prints it, the stamps of
 # the machine's git config files, of the repository's and of the files

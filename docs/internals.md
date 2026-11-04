@@ -533,9 +533,17 @@ git answers (R7); that check takes the process's answer without
 stating the git binary, which the capture's own re-read within
 `CACHE_SECONDS` does. Each such file costs a kept capture one stat
 (E16). The repository's config is its common config and, where that
-sets `extensions.worktreeConfig`, the git directory's `config.worktree`,
-which git reads after it: a remote or a rule set there, or in a file it
-includes, is the repository's, and `config.worktree` is stamped itself.
+file itself sets `extensions.worktreeConfig` true, the git directory's
+`config.worktree`, which git reads after it: a remote or a rule set
+there, or in a file it includes, is the repository's, and
+`config.worktree` is stamped itself. git takes the extension as its
+read of the repository's format does (`gitfile_rule.reads_worktree_config`):
+from the file alone, no include followed, and cleared where no
+`core.repositoryformatversion` is set; where git dies on that format
+(a version above 1, a value or a line it refuses) no remote is read.
+Where git does not read `config.worktree`, neither a capture nor an
+origin hit states it; the common config's stamp sees the extension
+switched on.
 An include under a condition the reader does not evaluate (`onbranch:`,
 `hasconfig:`) gives the capture none of its values, where git may take
 them, and is stamped all the same. The origin cache (`origin.capture`)

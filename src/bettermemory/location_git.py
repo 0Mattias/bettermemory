@@ -58,6 +58,7 @@ from .gitfile_rule import (
     _not_registered,
     inside_reading,
     judge,
+    reads_worktree_config,
 )
 
 # The bounded reads of recorded paths (ENG-156) live in `location_reads`;
@@ -296,22 +297,25 @@ def _machine_configs(*, stamp: bool = True) -> tuple[str, ...]:
 #: A config file as a read stamped it (`gitconfig.ConfigValues.files`).
 ConfigFile = tuple[str, Stamp | None]
 
-#: The variable that has git read ``config.worktree`` after the common
-#: config, as `_config_values` names it.
-_WORKTREE_CONFIG = ("extensions", None, "worktreeconfig")
-
 
 def _repository_config(
     common_dir: str, git_dir: str
 ) -> tuple[ConfigValues, list[ConfigFile]]:
     """The repository's own config as git reads it: the common config,
-    then, where it sets ``extensions.worktreeConfig`` true, the git
+    then, where git reads it (`gitfile_rule.reads_worktree_config`: the
+    common config file itself sets ``extensions.worktreeConfig`` true, as
+    git's read of a format takes it, no include followed), the git
     directory's ``config.worktree`` (ENG-207's review: a remote or an
     insteadOf rule set there is the repository's too), each with its
     includes; and the files read, stamped, but for the common config,
     which the capture's signature stamps (`location.signature`).
     ``config.worktree`` is stamped itself, so one created, written or
-    removed is read at the next capture."""
+    removed is read at the next capture. Where git dies on the common
+    config's format, it reads no variable of the repository, and nothing
+    is read here either (the reviewer's R14)."""
+    worktree_config = reads_worktree_config(common_dir)
+    if worktree_config is None:
+        return ConfigValues(), []
     values = _config_values(
         os.path.join(common_dir, "config"),
         git_dir=git_dir,
@@ -319,7 +323,7 @@ def _repository_config(
         stamp_self=False,
     )
     files = list(values.files or ())
-    if not _truthy(values.get(_WORKTREE_CONFIG)):
+    if not worktree_config:
         return values, files
     worktree = _config_values(
         os.path.join(git_dir, "config.worktree"), git_dir=git_dir, stamped=True
@@ -351,7 +355,7 @@ def _rewrites(
     repository's own config, which the capture's signature stamps
     already (`location.signature`); and the machine's config files read
     (`_machine_configs`). The repository's config is the common config
-    and, where it sets ``extensions.worktreeConfig``, the git directory's
+    and, where git reads it, the git directory's
     ``config.worktree`` git reads after it (`_repository_config`). A
     repository with no remote reads its own config alone, and names none
     of the machine's. The config a process's environment gives git
@@ -509,16 +513,19 @@ def machine_config_stamps(git_dir: str) -> tuple[object, ...]:
 
 def repository_config_stamps(common_dir: str, git_dir: str) -> tuple[object, ...]:
     """The repository's own config as git reads it, as stamps (ENG-207's
-    review): the common config and, where it sets
-    ``extensions.worktreeConfig`` true, the git directory's
+    review): the common config and, where git reads it
+    (`gitfile_rule.reads_worktree_config`), the git directory's
     ``config.worktree``, each with the files it includes there, stamped
     as a capture stamps them (`_repository_config`), and read once and
     then only stated (`_stamped_read`). `origin`'s capture is kept
     against it, so a rule set in an included file reaches its next
-    capture as it reaches a capture's (`config_unchanged`)."""
+    capture as it reaches a capture's (`config_unchanged`). Where git
+    does not read ``config.worktree`` it is not stated: only the common
+    config, stamped here, decides that, so the change that has git read
+    it is seen."""
     common = _stamped_read(os.path.join(common_dir, "config"), git_dir)
     out: list[object] = [tuple(common.files or ())]
-    if _truthy(common.get(_WORKTREE_CONFIG)):
+    if reads_worktree_config(common_dir):
         worktree = _stamped_read(os.path.join(git_dir, "config.worktree"), git_dir)
         out.append(tuple(worktree.files or ()))
     return tuple(out)

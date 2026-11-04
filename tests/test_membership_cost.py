@@ -55,12 +55,13 @@ _DEVELOPER_READLINKS = 1 if gitsystem._MACOS else 0
 #: An origin cache hit's stat calls besides one for each config file
 #: (`origin._capture_signature`): discovery's 2 (githead's, run for the
 #: git directory and again for the signature), HEAD, its ref, packed-refs
-#: and config (4), config.worktree and the ref files that decide a
-#: branch's short name in its git directory (11 for ``main``), and the
-#: probe's 2 of the git directory; on every Python, since the capture
-#: resolves its directory with `os.path.realpath` (`Path.resolve` stats it
-#: once more before 3.13).
-_ORIGIN_HIT_STATS = 19
+#: and config (4), the ref files that decide a branch's short name in its
+#: git directory (10 for ``main``), and the probe's 2 of the git
+#: directory; config.worktree is stated only where git reads it
+#: (`location_git.repository_config_stamps`, the reviewer's R14). On every
+#: Python, since the capture resolves its directory with
+#: `os.path.realpath` (`Path.resolve` stats it once more before 3.13).
+_ORIGIN_HIT_STATS = 18
 #: An origin cache hit's lstat calls besides three for each component of
 #: the resolved path: the probes of HEAD's ref (4), of the reading rule
 #: (2) and, on githead's POSIX leg alone, of the git directory's owner (4).
@@ -446,10 +447,11 @@ def test_an_origin_cache_hit_spawns_no_git_and_states_its_signature(
     and two discoveries, githead's on POSIX and the file walk off it,
     `githead._POSIX`) and `_ORIGIN_HIT_LSTATS`; and the developer
     directory's readlink where the system config is read. Measured on
-    macOS at a path of 10 components: 21 stat (25 with a home folder's
+    macOS at a path of 10 components: 20 stat (24 with a home folder's
     files and the system's), 40 lstat (36 off POSIX), 1 readlink with the
     system files, the reviewer's 24, 40 and 1 before the repository's
-    config was stated."""
+    config was stated, and 21 (25) while config.worktree was stated where
+    git does not read it."""
     if leg == "off-posix":
         monkeypatch.setattr(githead, "_POSIX", False)
     repo = make_repo(tmp_path / "game", remote=_URL)

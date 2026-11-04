@@ -540,6 +540,36 @@ def test_a_changed_ceiling_inside_the_lifetime_is_a_miss(
 
 
 @posix_fixture
+def test_config_worktree_is_stated_only_where_git_reads_it(
+    tmp_path: Path, probes: list[tuple[str, ...]]
+) -> None:
+    """The reviewer's follow-up to R14: the signature stated
+    config.worktree in every repository, where git reads it only under
+    ``extensions.worktreeConfig`` set in the common config itself. A rule
+    written there with the extension off is a hit, as git reads none of
+    it; the extension switched on is seen at the next capture through the
+    common config's stamp, which then answers with the rule
+    (`location_git.repository_config_stamps`)."""
+    repo = _repo(tmp_path / "repo", remote="gh:acme/lib")
+    worktree_config = repo / ".git" / "config.worktree"
+    assert capture(repo).repo == "gh:acme/lib"
+    worktree_config.write_text(
+        '[url "https://example.invalid/"]\n\tinsteadOf = gh:\n', encoding="utf-8"
+    )
+    assert _run(repo, "remote", "get-url", "origin") == "gh:acme/lib"
+    probes.clear()
+    if githead._POSIX:
+        assert capture(repo).repo == "gh:acme/lib"
+        assert probes == []
+    _run(repo, "config", "extensions.worktreeConfig", "true")
+    after = capture(repo)
+    assert after.repo == "https://example.invalid/acme/lib"
+    _same(after, _uncached(repo))
+    probes.clear()
+    _same(capture(repo), after)
+    assert probes == []
+
+
 def test_core_worktree_in_config_worktree_inside_the_lifetime_is_seen(
     tmp_path: Path,
 ) -> None:
