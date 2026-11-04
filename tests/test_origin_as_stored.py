@@ -1210,6 +1210,27 @@ def test_a_stored_claim_on_a_name_git_quotes_keeps_the_conservative_count(
     assert _both(repo, [name, _QUIET], anchor) == [(2, ())] * 2
 
 
+@pytest.mark.parametrize("name", ["src/a\ud800.py", "src/é\udbff.py", "src/a\udc80.py"])
+def test_a_claim_on_a_lone_surrogate_keeps_the_conservative_count(
+    tmp_path: Path, name: str
+) -> None:
+    """foo claimed on a path holding a lone surrogate, stored before
+    declaration refused one, beside foo on src/mod.py, whose def line the
+    rebased commit changes: the hit keeps the walk's whole length, 2, and
+    on dates every commit since the stamp, 1, as a claim holding a control
+    character does; it raised UnicodeEncodeError, or read the other claim
+    alone (ENG-220's review, round D). The tree check skips such a name,
+    which is never held, rather than raise."""
+    from bettermemory import verify_spelling
+
+    repo = _repository(tmp_path)
+    anchor = _rebased(repo)
+    claims = [f"{name}::foo", f"{_MOD}::foo"]
+    assert _both(repo, claims, anchor) == [(2, ()), (1, ())]
+    _caches.clear_all()
+    assert verify_spelling._held(repo, "HEAD", {name, _MOD}) == {_MOD}
+
+
 @pytest.mark.parametrize("walked", [False, True], ids=["dates", "walk"])
 def test_a_claim_holding_a_control_character_is_not_read(
     monkeypatch: pytest.MonkeyPatch, walked: bool

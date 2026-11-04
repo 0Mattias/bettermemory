@@ -1617,6 +1617,45 @@ def _drift(out: list[dict[str, Any]], memory_id: str) -> tuple[Any, Any]:
     return hit.get("commit_drift_count"), hit.get("commit_drift_basis")
 
 
+@pytest.mark.parametrize("path", ["src/a\ud800.py", "src/é\udbff.py", "src/a\udc80.py"])
+def test_a_stored_claim_on_a_lone_surrogate_keeps_the_conservative_count(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    """foo claimed on a path holding a lone surrogate, which declaration
+    refuses and `load_claims` keeps from a store written before, beside a
+    cited file one of the two commits since the verify edited: the search
+    completes, and the hit keeps the conservative count, 2, on both bases,
+    as a claim on a path holding a control character does. Its path raised
+    UnicodeEncodeError out of the drift resolution, and the search with it
+    (ENG-220's review, round D)."""
+    repo = _repo(tmp_path)
+    anchor = _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    ids = {
+        basis: _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule {basis} lives in {repo / 'notes0.md'}",
+            verified_head=anchor if basis == "walk" else None,
+        )
+        for basis in ("walk", "dates")
+    }
+    _commit(repo, "post 1", when=_T1, files={"notes0.md": "a1\n"})
+    _commit(repo, "post 2", when=_T2, files={"other.md": "o\n"})
+    memories = store.load_all()
+    out, _ = _attach(memories, caller, monkeypatch)
+    counts = [_by_id(out)[ids[basis]]["commit_drift_count"] for basis in ids]
+    assert counts == [1, 1], "premise: the cited file's one commit"
+    _caches.clear_all()
+    claimed = [m.model_copy(update={"claims": [f"{path}::foo"]}) for m in memories]
+    assert all(m.claims for m in claimed), "premise: the claim is kept"
+    out, _ = _attach(claimed, caller, monkeypatch)
+    counts = [_by_id(out)[ids[basis]]["commit_drift_count"] for basis in ids]
+    assert counts == [2, 2]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
 @pytest.mark.skipif(
     hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads any file"

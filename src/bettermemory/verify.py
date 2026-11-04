@@ -118,6 +118,7 @@ from .claims import (
     claim_level_drift,
     claim_paths,
     control_character,
+    lone_surrogate,
     governed_claim_paths,
     load_claims,
     path_key,
@@ -845,10 +846,12 @@ def _unreadable(claims: Sequence[Claim]) -> bool:
     stored before may hold. git quotes such a name in every patch it
     prints, and a header naming a line break stays quoted, so no stream
     names the path as the claim spells it: read, the claim on such a file,
-    deleted, counted 0, or 1 naming no claim (ENG-220's re-review). The hit
-    keeps the conservative count, the walk's length or the unfiltered one,
-    as where git cannot answer."""
-    return any(control_character(claim.rel_path) for claim in claims)
+    deleted, counted 0, or 1 naming no claim (ENG-220's re-review); nor a
+    lone surrogate (`claims.lone_surrogate`), which raised (round D). The
+    hit keeps the conservative count, the walk's length or the unfiltered
+    one, as where git cannot answer."""
+    paths = [claim.rel_path for claim in claims]
+    return any(control_character(path) or lone_surrogate(path) for path in paths)
 
 
 def _gated_claims(claims: Sequence[Claim]) -> list[Claim]:

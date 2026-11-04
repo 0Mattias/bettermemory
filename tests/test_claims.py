@@ -169,6 +169,21 @@ def test_a_declared_path_holding_a_control_character_is_refused(
     assert [claim.rel_path for claim in load_claims([raw])] == [f"src/a{control}b.py"]
 
 
+@pytest.mark.parametrize("surrogate", ["\ud800", "\udbff", "\udc80", "\udfff"])
+@pytest.mark.parametrize("shape", ["{}", "{}::handler", "!{}"])
+def test_a_declared_path_holding_a_lone_surrogate_is_refused(
+    surrogate: str, shape: str
+) -> None:
+    """A lone surrogate spells no character, and no file name git stores
+    as UTF-8 holds one, so claim drift cannot ask git for it (ENG-220's
+    review, round D): declaration refuses it, naming the code point. A
+    claim stored before is still loaded, and the drift readers decline."""
+    raw = shape.format(f"src/a{surrogate}b.py")
+    with pytest.raises(ValueError, match=f"lone surrogate \\(U\\+{ord(surrogate):04X}"):
+        parse_claims([raw])
+    assert [claim.rel_path for claim in load_claims([raw])] == [f"src/a{surrogate}b.py"]
+
+
 def test_a_path_with_no_control_character_is_declared() -> None:
     """A space, a quote, a non-ASCII letter and a C1 control (which git
     prints as it is under ``core.quotePath=false``) are not refused."""

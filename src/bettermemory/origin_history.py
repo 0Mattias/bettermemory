@@ -407,13 +407,18 @@ def log_stdin(revisions: Sequence[str], pathspecs: Sequence[str]) -> bytes | Non
     holding a line break (git also takes a CR before the LF off a line), an
     empty one, which ends git's read, or a revision that starts with a
     dash, which git takes for an option there and dies on. Encoded as
-    ``os.fsencode`` encodes an argument on POSIX."""
+    ``os.fsencode`` encodes an argument on POSIX; None for an element that
+    encoding cannot carry, a lone surrogate outside the escaped bytes."""
     lines = (*revisions, "--", *pathspecs)
     if any(not line or "\n" in line or "\r" in line for line in lines):
         return None
     if any(revision.startswith("-") for revision in revisions):
         return None
-    return "".join(f"{line}\n" for line in lines).encode("utf-8", "surrogateescape")
+    data = "".join(f"{line}\n" for line in lines)
+    try:
+        return data.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError:
+        return None
 
 
 @dataclass(frozen=True)

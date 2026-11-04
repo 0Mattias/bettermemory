@@ -1128,15 +1128,20 @@ def test_no_window_passes_a_command_line_s_bound(
 def test_a_line_that_cannot_carry_a_pathspec_reads_as_no_answer() -> None:
     """A pathspec holding a line break, or empty, cannot be put on a line
     of git's standard input (git ends its read at an empty line and takes a
-    CR off a line's end), nor can a revision that starts with a dash: the
-    log reads as git not answering, and the caller keeps its conservative
-    count."""
+    CR off a line's end), nor can a revision that starts with a dash, nor a
+    pathspec holding a lone surrogate the encoding cannot carry, which
+    raised (ENG-220's review, round D): the log reads as git not answering,
+    and the caller keeps its conservative count. A surrogate that stands
+    for an undecodable byte is that byte, as ``os.fsencode`` spells it."""
     assert origin_history.log_stdin(["HEAD"], ["a.py"]) == b"HEAD\n--\na.py\n"
+    assert origin_history.log_stdin(["HEAD"], ["a\udc80.py"]) == b"HEAD\n--\na\x80.py\n"
     for revisions, pathspecs in (
         (["HEAD"], ["a\nb.py"]),
         (["HEAD"], ["a.py\r"]),
         (["HEAD"], [""]),
         (["--all"], ["a.py"]),
+        (["HEAD"], ["a\ud800.py"]),
+        (["HEAD"], ["\udfff"]),
     ):
         assert origin_history.log_stdin(revisions, pathspecs) is None
     assert (

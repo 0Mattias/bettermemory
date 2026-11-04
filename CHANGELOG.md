@@ -474,6 +474,25 @@ eighteenth was built.
   `src/bettermemory/verify.py`, `docs/api.md`, `tests/test_claims.py`,
   `tests/test_origin_as_stored.py`, `tests/test_server_claims.py`)
 
+- **A claimed path holding a lone surrogate is refused, and one stored
+  before keeps the conservative count (ENG-220).** `load_claims` keeps a
+  stored claim whose path holds a surrogate code point with no partner
+  (`\ud800`), which a store written by hand or before declaration
+  checked can hold, and claim drift raised `UnicodeEncodeError` on it,
+  out of the search: the logs' standard input could not encode it
+  (`origin_history.log_stdin`), nor the tree check's (`verify_spelling.
+  _held`); one standing for an undecodable byte (`\udc80`) read as no
+  file. A memory carrying such a claim now keeps the conservative count
+  on both bases, as one holding a control character does
+  (`claims.lone_surrogate`, `verify._unreadable`); `log_stdin` reads such
+  an element as a line it cannot carry, and the tree check skips it; and
+  `memory_write` and `memory_verify` refuse it, naming the code point.
+  (`src/bettermemory/claims.py`, `src/bettermemory/verify.py`,
+  `src/bettermemory/origin_history.py`,
+  `src/bettermemory/verify_spelling.py`, `docs/api.md`,
+  `tests/test_claims.py`, `tests/test_origin_as_stored.py`,
+  `tests/test_origin_patch.py`, `tests/test_commit_drift_cache.py`)
+
 - **A claim reads the tree's spelling of its path, composed or
   decomposed (ENG-220).** A tree stores a name as the git that committed
   it read it, decomposed where a git on macOS did not precompose

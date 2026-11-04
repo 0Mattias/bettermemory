@@ -112,6 +112,7 @@ __all__ = [
     "parse_claim",
     "parse_claims",
     "control_character",
+    "lone_surrogate",
     "load_claims",
     "check_claim",
     "claim_reason_is_indeterminate",
@@ -311,14 +312,23 @@ def control_character(path: str) -> str | None:
     return next((ch for ch in path if ch < " " or ch == "\x7f"), None)
 
 
+def lone_surrogate(path: str) -> str | None:
+    """The first surrogate code point `path` holds, or None. A lone
+    surrogate spells no character: no file name git stores as UTF-8 holds
+    one, and the text git reads a pathspec from cannot carry one, so a
+    claim on it cannot be read (ENG-220's review, round D)."""
+    return next((ch for ch in path if "\ud800" <= ch <= "\udfff"), None)
+
+
 def parse_claims(raw: list[str]) -> list[Claim]:
     """Parse a wire list, enforcing the count cap and per-entry syntax.
 
     Duplicates (after normalization) collapse silently — attesting the
     same fact twice is redundancy, not an error. A path holding a control
-    character is refused (`control_character`): the declaration's rule,
-    which `load_claims` leaves to the read side for a claim stored before
-    it, since the drift readers decline on one.
+    character (`control_character`) or a lone surrogate (`lone_surrogate`)
+    is refused: the declaration's rule, which `load_claims` leaves to the
+    read side for a claim stored before it, since the drift readers
+    decline on one.
     """
     if len(raw) > MAX_CLAIMS:
         raise ValueError(
@@ -336,6 +346,14 @@ def parse_claims(raw: list[str]) -> list[Claim]:
                 f"(U+{ord(control):04X}): git quotes such a name in every "
                 "patch it prints, so claim drift could not read the claim. "
                 "Claim a path whose name holds none."
+            )
+        surrogate = lone_surrogate(claim.rel_path)
+        if surrogate is not None:
+            raise ValueError(
+                f"claim path {claim.rel_path!r} holds a lone surrogate "
+                f"(U+{ord(surrogate):04X}), which spells no character: no "
+                "file name holds one, so claim drift could not read the "
+                "claim. Claim the path as its name is spelled."
             )
         rendered = claim.render()
         if rendered in seen:

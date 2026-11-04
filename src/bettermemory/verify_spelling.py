@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import origin, origin_history
-from .claims import spellings_capped, stored_spellings
+from .claims import lone_surrogate, spellings_capped, stored_spellings
 
 
 def git_bool(value: str | None) -> bool:
@@ -153,9 +153,13 @@ def _held(toplevel: Path, head: str, names: set[str]) -> set[str] | None:
     """The names among `names` that `head`'s tree holds, a file or a
     folder, from one ``cat-file --batch-check`` (each ``<head>:<name>``
     on its standard input, so no argument is precomposed); None where git
-    did not answer. A name holding a line break cannot be asked and is
-    not held."""
-    asked = sorted(name for name in names if "\n" not in name and "\r" not in name)
+    did not answer. A name holding a line break or a lone surrogate
+    (`claims.lone_surrogate`) cannot be asked and is not held."""
+    asked = sorted(
+        name
+        for name in names
+        if "\n" not in name and "\r" not in name and lone_surrogate(name) is None
+    )
     if not asked:
         return set()
     raw = origin._git(
