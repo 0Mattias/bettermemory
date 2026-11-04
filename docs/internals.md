@@ -773,9 +773,12 @@ of the repository's own config, which its own files set) merges its
 project P into one other project Q where all of these hold:
 
 - P was minted on that alias key as written: the first checkout row the
-  log holds for P, the sighting's that minted it, names the alias key
-  and none of the keys the checkout fetches from, as a capture before
-  rc14 keyed it. A project minted on a remote of its own, or on the
+  log holds for P, the sighting's that minted it (or first joined it,
+  where a migration or an import minted it with no checkout), names the
+  alias key and none of the keys the checkout fetches from, as a capture
+  before rc14 keyed it. That row is read once for each open store and
+  project; before it is found, a judgment reads only the rows written
+  since the last. A project minted on a remote of its own, or on the
   alias expanded, is no such split, and its remote re-spelled with an
   alias later merges nothing, as it would re-pointed at the URL: a
   remote's spelling decides no merge.

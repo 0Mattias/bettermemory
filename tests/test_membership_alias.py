@@ -22,10 +22,11 @@ import os
 import shutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from bettermemory import location
+from bettermemory import location, membership_alias
 from bettermemory.config import Config
 from bettermemory.location import resolve_here
 from bettermemory.machine import MachineIdentity
@@ -301,6 +302,122 @@ def test_a_project_minted_on_the_alias_expanded_stays_apart(world: World) -> Non
     assert world.see(full).project == first.project
     _caught_up(full, alias)
     _stays_apart(world, alias, second)
+
+
+def _log_reads(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[str, int, int]]:
+    """Each read of the log's ``project_minted`` or ``checkout_put`` rows
+    (`membership_alias._first_remotes`' alone on a sighting's path), as
+    the kind, the sequence number read after, and the rows taken."""
+    reads: list[tuple[str, int, int]] = []
+    real = world.store.membership_log
+
+    def spy(kinds: Any = None, *, since_seq: int = 0) -> Iterator[Any]:
+        rows = real(kinds, since_seq=since_seq)
+        if kinds is None or list(kinds) not in (["project_minted"], ["checkout_put"]):
+            return rows
+        reads.append((str(kinds[0]), since_seq, 0))
+        at = len(reads) - 1
+
+        def counted_rows() -> Iterator[Any]:
+            for row in rows:
+                kind, since, taken = reads[at]
+                reads[at] = (kind, since, taken + 1)
+                yield row
+
+        return counted_rows()
+
+    monkeypatch.setattr(world.store, "membership_log", spy)
+    return reads
+
+
+def _minted_with_no_checkout(world: World, repo: Repo) -> str:
+    """A project minted as a migration or an import mints one, with no
+    checkout: the remote spelled with the alias, as a store before rc14
+    held it, and `repo`'s HEAD its witness."""
+    model = world.model
+    with model._call():
+        p = model._mint_project("lib", reason="import:document")
+        model._add_remotes(p.id, [ALIAS])
+        assert repo.head is not None
+        model._add_witness(p.id, repo.head, source="import:document", history=None)
+    return p.id
+
+
+def test_a_projects_first_checkout_row_is_read_once_for_the_open_store(
+    world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The review's residual 4: each judgment read the log from the
+    project's mint to its first checkout row, once for each HEAD in each
+    process. The row found is kept for the open store and the project: a
+    second judgment, at a new HEAD, reads no log row. Another store, whose
+    project of the same id has another first row, reads its own."""
+    full = world.repo("/w/full", remote=FULL)
+    mine = world.clone(full, "/w/mine", remote="github.com/me/mine")
+    full.commit()
+    world.see(full)
+    second = world.see(mine)
+    _caught_up(full, mine)
+    mine.remotes = {ALIAS}
+    reads = _log_reads(world, monkeypatch)
+    assert _alias_sighting(world, mine, {ALIAS: FULL}).project == second.project
+    assert [kind for kind, _since, _taken in reads] == [
+        "project_minted",
+        "checkout_put",
+    ]
+    reads.clear()
+    mine.commit()
+    assert _alias_sighting(world, mine, {ALIAS: FULL}).project == second.project
+    assert reads == []
+    assert _merges(world) == []
+
+    other = World(tmp_path / "other")
+    *_, split = _split_pair(other)
+    assert split.project == second.project
+    pid = str(second.project)
+    assert membership_alias._first_remotes(other.model, pid) == frozenset({ALIAS})
+    assert membership_alias._first_remotes(world.model, pid) == frozenset(
+        {"github.com/me/mine"}
+    )
+
+
+def test_a_project_minted_with_no_checkout_is_judged_by_the_first_to_join_it(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project a migration or an import minted with no checkout, on the
+    alias as written: the full-URL clone's checkout row comes between its
+    mint and the first row naming it, the alias clone's as it joined, and
+    names the project's id too, as its branch. The row naming the project
+    is judged, never another checkout's (the review's N2), and the
+    project merges. None found yet is kept as how far the log was
+    read, not as an answer, since a checkout row can come later: a
+    judgment before the clone joined reads the rows written since."""
+    full = world.repo("/w/full", remote=FULL)
+    alias = world.clone(full, "/w/alias", remote=ALIAS)
+    alias.commit()
+    full.commit()
+    pid = _minted_with_no_checkout(world, alias)
+    reads = _log_reads(world, monkeypatch)
+    assert membership_alias._first_remotes(world.model, pid) is None
+    first = world.see(full, branch=pid)
+    assert first.project != pid
+    _mint, read, found = membership_alias._FIRST[world.store][
+        (world.store.store_id, pid)
+    ]
+    assert found is None
+    reads.clear()
+    assert membership_alias._first_remotes(world.model, pid) is None
+    ((kind, since, taken),) = reads
+    assert (kind, since) == ("checkout_put", read) and taken >= 1
+    assert world.see(alias).project == pid
+    assert membership_alias._first_remotes(world.model, pid) == frozenset({ALIAS})
+
+    _caught_up(full, alias)
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+    assert seen.project == first.project
+    (merged,) = _merges(world)
+    assert pid in merged
 
 
 def test_a_key_the_other_project_holds_only_as_an_alias_is_no_remote_witness(

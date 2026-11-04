@@ -23,9 +23,10 @@ nothing a user said or a file binds stands against it:
   own config, which the checkout's own files set, makes none
   (`location_git.read_remotes`);
 * P was minted on that alias key as written (`_minted_on`): the first
-  checkout row the log holds for P, the sighting's that minted it, names
-  the alias key and none of the keys the checkout fetches from, as a
-  capture before rc14 keyed it. A project minted on a remote of its own,
+  checkout row the log holds for P, the sighting's that minted it (or
+  first joined it, where a migration or an import minted it with no
+  checkout), names the alias key and none of the keys the checkout
+  fetches from, as a capture before rc14 keyed it. A project minted on a remote of its own,
   or on the alias expanded, is no such split: its remote re-spelled with
   an alias later merges nothing, as it would re-pointed at the URL, so a
   remote's spelling decides no merge;
@@ -53,14 +54,15 @@ between the two joins Q. A sighting the rule leaves as it is, is kept for
 the checkout's evidence (its project, tenant, HEAD, remotes and alias
 keys) in this process (`_PASSED`), so a prompt at an alias clone that
 never joins reads nothing more after its first; a declaration found
-against a pair is kept for the pair (`_DECLARED`), since the log only
-grows.
+against a pair is kept for the pair (`_DECLARED`), and a project's first
+checkout row for the open store (`_FIRST`), since the log only grows.
 """
 
 from __future__ import annotations
 
 import json
 import threading
+import weakref
 from collections import OrderedDict, defaultdict
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
@@ -81,6 +83,14 @@ _MARKS = ("declaration", "declared", '"principal"')
 _LOCK = threading.Lock()
 _PASSED: OrderedDict[tuple[Any, ...], None] = OrderedDict()
 _DECLARED: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+#: Each project's first checkout row as `_first_remotes` read it, for each
+#: open store (a reopened or restored store is another object, and starts
+#: empty), keyed by the store's id and the project: the ``project_minted``
+#: row's sequence number, the last sequence number read, and the row's
+#: remotes once found.
+_FIRST: weakref.WeakKeyDictionary[
+    Any, OrderedDict[tuple[str, str], tuple[int | None, int, frozenset[str] | None]]
+] = weakref.WeakKeyDictionary()
 
 
 @_caches.register
@@ -88,6 +98,7 @@ def _clear() -> None:
     with _LOCK:
         _PASSED.clear()
         _DECLARED.clear()
+        _FIRST.clear()
 
 
 def _kept(memo: OrderedDict[Any, None], key: Any) -> bool:
@@ -211,28 +222,56 @@ def _minted_on(
 ) -> bool:
     """Whether project `pid` was minted on an alias key of the sighting
     as written, unexpanded, as a capture before rc14 keyed it (or one
-    before the system config was read, for a rule there): the first
-    checkout row the log holds for `pid` from its ``project_minted`` row
-    on, written at the sighting that minted it, names one of `aliases`
-    among its remotes and none of the keys the checkout fetches from
-    (`fetched`). A project minted on another spelling, its remote spelled
-    with an alias later, or minted on the alias expanded, is no split
-    this repairs: so a remote's spelling decides no merge."""
+    before the system config was read, for a rule there): its first
+    checkout row (`_first_remotes`) names one of `aliases` among its
+    remotes and none of the keys the checkout fetches from (`fetched`).
+    A project minted on another spelling, its remote spelled with an
+    alias later, or minted on the alias expanded, is no split this
+    repairs: so a remote's spelling decides no merge."""
+    first = _first_remotes(self, pid)
+    return first is not None and bool(first & set(aliases)) and not first & set(fetched)
+
+
+def _first_remotes(self: Membership, pid: str) -> frozenset[str] | None:
+    """The remotes of the first checkout row the log holds for project
+    `pid` from its ``project_minted`` row on: the sighting's that minted
+    it, or, for a project a migration or an import minted with no
+    checkout, the first sighting's that joined it; None where there is
+    none yet. Found, the row is kept for the open store and the project
+    (`_FIRST`), since the log only grows. None is kept as how far the log
+    was read, not as an answer: a checkout row can arrive later (a clone
+    joining a project an import minted), so the next judgment reads only
+    the rows written since and finds it, where reading from the mint each
+    time cost a project whose first row came late every row after it."""
+    store = self._store
+    key = (store.store_id, pid)
+    with _LOCK:
+        mint, read, first = _FIRST.setdefault(store, OrderedDict()).get(
+            key, (None, 0, None)
+        )
+    if first is not None:
+        return first
     quoted = json.dumps(pid)
-    since: int | None = None
-    for row in self._store.membership_log(["project_minted"]):
-        if quoted in row.payload and _loads(row.payload).get("project") == pid:
-            since = row.seq - 1
-            break
-    if since is None:
-        return False
-    for row in self._store.membership_log(["checkout_put"], since_seq=since):
-        put = _loads(row.payload).get("checkout") if quoted in row.payload else None
-        if not isinstance(put, dict) or put.get("project") != pid:
-            continue
-        first = _values(put.get("remotes_json"))
-        return bool(first & set(aliases)) and not first & set(fetched)
-    return False
+    if mint is None:
+        for row in store.membership_log(["project_minted"], since_seq=read):
+            read = row.seq
+            if quoted in row.payload and _loads(row.payload).get("project") == pid:
+                mint, read = row.seq, row.seq - 1
+                break
+    if mint is not None:
+        for row in store.membership_log(["checkout_put"], since_seq=read):
+            read = row.seq
+            put = _loads(row.payload).get("checkout") if quoted in row.payload else None
+            if isinstance(put, dict) and put.get("project") == pid:
+                first = frozenset(_values(put.get("remotes_json")))
+                break
+    with _LOCK:
+        memo = _FIRST.setdefault(store, OrderedDict())
+        memo.pop(key, None)
+        memo[key] = (mint, read, first)
+        while len(memo) > _KEPT:
+            memo.popitem(last=False)
+    return first
 
 
 def _loads(payload: str) -> dict[str, Any]:
