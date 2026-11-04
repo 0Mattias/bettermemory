@@ -113,9 +113,14 @@ def test_a_child_inheriting_the_environment_resolves_in_scratch(
     tmp_path: Path,
     tmp_path_factory: pytest.TempPathFactory,
     local_tmp_root: Path | None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A child given no environment inherits this process's, whose home is
-    the developer's: it counts as none, so the child's home is scratch."""
+    the developer's: it counts as none, so the child's home is scratch.
+    The inherited environment carries the import shield's `PYTHONPATH`, as
+    every other spawn's does, so the child imports bettermemory where the
+    venv's editable `.pth` is hidden."""
+    monkeypatch.setenv("PYTHONPATH", shielded_child_env()["PYTHONPATH"])
     resolved = _resolved(None, tmp_path)
     assert _outside_scratch(resolved, _bases(tmp_path_factory, local_tmp_root)) == {}
 
