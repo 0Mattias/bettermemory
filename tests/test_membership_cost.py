@@ -11,7 +11,7 @@ batch, through the object reader and no git process; 301 sightings at
 successive commits keep the witness bound. Git runs with no user or
 system configuration and a fixed author; process spawns are counted by
 patching `subprocess.Popen`, stat calls by patching `os.stat` and
-`os.lstat`.
+`os.lstat`, and readlink calls by patching `os.readlink`.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _caches, location
+from bettermemory import _caches, gitsystem, location
 from bettermemory.config import Config
 from bettermemory.location import resolve_here
 from bettermemory.machine import MachineIdentity, open_machine
@@ -47,6 +47,11 @@ _URL = "https://example.invalid/acme/game.git"
 #: read for its remotes (E16, tests/test_membership_capture.py); each such
 #: file adds one (ENG-207).
 _BASE_STATS = 10
+#: The steady prompt's readlink calls where the system config is read for
+#: a checkout's remotes: on macOS the one that keys git's answer of its
+#: system config files on the developer directory (`gitsystem._developer`,
+#: ENG-207's review); none elsewhere, and none under GIT_CONFIG_NOSYSTEM.
+_DEVELOPER_READLINKS = 1 if gitsystem._MACOS else 0
 
 
 @pytest.fixture(autouse=True)
@@ -118,6 +123,7 @@ class _Counts:
         self.spawns = 0
         self.stats = 0
         self.lstats = 0
+        self.readlinks = 0
 
 
 @pytest.fixture
@@ -125,10 +131,12 @@ def counted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Callable[[Callable[[], object]], _Counts]:
     """Run a call with every process spawn (`subprocess.Popen`, which
-    `subprocess.run` uses) and every `os.stat` and `os.lstat` counted, the
+    `subprocess.run` uses) and every `os.stat`, `os.lstat` and
+    `os.readlink` counted, the
     suite's own guard on captures (conftest) set aside so only the
     product's calls count."""
     real_stat, real_lstat, real_popen = os.stat, os.lstat, subprocess.Popen
+    real_readlink = os.readlink
 
     def measure(fn: Callable[[], object]) -> _Counts:
         counts = _Counts()
@@ -141,6 +149,10 @@ def counted(
             counts.lstats += 1
             return real_lstat(*a, **k)
 
+        def readlink(*a: Any, **k: Any) -> Any:
+            counts.readlinks += 1
+            return real_readlink(*a, **k)
+
         class Popen(real_popen):  # type: ignore[valid-type,misc]
             def __init__(self, *a: Any, **k: Any) -> None:
                 counts.spawns += 1
@@ -152,6 +164,7 @@ def counted(
                 m.setattr(location, name, getattr(fn_, "__wrapped__", fn_))
             m.setattr(os, "stat", stat)
             m.setattr(os, "lstat", lstat)
+            m.setattr(os, "readlink", readlink)
             m.setattr(subprocess, "Popen", Popen)
             fn()
         return counts
@@ -327,7 +340,10 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
             resolve_here(store, config, str(repo), identity=identity)
         )
     )
-    print(f"steady: spawns={warm.spawns} stat={warm.stats} lstat={warm.lstats}")
+    print(
+        f"steady: spawns={warm.spawns} stat={warm.stats} lstat={warm.lstats} "
+        f"readlink={warm.readlinks}"
+    )
     assert results[0].rule == known_rule(repo / ".git")
     assert results[0].checkout == root.checkout
     assert warm.spawns == 0
@@ -338,6 +354,8 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     files = location.capture(str(repo), write_token=False).config_files
     assert len(files) == 1
     assert warm.stats <= _BASE_STATS + len(files) and warm.lstats <= 2
+    # GIT_CONFIG_NOSYSTEM: the system config's answer is not asked for.
+    assert warm.readlinks == 0
 
 
 def test_e16_a_config_file_read_costs_one_stat_and_no_git(
@@ -353,11 +371,13 @@ def test_e16_a_config_file_read_costs_one_stat_and_no_git(
     macOS the developer directory's and ``/etc/gitconfig``). A kept
     capture is checked against each config file read for its remote, so
     the steady prompt makes the 10 stat calls of a checkout with no
-    remote and one for each of those files, and no more lstat calls; and
-    a new process (the caches cleared, as a hook client starts each
-    prompt) asks git nothing while the state directory's record of the
-    system files stands (`gitsystem`). Measured on macOS: 15 stat and 2
-    lstat calls, 5 files; the new process 0 spawns."""
+    remote and one for each of those files, no more lstat calls, and on
+    macOS the one readlink of the developer directory's link that keys the
+    system files' answer; and a new process (the caches cleared, as a hook
+    client starts each prompt) asks git nothing while the state
+    directory's record of the system files stands (`gitsystem`). Measured
+    on macOS: 15 stat, 2 lstat and 1 readlink calls, 5 files; the new
+    process 0 spawns."""
     store, identity, config = lab
     repo = make_repo(tmp_path / "game", remote=_URL)
     home = tmp_path / "home"
@@ -380,10 +400,14 @@ def test_e16_a_config_file_read_costs_one_stat_and_no_git(
         str(home / ".gitconfig.local"),
     } <= set(files), files
     warm = counted(lambda: resolve_here(store, config, str(repo), identity=identity))
-    print(f"steady: spawns={warm.spawns} stat={warm.stats} lstat={warm.lstats}")
+    print(
+        f"steady: spawns={warm.spawns} stat={warm.stats} lstat={warm.lstats} "
+        f"readlink={warm.readlinks}"
+    )
     print(f"config files: {len(files)}")
     assert warm.spawns == 0
     assert warm.stats <= _BASE_STATS + len(files) and warm.lstats <= 2
+    assert warm.readlinks <= _DEVELOPER_READLINKS
 
     _caches.clear_all()
     fresh = counted(lambda: location.capture(str(repo), write_token=False))

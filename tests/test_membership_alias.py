@@ -846,3 +846,4 @@ def test_e16_an_alias_clone_that_never_joins_costs_what_any_checkout_does(
     )
     assert warm.spawns == 0
     assert warm.stats <= _BASE_STATS + len(files) and warm.lstats <= 2
+    assert warm.readlinks == 0  # GIT_CONFIG_NOSYSTEM: no system answer read
