@@ -1466,9 +1466,12 @@ eighteenth was built.
   record no sighting reads from then on into the one they read: its
   records are homed there, so a later `project new` or `project join`
   at the path carries every record written there, where the one left
-  behind kept its own in the old project; and its view at the path is
-  deleted, so a restore there re-keys the one read (rows of kinds
-  9.0.0rc18 reads: it verifies, opens, reads and writes such a store).
+  behind kept its own in the old project; its view at the path is
+  deleted, so a restore there re-keys the one read; and a question
+  still open on it is closed as settled (`settled:<checkout>`), where
+  it stayed pending, shown nowhere, and answering it moved the record
+  no sighting reads (rows of kinds 9.0.0rc18 reads: it verifies, opens,
+  reads and writes such a store).
   The rule costs one read of the
   checkouts' token index, with no views, at each reading of rung 2 where
   the token found is neither recorded nor the checkout's own re-mint

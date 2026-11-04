@@ -1031,6 +1031,55 @@ def test_two_records_settled_into_one_carry_both_ones_records(
 
 
 @pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("settled", ["heal", "join_first"])
+def test_a_question_open_on_a_retired_record_is_closed_as_settled(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, settled: str
+) -> None:
+    """A changed remote's question still open on the record a heal (the
+    second) or an answer joining the first record's project (the first)
+    leaves unread: no sighting shows it at the path any more, and its
+    answer would move a record no sighting reads (its separate answer, a
+    project of its own with nothing delivered at the path). It is closed
+    as settled into the record kept (``settled:<kept>``, by the heal or by
+    the declaration), out of `project pending`, and an answer naming it is
+    refused as already answered; the path stays where it was settled.
+    Before, it stayed pending, shown nowhere."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    first = lab.model().checkout(hid).project
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    dup, _found = _rc18_registered(lab, line)
+    if settled == "heal":
+        idle, kept, by = dup, hid, "heal"
+        qid = _asked_on(lab, dup, REMOTE_DIVERGED, lab.model().checkout(dup).project)
+    else:
+        idle, kept, by = hid, dup, "declaration:os:tester"
+        qid = _asked_on(lab, hid, REMOTE_DIVERGED, first)
+        _written_at(lab, "h2", line, monkeypatch)
+        asked, _admitted = lab.view(line)
+        assert asked.proposal is not None and asked.proposal != qid
+        lab._declaring().declare(
+            Declaration(
+                "join", "os:tester", checkout=dup, proposal=asked.proposal, target=first
+            )
+        )
+    location.forget()
+
+    res, admitted = lab.view(line)
+
+    assert res.checkout == kept and "h1" in admitted
+    pr = lab.model().proposal(qid)
+    assert (pr.state, pr.answer, pr.answered_by) == ("answered", f"settled:{kept}", by)
+    assert qid not in {p.id for p in lab.model().pending()}
+    with pytest.raises(ValueError, match="already answered"):
+        lab._declaring().declare(
+            Declaration("new", "agent:s", checkout=idle, proposal=qid)
+        )
+    location.forget()
+    after, again = lab.view(line)
+    assert (after.checkout, again) == (kept, admitted)
+
+
+@pytest.mark.usefixtures("no_birth")
 def test_a_retired_record_is_not_re_keyed_at_its_old_path(
     tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
 ) -> None:

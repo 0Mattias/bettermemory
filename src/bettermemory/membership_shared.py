@@ -85,6 +85,9 @@ _SECOND_NS = 1_000_000_000
 #: (the empty string).
 HEAL = "heal"
 ASK_WHICH = "ask"
+#: The answer a question on a record retired into another is closed with,
+#: followed by that record's id (`_retire_into`).
+SETTLED = "settled:"
 #: The log rows `_joined_silently_by_token` reads of a checkout, each kind
 #: through the log's kind index: its registration, and the rows a
 #: declaration writes naming it as their ``checkout`` (a join or a
@@ -361,8 +364,9 @@ def _asked_where(self: Membership, checkout: str) -> bool:
     answered; or one of another kind but those about something else
     (`_ABOUT_ELSE`), answered by deciding its project (`_decides`: a
     project of its own, a join to any project, its own kept). An open
-    question of another kind is not, nor an answer that decided nothing.
-    One indexed read of its questions."""
+    question of another kind is not, nor an answer that decided nothing
+    (one closed as settled into another record, `_retire_into`). One
+    indexed read of its questions."""
     rows = self._store.membership_rows("proposals", where={"checkout": checkout})
     return any(
         row["kind"] in _PICKING
@@ -452,11 +456,19 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
     either way, so nothing delivered changes and a later move of `kept`
     (`project new`, `project join`) carries it; `idle`'s views on its
     machine at a path of `kept`'s are deleted, so that path is `kept`'s
-    alone (B reads no other checkout there); and `idle` is retired, its
-    row kept, with a ``checkout_retired`` row naming `kept` and `by`. The
-    rows are of kinds 9.0.0rc18 reads (a home's and a checkout's put, a
-    view's deletion, ``checkout_retired``). One indexed read of `idle`'s
-    homes."""
+    alone (B reads no other checkout there); each question still open on
+    `idle` is closed as settled into `kept` (``settled:<kept>``, an
+    answer that decides nothing, `_decides`), as no sighting shows it
+    now and an answer there would move a record no sighting reads; and
+    `idle` is retired, its row kept, with a ``checkout_retired`` row
+    naming `kept` and `by`. A question is closed rather than moved onto
+    `kept`: it was asked of `idle`'s project and evidence (a changed
+    remote against the project `idle` is in, which `kept` need not be
+    in), and `kept`'s own sightings open the questions that hold for it.
+    The rows are of kinds 9.0.0rc18 reads (a home's, a checkout's and a
+    question's put, a view's deletion, ``proposal_answered``,
+    ``checkout_retired``). Indexed reads of `idle`'s homes and open
+    questions."""
     for row in self._store.membership_rows("homes", where={"checkout": idle.id}):
         self._put("home", {**row, "checkout": kept.id, "rule": f"{row['rule']}|{by}"})
     paths = {_norm(v.path) for v in kept.views_on(idle.machine)}
@@ -466,5 +478,7 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
                 "checkout_view",
                 {"checkout": idle.id, "machine": v.machine, "path": v.path},
             )
+    for pr in self._open_proposals(idle.id):
+        self._close(pr, f"{SETTLED}{kept.id}", by)
     self._put_checkout(dataclasses.replace(idle, retired=True))
     self._event("checkout_retired", checkout=idle.id, into=kept.id, evidence=by)

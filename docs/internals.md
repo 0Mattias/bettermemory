@@ -1245,9 +1245,17 @@ none reads from then on: the second after a heal, the first after the
 answer (the sightings resolve the second, the answer a choice there).
 That one is retired into the other (`_retire_into`): each record homed
 at it is homed at the one read, in the project its home names (the
-same either way), its views at that one's paths are deleted, and it is
-retired (its row kept, `checkout_retired` naming the one it went into
-and why). So a later move of the checkout at the path (`project new`,
+same either way), its views at that one's paths are deleted, each
+question still open on it is closed as settled (`settled:<checkout>`,
+by the heal or the declaration, an answer that decides nothing), and it
+is retired (its row kept, `checkout_retired` naming the one it went
+into and why). A question is closed rather than moved onto the record
+read: no sighting shows it at the path any more, an answer would move a
+record no sighting reads (a changed remote's separate answer, a project
+of its own with nothing delivered at the path), and it was asked of the
+idle record's project and evidence, which the record read need not
+share; that record's own sightings open the questions that hold for
+it. So a later move of the checkout at the path (`project new`,
 `project join`) carries every record written there, where the one left
 behind kept its own in the old project, and a sighting of another
 object at the path (a restore) finds one checkout there for B to
