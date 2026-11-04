@@ -25,6 +25,15 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc19
+
+The nineteenth candidate closes the residuals filed while the
+eighteenth was built.
+
+#### Changed
+
+#### Fixed
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a
