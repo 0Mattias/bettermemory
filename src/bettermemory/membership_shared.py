@@ -54,9 +54,13 @@ from typing import TYPE_CHECKING, Any
 from . import checkout_token
 from .membership_lines import line_restated
 from .membership_records import (
+    ANSWERED,
     DUPLICATE_CHECKOUT,
     FILE_CONTRADICTION,
     FIRST_SIGHT,
+    IMPORT,
+    LEGACY,
+    SUBPROJECT_CONTRADICTION,
     Checkout,
     Location,
     _found_token,
@@ -95,14 +99,18 @@ _NAMING = (
     "resolution_joined",
     "resolution_new",
 )
-#: The questions whose every answer picks or confirms the project of the
-#: checkout they are on (`_asked_where`): a first sight's, a contradiction
-#: of the root's project file, and a second record's own. The others ask
-#: about something else: whether a changed remote is still the project
-#: (its separate answer, a project of the checkout's own, re-mints the
-#: token, which `_healed` then does not read), a part below the root, the
-#: records of a folder that is gone or could not be read, an import.
+#: The questions that ask which project the checkout they are on is in
+#: (`_asked_where`), so that one open there is a choice being made: a
+#: first sight's, a contradiction of the root's project file, and a
+#: second record's own.
 _PICKING = frozenset({FIRST_SIGHT, FILE_CONTRADICTION, DUPLICATE_CHECKOUT})
+#: The questions on a checkout whose answers decide another thing than
+#: its project (`_asked_where`): a part below its root, the records of a
+#: folder that is gone or could not be read, an import. A changed
+#: remote's is not one: its answers keep the checkout's project (still
+#: the project), merge it into another or make the checkout a project of
+#: its own.
+_ABOUT_ELSE = frozenset({SUBPROJECT_CONTRADICTION, LEGACY, IMPORT})
 
 
 def _shared_remint(
@@ -346,11 +354,31 @@ def _chosen(self: Membership, kept: Checkout, later: Checkout, loc: Location) ->
 
 
 def _asked_where(self: Membership, checkout: str) -> bool:
-    """Whether a question whose answer picks or confirms `checkout`'s
-    project (`_PICKING`) was opened on it, open or answered since. One
-    indexed read of its questions."""
+    """Whether someone was asked about `checkout`'s project there: a
+    question asking which project it is in (`_PICKING`), open or
+    answered; or one of another kind but those about something else
+    (`_ABOUT_ELSE`), answered by deciding its project (`_decides`: a
+    project of its own, a join to any project, its own kept). An open
+    question of another kind is not, nor an answer that decided nothing.
+    One indexed read of its questions."""
     rows = self._store.membership_rows("proposals", where={"checkout": checkout})
-    return any(row["kind"] in _PICKING for row in rows)
+    return any(
+        row["kind"] in _PICKING
+        or (
+            row["state"] == ANSWERED
+            and row["kind"] not in _ABOUT_ELSE
+            and _decides(str(row["answer"] or ""))
+        )
+        for row in rows
+    )
+
+
+def _decides(answer: str) -> bool:
+    """Whether a question's answer decided its checkout's project: a
+    project of its own (``new``, the separate answer), a join (``join:``
+    a project, or ``join`` where the root's project file named it), or
+    the project kept with a fresh project file (``rebind``)."""
+    return answer in ("new", "join", "rebind") or answer.startswith("join:")
 
 
 def _joined_silently_by_token(self: Membership, checkout: str) -> bool:

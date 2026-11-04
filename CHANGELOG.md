@@ -1447,14 +1447,15 @@ eighteenth was built.
   container's project silently; where every witness names one project,
   a copy on the freed number without birth time is the recorded
   checkout (`same_object`), as one at another number is re-keyed with
-  birth time. A second checkout 9.0.0rc18 registered
-  this way, by a silent join on the token into the project of the other
-  machine's checkout recording it, that no one chose (no question about
-  its project, open or answered, where a changed remote's is about
-  something else; no log row about it a declaration wrote, an absorb
-  among them; and no project file bound to its project), yields to the
-  first checkout at
-  the host's next sighting where nothing was written at it since, or
+  birth time. A second checkout 9.0.0rc18 registered this way, by a
+  silent join on the token into the project of the other machine's
+  checkout recording it, that no one chose (no question asking its
+  project, open or answered, nor one of another kind answered by
+  deciding its project, a changed remote's kept, joined elsewhere or
+  made a project of its own; no log row about it a declaration wrote,
+  an absorb among them; and no project file bound to its project),
+  yields to the first checkout at the host's next sighting where
+  nothing was written at it since, or
   only in the first checkout's project, the first recording the token
   and so staying first. Where records were written at it in another
   project, the sighting stays there and asks (`duplicate_checkout`):
