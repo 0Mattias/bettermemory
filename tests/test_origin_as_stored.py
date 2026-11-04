@@ -618,9 +618,9 @@ def test_a_claim_reads_the_tree_s_spelling_of_its_path(
     two.py's bar is edited. The claim fires on both bases, as where it is
     spelled as stored (`_COUNTED`). It matched no path: the logs and the
     walk missed the file, the patch named it otherwise, and the claim read
-    0. Every
-    spec is looked for in each spelling (`verify._spelled`), and a claim
-    read under each the stream holds (`verify._index_spellings`)."""
+    0. A spec the tree does not hold under its own spelling is looked for
+    in each other (`verify_spelling.spelled`), and a claim read under each
+    the stream holds (`verify._index_paths`)."""
     repo = _repository(tmp_path)
     anchor = _accented(repo, [_SPELLED[stored]], change)
     claim = _SPELLED[claimed] + ("::foo" if change == "edit" else "")
@@ -632,20 +632,157 @@ def test_a_claim_reads_the_tree_s_spelling_of_its_path(
     assert _both(repo, [claim, _QUIET], anchor) == [(_COUNTED[change], (claim,))] * 2
 
 
+@pytest.mark.parametrize("on", ["changed", "kept"])
 @pytest.mark.parametrize("change", ["edit", "delete"])
 @pytest.mark.parametrize("claimed", ["NFC", "NFD"])
-def test_a_name_stored_in_two_spellings_is_read_in_both(
-    tmp_path: Path, claimed: str, change: str
+def test_twins_read_each_claim_on_its_own_file(
+    tmp_path: Path, claimed: str, change: str, on: str
 ) -> None:
-    """A tree that stores both spellings of one name holds two files, which
-    a filesystem that ignores normalisation shows as one: the change to
-    the spelling the claim does not use fires it all the same, on both
-    bases (`_COUNTED`)."""
+    """A tree that stores both spellings of one name holds two files
+    (twins), which a filesystem that ignores normalisation shows as one;
+    `change` is made to one of them. A claim spelled as the changed twin
+    fires (`_COUNTED`), and one spelled as the kept twin reads 0, on both
+    bases. Read under every spelling, the change to the twin the claim
+    does not use fired it too, an over-count (ENG-220's review, round C):
+    a claim is read under its own spelling wherever the tree holds it
+    (`verify_spelling.spelled`)."""
     other = "NFD" if claimed == "NFC" else "NFC"
     repo = _repository(tmp_path)
-    anchor = _accented(repo, [_SPELLED[claimed], _SPELLED[other]], change)
+    twins = [_SPELLED[other], _SPELLED[claimed]]
+    anchor = _accented(repo, twins if on == "changed" else twins[::-1], change)
     claim = _SPELLED[claimed] + ("::foo" if change == "edit" else "")
-    assert _both(repo, [claim, _QUIET], anchor) == [(_COUNTED[change], (claim,))] * 2
+    truth = (_COUNTED[change], (claim,)) if on == "changed" else (0, ())
+    assert _both(repo, [claim, _QUIET], anchor) == [truth] * 2
+
+
+def _twins(repo: Path) -> str:
+    """Both spellings of café.py stored as two files before the verify;
+    after it foo's def line changes in the decomposed one, and then the
+    composed one is deleted. The anchor."""
+    body = _object(repo, _module("", 0).encode())
+    _index_info(repo, [("100644", body, _SPELLED[form]) for form in ("NFC", "NFD")])
+    _plain(repo, "commit", "-q", "-m", "anchor", when=_VERIFIED - timedelta(hours=1))
+    anchor = _plain(repo, "rev-parse", "HEAD")
+    edited = _object(repo, _module("flag=False", 0).encode())
+    _index_info(repo, [("100644", edited, _SPELLED["NFD"])])
+    _plain(repo, "commit", "-q", "-m", "edit", when=_VERIFIED + timedelta(hours=1))
+    _index_info(repo, [("0", "0" * 40, _SPELLED["NFC"])])
+    _plain(repo, "commit", "-q", "-m", "delete", when=_VERIFIED + timedelta(hours=2))
+    return anchor
+
+
+@pytest.mark.parametrize(
+    ("claim", "truth"),
+    [
+        (_SPELLED["NFC"] + "::foo", 1),
+        (_SPELLED["NFD"] + "::foo", 1),
+        (_SPELLED["NFD"], 0),
+        (_SPELLED["NFC"], 1),
+    ],
+)
+def test_twins_one_edited_and_the_other_deleted_read_exactly(
+    tmp_path: Path, claim: str, truth: int
+) -> None:
+    """The review's twins (round C): foo's def line changes in the
+    decomposed twin, and the composed one is deleted. foo on either twin
+    is its one commit, 1; the decomposed path, never deleted, 0; the
+    composed path, deleted, 1; on both bases. Read under every spelling,
+    foo on either read both commits, 2, and the decomposed path 1 with
+    the claim named, for the other file's deletion."""
+    repo = _repository(tmp_path)
+    anchor = _twins(repo)
+    assert _both(repo, [claim], anchor) == [(truth, (claim,) if truth else ())] * 2
+
+
+#: A file seven accented components deep, past the spellings bound
+#: (`claims.spellings_capped`), and stored with its components' forms
+#: mixed: composed and decomposed by turns, as no whole form spells it.
+_DEEP = "/".join(f"dé{i}" for i in range(6)) + "/café.py"
+_DEEP_MIXED = "/".join(
+    unicodedata.normalize("NFC" if i % 2 else "NFD", part)
+    for i, part in enumerate(_DEEP.split("/"))
+)
+
+
+@pytest.mark.parametrize("beside", [True, False])
+@pytest.mark.parametrize(
+    ("stored", "claimed", "truth"),
+    [
+        (_DEEP_MIXED, unicodedata.normalize("NFC", _DEEP), "conservative"),
+        (_DEEP_MIXED, unicodedata.normalize("NFD", _DEEP), "conservative"),
+        (_DEEP_MIXED, _DEEP_MIXED, "exact"),
+        (
+            unicodedata.normalize("NFD", _DEEP),
+            unicodedata.normalize("NFC", _DEEP),
+            "exact",
+        ),
+    ],
+)
+def test_a_tree_mixing_forms_past_the_bound_keeps_the_conservative_count(
+    tmp_path: Path, stored: str, claimed: str, truth: str, beside: bool
+) -> None:
+    """Past the spellings bound only the whole forms of a path are looked
+    for, so a claim on a file the tree stores with its components' forms
+    mixed names no path the tree holds: foo's def line changes, and
+    two.py's bar is edited. The hit keeps the conservative count, the
+    whole window, 2, on both bases, with two.py's foo claimed `beside`
+    it or not. It matched nothing: it read 0 beside two.py's claim, and
+    alone as not applicable (ENG-220's review, round C). Spelled as
+    stored, or against a tree holding a whole form, the claim reads its
+    one commit."""
+    repo = _repository(tmp_path)
+    anchor = _accented(repo, [stored], "edit")
+    claim = f"{claimed}::foo"
+    expected = (2, ()) if truth == "conservative" else (1, (claim,))
+    claims = [claim, _QUIET] if beside else [claim]
+    assert _both(repo, claims, anchor) == [expected] * 2
+
+
+def test_a_cited_path_mixing_forms_past_the_bound_keeps_the_conservative_count(
+    tmp_path: Path,
+) -> None:
+    """The body cites, composed, a file the tree stores with its forms
+    mixed past the spellings bound, and two.py, and claims nothing: the
+    file is edited after the verify, and then two.py. The hit keeps the
+    conservative count, 2, on both bases, and so does the count the
+    status surfaces read on dates. The cited file matched nothing, so
+    only two.py's edit counted, 1."""
+    repo = _repository(tmp_path)
+    anchor = _accented(repo, [_DEEP_MIXED], "bar")
+    cited = (unicodedata.normalize("NFC", _DEEP), _BESIDE)
+    assert _both(repo, [], anchor, cited) == [(2, ())] * 2
+    _caches.clear_all()
+    count = verify.resolve_commit_drift_count(
+        cwd=repo, since=_VERIFIED, unfiltered=2, anchors=cited, toplevel=repo
+    )
+    assert count == 2
+
+
+def test_a_quiet_tree_mixing_forms_past_the_bound_keeps_the_signal(
+    tmp_path: Path,
+) -> None:
+    """No commit since the verify, a claim on a file the tree stores with
+    its forms mixed past the spellings bound, and one on a file no commit
+    touched: the first claim is never read as phantom, so the quiescent
+    check keeps the signal. Looked for in its whole forms only, it
+    touched no commit, and with the phantom beside it the memory read as
+    not applicable. A path past the bound that no tree holds keeps the
+    signal too: its mixed forms are not looked for."""
+    repo = _repository(tmp_path)
+    body = _object(repo, _module("", 0).encode())
+    _index_info(repo, [("100644", body, _DEEP_MIXED)])
+    _plain(repo, "commit", "-q", "-m", "anchor", when=_VERIFIED - timedelta(hours=1))
+    phantom = "src/nowhere.py::foo"
+    claims = load_claims([unicodedata.normalize("NFC", _DEEP) + "::foo", phantom])
+    _caches.clear_all()
+    assert verify._quiescent_drift_applicable(repo, (), claims, toplevel=repo)
+    claims = load_claims([unicodedata.normalize("NFC", _DEEP[:-3]) + "x.py::foo"])
+    _caches.clear_all()
+    assert verify._quiescent_drift_applicable(repo, (), claims, toplevel=repo)
+    _caches.clear_all()
+    assert not verify._quiescent_drift_applicable(
+        repo, (), load_claims([phantom]), toplevel=repo
+    ), "premise: a phantom alone is not applicable"
 
 
 def test_an_unaddressable_claim_keeps_each_spelling_of_its_file_any_touch(
@@ -681,8 +818,21 @@ def test_a_file_cited_in_one_spelling_and_claimed_in_another_is_the_claims(
 def test_each_spelling_of_a_path_is_looked_for() -> None:
     """Every component as written, composed and decomposed, in every
     combination; an ASCII path has the one spelling; past the bound, the
-    whole path in each form."""
-    from bettermemory.claims import path_key, stored_spellings
+    whole path in each form, and the path is marked as past it."""
+    from bettermemory.claims import (
+        MAX_SPELLINGS,
+        path_key,
+        spellings_capped,
+        stored_spellings,
+    )
+
+    six = "/".join(["é"] * 6)
+    assert len(stored_spellings(six)) == MAX_SPELLINGS == 64
+    assert not spellings_capped(six)
+    assert spellings_capped(six + "/é")
+    assert not spellings_capped(_SPELLED["NFC"])
+    assert not spellings_capped("/".join(["e"] * 9))
+    assert spellings_capped(_DEEP) and spellings_capped(_DEEP_MIXED)
 
     spellings = stored_spellings(_SPELLED["NFC"])
     assert spellings[0] == _SPELLED["NFC"]

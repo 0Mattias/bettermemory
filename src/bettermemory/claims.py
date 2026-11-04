@@ -118,7 +118,9 @@ __all__ = [
     "claim_paths",
     "claim_is_addressable",
     "governed_claim_paths",
+    "MAX_SPELLINGS",
     "path_key",
+    "spellings_capped",
     "stored_spellings",
     "build_binding_index",
     "hunk_lines",
@@ -363,7 +365,7 @@ def load_claims(raw: list[str] | tuple[str, ...]) -> list[Claim]:
 
 
 #: The most spellings a path is looked for under (`stored_spellings`).
-_MAX_SPELLINGS = 64
+MAX_SPELLINGS = 64
 
 
 def path_key(path: str) -> str:
@@ -373,18 +375,9 @@ def path_key(path: str) -> str:
     return unicodedata.normalize("NFC", path)
 
 
-def stored_spellings(path: str) -> tuple[str, ...]:
-    """`path` as written, then each other spelling a tree may store the same
-    name under by Unicode normalisation: every component as written,
-    composed (NFC) and decomposed (NFD), in every combination, so a folder
-    a decomposing filesystem named and a file another tool did are both
-    found. A tree stores a name as the git that committed it read it: on
-    macOS a git that did not precompose read it decomposed, where the user
-    typed it composed (ENG-220's re-review). Past `_MAX_SPELLINGS`
-    combinations, the whole path in each form; an ASCII path has the one."""
-    if path.isascii():
-        return (path,)
-    forms = [
+def _component_forms(path: str) -> list[tuple[str, ...]]:
+    """Each component of `path` as written, composed and decomposed."""
+    return [
         tuple(
             dict.fromkeys(
                 (
@@ -396,9 +389,33 @@ def stored_spellings(path: str) -> tuple[str, ...]:
         )
         for part in path.split("/")
     ]
-    if math.prod(len(form) for form in forms) > _MAX_SPELLINGS:
+
+
+def spellings_capped(path: str) -> bool:
+    """Whether `path` has more spellings than `MAX_SPELLINGS`, so
+    `stored_spellings` gives its whole forms alone, and a tree that mixes
+    the forms across its components is not looked for."""
+    if path.isascii():
+        return False
+    return math.prod(len(form) for form in _component_forms(path)) > MAX_SPELLINGS
+
+
+def stored_spellings(path: str) -> tuple[str, ...]:
+    """`path` as written, then each other spelling a tree may store the same
+    name under by Unicode normalisation: every component as written,
+    composed (NFC) and decomposed (NFD), in every combination, so a folder
+    a decomposing filesystem named and a file another tool did are both
+    found. A tree stores a name as the git that committed it read it: on
+    macOS a git that did not precompose read it decomposed, where the user
+    typed it composed (ENG-220's re-review). Past `MAX_SPELLINGS`
+    combinations (`spellings_capped`), the whole path in each form; an
+    ASCII path has the one."""
+    if path.isascii():
+        return (path,)
+    if spellings_capped(path):
         whole = (path, path_key(path), unicodedata.normalize("NFD", path))
         return tuple(dict.fromkeys(whole))
+    forms = _component_forms(path)
     return tuple(dict.fromkeys("/".join(parts) for parts in itertools.product(*forms)))
 
 

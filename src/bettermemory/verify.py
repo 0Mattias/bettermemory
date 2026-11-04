@@ -106,7 +106,6 @@ and `compute_commit_drift`'s count of the commits since a verify.
 from __future__ import annotations
 
 import bisect
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -122,7 +121,6 @@ from .claims import (
     governed_claim_paths,
     load_claims,
     path_key,
-    stored_spellings,
 )
 from .origin import (
     MAX_PATCH_STREAM_COMMITS,
@@ -136,6 +134,8 @@ from .origin import (
 )
 from .origin_patch import local_patch_window, too_large
 from .verify_basis import BASIS_AUTHOR_DATE, BASIS_REACHABILITY, _count_since_verify
+from .verify_spelling import Spelled, spelled
+from .verify_spelling import literal_pathspecs as _literal_pathspecs
 
 # The path-drift scan lives in `verify_anchoring` and `verify_candidates`,
 # neither of which imports anything from here. The plain imports are
@@ -641,63 +641,13 @@ class ResolvedCommitDrift:
     basis: str = BASIS_AUTHOR_DATE
 
 
-def _literal_pathspecs(specs: Sequence[str]) -> list[str]:
-    """`specs` spelled so git reads each as the path it names, never as a
-    pattern: the ``:(literal)`` magic on each (ENG-183).
-
-    A spec is a repository path (`resolve_repo_pathspecs`, a claimed
-    path), and git reads a plain one as a pattern: ``src/foo[1].py`` also
-    matched ``src/foo1.py``, and a file named ``:(glob)**`` matched every
-    commit, so the author-date logs over-counted where the reachable walk
-    (`ReachableWalk.shas_touching`, which compares paths) did not, and
-    the two bases disagreed about one memory. Every log, phantom check
-    and patch stream this module runs over a spec takes it through here;
-    the walk keeps the plain specs it compares.
-
-    Where the environment already makes git read every pathspec
-    literally (``GIT_LITERAL_PATHSPECS``), git reads no magic either and
-    would take the prefix as part of the name, so the specs pass as they
-    stand. Each spec is given in every spelling a tree may store it under
-    (`_spelled`), as the walk compares them."""
-    spelled = _spelled(specs)
-    if _git_bool(os.environ.get("GIT_LITERAL_PATHSPECS")):
-        return spelled
-    return [f":(literal){spec}" for spec in spelled]
-
-
-def _spelled(specs: Sequence[str]) -> list[str]:
-    """`specs`, each followed by the other spellings a tree may store its
-    name under by Unicode normalisation (`claims.stored_spellings`). A
-    claim spelled composed against a tree that stores the name decomposed
-    (a git on macOS that did not precompose committed it), or the reverse,
-    named no path: the logs and the walk missed the file, and a changed
-    claim read 0 (ENG-220's re-review). Every log, phantom check and patch
-    stream reads its specs so (`_literal_pathspecs`), and the walk too."""
-    return list(
-        dict.fromkeys(name for spec in specs for name in stored_spellings(spec))
-    )
-
-
-def _git_bool(value: str | None) -> bool:
-    """A boolean environment variable as git reads it: unset or empty is
-    false, ``true`` / ``yes`` / ``on`` and a nonzero integer are true."""
-    if value is None:
-        return False
-    word = value.strip().lower()
-    if word in ("true", "yes", "on"):
-        return True
-    try:
-        return int(word) != 0
-    except ValueError:
-        return False
-
-
 def _weak_tier_evaluation(
     cwd: Path,
     shas: list[str],
     specs: list[str],
     claims: Sequence[Claim],
     toplevel: Path | None,
+    spell: Spelled | None = None,
 ) -> tuple[list[str], set[str] | None]:
     """Run the claim-level `weak` tier over one patch window.
 
@@ -734,7 +684,8 @@ def _weak_tier_evaluation(
     """
     if len(shas) > MAX_PATCH_STREAM_COMMITS:
         return [], None
-    pathspecs = _literal_pathspecs(specs)
+    spell = spell or Spelled()
+    pathspecs = _literal_pathspecs(spell.names(specs))
     if too_large(cwd, shas, pathspecs, toplevel=toplevel):
         # Every file is diffed as text, a large binary's lines included:
         # past the bound the patch is not read (ENG-220's review).
@@ -768,9 +719,9 @@ def _weak_tier_evaluation(
     drifted: list[str] = []
     implicated: set[str] = set()
     bare = False
-    named = _index_spellings(index)
+    named = _index_paths(index)
     for claim in claims:
-        paths = named.get(path_key(claim.rel_path)) or [claim.rel_path]
+        paths = [p for p in spell.of(claim.rel_path) if p in named] or [claim.rel_path]
         results = [claim_level_drift(replace(claim, rel_path=p), index) for p in paths]
         if not any(result["weak"] for result in results):
             continue
@@ -793,13 +744,13 @@ def _weak_tier_evaluation(
     return drifted, implicated & window
 
 
-def _index_spellings(index: dict[str, Any]) -> dict[str, list[str]]:
-    """Each path a `claims.build_binding_index` index names, by its composed
-    spelling (`claims.path_key`): a claim is read under every spelling of
-    its path the stream holds, so one spelled composed reads a tree that
-    stores the name decomposed, and one name stored both ways is read in
-    both (ENG-220's re-review)."""
-    paths = (
+def _index_paths(index: dict[str, Any]) -> set[str]:
+    """Every path a `claims.build_binding_index` index names: a claim is
+    read under each spelling of its path `verify_spelling.spelled` chose
+    that the stream holds, its own where the tree holds that, so a tree
+    storing both spellings (twins) reads each claim on its own file, and
+    under every other where it does not (ENG-220's review, round C)."""
+    return (
         set(index["files"])
         | set(index["deleted"])
         | set(index["changed_text"])
@@ -807,10 +758,6 @@ def _index_spellings(index: dict[str, Any]) -> dict[str, list[str]]:
         | set(index.get("header_only", {}))
         | {key[0] for key in index["bindings"]}
     )
-    named: dict[str, list[str]] = {}
-    for path in sorted(paths):
-        named.setdefault(path_key(path), []).append(path)
-    return named
 
 
 def resolve_commit_drift(
@@ -1006,19 +953,29 @@ def _resolve_reachable(
         # a path in it. The memory's claims are real but not about this
         # repo's code.
         return None
+    spell = spelled(
+        cwd,
+        [*ungoverned, *governed],
+        toplevel=toplevel,
+        head=walk.head,
+        touched=walk.touched,
+    )
+    if spell.declined:
+        # A path past the spellings bound the tree holds in no whole form.
+        return conservative
 
     escalating: set[str] = set()
     if ungoverned:
-        escalating |= walk.shas_touching(_spelled(ungoverned))
+        escalating |= walk.shas_touching(spell.names(ungoverned))
     drifted: list[str] = []
     if governed:
-        touched = walk.shas_touching(_spelled(governed))
+        touched = walk.shas_touching(spell.names(governed))
         # Walk order, so the patch stream names the commits the way a
         # log would; `--no-walk=unsorted` does not care, a reader does.
         post = [sha for sha in walk.commits if sha in touched]
         if post:
             drifted, implicated = _weak_tier_evaluation(
-                cwd, post, governed, claims, toplevel
+                cwd, post, governed, claims, toplevel, spell
             )
             if implicated is None:
                 # Patch stream unavailable or window too large —
@@ -1030,7 +987,7 @@ def _resolve_reachable(
         return ResolvedCommitDrift(
             len(escalating), checked, tuple(drifted), BASIS_REACHABILITY
         )
-    combined = list(dict.fromkeys((*ungoverned, *governed)))
+    combined = spell.names([*ungoverned, *governed])
     touching = commit_author_timestamps_touching_pathspecs(
         cwd, _literal_pathspecs(combined), toplevel=toplevel
     )
@@ -1078,12 +1035,18 @@ def _resolve_with_claims(
     if since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
 
+    spell = spelled(
+        cwd, [*ungoverned, *governed], toplevel=toplevel, head="HEAD", since=since
+    )
+    if spell.declined:
+        # A path past the spellings bound the tree holds in no whole form.
+        return conservative
     escalating: set[str] = set()
     every_leg_phantom = True
 
     if ungoverned:
         pairs = commit_author_sha_pairs_touching_pathspecs(
-            cwd, _literal_pathspecs(ungoverned), toplevel=toplevel
+            cwd, _literal_pathspecs(spell.names(ungoverned)), toplevel=toplevel
         )
         if pairs is None:
             return conservative
@@ -1097,7 +1060,7 @@ def _resolve_with_claims(
         # an empty pathspec list, which read as "git could not answer"
         # and fell back to the repo-wide count.
         gpairs = commit_author_sha_pairs_touching_pathspecs(
-            cwd, _literal_pathspecs(governed), toplevel=toplevel
+            cwd, _literal_pathspecs(spell.names(governed)), toplevel=toplevel
         )
         if gpairs is None:
             return conservative
@@ -1106,7 +1069,7 @@ def _resolve_with_claims(
             post = [sha for ts, sha in gpairs if ts > since]
             if post:
                 drifted, implicated = _weak_tier_evaluation(
-                    cwd, post, governed, claims, toplevel
+                    cwd, post, governed, claims, toplevel, spell
                 )
                 if implicated is None:
                     # Patch stream unavailable or window too large —
@@ -1224,8 +1187,11 @@ def resolve_commit_drift_count(
         # Git answered: every anchor escapes this repo. The memory's
         # claims are real but not about this repo's code.
         return None
+    spell = spelled(cwd, specs, toplevel=toplevel, head="HEAD", since=since)
+    if spell.declined:
+        return unfiltered
     touching = commit_author_timestamps_touching_pathspecs(
-        cwd, _literal_pathspecs(specs), toplevel=toplevel
+        cwd, _literal_pathspecs(spell.names(specs)), toplevel=toplevel
     )
     if touching is None:
         # Git couldn't run the path-filtered log — never under-count on
@@ -1343,8 +1309,13 @@ def _quiescent_drift_applicable(
     combined = list(dict.fromkeys((*specs, *governed)))
     if not combined:
         return False
+    spell = spelled(cwd, combined, toplevel=toplevel, head="HEAD")
+    if spell.declined:
+        # A path past the spellings bound the tree holds in no whole form:
+        # never read as not applicable.
+        return True
     touching = commit_author_timestamps_touching_pathspecs(
-        cwd, _literal_pathspecs(combined), toplevel=toplevel
+        cwd, _literal_pathspecs(spell.names(combined)), toplevel=toplevel
     )
     if touching is None:
         # Git couldn't run the path-filtered log — could-not-ask never
