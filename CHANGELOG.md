@@ -770,7 +770,9 @@ eighteenth was built.
   before rc14, which a third clone of either named both and asked about,
   become one: a sighting of the alias clone (its remote spelled with an
   `insteadOf` prefix of the system or the global config, never of the
-  repository's own) merges its project into the one other settled
+  repository's own), whose project was minted on that alias as written
+  (its first checkout row names the alias and not the URL), merges its
+  project into the one other settled
   project, in its tenant, that fetches from every remote it fetches
   from (one of that project's checkouts names exactly those keys) and
   whose witness commit it holds, outside the strict switch. Nothing is
@@ -786,7 +788,10 @@ eighteenth was built.
   its next sighting, so a third clone asked between the two joins
   without a question. Two repositories whose aliases share a prefix or
   a spelling stay apart, as does a fork whose own remote the other does
-  not hold. A sighting that merges nothing is kept for the checkout's
+  not hold. A project minted on a remote of its own, or on the alias
+  expanded, stays apart when its remote is re-spelled with the alias,
+  as it does re-pointed at the URL: a remote's spelling decides no
+  merge. A sighting that merges nothing is kept for the checkout's
   evidence, so a steady prompt at an alias clone costs what any
   checkout's does. `docs/internals.md` states the rule.
   (`src/bettermemory/membership_alias.py`,

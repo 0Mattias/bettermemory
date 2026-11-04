@@ -237,6 +237,72 @@ def test_a_fork_whose_own_remote_is_an_alias_is_not_joined_to_its_upstream(
     assert _merges(world) == []
 
 
+@pytest.mark.parametrize("spelling", ["alias", "full URL"])
+def test_a_project_re_pointed_at_the_url_stays_apart_under_either_spelling(
+    world: World, spelling: str
+) -> None:
+    """The review's P9: a settled project minted on a remote of its own,
+    its checkout re-pointed at the full-URL clone's repository and its
+    commits fetched. Spelled as the URL or as an alias the machine
+    expands to it, the project stays apart: only a project minted on the
+    alias as written is the split the rule repairs, so a remote's
+    spelling decides no merge."""
+    full = world.repo("/w/full", remote=FULL)
+    mine = world.clone(full, "/w/mine", remote="github.com/me/mine")
+    full.commit()
+    first = world.see(full)
+    second = world.see(mine)
+    assert (first.outcome, second.outcome) == (NEW, NEW)
+    assert first.project != second.project
+    _caught_up(full, mine)
+    mine.remotes = {ALIAS if spelling == "alias" else FULL}
+    for _ in range(2):
+        res = (
+            _alias_sighting(world, mine, {ALIAS: FULL})
+            if spelling == "alias"
+            else world.see(mine)
+        )
+        assert res.project == second.project
+    assert _merges(world) == []
+
+
+def test_a_project_re_pointed_at_the_alias_before_a_rule_names_it_stays_apart(
+    world: World,
+) -> None:
+    """P9 in two steps: the settled project's checkout re-pointed at the
+    alias while no rule names it, so a sighting records the alias as
+    written alone, and the rule added after. The project was minted on
+    its own remote, not on the alias: it stays apart."""
+    full = world.repo("/w/full", remote=FULL)
+    mine = world.clone(full, "/w/mine", remote="github.com/me/mine")
+    full.commit()
+    first = world.see(full)
+    second = world.see(mine)
+    assert (first.outcome, second.outcome) == (NEW, NEW)
+    _caught_up(full, mine)
+    mine.remotes = {ALIAS}
+    assert world.see(mine).project == second.project
+    _stays_apart(world, mine, second)
+
+
+def test_a_project_minted_on_the_alias_expanded_stays_apart(world: World) -> None:
+    """The alias clone first seen as rc14 keys it, the alias expanded,
+    before the full-URL clone's project fetched from the URL: its project
+    was minted on the URL's key too, so no alias kept as written split
+    it, and once the other project fetches from the URL a sighting's
+    evidence merges neither."""
+    full = world.repo("/w/full")
+    alias = world.clone(full, "/w/alias", remote=ALIAS)
+    full.commit()
+    first = world.see(full)
+    second = _alias_sighting(world, alias, {ALIAS: FULL})
+    assert (first.outcome, second.outcome) == (NEW, NEW)
+    full.remotes = {FULL}
+    assert world.see(full).project == first.project
+    _caught_up(full, alias)
+    _stays_apart(world, alias, second)
+
+
 def test_a_key_the_other_project_holds_only_as_an_alias_is_no_remote_witness(
     world: World,
 ) -> None:
@@ -603,6 +669,39 @@ def test_a_rule_in_the_repositorys_own_config_makes_no_alias(
         assert (
             str(resolve_here(store, config, str(alias), identity=identity).project) == p
         )
+
+
+@_ON_GIT
+@pytest.mark.parametrize("spelling", ["gh:acme/lib", _URL])
+def test_a_checkout_re_pointed_at_the_url_stays_apart_on_git(
+    tmp_path: Path, lab: _Lab, spelling: str
+) -> None:
+    """P9 on git: a checkout with a remote of its own, seen as a new
+    project under the global rule, fetches the full-URL clone's commits
+    and is re-pointed (``git remote set-url``) at its URL, spelled as the
+    URL or as the alias the rule expands to it: either way its project
+    stays apart."""
+    store, identity, config = lab
+    _global_rule(_RULE)
+    full = make_repo(tmp_path / "full", commits=2, remote=_URL)
+    mine = tmp_path / "mine"
+    git(tmp_path, "init", "-q", str(mine))
+    git(mine, "commit", "-q", "--allow-empty", "-m", "own")
+    git(mine, "remote", "add", "origin", "https://example.invalid/me/mine.git")
+    q = resolve_here(store, config, str(full), identity=identity)
+    p = resolve_here(store, config, str(mine), identity=identity)
+    assert (q.outcome, p.outcome) == (NEW, NEW)
+    git(mine, "fetch", "-q", str(full), "main")
+    git(mine, "reset", "-q", "--hard", "FETCH_HEAD")
+    git(mine, "remote", "set-url", "origin", spelling)
+    assert location.capture(str(mine), write_token=False).alias_keys == (
+        ("gh/acme/lib",) if spelling != _URL else ()
+    )
+    for _ in range(2):
+        assert resolve_here(store, config, str(mine), identity=identity).project == (
+            p.project
+        )
+    assert [r for r in store.log_rows() if r.kind == "project_merged"] == []
 
 
 @_ON_GIT

@@ -758,6 +758,13 @@ system or the global config that git rewrites to another key, never one
 of the repository's own config, which its own files set) merges its
 project P into one other project Q where all of these hold:
 
+- P was minted on that alias key as written: the first checkout row the
+  log holds for P, the sighting's that minted it, names the alias key
+  and none of the keys the checkout fetches from, as a capture before
+  rc14 keyed it. A project minted on a remote of its own, or on the
+  alias expanded, is no such split, and its remote re-spelled with an
+  alias later merges nothing, as it would re-pointed at the URL: a
+  remote's spelling decides no merge.
 - P and Q are settled: neither provisional, a part, a folder project or
   a boundary, both in the location's tenant; no question is open on a
   checkout of either, and no project file is bound to either.

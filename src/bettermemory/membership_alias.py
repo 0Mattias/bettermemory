@@ -22,6 +22,13 @@ nothing a user said or a file binds stands against it:
   config that git rewrites to another key; a rule in the repository's
   own config, which the checkout's own files set, makes none
   (`location_git.read_remotes`);
+* P was minted on that alias key as written (`_minted_on`): the first
+  checkout row the log holds for P, the sighting's that minted it, names
+  the alias key and none of the keys the checkout fetches from, as a
+  capture before rc14 keyed it. A project minted on a remote of its own,
+  or on the alias expanded, is no such split: its remote re-spelled with
+  an alias later merges nothing, as it would re-pointed at the URL, so a
+  remote's spelling decides no merge;
 * P and Q are settled (`_settled`): neither provisional, a part, a folder
   project or a boundary, both in the location's tenant; no question is
   open on a checkout of either, and no project file is bound to either;
@@ -117,7 +124,7 @@ def rejoin(
     )
     if _kept(_PASSED, seen):
         return []
-    q = _target(self, k, pid, frozenset(fetched), tenant)
+    q = _target(self, k, pid, frozenset(fetched), aliases, tenant)
     witnesses = (
         []
         if q is None
@@ -149,6 +156,7 @@ def _target(
     k: Checkout,
     pid: str,
     fetched: frozenset[str],
+    aliases: frozenset[str],
     tenant: str | None,
 ) -> str | None:
     """The project Q the rule merges P, the checkout `k`'s project
@@ -168,6 +176,8 @@ def _target(
     q = named[0]
     held = self._checkouts_by_project([pid, q])
     if not any(set(c.remotes) == fetched for c in held.get(q, ())):
+        return None
+    if not _minted_on(self, pid, aliases, fetched):
         return None
     checkouts = {c.id for cs in held.values() for c in cs} | {k.id}
     if any(pr.checkout in checkouts for pr in self._open_proposals()):
@@ -194,6 +204,44 @@ def _settled(self: Membership, pid: str, tenant: str | None) -> bool:
         and not p.folder
         and not p.boundary
     )
+
+
+def _minted_on(
+    self: Membership, pid: str, aliases: Collection[str], fetched: Collection[str]
+) -> bool:
+    """Whether project `pid` was minted on an alias key of the sighting
+    as written, unexpanded, as a capture before rc14 keyed it (or one
+    before the system config was read, for a rule there): the first
+    checkout row the log holds for `pid` from its ``project_minted`` row
+    on, written at the sighting that minted it, names one of `aliases`
+    among its remotes and none of the keys the checkout fetches from
+    (`fetched`). A project minted on another spelling, its remote spelled
+    with an alias later, or minted on the alias expanded, is no split
+    this repairs: so a remote's spelling decides no merge."""
+    quoted = json.dumps(pid)
+    since: int | None = None
+    for row in self._store.membership_log(["project_minted"]):
+        if quoted in row.payload and _loads(row.payload).get("project") == pid:
+            since = row.seq - 1
+            break
+    if since is None:
+        return False
+    for row in self._store.membership_log(["checkout_put"], since_seq=since):
+        put = _loads(row.payload).get("checkout") if quoted in row.payload else None
+        if not isinstance(put, dict) or put.get("project") != pid:
+            continue
+        first = _values(put.get("remotes_json"))
+        return bool(first & set(aliases)) and not first & set(fetched)
+    return False
+
+
+def _loads(payload: str) -> dict[str, Any]:
+    """A log row's payload as a mapping; an empty one where it is not."""
+    try:
+        raw = json.loads(payload)
+    except ValueError:
+        return {}
+    return raw if isinstance(raw, dict) else {}
 
 
 def _declared(self: Membership, pid: str, q: str, ids: Collection[str]) -> bool:
