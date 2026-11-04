@@ -35,7 +35,17 @@ def _neutral(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     neutral_git(tmp_path, monkeypatch)
 
 
-NAMES = {"trailing_space": "trail ", "trailing_tab": "tab\t", "leading_space": " lead"}
+#: Windows takes no control character in a name, a tab included, and drops
+#: a space that ends one (Win32 path normalisation): those names are POSIX's.
+_POSIX_NAME = pytest.mark.skipif(
+    os.name == "nt", reason="a Windows name holds no tab and ends in no space"
+)
+
+NAMES = [
+    pytest.param("trail ", id="trailing_space", marks=_POSIX_NAME),
+    pytest.param("tab\t", id="trailing_tab", marks=_POSIX_NAME),
+    pytest.param(" lead", id="leading_space"),
+]
 
 
 def _head(where: Path) -> str:
@@ -44,7 +54,7 @@ def _head(where: Path) -> str:
     ).stdout.strip()
 
 
-@pytest.mark.parametrize("name", list(NAMES.values()), ids=list(NAMES))
+@pytest.mark.parametrize("name", NAMES)
 def test_a_folder_named_with_blank_space_keeps_its_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
@@ -68,7 +78,14 @@ def test_a_folder_named_with_blank_space_keeps_its_root(
     assert origin.repo_toplevel_and_head(app) == (Path(os.path.realpath(app)), head)
 
 
-@pytest.mark.parametrize("name", ["note ", " note", "tab\tnote"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("note ", marks=_POSIX_NAME),
+        " note",
+        pytest.param("tab\tnote", marks=_POSIX_NAME),
+    ],
+)
 def test_a_file_named_with_blank_space_is_touched_as_named(
     tmp_path: Path, name: str
 ) -> None:
@@ -85,6 +102,7 @@ def test_a_file_named_with_blank_space_is_touched_as_named(
     assert set(walk.touched) == {name}, walk.touched
 
 
+@_POSIX_NAME
 def test_the_audit_reads_a_store_s_working_tree_whole(tmp_path: Path) -> None:
     """A store inside a working tree whose folder's name ends in a space is
     read as inside that tree."""

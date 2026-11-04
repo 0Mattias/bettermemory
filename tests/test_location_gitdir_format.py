@@ -29,7 +29,14 @@ from typing import Any
 import pytest
 
 from bettermemory import _git as git_runner
-from bettermemory import gitconfig, githead, location, location_audit, origin
+from bettermemory import (
+    gitconfig,
+    gitfile_rule,
+    githead,
+    location,
+    location_audit,
+    origin,
+)
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.server import build_server
@@ -40,6 +47,7 @@ from . import test_location_gitdir_worktree as gitdir_worktree
 from ._mcp import call_tool
 from .test_location_gitdir_worktree import (
     REMOTE,
+    _config_path,
     _inside,
     _membership,
     _no_origin,
@@ -146,7 +154,7 @@ def test_each_spelling_git_reads_is_refused_by_both_readers(
     app, other = _apps(tmp_path)
     config = app / ".git" / "config"
     (app / ".git" / "back.inc").write_text("[core]\n\tworktree = ..\n")
-    config.write_bytes(SPELLINGS[how](config.read_bytes(), os.fsencode(other)) + b"\n")
+    config.write_bytes(SPELLINGS[how](config.read_bytes(), _config_path(other)) + b"\n")
     _git_names(app, other)
     runs.clear()
 
@@ -155,11 +163,31 @@ def test_each_spelling_git_reads_is_refused_by_both_readers(
     assert [cwd for cwd in runs if _inside(cwd, app)] == []
 
 
+#: A Windows path in ``core.worktree`` as a user's config may hold it, and
+#: the value git reads from it: escaped as ``git config`` writes it, with
+#: forward slashes, quoted around a space, a share, and written as it is,
+#: where git dies on an escape it does not know (``\U``: None) and reads
+#: the ones it knows (``\t``, ``\n``) as their characters. Strings, not
+#: paths, so each is checked against git off Windows too.
+WINDOWS_VALUES: dict[str, tuple[bytes, str | None]] = {
+    "escaped": (b"C:\\\\Users\\\\me\\\\app", "C:\\Users\\me\\app"),
+    "forward_slashes": (b"C:/Users/me/app", "C:/Users/me/app"),
+    "quoted": (b'"C:\\\\Program Files\\\\app"', "C:\\Program Files\\app"),
+    "share": (b"\\\\\\\\host\\\\share\\\\app", "\\\\host\\share\\app"),
+    "known_escapes": (b"C:\\temp\\new", "C:\temp\new"),
+    "unknown_escape": (b"C:\\Users\\me\\app", None),
+}
+
+
+def _windows_config(value: bytes) -> bytes:
+    return b"[core]\n\trepositoryformatversion = 0\n\tworktree = " + value + b"\n"
+
+
 #: Config texts git parses, or refuses, in the ways the rule's parse follows:
 #: values (quotes, escapes, comments, trimmed and kept blank space, a NUL
 #: byte), names (case, subsections, the older dotted form, a NUL byte),
 #: headers and keys git refuses, the end of the file, a partial byte order
-#: mark, and the spellings above.
+#: mark, the spellings above and the Windows paths.
 TEXTS: list[bytes] = [
     b'[a]\n\tk\n\tv = 1\n\tn = x\\ny\n[b "s\x00t"]\n\tz = q\x00r\n',
     b'[a]\n\tq = " a ; b " ; c\n\tr = a "" \n\ts = "x"y"z"\n\tt = \\t\\b\\\\\\"\n',
@@ -186,6 +214,7 @@ TEXTS: list[bytes] = [
         spell(b"[core]\n\tbare = false\n", b"/elsewhere") + b"\n"
         for spell in SPELLINGS.values()
     ),
+    *(_windows_config(value) for value, _ in WINDOWS_VALUES.values()),
 ]
 
 
@@ -215,6 +244,30 @@ def test_the_parse_is_git_s(tmp_path: Path, text: bytes) -> None:
         (name, None if value is None else value.split(b"\0", 1)[0])
         for name, value in ours
     ] == listed
+
+
+@pytest.mark.parametrize("how", list(WINDOWS_VALUES))
+def test_a_windows_path_is_the_working_tree_git_reads(tmp_path: Path, how: str) -> None:
+    """A Windows user's ``core.worktree``: `gitfile_rule.tree_format` takes
+    the value git takes (``git config --get``), escapes undone as git
+    undoes them, and refuses the config where git dies on an escape."""
+    value, expected = WINDOWS_VALUES[how]
+    git_dir = tmp_path / "dot_git"
+    git_dir.mkdir()
+    config = git_dir / "config"
+    config.write_bytes(_windows_config(value))
+    done = subprocess.run(
+        ["git", "config", "--file", str(config), "--null", "core.worktree"],
+        capture_output=True,
+    )
+    got = gitfile_rule.tree_format(str(git_dir))
+    if expected is None:
+        assert b"bad config" in done.stderr, done.stderr
+        assert got.why is not None and got.worktree is None, got
+        return
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == os.fsencode(expected) + b"\0"
+    assert got == gitfile_rule.TreeFormat(worktree=expected), got
 
 
 @pytest.mark.parametrize(
@@ -261,10 +314,10 @@ def test_a_config_git_reads_no_format_from_leaves_the_tree_at_the_folder(
     at the folder, and both readers do too. The rule refused it."""
     app, other = _apps(tmp_path)
     tail = {
-        "worktree": b"[core]\n\tworktree = " + os.fsencode(other) + b"\n",
+        "worktree": b"[core]\n\tworktree = " + _config_path(other) + b"\n",
         "bare": b"[core]\n\tbare = true\n",
         "negative": b"[core]\n\trepositoryformatversion = -1\n\tworktree = "
-        + os.fsencode(other)
+        + _config_path(other)
         + b"\n",
     }[how]
     _without_version(app, tail)
@@ -333,14 +386,14 @@ def test_a_worktree_s_config_worktree_is_read_where_git_reads_it(
     tree = tmp_path / "work" / "tree"
     _git(main, "worktree", "add", "-q", str(tree), "-b", "tree")
     with (main / ".git" / "config").open("ab") as fh:
-        fh.write(b"[core]\n\tworktree = " + os.fsencode(other) + b"\n")
+        fh.write(b"[core]\n\tworktree = " + _config_path(other) + b"\n")
     _git_names(tree, tree)
     assert _same(_membership(tree).root, tree)
     assert _same(origin.capture(tree).worktree_root, tree)
 
     _set(main / ".git", "extensions.worktreeConfig", "true")
     own = main / ".git" / "worktrees" / "tree" / "config.worktree"
-    own.write_text(f"[core]\n\tworktree = {other}\n", encoding="utf-8")
+    own.write_bytes(b"[core]\n\tworktree = " + _config_path(other) + b"\n")
     _git_names(tree, other)
     runs.clear()
     assert _membership(tree).state == location.OUTSIDE

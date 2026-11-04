@@ -161,12 +161,20 @@ def test_a_core_worktree_naming_the_folder_itself_keeps_both_readers_on_it(
     assert got.repo == REMOTE and _same(got.worktree_root, app)
 
 
-def _worktree_config(git_dir: Path, value: str) -> None:
+def _config_path(path: Path) -> bytes:
+    """`path` as a config value git reads back as it: with forward slashes,
+    which git takes on Windows too. A Windows path written as it is
+    (``C:\\Users\\...``) holds escapes git does not know (``\\U``), and git
+    dies on the line."""
+    return os.fsencode(path.as_posix())
+
+
+def _worktree_config(git_dir: Path, value: Path) -> None:
     """``core.worktree`` set to `value` in `git_dir`'s ``config.worktree``,
     which git reads under ``extensions.worktreeConfig``."""
     _set(git_dir, "extensions.worktreeConfig", "true")
-    (git_dir / "config.worktree").write_text(
-        f"[core]\n\tworktree = {value}\n", encoding="utf-8"
+    (git_dir / "config.worktree").write_bytes(
+        b"[core]\n\tworktree = " + _config_path(value) + b"\n"
     )
 
 
@@ -196,10 +204,10 @@ def test_a_config_that_moves_the_tree_off_the_folder_is_refused_by_both_readers(
     elif how == "nothing":
         _set(app / ".git", "core.worktree", "../../nowhere")
     elif how == "worktree_config":
-        _worktree_config(app / ".git", str(other))
+        _worktree_config(app / ".git", other)
     else:
         config = app / ".git" / "config"
-        tail = NUL_SPELLINGS[how].replace(b"{other}", os.fsencode(other))
+        tail = NUL_SPELLINGS[how].replace(b"{other}", _config_path(other))
         config.write_bytes(config.read_bytes() + tail)
     if how not in ("bare", "nothing"):
         assert _same(_git(app, "rev-parse", "--show-toplevel"), other)
@@ -238,7 +246,7 @@ def test_a_separate_git_directory_naming_another_tree_in_its_worktree_config_is_
     tree, sep = _separate(tmp_path)
     other = tmp_path / "work" / "other"
     other.mkdir()
-    _worktree_config(sep, str(other))
+    _worktree_config(sep, other)
     assert _same(_git(tree, "rev-parse", "--show-toplevel"), other)
     runs.clear()
 

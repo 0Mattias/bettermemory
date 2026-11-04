@@ -407,7 +407,7 @@ def test_core_worktree_in_config_worktree_inside_the_lifetime_is_seen(
     elsewhere.mkdir()
     assert capture(repo).worktree_root == _key(repo)
     (repo / ".git" / "config.worktree").write_text(
-        f"[core]\n\tworktree = {elsewhere}\n", encoding="utf-8"
+        f"[core]\n\tworktree = {elsewhere.as_posix()}\n", encoding="utf-8"
     )
     assert Path(_run(repo, "rev-parse", "--show-toplevel")).resolve() == Path(
         _key(elsewhere)
