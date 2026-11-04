@@ -1444,8 +1444,10 @@ eighteenth was built.
   container's project silently. A second checkout 9.0.0rc18 registered
   this way, by a silent join on the token into the project of the other
   machine's checkout recording it, that no one chose (no question about
-  it, no log row about it a declaration wrote, an absorb among them, and
-  no project file bound to its project), yields to the first checkout at
+  its project, open or answered, where a changed remote's is about
+  something else; no log row about it a declaration wrote, an absorb
+  among them; and no project file bound to its project), yields to the
+  first checkout at
   the host's next sighting where nothing was written at it since, or
   only in the first checkout's project, the first recording the token
   and so staying first. Where records were written at it in another

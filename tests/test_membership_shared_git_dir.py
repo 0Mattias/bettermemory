@@ -61,7 +61,11 @@ from bettermemory import checkout_token, location, location_git, membership_shar
 from bettermemory.declare import declaring_model
 from bettermemory.location import capture, remint_answer
 from bettermemory.membership import ASK, SILENT, Declaration, Membership
-from bettermemory.membership_records import DUPLICATE_CHECKOUT, REMOTE_DIVERGED
+from bettermemory.membership_records import (
+    DUPLICATE_CHECKOUT,
+    FILE_CONTRADICTION,
+    REMOTE_DIVERGED,
+)
 from bettermemory.membership_shared import _same_file
 from bettermemory.store import Store
 
@@ -966,41 +970,73 @@ def test_a_second_checkout_its_project_file_names_is_kept(
 
 
 @pytest.mark.usefixtures("no_birth")
-@pytest.mark.parametrize("question", ["open", "answered"])
-def test_a_second_checkout_a_question_was_opened_about_is_kept(
-    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, question: str
+@pytest.mark.parametrize(
+    ("kind", "state", "records"),
+    [
+        (FILE_CONTRADICTION, "open", "none"),
+        (FILE_CONTRADICTION, "answered", "none"),
+        (REMOTE_DIVERGED, "open", "none"),
+        (REMOTE_DIVERGED, "answered", "none"),
+        (REMOTE_DIVERGED, "open", "written"),
+        (REMOTE_DIVERGED, "answered", "written"),
+    ],
+)
+def test_a_question_on_a_second_checkout_keeps_it_where_it_asks_its_project(
+    tmp_path: Path,
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    state: str,
+    records: str,
 ) -> None:
-    """A question was opened about the same second checkout (its remote
-    changed), still open or answered since: someone was asked there, so
-    it is kept. An open question is the only trace of it (the proposals'
-    guard alone); an answered one is also the answer's declaration."""
-    line, box, _hid, kid = _shared(tmp_path, lab, "line")
+    """A question was opened on the same second checkout, still open or
+    answered since (joining its own project). One whose answer picks or
+    confirms the checkout's project (its project file's contradiction) is
+    a choice there, so the checkout is kept, the question its only trace.
+    One about something else (its remote changed: still the project, or
+    a project of its own) is not: the sighting yields to the first
+    checkout where nothing was written at the second, and asks
+    (``duplicate_checkout``) where h2 was. Before, any question kept the
+    second checkout."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
     _the_containers_re_mint(lab, box, kid, "recorded")
     dup, _found = _without_the_rule(lab, line, monkeypatch)
     project = lab.model().checkout(dup).project
+    if records == "written":
+        _written_at(lab, "h2", line, monkeypatch)
     model = lab.model()
     with lab.store.batch():
         pr = model._open_proposal(
             checkout=dup,
-            kind=REMOTE_DIVERGED,
+            kind=kind,
             candidates=[project],
             evidence={"old": [], "new": []},
-            reason=REMOTE_DIVERGED,
+            reason=kind,
             line="a question about the second checkout",
             signature=None,
         )
-    if question == "answered":
+    if state == "answered":
         lab._declaring().declare(
             Declaration(
                 "join", "os:tester", checkout=dup, proposal=pr.id, target=project
             )
         )
+        assert lab.model().proposal(pr.id).answer == f"join:{project}"
     location.forget()
 
-    res, _admitted = lab.view(line)
+    res, admitted = lab.view(line)
 
-    assert (res.checkout, res.rule) == (dup, "object+token")
-    assert res.outcome == (ASK if question == "open" else SILENT)
+    asked = [p.kind for p in lab.model().pending() if p.checkout == dup]
+    if kind == FILE_CONTRADICTION:
+        assert (res.checkout, res.rule) == (dup, "object+token")
+        assert res.outcome == (ASK if state == "open" else SILENT)
+        assert DUPLICATE_CHECKOUT not in asked
+    elif records == "none":
+        assert (res.checkout, res.outcome, res.rule) == (hid, SILENT, "object+remint")
+        assert admitted == ["h1"] and DUPLICATE_CHECKOUT not in asked
+    else:
+        assert (res.checkout, res.outcome, res.rule) == (dup, ASK, "object+token")
+        assert admitted == ["h2"] and DUPLICATE_CHECKOUT in asked
 
 
 @pytest.mark.usefixtures("no_birth")

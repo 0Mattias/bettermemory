@@ -52,7 +52,14 @@ from typing import TYPE_CHECKING, Any
 
 from . import checkout_token
 from .membership_lines import line_restated
-from .membership_records import DUPLICATE_CHECKOUT, Checkout, Location, _found_token
+from .membership_records import (
+    DUPLICATE_CHECKOUT,
+    FILE_CONTRADICTION,
+    FIRST_SIGHT,
+    Checkout,
+    Location,
+    _found_token,
+)
 from .membership_rows import _checkout_from
 
 if TYPE_CHECKING:
@@ -75,19 +82,26 @@ ASK_WHICH = "ask"
 #: The log rows `_joined_silently_by_token` reads of a checkout, each kind
 #: through the log's kind index: its registration, and the rows a
 #: declaration writes naming it as their ``checkout`` (a join or a
-#: separation that answered no question, a question's answer, an absorb,
-#: a part's project file bound in it). The membership tables' mutation
-#: rows record no declaration, and the rows of its sightings
-#: (``resolution_session``, a view added) are as many as its sessions, so
-#: neither is read.
+#: separation that answered no question, an absorb, a part's project file
+#: bound in it). A question's answer is read from the question's row
+#: (`_asked_where`). The membership tables' mutation rows record no
+#: declaration, and the rows of its sightings (``resolution_session``, a
+#: view added) are as many as its sessions, so neither is read.
 _NAMING = (
     "checkout_registered",
-    "proposal_answered",
     "project_absorbed",
     "project_file_bound",
     "resolution_joined",
     "resolution_new",
 )
+#: The questions whose every answer picks or confirms the project of the
+#: checkout they are on (`_asked_where`): a first sight's, a contradiction
+#: of the root's project file, and a second record's own. The others ask
+#: about something else: whether a changed remote is still the project
+#: (its separate answer, a project of the checkout's own, re-mints the
+#: token, which `_healed` then does not read), a part below the root, the
+#: records of a folder that is gone or could not be read, an import.
+_PICKING = frozenset({FIRST_SIGHT, FILE_CONTRADICTION, DUPLICATE_CHECKOUT})
 
 
 def _shared_remint(
@@ -316,16 +330,25 @@ def _healed(self: Membership, kept: Checkout, later: Checkout, loc: Location) ->
 def _chosen(self: Membership, kept: Checkout, later: Checkout, loc: Location) -> bool:
     """Whether someone chose `later` where it is: the root's project file
     bound to a project other than `kept`'s (`project init` there), a
-    question opened about it, or a log row naming it that a declaration
-    wrote (`_by_declaration`); or the log does not register it by a silent
-    first-sight join with the token among its witnesses."""
+    question about its project opened on it (`_asked_where`), or a log
+    row naming it that a declaration wrote (`_by_declaration`); or the
+    log does not register it by a silent first-sight join with the token
+    among its witnesses."""
     rf = loc.root_file
     bound = self._file_binding(rf.id) if rf is not None else None
     if bound is not None and self._canon(bound) != self._canon(kept.project):
         return True
-    if self._store.membership_rows("proposals", where={"checkout": later.id}):
+    if _asked_where(self, later.id):
         return True
     return not _joined_silently_by_token(self, later.id)
+
+
+def _asked_where(self: Membership, checkout: str) -> bool:
+    """Whether a question whose answer picks or confirms `checkout`'s
+    project (`_PICKING`) was opened on it, open or answered since. One
+    indexed read of its questions."""
+    rows = self._store.membership_rows("proposals", where={"checkout": checkout})
+    return any(row["kind"] in _PICKING for row in rows)
 
 
 def _joined_silently_by_token(self: Membership, checkout: str) -> bool:
@@ -355,13 +378,12 @@ def _joined_silently_by_token(self: Membership, checkout: str) -> bool:
 def _by_declaration(payload: Mapping[str, Any]) -> bool:
     """Whether a log row was written by a declaration: it names its
     principal (a join or a separation, `membership_declare._declared`), or
-    its evidence or answerer is one (``declaration:<principal>``: an
-    absorb, a question answered), or a join's witness is one."""
+    its evidence is one (``declaration:<principal>``: an absorb, a part's
+    project file bound), or a join's witness is one."""
     if payload.get("principal"):
         return True
-    for field in ("evidence", "by"):
-        if str(payload.get(field) or "").startswith("declaration:"):
-            return True
+    if str(payload.get("evidence") or "").startswith("declaration:"):
+        return True
     witnesses = payload.get("witnesses")
     return isinstance(witnesses, list) and "declaration" in witnesses
 

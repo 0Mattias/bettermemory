@@ -1198,12 +1198,17 @@ ctimes, as above (a re-mint of its own lineage is ENG-205's, left in
 that order), the second is in the project of another machine's
 checkout recording the token, and no one chose the second where it is
 (`_chosen`): the root's project file is not bound to a project other
-than the first's (`project init` there), no question was opened about
-it, the membership log registers it by a silent first-sight join with
-the token among its witnesses, and no row of the log naming it was
-written by a declaration (its principal, or its evidence or answerer
-`declaration:<principal>`: a join or a separation, an absorb, a question
-answered). With birth time the sighting that registered it would have
+than the first's (`project init` there), no question whose answer picks
+or confirms its project was opened on it, open or answered (a first
+sight's, its project file's contradiction, or its own
+`duplicate_checkout`; a question about something else, a changed
+remote, a part below the root, an import, a gone folder's records, is
+no such choice), the membership log registers it by a silent
+first-sight join with the token among its witnesses, and no row of the
+log naming it was written by a declaration (its principal, or its
+evidence `declaration:<principal>`: a join or a separation that
+answered no question, an absorb, a part's project file bound in it).
+With birth time the sighting that registered it would have
 continued the first. Where nothing was written at the second checkout
 since (its homes, one indexed read), rung 2 takes the first, silently;
 the healed sighting records the token there, which then comes first, so
