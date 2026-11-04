@@ -18,8 +18,9 @@ git directory's ``core.worktree`` and ``core.bare`` through it, and
 module and reads its names from here (`remote_urls`, `_from_env`,
 `_discover`); this module imports the standard library and, of the
 package, only `_location_probe` (the one reading of an error as nothing
-at a path, `path_missing`, which imports the standard library alone), so
-it never loads `location_git` or `githead`
+at a path, `path_missing`) and `_caches` (where its memo of a format's
+reading is registered), which import the standard library alone, so it
+never loads `location_git` or `githead`
 (tests/test_import_graph.py). The hook client loads it with `location`
 (tests/test_membership_capture.py pins that set).
 """
@@ -29,9 +30,13 @@ from __future__ import annotations
 import os
 import re
 import stat
+import threading
+import time
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from . import _caches
 from ._location_probe import path_missing
 
 # A repository's config: git reads any size; the eight on the development
@@ -531,13 +536,58 @@ class GitConfigRead:
     why: str | None = None
 
 
-def read_git_config(path: str) -> GitConfigRead:
+#: A config file as `read_git_config` found it open: its device, inode,
+#: size, modification and change times in nanoseconds, and file type. git
+#: writes a config through a lock file renamed over it, a new inode; any
+#: other write moves the size or the times, unless it falls within one tick
+#: of the filesystem's clock of the change before it, which no kept reading
+#: can follow (`_FORMAT_MEMO_SETTLED_NS`).
+_FileStamp = tuple[int, int, int, int, int, int]
+
+#: The readings `read_git_config` keeps, by the path and the names asked
+#: for, each with the stamp of the file it was parsed from: a later read
+#: of the same file, its stamp unchanged, takes it and parses nothing. An
+#: entry holds only the variables asked for (four, for a repository's
+#: format), never a file's whole parse, so the memo stays small whatever
+#: a config holds. Bounded at `_FORMAT_MEMO_SIZE` paths, the oldest used
+#: dropped first. Without it a config of 2 MiB built to be slow cost each
+#: warm membership capture 0.59 s, each warm origin capture 1.17 s and a
+#: cold one 5.8 s (one, two and nine parses), against 0.12 s for git's own
+#: read of it (review G, macOS, Python 3.13).
+_FORMAT_MEMO: OrderedDict[
+    tuple[str, frozenset[bytes]], tuple[_FileStamp, GitConfigRead]
+]
+_FORMAT_MEMO = OrderedDict()
+_FORMAT_MEMO_SIZE = 256
+_FORMAT_MEMO_LOCK = threading.Lock()
+#: How long after its last change a file's reading is kept: a write that
+#: keeps the size and the inode and falls within one tick of the
+#: filesystem's clock of the change before it leaves the stamp as it was
+#: (a FAT volume's modification time ticks every two seconds, an HFS+
+#: one's every second). A file changed less than this before its read is
+#: parsed again at its next read, and so a reading is kept only of a file
+#: whose next change, whenever it comes, moves its stamp.
+_FORMAT_MEMO_SETTLED_NS = 2_000_000_000
+
+
+@_caches.register
+def _clear_format_memo() -> None:
+    with _FORMAT_MEMO_LOCK:
+        _FORMAT_MEMO.clear()
+
+
+def read_git_config(path: str, names: frozenset[bytes] | None = None) -> GitConfigRead:
     """The variables the config file `path` sets, read whole and parsed as
     git parses it (`git_entries`), with no include followed: git's read of
     a repository's format (setup.c's ``read_repository_format``) follows
     none, nor reads a global or system file (ENG-211). A file that does not
     exist sets nothing, as git reads it. The open does not block, so a FIFO
-    fails instead of waiting."""
+    fails instead of waiting.
+
+    With `names`, only the entries of those names are kept, in order, and
+    the reading is kept with the file's stamp (`_FORMAT_MEMO`): a read of
+    the file unchanged since opens it, takes its stamp from the open
+    descriptor and parses nothing."""
     flags = (
         os.O_RDONLY
         | getattr(os, "O_NONBLOCK", 0)
@@ -552,9 +602,28 @@ def read_git_config(path: str) -> GitConfigRead:
         return GitConfigRead(why=f"{path} could not be read ({type(exc).__name__})")
     chunks: list[bytes] = []
     size = 0
+    key = (path, names) if names is not None else None
+    stamp: _FileStamp = (0, 0, -1, 0, 0, 0)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
             return GitConfigRead(why=f"{path} is not a regular file")
+        stamp = (
+            st.st_dev,
+            st.st_ino,
+            st.st_size,
+            st.st_mtime_ns,
+            st.st_ctime_ns,
+            stat.S_IFMT(st.st_mode),
+        )
+        if key is not None:
+            with _FORMAT_MEMO_LOCK:
+                kept = _FORMAT_MEMO.get(key)
+                if kept is not None and kept[0] == stamp:
+                    _FORMAT_MEMO.move_to_end(key)
+                    return kept[1]
+        if st.st_size > _FORMAT_LIMIT:
+            return GitConfigRead(why=f"{path} is larger than {_FORMAT_LIMIT >> 20} MiB")
         while size <= _FORMAT_LIMIT:
             chunk = os.read(fd, _FORMAT_LIMIT + 1 - size)
             if not chunk:
@@ -569,8 +638,24 @@ def read_git_config(path: str) -> GitConfigRead:
         return GitConfigRead(why=f"{path} is larger than {_FORMAT_LIMIT >> 20} MiB")
     entries = git_entries(b"".join(chunks))
     if entries is None:
-        return GitConfigRead(why=f"{path} is a config git cannot parse")
-    return GitConfigRead(tuple(entries))
+        read = GitConfigRead(why=f"{path} is a config git cannot parse")
+    elif names is None:
+        return GitConfigRead(tuple(entries))
+    else:
+        read = GitConfigRead(tuple(e for e in entries if e[0] in names))
+    if key is not None and size == stamp[2] and _settled(stamp):
+        with _FORMAT_MEMO_LOCK:
+            _FORMAT_MEMO[key] = (stamp, read)
+            _FORMAT_MEMO.move_to_end(key)
+            while len(_FORMAT_MEMO) > _FORMAT_MEMO_SIZE:
+                _FORMAT_MEMO.popitem(last=False)
+    return read
+
+
+def _settled(stamp: _FileStamp) -> bool:
+    """Whether the file `stamp` was taken of last changed long enough ago
+    (`_FORMAT_MEMO_SETTLED_NS`) that its next change moves its stamp."""
+    return max(stamp[3], stamp[4]) + _FORMAT_MEMO_SETTLED_NS <= time.time_ns()
 
 
 def git_entries(data: bytes) -> list[Entry] | None:

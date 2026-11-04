@@ -112,14 +112,24 @@ eighteenth was built.
   (`git clone --bare <url> .git`, then `git worktree add`), whose
   `core.bare` git needs and whose folder git reads no working tree in,
   and the inside of a submodule's git directory: sessions belong in a
-  worktree. Each prompt at a checkout reads its `.git` directory's config
-  once more (one open, about 35 µs), and an origin captured where git
-  runs walks the folders above it once more. (`src/bettermemory/gitconfig.py`,
+  worktree. Each prompt at a checkout opens its `.git` directory's config
+  once more (about 35 µs), and an origin captured where git runs walks
+  the folders above it once more. The config is parsed again only when
+  its stamp (device, inode, size, both times, type) changed, or it changed
+  less than two seconds before it was read: the reading of the four names
+  is kept, at most 256 files. Parsed at each judgment, a config of 2 MiB
+  built to be slow cost each warm membership capture 0.59 s, each warm
+  origin capture 1.17 s and a cold one 5.8 s, and a 1.8 MB one of 30,000
+  branches 0.26 s a warm prompt; kept, the first three cost 0.1 ms, 0.4 ms
+  and 0.41 s (its git processes, 0.12 s each; 0.93 s in a process that
+  has not read the config yet), and the last 0.5 ms (macOS, Python 3.13).
+  (`src/bettermemory/gitconfig.py`,
   `src/bettermemory/gitfile_rule.py`, `src/bettermemory/location_git.py`,
   `src/bettermemory/location.py`, `src/bettermemory/location_audit.py`,
   `src/bettermemory/origin.py`, `docs/internals.md`, `SECURITY.md`,
   `tests/test_location_gitdir_worktree.py`,
   `tests/test_location_gitdir_format.py`,
+  `tests/test_location_format_memo.py`,
   `tests/test_location_git_config.py`, `tests/test_membership_capture.py`,
   `tests/test_commit_drift_cache.py`, `tests/test_origin_cache.py`,
   `tests/test_origin_refused.py`)

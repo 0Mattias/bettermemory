@@ -239,6 +239,8 @@ _VERSION = b"core.repositoryformatversion"
 _WORKTREE_CONFIG = b"extensions.worktreeconfig"
 _BARE = b"core.bare"
 _WORKTREE = b"core.worktree"
+# The four, as `gitconfig.read_git_config` keeps a reading of them alone.
+_FORMAT_NAMES = frozenset({_VERSION, _WORKTREE_CONFIG, _BARE, _WORKTREE})
 
 
 def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFormat:
@@ -271,7 +273,7 @@ def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFor
     except _Unsettled:
         return TreeFormat(f"git cannot read {os.path.join(git_dir, 'commondir')}")
     path = os.path.join(where, "config")
-    read = gitconfig.read_git_config(path)
+    read = gitconfig.read_git_config(path, _FORMAT_NAMES)
     if read.why is not None:
         return TreeFormat(read.why)
     version, worktree_config = -1, False
@@ -295,7 +297,7 @@ def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFor
         return TreeFormat(f"{path} sets a repository format version git does not read")
     if worktree_config:
         path = os.path.join(git_dir, "config.worktree")
-        read = gitconfig.read_git_config(path)
+        read = gitconfig.read_git_config(path, _FORMAT_NAMES)
         if read.why is not None:
             return TreeFormat(read.why)
         for name, value in read.entries:

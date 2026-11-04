@@ -366,8 +366,10 @@ async def test_an_origin_keeps_no_toplevel_membership_does_not_root_at(
     _git_names(app, other)
     real = gitconfig.read_git_config
 
-    def missing(path: str) -> gitconfig.GitConfigRead:
-        read = real(path)
+    def missing(
+        path: str, names: frozenset[bytes] | None = None
+    ) -> gitconfig.GitConfigRead:
+        read = real(path, names)
         kept = tuple(e for e in read.entries if e[0] != b"core.worktree")
         return gitconfig.GitConfigRead(kept, read.why)
 
