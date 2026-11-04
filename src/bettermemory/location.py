@@ -84,7 +84,6 @@ from ._location_probe import (
     probe,
     view_path,
 )
-from .gitconfig import unchanged  # a kept capture's config files: ENG-207
 from .machine import _identity_from  # the client's machine as posted
 from .machine import identity_to_json as identity_to_json  # the hook client's
 from .gitfile_rule import (
@@ -144,6 +143,7 @@ from .location_git import (
     bounded_read,
     bounded_reads,
     _at_dotgit,
+    config_unchanged,
     read_remotes,
 )
 from .location_git import (
@@ -655,6 +655,7 @@ def _capture_uncached(
         remote_keys=remotes.keys,
         alias_keys=remotes.aliases,
         config_files=remotes.files,
+        config_sources=remotes.sources,
         shallow=os.path.isfile(os.path.join(git.common_dir, "shallow")),
         token=token,
         token_written=written,
@@ -891,18 +892,18 @@ def capture(
 ) -> Capture:
     """The capture of `cwd` (design 3.1), from the cache while its
     signature reads as it did, the config files read for its remotes
-    stamp as they did (ENG-207) and it is younger than `CACHE_SECONDS` on
-    both clocks. `write_token` is the policy switch
-    (``membership.write_token``); `budget` the seconds a fetch of an
-    evicted HEAD or config may take; `manifest` whether the content
-    manifest is read (the hook client's first post leaves it out). A
-    capture is kept only when the signature read the same before and
-    after it (the token's own slot aside when this capture wrote the
-    token), never an indeterminate or evicted one. Where it follows a
-    git directory kept apart (``Capture.kept_apart``), its folder is
-    recorded as that git directory's working tree unless `record_tree`
-    is off (the migration's read-only probe) or another folder is
-    recorded (`record_working_tree`, ENG-206), cached or not."""
+    stamp as they did and are those git reads (`config_unchanged`,
+    ENG-207) and it is younger than `CACHE_SECONDS` on both clocks.
+    `write_token` is the policy switch (``membership.write_token``);
+    `budget` the seconds a fetch of an evicted HEAD or config may take;
+    `manifest` whether the content manifest is read (the hook client's
+    first post leaves it out). A capture is kept only when the signature
+    read the same before and after it (the token's own slot aside when
+    this capture wrote the token), never an indeterminate or evicted one.
+    Where it follows a git directory kept apart (``Capture.kept_apart``),
+    its folder is recorded as that git directory's working tree unless
+    `record_tree` is off (the migration's read-only probe) or another
+    folder is recorded (`record_working_tree`, ENG-206), cached or not."""
     got = _capture_cached(
         cwd,
         write_token=write_token,
@@ -948,7 +949,7 @@ def _capture_cached(
             entry is not None
             and entry.signature == before
             and _fresh(entry.monotonic, entry.wall, now, wall)
-            and unchanged(entry.capture.config_files)
+            and config_unchanged(entry.capture)
         ):
             return entry.capture
     got = _capture_uncached(

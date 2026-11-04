@@ -493,12 +493,16 @@ process each prompt, so the answer is kept in the state directory
 of the git binary found on that PATH; a capture stats that binary and
 asks again only where it changed, the answer is an hour old, or none is
 recorded. A git that does not answer in time or cannot run, or none on
-PATH, reads as naming `/etc/gitconfig` (none on Windows, whose git keeps
-its file in its own installation) and no file of its own, for a minute.
-Not read: a file of the build's own that was missing or empty when git
-was asked, until it is asked again; and the config a process's
-environment gives git (`GIT_CONFIG_COUNT` with its `GIT_CONFIG_KEY_<n>`
-and `GIT_CONFIG_VALUE_<n>`, `GIT_CONFIG_PARAMETERS` from `git -c`),
+PATH, reads as the last answer git gave for the PATH (one a racing
+process recorded meanwhile, else the process's or the record's), and
+where it never answered as naming `/etc/gitconfig` (none on Windows,
+whose git keeps its file in its own installation) and no file of its
+own; either way for a minute, and a failed ask is never recorded over
+git's answer (ENG-207's review, R6). Not read: a file of the build's
+own that was missing or empty when git was asked, until it is asked
+again; and the config a process's environment gives git
+(`GIT_CONFIG_COUNT` with its `GIT_CONFIG_KEY_<n>` and
+`GIT_CONFIG_VALUE_<n>`, `GIT_CONFIG_PARAMETERS` from `git -c`),
 which is one shell's setting, not the repository's or the machine's: the
 hook client or daemon that captures is not the shell that runs git. The
 global config is the file `GIT_CONFIG_GLOBAL` names (none where it is
@@ -514,7 +518,12 @@ inode, mode) before it was read, a missing one as missing: a change to
 the global or the system config, or a file one of them or the
 repository's own config includes, created, written or removed, is read
 at the next capture (ENG-207); the repository's own config is in the
-signature. Each such file costs a kept capture one stat (E16). A `.git`
+signature. A kept capture is checked against the machine's config files
+git names now too, so one taken under the fallback is read again once
+git answers (R7); that check takes the process's answer without
+stating the git binary, which the capture's own re-read within
+`CACHE_SECONDS` does. Each such file costs a kept capture one stat
+(E16). A `.git`
 file is followed only
 where git's own pointers say the folder is its git directory's working
 tree (ENG-158): a linked worktree's git directory registered at

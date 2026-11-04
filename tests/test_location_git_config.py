@@ -27,6 +27,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -422,12 +423,15 @@ def _listing(*entries: tuple[str, str]) -> bytes:
 class _FakeGit:
     """`_git.run_git` answering `gitsystem`'s two questions with `named`
     and `own` (None: git does not answer), every other call run by git;
-    the calls asked, each (args, keywords), are kept in `asked`."""
+    the calls asked, each (args, keywords), are kept in `asked`, and
+    `during` (where set) runs as the first is asked: another process's
+    turn."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, binary: Path) -> None:
         self.named: str | None = ""
         self.own: list[str] | None = []
         self.asked: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+        self.during: Callable[[], None] | None = None
         self.binary = binary
         binary.write_text("a git")
         real = git_runner.run_git
@@ -435,6 +439,8 @@ class _FakeGit:
         def run_git(args: Any, **kw: Any) -> Any:
             args = tuple(args)
             if args == gitsystem._VAR:
+                if self.during is not None:
+                    self.during()
                 said: Any = self.named
             elif args == gitsystem._LIST:
                 said = (
@@ -620,6 +626,101 @@ def test_a_git_that_does_not_answer_reads_as_the_fallback_until_asked_again(
     monkeypatch.setenv("PATH", str(tmp_path / "no-git-here"))
     assert gitsystem.sources() == fallback
     assert len(fake.asked) == 3
+
+
+def _aged(state: Path, field: str, seconds: float) -> None:
+    """The record's newest entry's `field` moved `seconds` back."""
+    raw = _record(state)
+    raw["entries"][0][field] -= seconds
+    (state / gitsystem.RECORD).write_text(json.dumps(raw))
+
+
+def test_a_failed_ask_keeps_the_answer_git_gave(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's review, R6: the hourly ask timing out under load, or a
+    racing process whose ask failed, recorded the fallback over git's
+    answer for a minute. A failed ask now keeps the last answer git gave
+    for the PATH, in this process and the record, and asks again after
+    `RETRY_SECONDS`; a failed answer is never recorded over a good one;
+    and an ask that fails while another process records git's answer
+    takes that answer."""
+    state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
+    fake = _FakeGit(monkeypatch, tmp_path / "git")
+    fake.named, fake.own = "/opt/example/etc/gitconfig\n", ["/opt/example/vendor"]
+    good = gitsystem.Sources(("/opt/example/vendor",), "/opt/example/etc/gitconfig")
+    assert gitsystem.sources() == good
+    asked = len(fake.asked)
+
+    fake.named = None
+    _aged(state, "asked", gitsystem.REASK_SECONDS)
+    _caches.clear_all()
+    assert gitsystem.sources() == good
+    assert len(fake.asked) == asked + 1
+    entry = _record(state)["entries"][0]
+    assert entry["ok"] is True and entry["system"] == "/opt/example/etc/gitconfig"
+    assert entry["tried"] is not None
+    _caches.clear_all()
+    assert gitsystem.sources() == good
+    assert len(fake.asked) == asked + 1
+    _aged(state, "tried", gitsystem.RETRY_SECONDS)
+    _caches.clear_all()
+    assert gitsystem.sources() == good
+    assert len(fake.asked) == asked + 2
+
+    key = gitsystem._key(os.environ.get("PATH"))
+    fallback = gitsystem.Sources((), "/etc/gitconfig")
+    gitsystem._record(gitsystem._Answer(key, None, None, time.time(), False, fallback))
+    assert _record(state)["entries"][0]["ok"] is True
+
+    fake.named, fake.own = "/opt/other/etc/gitconfig\n", []
+    _aged(state, "tried", gitsystem.RETRY_SECONDS)
+    _caches.clear_all()
+    assert gitsystem.sources() == gitsystem.Sources((), "/opt/other/etc/gitconfig")
+    assert _record(state)["entries"][0]["tried"] is None
+
+    racer = gitsystem._Answer(
+        key,
+        str(fake.binary),
+        gitconfig.file_stamp(str(fake.binary)),
+        time.time(),
+        True,
+        good,
+    )
+    (state / gitsystem.RECORD).unlink()
+    _caches.clear_all()
+    fake.named = None
+    fake.during = lambda: gitsystem._record(racer)
+    assert gitsystem.sources() == good
+    assert _record(state)["entries"][0]["system"] == "/opt/example/etc/gitconfig"
+
+
+def test_a_capture_taken_under_the_fallback_is_read_again_once_git_answers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's review, R7: a capture kept while git did not answer read
+    the fallback's system files, and was served for its whole lifetime
+    after git answered, since only the stamps of the files it read were
+    checked. A kept capture is now checked against the machine's config
+    files git names, and read again once they are others."""
+    fake = _FakeGit(monkeypatch, tmp_path / "git")
+    vendor = tmp_path / "vendor-gitconfig"
+    vendor.write_text('[url "https://vendor.example.invalid/"]\n\tinsteadOf = sy:\n')
+    fake.named = None
+    _read_system(monkeypatch, None)
+    repo = _repo(tmp_path / "cached")
+    _git(repo, "remote", "add", "origin", "sy:acme/lib")
+    first = location.capture(str(repo), write_token=False)
+    assert "vendor.example.invalid/acme/lib" not in first.remote_keys
+    assert location.capture(str(repo), write_token=False) is first
+
+    fake.named, fake.own = f"{tmp_path / 'none'}\n", [str(vendor)]
+    monkeypatch.setattr(gitsystem, "RETRY_SECONDS", 0.0)
+    again = location.capture(str(repo), write_token=False)
+    assert again is not first
+    assert "vendor.example.invalid/acme/lib" in again.remote_keys
+    monkeypatch.setattr(gitsystem, "RETRY_SECONDS", 60.0)
+    assert location.capture(str(repo), write_token=False) is again
 
 
 def test_the_files_a_build_reads_are_read_off_gits_listing() -> None:

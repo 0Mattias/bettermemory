@@ -21,17 +21,22 @@ is kept in the state directory (`RECORD`), for the PATH it was asked
 under, with the stamp of the git binary found on that PATH then; a
 capture reads the record and stats that binary, and asks git again only
 where the binary stamps otherwise, the answer is older than
-`REASK_SECONDS` or none is recorded. Both questions together are bound
-by `ASK_SECONDS`, the capture's own fetch budget; a git that does not
-answer within it or cannot run, or none on PATH, reads as naming the
+`REASK_SECONDS` or none is recorded. Both questions together are bound by `ASK_SECONDS`, the
+capture's own fetch budget. A git that does not answer within it or
+cannot run, or none on PATH, reads as the last answer git gave for that
+PATH (`_kept`: one a racing process recorded meanwhile, else the
+process's or the record's), and where it never answered as naming the
 fallback file (`/etc/gitconfig`, none on Windows) and no file of its
-own, and is asked again after `RETRY_SECONDS`. git is asked at the root,
-with the caller's ``GIT_CONFIG_SYSTEM`` unset, so no repository's config
-and no override of this process reaches the answer.
+own; either way it is asked again after `RETRY_SECONDS`, and a failed
+ask never replaces a recorded answer of git's (ENG-207's review, R6).
+git is asked at the root, with the caller's ``GIT_CONFIG_SYSTEM``
+unset, so no repository's config and no override of this process
+reaches the answer.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -92,12 +97,17 @@ class Sources:
 
 @dataclass(frozen=True)
 class _Answer:
+    """git's answer for a PATH (`ok`, given at `asked`), or the fallback
+    where it never gave one; `tried` is when an ask after a good answer
+    failed, which keeps that answer for `RETRY_SECONDS` from then."""
+
     key: str
     git: str | None
     stamp: Stamp | None
     asked: float
     ok: bool
     sources: Sources
+    tried: float | None = None
 
 
 _LOCK = threading.Lock()
@@ -110,19 +120,28 @@ def _clear() -> None:
         _HELD.clear()
 
 
-def sources() -> Sources:
+def sources(*, stamp: bool = True) -> Sources:
     """The system config files of the git on this process's PATH, from
     the process's answer or the record while it stands (`_current`),
-    else asked of git and recorded (`_ask`)."""
+    else asked of git and recorded (`_ask`), or kept where the ask failed
+    (`_kept`). `stamp` off takes the process's answer while it is young
+    enough without stating its git binary: a kept capture's check
+    (`location_git.config_unchanged`), whose capture is read again within
+    `location.CACHE_SECONDS` anyway, where the binary is stated."""
     key = _key(os.environ.get("PATH"))
     now = time.time()
     with _LOCK:
         held = _HELD.get(key)
-    if held is None or not _current(held, now):
-        held = _recorded(key)
-        if held is None or not _current(held, now):
-            held = _ask(key, now)
-            _record(held)
+    if held is None or not _current(held, now, stamp=stamp):
+        recorded = _recorded(key)
+        if recorded is not None and _current(recorded, now):
+            got = recorded
+        else:
+            got = _ask(key, now)
+            if not got.ok:
+                got = _kept(key, now, held, recorded) or got
+            _record(got)
+        held = got
         with _LOCK:
             _HELD.pop(key, None)
             _HELD[key] = held
@@ -138,14 +157,32 @@ def _key(path: str | None) -> str:
     return hashlib.sha256(raw.encode("utf-8", "surrogatepass")).hexdigest()[:32]
 
 
-def _current(answer: _Answer, now: float) -> bool:
-    """Whether `answer` stands at `now`: younger than its lifetime
-    (`REASK_SECONDS`, `RETRY_SECONDS` for a git that did not answer) on
-    a clock that has not gone back, its git binary stamping as it did."""
+def _current(answer: _Answer, now: float, *, stamp: bool = True) -> bool:
+    """Whether `answer` stands at `now` on a clock that has not gone
+    back: one kept after a failed ask (`tried`) for `RETRY_SECONDS` from
+    then; else one younger than its lifetime (`REASK_SECONDS`,
+    `RETRY_SECONDS` for a git that never answered) whose git binary
+    stamps as it did (not stated where `stamp` is off)."""
+    if answer.tried is not None:
+        return 0 <= now - answer.tried < RETRY_SECONDS
     age = now - answer.asked
     if not 0 <= age < (REASK_SECONDS if answer.ok else RETRY_SECONDS):
         return False
-    return answer.git is None or file_stamp(answer.git) == answer.stamp
+    return not stamp or answer.git is None or file_stamp(answer.git) == answer.stamp
+
+
+def _kept(key: str, now: float, *seen: _Answer | None) -> _Answer | None:
+    """Where an ask failed: the record's answer if one that stands was
+    recorded meanwhile (a racing process's), else the newest answer git
+    gave of those `seen` and the record's, kept from `now`
+    (`_Answer.tried`); None where git never answered for the PATH."""
+    again = _recorded(key)
+    if again is not None and again.ok and _current(again, now):
+        return again
+    good = [a for a in (again, *seen) if a is not None and a.ok]
+    if not good:
+        return None
+    return dataclasses.replace(max(good, key=lambda a: a.asked), tried=now)
 
 
 def _ask(key: str, now: float) -> _Answer:
@@ -251,6 +288,7 @@ def _recorded(key: str) -> _Answer | None:
                     return None
                 a, b, c, d, e = (int(x) for x in stamp)
                 stamped = (a, b, c, d, e)
+            tried = entry.get("tried")
             return _Answer(
                 key=key,
                 git=git,
@@ -258,6 +296,7 @@ def _recorded(key: str) -> _Answer | None:
                 asked=float(entry["asked"]),
                 ok=entry.get("ok") is True and git is not None and stamped is not None,
                 sources=Sources(tuple(p for p in files if p), system),
+                tried=None if tried is None else float(tried),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -265,9 +304,15 @@ def _recorded(key: str) -> _Answer | None:
 
 
 def _record(answer: _Answer) -> None:
-    """Keep `answer` in the record, newest first, over any for its PATH;
-    where the state directory refuses the write nothing is kept, and the
-    next process asks again."""
+    """Keep `answer` in the record, newest first, over any for its PATH
+    but an answer git gave where `answer` is the fallback (a racing
+    process's, recorded since this one read the record); where the state
+    directory refuses the write nothing is kept, and the next process
+    asks again."""
+    if not answer.ok:
+        prior = _recorded(answer.key)
+        if prior is not None and prior.ok:
+            return
     entry = {
         "path": answer.key,
         "git": answer.git,
@@ -276,6 +321,7 @@ def _record(answer: _Answer) -> None:
         "ok": answer.ok,
         "own": list(answer.sources.own),
         "system": answer.sources.system,
+        "tried": answer.tried,
     }
     others = [e for e in _entries() if e.get("path") != answer.key]
     body = {"format": RECORD_FORMAT, "entries": [entry, *others][:_KEPT]}

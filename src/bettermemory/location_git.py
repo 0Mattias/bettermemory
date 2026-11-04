@@ -41,7 +41,7 @@ from typing import Any
 from . import _caches, githead, gitobjects, gitsystem, project_file
 from . import _git as _git_runner
 from ._location_probe import INDETERMINATE, TOKEN_VERSION
-from .gitconfig import Stamp, _config_values, _home, _truthy
+from .gitconfig import Stamp, _config_values, _home, _truthy, unchanged
 from .gitfile_rule import (
     _common_of,
     _foreign_commondir,
@@ -239,7 +239,7 @@ def _env_true(raw: str) -> bool:
         return True
 
 
-def _system_configs() -> list[str]:
+def _system_configs(*, stamp: bool = True) -> list[str]:
     """The system config files git reads, in its order, as config.c finds
     them (ENG-207): none under GIT_CONFIG_NOSYSTEM set true; else the
     files the git on PATH reads of its own build (Apple's developer
@@ -248,11 +248,11 @@ def _system_configs() -> list[str]:
     that git was built to read. Only a repository with a remote asks
     (`_rewrites`), and `gitsystem` asks git once for each PATH and keeps
     the answer in the state directory, so a capture spawns no git while
-    the answer stands (design 8.9, E16)."""
+    the answer stands (design 8.9, E16); `stamp` as `gitsystem.sources`."""
     raw = os.environ.get("GIT_CONFIG_NOSYSTEM")
     if raw is not None and _env_true(raw):
         return []
-    found = gitsystem.sources()
+    found = gitsystem.sources(stamp=stamp)
     named = os.environ.get("GIT_CONFIG_SYSTEM")
     system = found.system if named is None else named
     return [*found.own, *([system] if system else [])]
@@ -276,6 +276,12 @@ def _global_configs() -> list[str]:
     return out
 
 
+def _machine_configs(*, stamp: bool = True) -> tuple[str, ...]:
+    """The machine's config files git reads, in its order: the system's
+    (`_system_configs`), then the global ones (`_global_configs`)."""
+    return (*_system_configs(stamp=stamp), *_global_configs())
+
+
 #: A config file as a read stamped it (`gitconfig.ConfigValues.files`).
 ConfigFile = tuple[str, Stamp | None]
 
@@ -286,7 +292,9 @@ ConfigFile = tuple[str, Stamp | None]
 Spelling = tuple[str, str | None, bool]
 
 
-def _rewrites(common_dir: str, git_dir: str) -> tuple[list[Spelling], list[ConfigFile]]:
+def _rewrites(
+    common_dir: str, git_dir: str
+) -> tuple[list[Spelling], list[ConfigFile], tuple[str, ...]]:
     """Each remote URL in the repository's config with the URL git
     rewrites it to, where a ``url.<base>.insteadOf`` prefix in the system,
     the global or the repository's config matches it (the longest prefix
@@ -295,10 +303,11 @@ def _rewrites(common_dir: str, git_dir: str) -> tuple[list[Spelling], list[Confi
     prefix is the machine's (`Spelling`); and every config file
     read for them, stamped, the files each includes with it, but for the
     repository's own config, which the capture's signature stamps
-    already (`location.signature`). A repository with no remote reads its
-    own config alone. The config a process's environment gives git
-    (``GIT_CONFIG_COUNT`` and its keys, ``GIT_CONFIG_PARAMETERS`` from
-    ``git -c``) is not read: it is the setting of one shell, not of the
+    already (`location.signature`); and the machine's config files read
+    (`_machine_configs`). A repository with no remote reads its own
+    config alone, and names none of the machine's. The config a
+    process's environment gives git (``GIT_CONFIG_COUNT`` and its keys,
+    ``GIT_CONFIG_PARAMETERS`` from ``git -c``) is not read: it is the setting of one shell, not of the
     repository or the machine, and the hook client or the daemon that
     captures is not the shell that runs git."""
     values = _config_values(
@@ -315,12 +324,10 @@ def _rewrites(common_dir: str, git_dir: str) -> tuple[list[Spelling], list[Confi
         for u in found
     ]
     if not urls:
-        return [], files
+        return [], files, ()
     rules: list[tuple[str, str, bool]] = []
-    configs = [
-        _config_values(p, git_dir=git_dir, stamped=True)
-        for p in [*_system_configs(), *_global_configs()]
-    ]
+    named = _machine_configs()
+    configs = [_config_values(p, git_dir=git_dir, stamped=True) for p in named]
     for config in configs:
         files.extend(config.files or ())
     for config in [*configs, values]:
@@ -339,7 +346,7 @@ def _rewrites(common_dir: str, git_dir: str) -> tuple[list[Spelling], list[Confi
             out.append((url, None, False))
         else:
             out.append((url, best[1] + url[len(best[0]) :], best[2]))
-    return out, files
+    return out, files, named
 
 
 def remote_urls(common_dir: str, git_dir: str) -> list[str]:
@@ -349,19 +356,20 @@ def remote_urls(common_dir: str, git_dir: str) -> list[str]:
     ENG-160. Both are kept, so a checkout keyed on the alias before
     matches as it did, and a clone of the URL the alias stands for
     matches too."""
-    spellings, _files = _rewrites(common_dir, git_dir)
+    spellings, _files, _named = _rewrites(common_dir, git_dir)
     return [u for u, _r, _m in spellings] + [r for _u, r, _m in spellings if r]
 
 
 @dataclass(frozen=True)
 class RemoteKeys:
     """A repository's remotes as a capture keys them (`read_remotes`):
-    every key, the alias keys among them, and the config files read for
-    them (`_rewrites`)."""
+    every key, the alias keys among them, the config files read for them
+    and the machine's config files named (`_rewrites`)."""
 
     keys: tuple[str, ...]
     aliases: tuple[str, ...]
     files: tuple[ConfigFile, ...]
+    sources: tuple[str, ...] = ()
 
 
 def read_remotes(
@@ -375,9 +383,10 @@ def read_remotes(
     the URL git fetches (ENG-207). A prefix of the repository's own config
     makes none: the checkout's own files set it, and an alias key may
     join two projects (`membership_alias`). The config files read for the
-    remotes are kept with their stamps, so a capture kept against them is
-    read again once one changes (`gitconfig.unchanged`; ENG-207)."""
-    spellings, files = _rewrites(common_dir, git_dir)
+    remotes are kept with their stamps, and the machine's config files
+    git read, so a capture kept against them is read again once one
+    changes or git names others (`config_unchanged`; ENG-207)."""
+    spellings, files, named = _rewrites(common_dir, git_dir)
     keys: set[str] = set()
     fetched: set[str] = set()
     aliased: set[str] = set()
@@ -392,7 +401,20 @@ def read_remotes(
         keys=tuple(sorted(keys)),
         aliases=tuple(sorted(aliased - fetched)),
         files=tuple(files),
+        sources=named,
     )
+
+
+def config_unchanged(cap: Capture) -> bool:
+    """Whether a kept capture's config reads as it did (ENG-207): the
+    machine's config files git reads now are the ones read for its
+    remotes (`Capture.config_sources`), so one taken while git named the
+    fallback is read again once git answers (ENG-207's review, R7), and
+    each config file read stamps as it did (`gitconfig.unchanged`). The
+    git binary is not stated here (`gitsystem.sources`)."""
+    if cap.config_sources and _machine_configs(stamp=False) != cap.config_sources:
+        return False
+    return unchanged(cap.config_files)
 
 
 # ---------------------------------------------------------------------------
@@ -617,11 +639,12 @@ class Capture:
     ``kept_apart`` is set where the repository was reached through a
     ``.git`` entry naming a git directory kept apart (`kept_apart`),
     ``tree_recorded`` where this capture made the first record of its
-    working tree (`record_working_tree`, ENG-206), and ``config_files``
+    working tree (`record_working_tree`, ENG-206); ``config_files``
     holds the config files read for the remotes besides the repository's
-    own, stamped, which a kept capture is checked against (ENG-207);
-    none of these three is part of the token, and the last is no part of
-    what a capture equals."""
+    own, stamped, and ``config_sources`` the machine's config files git
+    read then, which a kept capture is checked against (ENG-207,
+    `config_unchanged`); none of these four is part of the token, and the
+    last two are no part of what a capture equals."""
 
     cwd: str
     state: str
@@ -653,6 +676,7 @@ class Capture:
     kept_apart: bool = False
     tree_recorded: bool = False
     config_files: tuple[ConfigFile, ...] = field(default=(), compare=False, repr=False)
+    config_sources: tuple[str, ...] = field(default=(), compare=False, repr=False)
 
     @property
     def born(self) -> bool:
