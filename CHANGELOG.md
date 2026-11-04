@@ -549,7 +549,10 @@ eighteenth was built.
   `cross_repo_drift` group, where it had no row and a rollup of such
   memories alone read as caught up. A later hit at the anchor in the same
   pass runs no walk again, and the search keeps the value for a minute,
-  as it keeps other timeouts'. (`src/bettermemory/origin.py`,
+  as it keeps other timeouts': every hit's, a later one served the
+  pass's walk listed alone counting its timeout again, where it counted
+  none and its value was kept until the head moved (the review's round
+  D). (`src/bettermemory/origin.py`,
   `src/bettermemory/origin_history.py`, `src/bettermemory/_git.py`,
   `src/bettermemory/verify.py`, `src/bettermemory/verify_basis.py`,
   `src/bettermemory/_response.py`, `src/bettermemory/verdict.py`,

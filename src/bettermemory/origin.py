@@ -1229,9 +1229,9 @@ def commits_since_anchor(
     the process-wide memo could not key (the stamps unreadable) or did not
     list its names. A later call for the same key in that pass returns the
     remembered walk, or None without a process, counting the failure again
-    on the calling thread (`failed_git_calls`), so a caller that keeps a
-    value only when no git call failed judges every hit at that anchor as
-    it judged the first.
+    on the calling thread (`failed_git_calls`), a timeout for a walk listed
+    alone, so a caller that keeps a value only when no git call failed
+    judges every hit at that anchor as it judged the first.
 
     A walk whose names meet their timeout falls back to its commits listed
     alone, with no diff (`ReachableWalk.listed` False), whose whole length
@@ -1269,6 +1269,9 @@ def commits_since_anchor(
     if walked is not None and within in walked:
         seen = walked[within]
         if isinstance(seen, ReachableWalk):
+            if not seen.listed:
+                # Its names met their timeout: the same one, served again.
+                _git_runner.note_timed_out()
             return seen
         if seen is None:
             _git_runner.note_timed_out()

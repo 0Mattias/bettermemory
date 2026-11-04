@@ -634,6 +634,61 @@ def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
     assert calls, "resolved again once git could run"
 
 
+@files_only
+def test_every_hit_at_an_anchor_whose_names_timed_out_is_kept_a_minute(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two memories verified at one anchor whose walk's names meet their
+    timeout: the walk lists its commits alone, once for the search, and
+    each hit counts them all. The first hit's value was kept for a minute,
+    as a timeout's is; the second, served the search's walk with no
+    process, counted no failure, and its value was kept until the head
+    moved (ENG-220's review, round D). Each is kept a minute, and then
+    each is resolved again."""
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    repo = _repo(tmp_path)
+    anchor = _commit(
+        repo, "seed", when=_T0, files={"notes0.md": "a\n", "notes1.md": "b\n"}
+    )
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    ids = [
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule {i} lives in {repo / f'notes{i}.md'}",
+            verified_head=anchor,
+        )
+        for i in (0, 1)
+    ]
+    _commit(repo, "post", when=_T1, files={"notes0.md": "a1\n"})
+    memories = store.load_all()
+    real_run = subprocess.run
+    walks: list[list[str]] = []
+
+    def names_time_out(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if any(str(arg).startswith(f"{anchor}..") for arg in argv):
+            walks.append(list(argv))
+            if "--name-only" in argv:
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", names_time_out)
+    out, _ = _attach(memories, caller, monkeypatch)
+    assert len(walks) == 2, "premise: the names, then the commits alone, once"
+    assert [_by_id(out)[i]["commit_drift_count"] for i in ids] == [1, 1]
+    assert not _response._DRIFT_MEMO
+    assert len(_response._DRIFT_TIMED_OUT) == 2
+    out, calls = _attach(memories, caller, monkeypatch)
+    assert calls == [] and len(walks) == 2, "kept a minute"
+    clock[0] += _response._TIMED_OUT_SECONDS
+    out, calls = _attach(memories, caller, monkeypatch)
+    assert len(walks) == 4, "each resolved again: one walk for the search"
+    assert [_by_id(out)[i]["commit_drift_count"] for i in ids] == [1, 1]
+
+
 def test_a_head_that_moves_during_the_attach_stores_nothing(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

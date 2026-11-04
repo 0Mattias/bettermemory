@@ -1304,7 +1304,8 @@ def test_a_walk_whose_names_time_out_keeps_the_conservative_count(
     the author dates miss it, 0. Where the walk's names meet their
     timeout, the hit read those dates, 0; its commits are now listed
     alone and each counts, 2 on the reachable basis, and no date is read.
-    Kept for the pass (`walked`) and out of the walk memo."""
+    Kept for the pass (`walked`) and out of the walk memo; served again,
+    it counts its timeout again (round D)."""
     repo = _repository(tmp_path)
     anchor = _rebased(repo)
     assert _seen(_hit(repo, [_FOO], anchor)) == (1, (_FOO,), verify.BASIS_REACHABILITY)
@@ -1320,10 +1321,38 @@ def test_a_walk_whose_names_time_out_keeps_the_conservative_count(
     )
     assert first is not None and not first.listed and len(first.commits) == 2
     assert first.touched == {} and first.shas_touching(["x"]) == set(first.commits)
+    failed, timed_out = _git.failed_calls(), _git.timed_out_calls()
     again = origin.commits_since_anchor(
         repo, anchor, toplevel=repo, head=head, walked=walked
     )
     assert again is first and len(met) == 2, "one walk for the pass"
+    assert (_git.failed_calls(), _git.timed_out_calls()) == (failed + 1, timed_out + 1)
+
+
+def test_a_walk_no_memo_keys_is_served_again_as_it_answered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A walk that listed its names, which the process-wide memo cannot key
+    (the files beside the history unreadable), is kept for the pass and
+    served again with no process and no failure counted: only a walk whose
+    names met their timeout counts its timeout again."""
+    repo = _repository(tmp_path)
+    anchor = _rebased(repo)
+    head = _plain(repo, "rev-parse", "HEAD")
+    monkeypatch.setattr(origin, "walk_files_signature", lambda *a, **k: None)
+    _caches.clear_all()
+    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
+    first = origin.commits_since_anchor(
+        repo, anchor, toplevel=repo, head=head, walked=walked
+    )
+    assert first is not None and first.listed
+    failed, timed_out = _git.failed_calls(), _git.timed_out_calls()
+    met = _timing_out(monkeypatch, "--boundary")
+    again = origin.commits_since_anchor(
+        repo, anchor, toplevel=repo, head=head, walked=walked
+    )
+    assert again is first and met == []
+    assert (_git.failed_calls(), _git.timed_out_calls()) == (failed, timed_out)
 
 
 def test_a_walk_whose_listing_times_out_too_reads_unread(
