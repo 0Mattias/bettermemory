@@ -147,10 +147,16 @@ def _file_stamp(tmp: Path, mp: pytest.MonkeyPatch, error: OSError) -> Any:
 
 
 def _config_bytes(tmp: Path, mp: pytest.MonkeyPatch, error: OSError) -> Any:
+    """A config file that names nothing is skipped, as git skips it; one
+    git cannot open for another reason is one git dies at (ENG-207's
+    round 6: ``access_or_die``)."""
     _fail_at(mp, "open", str(tmp / "config"), error)
-    out = gitconfig.ConfigValues()
-    assert gitconfig._config_bytes(str(tmp / "config"), out) is None
-    return "complete" if out.complete else "incomplete"
+    try:
+        found = gitconfig._config_bytes(str(tmp / "config"))
+    except gitconfig._Dies:
+        return "git dies"
+    assert found is None
+    return "skipped"
 
 
 def _githead_stamp(tmp: Path, mp: pytest.MonkeyPatch, error: OSError) -> Any:
@@ -199,7 +205,7 @@ READERS: dict[str, tuple[Reader, Any, Any]] = {
     "migration": (_migration, membership_migrate.GONE, membership_migrate.UNREACHABLE),
     "format": (_format, "no config", "refused"),
     "file_stamp": (_file_stamp, None, "unstated"),
-    "config_bytes": (_config_bytes, "complete", "incomplete"),
+    "config_bytes": (_config_bytes, "skipped", "git dies"),
     "githead_stamp": (_githead_stamp, None, "raises"),
     "token": (_token, "absent", "unreadable"),
     "project_file": (_project, None, "ProjectFileError"),

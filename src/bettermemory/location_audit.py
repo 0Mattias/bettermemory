@@ -19,7 +19,7 @@ from typing import Any
 from . import gitdir_pin
 from .gitfile_rule import UNREAD_TREE, _recorded_reading, _small_text, names_git_dir
 from .location import kept_apart
-from .location_git import _discover
+from .location_git import GitDies, _discover
 
 #: The security audit's finding id for the ``.git`` files above the cwd.
 GITFILE_FINDING = "membership.gitfile"
@@ -56,7 +56,8 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
     refused: list[tuple[str, str, str]] = []
     try:
         found = _discover(start, refused)
-    except (OSError, ValueError):
+    except (OSError, ValueError, GitDies):
+        # A git directory git dies on is in `refused` already.
         found = None
     record: tuple[gitdir_pin.Pin | None, bool] | None = None
     if (

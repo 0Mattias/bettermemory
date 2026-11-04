@@ -13,7 +13,14 @@ into the binary, so git alone names them: ``git var GIT_CONFIG_SYSTEM``
 names the system file (git 2.42 and later), and ``git config --list
 --show-scope --show-origin`` with the system and global files set to
 the null device names each other file it reads that holds an entry, at
-system or unknown scope (git 2.26 and later). `sources` answers both.
+system or unknown scope (git 2.26 and later). `sources` answers both,
+and a third (ENG-207's round 6): how that git reads a remote, which its
+build decides and no option list names (`_reads_remotes`). A git built
+with breaking changes reads no legacy ``remotes/`` or ``branches/`` file,
+and git from 2.46 empties a remote's URLs at an empty one; git is asked
+``ls-remote --get-url`` of a remote only a legacy file of a git
+directory under the state directory names (`_probe_repository`), and
+the URL it prints says both.
 
 A hook client is a new process each prompt, and asking costs a git
 process for each question (13 ms each measured, ENG-207), so the answer
@@ -21,8 +28,9 @@ is kept in the state directory (`RECORD`), for the PATH it was asked
 under (on macOS with the developer directory, `_developer`), with the
 stamp of the git binary found on that PATH then; a capture reads the
 record and stats that binary, and asks git again only where the binary
-stamps otherwise, the answer is older than `REASK_SECONDS` or none is
-recorded. Both questions together are bound by `ASK_SECONDS`, the
+stamps otherwise, the answer is older than `REASK_SECONDS` (one that
+did not say how git reads a remote, `RETRY_SECONDS`) or none is
+recorded. The three questions together are bound by `ASK_SECONDS`, the
 capture's own fetch budget. A git that does not answer within it or
 cannot run, or none on PATH, reads as the last answer git gave for that
 PATH (`_kept`: one a racing process recorded meanwhile, else the
@@ -59,13 +67,17 @@ from .gitconfig import _UNSTATED, Stamp, file_stamp
 
 #: The record's file in the state directory.
 RECORD = "git-config-sources.json"
-#: The format the record carries in its ``format`` field.
-RECORD_FORMAT = 1
-#: How long both questions may take together: the capture's budget for a
-#: fetch (`location_git.FETCH_BUDGET`; tests/test_location_git_config.py
+#: The format the record carries in its ``format`` field: 2 adds how git
+#: reads a remote (`Sources.legacy`, `Sources.resets`), so a record of
+#: format 1 is asked again.
+RECORD_FORMAT = 2
+#: How long the three questions may take together: the capture's budget
+#: for a fetch (`location_git.FETCH_BUDGET`; tests/test_location_git_config.py
 #: pins the two equal), under every hook's. Measured (ENG-207, macOS, git
 #: 2.54 through /usr/bin/git's xcrun shim, a load average of 12 to 15):
-#: medians of 13 and 14 ms for ``git var``, 82 ms at most over 100 calls.
+#: medians of 13 and 14 ms for ``git var``, 82 ms at most over 100 calls;
+#: ``ls-remote --get-url`` in the probe (round 6, the same git, a load
+#: average of 4) a median of 9 ms, 11 ms at most over 100 calls.
 ASK_SECONDS = 0.3
 #: How long an answer stands while its git binary stamps as it did: a git
 #: installed ahead of it on the same PATH is asked within this.
@@ -93,16 +105,51 @@ XCODE_SELECT_LINK = "/var/db/xcode_select_link"
 _MACOS = sys.platform == "darwin"
 #: The folder under the state directory git is asked in (`_where`).
 ASK_FOLDER = "git-ask"
+#: The git directory under the state directory git is asked how it reads
+#: a remote in (`_probe_repository`): a remote ``p`` its config gives no
+#: URL and whose ``remotes/p`` file gives one, an empty one and another.
+PROBE_FOLDER = "git-probe"
+_PROBE_FILES = {
+    "HEAD": b"ref: refs/heads/main\n",
+    "config": b"[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+    "remotes/p": b"URL: bettermemory-probe-a\nURL:\nURL: bettermemory-probe-b\n",
+}
+_PROBE_FOLDERS = ("objects", "refs", "remotes")
+#: The question (``git ls-remote --get-url p``), and the URL it prints for
+#: each answer: the last of the file's (it reads the file and an empty
+#: URL empties the list), the first (it reads the file, and an empty URL
+#: is one more), or the remote's name (it reads no such file: a git built
+#: with breaking changes, all of which empty the list, as git 2.46 does).
+_REMOTE_ASK = ("ls-remote", "--get-url", "p")
+_REMOTE_ANSWERS = {
+    "bettermemory-probe-b": (True, True),
+    "bettermemory-probe-a": (True, False),
+    "p": (False, True),
+}
+#: The caller's variables that would reach the probe's config.
+_PROBE_UNSET = (
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+)
 
 
 @dataclass(frozen=True)
 class Sources:
     """What the git on a PATH reads before the global config, in its
     order: the files its build reads of its own (`own`), then the system
-    file it was built to read (`system`; None where it names none)."""
+    file it was built to read (`system`; None where it names none); and
+    how it reads a remote (ENG-207's round 6): whether it reads the
+    legacy ``remotes/`` and ``branches/`` files (`legacy`: a git built
+    with breaking changes reads neither), and whether an empty
+    ``remote.<name>.url`` empties the remote's URLs (`resets`, git 2.46
+    and later), each None where git did not say (`_reads_remotes`)."""
 
     own: tuple[str, ...]
     system: str | None
+    legacy: bool | None = None
+    resets: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -191,12 +238,14 @@ def _current(answer: _Answer, now: float, *, stamp: bool = True) -> bool:
     """Whether `answer` stands at `now` on a clock that has not gone
     back: one kept after a failed ask (`tried`) for `RETRY_SECONDS` from
     then; else one younger than its lifetime (`REASK_SECONDS`,
-    `RETRY_SECONDS` for a git that never answered) whose git binary
+    `RETRY_SECONDS` for a git that never answered or did not say how it
+    reads a remote, `Sources.legacy`) whose git binary
     stamps as it did (not stated where `stamp` is off)."""
     if answer.tried is not None:
         return 0 <= now - answer.tried < RETRY_SECONDS
     age = now - answer.asked
-    if not 0 <= age < (REASK_SECONDS if answer.ok else RETRY_SECONDS):
+    whole = answer.ok and answer.sources.legacy is not None
+    if not 0 <= age < (REASK_SECONDS if whole else RETRY_SECONDS):
         return False
     return not stamp or answer.git is None or file_stamp(answer.git) == answer.stamp
 
@@ -254,7 +303,7 @@ def _absolute(path: str, flavour: ModuleType = os.path) -> bool:
 
 
 def _ask(key: str, now: float) -> _Answer:
-    """git's answer for the PATH `key` names, both questions within
+    """git's answer for the PATH `key` names, the three questions within
     `ASK_SECONDS` together; the fallback, not ok, where git is not on
     PATH, cannot run or does not answer in time."""
     failed = _Answer(key, None, None, now, False, Sources((), _FALLBACK))
@@ -287,7 +336,65 @@ def _ask(key: str, now: float) -> _Answer:
     # each answers with an error, which names nothing.
     system = named.stdout.strip() if named.returncode == 0 else ""
     own = _own_files(listed.stdout) if listed.returncode == 0 else ()
-    return _Answer(key, git, stamp, now, True, Sources(own, system or _FALLBACK))
+    legacy, resets = _reads_remotes(folder, ceiling, deadline - time.monotonic())
+    found = Sources(own, system or _FALLBACK, legacy, resets)
+    return _Answer(key, git, stamp, now, True, found)
+
+
+def _reads_remotes(
+    folder: str, ceiling: dict[str, str], left: float
+) -> tuple[bool | None, bool | None]:
+    """How the git on PATH reads a remote (`Sources.legacy`,
+    `Sources.resets`), from its answer to `_REMOTE_ASK` in the probe's
+    git directory (`_probe_repository`), asked from `folder` within
+    `left` seconds with no config but the probe's own; (None, None) where
+    it does not answer so, and the answer is asked again after
+    `RETRY_SECONDS` (`_current`). A build's own option list
+    (``git version --build-options``) names no breaking changes (git
+    2.54's ``help.c``), so git is asked what it does."""
+    probe = _probe_repository()
+    if probe is None or left <= 0:
+        return None, None
+    done = _git_runner.run_git(
+        _REMOTE_ASK,
+        cwd=folder,
+        git_dir=probe,
+        timeout=left,
+        env={**_DEVNULL, "GIT_CONFIG_NOSYSTEM": "1", **ceiling},
+        unset=_PROBE_UNSET,
+    )
+    if done is None or done.returncode != 0:
+        return None, None
+    return _REMOTE_ANSWERS.get(done.stdout.strip(), (None, None))
+
+
+def _probe_repository() -> str | None:
+    """The git directory `_REMOTE_ASK` is asked in: `PROBE_FOLDER` under
+    the state directory, owner-only, holding `_PROBE_FILES` and the
+    folders git's test of a git directory looks for, and nothing else
+    (an entry of another's could change the answer: none is read). None
+    where it cannot be made so."""
+    from . import _daemon_client
+
+    try:
+        root = _daemon_client.resolve_state_dir() / PROBE_FOLDER
+        ensure_owner_only_dir(root, parents=True)
+        for name in _PROBE_FOLDERS:
+            ensure_owner_only_dir(root / name)
+        for name, data in _PROBE_FILES.items():
+            path = root / name
+            try:
+                same = path.read_bytes() == data
+            except FileNotFoundError:
+                same = False
+            if not same:
+                atomic_write_bytes(path, data, mode_before_rename=0o600)
+        expected = {*_PROBE_FOLDERS, *(n for n in _PROBE_FILES if "/" not in n)}
+        if set(os.listdir(root)) != expected or os.listdir(root / "remotes") != ["p"]:
+            return None
+        return os.path.realpath(root)
+    except (OSError, ValueError):
+        return None
 
 
 def _own_files(listing: bytes) -> tuple[str, ...]:
@@ -367,13 +474,18 @@ def _recorded(key: str) -> _Answer | None:
                 a, b, c, d, e = (int(x) for x in stamp)
                 stamped = (a, b, c, d, e)
             tried = entry.get("tried")
+            legacy, resets = entry.get("legacy"), entry.get("resets")
+            if not all(
+                flag is None or isinstance(flag, bool) for flag in (legacy, resets)
+            ):
+                return None
             return _Answer(
                 key=key,
                 git=git,
                 stamp=stamped,
                 asked=float(entry["asked"]),
                 ok=entry.get("ok") is True and git is not None and stamped is not None,
-                sources=Sources(tuple(p for p in files if p), system),
+                sources=Sources(tuple(p for p in files if p), system, legacy, resets),
                 tried=None if tried is None else float(tried),
             )
         except (KeyError, TypeError, ValueError):
@@ -399,6 +511,8 @@ def _record(answer: _Answer) -> None:
         "ok": answer.ok,
         "own": list(answer.sources.own),
         "system": answer.sources.system,
+        "legacy": answer.sources.legacy,
+        "resets": answer.sources.resets,
         "tried": answer.tried,
     }
     others = [e for e in _entries() if e.get("path") != answer.key]

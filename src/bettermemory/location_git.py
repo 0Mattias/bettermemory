@@ -33,28 +33,40 @@ import re
 import stat
 import threading
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from . import _caches, githead, gitobjects, gitsystem, project_file
 from . import _git as _git_runner
-from ._location_probe import INDETERMINATE, TOKEN_VERSION, path_missing
+from ._location_probe import INDETERMINATE, TOKEN_VERSION
+from .gitconfig import (
+    _LEGACY_FOLDERS as _LEGACY_FOLDERS,
+)
 from .gitconfig import (
     UNSETTLED,
+    ConfigFile,
     ConfigValues,
     IncludeContext,
-    Stamp,
-    _config_values,
+    _default_branch,
     _home,
+    _Legacy,
+    _legacy_names,
+    _legacy_remote,
     _native,
     _remote_url_names,
-    _truthy,
+    config_tree,
     file_stamp,
+    git_bool,
+    subsection_bytes,
     unchanged,
 )
+from .gitconfig import (
+    legacy_remote_stamps as legacy_remote_stamps,
+)
 from .gitfile_rule import (
+    FormatUnknown,
     _common_of,
     _foreign_commondir,
     _git_reads,
@@ -64,6 +76,7 @@ from .gitfile_rule import (
     inside_reading,
     judge,
     reads_worktree_config,
+    tree_format,
 )
 
 # The bounded reads of recorded paths (ENG-156) live in `location_reads`;
@@ -234,26 +247,41 @@ Key = tuple[str, str, str | None]
 # Git config files
 # ---------------------------------------------------------------------------
 
-# The reader of one config file and its includes (`_config_values`) is
-# `gitconfig`'s, imported above; the system and global files and the
-# remotes are read here.
+# The reader of one config file and its includes (`config_tree`, parsed as
+# git's own parser parses it) is `gitconfig`'s, imported above; the system
+# and global files and the remotes are read here.
 
 
 def _env_true(raw: str) -> bool:
-    """A variable git reads with ``git_env_bool`` set to `raw`: a boolean
-    as git spells one, else an integer, true when it is not 0. A value
-    that is neither stops git; it reads as true here, so nothing is read
-    that git would not read."""
-    told = _truthy([raw])
-    if told is not None:
-        return told
-    try:
-        return int(raw.strip()) != 0
-    except ValueError:
-        return True
+    """A variable git reads with ``git_env_bool`` set to `raw`, as git
+    reads a boolean (`gitconfig.git_bool`). A value that is none stops
+    git; it reads as true here, so nothing is read that git would not
+    read."""
+    told = git_bool(raw.encode("utf-8", "surrogateescape"))
+    return True if told is None else told
 
 
-def _system_configs(*, stamp: bool = True) -> list[str]:
+#: The answer of the git on PATH about what it reads (`gitsystem.sources`),
+#: asked of `gitsystem` once a capture and kept for it.
+SourcesOf = Callable[[], gitsystem.Sources]
+
+
+def _sources_once() -> SourcesOf:
+    """`gitsystem.sources`, asked once however often the answer is read:
+    each ask states the git binary."""
+    held: list[gitsystem.Sources] = []
+
+    def sources() -> gitsystem.Sources:
+        if not held:
+            held.append(gitsystem.sources())
+        return held[0]
+
+    return sources
+
+
+def _system_configs(
+    *, stamp: bool = True, sources: SourcesOf | None = None
+) -> list[str]:
     """The system config files git reads, in its order, as config.c finds
     them (ENG-207): none under GIT_CONFIG_NOSYSTEM set true; else the
     files the git on PATH reads of its own build (Apple's developer
@@ -262,11 +290,12 @@ def _system_configs(*, stamp: bool = True) -> list[str]:
     that git was built to read. Only a repository with a remote asks
     (`_rewrites`), and `gitsystem` asks git once for each PATH and keeps
     the answer in the state directory, so a capture spawns no git while
-    the answer stands (design 8.9, E16); `stamp` as `gitsystem.sources`."""
+    the answer stands (design 8.9, E16); `stamp` as `gitsystem.sources`,
+    and `sources` the capture's own ask of it where it has one."""
     raw = os.environ.get("GIT_CONFIG_NOSYSTEM")
     if raw is not None and _env_true(raw):
         return []
-    found = gitsystem.sources(stamp=stamp)
+    found = sources() if sources is not None else gitsystem.sources(stamp=stamp)
     named = os.environ.get("GIT_CONFIG_SYSTEM")
     system = found.system if named is None else named
     return [*found.own, *([system] if system else [])]
@@ -275,47 +304,48 @@ def _system_configs(*, stamp: bool = True) -> list[str]:
 def _global_configs() -> list[str]:
     """The global config files git reads, in its order: the one
     GIT_CONFIG_GLOBAL names alone (none where it is empty, which git cannot
-    open), else ``$XDG_CONFIG_HOME/git/config`` (``~/.config/git/config``)
-    and then ``~/.gitconfig``."""
+    open), else ``$XDG_CONFIG_HOME/git/config`` (``$HOME/.config/git/config``
+    where XDG_CONFIG_HOME is unset or empty) and then ``$HOME/.gitconfig``;
+    none of HOME's where HOME is unset, as git reads none
+    (`gitconfig._home`)."""
     named = os.environ.get("GIT_CONFIG_GLOBAL")
     if named is not None:
         return [named] if named else []
     home = _home()
     xdg = os.environ.get("XDG_CONFIG_HOME")
     out = [os.path.join(xdg, "git", "config")] if xdg else []
-    if home:
+    if home is not None:
         if not xdg:
-            out.append(os.path.join(home, ".config", "git", "config"))
-        out.append(os.path.join(home, ".gitconfig"))
+            out.append(home + "/.config/git/config")
+        out.append(home + "/.gitconfig")
     return out
 
 
-def _machine_configs(*, stamp: bool = True) -> tuple[str, ...]:
+def _machine_configs(
+    *, stamp: bool = True, sources: SourcesOf | None = None
+) -> tuple[str, ...]:
     """The machine's config files git reads, in its order: the system's
     (`_system_configs`), then the global ones (`_global_configs`), each
     spelled with the platform's separator (`gitconfig._native`)."""
     return tuple(
-        _native(p) for p in (*_system_configs(stamp=stamp), *_global_configs())
+        _native(p)
+        for p in (*_system_configs(stamp=stamp, sources=sources), *_global_configs())
     )
 
 
-#: A config file as a read stamped it (`gitconfig.ConfigValues.files`).
-ConfigFile = tuple[str, Stamp | None]
-
-
-def _repository_paths(common_dir: str, git_dir: str) -> list[str] | None:
+def _repository_paths(common_dir: str, git_dir: str) -> list[str] | str:
     """The repository's own config files git reads, in its order: the
     common config, then, where git reads it
     (`gitfile_rule.reads_worktree_config`: the common config file itself
     sets ``extensions.worktreeConfig`` true, as git's read of a format
     takes it, no include followed), the git directory's
     ``config.worktree`` (ENG-207's review: a remote or an insteadOf rule
-    set there is the repository's too). None where git dies on the common
-    config's format, and reads no variable of the repository (the
+    set there is the repository's too). Why not, where git dies on the
+    common config's format and reads no variable of the repository (the
     reviewer's R14)."""
     worktree_config = reads_worktree_config(common_dir)
     if worktree_config is None:
-        return None
+        return f"git dies reading the format of {os.path.join(common_dir, 'config')}"
     paths = [os.path.join(common_dir, "config")]
     if worktree_config:
         paths.append(os.path.join(git_dir, "config.worktree"))
@@ -329,19 +359,23 @@ def _read_configs(
     files: list[ConfigFile],
     *,
     stamp_first: bool = True,
+    gentle: Collection[str] = (),
 ) -> list[ConfigValues]:
     """Each of the config files `paths` read with its includes, as git
     reads it under `context` (`gitconfig.IncludeContext`), the files each
     read stamped into `files`; the first file itself left out where
     `stamp_first` is off (the common config, which the capture's
-    signature stamps, `location.signature`)."""
+    signature stamps, `location.signature`). A file of `gentle` (the
+    global ones) is skipped where it cannot be read for want of
+    permission, as git skips it."""
     out: list[ConfigValues] = []
     for i, path in enumerate(paths):
-        read = _config_values(
+        read = config_tree(
             path,
             git_dir=git_dir,
             stamped=True,
             stamp_self=stamp_first or i > 0,
+            gentle=path in gentle,
             context=context,
         )
         files.extend(read.files or ())
@@ -349,42 +383,44 @@ def _read_configs(
     return out
 
 
-def _settles_remotes(name: tuple[str, str | None, str]) -> bool:
-    """Whether the config variable `name` is one the reading of the
-    remotes takes (a ``remote.<name>.url``, a ``url.<base>.insteadOf``),
-    which the capture declines on where an include git may read sets it
-    under a condition not settled here."""
-    section, sub, key = name
-    return sub is not None and (
-        (section == "remote" and key == "url")
-        or (section == "url" and key == "insteadof")
-    )
+def _failed(reads: Sequence[ConfigValues]) -> str | None:
+    """Why the config `reads` read does not settle what git reads: git
+    dies reading it, or reads more than was read (`ConfigValues.dies`,
+    `ConfigValues.complete`); None where it does."""
+    for read in reads:
+        if read.dies is not None:
+            return f"git dies reading its config: {read.dies}"
+        if not read.complete:
+            return "a config file is not read whole here"
+    return None
 
 
-def _head_branch(common_dir: str, git_dir: str, files: list[ConfigFile]) -> str | None:
+def _head_branch(
+    common_dir: str, git_dir: str, files: list[ConfigFile]
+) -> bytes | None:
     """The branch an ``onbranch:`` include is matched against, read from
     HEAD the way the capture reads it (githead's reader of
     ``refs_resolve_ref_unsafe`` over the files backend): the name under
     ``refs/heads/`` of the ref HEAD's chain ends at, born or unborn; None
     where HEAD is detached or ends at another ref, where git's condition
-    never holds; `gitconfig.UNSETTLED` where the files do not settle it
-    (a shape githead declines, a chain past git's depth, a reftable
-    repository). HEAD and each loose ref file the chain reads go into
-    `files`, stamped before they are read, so a branch switch that leaves
-    HEAD's bytes as they were (a symbolic ref along the chain moved) is
-    seen too."""
+    never holds. Where the files do not settle it (a reftable repository,
+    a shape githead declines, a chain past git's depth) git is asked
+    (`_asked_branch`). HEAD and each loose ref file the chain reads go
+    into `files`, stamped before they are read, so a branch switch that
+    leaves HEAD's bytes as they were (a symbolic ref along the chain
+    moved) is seen too."""
     gd = githead.GitDir(Path(git_dir), Path(common_dir), Path(git_dir))
     head = os.path.join(git_dir, "HEAD")
     files.append((head, file_stamp(head)))
     try:
         content = githead.head_bytes(gd)
         if content is None:
-            return UNSETTLED
+            return _asked_branch(common_dir, git_dir, files)
         name, _sha = githead._parse(content)
         reads = 1
         while name is not None:
             if reads == githead._MAX_READS:
-                return UNSETTLED
+                return _asked_branch(common_dir, git_dir, files)
             reads += 1
             base = git_dir if name.startswith(githead._PER_WORKTREE) else common_dir
             loose = os.path.join(base, *os.fsdecode(name).split("/"))
@@ -393,151 +429,51 @@ def _head_branch(common_dir: str, git_dir: str, files: list[ConfigFile]) -> str 
             if target is None:
                 break
             name = target
-        if name is None:
-            return None
-        text = name.decode("utf-8")
     except (_Unsettled, OSError, ValueError):
-        return UNSETTLED
-    return text[len("refs/heads/") :] if text.startswith("refs/heads/") else None
+        return _asked_branch(common_dir, git_dir, files)
+    if name is None or not name.startswith(b"refs/heads/"):
+        return None
+    return name[len(b"refs/heads/") :]
 
 
-#: The folders of the common directory whose files name a remote git
-#: still reads (remote.c's ``read_remotes_file`` and
-#: ``read_branches_file``, "nominated for removal"), in the order git
-#: reads them for a remote.
-_LEGACY_FOLDERS = ("remotes", "branches")
-#: The bytes read of one such file; git reads any size. One larger is not
-#: read, and the capture declines (fail closed).
-_LEGACY_LIMIT = 1 << 16
-#: The remotes these folders name that a capture reads; past it, it
-#: declines.
-_LEGACY_NAMES = 256
-#: The bytes git's ``isspace`` takes (git-compat-util.h's ``sane_ctype``:
-#: space, tab, LF and CR, not VT or FF), which its ``strbuf_trim`` trims.
-_GIT_SPACE = b" \t\n\r"
-
-
-def _legacy_file(path: str, files: list[ConfigFile]) -> bytes | str | None:
-    """The bytes of the legacy remote file `path`, stamped into `files`
-    before it is read; None where git reads nothing from it (no file, a
-    folder or one git cannot open: ``fopen_or_warn`` warns and reads
-    none); why the capture declines where it is no regular file (a FIFO
-    would block git), is larger than `_LEGACY_LIMIT` or cannot be read."""
-    files.append((path, file_stamp(path)))
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_NONBLOCK", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_BINARY", 0)
+def _asked_branch(
+    common_dir: str, git_dir: str, files: list[ConfigFile]
+) -> bytes | None:
+    """The branch HEAD names, as git answers it (``git symbolic-ref -q
+    HEAD``, which follows HEAD's chain as ``include_by_branch`` does),
+    where the files do not settle it: a reftable repository's HEAD lives
+    in its tables. One git, made only for a capture whose config has an
+    ``onbranch:`` include (`gitconfig.IncludeContext.branch`), so a
+    steady prompt makes none (tests/test_membership_cost.py). The tables'
+    lists and packed-refs go into `files`, stamped before git reads them
+    (git rewrites a list whole at each ref update), so a branch switch is
+    seen. None where HEAD is detached or names no branch;
+    `gitconfig.UNSETTLED` where git does not answer within
+    `FETCH_BUDGET`."""
+    lists = dict.fromkeys(
+        os.path.join(folder, "reftable", "tables.list")
+        for folder in (git_dir, common_dir)
     )
-    try:
-        fd = os.open(path, flags)
-    except (OSError, ValueError) as exc:
-        if path_missing(exc) or isinstance(exc, (PermissionError, IsADirectoryError)):
-            return None
-        return f"{path} cannot be read ({type(exc).__name__})"
-    chunks: list[bytes] = []
-    size = 0
-    try:
-        st = os.fstat(fd)
-        if stat.S_ISDIR(st.st_mode):
-            return None
-        if not stat.S_ISREG(st.st_mode):
-            return f"{path} is not a regular file"
-        while size <= _LEGACY_LIMIT:
-            chunk = os.read(fd, _LEGACY_LIMIT + 1 - size)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            size += len(chunk)
-    except OSError as exc:
-        return f"{path} cannot be read ({type(exc).__name__})"
-    finally:
-        os.close(fd)
-    if size > _LEGACY_LIMIT:
-        return f"{path} is larger than {_LEGACY_LIMIT >> 10} KiB"
-    return b"".join(chunks)
-
-
-def _remotes_file_urls(data: bytes) -> list[str]:
-    """The URLs a ``remotes/<name>`` file gives, as git reads it: each
-    line (to its LF) with git's blank space trimmed from its end, the
-    rest of each that starts ``URL:``, its leading blank space skipped,
-    to a NUL byte (a C string); an empty one empties the list, as an
-    empty ``remote.<name>.url`` does (remote.c's ``add_url``)."""
-    urls: list[str] = []
-    for line in data.split(b"\n"):
-        line = line.rstrip(_GIT_SPACE)
-        if not line.startswith(b"URL:"):
-            continue
-        value = line[len(b"URL:") :].lstrip(_GIT_SPACE).split(b"\0", 1)[0]
-        if value:
-            urls.append(value.decode("utf-8", errors="replace"))
-        else:
-            urls.clear()
-    return urls
-
-
-def _branches_file_urls(data: bytes) -> list[str]:
-    """The URL a ``branches/<name>`` file gives, as git reads it: its
-    first line (to its LF), trimmed of git's blank space at both ends,
-    to a ``#`` (the branch fetched) or a NUL byte; nothing where that is
-    empty. A blank before the ``#`` stays, as git keeps it."""
-    line = data.split(b"\n", 1)[0].strip(_GIT_SPACE)
-    url = line.split(b"\0", 1)[0].split(b"#", 1)[0]
-    return [url.decode("utf-8", errors="replace")] if url else []
-
-
-def _legacy_remotes(
-    common_dir: str, files: list[ConfigFile]
-) -> dict[str, list[str]] | str:
-    """The remotes git reads from the legacy files of the common
-    directory (`_LEGACY_FOLDERS`), each name with the URLs it gives: those
-    of ``remotes/<name>``, else of ``branches/<name>`` (remote.c's
-    ``remotes_remote_get_1``, which reads them for a remote whose config
-    gives no URL, `_rewrites`). Each folder is stamped into `files` (an
-    entry made or removed moves its times) and each file read; why the
-    capture declines where a folder cannot be listed, names more than
-    `_LEGACY_NAMES` remotes or a file declines (`_legacy_file`). git
-    lists none of these remotes (``git remote``), but fetches from each,
-    and ``git remote get-url`` names its URL."""
-    names: dict[str, None] = {}
-    for folder in _LEGACY_FOLDERS:
-        path = os.path.join(common_dir, folder)
+    for path in (*lists, os.path.join(common_dir, "packed-refs")):
         files.append((path, file_stamp(path)))
-        try:
-            entries = os.listdir(path)
-        except (OSError, ValueError) as exc:
-            if path_missing(exc):
-                continue
-            return f"{path} cannot be listed ({type(exc).__name__})"
-        names.update(dict.fromkeys(sorted(entries)))
-        if len(names) > _LEGACY_NAMES:
-            return f"the legacy remote folders name more than {_LEGACY_NAMES} remotes"
-    out: dict[str, list[str]] = {}
-    for name in names:
-        found = _legacy_file(os.path.join(common_dir, "remotes", name), files)
-        if isinstance(found, str):
-            return found
-        urls = _remotes_file_urls(found) if found is not None else []
-        if not urls:
-            found = _legacy_file(os.path.join(common_dir, "branches", name), files)
-            if isinstance(found, str):
-                return found
-            urls = _branches_file_urls(found) if found is not None else []
-        out[name] = urls
-    return out
-
-
-def legacy_remote_stamps(common_dir: str, name: str) -> tuple[Stamp | None, ...]:
-    """The stamps of the legacy files git reads for the remote `name`
-    where its config gives it no URL, ``remotes/<name>`` and
-    ``branches/<name>`` in the common directory (`_legacy_remotes`):
-    `origin`'s capture asks git for the URL of ``origin``, which such a
-    file can give (ENG-207's review), and is kept against them."""
-    return tuple(
-        file_stamp(os.path.join(common_dir, folder, name)) for folder in _LEGACY_FOLDERS
+    done = _git_runner.run_git(
+        _SYMBOLIC_HEAD, git_dir=git_dir, timeout=FETCH_BUDGET, text=False
     )
+    if done is None or done.returncode not in (0, 1):
+        return UNSETTLED
+    name = done.stdout.rstrip(b"\n") if done.returncode == 0 else b""
+    if not name.startswith(b"refs/heads/"):
+        return None
+    return name[len(b"refs/heads/") :]
+
+
+#: git's question for the branch HEAD names (`_asked_branch`).
+_SYMBOLIC_HEAD = ("symbolic-ref", "-q", "HEAD")
+
+
+class _Unknown(Exception):
+    """What the git on PATH does is not known (`gitsystem.Sources`), and
+    what it reads turns on it: the capture declines."""
 
 
 #: A remote URL as written, the URL git rewrites it to (None where no
@@ -559,6 +495,12 @@ class _Remotes:
     declined: str | None = None
 
 
+def _url_text(raw: bytes) -> str:
+    """A URL as a capture keys it: its bytes as UTF-8, a byte that is none
+    replaced."""
+    return raw.decode("utf-8", "replace")
+
+
 def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
     """Each remote URL of the repository with the URL git rewrites it to,
     where a ``url.<base>.insteadOf`` prefix in the system, the global or
@@ -568,115 +510,210 @@ def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
     common config, which the capture's signature stamps already
     (`location.signature`); and the machine's config files read
     (`_machine_configs`). Read as git 2.54 reads them, checked against
-    ``git config`` and ``git ls-remote --get-url``
-    (tests/test_location_git_include_conditions.py):
+    ``git remote``, ``git remote get-url`` and ``git ls-remote --get-url``
+    (tests/test_location_git_include_conditions.py,
+    tests/test_location_git_parse.py):
 
-    - The config is read in git's order: the machine's files, then the
-      repository's (`_repository_paths`). Its includes are followed
-      (`gitconfig._config_values`), under ``onbranch:`` against the
-      branch HEAD names (`_head_branch`) and under
-      ``hasconfig:remote.*.url:`` against every ``remote.<name>.url`` of
-      that config, read as git collects them first: every includeIf that
-      holds there is forbidden to set one, and one that does has git
-      refuse the configuration, as the capture declines.
+    - The config is read in git's order, the machine's files and then the
+      repository's (`_repository_paths`), each parsed as git's parser
+      parses it (`gitconfig.config_tree`). Its includes are followed,
+      under ``onbranch:`` against the branch HEAD names (`_head_branch`)
+      and under ``hasconfig:remote.*.url:`` against every
+      ``remote.<name>.url`` of that config, read as git collects them
+      first: every includeIf that holds there is forbidden to set one,
+      and one that does has git refuse the configuration.
     - A remote's URLs are its ``remote.<name>.url`` values in that order,
-      an empty one emptying the list (remote.c's ``add_url``); a remote
-      with none, the machine's included, takes them from its legacy files
-      (`_legacy_remotes`). The capture keys those the repository's own
-      config or files give, not the machine's: a remote the global config
-      sets is every repository's.
+      an empty one emptying the list where this git does
+      (`gitsystem.Sources.resets`, remote.c's ``add_url``); a remote with
+      none, the machine's included, takes them from its legacy files
+      (`_legacy_remote`) where this git reads them
+      (`gitsystem.Sources.legacy`), and one whose legacy files git dies
+      on is not keyed. A remote whose name starts with ``/`` is none. The
+      capture keys those the repository's own config or files give, not
+      the machine's: a remote the global config sets is every
+      repository's.
     - A URL is rewritten as remote.c's ``alias_url`` rewrites it: the
       longest matching prefix wins, an empty one matching every URL, and
       of equal ones the first under the base git met first.
 
-    `declined` says why the files do not settle what git reads, where an
-    include git may read sets a remote's URL or an insteadOf rule under a
-    condition not settled here (a HEAD githead declines, a pattern
-    `gitconfig._wildmatch` does not read as git does), where the remote
-    URLs a ``hasconfig:`` condition is matched against are not, where git
-    refuses the configuration, or where a legacy file is not
-    (`_legacy_remotes`): the capture declines there rather than read
-    another answer. A repository with no remote reads its own config and
-    folders alone, and names none of the machine's. The config a
-    process's environment gives git (``GIT_CONFIG_COUNT`` and its keys,
-    ``GIT_CONFIG_PARAMETERS`` from ``git -c``) is not read: it is the
-    setting of one shell, not of the repository or the machine, and the
-    hook client or the daemon that captures is not the shell that runs
-    git."""
+    `declined` says why the files do not settle what git reads: git dies
+    reading the config (a line its parser refuses, an include it cannot
+    read or follow, a remote variable its reader of remotes refuses,
+    `gitconfig.ConfigValues.dies`), or reads more than is read here; git
+    refuses the configuration (a remote URL in a file a hasconfig
+    collection forbids); the remote URLs a ``hasconfig:`` condition is
+    matched against are not settled; an include under a condition not
+    settled here (git does not answer for HEAD within `FETCH_BUDGET`) sets
+    a remote URL or an insteadOf rule whose prefix matches a URL keyed,
+    or is one git may die on (a rule that cannot touch a URL keyed is not
+    one); what this git does is not known where it matters (`_Unknown`);
+    or a legacy file is not read. The capture declines there rather than
+    read another answer. A repository with no remote reads its own config
+    and folders alone, and names none of the machine's: git names no
+    remote there either way. The config a process's environment gives git
+    (``GIT_CONFIG_COUNT`` and its keys, ``GIT_CONFIG_PARAMETERS`` from
+    ``git -c``) is not read: it is the setting of one shell, not of the
+    repository or the machine, and the hook client or the daemon that
+    captures is not the shell that runs git."""
     paths = _repository_paths(common_dir, git_dir)
-    if paths is None:
-        return _Remotes([], [])
+    if isinstance(paths, str):
+        return _Remotes([], [], (), paths)
     files: list[ConfigFile] = []
     context = IncludeContext(lambda: _head_branch(common_dir, git_dir, files))
     own = _read_configs(paths, git_dir, context, files, stamp_first=False)
-    legacy = _legacy_remotes(common_dir, files)
+    why = _failed(own)
+    if why is not None:
+        return _Remotes([], files, (), why)
+    legacy = _legacy_names(common_dir, files)
     if isinstance(legacy, str):
         return _Remotes([], files, (), legacy)
     if not legacy and not any(
         _remote_url_names(read) or _remote_url_names(read.undecided) for read in own
     ):
         return _Remotes([], files)
-    named = _machine_configs()
-    machine = _read_configs(named, git_dir, context, files)
-    if any(read.asks_remote_urls for read in (*machine, *own)):
+    sources = _sources_once()
+    named = _machine_configs(sources=sources)
+    gentle = frozenset(_native(p) for p in _global_configs())
+    machine = _read_configs(named, git_dir, context, files, gentle=gentle)
+    why = _failed(machine)
+    if why is None and any(read.asks_remote_urls for read in (*machine, *own)):
         collect = context.collect()
         collected = [
-            *_read_configs(named, git_dir, collect, files),
+            *_read_configs(named, git_dir, collect, files, gentle=gentle),
             *_read_configs(paths, git_dir, collect, files, stamp_first=False),
         ]
-        if any(read.forbidden for read in collected):
+        why = _failed(collected)
+        if why is None and any(read.forbidden for read in collected):
             why = "git refuses a remote URL a file an includeIf reads sets"
-            return _Remotes([], files, named, why)
-        if any(
-            not read.complete or _remote_url_names(read.undecided) for read in collected
-        ):
+        if why is None and any(_remote_url_names(read.undecided) for read in collected):
             why = "the remote URLs a hasconfig include is matched against are unsettled"
-            return _Remotes([], files, named, why)
-        collected_urls = frozenset(
-            url
-            for read in collected
-            for name in _remote_url_names(read)
-            for url in read[name]
-        )
-        settled = context.with_urls(collected_urls)
-        machine = _read_configs(named, git_dir, settled, files)
-        own = _read_configs(paths, git_dir, settled, files, stamp_first=False)
-    if any(
-        _settles_remotes(name) for read in (*machine, *own) for name in read.undecided
-    ):
-        why = "an include sets a remote URL or insteadOf rule under an unsettled condition"
+        if why is None:
+            settled = context.with_urls(
+                frozenset(
+                    url
+                    for read in collected
+                    for name in _remote_url_names(read)
+                    for url in read[name]
+                    if url is not None
+                )
+            )
+            machine = _read_configs(named, git_dir, settled, files, gentle=gentle)
+            own = _read_configs(paths, git_dir, settled, files, stamp_first=False)
+            why = _failed([*machine, *own])
+    if why is not None:
         return _Remotes([], files, named, why)
-    remotes: dict[str, list[tuple[str, bool]]] = {}
-    rewrites: dict[str, list[tuple[str, bool]]] = {}
-    for read, mine in [*((r, False) for r in machine), *((r, True) for r in own)]:
+    try:
+        spellings = _spellings(
+            [(r, False) for r in machine] + [(r, True) for r in own],
+            legacy,
+            lambda name, against: _legacy_remote(common_dir, name, files, against),
+            sources,
+        )
+    except _Unknown as exc:
+        return _Remotes([], files, named, str(exc))
+    if isinstance(spellings, str):
+        return _Remotes([], files, named, spellings)
+    return _Remotes(spellings, files, named)
+
+
+def _spellings(
+    reads: Sequence[tuple[ConfigValues, bool]],
+    legacy: Sequence[str],
+    legacy_remote: Callable[[str, _Legacy], list[bytes] | str | None],
+    sources: SourcesOf,
+) -> list[Spelling] | str:
+    """`_rewrites`' keyed URLs (`Spelling`) of the config `reads` read,
+    each with whether it is the repository's own, and of the legacy
+    remotes `legacy` names (`legacy_remote`), as `_rewrites` says; why
+    the capture declines where an undecided include could change them,
+    or a legacy file is not read. `_Unknown` where what this git does is
+    not known (`sources`) and matters."""
+
+    def resets() -> bool:
+        flag = sources().resets
+        if flag is None:
+            raise _Unknown("whether this git empties a remote's URLs at an empty one")
+        return flag
+
+    remotes: dict[str, list[tuple[bytes, bool]]] = {}
+    rewrites: dict[str, list[tuple[bytes, bool]]] = {}
+    for read, mine in reads:
         for (section, sub, key), found in read.items():
             if sub is None:
                 continue
-            if section == "remote" and key == "url":
-                for url in found:
-                    if url:
-                        remotes.setdefault(sub, []).append((url, mine))
+            if section == "remote" and key == "url" and not sub.startswith("/"):
+                entries = remotes.setdefault(sub, [])
+                for value in found:
+                    if value:
+                        entries.append((value, mine))
+                    elif resets():
+                        entries.clear()
                     else:
-                        remotes[sub] = []
+                        entries.append((b"", mine))
             elif section == "url" and key == "insteadof":
-                rewrites.setdefault(sub, []).extend((p, not mine) for p in found)
-    for name, urls in legacy.items():
-        if not remotes.get(name):
-            remotes[name] = [(url, True) for url in urls]
+                rewrites.setdefault(sub, []).extend(
+                    (p, not mine) for p in found if p is not None
+                )
+    pending = [name for name in legacy if not remotes.get(name)]
+    if pending:
+        reads_legacy = sources().legacy
+        if reads_legacy is None:
+            raise _Unknown("whether this git reads legacy remote files")
+        if reads_legacy:
+            against = _Legacy(resets, lambda: _default_branch([r for r, _m in reads]))
+            for name in pending:
+                got = legacy_remote(name, against)
+                if isinstance(got, str):
+                    return got
+                if got is not None:
+                    remotes[name] = [(url, True) for url in got]
+    keyed = [url for found in remotes.values() for url, mine in found if mine and url]
+    why = _undecided_matters([r for r, _m in reads], keyed, bool(pending))
+    if why is not None:
+        return why
     out: list[Spelling] = []
-    for url in (u for found in remotes.values() for u, mine in found if mine):
-        best: tuple[str, str, bool] | None = None
+    for url in keyed:
+        best: tuple[bytes, bytes, bool] | None = None
         for base, prefixes in rewrites.items():
             for prefix, by_machine in prefixes:
                 if url.startswith(prefix) and (
                     best is None or len(best[1]) < len(prefix)
                 ):
-                    best = (base, prefix, by_machine)
+                    best = (subsection_bytes(base), prefix, by_machine)
         if best is None:
-            out.append((url, None, False))
+            out.append((_url_text(url), None, False))
         else:
-            out.append((url, best[0] + url[len(best[1]) :], best[2]))
-    return _Remotes(out, files, named)
+            rewritten = best[0] + url[len(best[1]) :]
+            out.append((_url_text(url), _url_text(rewritten), best[2]))
+    return out
+
+
+def _undecided_matters(
+    reads: Sequence[ConfigValues], keyed: Sequence[bytes], legacy: bool
+) -> str | None:
+    """Why an include under a condition not settled here could change the
+    URLs keyed (`keyed`), or None where none could (ENG-207's round 6: one
+    that cannot touch them leaves the capture as git reads it): it sets a
+    remote URL, an insteadOf rule whose prefix matches a URL keyed, or,
+    where a legacy ``branches`` file is read (`legacy`), the default
+    branch; or git may die reading it (`gitconfig.ConfigValues.maybe_dies`)."""
+    for read in reads:
+        if read.maybe_dies is not None:
+            return f"an include under an unsettled condition may make git die: {read.maybe_dies}"
+        for (section, sub, key), found in read.undecided.items():
+            if (
+                section == "remote"
+                and key == "url"
+                and sub is not None
+                and not sub.startswith("/")
+            ):
+                return "an include sets a remote URL under an unsettled condition"
+            if section == "url" and key == "insteadof" and sub is not None:
+                if any(p is not None and u.startswith(p) for p in found for u in keyed):
+                    return "an include sets an insteadOf rule matching a remote URL under an unsettled condition"
+            if legacy and (section, sub, key) == ("init", None, "defaultbranch"):
+                return "an include sets the default branch under an unsettled condition"
+    return None
 
 
 def remote_urls(common_dir: str, git_dir: str) -> list[str]:
@@ -769,7 +806,7 @@ def _clear_stamped_reads() -> None:
 
 def _stamped_read(path: str, git_dir: str) -> ConfigValues:
     """The config file `path` read for the repository whose git directory
-    is `git_dir`, stamped, its includes with it (`_config_values`): kept
+    is `git_dir`, stamped, its includes with it (`gitconfig.config_tree`): kept
     for that directory and the home directory an include's ``~/`` names,
     and read again only where one of the files it read stamps otherwise
     (`gitconfig.unchanged`), so a steady call states them and reads none.
@@ -782,7 +819,7 @@ def _stamped_read(path: str, git_dir: str) -> ConfigValues:
     with _STAMPED_LOCK:
         read = _STAMPED_READS.get(key)
     if read is None or not unchanged(read.files or ()):
-        read = _config_values(path, git_dir=git_dir, stamped=True)
+        read = config_tree(path, git_dir=git_dir, stamped=True)
         with _STAMPED_LOCK:
             _STAMPED_READS.pop(key, None)
             _STAMPED_READS[key] = read
@@ -875,28 +912,49 @@ def _inside(path: str, root: str) -> bool:
 # and git's own stop test, `_git_reads`) are `gitfile_rule`'s, imported above.
 
 
-def _from_env(start: str) -> _Git | None:
+class GitDies(Exception):
+    """git dies reading the format of the repository discovery reaches
+    (`gitfile_rule.FormatUnknown`: a config line its parser refuses, a
+    value it dies on), or that format is not known here: git reads no
+    repository there and goes no further, and the capture declines
+    (INDETERMINATE), never reading the folder as outside one."""
+
+
+def _from_env(
+    start: str, refused: list[tuple[str, str, str]] | None = None
+) -> _Git | None:
     """The repository GIT_DIR (with GIT_WORK_TREE, GIT_COMMON_DIR or
-    core.worktree) names (I22)."""
+    core.worktree) names (I22), its working tree as setup.c's
+    ``setup_explicit_git_dir`` places it: GIT_WORK_TREE, else none where
+    the format git reads (`gitfile_rule.tree_format`) sets ``core.bare``,
+    else its ``core.worktree`` taken from the git directory, else the
+    directory git runs in. `GitDies` where git dies on that format, or on
+    an empty ``core.worktree``, the refusal to `refused` first."""
     raw = os.environ.get("GIT_DIR")
     if not raw:
         return None
     git_dir = os.path.normpath(os.path.join(start, raw))
     common, linked = _common_of(git_dir)
+    found = tree_format(git_dir)
     work = os.environ.get("GIT_WORK_TREE")
-    values = _config_values(os.path.join(common, "config"), git_dir=git_dir)
+    why = None
+    if found.why is not None:
+        why = f"{git_dir}'s config cannot be read as git reads it: {found.why}"
+    elif not work and not found.bare and found.worktree == "":
+        why = f"{git_dir}'s config names no working tree (an empty core.worktree)"
+    if why is not None:
+        if refused is not None:
+            refused.append((git_dir, git_dir, why))
+        raise GitDies(why)
     root: str | None
     if work:
         root = os.path.normpath(os.path.join(start, work))
+    elif found.bare:
+        root = None
+    elif found.worktree is not None:
+        root = os.path.normpath(os.path.join(git_dir, found.worktree))
     else:
-        listed = values.get(("core", None, "worktree")) or []
-        configured = listed[-1] if listed else None
-        if configured:
-            root = os.path.normpath(os.path.join(git_dir, configured))
-        elif _truthy(values.get(("core", None, "bare"))):
-            root = None
-        else:
-            root = start
+        root = start
     kind = BARE if root is None else (LINKED if linked else PRIMARY)
     return _Git(None, git_dir, common, root, kind)
 
@@ -924,9 +982,11 @@ def _discover(
     work tree. With `read_head` False a ``HEAD`` is taken by its
     presence where git's test reads it (`gitfile_rule._valid_headref`):
     the caller reads the one where the walk stops and tests it, as
-    `location.signature` does."""
+    `location.signature` does. `GitDies` where git dies on the format of
+    a git directory the walk reaches (`gitfile_rule.FormatUnknown`), its
+    refusal to `refused` first: git stops there, reading nothing."""
     if os.environ.get("GIT_DIR"):
-        return _from_env(start)
+        return _from_env(start, refused)
     ceiling = _ceiling(start)
     across = bool(os.environ.get("GIT_DISCOVERY_ACROSS_FILESYSTEM"))
     device: int | None = None
@@ -954,6 +1014,8 @@ def _discover(
                 # walk stops here too, so membership joins no project.
                 if refused is not None:
                     refused.append((d, d, why))
+                if isinstance(why, FormatUnknown):
+                    raise GitDies(why)
                 return None
             common, linked = _common_of(d)
             if root is not None:
@@ -1000,6 +1062,8 @@ def _at_dotgit(
         # so no other checkout's git directory keys this folder.
         if refused is not None:
             refused.append((dotgit, seen.git_dir, seen.why))
+        if isinstance(seen.why, FormatUnknown):
+            raise GitDies(seen.why)
         return None
     if seen.own:
         return _Git(dotgit, dotgit, dotgit, directory, PRIMARY)

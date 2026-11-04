@@ -36,7 +36,6 @@ BOUNDS = [
     (location_git, "BLOB_LOOK"),
     (location_git, "EXCHANGE_ROUNDS"),
     (location_git, "_GIT_TIMEOUT_SECONDS"),
-    (gitconfig, "_CONFIG_LIMIT"),
     (gitfile_rule, "_GITFILE_LIMIT"),
     (gitfile_rule, "_RECORDED_BUDGET"),
     (gitconfig, "_INCLUDE_DEPTH"),

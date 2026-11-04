@@ -7,9 +7,10 @@ A location capture took no value from an include under ``onbranch:`` or
 the origin's signature did not stamp either. Both conditions are now
 evaluated as git 2.54 evaluates them (`gitconfig.IncludeContext`,
 `location_git._rewrites`), the legacy files are read as remote.c reads
-them (`location_git._legacy_remotes`), and where git's semantics are not
-mirrored the capture declines (fail closed) instead of keying another
-answer.
+them (`gitconfig._legacy_names`, `gitconfig._legacy_remote`), and where
+a condition is not settled here the capture declines (fail closed)
+wherever the include could change what is keyed, instead of keying
+another answer (tests/test_location_git_parse.py).
 
 Each expectation is git's own answer: the remote URLs ``git config
 --get-regexp`` lists and the URL ``git ls-remote --get-url`` fetches from.
@@ -390,25 +391,43 @@ def test_a_remote_url_an_includeif_sets_under_hasconfig_declines(
     assert _capture(repo) is not cap
 
 
-def test_a_pattern_not_read_as_git_reads_it_declines(tmp_path: Path) -> None:
-    """A character class (``[:alpha:]``) or a backslash in a pattern is not
-    read here as git's wildmatch reads it: where the include sets an
-    insteadOf rule or a remote URL the capture declines, and where it sets
-    neither it reads on."""
+@pytest.mark.parametrize(
+    ("condition", "rewritten"),
+    [
+        ("onbranch:[[:alpha:]]ain", True),
+        ("onbranch:[[:digit:]]ain", False),
+        ("onbranch:m[[:lower:][:digit:]]i[!-[:upper:]]", True),
+        ("onbranch:[[:alnum:]]a[[:xdigit:]]n", False),
+        ("onbranch:\\\\main", True),
+        ("onbranch:\\\\[main]", False),
+        ("onbranch:ma\\\\*", False),
+        ("hasconfig:remote.*.url:gh[:]**", False),
+        ("hasconfig:remote.*.url:gh[:]acme/*", True),
+        ("hasconfig:remote.*.url:gh\\\\:acme/**", True),
+        ("hasconfig:remote.*.url:gh[[:punct:]]acme/l[[:alpha:]]b", True),
+        ("hasconfig:remote.*.url:gh[[:space:]]acme/*", False),
+    ],
+)
+def test_a_class_or_a_backslash_in_a_pattern_is_read_as_git_reads_it(
+    tmp_path: Path, condition: str, rewritten: bool
+) -> None:
+    """ENG-207's round 6: a character class (``[:alpha:]``) or a backslash
+    in a pattern was not read here, and a capture declined wherever such
+    an include set an insteadOf rule. Both are now read as git's wildmatch
+    reads them (`gitconfig.wildmatch`), and the capture keys the URL git
+    fetches from, rewritten by the include's rule exactly where git's is.
+    A backslash is written twice in the file, as a subsection spells one;
+    a ``**`` not after a slash is one ``*``, as git's ``WM_PATHNAME``
+    reads it."""
     repo = _repo(tmp_path / "repo")
     rules = tmp_path / "rules.inc"
     rules.write_text(_RULES, encoding="utf-8")
-    config = repo / ".git" / "config"
-    plain = config.read_text(encoding="utf-8")
-    for condition in ("onbranch:[[:alpha:]]ain", "hasconfig:remote.*.url:gh[:]**"):
-        config.write_text(plain, encoding="utf-8")
-        _include(config, condition, rules)
-        assert _capture(repo, cached=False).state == location.INDETERMINATE, condition
-    neutral = tmp_path / "neutral.inc"
-    neutral.write_text("[user]\n\tname = Test\n", encoding="utf-8")
-    config.write_text(plain, encoding="utf-8")
-    _include(config, "onbranch:[[:alpha:]]ain", neutral)
-    assert _capture(repo, cached=False).state == location.REPO
+    _include(repo / ".git" / "config", condition, rules)
+    fetched = _fetched(repo)
+    assert (fetched == _MIRRORED) is rewritten, "premise: git's match"
+    keys = _keys(repo)
+    assert _key(repo, fetched) in keys
+    assert (_key(repo, _MIRRORED) in keys) is rewritten
 
 
 # ---------------------------------------------------------------------------

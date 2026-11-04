@@ -49,6 +49,11 @@ _URL = "https://example.invalid/acme/game.git"
 #: folders every capture states (``remotes``, ``branches``), which
 #: `Capture.config_files` lists with them.
 _BASE_STATS = 10
+#: The steady prompt's further stat calls at a reftable checkout: the
+#: ``refs/heads`` file git writes there and the ``refs/heads/.invalid``
+#: its HEAD names, which the signature's read of HEAD's chain states
+#: (`test_head_s_branch_costs_one_git_only_where_its_files_do_not_settle_it`).
+_REFTABLE_STATS = 2
 #: The steady prompt's readlink calls where the system config is read for
 #: a checkout's remotes: on macOS the one that keys git's answer of its
 #: system config files on the developer directory (`gitsystem._developer`,
@@ -68,7 +73,7 @@ _DEVELOPER_READLINKS = 1 if gitsystem._MACOS else 0
 #: before 3.13).
 _ORIGIN_HIT_STATS = 20
 #: The legacy remote folders a location capture states with its config
-#: files (`location_git._legacy_remotes`), which an origin hit does not.
+#: files (`gitconfig._legacy_names`), which an origin hit does not.
 _LEGACY_FOLDERS = ("remotes", "branches")
 #: An origin cache hit's lstat calls besides three for each component of
 #: the resolved path: the probes of HEAD's ref (4), of the reading rule
@@ -443,6 +448,71 @@ def test_e16_a_config_file_read_costs_one_stat_and_no_git(
     fresh = counted(lambda: location.capture(str(repo), write_token=False))
     print(f"new process: spawns={fresh.spawns}")
     assert fresh.spawns == 0
+
+
+@pytest.mark.parametrize("onbranch", [False, True])
+@pytest.mark.parametrize("backend", ["files", "reftable"])
+def test_head_s_branch_costs_one_git_only_where_its_files_do_not_settle_it(
+    tmp_path: Path,
+    lab: tuple[Store, MachineIdentity, Config],
+    counted: Callable[[Callable[[], object]], _Counts],
+    backend: str,
+    onbranch: bool,
+) -> None:
+    """ENG-207's round 6: an ``onbranch:`` include is matched against the
+    branch HEAD names. The files backend's HEAD is read from its files at
+    no git; a reftable repository's lives in its tables, and git is asked
+    once (``git symbolic-ref -q HEAD``, `location_git._asked_branch`), at
+    a capture whose config has such an include and no other. A new
+    process's capture makes that one spawn, and the steady prompt none:
+    the kept capture is checked against HEAD, the ref files its chain
+    read, and for a reftable repository the tables' list and packed-refs,
+    as config files, one stat each. Measured on macOS (git 2.54): the new
+    process 1 spawn with a reftable HEAD and an include, 0 otherwise; the
+    steady prompt 0 spawns, and 13 stat calls with 3 files (no include)
+    and 16 with 6 for the files backend, 15 with 3 and 19 with 7 for
+    reftable, whose checkout states the ``refs/heads`` stub git writes
+    and the ``refs/heads/.invalid`` its HEAD names (`_REFTABLE_STATS`),
+    with or without an include, as at 7054bb06; there the include had
+    the capture decline."""
+    store, identity, config = lab
+    repo = tmp_path / "game"
+    repo.mkdir()
+    made = subprocess.run(
+        ["git", "init", "-q", "-b", "main", f"--ref-format={backend}", str(repo)],
+        capture_output=True,
+        check=False,
+    )
+    if made.returncode != 0:
+        pytest.skip(f"this git makes no {backend} repository")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+    git(repo, "remote", "add", "origin", "gh:acme/game")
+    if onbranch:
+        rules = tmp_path / "rules.inc"
+        rules.write_text('[url "https://example.invalid/"]\n\tinsteadOf = gh:\n')
+        with open(os.environ["GIT_CONFIG_GLOBAL"], "a", encoding="utf-8") as fh:
+            fh.write(f'[includeIf "onbranch:main"]\n\tpath = {rules.as_posix()}\n')
+    keys = location.capture(str(repo), write_token=False).remote_keys
+    rewritten = "example.invalid/acme/game" in keys
+    assert rewritten is onbranch, keys
+    assert (git(repo, "ls-remote", "--get-url", "origin") != "gh:acme/game") is onbranch
+
+    _caches.clear_all()
+    fresh = counted(lambda: location.capture(str(repo), write_token=False))
+    asks = 1 if backend == "reftable" and onbranch else 0
+    resolve_here(store, config, str(repo), identity=identity)
+    resolve_here(store, config, str(repo), identity=identity)
+    warm = counted(lambda: resolve_here(store, config, str(repo), identity=identity))
+    files = location.capture(str(repo), write_token=False).config_files
+    print(
+        f"{backend}, onbranch={onbranch}: new process spawns={fresh.spawns}; "
+        f"steady spawns={warm.spawns} stat={warm.stats} lstat={warm.lstats}; "
+        f"{len(files)} files"
+    )
+    assert fresh.spawns == asks
+    assert warm.spawns == 0
+    stub = _REFTABLE_STATS if backend == "reftable" else 0
+    assert warm.stats <= _BASE_STATS + stub + len(files) and warm.lstats <= 2
 
 
 @pytest.mark.skipif(os.name != "posix", reason="counted where a path resolves by lstat")

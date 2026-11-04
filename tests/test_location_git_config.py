@@ -96,11 +96,16 @@ def _append(path: Path, text: str) -> None:
         fh.write(text)
 
 
-def test_a_config_over_the_bound_keeps_the_remotes_read_within_it(
+def test_a_config_past_a_mebibyte_is_read_whole_and_one_past_the_bound_declines(
     tmp_path: Path,
 ) -> None:
     """A config grown past 1 MiB (a branch section per branch) kept no
-    remote at all; the remotes within the bound are keyed."""
+    remote at all, and was then read to its last whole line within 1 MiB,
+    where git reads on (a later line can empty the remote's URLs, or be
+    one git dies on). It is read whole within `gitconfig._FORMAT_LIMIT`,
+    as git's parser reads it, and its remote is keyed; one larger than
+    the bound declines, its format not known before its remotes are read
+    (ENG-207's round 6)."""
     repo = _repo(tmp_path / "big")
     _git(repo, "remote", "add", "origin", "https://example.invalid/team/big.git")
     config = repo / ".git" / "config"
@@ -111,9 +116,19 @@ def test_a_config_over_the_bound_keeps_the_remotes_read_within_it(
             for i in range(30000)
         ),
     )
-    assert config.stat().st_size > gitconfig._CONFIG_LIMIT
+    assert 1 << 20 < config.stat().st_size <= gitconfig._FORMAT_LIMIT
     assert "example.invalid/team/big" in _keys(repo)
-    assert not gitconfig._config_values(str(config)).complete
+    read = gitconfig.config_tree(str(config))
+    assert read.complete and read.dies is None
+    _append(
+        config,
+        "".join(f'[branch "c{i}"]\n\tremote = origin\n' for i in range(20000)),
+    )
+    assert config.stat().st_size > gitconfig._FORMAT_LIMIT
+    assert _git(repo, "remote", "get-url", "origin").endswith("big.git")
+    cap = location.capture(str(repo), write_token=False, use_cache=False)
+    assert cap.state == location.INDETERMINATE
+    assert "larger than 2 MiB" in cap.detail
 
 
 def test_includes_are_followed_as_git_follows_them(
@@ -158,12 +173,12 @@ def test_includes_are_followed_as_git_follows_them(
     assert not {"miss", "one-level", "case-miss", "unknown"} & set(git_remotes)
     expected = {remote_key(u) for urls in git_remotes.values() for u in urls}
     assert _keys(repo) == expected
-    values = gitconfig._config_values(str(gd / "config"), git_dir=str(gd))
+    values = gitconfig.config_tree(str(gd / "config"), git_dir=str(gd))
     ours = {
         sub for (section, sub, key) in values if section == "remote" and key == "url"
     }
     assert ours == set(git_remotes)
-    assert values.complete and not values.undecided
+    assert values.complete and values.dies is None and not values.undecided
 
 
 def test_a_remote_is_keyed_as_insteadof_rewrites_it_too(tmp_path: Path) -> None:
@@ -379,7 +394,7 @@ def test_an_include_naming_a_fifo_does_not_wait(tmp_path: Path) -> None:
     answer: list[gitconfig.ConfigValues] = []
     reader = threading.Thread(
         target=lambda: answer.append(
-            gitconfig._config_values(str(repo / ".git" / "config"))
+            gitconfig.config_tree(str(repo / ".git" / "config"))
         ),
         daemon=True,
     )
@@ -395,19 +410,18 @@ _INCLUDE_FILES: int = getattr(gitconfig, "_INCLUDE_FILES", 64)
 
 
 def _counted(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """The config files `_config_values` reads, in order."""
+    """The config files `gitconfig.config_tree` reads, in order."""
     read: list[str] = []
     real = gitconfig._config_bytes
 
     def counted(
         path: str,
-        out: gitconfig.ConfigValues,
         identity: list[tuple[int, int]] | None = None,
+        *,
+        gentle: bool = False,
     ) -> bytes | None:
         read.append(path)
-        if identity is None:
-            return real(path, out)
-        return real(path, out, identity)
+        return real(path, identity, gentle=gentle)
 
     monkeypatch.setattr(gitconfig, "_config_bytes", counted)
     return read
@@ -418,21 +432,27 @@ def test_a_config_including_itself_stops_at_the_cycle(
 ) -> None:
     """Review M D3: a config naming itself in four ``include.path`` lines
     was read 1,398,101 times (38 s, every value kept), where git stops at
-    its first include past its depth. The read now stops at the cycle, in
-    well under a second and within `_INCLUDE_FILES` files; the remote read
-    before stands, once, and the config reads as incomplete."""
+    its first include past its depth, and dies. The read now stops at the
+    cycle, in well under a second and within `_INCLUDE_FILES` files, and
+    says git dies there (`ConfigValues.dies`), as ``git config`` does."""
     config = tmp_path / "config"
     config.write_text(
         '[remote "origin"]\n\turl = https://example.invalid/a/b.git\n'
         + "[include]\n\tpath = config\n" * 4,
         encoding="utf-8",
     )
+    git = subprocess.run(
+        ["git", "config", "--includes", "--file", str(config), "--get-regexp", "."],
+        capture_output=True,
+        check=False,
+    )
+    assert git.returncode != 0
     read = _counted(monkeypatch)
     answer: list[tuple[gitconfig.ConfigValues, float]] = []
 
     def run() -> None:
         start = time.monotonic()
-        values = gitconfig._config_values(str(config))
+        values = gitconfig.config_tree(str(config))
         answer.append((values, time.monotonic() - start))
 
     reader = threading.Thread(target=run, daemon=True)
@@ -442,17 +462,16 @@ def test_a_config_including_itself_stops_at_the_cycle(
     values, elapsed = answer[0]
     assert elapsed < 0.5
     assert len(read) <= _INCLUDE_FILES
-    assert not values.complete
-    assert values[("remote", "origin", "url")] == ["https://example.invalid/a/b.git"]
+    assert values.dies is not None and "included in itself" in values.dies
 
 
 def test_includes_fanning_out_stop_at_the_file_bound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Review M D3: ten files, each including the next twice, are 1,023
-    reads within git's depth; the read stops at `_INCLUDE_FILES` files,
-    keeps what it read (the first chain down, read whole) and reads as
-    incomplete, where git reads more."""
+    reads within git's depth; the read stops at `_INCLUDE_FILES` files
+    (the first chain down read whole) and reads as incomplete, where git
+    reads more, and a capture declines there."""
     for i in range(10):
         nxt = f"[include]\n\tpath = f{i + 1}\n" * 2 if i < 9 else ""
         (tmp_path / f"f{i}").write_text(
@@ -461,7 +480,7 @@ def test_includes_fanning_out_stop_at_the_file_bound(
         )
     read = _counted(monkeypatch)
 
-    values = gitconfig._config_values(str(tmp_path / "f0"))
+    values = gitconfig.config_tree(str(tmp_path / "f0"))
 
     assert len(read) == _INCLUDE_FILES
     assert not values.complete
@@ -565,8 +584,10 @@ def _listing(*entries: tuple[str, str]) -> bytes:
 
 
 class _FakeGit:
-    """`_git.run_git` answering `gitsystem`'s two questions with `named`
-    and `own` (None: git does not answer), every other call run by git;
+    """`_git.run_git` answering `gitsystem`'s three questions with `named`,
+    `own` and `remotes` (None: git does not answer; `remotes` is what
+    ``ls-remote --get-url`` prints in the probe's git directory, by
+    default as git 2.54 prints it), every other call run by git;
     the calls asked, each (args, keywords), are kept in `asked`, and
     `during` (where set) runs as the first is asked: another process's
     turn."""
@@ -574,6 +595,7 @@ class _FakeGit:
     def __init__(self, monkeypatch: pytest.MonkeyPatch, binary: Path) -> None:
         self.named: str | None = ""
         self.own: list[str] | None = []
+        self.remotes: str | None = "bettermemory-probe-b\n"
         self.asked: list[tuple[tuple[str, ...], dict[str, Any]]] = []
         self.during: Callable[[], None] | None = None
         self.binary = binary
@@ -592,6 +614,8 @@ class _FakeGit:
                     if self.own is None
                     else _listing(*(("unknown", f"file:{p}") for p in self.own))
                 )
+            elif args == gitsystem._REMOTE_ASK:
+                said = self.remotes
             else:
                 return real(args, **kw)
             self.asked.append((args, kw))
@@ -663,12 +687,16 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
     assert "vendor.example.invalid/acme/lib" in keys
     assert "system.example.invalid/acme/lib" not in keys
     assert location_git._system_configs() == [str(own), str(named)]
-    (var, var_kw), (listing, list_kw) = fake.asked
-    assert (var, listing) == (gitsystem._VAR, gitsystem._LIST)
+    (var, var_kw), (listing, list_kw), (remote, remote_kw) = fake.asked
+    assert (var, listing, remote) == (
+        gitsystem._VAR,
+        gitsystem._LIST,
+        gitsystem._REMOTE_ASK,
+    )
     where = gitsystem._where()
     assert where is not None
     folder, ceiling = where
-    for kw in (var_kw, list_kw):
+    for kw in (var_kw, list_kw, remote_kw):
         assert kw["cwd"] == folder
         assert "GIT_CONFIG_SYSTEM" in kw["unset"]
     assert var_kw["env"] == ceiling
@@ -677,6 +705,16 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
         "GIT_CONFIG_GLOBAL": os.devnull,
         **ceiling,
     }
+    # How git reads a remote is asked of the probe's git directory alone,
+    # with no config file of the machine's or the caller's read.
+    assert remote_kw["git_dir"] == gitsystem._probe_repository()
+    assert remote_kw["env"] == {
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        **ceiling,
+    }
+    assert set(gitsystem._PROBE_UNSET) <= set(remote_kw["unset"])
 
     other = tmp_path / "other-gitconfig"
     _read_system(monkeypatch, str(other))
@@ -694,7 +732,7 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
         monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", value)
         expected = [str(own), str(other)] if read else []
         assert location_git._system_configs() == expected, value
-    assert len(fake.asked) == 2
+    assert len(fake.asked) == 3
 
 
 def _record(state: Path) -> dict[str, Any]:
@@ -709,14 +747,14 @@ def test_git_is_asked_once_for_a_path_and_the_answer_kept_in_the_state_directory
     state directory for the PATH (as its digest), so a new process (the
     caches cleared) asks nothing while it stands; git is asked again where
     the binary found on that PATH changed, the answer is older than
-    `REASK_SECONDS`, another PATH asks, or the record is not one. Both
-    questions together are bound by `ASK_SECONDS`, the capture's fetch
-    budget."""
+    `REASK_SECONDS`, another PATH asks, or the record is not one. The
+    three questions together are bound by `ASK_SECONDS`, the capture's
+    fetch budget."""
     assert gitsystem.ASK_SECONDS == location_git.FETCH_BUDGET
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     fake = _FakeGit(monkeypatch, tmp_path / "git")
     fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
-    answer = gitsystem.Sources((_VENDOR,), _ETC)
+    answer = gitsystem.Sources((_VENDOR,), _ETC, True, True)
 
     def asks() -> int:
         before = len(fake.asked)
@@ -724,28 +762,27 @@ def test_git_is_asked_once_for_a_path_and_the_answer_kept_in_the_state_directory
         assert gitsystem.sources() == answer
         return len(fake.asked) - before
 
-    assert asks() == 2
+    assert asks() == 3
     for _ in range(2):
         assert gitsystem.sources() == answer
     assert asks() == 0
-    (_v, var_kw), (_l, list_kw) = fake.asked
-    assert var_kw["timeout"] <= gitsystem.ASK_SECONDS
-    assert list_kw["timeout"] <= gitsystem.ASK_SECONDS
+    for _args, kw in fake.asked:
+        assert kw["timeout"] <= gitsystem.ASK_SECONDS
     record = (state / gitsystem.RECORD).read_text()
     assert os.environ["PATH"] not in record
 
     fake.binary.write_text("another git")
-    assert asks() == 2
+    assert asks() == 3
     assert asks() == 0
     raw = _record(state)
     raw["entries"][0]["asked"] -= gitsystem.REASK_SECONDS
     (state / gitsystem.RECORD).write_text(json.dumps(raw))
-    assert asks() == 2
+    assert asks() == 3
     monkeypatch.setenv("PATH", os.environ["PATH"] + os.pathsep + str(tmp_path))
-    assert asks() == 2
+    assert asks() == 3
     assert len(_record(state)["entries"]) == 2
     (state / gitsystem.RECORD).write_text("not a record")
-    assert asks() == 2
+    assert asks() == 3
     assert asks() == 0
 
 
@@ -799,7 +836,7 @@ def test_a_failed_ask_keeps_the_answer_git_gave(
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     fake = _FakeGit(monkeypatch, tmp_path / "git")
     fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
-    good = gitsystem.Sources((_VENDOR,), _ETC)
+    good = gitsystem.Sources((_VENDOR,), _ETC, True, True)
     assert gitsystem.sources() == good
     asked = len(fake.asked)
 
@@ -827,7 +864,7 @@ def test_a_failed_ask_keeps_the_answer_git_gave(
     fake.named, fake.own = f"{_OTHER}\n", []
     _aged(state, "tried", gitsystem.RETRY_SECONDS)
     _caches.clear_all()
-    assert gitsystem.sources() == gitsystem.Sources((), _OTHER)
+    assert gitsystem.sources() == gitsystem.Sources((), _OTHER, True, True)
     assert _record(state)["entries"][0]["tried"] is None
 
     racer = gitsystem._Answer(
@@ -895,13 +932,13 @@ def test_the_developer_directory_names_the_answer(
         gitsystem.sources()
         return len(fake.asked) - before
 
-    assert asks() == 2
+    assert asks() == 3
     assert asks() == 0
     link.unlink()
     link.symlink_to(tmp_path / "CommandLineTools")
-    assert asks() == 2
+    assert asks() == 3
     monkeypatch.setenv("DEVELOPER_DIR", str(tmp_path / "Beta"))
-    assert asks() == 2
+    assert asks() == 3
     monkeypatch.delenv("DEVELOPER_DIR")
     link.unlink()
     link.symlink_to(tmp_path / "Xcode")
@@ -910,7 +947,7 @@ def test_the_developer_directory_names_the_answer(
 
     monkeypatch.setattr(gitsystem, "_MACOS", False)
     assert gitsystem._developer() == ""
-    assert asks() == 2
+    assert asks() == 3
     link.unlink()
     assert asks() == 0
 
@@ -1004,8 +1041,8 @@ def test_git_is_asked_where_it_finds_no_repository(
     GIT_CEILING_DIRECTORIES at the state directory (`gitsystem._where`),
     on every platform, so git finds no repository there and reads none of
     its config, here with the state directory inside a repository whose
-    working tree git finds from that folder without the ceiling. Both
-    questions run there, wherever the process stands; a folder that holds
+    working tree git finds from that folder without the ceiling. The
+    three questions run there, wherever the process stands; a folder that holds
     an entry is not asked in."""
     repo = _repo(tmp_path / "tree")
     _git(repo, "config", "probe.from", "the-repository")
@@ -1049,12 +1086,12 @@ def test_git_is_asked_where_it_finds_no_repository(
     fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
     monkeypatch.chdir(repo)
     assert gitsystem._ask("key", 0.0).ok
-    assert [kw["cwd"] for _args, kw in fake.asked] == [folder] * 2
+    assert [kw["cwd"] for _args, kw in fake.asked] == [folder] * 3
     assert all(kw["env"].items() >= ceiling.items() for _args, kw in fake.asked)
     (Path(folder) / ".git").mkdir()
     assert gitsystem._where() is None
     assert not gitsystem._ask("key", 0.0).ok
-    assert len(fake.asked) == 2
+    assert len(fake.asked) == 3
 
 
 def test_a_config_file_is_named_one_way(
@@ -1083,7 +1120,7 @@ def test_a_config_file_is_named_one_way(
     monkeypatch.setenv("HOME", str(home))
     main = tmp_path / "main-gitconfig"
     main.write_text("[include]\n\tpath = ~/a.inc\n[include]\n\tpath = sub/b.inc\n")
-    read = gitconfig._config_values(str(main), stamped=True)
+    read = gitconfig.config_tree(str(main), stamped=True)
     assert [p for p, _stamp in read.files or ()] == [
         str(main),
         str(home / "a.inc"),
@@ -1102,7 +1139,7 @@ def test_a_config_file_is_named_one_way(
     piped.write_text("[include]\n\tpath = sub|c.inc\n")
     wanted = [str(piped), str(tmp_path / "sub" / "c.inc")]
     monkeypatch.setattr(posixpath, "altsep", "|")
-    read = gitconfig._config_values(str(piped), stamped=True)
+    read = gitconfig.config_tree(str(piped), stamped=True)
     assert [p for p, _stamp in read.files or ()] == wanted
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", f"{tmp_path}|{piped.name}")
     assert location_git._machine_configs() == (str(piped),)

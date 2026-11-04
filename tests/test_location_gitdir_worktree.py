@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 
 from bettermemory import _git as git_runner
-from bettermemory import gitconfig, githead, location, location_audit, origin
+from bettermemory import githead, location, location_audit, origin
 
 from .test_location_gitdir_pin import _separate
 from .test_membership_security import _git, checkout, neutral_git
@@ -259,10 +259,11 @@ def test_a_separate_git_directory_naming_another_tree_in_its_worktree_config_is_
 def test_a_config_past_the_remote_bound_is_read_whole(
     tmp_path: Path, names: bool
 ) -> None:
-    """A config grown past the 1 MiB the remotes are read within (a branch
-    section per branch) is an ordinary repository's, and git reads a
-    ``core.worktree`` from it wherever it stands: it is read whole (within
-    `gitconfig._FORMAT_LIMIT`, tests/test_location_gitdir_format.py), so a
+    """A config grown past 1 MiB (a branch section per branch) is an
+    ordinary repository's, and git reads a ``core.worktree`` from it
+    wherever it stands: it is read whole, for its format and its remotes
+    alike (within `gitconfig._FORMAT_LIMIT`,
+    tests/test_location_gitdir_format.py), so a
     checkout whose config names no working tree stays followed by both
     readers, and one whose config names another folder is refused."""
     app = checkout(tmp_path / "work" / "app", remote=REMOTE)
@@ -275,7 +276,7 @@ def test_a_config_past_the_remote_bound_is_read_whole(
             f'[branch "b{i}"]\n\tremote = origin\n\tmerge = refs/heads/b{i}\n'
             for i in range(30000)
         )
-    assert config.stat().st_size > gitconfig._CONFIG_LIMIT
+    assert config.stat().st_size > 1 << 20
 
     cap = _membership(app)
     if names:

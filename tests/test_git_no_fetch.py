@@ -186,7 +186,10 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     working tree), so the config of the repository a process stands in
     never reaches git; the caller's GIT_CONFIG_SYSTEM is unset for ``git
     var`` and the system and global files are the null device for the
-    listing."""
+    listing. The third question, how git reads a remote (ENG-207's round
+    6), is asked of the probe's own git directory with no config but its
+    own: no system file, the null device for the global one, and none of
+    the caller's config variables."""
     _plain_git(tmp_path, "init", "-q")
     calls: list[tuple[list[str], object, dict[str, str]]] = []
     real = subprocess.run
@@ -201,14 +204,21 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(gitsystem, "ASK_SECONDS", 30.0)
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "mine"))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "url.https://planted.invalid/.insteadOf")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "")
     monkeypatch.chdir(tmp_path)
     answer = gitsystem._ask("key", 0.0)
     git = shutil.which("git")
     assert git is not None
     assert answer.ok and answer.sources.system != str(tmp_path / "mine")
+    assert (answer.sources.legacy, answer.sources.resets) == (True, True)
+    probe = gitsystem._probe_repository()
+    assert probe is not None
     assert [c[0][1 + len(_git.PINS) :] for c in calls] == [
         list(gitsystem._VAR),
         list(gitsystem._LIST),
+        [f"--git-dir={probe}", *gitsystem._REMOTE_ASK],
     ]
     where = gitsystem._where()
     assert where is not None
@@ -223,8 +233,11 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     assert (
         calls[1][2]["GIT_CONFIG_SYSTEM"]
         == calls[1][2]["GIT_CONFIG_GLOBAL"]
+        == calls[2][2]["GIT_CONFIG_GLOBAL"]
         == os.devnull
     )
+    assert calls[2][2]["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert "GIT_CONFIG_COUNT" not in calls[2][2]
 
 
 def test_the_hostile_clone_runs_its_command_for_a_git_that_may_fetch(

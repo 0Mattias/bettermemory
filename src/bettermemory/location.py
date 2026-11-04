@@ -130,6 +130,7 @@ from .location_git import (
     UNANSWERED,
     WALK_LIMIT,
     Capture,
+    GitDies,
     Key,
     RepositoryHistory,
     _clear_above,
@@ -552,6 +553,11 @@ def _capture_uncached(
         git = _discover(real)
     except OSError as exc:
         return _indeterminate(real, f"unreadable: {exc}", cwd_key)
+    except GitDies as exc:
+        # git dies on the format of the repository its walk reaches, and
+        # reads nothing there, or that format is not known here: never a
+        # folder outside one (ENG-207).
+        return _indeterminate(real, f"repository format: {exc}", cwd_key)
     if git is None:
         walk, files, errors = _walk_files(real, None)
         folder = walk.folder
@@ -763,7 +769,7 @@ def signature(cwd: str, *, read_head: bool = False) -> tuple[Any, ...] | None:
     cwd_part = (cwd, st.st_dev, st.st_ino)
     try:
         git = _discover(cwd, read_head=read_head)
-    except OSError:
+    except (OSError, GitDies):
         return None
     if git is None:
         return (OUTSIDE, cwd_part, _stamp(os.path.join(cwd, _PROJECT_FILE)))
@@ -1013,8 +1019,12 @@ def _git_dir_at(path: str, kind: str) -> str | None:
     if stat.S_ISDIR(st.st_mode) and not _is_link(st):
         return dotgit
     # A pointer discovery would not follow, a `.git` file's or a link's,
-    # names no git directory here either (ENG-158, ENG-206).
-    found = _at_dotgit(path, dotgit, st)
+    # names no git directory here either (ENG-158, ENG-206), nor one git
+    # dies on.
+    try:
+        found = _at_dotgit(path, dotgit, st)
+    except GitDies:
+        return None
     return None if found is None else found.git_dir
 
 

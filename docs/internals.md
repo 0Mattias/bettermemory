@@ -472,9 +472,19 @@ with `git cat-file --batch-check` only where that reader reports itself
 incomplete. Repository configuration (the remote URLs, `core.worktree`
 and `core.bare`, the files `include.path` and `includeIf "gitdir:"`
 name, and `url.<base>.insteadOf` from the system, the global and the
-repository's config; ENG-160, ENG-207) is read as bytes by the module's
-own bounded parser, never through git, so git's `safe.directory`
-refusal never applies. The system config files are found as git finds
+repository's config; ENG-160, ENG-207) is read as bytes and parsed as
+git 2.54's parser parses it (`gitconfig.git_entries`, through
+`gitconfig.config_tree`), never through git, so git's `safe.directory`
+refusal never applies. Where git dies reading it (a line its parser
+refuses, a `url`, `insteadOf` or `include.path` with no value, an
+include it cannot read, a directory, `~user` naming no user, an include
+past git's depth of 10, a remote or branch variable remote.c's reader
+refuses: a string with no value, a boolean that is none, a refspec it
+cannot parse), the capture declines (indeterminate, not kept) and the
+origin, which asks git, records no repository; never a folder outside
+one (ENG-207's round 6). A global config git may not read is skipped,
+as git skips it; a system config or an include it may not read is one
+git dies at. The system config files are found as git finds
 them (`gitsystem.py`): none under `GIT_CONFIG_NOSYSTEM` set true; else
 the files the git on PATH reads of its own build first (Apple's git
 reads its developer directory's `usr/share/git-core/gitconfig`, which
@@ -486,13 +496,22 @@ GIT_CONFIG_SYSTEM` (git 2.42 and later) names the system file, and `git
 config --list --show-scope --show-origin -z`, with the system and global
 files at the null device, the build's own files that hold an entry
 (git 2.26 and later); a file it names by a path with no drive on
-Windows is not kept. Both run in an empty owner-only folder under the
-state directory (`git-ask`), with `GIT_CEILING_DIRECTORIES` naming the
-state directory, so git finds no repository there wherever the state
-directory sits (the root of git's drive, asked before, can be a working
-tree: a share's root, a `subst` drive, `/` in a container), and with
-the caller's `GIT_CONFIG_SYSTEM` unset, within 0.3 s together (the
-capture's fetch budget), only for a repository with a remote. A config
+Windows is not kept. A third question asks how that git reads a remote,
+which its build decides and no option list names: `git ls-remote
+--get-url p` in a git directory under the state directory (`git-probe`)
+whose remote `p` only `remotes/p` names, with the URLs `a`, an empty
+one and `b`, prints `b` for a git that reads the legacy files and
+empties a remote's URLs at an empty one (2.46 and later), `a` for one
+before 2.46, and `p` for one built with breaking changes, which reads
+no legacy file; anything else leaves both unknown, and the answer is
+asked again after a minute. All three run in an empty owner-only folder
+under the state directory (`git-ask`), with `GIT_CEILING_DIRECTORIES`
+naming the state directory, so git finds no repository there wherever
+the state directory sits (the root of git's drive, asked before, can be
+a working tree: a share's root, a `subst` drive, `/` in a container),
+and with the caller's `GIT_CONFIG_SYSTEM` unset (the third with no
+config file but the probe's), within 0.3 s together (the capture's
+fetch budget), only for a repository with a remote. A config
 file's path is spelled with the platform's separator where it enters
 (an include's target, the machine's files), so one file is named one
 way wherever it is stamped or compared. A hook client is a new
@@ -520,8 +539,9 @@ which is one shell's setting, not the repository's or the machine's: the
 hook client or daemon that captures is not the shell that runs git. The
 global config is the file `GIT_CONFIG_GLOBAL` names (none where it is
 empty), else `$XDG_CONFIG_HOME/git/config` and `~/.gitconfig`. Each is
-read with the same bounds as the repository's own: the size bound,
-git's include depth and the 64-file bound. A remote is keyed as written
+read with the same bounds as the repository's own: 2 MiB a file (a
+larger one, a FIFO or a socket declines), git's include depth and the
+64-file bound. A remote is keyed as written
 and as the longest `insteadOf` prefix rewrites it (the first read of
 equal prefixes, the build's own files before the system file before the
 global before the repository's, as git takes them). A capture is cached
@@ -557,19 +577,33 @@ stamped; `hasconfig:` against every `remote.<name>.url` of the config
 git reads, the machine's files and the repository's, collected first as
 git collects them: with every includeIf that holds forbidden to set
 one, where one that does has git refuse the configuration. Another
-`hasconfig:` key holds nowhere, as in git. Where a condition is not
-settled here (a HEAD githead declines; a character class or a
-backslash in a pattern, which this wildmatch does not read as git's
-does) and its file sets a remote URL or an insteadOf rule, where the
-URLs `hasconfig:` is matched against are not settled, or where git
+`hasconfig:` key holds nowhere, as in git. Patterns are matched as
+git's wildmatch matches them (`gitconfig.wildmatch`, `WM_PATHNAME`):
+`*`, `?`, `**` as a whole component, brackets with ranges, negation,
+the twelve character classes (`[:alnum:]` to `[:xdigit:]`, ASCII) and
+backslash escapes. A HEAD githead declines (a reftable repository's,
+which lives in its tables) is asked of `git symbolic-ref -q HEAD`, one
+process, only for a capture whose config reads an `onbranch:` include,
+with the tables' lists and `packed-refs` stamped, so a steady prompt
+spawns none. Where a condition is still not settled here (git does not
+answer for HEAD within the fetch budget; a `%(prefix)` path in a
+`gitdir:` pattern), the include declines the capture only where it
+could change what is keyed: it sets a remote URL, an insteadOf rule
+whose prefix matches a URL keyed, the default branch where a
+`branches/` file is read, or a line git may die on; an include whose
+rule matches none of the URLs leaves the capture as git reads it.
+Where the URLs `hasconfig:` is matched against are not settled, or git
 refuses the configuration, the capture declines (indeterminate, not
 kept) rather than key another answer. A remote's URLs are its
 `remote.<name>.url` values in git's order, an empty one emptying the
-list, the machine's counted and the repository's keyed; a remote with
-none takes them from `remotes/<name>` (its `URL:` lines), else
-`branches/<name>` (its first line, to a `#`) in the common directory,
-read as remote.c reads them, the two folders and each file read
-stamped (one stat each a prompt). An insteadOf rule is chosen as
+list where the git on PATH does (`gitsystem.Sources.resets`), the
+machine's counted and the repository's keyed; a remote with none takes
+them from `remotes/<name>` (its `URL:` lines), else `branches/<name>`
+(its first line, to a `#`) in the common directory, where the git on
+PATH reads them (`gitsystem.Sources.legacy`), read as remote.c reads
+them, the two folders and each file read stamped (one stat each a
+prompt); where git did not say either and it matters, the capture
+declines. An insteadOf rule is chosen as
 remote.c's `alias_url` chooses it: the longest prefix, an empty one
 matching every URL, of equal ones the first under the base git met
 first. The origin cache (`origin.capture`) is kept against the same

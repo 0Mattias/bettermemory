@@ -566,7 +566,7 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     many paths: steady state 0 spawns, (12, 2, 3, 2) on 14 paths; after a
     commit 0 spawns, (43, 17, 34, 6) on 24. Each counts the two legacy
     remote folders git reads a remote from (``remotes`` and ``branches``
-    in the common directory, `location_git._legacy_remotes`, ENG-207's
+    in the common directory, `gitconfig._legacy_names`, ENG-207's
     review), stated by a kept capture's check and by the fresh capture's
     read, which made them (10, 2, 3, 2) on 12 and (41, 17, 34, 6) on 22
     before. The fresh capture opens the

@@ -375,6 +375,18 @@ def _dies(path: str, name: bytes) -> str:
     return f"{path} sets {name.decode()} to a value git dies on"
 
 
+class FormatUnknown(str):
+    """A refusal (`_tree_refusal`) where git dies on the format of the git
+    directory it reads (a config line its parser refuses, a value it dies
+    on, an empty ``core.worktree``) or that format is not known here: git
+    goes no further there, and a capture declines rather than read the
+    folder as outside a repository (`location_git.GitDies`, ENG-207's
+    round 6). It is the refusal's text, kept as the type it is through
+    the readers that pass it on."""
+
+    __slots__ = ()
+
+
 def _tree_refusal(
     git_dir: str, found: TreeFormat, directory: str, *, moved: bool = False
 ) -> str | None:
@@ -386,15 +398,18 @@ def _tree_refusal(
     dies) or names another folder, compared as filesystem objects, a
     relative path taken from `git_dir` as git takes it. With `moved` a
     ``core.worktree`` naming nothing is read as this folder's (a
-    submodule's tree moved with a plain ``mv``, ENG-158)."""
+    submodule's tree moved with a plain ``mv``, ENG-158). Where git dies,
+    or the format is not known, the refusal is a `FormatUnknown`."""
     if found.why is not None:
-        return f"{git_dir}'s config cannot be read as git reads it: {found.why}"
+        return FormatUnknown(
+            f"{git_dir}'s config cannot be read as git reads it: {found.why}"
+        )
     if found.bare:
         return f"{git_dir}'s config names no working tree (core.bare)"
     if found.worktree is None:
         return None
     if not found.worktree:
-        return (
+        return FormatUnknown(
             f"{git_dir}'s config names no working tree (an empty core.worktree, "
             "on which git dies)"
         )

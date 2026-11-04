@@ -348,14 +348,18 @@ def test_a_config_git_dies_on_is_refused_by_both_readers(
     no value, a ``core.bare`` that is no boolean, a format version git does
     not read and a line git cannot parse: git names no toplevel, and
     neither reader names a root. The rule followed the folder at the first
-    two (an empty value read as none)."""
+    two (an empty value read as none). git dies there, and reads no folder
+    outside a repository: membership declines (INDETERMINATE), where it
+    read the folder as OUTSIDE (ENG-207's round 6)."""
     app, _other = _apps(tmp_path)
     config = app / ".git" / "config"
     config.write_bytes(config.read_bytes() + tail)
     assert _toplevel(app).returncode != 0
     runs.clear()
 
-    assert _membership(app).state == location.OUTSIDE
+    cap = _membership(app)
+    assert cap.state == location.INDETERMINATE
+    assert cap.detail.startswith("repository format: ")
     _no_origin(app)
     assert [cwd for cwd in runs if _inside(cwd, app)] == []
 
@@ -363,14 +367,17 @@ def test_a_config_git_dies_on_is_refused_by_both_readers(
 def test_a_config_past_the_format_bound_is_refused(tmp_path: Path) -> None:
     """git reads a config of any size; one past `gitconfig._FORMAT_LIMIT`
     is not read here, and is refused (fail closed) rather than judged by a
-    part of it."""
+    part of it: membership declines, never reading the folder as outside a
+    repository (ENG-207's round 6)."""
     app, _other = _apps(tmp_path)
     config = app / ".git" / "config"
     config.write_bytes(config.read_bytes() + _padding(40000))
     assert config.stat().st_size > gitconfig._FORMAT_LIMIT
     _git_names(app, app)
 
-    assert _membership(app).state == location.OUTSIDE
+    cap = _membership(app)
+    assert cap.state == location.INDETERMINATE
+    assert "larger than 2 MiB" in cap.detail
     _no_origin(app)
 
 

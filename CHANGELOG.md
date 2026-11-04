@@ -650,10 +650,18 @@ eighteenth was built.
   no git for it. A git that does not answer, or none on PATH, reads for
   a minute as the last answer git gave for that PATH, and as naming
   `/etc/gitconfig` (none on Windows) where it never answered; a failed
-  ask is never recorded over git's answer. Each file is read with its
-  includes under the reader's size, depth and file bounds, so a remote
-  alias set there keys the remote as git fetches it, an equal prefix
-  read first winning as in git. An empty `GIT_CONFIG_GLOBAL` now names
+  ask is never recorded over git's answer. Each file is parsed as git
+  2.54's parser parses it, with its includes, under the reader's size (2
+  MiB), depth and file bounds, so a remote alias set there keys the
+  remote as git fetches it, an equal prefix read first winning as in
+  git. Where git dies reading the config (a line its parser refuses, a
+  `url`, `insteadOf` or `include.path` with no value, an include it
+  cannot read or past its depth, a remote or branch variable git's
+  reader of remotes refuses), the capture declines (indeterminate, not
+  kept) and the origin records no repository; the line reader this
+  replaces keyed a valueless `url` as `local:<repo>/true`, read on past
+  the others, and read a folder whose repository's config holds a bad
+  line as outside any repository. An empty `GIT_CONFIG_GLOBAL` now names
   no file, as for git, where it read `~/.gitconfig`. A cached capture
   waited for the repository's own files to change before it saw a new
   rule in the global config; it is now kept against every config file
@@ -694,12 +702,25 @@ eighteenth was built.
   and each file read; the origin's signature stamps `remotes/origin` and
   `branches/origin`, which `git remote get-url origin` reads (two stats
   a hit). A remote's URLs are taken as git takes them, an empty `url`
-  emptying the list, and an insteadOf rule as git chooses it (an empty
-  prefix matches every URL; of equal prefixes the first under the base
-  git met first). Where git's reading is not mirrored (a HEAD githead
-  declines, a character class or a backslash in a pattern, a legacy file
-  that is no regular file or is over 64 KiB), the capture declines
-  rather than key another answer. The origin cache (`origin.capture`),
+  emptying the list where the git on PATH does (2.46 and later), the
+  legacy files read where it reads them (a git built with breaking
+  changes reads neither): `gitsystem` asks git both with the system
+  files, from the URL `git ls-remote --get-url` prints for a remote only
+  a legacy file of a git directory under the state directory names (9 ms
+  measured, once an hour with the rest). An insteadOf rule is chosen as
+  git chooses it (an empty prefix matches every URL; of equal prefixes
+  the first under the base git met first). A pattern's character classes
+  and backslash escapes are read as git's wildmatch reads them, and the
+  HEAD of a reftable repository, which githead does not read, is asked of
+  `git symbolic-ref`, once, only where an `onbranch:` include is read, so
+  a steady prompt spawns none. Where git's reading is still not settled
+  (git does not answer for HEAD, a `%(prefix)` path in a `gitdir:`
+  pattern, a legacy file that is no regular file or is over 64 KiB),
+  the capture declines rather than key another answer, but only where
+  the include could change what is keyed: one that sets a remote URL, an
+  insteadOf rule whose prefix matches a URL keyed, or a line git may die
+  on. One such include anywhere had every capture decline, though its
+  rule matched none of the repository's URLs. The origin cache (`origin.capture`),
   which saw a rule in the global config or in a file the repository's
   config includes only once its ten minutes ran out, is kept against the
   same config files, the machine's and the repository's, and the files
@@ -712,9 +733,12 @@ eighteenth was built.
   takes `unset`, applied beneath its scrub and pins like `env`.
   (`src/bettermemory/gitsystem.py`, `src/bettermemory/gitconfig.py`,
   `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
-  `src/bettermemory/_git.py`, `src/bettermemory/origin.py`,
-  `tests/test_location_git_config.py`, `tests/test_membership_cost.py`,
-  `tests/test_git_no_fetch.py`, `tests/test_origin_cache.py`)
+  `src/bettermemory/gitfile_rule.py`, `src/bettermemory/_git.py`,
+  `src/bettermemory/origin.py`, `tests/test_location_git_config.py`,
+  `tests/test_location_git_parse.py`,
+  `tests/test_location_git_include_conditions.py`,
+  `tests/test_membership_cost.py`, `tests/test_git_no_fetch.py`,
+  `tests/test_origin_cache.py`)
 
 - **A plant seen first while the checkout's share answers with errors
   no longer takes its record (ENG-217).** Since 9.0.0rc18 a checkout

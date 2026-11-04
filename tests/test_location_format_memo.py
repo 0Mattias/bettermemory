@@ -42,15 +42,30 @@ def _neutral(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(name="parses")
 def _parses(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """The size of each config `gitconfig.git_entries` parses from here."""
+    """The size of each config `gitconfig.git_entries` parses from here for
+    the format reader (`gitconfig.read_git_config`). The reader of the
+    remotes (`gitconfig.config_tree`) parses with it too, a capture's
+    files as it reads them, as the line reader it replaced did (ENG-207's
+    round 6), and is not the memo's."""
     seen: list[int] = []
+    inside = [0]
     real = gitconfig.git_entries
+    real_read = gitconfig.read_git_config
 
     def counting(data: bytes) -> Any:
-        seen.append(len(data))
+        if inside[0]:
+            seen.append(len(data))
         return real(data)
 
+    def reading(*args: Any, **kwargs: Any) -> Any:
+        inside[0] += 1
+        try:
+            return real_read(*args, **kwargs)
+        finally:
+            inside[0] -= 1
+
     monkeypatch.setattr(gitconfig, "git_entries", counting)
+    monkeypatch.setattr(gitconfig, "read_git_config", reading)
     return seen
 
 
