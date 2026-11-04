@@ -795,7 +795,10 @@ project P into one other project Q where all of these hold:
   alias key and none of the keys the checkout fetches from, as a capture
   before rc14 keyed it. That row is read once for each open store and
   project; before it is found, a judgment reads only the rows written
-  since the last. A project minted on a remote of its own, or on the
+  since the last. Nothing read past the last row committed is kept,
+  since a rollback takes the open transaction's rows away and the next
+  writes take their sequence numbers and the project's id again. A project
+  minted on a remote of its own, or on the
   alias expanded, is no such split, and its remote re-spelled with an
   alias later merges nothing, as it would re-pointed at the URL: a
   remote's spelling decides no merge.

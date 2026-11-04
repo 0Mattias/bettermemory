@@ -172,6 +172,22 @@ def next_membership_number(self: Store, table: str, column: str) -> int:
     return int(row[0] or 0) + 1
 
 
+def committed_seq(self: Store) -> int | None:
+    """The last log sequence number no rollback can take away, or None
+    where every row a read sees now is committed: no transaction is open
+    on the store's connection, or the one this store owns has appended
+    no row yet. Inside one that has, the row before the first it appended
+    (a savepoint's rollback puts that back too): a rollback takes the rows
+    after it away, and the next writes take their sequence numbers and
+    ids again, so a memo of the log keeps nothing read past it
+    (`membership_alias._first_remotes`, ENG-207's review, P12). In a
+    transaction no call owns (one a failed rollback left), 0."""
+    if self._tx_depth:
+        first = self._tx_first_seq
+        return None if first is None else first - 1
+    return 0 if self._conn.in_transaction else None
+
+
 def membership_log(
     self: Store, kinds: Collection[str] | None = None, *, since_seq: int = 0
 ) -> Iterator[LogRow]:

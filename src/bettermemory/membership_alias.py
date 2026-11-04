@@ -55,7 +55,8 @@ the checkout's evidence (its project, tenant, HEAD, remotes and alias
 keys) in this process (`_PASSED`), so a prompt at an alias clone that
 never joins reads nothing more after its first; a declaration found
 against a pair is kept for the pair (`_DECLARED`), and a project's first
-checkout row for the open store (`_FIRST`), since the log only grows.
+checkout row for the open store (`_FIRST`), since the log only grows
+once committed.
 """
 
 from __future__ import annotations
@@ -242,7 +243,13 @@ def _first_remotes(self: Membership, pid: str) -> frozenset[str] | None:
     was read, not as an answer: a checkout row can arrive later (a clone
     joining a project an import minted), so the next judgment reads only
     the rows written since and finds it, where reading from the mint each
-    time cost a project whose first row came late every row after it."""
+    time cost a project whose first row came late every row after it.
+    Nothing read past the last row committed is kept
+    (`Store.committed_seq`; the review's P12): a rollback takes the open
+    transaction's rows away, and the next writes take their sequence
+    numbers and the project's id again, so a row kept from one answered
+    for another project, and a read position past them passed over their
+    rows."""
     store = self._store
     key = (store.store_id, pid)
     with _LOCK:
@@ -251,6 +258,7 @@ def _first_remotes(self: Membership, pid: str) -> frozenset[str] | None:
         )
     if first is not None:
         return first
+    since = read
     quoted = json.dumps(pid)
     if mint is None:
         for row in store.membership_log(["project_minted"], since_seq=read):
@@ -265,13 +273,37 @@ def _first_remotes(self: Membership, pid: str) -> frozenset[str] | None:
             if isinstance(put, dict) and put.get("project") == pid:
                 first = frozenset(_values(put.get("remotes_json")))
                 break
+    kept = _committed(store.committed_seq(), since, (mint, read, first))
+    if kept is None:
+        return first
     with _LOCK:
         memo = _FIRST.setdefault(store, OrderedDict())
         memo.pop(key, None)
-        memo[key] = (mint, read, first)
+        memo[key] = kept
         while len(memo) > _KEPT:
             memo.popitem(last=False)
     return first
+
+
+def _committed(
+    base: int | None, since: int, found: tuple[int | None, int, frozenset[str] | None]
+) -> tuple[int | None, int, frozenset[str] | None] | None:
+    """What `_first_remotes` keeps of `found` (the mint's sequence
+    number, the last read, the first row's remotes) where no row past
+    `base` is committed (`Store.committed_seq`; None: every row is):
+    a mint or a first row past it is not kept, and the read position
+    stops at it, the rows up to it having held neither. None, nothing to
+    keep, where `base` is before where this read began (`since`)."""
+    if base is None:
+        return found
+    if base < since:
+        return None
+    mint, read, first = found
+    if mint is not None and mint > base:
+        return (None, base, None)
+    if first is not None and read > base:
+        return (mint, base, None)
+    return (mint, min(read, base), first)
 
 
 def _loads(payload: str) -> dict[str, Any]:

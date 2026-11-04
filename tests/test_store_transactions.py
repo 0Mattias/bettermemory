@@ -600,6 +600,35 @@ def test_a_failed_commit_of_a_batch_leaves_nothing_open(
     assert store.log_verify()["status"] == "ok"
 
 
+class _TakenBack(Exception):
+    """Raised inside a nested batch to roll its savepoint back."""
+
+
+def test_the_last_committed_row_follows_the_open_transaction(store: Store) -> None:
+    """`Store.committed_seq` (ENG-207's review, P12): None where every log
+    row a read sees is committed; inside a transaction that has appended
+    rows, the row before the first it appended, which a savepoint's
+    rollback puts back with the rows; in a transaction no call owns, 0."""
+    store.write(content="the release runs from the tag", scopes=["global"])
+    head = max(row.seq for row in store.log_rows())
+    assert store.committed_seq() is None
+    with store.batch():
+        assert store.committed_seq() is None
+        with contextlib.suppress(_TakenBack), store.batch():
+            store.write(content="taken back", scopes=["global"])
+            assert store.committed_seq() == head
+            raise _TakenBack
+        assert store.committed_seq() is None
+        store.write(content="kept", scopes=["global"])
+        assert store.committed_seq() == head
+    assert store.committed_seq() is None
+    store.conn.execute("BEGIN")
+    try:
+        assert store.committed_seq() == 0
+    finally:
+        store.conn.execute("ROLLBACK")
+
+
 def test_a_transaction_a_failed_rollback_left_is_rolled_back_by_the_next_call(
     store: Store,
     written: Memory,

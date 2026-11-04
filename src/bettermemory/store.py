@@ -450,6 +450,8 @@ class Store:
     _reader: _restore_lock.Closeable | None
     _store_id: str
     _last_appended: LogRow | None
+    # The first row the open transaction appended (`committed_seq`).
+    _tx_first_seq: int | None
     # How many `_transaction` entries are open on this connection: 0 when
     # none, 1 for the owner of the write transaction, more for the calls
     # nested in it. The one record of who owns the transaction.
@@ -534,6 +536,7 @@ class Store:
         self._reader = None
         self._store_id = store_id
         self._last_appended = None
+        self._tx_first_seq = None
         self._tx_depth = 0
         self._tx_records = False
         self._tx_returns = {}
@@ -1192,6 +1195,7 @@ class Store:
         if conn.in_transaction:
             self._clear_residue(conn)
         self._last_appended = None
+        self._tx_first_seq = None
         self._tx_records = False
         self._tx_returns = {}
         # BEGIN before the depth is set: a BEGIN that fails (the busy wait
@@ -1231,7 +1235,7 @@ class Store:
         head never names a row the rollback took away."""
         self._require_open(conn)
         name = f"nested_{self._tx_depth}"
-        appended = self._last_appended
+        appended, first = self._last_appended, self._tx_first_seq
         records = self._tx_records
         returns = dict(self._tx_returns)
         conn.execute(f"SAVEPOINT {name}")
@@ -1240,7 +1244,7 @@ class Store:
             yield conn
             conn.execute(f"RELEASE {name}")
         except BaseException:
-            self._last_appended = appended
+            self._last_appended, self._tx_first_seq = appended, first
             self._tx_records = records
             self._tx_returns = returns
             if conn.in_transaction:
@@ -1367,6 +1371,8 @@ class Store:
             conn, key=self._key, kind=kind, payload=payload, session=session, ts=ts
         )
         self._last_appended = row
+        if self._tx_first_seq is None:
+            self._tx_first_seq = row.seq
         return row
 
     def _mutate(
@@ -1575,6 +1581,7 @@ class Store:
     next_membership_id = _membership.next_membership_id
     next_membership_number = _membership.next_membership_number
     membership_log = _membership.membership_log
+    committed_seq = _membership.committed_seq
     wrote_record = _membership.wrote_record
     reissue_membership_store_id = _membership.reissue_membership_store_id
 

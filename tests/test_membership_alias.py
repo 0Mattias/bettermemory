@@ -382,6 +382,71 @@ def test_a_projects_first_checkout_row_is_read_once_for_the_open_store(
     )
 
 
+class _RolledBack(Exception):
+    """Raised inside a batch to roll it back."""
+
+
+@pytest.mark.parametrize("found", [True, False])
+def test_what_is_read_in_a_transaction_rolled_back_is_not_kept(
+    world: World, found: bool
+) -> None:
+    """The review's P12: a judgment that read a project's first checkout
+    row inside a transaction that then rolled back kept the row, and
+    project ids are the highest plus one, so the next project minted took
+    the id with another first row, and the memo answered that it was
+    minted on the alias. A read finding none yet kept a read position past
+    sequence numbers the next writes took again, and passed over their
+    rows. Nothing read past the last row committed is kept
+    (`Store.committed_seq`): the next judgment reads the log the rollback
+    left."""
+    alias = world.repo("/w/alias", remote=ALIAS)
+    alias.commit()
+    mine = world.repo("/w/mine", remote="github.com/me/mine")
+    mine.commit()
+    store = world.store
+    head = max((row.seq for row in store.log_rows()), default=0)
+    with pytest.raises(_RolledBack), store.batch():
+        assert store.committed_seq() is None
+        if found:
+            pid = str(world.see(alias).project)
+            assert membership_alias._first_remotes(world.model, pid) == frozenset(
+                {ALIAS}
+            )
+            assert membership_alias._minted_on(world.model, pid, [ALIAS], [FULL])
+        else:
+            pid = _minted_with_no_checkout(world, alias)
+            assert membership_alias._first_remotes(world.model, pid) is None
+        assert store.committed_seq() == head
+        raise _RolledBack
+    assert store.committed_seq() is None
+    # What is kept holds no row and reads no further than the commits did.
+    memo = membership_alias._FIRST.get(store)
+    kept = None if memo is None else memo.get((store.store_id, pid))
+    assert kept is None or (kept[0], kept[2]) == (None, None) and kept[1] <= head
+    assert str(world.see(mine).project) == pid, "premise: the id is taken again"
+    assert membership_alias._first_remotes(world.model, pid) == frozenset(
+        {"github.com/me/mine"}
+    )
+    assert not membership_alias._minted_on(world.model, pid, [ALIAS], [FULL])
+
+
+def test_only_what_is_committed_of_a_first_row_read_is_kept() -> None:
+    """`membership_alias._committed`: of a read's mint, read position and
+    first row, a mint or a row past the last committed is dropped and the
+    read position stops there; with every row committed all is kept, and
+    a commit point before where the read began keeps nothing."""
+    first = frozenset({ALIAS})
+    kept = membership_alias._committed
+    assert kept(None, 0, (3, 7, first)) == (3, 7, first)
+    assert kept(9, 0, (3, 7, first)) == (3, 7, first)
+    assert kept(7, 0, (3, 7, first)) == (3, 7, first)
+    assert kept(5, 0, (3, 7, first)) == (3, 5, None)
+    assert kept(2, 0, (3, 7, first)) == (None, 2, None)
+    assert kept(5, 0, (None, 8, None)) == (None, 5, None)
+    assert kept(5, 0, (3, 4, None)) == (3, 4, None)
+    assert kept(3, 4, (None, 8, None)) is None
+
+
 def test_a_project_minted_with_no_checkout_is_judged_by_the_first_to_join_it(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
