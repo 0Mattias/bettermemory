@@ -221,17 +221,18 @@ eighteenth was built.
   Replace refs and the grafts file are ignored for claim drift: every git
   `origin` runs, the windows, the unfiltered count and the author dates
   included, reads the history as its objects hold it
-  (`GIT_NO_REPLACE_OBJECTS`, and `GIT_GRAFT_FILE` set to the null device),
-  and the patch stream and its split also set aside the repository's
-  `core.useReplaceRefs` and commit-graph, as the hardened history call
-  does. A repository's replace refs are its own and untrusted, and they
-  rewrote which commits a window held and what each changed under a head
-  that stayed; one written under a reftable ref store moved none of the
-  stamps the split's listing was kept under, so the kept listing read the
-  history without it and a fresh one with it (3, then 5 and the claim
-  named, in the tests' replaced window). Neither does now, so the listing
-  needs no replace-ref stamp, and a replace ref or a graft no longer moves
-  a count.
+  (`GIT_NO_REPLACE_OBJECTS` with `-c core.useReplaceRefs=false`, which the
+  repository's own setting cannot turn back on under any git version, and
+  `GIT_GRAFT_FILE` set to the null device), and the patch stream and its
+  split also set aside the repository's commit-graph, as the hardened
+  history call does. A repository's replace refs are its own and
+  untrusted, and they rewrote which commits a window held and what each
+  changed under a head that stayed; one written under a reftable ref
+  store moved none of the stamps the split's listing was kept under, so
+  the kept listing read the history without it and a fresh one with it
+  (3, then 5 and the claim named, in the tests' replaced window). Neither
+  does now, so the listing needs no replace-ref stamp, and a replace ref
+  or a graft no longer moves a count.
   (`src/bettermemory/origin_patch.py`, `src/bettermemory/verify.py`,
   `src/bettermemory/origin.py`, `src/bettermemory/origin_history.py`,
   `src/bettermemory/_response.py`, `docs/api.md`, `docs/internals.md`,

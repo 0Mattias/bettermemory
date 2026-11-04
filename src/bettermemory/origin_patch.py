@@ -82,7 +82,8 @@ _GITLINK = "160000"
 # shallow file, which changes which parent a commit is diffed against.
 # Replace refs, a grafts file and the commit-graph decide nothing here:
 # both calls read the objects as stored (`origin._AS_STORED`,
-# `origin.AS_STORED_PINS`), as the stream does, so a replace ref written
+# `origin._AS_STORED_CONFIG`, `origin.AS_STORED_PINS`), as the stream
+# does, so a replace ref written
 # under a ref store no stamp sees (reftable) moves no answer (ENG-220's
 # review). The first stream still runs and fails on every
 # search (and keeps the drift memo from keeping the value, so a blob

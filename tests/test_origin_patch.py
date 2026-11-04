@@ -58,6 +58,12 @@ needs_lazy_fetch_pin = pytest.mark.skipif(
 needs_reftable = pytest.mark.skipif(
     _git_version() < (2, 45), reason="git clones into a reftable from 2.45"
 )
+#: A git before 2.19 has no ``core.useReplaceRefs``: the variable alone
+#: sets replace refs aside there, and no setting of a repository's can
+#: turn them back on.
+needs_use_replace_refs = pytest.mark.skipif(
+    _git_version() < (2, 19), reason="core.useReplaceRefs is read from git 2.19"
+)
 
 _T0 = datetime(2025, 1, 1, tzinfo=timezone.utc)
 _VERIFIED = _T0 + timedelta(hours=1)
@@ -520,7 +526,7 @@ def test_a_replace_ref_changes_no_full_clone_count(
     """A replace ref is the repository's own, untrusted, and rewrites what
     a commit changed under a head that stays. Claim drift reads the history
     as its objects hold it, whatever ``core.useReplaceRefs`` the repository
-    sets (`origin._AS_STORED`, `origin.AS_STORED_PINS`): f.py is edited in
+    sets (`origin._AS_STORED`, `origin._AS_STORED_CONFIG`): f.py is edited in
     every commit and deleted in none, so nothing escalates before the ref
     or after it, where git's own diff shows the deletion."""
     partial = Partial(tmp_path, _EDITS)
@@ -554,6 +560,39 @@ def test_a_rewritten_parent_changes_no_window(
         _plain(repo, "replace", "--graft", deletion, first)
     else:
         (repo / ".git" / "info" / "grafts").write_text(f"{deletion} {first}\n")
+    reached = _plain(repo, "log", "--format=%H").split()
+    assert partial.commits[1] not in reached, "premise: git's own log drops it"
+    resolved = partial.resolve([_GONE], basis)
+    assert (resolved.count, resolved.claims_drifted) == (3, (_GONE,))
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@pytest.mark.parametrize(
+    "alone", [pytest.param("setting", marks=needs_use_replace_refs), "variable"]
+)
+def test_each_replace_pin_alone_holds_the_window(
+    tmp_path: Path, basis: str, alone: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every origin call carries two pins against replace refs, and either
+    alone keeps the window past a replacement: 3. With no
+    ``GIT_NO_REPLACE_OBJECTS`` and the repository setting
+    ``core.useReplaceRefs=true``, git reads replace refs, as a git before
+    2.42 would even with the variable set; the ``-c
+    core.useReplaceRefs=false`` (`origin._AS_STORED_CONFIG`) is read after
+    the repository's config on every git, so it holds. With no ``-c``, the
+    variable holds, as it does alone on a git before 2.19, which has no
+    such setting."""
+    monkeypatch.delenv("GIT_NO_REPLACE_OBJECTS", raising=False)
+    if alone == "setting":
+        monkeypatch.setattr(origin, "_AS_STORED", {"GIT_GRAFT_FILE": os.devnull})
+    else:
+        monkeypatch.setattr(origin, "_AS_STORED_CONFIG", ())
+    partial = Partial(tmp_path, _PATH)
+    repo = partial.clone(blobless=False)
+    deletion, first = partial.commits[2], partial.commits[0]
+    _plain(repo, "replace", "--graft", deletion, first)
+    if alone == "setting":
+        _plain(repo, "config", "core.useReplaceRefs", "true")
     reached = _plain(repo, "log", "--format=%H").split()
     assert partial.commits[1] not in reached, "premise: git's own log drops it"
     resolved = partial.resolve([_GONE], basis)

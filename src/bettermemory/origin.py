@@ -754,7 +754,11 @@ def _git_result(
             stderr=f"fatal: not a git repository: {why}\n",
         )
     return _git_runner.run_git(
-        args, cwd=cwd, timeout=timeout, stdin=stdin, env=_AS_STORED
+        (*_AS_STORED_CONFIG, *args),
+        cwd=cwd,
+        timeout=timeout,
+        stdin=stdin,
+        env=_AS_STORED,
     )
 
 
@@ -762,13 +766,16 @@ def _git_result(
 #: history reads it (`location_git`). Replace refs and a grafts file are the
 #: repository's own, untrusted, and rewrite which commits a head reaches
 #: and what each changed, under a head and stamps that stay (a replace ref
-#: under a reftable ref store, ENG-220's review).
+#: under a reftable ref store, ENG-220's review). The ``-c`` setting is read
+#: after the repository's config, so it holds where a git before 2.42 lets
+#: the repository's ``core.useReplaceRefs=true`` override the variable, and
+#: the variable holds on a git before 2.19, which has no such setting.
 _AS_STORED = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.devnull}
-#: On top, for the patch stream and its split (`origin_patch`): a git
-#: before 2.42 lets the repository's ``core.useReplaceRefs`` turn replace
-#: refs back on, and a commit-graph file can name other parents than the
-#: objects; neither call walks, so the graph saves them nothing.
-AS_STORED_PINS = ("-c", "core.useReplaceRefs=false", "-c", "core.commitGraph=false")
+_AS_STORED_CONFIG = ("-c", "core.useReplaceRefs=false")
+#: On top, for the patch stream and its split (`origin_patch`): a
+#: commit-graph file can name other parents than the objects, and neither
+#: call walks, so the graph saves them nothing.
+AS_STORED_PINS = ("-c", "core.commitGraph=false")
 
 
 def follow_unsettled(found: Origin) -> bool:
