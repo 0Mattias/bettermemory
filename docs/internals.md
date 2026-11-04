@@ -1584,7 +1584,11 @@ extracts; the commit-drift count's bases in `verify_basis.py`; a claim
 window's patch over the commits whose blobs a partial clone holds, the
 rest counted per file, in `origin_patch.py`; every git `origin.py` runs
 reads the history as its objects hold it, past the repository's replace
-refs, grafts file and commit-graph, and reads no count behind a shallow
+refs, grafts file and commit-graph, and past what its config,
+`.gitmodules` and attribute files set that could hide a change (a root
+commit's diff, a rename, a binary file's or a gitlink's change; the
+pins are `origin_history.AS_STORED_ENV`, `AS_STORED_CONFIG` and
+`AS_STORED_DIFF`), and reads no count behind a shallow
 file's cut, `origin_history.cuts`: there the count is omitted, never a
 measured 0), with
 `symbols.py` for advisory symbol citations, and

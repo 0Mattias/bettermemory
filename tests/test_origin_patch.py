@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _caches, _git, githead, origin, origin_patch
+from bettermemory import _caches, _git, githead, origin, origin_history, origin_patch
 from bettermemory import verify as verify_mod
 from bettermemory.claims import COMMIT_MARK, load_claims, parse_claim
 from bettermemory.origin_patch import PatchWindow, local_patch_window
@@ -148,7 +148,9 @@ _EDITS: History = [
 ]
 #: x.py (short lines) is deleted in a local commit, so its path claim fires
 #: implicating nothing; y.py is made binary or empty and deleted in counted
-#: commits, a deletion the patch prints without a ``/dev/null`` header.
+#: commits. The patch prints an empty file's deletion without a
+#: ``/dev/null`` header, and a binary file's as text, with one
+#: (`origin_history.AS_STORED_DIFF`).
 _BARE: dict[str, History] = {
     "binary": [
         {_X: "a = 1\n", _Y: _long(0), "src/z.py": _Z0},
@@ -437,8 +439,8 @@ def test_a_typechange_in_a_counted_commit_fires_the_path_claim(
 
 @pytest.mark.parametrize("basis", _BASES)
 @pytest.mark.parametrize(
-    ("kind", "local", "expected"),
-    [("binary", (0, 1, 2, 3), 5), ("empty", (0, 1, 2, 3, 4), 6)],
+    ("kind", "local", "split", "full"),
+    [("binary", (0, 1, 2, 3), 5, 3), ("empty", (0, 1, 2, 3, 4), 6, 6)],
 )
 @_CLONES
 def test_a_claim_only_the_trees_fire_keeps_the_whole_window(
@@ -446,22 +448,26 @@ def test_a_claim_only_the_trees_fire_keeps_the_whole_window(
     basis: str,
     kind: str,
     local: tuple[int, ...],
-    expected: int,
+    split: int,
+    full: int,
     blobless: bool,
 ) -> None:
     """x.py's deletion is local and carries no line long enough to index,
-    so its path claim fires implicating nothing, and a full clone counts
-    the whole window. y.py's deletion, of a binary or empty file, is
-    printed without a ``/dev/null`` header, so a full clone's y claim
-    stays quiet; the split's trees show it, so y fires there and
-    implicates its local edit. The whole window is still counted: in a
-    split, any fired claim that implicates nothing takes it."""
+    so its path claim fires implicating nothing. An empty y.py's deletion
+    is printed without a ``/dev/null`` header, so a full clone's y claim
+    stays quiet, no fired claim implicates a commit, and the whole window
+    is counted: 6. A binary y.py's deletion is printed as text, so a full
+    clone's y claim fires and implicates the 3 commits carrying y's lines,
+    which x's fire, implicating nothing, does not widen. The split's trees
+    show either deletion, so y fires there and implicates its local edit,
+    and the whole window is counted: in a split, any fired claim that
+    implicates nothing takes it, 5 where the full clone counts 3."""
     partial = Partial(tmp_path, _BARE[kind])
     partial.clone(blobless=blobless)
     if blobless:
         partial.fetch(*local)
     resolved = partial.resolve([_X, _Y, _Z], basis)
-    assert resolved.count == expected
+    assert resolved.count == (split if blobless else full)
     assert _X in resolved.claims_drifted
 
 
@@ -526,9 +532,9 @@ def test_a_replace_ref_changes_no_full_clone_count(
     """A replace ref is the repository's own, untrusted, and rewrites what
     a commit changed under a head that stays. Claim drift reads the history
     as its objects hold it, whatever ``core.useReplaceRefs`` the repository
-    sets (`origin._AS_STORED`, `origin._AS_STORED_CONFIG`): f.py is edited in
-    every commit and deleted in none, so nothing escalates before the ref
-    or after it, where git's own diff shows the deletion."""
+    sets (`origin_history.AS_STORED_ENV`, `AS_STORED_CONFIG`): f.py is
+    edited in every commit and deleted in none, so nothing escalates before
+    the ref or after it, where git's own diff shows the deletion."""
     partial = Partial(tmp_path, _EDITS)
     third, replacement = _replacement(partial)
     repo = partial.clone(blobless=False)
@@ -578,15 +584,26 @@ def test_each_replace_pin_alone_holds_the_window(
     ``GIT_NO_REPLACE_OBJECTS`` and the repository setting
     ``core.useReplaceRefs=true``, git reads replace refs, as a git before
     2.42 would even with the variable set; the ``-c
-    core.useReplaceRefs=false`` (`origin._AS_STORED_CONFIG`) is read after
-    the repository's config on every git, so it holds. With no ``-c``, the
-    variable holds, as it does alone on a git before 2.19, which has no
-    such setting."""
+    core.useReplaceRefs=false`` (`origin_history.AS_STORED_CONFIG`) is
+    read after the repository's config on every git, so it holds. Without
+    that ``-c`` (the other pins kept), the variable holds, as it does
+    alone on a git before 2.19, which has no such setting."""
     monkeypatch.delenv("GIT_NO_REPLACE_OBJECTS", raising=False)
     if alone == "setting":
-        monkeypatch.setattr(origin, "_AS_STORED", {"GIT_GRAFT_FILE": os.devnull})
+        monkeypatch.setattr(
+            origin_history, "AS_STORED_ENV", {"GIT_GRAFT_FILE": os.devnull}
+        )
     else:
-        monkeypatch.setattr(origin, "_AS_STORED_CONFIG", ())
+        kept = origin_history.AS_STORED_CONFIG
+        pairs = [kept[i : i + 2] for i in range(0, len(kept), 2)]
+        without = tuple(
+            arg
+            for pair in pairs
+            if pair[1] != "core.useReplaceRefs=false"
+            for arg in pair
+        )
+        assert len(without) == len(kept) - 2, "premise: the pin is dropped"
+        monkeypatch.setattr(origin_history, "AS_STORED_CONFIG", without)
     partial = Partial(tmp_path, _PATH)
     repo = partial.clone(blobless=False)
     deletion, first = partial.commits[2], partial.commits[0]

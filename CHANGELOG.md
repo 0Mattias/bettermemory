@@ -263,10 +263,71 @@ eighteenth was built.
   counts what the objects reach, and a stamp whose commit only the stitch
   reached reads on the author-date basis. In a shallow clone, a stamp
   behind the cut reads no count until the clone is deepened (`git fetch
-  --unshallow`). (`src/bettermemory/origin.py`,
+  --unshallow`). A repository that sets `log.showRoot = false`,
+  `log.follow`, `diff.ignoreSubmodules` or a submodule's `ignore`, or
+  marks a claimed file binary, now has its claims counted over the
+  changes those settings hid, so a count there can rise (the fix
+  below). (`src/bettermemory/origin.py`,
   `src/bettermemory/origin_history.py`)
 
 #### Fixed
+
+- **Nothing a repository sets makes a changed claim read fresh
+  (ENG-220).** Claim drift reads a window's commits and their patches
+  with `git log`, and the repository's own config, `config.worktree`,
+  the files they include, its `.gitmodules` and its attribute files are
+  read by that log; a hostile `.git` sets any of them. Five of them hid
+  the change that fired a claim, and the count read 0 where the objects
+  say 1 or more: `log.showRoot = false` diffed no root commit, so a
+  history merged in whose root changed a claim (`git subtree add`,
+  `merge --allow-unrelated-histories`) was missed by the walk and the
+  patch; `log.follow` made a log over the one claimed path follow it
+  back across a rename into its place; `diff.renames`, git's own
+  default, printed a claimed file renamed to another claimed path as a
+  header without hunks, so neither claim fired; the `-diff` and
+  `binary` attributes, a diff driver marked binary and
+  `core.bigFileThreshold` printed "Binary files differ", which carries
+  no header, so beside another claimed file the claim read as
+  untouched; and `diff.ignoreSubmodules` or `submodule.<name>.ignore`
+  dropped a gitlink's change, its deletion included, from the walk and
+  the patch. Every git `origin` runs now pins `log.showRoot=true`,
+  `log.follow=false` and `diff.renames=false`, and every log that prints
+  a diff (the walk, the split's listing and the patch) passes `--text`
+  and `--ignore-submodules=none`, the one spelling that outranks
+  `.gitmodules`; a test sets each and reads the history's count. What
+  else a repository, or the environment, can set was checked and moves
+  no count, or moves one only up (the hit counts more commits, declines,
+  or is omitted).
+  It moves none: `diff.renameLimit` (renames are off); `diff.relative`
+  (every diff runs at the root); `core.quotePath`, the diff prefixes,
+  `diff.noprefix`, `diff.mnemonicPrefix` and `diff.interHunkContext`
+  (pinned where a path or a hunk is printed); `color.ui` and
+  `color.diff` (`--no-color` on the patch, and the listings print
+  none); `log.decorate`, `log.excludeDecoration`, `format.pretty`,
+  `log.date`, `log.abbrevCommit`, `core.abbrev` and the notes refs
+  (each log names its format); `diff.context` (`-U0`); `diff.external`
+  and a driver's `textconv` (off); `diff.submodule` and
+  `log.showSignature` (pinned since 9.0.0rc18); `diff.orderFile` and
+  `diff.suppressBlankEmpty`; `log.diffMerges` (no merge is diffed);
+  `log.mailmap` and `mailmap.file` (no name is read); a driver's
+  `funcname` and `xfuncname` (the hunk header's context is not read);
+  `core.ignoreCase`, and the `GIT_LITERAL_PATHSPECS`,
+  `GIT_GLOB_PATHSPECS` and `GIT_NOGLOB_PATHSPECS` variables (each
+  pathspec is `:(literal)`). Only up: `diff.algorithm`,
+  `diff.indentHeuristic` and a driver's `algorithm`, which move only
+  lines whose text is unchanged, so a binding can read touched but not
+  untouched; `i18n.logOutputEncoding`, which leaves what each format
+  prints as it is in an encoding that extends ASCII, and in one that
+  does not (UTF-16) fails the parse, and the count is omitted; and
+  `GIT_ICASE_PATHSPECS`, which matches more paths. Not exercised: `core.precomposeUnicode` with a
+  path committed in decomposed Unicode. The memo keys still stamp the
+  files these settings live in, so a hit is read again when one moves.
+  (`src/bettermemory/origin_history.py`, `src/bettermemory/origin.py`,
+  `src/bettermemory/origin_patch.py`, `src/bettermemory/_response.py`,
+  `src/bettermemory/origin_gitfiles.py`, `docs/internals.md`,
+  `docs/operations.md`, `tests/test_origin_as_stored.py`,
+  `tests/test_commit_drift_cache.py`, `tests/test_origin_patch.py`,
+  `tests/test_origin.py`)
 
 - **The migration homes a record in a part below a folder whose question
   was answered where a session there resolves (ENG-222).** A folder

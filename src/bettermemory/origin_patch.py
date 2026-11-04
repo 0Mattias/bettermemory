@@ -66,7 +66,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from . import _caches, githead, origin
+from . import _caches, githead, origin, origin_history
 from .claims import COMMIT_MARK
 from .origin_gitfiles import _unquote_c_path
 
@@ -81,11 +81,10 @@ _GITLINK = "160000"
 # objects writes a pack into, the alternates file, the config, and the
 # shallow file, which changes which parent a commit is diffed against.
 # Replace refs, a grafts file and the commit-graph decide nothing here:
-# both calls read the objects as stored (`origin._AS_STORED`,
-# `origin._AS_STORED_CONFIG`), as every origin call does, so a replace ref
-# written
-# under a ref store no stamp sees (reftable) moves no answer (ENG-220's
-# review). The first stream still runs and fails on every
+# both calls read the objects as stored (`origin_history.AS_STORED_ENV`,
+# `origin_history.AS_STORED_CONFIG`), as every origin call does, so a
+# replace ref written under a ref store no stamp sees (reftable) moves no
+# answer (ENG-220's review). The first stream still runs and fails on every
 # search (and keeps the drift memo from keeping the value, so a blob
 # fetched since is read at once where its pack is new); a search after the
 # first pays it and the stream over the local commits alone, where it paid
@@ -267,6 +266,7 @@ def _changes(
         "-c",
         "log.follow=false",
         "log",
+        *origin_history.AS_STORED_DIFF,
         "--no-walk=unsorted",
         "--raw",
         "--no-renames",

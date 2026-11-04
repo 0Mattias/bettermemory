@@ -47,6 +47,7 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 from ._mcp import call_tool as _mcp_call
+from .test_origin_patch import _git_version
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
@@ -1134,7 +1135,7 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
     (`origin_history.cuts`): None, as a failed read, and no log. A graft
     or a replacement ref changes what git's own log reaches but not what
     `origin` reads, the history as its objects hold it
-    (`origin._AS_STORED`); its stamp still reads the history whole, which
+    (`origin_history.AS_STORED_ENV`); its stamp still reads the history whole, which
     reads the seed."""
     repo = _repo(tmp_path)
     seed = _commit(repo, "seed", when=_T0)
@@ -1556,6 +1557,25 @@ def git_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return home
 
 
+#: The attribute the attribute-file tests write: the `lever` diff driver,
+#: whose algorithm `_claimed`'s repository config sets to patience. Every
+#: file is diffed as text whatever its attributes say
+#: (`origin_history.AS_STORED_DIFF`), so `-diff` moves no count; a driver's
+#: algorithm still does, and only coarser: it moves only lines whose text
+#: is unchanged.
+_LEVER = "*.py diff=lever\n"
+needs_driver_algorithm = pytest.mark.skipif(
+    _git_version() < (2, 42), reason="git reads a diff driver's algorithm from 2.42"
+)
+
+
+def _arranged(*names: str) -> str:
+    """_MODULE's head, then one `return 1` function per name, in order:
+    `_arranged("handler", "other")` is _MODULE."""
+    head = _MODULE[: _MODULE.index("\n\n\ndef handler")]
+    return head + "".join(f"\n\n\ndef {name}():\n    return 1\n" for name in names)
+
+
 def _claimed(
     tmp_path: Path,
     memory_dir: Path,
@@ -1563,12 +1583,15 @@ def _claimed(
     *,
     claim: str,
 ) -> tuple[Path, Origin, list[Any], list[str]]:
-    """A repository whose two later commits change `other` in the claimed
-    module, and two memories claiming `claim`, one counted from an anchor
-    and one on author date. The weak tier reads the hunks and finds the
-    claim untouched, so both count 0; where the hunks read as binary it
-    cannot index them and both count the 2 commits that touched the file."""
+    """A repository whose two later commits rearrange the functions around
+    `handler` in the claimed module, its text left as it was, and two
+    memories claiming `claim`, one counted from an anchor and one on author
+    date. Git's default algorithm diffs each rearrangement without touching
+    `handler`'s lines, so both count 0; where an attribute names the
+    `lever` driver, whose algorithm the config sets to patience, the hunks
+    move `handler`'s lines and both count the 2 commits."""
     repo = _repo(tmp_path)
+    _git(repo, "config", "diff.lever.algorithm", "patience")
     anchor = _commit(repo, "c1", when=_day(0), files={"src/app.py": _MODULE})
     store = Store(memory_dir)
     caller = _caller(repo)
@@ -1592,11 +1615,13 @@ def _claimed(
             claims=[claim],
         ),
     ]
-    for n in (2, 3):
-        changed = _MODULE.replace(
-            "def other():\n    return 1", f"def other():\n    return {n}"
+    for n, order in (
+        (2, ("other", "handler", "a", "b")),
+        (3, ("a", "handler", "other", "b")),
+    ):
+        _commit(
+            repo, f"c{n}", when=_day(10 * n), files={"src/app.py": _arranged(*order)}
         )
-        _commit(repo, f"c{n}", when=_day(10 * n), files={"src/app.py": changed})
     return repo, caller, store.load_all(), ids
 
 
@@ -1616,6 +1641,7 @@ def _cached_and_uncached(
     return cached, uncached
 
 
+@needs_driver_algorithm
 @pytest.mark.parametrize("source", ["root", "directory", "info", "global"])
 def test_an_attribute_file_the_patch_stream_reads_is_in_the_key(
     source: str,
@@ -1626,11 +1652,11 @@ def test_an_attribute_file_the_patch_stream_reads_is_in_the_key(
 ) -> None:
     """`git log -p` reads the diff attribute from the working tree's
     .gitattributes on the claimed file's path, from info/attributes and
-    from the global attributes file. `-diff` there turns the claimed file's
-    hunks into "Binary files differ", which the weak tier cannot index, and
-    the governed half counts any touch. An edit to any of them, committed
-    or not, moves git's answer under an unchanged head: the warm attach
-    answers as the cold one after the edit and after its removal."""
+    from the global attributes file. The `lever` driver there diffs the
+    claimed file with patience, whose hunks move `handler`'s unchanged
+    lines, and the weak tier counts both commits. An edit to any of them,
+    committed or not, moves git's answer under an unchanged head: the warm
+    attach answers as the cold one after the edit and after its removal."""
     repo, caller, memories, ids = _claimed(
         tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
     )
@@ -1647,7 +1673,7 @@ def test_an_attribute_file_the_patch_stream_reads_is_in_the_key(
         assert calls == [], "premise: the memo answers"
 
     attributes.parent.mkdir(parents=True, exist_ok=True)
-    attributes.write_text("*.py -diff\n", encoding="utf-8")
+    attributes.write_text(_LEVER, encoding="utf-8")
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
     assert _counts(uncached, ids) == [2, 2], "premise: the attribute moved git"
     assert cached == uncached
@@ -1658,7 +1684,13 @@ def test_an_attribute_file_the_patch_stream_reads_is_in_the_key(
     assert cached == uncached
 
 
-@pytest.mark.parametrize("shape", ["directory claim", "attributes file in config"])
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "directory claim",
+        pytest.param("attributes file in config", marks=needs_driver_algorithm),
+    ],
+)
 def test_attributes_the_files_cannot_settle_are_never_memoised(
     shape: str,
     git_config_home: Path,
@@ -1671,7 +1703,10 @@ def test_attributes_the_files_cannot_settle_are_never_memoised(
     core.attributesFile in the repository's configuration names a file no
     stat of the repository covers. Neither is settled by a handful of
     stats, so such a hit resolves through git on every attach, as the
-    uncached code does."""
+    uncached code does. The directory claim fires only where a file below
+    it is added or removed, which no algorithm moves, so its attribute is
+    `-diff`, and it moves nothing either: the files are diffed as text
+    (`origin_history.AS_STORED_DIFF`)."""
     claim = "src" if shape == "directory claim" else "src/app.py::handler"
     repo, caller, memories, ids = _claimed(
         tmp_path, memory_dir, monkeypatch, claim=claim
@@ -1688,12 +1723,18 @@ def test_attributes_the_files_cannot_settle_are_never_memoised(
     assert calls, "resolved through git again"
     assert len(_response._DRIFT_MEMO) == 0
 
-    attributes.write_text("*.py -diff\n", encoding="utf-8")
+    if shape == "directory claim":
+        attributes.write_text("*.py -diff\n", encoding="utf-8")
+        expected = [0, 0]
+    else:
+        attributes.write_text(_LEVER, encoding="utf-8")
+        expected = [2, 2]
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _counts(uncached, ids) == [2, 2], "premise: the attribute moved git"
+    assert _counts(uncached, ids) == expected
     assert cached == uncached
 
 
+@needs_driver_algorithm
 def test_an_attribute_file_that_moves_during_the_attach_stores_nothing(
     git_config_home: Path,
     memory_dir: Path,
@@ -1711,7 +1752,7 @@ def test_an_attribute_file_that_moves_during_the_attach_stores_nothing(
     real_stream = origin.commit_patch_stream
 
     def write_then_read(*args: Any, **kwargs: Any) -> Any:
-        attributes.write_text("*.py -diff\n", encoding="utf-8")
+        attributes.write_text(_LEVER, encoding="utf-8")
         return real_stream(*args, **kwargs)
 
     with monkeypatch.context() as patch:
@@ -1738,6 +1779,7 @@ def _attributes_file(source: str, repo: Path, config_home: Path) -> Path:
     }[source]
 
 
+@needs_driver_algorithm
 @pytest.mark.parametrize("source", ["root", "directory", "info", "global"])
 def test_an_attribute_file_created_and_removed_during_the_attach_stores_nothing(
     source: str,
@@ -1749,9 +1791,9 @@ def test_an_attribute_file_created_and_removed_during_the_attach_stores_nothing(
     """An attributes file created before one hit's patch stream runs and
     removed once it returns is absent at the start of the attach and at
     its end, so its own stamp reads the same both times, while that hit's
-    stream read `-diff` from it. Creating or removing a file changes its
-    directory's (mtime, ctime): the attach reads the stamps of the
-    directories that hold the attribute files it keyed on when it keys
+    stream read the `lever` driver from it. Creating or removing a file
+    changes its directory's (mtime, ctime): the attach reads the stamps of
+    the directories that hold the attribute files it keyed on when it keys
     them and again at the end, and keeps nothing when one moved."""
     repo, caller, memories, ids = _claimed(
         tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
@@ -1764,7 +1806,7 @@ def test_an_attribute_file_created_and_removed_during_the_attach_stores_nothing(
         if created:
             return real_stream(*args, **kwargs)
         attributes.parent.mkdir(parents=True, exist_ok=True)
-        attributes.write_text("*.py -diff\n", encoding="utf-8")
+        attributes.write_text(_LEVER, encoding="utf-8")
         created.append(attributes)
         try:
             return real_stream(*args, **kwargs)
@@ -1784,6 +1826,7 @@ def test_an_attribute_file_created_and_removed_during_the_attach_stores_nothing(
     assert cached == uncached
 
 
+@needs_driver_algorithm
 def test_a_later_chain_through_a_changed_directory_stores_nothing(
     git_config_home: Path,
     memory_dir: Path,
@@ -1817,7 +1860,7 @@ def test_a_later_chain_through_a_changed_directory_stores_nothing(
     def create_read_remove(*args: Any, **kwargs: Any) -> Any:
         if created:
             return real_stream(*args, **kwargs)
-        attributes.write_text("*.py -diff\n", encoding="utf-8")
+        attributes.write_text(_LEVER, encoding="utf-8")
         created.append(attributes)
         try:
             return real_stream(*args, **kwargs)
@@ -1872,6 +1915,7 @@ def test_a_missing_directory_is_held_through_its_nearest_ancestor(
     assert not origin.directories_held(held)
 
 
+@needs_driver_algorithm
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
 @pytest.mark.skipif(
     hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads any file"
@@ -1887,9 +1931,10 @@ def test_a_permission_change_to_an_attribute_file_is_a_new_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Git reads an attributes file it cannot open as absent: it warns and
-    exits 0. A chmod of a `*.py -diff` file to 000 therefore moves git's
-    answer from the binary 2 to the weak tier's 0, and a chmod back moves
-    it back, while the file's mtime, size and inode stay as they were. The
+    exits 0. A chmod of a `*.py diff=lever` file to 000 therefore moves
+    git's answer from patience's 2 to the default algorithm's 0, and a
+    chmod back moves it back, while the file's mtime, size and inode stay
+    as they were. The
     stamp carries st_ctime_ns and st_mode, which a chmod moves, so the warm
     attach answers as the cold one in both directions."""
     repo, caller, memories, ids = _claimed(
@@ -1897,7 +1942,7 @@ def test_a_permission_change_to_an_attribute_file_is_a_new_key(
     )
     attributes = _attributes_file(source, repo, git_config_home)
     attributes.parent.mkdir(parents=True, exist_ok=True)
-    attributes.write_text("*.py -diff\n", encoding="utf-8")
+    attributes.write_text(_LEVER, encoding="utf-8")
     if not readable_first:
         attributes.chmod(0)
     try:
@@ -1932,12 +1977,13 @@ def test_a_repository_config_that_sets_log_follow_keeps_the_hit_out_of_the_memo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With log.follow in the repository's config, the patch stream's
-    single-pathspec `git log -p` follows the claimed file across a rename,
-    and the commit that renamed it takes the diff attribute of the rename
+    single-pathspec `git log -p` followed the claimed file across a rename,
+    and the commit that renamed it took the diff attribute of the rename
     source's path, from a .gitattributes no chain of the claimed path
-    covers. A config that sets log.follow keeps the hit out of the memo, so
-    an untracked lib/.gitattributes written between two attaches is read by
-    both."""
+    covers. log.follow is pinned off now (`origin_history.AS_STORED_CONFIG`),
+    and the key still keeps a hit whose config sets it out of the memo: an
+    untracked lib/.gitattributes written between two attaches moves
+    neither count, and both attaches read it as the cold code does."""
     repo = _repo(tmp_path)
     _git(repo, "config", "log.follow", "true")
     anchor = _commit(
@@ -1989,9 +2035,7 @@ def test_a_repository_config_that_sets_log_follow_keeps_the_hit_out_of_the_memo(
     (repo / "lib").mkdir(exist_ok=True)
     (repo / "lib" / ".gitattributes").write_text("*.py -diff\n", encoding="utf-8")
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _counts(uncached, ids) != [1, 1], (
-        "premise: the rename source's attributes moved git"
-    )
+    assert _counts(uncached, ids) == [1, 1], "the stream does not follow the rename"
     assert cached == uncached
     assert calls, "the second attach resolved through git again"
     assert len(_response._DRIFT_MEMO) == 0
@@ -2097,6 +2141,7 @@ def test_the_attribute_files_decline_where_git_reads_log_follow(
         assert signature is not None
 
 
+@needs_driver_algorithm
 @files_only
 @pytest.mark.parametrize(
     "commands",
@@ -2137,7 +2182,7 @@ def test_a_config_that_names_follow_without_log_follow_keeps_the_memo(
     assert _counts(before, ids) == [0, 0]
     assert calls == [], "the memo answers"
 
-    (repo / ".gitattributes").write_text("*.py -diff\n", encoding="utf-8")
+    (repo / ".gitattributes").write_text(_LEVER, encoding="utf-8")
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
     assert _counts(uncached, ids) == [2, 2], "premise: the attribute moved git"
     assert cached == uncached
@@ -2184,11 +2229,11 @@ def test_log_follow_set_through_a_nul_byte_keeps_the_hit_out_of_the_memo(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`[log "follow\\0"] x = true` makes git read log.follow = true, so
-    the patch stream follows the claimed file across its rename, as in
+    """`[log "follow\\0"] x = true` makes git read log.follow = true, which
+    the pin overrides, and which the key reads as set, as in
     test_a_repository_config_that_sets_log_follow_keeps_the_hit_out_of_the_memo:
-    an untracked lib/.gitattributes written between two attaches is read
-    by both."""
+    an untracked lib/.gitattributes written between two attaches moves
+    neither count, and both attaches read it as the cold code does."""
     repo = _repo(tmp_path)
     config = repo / ".git" / "config"
     config.write_bytes(config.read_bytes() + b'[log "follow\x00"]\n\tx = true\n')
@@ -2244,9 +2289,7 @@ def test_log_follow_set_through_a_nul_byte_keeps_the_hit_out_of_the_memo(
     (repo / "lib").mkdir(exist_ok=True)
     (repo / "lib" / ".gitattributes").write_text("*.py -diff\n", encoding="utf-8")
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _counts(uncached, ids) != [1, 1], (
-        "premise: the rename source's attributes moved git"
-    )
+    assert _counts(uncached, ids) == [1, 1], "the stream does not follow the rename"
     assert cached == uncached
 
 
@@ -2298,11 +2341,11 @@ def _renamed_claim(
     tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch, repo: Path
 ) -> tuple[Origin, list[Any], list[str]]:
     """The claimed module renamed after the stamp (lib/app.py to
-    src/app.py), so a patch stream that follows renames diffs the renaming
-    commit with the attributes of the rename source's path, and two
-    memories claiming src/app.py::handler, one counted from an anchor and
-    one on author date: each counts 1 unless lib/.gitattributes turns the
-    diff off."""
+    src/app.py), so a patch stream that followed renames would diff the
+    renaming commit with the attributes of the rename source's path, and
+    two memories claiming src/app.py::handler, one counted from an anchor
+    and one on author date: each counts 1, the renaming commit read as the
+    module's creation."""
     anchor = _commit(
         repo,
         "c1",
@@ -2355,10 +2398,10 @@ def test_log_follow_in_config_worktree_keeps_the_hit_out_of_the_memo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Under extensions.worktreeConfig git reads config.worktree after the
-    common config, so log.follow set there makes the patch stream follow
-    the claimed file across its rename as it does from the common config:
-    the attribute files decline, and an untracked lib/.gitattributes
-    written between two attaches is read by both."""
+    common config, so log.follow set there is read as it is from the common
+    config: the pin overrides it, the attribute files decline, and an
+    untracked lib/.gitattributes written between two attaches moves neither
+    count, and both attaches read it as the cold code does."""
     repo = _repo(tmp_path)
     _worktree_config(repo, "[log]\n\tfollow = true\n")
     assert _git(repo, "config", "--bool", "--get", "log.follow") == "true", (
@@ -2373,12 +2416,11 @@ def test_log_follow_in_config_worktree_keeps_the_hit_out_of_the_memo(
     (repo / "lib").mkdir(exist_ok=True)
     (repo / "lib" / ".gitattributes").write_text("*.py -diff\n", encoding="utf-8")
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _counts(uncached, ids) != [1, 1], (
-        "premise: the rename source's attributes moved git"
-    )
+    assert _counts(uncached, ids) == [1, 1], "the stream does not follow the rename"
     assert cached == uncached
 
 
+@needs_driver_algorithm
 @files_only
 def test_core_attributesfile_in_config_worktree_keeps_the_hit_out_of_the_memo(
     git_config_home: Path,
@@ -2404,7 +2446,7 @@ def test_core_attributesfile_in_config_worktree_keeps_the_hit_out_of_the_memo(
         before, _ = _attach(memories, caller, monkeypatch)
     assert _counts(before, ids) == [0, 0]
 
-    attributes.write_text("*.py -diff\n", encoding="utf-8")
+    attributes.write_text(_LEVER, encoding="utf-8")
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
     assert _counts(uncached, ids) == [2, 2], "premise: the attributes file moved git"
     assert cached == uncached
@@ -2481,6 +2523,7 @@ def test_the_linked_worktrees_own_config_worktree_is_the_one_read(
     assert origin.attribute_files_signature(repo, repo) is not None
 
 
+@needs_driver_algorithm
 def test_an_attributes_file_created_with_its_directory_during_the_attach_stores_nothing(
     git_config_home: Path,
     memory_dir: Path,
@@ -2507,7 +2550,7 @@ def test_an_attributes_file_created_with_its_directory_during_the_attach_stores_
         if created:
             return real_stream(*args, **kwargs)
         attributes.parent.mkdir()
-        attributes.write_text("*.py -diff\n", encoding="utf-8")
+        attributes.write_text(_LEVER, encoding="utf-8")
         created.append(attributes)
         try:
             return real_stream(*args, **kwargs)
@@ -2535,11 +2578,13 @@ def test_a_plain_hit_is_keyed_on_the_repository_config(
 ) -> None:
     """A hit with no claim and no recorded head reads no attribute file
     and walks nothing, but its path-filtered log reads the repository's
-    config: with log.follow there, a log over the one cited path follows
-    it across a rename and counts the commit that edited the rename
-    source after the stamp too. Every key carries the config's stamp, so
-    the warm attach answers as the cold one after the setting is written
-    and after it is removed."""
+    config: with log.follow there, a log over the one cited path followed
+    it across a rename and counted the commit that edited the rename
+    source after the stamp too. log.follow is pinned off, as is every
+    setting the audit found to move which commits such a log lists
+    (`origin_history.AS_STORED_CONFIG`), so the count is the history's 1
+    with the setting written and after it is removed. Every key carries
+    the config's stamp, and the warm attach answers as the cold one."""
     repo = _repo(tmp_path)
     _commit(
         repo, "c1", when=_day(0), files={"lib/app.py": _MODULE, "src/keep.txt": "k\n"}
@@ -2566,15 +2611,13 @@ def test_a_plain_hit_is_keyed_on_the_repository_config(
         before, _ = _attach(memories, caller, monkeypatch)
     assert _drift(before, memory_id) == (1, "author-date")
 
-    for command, expected in (
-        (("config", "log.follow", "true"), 2),
-        (("config", "--unset", "log.follow"), 1),
+    for command in (
+        ("config", "log.follow", "true"),
+        ("config", "--unset", "log.follow"),
     ):
         _git(repo, *command)
         cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-        assert _drift(uncached, memory_id) == (expected, "author-date"), (
-            "premise: the setting moved the path-filtered log"
-        )
+        assert _drift(uncached, memory_id) == (1, "author-date"), "the pin holds"
         assert cached == uncached
 
 
@@ -2697,8 +2740,9 @@ def _root_in_range(
     unrelated history adding lib/util.py, merged after the stamp, as
     `git subtree add` or `merge --allow-unrelated-histories` leaves it. The
     walk's --name-only listing names lib/util.py for that root commit only
-    while log.showRoot is true, git's default. One memory, verified at the
-    first root and anchored on lib/util.py by a claim or by its body."""
+    while log.showRoot is true, which every origin call pins. One memory,
+    verified at the first root and anchored on lib/util.py by a claim or by
+    its body."""
     repo = _repo(tmp_path)
     anchor = _commit(repo, "c0", when=_day(0), files={"src/app.py": _MODULE})
     _git(repo, "switch", "-q", "--orphan", "imported")
@@ -2745,12 +2789,15 @@ def test_the_walk_is_keyed_on_the_repository_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """log.showRoot = false in the repository's config drops the root
+    """log.showRoot = false in the repository's config dropped the root
     commit's paths from the walk's listing, so a hit anchored on a file only
-    that root commit added counts 0 instead of 1, under an unchanged head.
-    The walk memo and the per-hit key carry the config's stamp: the search
-    and the health rollup, which share the walk memo, answer as the cold
-    code after the setting is written and after it is removed."""
+    that root commit added counted 0 instead of 1, under an unchanged head.
+    The setting is pinned now (`origin_history.AS_STORED_CONFIG`), and no
+    setting the audit found still moves the walk's listing, so the hit
+    counts 1 with it written and after it is removed. The walk memo and the
+    per-hit key still carry the config's stamp: each write is walked again,
+    and the search and the health rollup, which share the walk memo, answer
+    as the cold code."""
     from bettermemory import health
 
     repo, caller, memories, memory_id = _root_in_range(
@@ -2775,17 +2822,18 @@ def test_the_walk_is_keyed_on_the_repository_config(
         before = answer()
     assert count(before) == drifting(1)
 
-    for command, expected in (
-        (("config", "log.showRoot", "false"), 0),
-        (("config", "--unset", "log.showRoot"), 1),
+    for command in (
+        ("config", "log.showRoot", "false"),
+        ("config", "--unset", "log.showRoot"),
     ):
         _git(repo, *command)
+        walks = len(origin._WALK_MEMO)
         cached = answer()
+        if _FILES:
+            assert len(origin._WALK_MEMO) == walks + 1, "walked again"
         _caches.clear_all()
         uncached = answer()
-        assert count(uncached) == drifting(expected), (
-            "premise: the setting moved the walk"
-        )
+        assert count(uncached) == drifting(1), "the pin holds"
         assert cached == uncached
 
 
@@ -2795,7 +2843,9 @@ def _pinned_submodule(
     """A superproject whose submodule `sub` was added and then moved after
     the stamp, and one memory attested on `sub`, verified at the commit
     before the submodule was added: its walk lists the gitlink's two
-    changes unless `submodule.sub.ignore` drops them."""
+    changes, which `submodule.sub.ignore` or `diff.ignoreSubmodules` set
+    to all dropped before the walk pinned `--ignore-submodules=none`
+    (`origin_history.AS_STORED_DIFF`)."""
     source = _repo(tmp_path, "source")
     _commit(source, "s1", when=_day(0), files={"a.txt": "a\n"})
     _commit(source, "s2", when=_day(1), files={"a.txt": "b\n"})
@@ -2835,11 +2885,13 @@ def test_the_walk_is_keyed_on_the_working_trees_gitmodules(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """submodule.<name>.ignore = all in the working tree's .gitmodules drops
-    the gitlink's changes from the walk's --name-only listing, while the
-    path-limited log still lists them: a hit attested on the submodule's
-    path, verified before it was added, counts 0 with the setting and 2
-    without it, under an unchanged head. The walk memo and the per-hit key
+    """submodule.<name>.ignore = all in the working tree's .gitmodules
+    dropped the gitlink's changes from the walk's --name-only listing,
+    while the path-limited log still listed them: a hit attested on the
+    submodule's path, verified before it was added, counted 0 with the
+    setting and 2 without it, under an unchanged head. The walk reads every
+    gitlink's change now, so the hit counts 2 either way, and the warm
+    attach answers as the cold one; the walk memo and the per-hit key still
     carry the .gitmodules stamp."""
     repo, caller, memories, memory_id = _pinned_submodule(
         tmp_path, memory_dir, monkeypatch
@@ -2848,17 +2900,15 @@ def test_the_walk_is_keyed_on_the_working_trees_gitmodules(
     _git(repo, *ignore, "all")
     for _ in range(2):
         before, _ = _attach(memories, caller, monkeypatch)
-    assert _drift(before, memory_id) == (0, "reachability")
+    assert _drift(before, memory_id) == (2, "reachability")
 
-    for command, expected in (
-        (("config", "-f", ".gitmodules", "--unset", "submodule.sub.ignore"), 2),
-        ((*ignore, "all"), 0),
+    for command in (
+        ("config", "-f", ".gitmodules", "--unset", "submodule.sub.ignore"),
+        (*ignore, "all"),
     ):
         _git(repo, *command)
         cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-        assert _drift(uncached, memory_id) == (expected, "reachability"), (
-            "premise: the setting moved the walk"
-        )
+        assert _drift(uncached, memory_id) == (2, "reachability"), "the pin holds"
         assert cached == uncached
 
 
@@ -2869,10 +2919,12 @@ def test_the_walk_is_keyed_on_config_worktree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """diff.ignoreSubmodules = all in config.worktree, which git reads under
-    extensions.worktreeConfig, drops the gitlink's changes from the walk's
-    --name-only listing as it does from the common config: a hit attested
-    on the submodule's path counts 0 with the setting and 2 without it,
-    under an unchanged head. The walk memo and the per-hit key carry
+    extensions.worktreeConfig, dropped the gitlink's changes from the
+    walk's --name-only listing as it did from the common config: a hit
+    attested on the submodule's path counted 0 with the setting and 2
+    without it, under an unchanged head. The walk reads every gitlink's
+    change now, so the hit counts 2 either way, and the warm attach answers
+    as the cold one; the walk memo and the per-hit key still carry
     config.worktree's stamp."""
     repo, caller, memories, memory_id = _pinned_submodule(
         tmp_path, memory_dir, monkeypatch
@@ -2883,12 +2935,10 @@ def test_the_walk_is_keyed_on_config_worktree(
     assert _drift(before, memory_id) == (2, "reachability")
 
     worktree_config = repo / ".git" / "config.worktree"
-    for text, expected in (("[diff]\n\tignoreSubmodules = all\n", 0), ("", 2)):
+    for text in ("[diff]\n\tignoreSubmodules = all\n", ""):
         worktree_config.write_text(text, encoding="utf-8")
         cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-        assert _drift(uncached, memory_id) == (expected, "reachability"), (
-            "premise: the setting moved the walk"
-        )
+        assert _drift(uncached, memory_id) == (2, "reachability"), "the pin holds"
         assert cached == uncached
 
 
@@ -2902,7 +2952,8 @@ def test_the_walk_is_keyed_on_the_indexs_gitmodules_where_the_working_tree_has_n
     copy, then HEAD's, for submodule.<name>.ignore. The index's copy sets
     ignore = all and the working tree's is removed; then the index's copy
     is reset to HEAD's, which sets none, and later set again. Only the
-    index changes each time, under an unchanged head, and the warm attach
+    index changes each time, under an unchanged head: the walk lists the
+    gitlink's two changes whatever the copy says, and the warm attach
     answers as the cold one after each change."""
     repo, caller, memories, memory_id = _pinned_submodule(
         tmp_path, memory_dir, monkeypatch
@@ -2921,15 +2972,13 @@ def test_the_walk_is_keyed_on_the_indexs_gitmodules_where_the_working_tree_has_n
     stage_ignore()
     for _ in range(2):
         before, _ = _attach(memories, caller, monkeypatch)
-    assert _drift(before, memory_id) == (0, "reachability")
+    assert _drift(before, memory_id) == (2, "reachability")
 
-    for change, expected in ((reset_index, 2), (stage_ignore, 0)):
+    for change in (reset_index, stage_ignore):
         change()
         assert not (repo / ".gitmodules").exists()
         cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-        assert _drift(uncached, memory_id) == (expected, "reachability"), (
-            "premise: the index's copy moved the walk"
-        )
+        assert _drift(uncached, memory_id) == (2, "reachability"), "the pin holds"
         assert cached == uncached
 
 
@@ -2956,9 +3005,10 @@ def test_an_unmerged_gitmodules_in_the_index_is_keyed_while_the_working_tree_has
     """git's repo_read_gitmodules reads the index first, and while the index
     holds .gitmodules unmerged it reads no .gitmodules at all, the working
     tree's included. With ignore = all committed and in the working tree,
-    the index's copy goes unmerged (the walk lists the gitlink's two
-    changes) and `git add` then resolves it (none): the working tree's file
-    is untouched both times, and the warm attach answers as the cold one."""
+    the index's copy goes unmerged (git reads no ignore setting) and `git
+    add` then resolves it (git reads ignore = all): the working tree's file
+    is untouched both times, the walk lists the gitlink's two changes
+    whatever git reads, and the warm attach answers as the cold one."""
     repo, caller, memories, memory_id = _pinned_submodule(
         tmp_path, memory_dir, monkeypatch
     )
@@ -2967,19 +3017,14 @@ def test_an_unmerged_gitmodules_in_the_index_is_keyed_while_the_working_tree_has
     _git(repo, "commit", "-q", "-m", "ignore sub", when=_day(35))
     for _ in range(2):
         before, _ = _attach(memories, caller, monkeypatch)
-    assert _drift(before, memory_id) == (0, "reachability")
+    assert _drift(before, memory_id) == (2, "reachability")
     working_tree_copy = githead.stamp(repo / ".gitmodules")
 
-    for change, expected in (
-        (lambda: _unmerge(repo), 2),
-        (lambda: _git(repo, "add", ".gitmodules"), 0),
-    ):
+    for change in (lambda: _unmerge(repo), lambda: _git(repo, "add", ".gitmodules")):
         change()
         assert githead.stamp(repo / ".gitmodules") == working_tree_copy
         cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-        assert _drift(uncached, memory_id) == (expected, "reachability"), (
-            "premise: the index moved the walk"
-        )
+        assert _drift(uncached, memory_id) == (2, "reachability"), "the pin holds"
         assert cached == uncached
 
 
@@ -2993,7 +3038,8 @@ def test_a_merge_conflict_on_gitmodules_resolved_by_git_add_reads_as_git(
     writes a resolution that sets ignore = all into the working tree, a
     search runs (git reads no .gitmodules while the conflict stands), and
     `git add .gitmodules` then resolves it (git reads the working tree's).
-    Only the index moves between the two searches."""
+    Only the index moves between the two searches, and the walk lists the
+    gitlink's two changes in both."""
     repo, caller, memories, memory_id = _pinned_submodule(
         tmp_path, memory_dir, monkeypatch
     )
@@ -3038,9 +3084,7 @@ def test_a_merge_conflict_on_gitmodules_resolved_by_git_add_reads_as_git(
     _git(repo, "add", ".gitmodules")
     assert githead.stamp(repo / ".gitmodules") == working_tree_copy
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _drift(uncached, memory_id) == (0, "reachability"), (
-        "premise: the resolution moved the walk"
-    )
+    assert _drift(uncached, memory_id) == (2, "reachability"), "the pin holds"
     assert cached == uncached
 
 
@@ -3269,7 +3313,8 @@ def test_a_split_index_answers_as_git(
 ) -> None:
     """Under a split index the walk files decline, so a change to the
     index's .gitmodules, which may live in the shared index, is read by
-    every search as git reads it."""
+    every search as git reads it: the walk lists the gitlink's two changes
+    whatever the index's copy says."""
     repo, caller, memories, memory_id = _pinned_submodule(
         tmp_path, memory_dir, monkeypatch
     )
@@ -3289,11 +3334,11 @@ def test_a_split_index_answers_as_git(
     stage_ignore()
     for _ in range(2):
         before, _ = _attach(memories, caller, monkeypatch)
-    assert _drift(before, memory_id) == (0, "reachability")
-    for change, expected in ((reset_index, 2), (stage_ignore, 0)):
+    assert _drift(before, memory_id) == (2, "reachability")
+    for change in (reset_index, stage_ignore):
         change()
         cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-        assert _drift(uncached, memory_id) == (expected, "reachability")
+        assert _drift(uncached, memory_id) == (2, "reachability")
         assert cached == uncached
 
 

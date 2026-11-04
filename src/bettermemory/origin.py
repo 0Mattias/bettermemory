@@ -753,29 +753,15 @@ def _git_result(
             stdout="",
             stderr=f"fatal: not a git repository: {why}\n",
         )
+    # The history as its objects hold it, whatever the repository sets
+    # (`origin_history.AS_STORED_CONFIG`, ENG-220's review).
     return _git_runner.run_git(
-        (*_AS_STORED_CONFIG, *args),
+        (*origin_history.AS_STORED_CONFIG, *args),
         cwd=cwd,
         timeout=timeout,
         stdin=stdin,
-        env=_AS_STORED,
+        env=origin_history.AS_STORED_ENV,
     )
-
-
-#: Set on every call: the history as its objects hold it, as the hardened
-#: history reads it (`location_git`). Replace refs and a grafts file are the
-#: repository's own, untrusted, and rewrite which commits a head reaches
-#: and what each changed, under a head and stamps that stay (a replace ref
-#: under a reftable ref store, ENG-220's review). The ``-c`` settings are read
-#: after the repository's config, so the first holds where a git before 2.42
-#: lets the repository's ``core.useReplaceRefs=true`` override the variable,
-#: and the variable holds on a git before 2.19, which has no such setting.
-#: A commit-graph file is the repository's too, and git takes a commit's
-#: parents and tree from it in place of the object's: forged, it moved the
-#: windows apart from the patch. So no call reads it, at a cost measured in
-#: ENG-220's review.
-_AS_STORED = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.devnull}
-_AS_STORED_CONFIG = ("-c", "core.useReplaceRefs=false", "-c", "core.commitGraph=false")
 
 
 def follow_unsettled(found: Origin) -> bool:
@@ -1200,10 +1186,12 @@ class ReachableWalk:
 # named commits never changes, so an entry is never stale while those
 # files read as they did; the key's `head` is what lets a long-lived
 # server stop reusing a walk the moment a commit lands, and the rest
-# what stops it once log.showRoot or a submodule's ignore setting is
-# written, in the working tree's .gitmodules or the index's copy, or the
-# index's copy goes unmerged. A write to the index that leaves its
-# .gitmodules entry as it was keys no new walk. A walk is kept only when
+# what stops it once a setting there is written, in the working tree's
+# .gitmodules or the index's copy, or the index's copy goes unmerged
+# (log.showRoot and a submodule's ignore, which moved the walk, are
+# pinned: `origin_history.AS_STORED_CONFIG`, `AS_STORED_DIFF`). A write
+# to the index that leaves its .gitmodules entry as it was keys no new
+# walk. A walk is kept only when
 # those files read the same after it as before it and neither the root
 # directory nor the index file moved meanwhile, so a .gitmodules created
 # and removed while git ran is not kept, nor is a walk during which the
@@ -1347,6 +1335,7 @@ def _walk_reachable(toplevel: Path, anchor: str, head: str) -> ReachableWalk | N
         "-c",
         "core.quotePath=false",
         "log",
+        *origin_history.AS_STORED_DIFF,
         "--boundary",
         # A rename is a change to BOTH paths: the cited old path stops
         # existing, which is exactly what a memory about it should see.
@@ -1561,10 +1550,11 @@ def commit_author_timestamps(
     returned, and remembered as a failed read is, so the calls of the next
     minute answer None without reading it again. A hit returns the stored
     list itself: every caller only bisects it. Replace refs and grafts
-    move nothing (`_AS_STORED`). A shallow repository's history, cut where
-    the dates behind the cut are not read (`origin_history.cuts`), answers
-    None, as a failed read does; a history kept before the cut was written
-    is still returned until the head moves.
+    move nothing (`origin_history.AS_STORED_ENV`). A shallow repository's
+    history, cut where the dates behind the cut are not read
+    (`origin_history.cuts`), answers None, as a failed read does; a
+    history kept before the cut was written is still returned until the
+    head moves.
     """
     if cwd is None:
         return None
@@ -1879,13 +1869,17 @@ def commit_patch_stream(
     normalization lives with the producer and the parser keeps its
     one-argument guarantee.
 
-    What each file's diff looks like is left to its attributes (``-diff``
-    and ``binary`` print "Binary files differ"), read from the working
-    tree's ``.gitattributes`` files, ``info/attributes`` and the global
-    attributes file; ``--text`` would change what a repository with such
-    attributes is served. `attribute_files_signature` and
-    `gitattributes_signature` name those files for a memo that keys on
-    this stream.
+    Every file is diffed as text, whatever its attributes (``-diff``,
+    ``binary``) or ``core.bigFileThreshold`` say: a "Binary files differ"
+    line carries no header and no hunk, so beside an indexed file its
+    claims read untouched; renames are read as a deletion and a creation,
+    a root commit as its creation diff, and a gitlink's change is never
+    ignored (`origin_history.AS_STORED_CONFIG`, `AS_STORED_DIFF`). What
+    the attributes still decide (a driver's diff algorithm, which moves
+    only lines whose text is unchanged) is read from the working tree's
+    ``.gitattributes`` files, ``info/attributes`` and the global
+    attributes file, which `attribute_files_signature` and
+    `gitattributes_signature` name for a memo that keys on this stream.
 
     No program the configuration names runs on this read. ``git log -p``
     runs a ``diff.<driver>.textconv`` program by default, for every file
@@ -1941,6 +1935,7 @@ def commit_patch_stream(
         "-c",
         "diff.interHunkContext=0",
         "log",
+        *origin_history.AS_STORED_DIFF,
         "--no-walk=unsorted",
         "-p",
         "--no-color",

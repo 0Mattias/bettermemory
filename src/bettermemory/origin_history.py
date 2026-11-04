@@ -1,4 +1,9 @@
-"""The whole-history author dates `origin.commit_author_timestamps` keeps.
+"""How `origin` reads a repository's history, and the whole-history author
+dates `origin.commit_author_timestamps` keeps.
+
+Every git `origin` runs reads the history as its objects hold it, whatever
+the repository sets (`AS_STORED_ENV`, `AS_STORED_CONFIG`, `AS_STORED_DIFF`),
+and no count is read behind a shallow file's cut (`cuts`).
 
 `origin` reads from git the author date of every commit a head reaches
 (``git log --format=%at <head>``), or of the commits a head reaches that a
@@ -24,6 +29,60 @@ from pathlib import Path
 from typing import TypeAlias
 
 from . import _caches, githead
+
+# What every git `origin` runs is set to, so that it reads the history as
+# its objects hold it and nothing the repository sets can make a changed
+# claim read lower or fresh (ENG-220's review). The repository's config,
+# config.worktree, the files they include, its .gitmodules and its
+# attribute files are its own, and a hostile `.git` copied in an archive
+# sets them. Each pin is git's default, or the reading the walk and the
+# split already made:
+#
+# - Replace refs and a grafts file rewrite which commits a head reaches and
+#   what each changed, under a head and stamps that stay (a replace ref
+#   under a reftable ref store). The variables set them aside; the ``-c``
+#   setting is read after the repository's config, so it holds where a git
+#   before 2.42 lets ``core.useReplaceRefs=true`` override the variable,
+#   and the variable on a git before 2.19, which has no such setting.
+# - A commit-graph file names each commit's parents, root tree and
+#   changed-path filter in place of the object's, and git believes it:
+#   forged, it hid the commit that changed a claim from the windows.
+# - ``log.showRoot=false`` hides a root commit's creation diff: an orphan
+#   root merged into the window changed a claim and the walk read 0.
+# - ``log.follow=true`` makes a log over one path follow it across
+#   renames, which moves the window off the paths as stored.
+# - ``diff.renames``, on by default in a patch, pairs a claimed path's
+#   deletion with a claimed path's creation as a rename that prints no
+#   ``/dev/null`` header, so neither claim fired; the walk and the split
+#   read renames as a deletion and a creation already (``--no-renames``).
+# - A diff of a file its attributes (``-diff``, ``binary``, a driver's
+#   ``binary``) or ``core.bigFileThreshold`` mark binary prints "Binary
+#   files differ", no header and no hunk, so beside an indexed file its
+#   claims read untouched: ``--text`` on every diff.
+# - ``diff.ignoreSubmodules`` and ``submodule.<name>.ignore`` (in the
+#   config or the .gitmodules) drop a gitlink's change from a diff, its
+#   deletion included: ``--ignore-submodules=none`` on every diff, which
+#   only the command line puts above the .gitmodules.
+#
+# The settings the review found to move no count, or only up (the hit
+# then counts more, declines or is omitted), are listed in the rc19
+# CHANGELOG entry for ENG-220.
+AS_STORED_ENV = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.devnull}
+AS_STORED_CONFIG = (
+    "-c",
+    "core.useReplaceRefs=false",
+    "-c",
+    "core.commitGraph=false",
+    "-c",
+    "log.showRoot=true",
+    "-c",
+    "log.follow=false",
+    "-c",
+    "diff.renames=false",
+)
+#: On every log that prints a diff (the walk's ``--name-only``, the split's
+#: ``--raw``, the patch stream's ``-p``), after the subcommand.
+AS_STORED_DIFF = ("--text", "--ignore-submodules=none")
 
 #: ``(root, head)``: the repository root as the caller resolved it and the
 #: full hash of the head the dates were read for.
@@ -190,7 +249,7 @@ def located_key(cwd: Path) -> Key | None:
 # replacement refs and their namespace, the graft and shallow files. Since
 # ENG-218 `_git` removes GIT_SHALLOW_FILE from every git it runs, and since
 # ENG-220 `origin` sets the replace and graft ones on every call
-# (`origin._AS_STORED`), so none moves git's answer; they stay listed, so a
+# (`AS_STORED_ENV`), so none moves git's answer; they stay listed, so a
 # change in one reads the history whole again where an extension would serve.
 _HISTORY_ENV = (
     "GIT_NO_REPLACE_OBJECTS",
@@ -209,7 +268,7 @@ def history_guard(root: Path) -> Guard | None:
     that move them. A head's dates are extended from an earlier head's only
     where the two guards are equal, so a shallow clone deepened reads the
     history whole again. Replace refs and grafts move no answer since
-    `origin` reads past them (`origin._AS_STORED`); their stamps stay, and a
+    `origin` reads past them (`AS_STORED_ENV`); their stamps stay, and a
     change in one reads the history whole where an extension would serve.
     Where `githead.gitdir_at` declines (off POSIX, another
     account's repository) the files are those `githead.locate` reads at
@@ -268,6 +327,9 @@ def cuts(start: Path, *, walk: bool = False) -> frozenset[str] | None:
 
 
 __all__ = [
+    "AS_STORED_CONFIG",
+    "AS_STORED_DIFF",
+    "AS_STORED_ENV",
     "Guard",
     "Key",
     "author_dates",

@@ -2250,7 +2250,7 @@ def test_the_walk_is_memoised_per_head(
     first = commits_since_anchor(tmp_path, shas["anchor"], toplevel=root, head=head)
     second = commits_since_anchor(tmp_path, shas["anchor"], toplevel=root, head=head)
     assert first is not None and second == first
-    assert calls[0][2:4] == ("log", "--boundary")
+    assert calls[0][2] == "log" and "--boundary" in calls[0]
     assert len(calls) == (1 if memoised else 2)
     assert (first is second) == memoised
 

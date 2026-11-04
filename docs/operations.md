@@ -436,6 +436,48 @@ What the daemon's log and the clients say when something is wrong:
   record; for a copy put back on purpose, `bettermemory log
   accept-history --yes` rewinds the head on the record.
 
+### Claim-drift latency
+
+A search, `memory show` or `health` reads the commit drift of each hit
+whose memory cites or claims a file in a git repository (the counts and
+their bases are in [api.md](api.md)). Every git that read runs reads the
+history as its objects hold it, past the repository's commit-graph, so
+no changed-path filter answers it (9.0.0rc19, ENG-220). Measured cold on
+the author's machine, over a synthetic 60,000-commit repository that
+has a commit-graph with changed-path filters, against the same reads
+taken through the graph:
+
+| Read | Through the graph | As stored |
+| --- | --- | --- |
+| A hit on the author-date basis | 350–372 ms | 741–823 ms |
+| of which, the log of the claimed file's whole history | 37 ms | 478 ms |
+| A hit on the walk, 20 commits since the stamp | 24 ms | 24 ms |
+| A hit on the walk, 2,000 commits since the stamp | 59 ms | 67 ms |
+| A hit on the walk, 50,000 commits since the stamp | 863 ms | 1,026 ms |
+| This repository's whole-history log of one file (2,365 commits) | 28 ms | 40 ms |
+
+A warm daemon memoises each answer per repository and head, so these
+are paid once each time a head moves, not on every search. Each git call
+claim drift makes is bounded at 5 s, and a call that runs out is a
+failed read, which never lowers a count: the hit keeps the conservative
+count its basis falls back to. At the measured rates (no graph read),
+the bounds fall about here:
+
+- **The walk**, at about 17 µs a commit since the stamp, reaches 5 s
+  near 290,000 commits; the hit then reads on the author-date basis.
+- **The log of a claimed file's whole history**, at about 8 µs a commit,
+  reaches 5 s near 600,000 commits in the repository; past that, a hit
+  on the author-date basis counts every commit since the stamp,
+  whichever file it touched, on every search.
+- **The author dates of the whole history** (`git log --format=%at`), at
+  about 5 µs a commit, reach 5 s near 1,000,000 commits; past that the
+  hit's count is omitted, and the failed read is remembered for a
+  minute, so the searches of that minute do not run it again.
+
+The three bounds are extrapolated from the 60,000-commit runs, not
+measured at those sizes. In a repository near them, a memory verified at
+a recent head keeps its walk short, and its hit on the walk's basis.
+
 ## Capacity
 
 How large a store bettermemory serves well was measured by the scale

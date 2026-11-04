@@ -114,14 +114,16 @@ SIMILAR_HITS_SHOWN = 5
 # `origin_gitfiles.gitattributes_signature`; None for every other hit, which
 # reads none), and the files beside the history its git reads
 # (`origin_gitfiles.walk_files_signature`: the repository's config and, under
-# extensions.worktreeConfig, its config.worktree, whose log.follow reaches
-# a single-pathspec log and log.showRoot the walk, the
-# working tree's .gitmodules, whose ignore settings reach the walk, and the
-# index's .gitmodules entry where git reads it: unmerged, or the working
-# tree has none); the value is the resolved count, basis and claim detail,
-# or None for a hit whose count is omitted. A commit moves the head and so
-# every key; a new stamp, a rewritten body, a changed claim or an edited
-# attributes file changes its own row's, and an edited config or
+# extensions.worktreeConfig, its config.worktree, the working tree's
+# .gitmodules, and the index's .gitmodules entry where git reads it:
+# unmerged, or the working tree has none; the settings there that moved a
+# log, log.follow, log.showRoot and a submodule's ignore, are pinned on
+# every git `origin` runs, `origin_history.AS_STORED_CONFIG` and
+# `AS_STORED_DIFF`, and the stamps stay); the value is the resolved count,
+# basis and claim detail, or None for a hit whose count is omitted. A
+# commit moves the head and so every key; a new stamp, a rewritten body, a
+# changed claim or an edited attributes file changes its own row's, and an
+# edited config or
 # .gitmodules, in the working tree or the index where git reads it, every
 # row's; a write to the index that leaves .gitmodules as it was changes
 # none. A value computed while a git process failed is never stored
@@ -255,20 +257,22 @@ class _DriftPass:
     file and the repository's ``config``); and for every hit, the files
     beside the history its git reads (`origin_gitfiles.walk_files_signature`:
     the repository's ``config`` and, under ``extensions.worktreeConfig``,
-    its ``config.worktree``, where ``log.follow`` reaches a
-    single-pathspec log and ``log.showRoot`` the walk, the working
-    tree's ``.gitmodules``, where a submodule's ``ignore`` reaches the
-    walk, and the index's ``.gitmodules`` entry where git reads it,
-    unmerged or where the working tree has none; the walk memo keys on
-    them too). A file is keyed on its mtime, ctime, size, inode and
-    mode, or its absence, so a write, a replacement, a creation, a
-    removal or a chmod changes the key; the index's entry is keyed on
+    its ``config.worktree``, the working tree's ``.gitmodules`` and the
+    index's ``.gitmodules`` entry where git reads it, unmerged or where
+    the working tree has none; the walk memo keys on them too. What
+    moved a log there, ``log.follow``, ``log.showRoot`` and a
+    submodule's ``ignore``, is pinned on every git `origin` runs,
+    `origin_history.AS_STORED_CONFIG` and `AS_STORED_DIFF`). A file is
+    keyed on its mtime, ctime, size, inode and mode, or its absence, so a
+    write, a replacement, a creation, a removal or a chmod changes the
+    key; the index's entry is keyed on
     its mode and object, read from the index in-process
     (`origin_gitfiles._index_gitmodules`, once per state of the index). A
     governed path that is a directory or a pattern, a ``config`` that
-    names an attributes file or tree, sets ``log.follow`` (the patch
-    stream would read the attributes of a rename source's path; the
-    file is read as git reads it, so ``push.followTags`` or a branch
+    names an attributes file or tree, sets ``log.follow`` (under
+    which the patch stream read the attributes of a rename source's
+    path before every git pinned it off; the file is read as git
+    reads it, so ``push.followTags`` or a branch
     named ``follow-up`` is no such config), holds a NUL byte or is
     refused by git, an index the reader does not read exactly (split, of
     an unknown version, a SHA-256 repository's, or GIT_INDEX_FILE set),
@@ -326,10 +330,11 @@ class _DriftPass:
     outside the repository's ``config`` and ``config.worktree`` (the
     global and system files, a file an include names, the environment, and
     what they set: a ``core.attributesFile`` naming a file other than
-    the default, ``log.follow``, ``log.showRoot``, a diff driver, the
-    program a textconv runs); the system attributes file; a shallow clone
-    deepened under an unchanged head (replace refs and grafts move no
-    answer: `origin._AS_STORED`); and a change that leaves every stamped field
+    the default, a diff driver, the program a textconv runs); the system
+    attributes file; a shallow clone deepened under an unchanged head
+    (replace refs and grafts move no answer:
+    `origin_history.AS_STORED_ENV`); and a change that leaves every
+    stamped field
     and every held directory as it was: a file rewritten, or a head
     moved and moved back, within one tick of the filesystem's clock
     with the inode number reused; a ``config`` created and removed
@@ -493,10 +498,9 @@ class _DriftPass:
         files, so its row keys on them, and runs uncached where they do
         not settle it; no other row reads them. Every row keys on the
         files beside the history its git reads: the repository's config
-        (log.follow there reaches a single-pathspec log, log.showRoot the
-        walk) and the working tree's .gitmodules (a submodule's ignore
-        setting reaches the walk), read once per pass; where they cannot
-        be read, the row runs uncached."""
+        and the working tree's .gitmodules (what moved a log there is
+        pinned, `origin_history.AS_STORED_CONFIG`), read once per pass;
+        where they cannot be read, the row runs uncached."""
         if self.settled is None:
             return None
         root = self.settled[0]

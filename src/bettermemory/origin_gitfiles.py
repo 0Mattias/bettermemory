@@ -740,10 +740,12 @@ def attribute_files_signature(
     that cannot be read, one that mentions ``attributesfile`` or an
     ``[attr`` section (a ``core.attributesFile`` or ``attr.tree`` there
     sends git to a file or a tree these stats do not cover), one that sets
-    ``log.follow`` (it makes the single-pathspec patch stream follow a
+    ``log.follow`` (it made the single-pathspec patch stream follow a
     claimed file across a rename and diff the renaming commit with the
     attributes of the rename source's path, which no chain of the claimed
-    path covers), one git refuses, one that holds a NUL byte (git ends a
+    path covers; every git `origin` runs pins it off now,
+    `origin_history.AS_STORED_CONFIG`, and the decline stays), one git
+    refuses, one that holds a NUL byte (git ends a
     variable's name at it, so a quoted subsection can set ``log.follow`` or
     ``core.attributesFile`` without the words' bytes), and a stat that
     fails for any reason but absence. Whether a file sets ``log.follow`` is
@@ -1082,15 +1084,18 @@ def walk_files_signature(
 ) -> tuple[object, ...] | None:
     """The files beside the history that decide what the drift readers'
     logs list, for a memo to key on: the repository's ``config`` in the
-    common directory (``log.showRoot`` there drops a root commit's paths
-    from the reachable walk's ``--name-only``, ``diff.ignoreSubmodules`` a
-    gitlink's, and ``log.follow`` makes a log over one path follow it
-    across renames) and, where it sets ``extensions.worktreeConfig``, the
-    ``config.worktree`` git then reads after it in the git directory, from
-    which the same settings reach the logs (`_worktree_config_facts`), the
-    working tree's ``.gitmodules`` at the root (``submodule.<name>.ignore``
-    there drops a gitlink's changes from the walk), and what the index
-    holds for ``.gitmodules`` where git reads it (`_index_gitmodules`). Git
+    common directory and, where it sets ``extensions.worktreeConfig``, the
+    ``config.worktree`` git then reads after it in the git directory
+    (`_worktree_config_facts`), the working tree's ``.gitmodules`` at the
+    root, and what the index holds for ``.gitmodules`` where git reads it
+    (`_index_gitmodules`). What moved a log there (``log.showRoot``
+    dropped a root commit's paths from the reachable walk's
+    ``--name-only``, ``diff.ignoreSubmodules`` and
+    ``submodule.<name>.ignore`` a gitlink's, and ``log.follow`` made a
+    log over one path follow it across renames) is pinned on every git
+    `origin` runs (`origin_history.AS_STORED_CONFIG`, `AS_STORED_DIFF`);
+    the stamps stay, so a setting the pins leave is read again when its
+    file moves. Git
     reads the index first: while it holds
     ``.gitmodules`` unmerged, git reads no ``.gitmodules`` at all, and the
     slot is `_INDEX_UNMERGED` whatever the working tree holds; otherwise the

@@ -6,7 +6,7 @@ either. The graph names each commit's parents, root tree and changed-path
 Bloom filter in place of the objects, and git read it for the windows while
 the patch read the objects: a forged graph hid the commit that changed a
 claim, and the count read 0. No origin call reads it now
-(`origin._AS_STORED_CONFIG`). The shallow file cuts the history at the
+(`origin_history.AS_STORED_CONFIG`). The shallow file cuts the history at the
 commits it lists, behind which git reads nothing: a range that holds a cut
 is not walked, and a shallow repository's dates are not read
 (`origin_history.cuts`), so no count is read where the commits behind the
@@ -146,12 +146,17 @@ def test_a_forged_commit_graph_moves_no_count(
     assert (resolved.count, resolved.claims_drifted) == (1, (_FOO,))
 
 
-def _commit(repo: Path, files: dict[str, str | None], hours: float) -> str:
-    """A commit of `files` (None deletes one) dated `hours` after the
-    verify, or before it where negative."""
+def _commit(
+    repo: Path, files: dict[str, str | tuple[str, str] | None], hours: float
+) -> str:
+    """A commit of `files` (None deletes one, ``("gitlink", commit)`` is a
+    gitlink) dated `hours` after the verify, or before it where negative."""
     for rel, text in files.items():
         if text is None:
             _plain(repo, "update-index", "--force-remove", "--", rel)
+        elif isinstance(text, tuple):
+            info = f"160000,{text[1]},{rel}"
+            _plain(repo, "update-index", "--add", "--cacheinfo", info)
         else:
             oid = _object(repo, text.encode())
             _plain(repo, "update-index", "--add", "--cacheinfo", f"100644,{oid},{rel}")
@@ -265,3 +270,169 @@ def test_the_cut_is_read_from_the_common_directory(tmp_path: Path) -> None:
     (repo / ".git" / "shallow").write_text("A" * 40 + "\n\n" + "b" * 40 + "\n")
     assert origin_history.cuts(repo) == frozenset({"a" * 40, "b" * 40})
     assert origin_history.cuts(tmp_path / "nowhere") is None
+
+
+# ---------------------------------------------------------------------------
+# What the repository sets moves no count (ENG-220's settings audit)
+# ---------------------------------------------------------------------------
+
+_BESIDE = "src/two.py"
+#: Claimed beside each case's claim and touched by no commit, while bar's
+#: edit puts two.py in the patch the weak tier indexes: a claimed file the
+#: patch leaves out then reads as untouched, where alone it fails the parse
+#: and the hit keeps the per-file count.
+_QUIET = f"{_BESIDE}::foo"
+
+
+def _repository(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _plain(repo, "init", "-q")
+    return repo
+
+
+def _both(
+    repo: Path, claims: list[str], anchor: str
+) -> list[tuple[int, tuple[str, ...]] | None]:
+    """The hit's count and the claims it names, cold, on the walk from
+    `anchor` and on dates."""
+    out: list[tuple[int, tuple[str, ...]] | None] = []
+    for head in (anchor, None):
+        got = _hit(repo, claims, head)
+        out.append(None if got is None else (got.count, got.claims_drifted))
+    return out
+
+
+def test_a_root_commit_is_read_as_its_creation(tmp_path: Path) -> None:
+    """An unrelated history merged after the verify brings src/mod.py with
+    foo's def line changed, from its root commit: 1, foo named, on both
+    bases. With log.showRoot = false git diffs no root commit: the walk
+    listed no path for it and the patch nothing, so with two.py's edit
+    indexed beside it foo read as untouched, and the count 0. Every origin
+    call pins it (`origin_history.AS_STORED_CONFIG`)."""
+    repo = _repository(tmp_path)
+    anchor = _commit(repo, {_MOD: _module("", 0), _BESIDE: _module("", 0)}, -1)
+    _commit(repo, {_BESIDE: _module("", 1)}, 1)
+    branch = _plain(repo, "symbolic-ref", "--short", "HEAD")
+    _plain(repo, "checkout", "-q", "--orphan", "imported")
+    _plain(repo, "read-tree", "--empty")
+    root = _commit(repo, {_MOD: _module("flag=False", 0)}, 2)
+    _plain(repo, "checkout", "-q", "-f", branch)
+    _plain(repo, "read-tree", "--reset", "HEAD")
+    blob = _object(repo, _module("flag=False", 0).encode())
+    _plain(repo, "update-index", "--cacheinfo", f"100644,{blob},{_MOD}")
+    tree = _plain(repo, "write-tree")
+    when = _VERIFIED + timedelta(hours=3)
+    merge = _plain(
+        repo, "commit-tree", tree, "-p", "HEAD", "-p", root, "-m", "m", when=when
+    )
+    _plain(repo, "reset", "-q", "--hard", merge)
+    claims = [_FOO, _QUIET]
+    truth = _both(repo, claims, anchor)
+    assert truth == [(1, (_FOO,))] * 2
+    _plain(repo, "config", "log.showRoot", "false")
+    assert _both(repo, claims, anchor) == truth
+
+
+def test_a_claimed_path_is_not_followed_across_a_rename(tmp_path: Path) -> None:
+    """src/mod.py is deleted after the verify, and lib/x.py, the same module
+    with another bar, is then renamed into its place: foo's lines leave
+    with the deletion and come back with the creation, 2 on both bases.
+    With log.follow set, a log over the one claimed path followed it back
+    across the rename to lib/x.py: the dates' window lost the deletion, and
+    the patch read the renaming commit as an edit of lib/x.py whose one
+    hunk is bar's, so the count read 0. Every origin call pins it off
+    (`origin_history.AS_STORED_CONFIG`)."""
+    repo = _repository(tmp_path)
+    anchor = _commit(repo, {_MOD: _module("", 0), "lib/x.py": _module("", 1)}, -1)
+    _commit(repo, {_MOD: None}, 1)
+    _commit(repo, {"lib/x.py": None, _MOD: _module("", 2)}, 2)
+    truth = _both(repo, [_FOO], anchor)
+    assert truth == [(2, (_FOO,))] * 2
+    _plain(repo, "config", "log.follow", "true")
+    assert _both(repo, [_FOO], anchor) == truth
+
+
+@pytest.mark.parametrize("renames", [None, "true", "copies"])
+def test_a_rename_is_read_as_a_deletion_and_a_creation(
+    tmp_path: Path, renames: str | None
+) -> None:
+    """src/mod.py is renamed to src/new.py after the verify, its text
+    unchanged, and two.py's bar is edited: foo's lines leave src/mod.py,
+    and src/new.py, claimed absent, is created. Git's own default, and
+    diff.renames set either way, printed the rename as a header without
+    hunks: neither line reached the weak tier, which, with two.py indexed
+    beside it, read both claims as untouched, 0. Every origin call pins
+    renames off (`origin_history.AS_STORED_CONFIG`)."""
+    repo = _repository(tmp_path)
+    anchor = _commit(repo, {_MOD: _module("", 0), _BESIDE: _module("", 0)}, -1)
+    _commit(repo, {_MOD: None, "src/new.py": _module("", 0)}, 1)
+    _commit(repo, {_BESIDE: _module("", 1)}, 2)
+    claims = [_FOO, "!src/new.py", _QUIET]
+    truth = _both(repo, claims, anchor)
+    assert truth == [(1, (_FOO, "!src/new.py"))] * 2
+    if renames is not None:
+        _plain(repo, "config", "diff.renames", renames)
+    assert _both(repo, claims, anchor) == truth
+
+
+@pytest.mark.parametrize(
+    "setting", ["-diff", "binary", "a binary driver", "core.bigFileThreshold"]
+)
+def test_a_claimed_file_is_diffed_as_text(tmp_path: Path, setting: str) -> None:
+    """foo's def line changes after the verify, and two.py's bar is edited:
+    1, foo named, on both bases. An attribute that turns the diff off, a
+    diff driver marked binary, or a blob over core.bigFileThreshold made
+    git print "Binary files differ" for src/mod.py, with no header and no
+    hunk, so with two.py indexed beside it foo read as untouched, 0. Every
+    file is diffed as text (`origin_history.AS_STORED_DIFF`)."""
+    repo = _repository(tmp_path)
+    anchor = _commit(repo, {_MOD: _module("", 0), _BESIDE: _module("", 0)}, -1)
+    changed = _commit(repo, {_MOD: _module("flag=False", 0)}, 1)
+    _commit(repo, {_BESIDE: _module("", 1)}, 2)
+    claims = [_FOO, _QUIET]
+    truth = _both(repo, claims, anchor)
+    assert truth == [(1, (_FOO,))] * 2
+    attributes = repo / ".git" / "info" / "attributes"
+    attributes.parent.mkdir(exist_ok=True)
+    if setting == "a binary driver":
+        attributes.write_text(f"{_MOD} diff=opaque\n")
+        _plain(repo, "config", "diff.opaque.binary", "true")
+    elif setting == "core.bigFileThreshold":
+        _plain(repo, "config", "core.bigFileThreshold", "1")
+    else:
+        attributes.write_text(f"{_MOD} {setting}\n")
+    shown = _plain(repo, "log", "-p", "--format=", "-1", changed, "--", _MOD)
+    assert "Binary files" in shown, "premise: git's own patch reads it as binary"
+    assert _both(repo, claims, anchor) == truth
+
+
+@pytest.mark.parametrize("where", ["diff.ignoreSubmodules", ".gitmodules"])
+def test_a_gitlinks_change_is_never_ignored(tmp_path: Path, where: str) -> None:
+    """The gitlink src/sub is deleted after the verify, and two.py's bar is
+    edited: the path claim on src/sub fires, 1 on both bases. With
+    diff.ignoreSubmodules = all, or submodule.<name>.ignore = all in the
+    working tree's .gitmodules, git dropped the gitlink's change from the
+    walk's listing and from the patch: the walk's window lost it, and with
+    two.py indexed beside it the dates' patch read the claim as untouched,
+    0. Every log that prints a diff pins `--ignore-submodules=none`
+    (`origin_history.AS_STORED_DIFF`), the one spelling that outranks
+    .gitmodules."""
+    repo = _repository(tmp_path)
+    sub = "src/sub"
+    gitlink = ("gitlink", "1" * 40)
+    anchor = _commit(repo, {sub: gitlink, _BESIDE: _module("", 0)}, -1)
+    _commit(repo, {sub: None}, 1)
+    _commit(repo, {_BESIDE: _module("", 1)}, 2)
+    claims = [sub, _QUIET]
+    truth = _both(repo, claims, anchor)
+    assert truth == [(1, (sub,))] * 2
+    if where == ".gitmodules":
+        (repo / ".gitmodules").write_text(
+            f'[submodule "sub"]\n\tpath = {sub}\n\turl = ./sub\n\tignore = all\n'
+        )
+    else:
+        _plain(repo, "config", "diff.ignoreSubmodules", "all")
+    shown = _plain(repo, "log", "--format=", "--name-only", "-2")
+    assert sub not in shown.split(), "premise: git's own log drops the gitlink"
+    assert _both(repo, claims, anchor) == truth
