@@ -627,6 +627,9 @@ def test_the_capture_modules_import_nothing_beyond_the_standard_library() -> Non
     assert result.stdout.split() == [
         "bettermemory",
         "bettermemory._fsutil",
+        # The one reading of a failed read as nothing there (ENG-217), on
+        # the standard library alone.
+        "bettermemory._location_probe",
         "bettermemory._printable",
         "bettermemory.checkout_token",
         "bettermemory.project_file",

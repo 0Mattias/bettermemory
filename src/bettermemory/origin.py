@@ -40,7 +40,6 @@ theirs a caller reads.
 
 from __future__ import annotations
 
-import errno
 import logging
 import os
 import re
@@ -57,6 +56,7 @@ from typing import TypeAlias
 
 from . import _git as _git_runner
 from . import _caches, githead, gitfile_rule, identity, origin_history
+from ._location_probe import path_gone
 
 # The repository files read in-process live in `origin_gitfiles`, which
 # imports nothing from here. The plain imports are `__all__`'s names and
@@ -586,53 +586,14 @@ def worktrees_match(memory_worktree: str | None, caller_worktree: str | None) ->
     return _worktree_root_is_gone(memory_worktree)
 
 
-# Errnos where the OS ANSWERED the liveness question — "is there
-# anything at this path?" — with "no". Each is a property of the path
-# itself failing to resolve to an object, independent of who is asking
-# and of whether any device is reachable:
-#
-#   ENOENT        a component of the path does not exist
-#   ENOTDIR       a component that would have to be a directory is not
-#                 one, so nothing can live below it
-#   ELOOP         the path cycles through symlinks and resolves to
-#                 nothing
-#   ENAMETOOLONG  this system cannot name an object at that path at
-#                 all — the shape a store synced from a longer-path OS
-#                 arrives in
-#
-# The complement is deliberately NOT enumerated: EACCES/EPERM on a
-# parent, the unreachable-device family (ENOTCONN, EHOSTDOWN,
-# ETIMEDOUT, ESTALE, EIO, ENODEV, …), and any errno a future platform
-# invents all fall through to "cannot tell". Listing the gone side and
-# treating every unclassified errno as indeterminate is what makes the
-# never-widen direction the default: a new error class holds the
-# isolation boundary rather than opening it.
-_WORKTREE_GONE_ERRNOS = frozenset(
-    {errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG}
-)
-
-# Windows: an error with a Windows code is told by that code alone, since
-# CPython folds a share or drive that does not answer into ENOENT
-# (ERROR_BAD_NETPATH 53, ERROR_BAD_NET_NAME 67, ERROR_INVALID_DRIVE 15).
-# Gone are the path-intrinsic codes: ERROR_FILE_NOT_FOUND (2),
-# ERROR_PATH_NOT_FOUND (3), ERROR_INVALID_NAME (123, "that syntax cannot
-# name anything"), ERROR_FILENAME_EXCED_RANGE (206, ENAMETOOLONG),
-# ERROR_DIRECTORY (267, ENOTDIR) and ERROR_CANT_RESOLVE_FILENAME (1921, the
-# reparse-point cycle). `gitfile_rule._gone` reads them so (ENG-217).
-#
-# Where we deliberately DIVERGE from `pathlib`: ERROR_NOT_READY (21) —
-# "the drive exists but is not accessible", i.e. a removable or
-# disconnected volume — is absent. `Path.exists()` reports it as
-# not-exists; for an isolation boundary that is the unmounted-volume
-# fail-open this classification exists to close, so it lands in
-# "cannot tell".
-_WORKTREE_GONE_WINERRORS = frozenset({2, 3, 123, 206, 267, 1921})
-
-
 def _worktree_root_is_gone(worktree: str) -> bool:
     """Whether the OS positively reported that nothing exists at
     `worktree`, as `worktrees_match` reads it for the rc3_admitted shadow
-    column (design 8.11)."""
+    column (design 8.11): `_location_probe.path_gone`, the one reading of
+    that answer membership and location share, whose comments give each
+    errno and Windows code it takes as gone. Every other error, a share
+    that does not answer among them, cannot tell, which holds the
+    isolation boundary rather than opening it."""
     try:
         os.stat(worktree)
     except ValueError:
@@ -642,12 +603,7 @@ def _worktree_root_is_gone(worktree: str) -> bool:
         # answer, not a refusal to answer.
         return True
     except OSError as exc:
-        winerror: object = getattr(exc, "winerror", None)
-        if (
-            winerror in _WORKTREE_GONE_WINERRORS
-            if isinstance(winerror, int)
-            else exc.errno in _WORKTREE_GONE_ERRNOS
-        ):
+        if path_gone(exc):
             return True
         # Indeterminate. Log it: "my project's memories went dark" and
         # "a stale mount is quietly widening auto-scope" are both

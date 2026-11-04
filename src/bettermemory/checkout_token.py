@@ -70,6 +70,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple, TypeGuard
 
 from ._fsutil import fsync_dir, fsync_file, replace_atomic, unlink_retrying
+from ._location_probe import path_missing
 
 #: The token's file name inside the git directory's `info/` folder.
 TOKEN_NAME = "bettermemory"
@@ -722,9 +723,9 @@ def _read_text(path: Path) -> str | TokenRead:
     of an unreadable file names the call that failed."""
     try:
         fd = os.open(path, _OPEN_READ)
-    except (FileNotFoundError, NotADirectoryError):
-        return TokenRead("absent")
     except OSError as exc:
+        if path_missing(exc):
+            return TokenRead("absent")
         if exc.errno not in _RETRY_ERRNOS:
             return TokenRead("unreadable", detail=f"open: {_os_text(exc)}")
         plain = _open_plain(path)
@@ -755,9 +756,9 @@ def _open_plain(path: Path) -> int | TokenRead:
         if not stat.S_ISREG(os.stat(path).st_mode):
             return TokenRead("malformed", detail="not a regular file")
         return os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
-    except (FileNotFoundError, NotADirectoryError):
-        return TokenRead("absent")
     except OSError as exc:
+        if path_missing(exc):
+            return TokenRead("absent")
         return TokenRead("unreadable", detail=f"open: {_os_text(exc)}")
 
 

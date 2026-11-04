@@ -538,7 +538,12 @@ into, since a share that does not answer (ERROR_BAD_NETPATH,
 ERROR_BAD_NET_NAME, ERROR_INVALID_DRIVE) is ENOENT there too: gone are
 ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_INVALID_NAME,
 ERROR_FILENAME_EXCED_RANGE, ERROR_DIRECTORY and
-ERROR_CANT_RESOLVE_FILENAME (`gitfile_rule._gone`); any
+ERROR_CANT_RESOLVE_FILENAME (`_location_probe.path_gone`, the one
+reading of a failed read every reader of membership, location and
+origin takes, the hook probe's liveness and a linked worktree's pointer
+back among them; a reader that takes ENOENT and ENOTDIR alone for "no
+such file" takes them through `path_missing`, which is `path_gone` of
+those two); any
 other error (a share answering ENOTCONN, EIO or ESTALE, EACCES, EPERM)
 cannot be read, and so is a file provider's placeholder (SF_DATALESS on
 macOS, the recall attributes on Windows), which is not read, since a

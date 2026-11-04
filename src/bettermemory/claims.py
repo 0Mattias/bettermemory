@@ -93,12 +93,13 @@ alarm for that file, silence keeps the conservative default.
 from __future__ import annotations
 
 import ast
-import errno
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from ._location_probe import path_missing
 
 __all__ = [
     "MAX_CLAIMS",
@@ -118,13 +119,6 @@ __all__ = [
     "string_fragment",
     "anchors_from_value",
 ]
-
-# The errnos where the OS ANSWERED "nothing is at this path" — the only
-# two a claim oracle may read as absence. Every other error is a failure
-# to determine, and `origin._WORKTREE_GONE_ERRNOS` makes the same split
-# for the same reason: enumerate the negative side, and let an
-# unclassified errno hold the boundary instead of opening it.
-_ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR})
 
 # Caps mirror the `verified_*` attestation caps at the memory_verify
 # handler boundary (`handlers/verify._MAX_VERIFIED_ENTRIES` /
@@ -464,7 +458,12 @@ def _occupancy(target: Path) -> bool | None:
     try:
         os.lstat(target)
     except OSError as exc:
-        if exc.errno in _ABSENT_ERRNOS:
+        # Only ENOENT and ENOTDIR are the OS answering that nothing is
+        # here, and on Windows only by the error's own code: a share that
+        # does not answer is ENOENT there too (`path_missing`, ENG-217).
+        # Every other error is a failure to determine, which holds the
+        # boundary instead of opening it.
+        if path_missing(exc):
             return False
         return None
     except ValueError:

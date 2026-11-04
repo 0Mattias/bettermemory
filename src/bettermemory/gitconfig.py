@@ -16,8 +16,10 @@ git directory's ``core.worktree`` and ``core.bare`` through it, and
 `githead` reads that rule too (ENG-193): `githead` cannot import
 `location_git`, which imports `githead`. `location_git` imports this
 module and reads its names from here (`remote_urls`, `_from_env`,
-`_discover`); this module imports the standard library alone and nothing
-of the package, so it never loads `location_git` or `githead`
+`_discover`); this module imports the standard library and, of the
+package, only `_location_probe` (the one reading of an error as nothing
+at a path, `path_missing`, which imports the standard library alone), so
+it never loads `location_git` or `githead`
 (tests/test_import_graph.py). The hook client loads it with `location`
 (tests/test_membership_capture.py pins that set).
 """
@@ -29,6 +31,8 @@ import re
 import stat
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+
+from ._location_probe import path_missing
 
 # A repository's config: git reads any size; the eight on the development
 # machine measured 349 B at the median and 608 B at most (ENG-160). One
@@ -172,10 +176,9 @@ def _config_bytes(
     )
     try:
         fd = os.open(path, flags)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except (OSError, ValueError):
-        out.complete = False
+    except (OSError, ValueError) as exc:
+        if not path_missing(exc):
+            out.complete = False
         return None
     chunks: list[bytes] = []
     size = 0
@@ -319,13 +322,11 @@ def _include(
 
 def file_stamp(path: str) -> Stamp | None:
     """The stamp of the file at `path` now (`Stamp`): None where nothing
-    is there, `_UNSTATED` where it cannot be stat-ed."""
+    is there (`path_missing`), `_UNSTATED` where it cannot be stat-ed."""
     try:
         st = os.stat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except (OSError, ValueError):
-        return _UNSTATED
+    except (OSError, ValueError) as exc:
+        return None if path_missing(exc) else _UNSTATED
     return (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino, st.st_mode)
 
 
@@ -545,9 +546,9 @@ def read_git_config(path: str) -> GitConfigRead:
     )
     try:
         fd = os.open(path, flags)
-    except (FileNotFoundError, NotADirectoryError):
-        return GitConfigRead()
     except (OSError, ValueError) as exc:
+        if path_missing(exc):
+            return GitConfigRead()
         return GitConfigRead(why=f"{path} could not be read ({type(exc).__name__})")
     chunks: list[bytes] = []
     size = 0

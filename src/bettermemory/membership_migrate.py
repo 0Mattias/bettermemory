@@ -72,6 +72,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import location
 from . import membership as mb
+from ._location_probe import path_missing
 from ._paths import inside, norm
 from ._printable import quoted
 from .membership_lines import _named
@@ -902,16 +903,13 @@ class _Run:
     def _read_probe(self, path: str, *, at_root: bool) -> _Probe:
         """What `path` holds now, read without writing: LIVE when it is a
         repository (with `at_root`, one whose top level it is) or a folder
-        project; GONE when nothing is there; UNREACHABLE when the OS could
-        not say or HEAD is not on this disk; REPLACED otherwise."""
+        project; GONE when nothing is there (`path_missing`); UNREACHABLE
+        when the OS could not say, a share that does not answer among them,
+        or HEAD is not on this disk; REPLACED otherwise."""
         try:
             os.stat(path)
-        except FileNotFoundError:
-            return _Probe(GONE)
-        except NotADirectoryError:
-            return _Probe(GONE)
-        except (OSError, ValueError):
-            return _Probe(UNREACHABLE)
+        except (OSError, ValueError) as exc:
+            return _Probe(GONE if path_missing(exc) else UNREACHABLE)
         cap = location.capture(
             path,
             write_token=False,

@@ -338,6 +338,31 @@ eighteenth was built.
   `src/bettermemory/location_audit.py`, `src/bettermemory/location.py`,
   `docs/internals.md`, `tests/test_location_gitdir_pin.py`)
 
+- **On Windows a linked worktree on a share that does not answer is not
+  read as moved (ENG-217).** The Windows rule above reached two readers
+  only. The rule's others still read any FileNotFoundError as nothing
+  there, and CPython raises a share or drive that does not answer as
+  one: a linked worktree's pointer back to its `.git` on such a share
+  read as a worktree moved away, so a `.git` file naming that
+  worktree's git directory (a plant) was followed from any folder, since
+  9.0.0rc14; a `core.worktree` there read as a submodule moved with
+  `mv`. The hook probe read such a working directory as gone where it
+  could not tell, and so did the migration's probe of a view, the
+  readers of a checkout token, a project file, a git config, a
+  `commondir`, a ref and the origin family's files, and the claim
+  oracle's test of a cited path. Every one of them now reads the error
+  through one classifier (`_location_probe.path_gone`, and
+  `path_missing` for a reader that takes ENOENT and ENOTDIR alone as
+  "no such file"), which decides by the Windows code where one is set;
+  what each reads on Linux and macOS is unchanged.
+  (`src/bettermemory/_location_probe.py`, `src/bettermemory/gitfile_rule.py`,
+  `src/bettermemory/origin.py`, `src/bettermemory/origin_gitfiles.py`,
+  `src/bettermemory/githead.py`, `src/bettermemory/gitconfig.py`,
+  `src/bettermemory/location.py`, `src/bettermemory/checkout_token.py`,
+  `src/bettermemory/project_file.py`, `src/bettermemory/membership_migrate.py`,
+  `src/bettermemory/claims.py`, `docs/internals.md`,
+  `tests/test_location_path_gone.py`, `tests/test_location_gitdir_pin.py`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a

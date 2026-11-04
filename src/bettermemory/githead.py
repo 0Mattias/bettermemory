@@ -92,6 +92,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import gitfile_rule
+from ._location_probe import path_missing
 from .gitfile_rule import (
     _REF_LIMIT,
     _SPACE,
@@ -208,11 +209,13 @@ def stamp(path: str | bytes | os.PathLike[str], *, follow: bool = True) -> Stamp
     except where the change fell within one tick of the filesystem's clock
     of the file's last one and kept the size and the inode number (a rewrite
     in place at the same size, a replacement that reused the number). Any
-    other failure to stat raises OSError, and a path holding a NUL byte
-    ValueError."""
+    other failure to stat raises OSError (a share that does not answer
+    included, `path_missing`), and a path holding a NUL byte ValueError."""
     try:
         status = os.stat(path, follow_symlinks=follow)
-    except (FileNotFoundError, NotADirectoryError):
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        if not path_missing(exc):
+            raise
         return None
     return (
         status.st_mtime_ns,
@@ -301,7 +304,9 @@ def _probe(
     entry = os.path.join(directory, ".git")
     try:
         mode = os.stat(entry).st_mode
-    except (FileNotFoundError, NotADirectoryError):
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        if not path_missing(exc):
+            raise  # a share that does not answer, as any other error (ENG-217)
         if _git_directory(directory) is not None:
             # A bare repository or the inside of a git directory: git
             # answers with no working tree.
@@ -510,7 +515,9 @@ def _entry_above(start: Path) -> bool:
         for name in (".git", "HEAD"):
             try:
                 os.lstat(os.path.join(here, name))
-            except (FileNotFoundError, NotADirectoryError):
+            except (FileNotFoundError, NotADirectoryError) as exc:
+                if not path_missing(exc):
+                    raise
                 continue
             return True
         parent = os.path.dirname(here)
@@ -594,7 +601,9 @@ def _packed(commondir: Path, name: bytes) -> str | None:
     second entry for the name, or a line of any other shape declines."""
     try:
         data = _read(os.path.join(commondir, "packed-refs"), _PACKED_LIMIT)
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        if not path_missing(exc):
+            raise
         return None
     if not data:
         return None
@@ -631,9 +640,11 @@ def _lookup(gd: GitDir, name: bytes) -> tuple[bytes | None, str | None]:
     base = gd.gitdir if per_worktree else gd.commondir
     try:
         content = _read(os.fsencode(base) + b"/" + name, _REF_LIMIT, follow=False)
-    except (FileNotFoundError, IsADirectoryError):
+    except (FileNotFoundError, IsADirectoryError) as exc:
         # No loose file, or a directory where it would be: git reads the
-        # packed store next.
+        # packed store next. A share that does not answer is no answer.
+        if isinstance(exc, FileNotFoundError) and not path_missing(exc):
+            raise
         if per_worktree:
             raise _Unsettled from None
         return None, _packed(gd.commondir, name)

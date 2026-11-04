@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Literal, TypeAlias
 
 from ._fsutil import atomic_write_bytes, fsync_dir, fsync_file
+from ._location_probe import path_missing
 from ._printable import quoted
 from .checkout_token import CROCKFORD, random_crockford
 
@@ -401,9 +402,10 @@ def _walk(start: Path, *, stop: Path | None) -> tuple[Found, ...]:
 def _look(path: Path) -> Found | None:
     try:
         st = os.stat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
     except OSError as exc:
+        if path_missing(exc):
+            return None
+        # A share that does not answer is no absence (ENG-217).
         return ProjectFileError(path, "unreadable", _os_text(exc))
     return _parse_stat(path, st)
 

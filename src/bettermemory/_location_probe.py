@@ -22,7 +22,14 @@ import os
 import socket
 from typing import Any
 
-__all__ = ["INDETERMINATE", "TOKEN_VERSION", "probe", "view_path"]
+__all__ = [
+    "INDETERMINATE",
+    "TOKEN_VERSION",
+    "path_gone",
+    "path_missing",
+    "probe",
+    "view_path",
+]
 
 #: The state of a location nothing could be read for; `location`'s
 #: vocabulary (``tests/test_membership_capture.py`` pins it to the model's).
@@ -30,20 +37,87 @@ INDETERMINATE = "indeterminate"
 #: The location token's format version.
 TOKEN_VERSION = 1
 
-_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG})
+# The errnos in which the OS ANSWERED "is there anything at this path?"
+# with "no". Each is a property of the path itself failing to resolve to
+# an object, independent of who is asking and of whether any device is
+# reachable, which a share that fails does not give and an unmount does
+# give (the mount point's folder is empty):
+#
+#   ENOENT        a component of the path does not exist
+#   ENOTDIR       a component that would have to be a directory is not
+#                 one, so nothing can live below it
+#   ELOOP         the path cycles through symlinks and resolves to
+#                 nothing
+#   ENAMETOOLONG  this system cannot name an object at that path at
+#                 all, the shape a store synced from a longer-path OS
+#                 arrives in
+#
+# The complement is deliberately NOT enumerated: EACCES/EPERM on a
+# parent, the unreachable-device family (ENOTCONN, EHOSTDOWN, ETIMEDOUT,
+# ESTALE, EIO, ENODEV, ...), and any errno a future platform invents all
+# fall through to "cannot tell", so a new error class holds an isolation
+# boundary rather than opening it.
+GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG})
+
+# On Windows an error is told by its own code alone, never by the errno
+# or the exception class CPython folds it into: a share or drive that
+# does not answer (ERROR_BAD_NETPATH 53, ERROR_BAD_NET_NAME 67,
+# ERROR_INVALID_DRIVE 15) is ENOENT there, and so a FileNotFoundError, as
+# a path that names nothing is (ENG-217). Gone are the codes of the path
+# itself: ERROR_FILE_NOT_FOUND (2), ERROR_PATH_NOT_FOUND (3),
+# ERROR_INVALID_NAME (123, "that syntax cannot name anything"),
+# ERROR_FILENAME_EXCED_RANGE (206, ENAMETOOLONG), ERROR_DIRECTORY (267, a
+# file where a folder is named: ENOTDIR) and the reparse-point cycle
+# ERROR_CANT_RESOLVE_FILENAME (1921, ELOOP). ERROR_NOT_READY (21), a
+# removable or disconnected volume, is deliberately absent, though
+# `pathlib` reads it as not existing: that is the unmounted-volume
+# fail-open this reading exists to close.
+GONE_WINERRORS = frozenset({2, 3, 123, 206, 267, 1921})
+
+
+def path_gone(exc: BaseException) -> bool:
+    """Whether `exc`, raised by a read of a path, is the OS's answer that
+    nothing is there: the one reading of that question for membership,
+    location and origin, so no two of them tell a share that does not
+    answer apart differently (ENG-217). A ValueError is a path the OS
+    cannot be asked about (an embedded NUL), where nothing can be. An
+    error with a Windows code is told by that code alone (`GONE_WINERRORS`);
+    any other OSError by its class or errno (`GONE_ERRNOS`). Any other
+    exception cannot tell."""
+    if isinstance(exc, ValueError):
+        return True
+    if not isinstance(exc, OSError):
+        return False
+    winerror: object = getattr(exc, "winerror", None)
+    if isinstance(winerror, int):
+        return winerror in GONE_WINERRORS
+    return (
+        isinstance(exc, (FileNotFoundError, NotADirectoryError))
+        or exc.errno in GONE_ERRNOS
+    )
+
+
+def path_missing(exc: BaseException) -> bool:
+    """Whether `exc` is a FileNotFoundError or NotADirectoryError that is
+    the OS's answer that nothing is there (`path_gone`): the narrower
+    absence a reader takes as "no such file" (ENOENT or ENOTDIR, as git
+    takes them), which on Windows excludes a share or drive that does not
+    answer, raised as the same FileNotFoundError."""
+    return isinstance(exc, (FileNotFoundError, NotADirectoryError)) and path_gone(exc)
 
 
 def _path_state(path: str) -> tuple[str, os.stat_result | None, str]:
     """('present', stat, '') or ('gone' | 'unreachable', None, detail):
-    'gone' when the OS answered that nothing is there, 'unreachable' when
-    it could not say (permission, a dropped mount)."""
+    'gone' when the OS answered that nothing is there (`path_gone`),
+    'unreachable' when it could not say (permission, a dropped mount, a
+    share that does not answer)."""
     try:
         st = os.stat(path)
     except ValueError as exc:
         return "gone", None, str(exc)
     except OSError as exc:
         reason = os.strerror(exc.errno) if exc.errno else str(exc)
-        if exc.errno in _GONE_ERRNOS:
+        if path_gone(exc):
             return "gone", None, reason
         return "unreachable", None, reason
     return "present", st, ""

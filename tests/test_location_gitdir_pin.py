@@ -43,6 +43,7 @@ from bettermemory import (
     location_git,
     origin,
 )
+from bettermemory._location_probe import path_gone
 from bettermemory.config import Config, StorageConfig
 from bettermemory.location import OUTSIDE, REPO, capture, resolve_caller
 from bettermemory.membership import GLOBAL_OUTCOME
@@ -1087,11 +1088,9 @@ def test_only_an_answer_that_nothing_is_there_reads_as_gone(
 def test_the_errors_that_read_as_gone_are_origins(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The one classification of a failed read as gone: membership's rule
-    and origin's worktree liveness read the same errors so, a Windows code
-    by itself in both."""
-    assert gitfile_rule._GONE_ERRNOS == origin._WORKTREE_GONE_ERRNOS
-    assert gitfile_rule._GONE_WINERRORS == origin._WORKTREE_GONE_WINERRORS
+    """The one classification of a failed read as gone
+    (`_location_probe.path_gone`): membership's rule and origin's worktree
+    liveness read the same errors so, a Windows code by itself in both."""
     for table, gone in ((_WINDOWS_GONE, True), (_WINDOWS_UNKNOWN, False)):
         for code in table.values():
             error = _windows_error(*code)
@@ -1101,7 +1100,7 @@ def test_the_errors_that_read_as_gone_are_origins(
             ) -> Any:
                 raise error
 
-            assert gitfile_rule._gone(error) is gone, code
+            assert path_gone(error) is gone, code
             with monkeypatch.context() as patch:
                 patch.setattr(os, "stat", failing)
                 assert origin._worktree_root_is_gone("/somewhere") is gone, code

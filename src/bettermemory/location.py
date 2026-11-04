@@ -80,6 +80,7 @@ from ._location_probe import (
     TOKEN_VERSION,
     _hostname,
     _path_state,
+    path_missing,
     probe,
     view_path,
 )
@@ -765,7 +766,9 @@ def signature(cwd: str, *, read_head: bool = False) -> tuple[Any, ...] | None:
             return None
         try:
             cst: os.stat_result | None = os.stat(os.path.join(git.common_dir, "config"))
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
+            if not path_missing(exc):
+                return None  # a share that does not answer (ENG-217)
             cst = None
         if cst is not None and _evicted(cst):
             return None

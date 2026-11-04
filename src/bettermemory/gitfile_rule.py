@@ -31,7 +31,9 @@ tree through, `tree_format`), `gitdir_pin`
 (the records it reads; it writes none: membership's capture records a
 tree, `location.record_working_tree`) and `location_reads` (the bounded
 reads a recorded tree and the store's earlier views are read through,
-`_recorded_reading` and `earliest_naming`). It never
+`_recorded_reading` and `earliest_naming`), and `_location_probe` for the
+one reading of an error as nothing at a path (`path_gone`, `path_missing`,
+ENG-217). It never
 imports `location_git`, `location` or `githead`
 (tests/test_import_graph.py), and the hook client loads it with
 `location` (tests/test_membership_capture.py pins that set).
@@ -49,6 +51,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from . import gitconfig, gitdir_pin
+from ._location_probe import path_gone, path_missing
 from .location_reads import NOT_READ, UNANSWERED, bounded_read, bounded_reads
 
 # git refuses a .git file over 1 MiB (read_gitfile_gently in setup.c).
@@ -71,25 +74,6 @@ _HEX_PREFIX = re.compile(rb"[0-9a-fA-F]{40}")
 # on a download.
 _SF_DATALESS = 0x40000000
 _WINDOWS_RECALL = 0x00040000 | 0x00400000
-# The errors in which the OS answered that nothing is at a path, as origin
-# reads a worktree root's liveness (`origin._WORKTREE_GONE_ERRNOS`, whose
-# comment gives each; tests/test_location_gitdir_pin.py holds the two
-# equal): ENOENT, ENOTDIR, ELOOP and ENAMETOOLONG. Each is a property of
-# the path as it is spelled, which a share that fails does not give and an
-# unmount does give (the mount point's folder is empty). Every other error
-# (ENOTCONN, EIO, ESTALE, EACCES, EPERM, ETIMEDOUT, and any a platform
-# adds) cannot tell what is there (`_entry_names`, ENG-217).
-_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG})
-# On Windows the error is told by its code alone (`_gone`): CPython folds
-# a share or drive that does not answer into ENOENT (ERROR_BAD_NETPATH 53,
-# ERROR_BAD_NET_NAME 67, ERROR_INVALID_DRIVE 15), and so into
-# FileNotFoundError, which a path that names nothing gives. Gone are only the
-# codes of the path itself: ERROR_FILE_NOT_FOUND (2), ERROR_PATH_NOT_FOUND
-# (3), ERROR_INVALID_NAME (123), ERROR_FILENAME_EXCED_RANGE (206, the
-# Windows ENAMETOOLONG), ERROR_DIRECTORY (267, a file where a folder is
-# named: ENOTDIR) and the reparse-point cycle ERROR_CANT_RESOLVE_FILENAME
-# (1921, ELOOP).
-_GONE_WINERRORS = frozenset({2, 3, 123, 206, 267, 1921})
 #: The ends of the refusals whose recorded working tree could not be read or
 #: did not answer (`_recorded_reading`): the security audit's fix for them
 #: says how the record is freed (`location_audit._gitfile_fix`, ENG-217).
@@ -147,14 +131,13 @@ def _names_here(raw: str, base: str, here: str) -> bool | None:
     """Whether the path `raw` (taken from `base` when relative) names the
     entry `here`: True when it is the same file, False when it names
     another one, None when it names nothing (what it named was moved or
-    deleted since git wrote it)."""
+    deleted since git wrote it: the OS answered so, `path_missing`; a share
+    that does not answer is False, ENG-217)."""
     path = raw if os.path.isabs(raw) else os.path.join(base, raw)
     try:
         theirs = os.stat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except (OSError, ValueError):
-        return False
+    except (OSError, ValueError) as exc:
+        return None if path_missing(exc) else False
     try:
         return os.path.samestat(theirs, os.stat(here))
     except (OSError, ValueError):
@@ -604,7 +587,7 @@ def _entry_names(entry: str, git_dir: str) -> str:
     `git_dir`: ``names`` (it is a ``.git`` file whose ``gitdir:`` reaches
     `git_dir`, or reaches it as a directory itself), ``other`` (it reaches
     something else, or is not a pointer), ``gone`` (the OS answered that
-    nothing is there, `_gone`, or a link that reaches nothing) or
+    nothing is there, `path_gone`, or a link that reaches nothing) or
     ``unknown`` (a read failed with any other error, a share's ENOTCONN,
     EIO or ESTALE, a refused permission, so what is there cannot be told,
     or it is a provider's placeholder, which is not read: a read would
@@ -612,7 +595,7 @@ def _entry_names(entry: str, git_dir: str) -> str:
     try:
         lst = os.lstat(entry)
     except (OSError, ValueError) as exc:
-        return "gone" if _gone(exc) else "unknown"
+        return "gone" if path_gone(exc) else "unknown"
     if _is_link(lst):
         # A link reaching another working tree's own `.git` names nothing
         # for this folder, as discovery reads it (`judge`).
@@ -626,7 +609,7 @@ def _entry_names(entry: str, git_dir: str) -> str:
         st = os.stat(entry)
         want = os.stat(git_dir)
     except (OSError, ValueError) as exc:
-        return "gone" if _gone(exc) else "unknown"
+        return "gone" if path_gone(exc) else "unknown"
     if stat.S_ISDIR(st.st_mode):
         return "names" if os.path.samestat(st, want) else "other"
     if not stat.S_ISREG(st.st_mode):
@@ -637,57 +620,36 @@ def _entry_names(entry: str, git_dir: str) -> str:
         with open(entry, "rb") as fh:
             data = fh.read(_GITFILE_LIMIT + 1)
     except (OSError, ValueError) as exc:
-        return "gone" if _gone(exc) else "unknown"
+        return "gone" if path_gone(exc) else "unknown"
     named = _parse_gitfile(data, entry)
     if named is None:
         return "other"
     return "names" if _names_here(named, git_dir, git_dir) is True else "other"
 
 
-def _gone(exc: OSError | ValueError) -> bool:
-    """Whether the error `exc`, raised by a read of a path, is the OS's
-    answer that nothing is there: a ValueError is a path the OS cannot be
-    asked about (an embedded NUL), where nothing can be, as
-    `origin._worktree_root_is_gone` reads it. An error with a Windows code
-    is told by that code alone (`_GONE_WINERRORS`), never by the errno or
-    the exception class CPython folds it into, so a share that does not
-    answer is not gone (ENG-217); any other by its errno (`_GONE_ERRNOS`)."""
-    if not isinstance(exc, OSError):
-        return True
-    winerror: object = getattr(exc, "winerror", None)
-    if isinstance(winerror, int):
-        return winerror in _GONE_WINERRORS
-    return (
-        isinstance(exc, (FileNotFoundError, NotADirectoryError))
-        or exc.errno in _GONE_ERRNOS
-    )
-
-
 def _names_folder(raw: str, base: str, directory: str) -> bool | None:
     """Whether the ``.git`` path `raw` (taken from `base` when relative),
     as a worktree's ``gitdir`` file names it, sits in the folder
     `directory`: None when nothing is at `raw` any more (the worktree was
-    moved or removed), True when its folder is `directory`, False
-    otherwise."""
+    moved or removed: the OS answered so, `path_missing`), True when its
+    folder is `directory`, False otherwise, a share that does not answer
+    included (ENG-217)."""
     path = os.path.normpath(raw if os.path.isabs(raw) else os.path.join(base, raw))
     try:
         os.lstat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except (OSError, ValueError):
-        return False
+    except (OSError, ValueError) as exc:
+        return None if path_missing(exc) else False
     return _same_folder(os.path.dirname(path), directory) is True
 
 
 def _same_folder(a: str, b: str) -> bool | None:
     """Whether the paths `a` and `b` reach one folder: None when `a`
-    reaches nothing, False when it reaches another or cannot be told."""
+    reaches nothing (`path_missing`), False when it reaches another or
+    cannot be told."""
     try:
         theirs = os.stat(a)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except (OSError, ValueError):
-        return False
+    except (OSError, ValueError) as exc:
+        return None if path_missing(exc) else False
     try:
         return os.path.samestat(theirs, os.stat(b))
     except (OSError, ValueError):
@@ -894,10 +856,11 @@ def _real_to_last(path: str) -> str:
     holds no ``objects`` then, so git's walk goes on past it."""
     try:
         return os.path.realpath(path, strict=True)
-    except FileNotFoundError:
-        pass
     except OSError as exc:
-        raise _Unsettled from exc
+        # Only ENOENT is git's missing component; a share that does not
+        # answer, raised as the same class on Windows, declines (ENG-217).
+        if not (isinstance(exc, FileNotFoundError) and path_missing(exc)):
+            raise _Unsettled from exc
     parent, last = os.path.split(path.rstrip("/" + os.sep) or path)
     if last in ("", ".", ".."):
         raise _Unsettled
@@ -959,9 +922,9 @@ def _git_common(gitdir: str) -> tuple[str, bool]:
     unread (`_valid_headref`)."""
     try:
         content = _read(os.path.join(gitdir, "commondir"), _REF_LIMIT)
-    except (FileNotFoundError, NotADirectoryError):
-        return gitdir, False
     except OSError as exc:
+        if path_missing(exc):
+            return gitdir, False
         raise _Unsettled from exc
     target = content.rstrip(b"\r\n")
     if not content or len(content) > _REF_LIMIT or b"\0" in target:

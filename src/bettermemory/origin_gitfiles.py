@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import _caches, githead
+from ._location_probe import path_missing
 
 
 # The repository's own configuration file, read to see whether it moves
@@ -133,9 +134,10 @@ def _config_facts(path: Path) -> tuple[githead.Stamp | None, _ConfigFacts] | Non
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(path, flags)
-    except FileNotFoundError:
-        return None, _NO_CONFIG
-    except OSError:
+    except OSError as exc:
+        # A share that does not answer is unread, not a missing config.
+        if isinstance(exc, FileNotFoundError) and path_missing(exc):
+            return None, _NO_CONFIG
         return None
     try:
         before = _fd_stamp(fd)
@@ -510,9 +512,9 @@ def _hold_directory(path: str | Path, held: dict[str, tuple[int, int]]) -> None:
     while current not in held:
         try:
             status = os.stat(current)
-        except (FileNotFoundError, NotADirectoryError):
+        except (FileNotFoundError, NotADirectoryError) as exc:
             parent = os.path.dirname(current)
-            if parent == current:
+            if parent == current or not path_missing(exc):
                 raise
             current = parent
             continue
@@ -824,8 +826,9 @@ def gitattributes_signature(
             try:
                 if stat.S_ISDIR(os.stat(root.joinpath(*parts)).st_mode):
                     return None
-            except (FileNotFoundError, NotADirectoryError):
-                pass
+            except (FileNotFoundError, NotADirectoryError) as exc:
+                if not path_missing(exc):
+                    raise
             directory = root
             chain.setdefault(directory, None)
             for part in parts[:-1]:
@@ -1027,7 +1030,9 @@ def _index_gitmodules(gd: githead.GitDir) -> tuple[object, ...] | None:
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(path, flags)
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        if not path_missing(exc):
+            raise
         return None
     try:
         before = _fd_stamp(fd)
