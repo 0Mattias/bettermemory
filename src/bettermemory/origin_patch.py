@@ -265,6 +265,7 @@ def _changes(
         "core.quotePath=false",
         "-c",
         "log.follow=false",
+        *origin_history.AS_STORED_PATHS,
         "log",
         *origin_history.AS_STORED_DIFF,
         "--no-walk=unsorted",

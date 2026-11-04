@@ -313,21 +313,64 @@ eighteenth was built.
   `funcname` and `xfuncname` (the hunk header's context is not read);
   `core.ignoreCase`, and the `GIT_LITERAL_PATHSPECS`,
   `GIT_GLOB_PATHSPECS` and `GIT_NOGLOB_PATHSPECS` variables (each
-  pathspec is `:(literal)`). Only up: `diff.algorithm`,
+  pathspec is read as the path it spells, ENG-183). Only up: `diff.algorithm`,
   `diff.indentHeuristic` and a driver's `algorithm`, which move only
   lines whose text is unchanged, so a binding can read touched but not
   untouched; `i18n.logOutputEncoding`, which leaves what each format
   prints as it is in an encoding that extends ASCII, and in one that
   does not (UTF-16) fails the parse, and the count is omitted; and
-  `GIT_ICASE_PATHSPECS`, which matches more paths. Not exercised: `core.precomposeUnicode` with a
-  path committed in decomposed Unicode. The memo keys still stamp the
-  files these settings live in, so a hit is read again when one moves.
-  (`src/bettermemory/origin_history.py`, `src/bettermemory/origin.py`,
-  `src/bettermemory/origin_patch.py`, `src/bettermemory/_response.py`,
-  `src/bettermemory/origin_gitfiles.py`, `docs/internals.md`,
-  `docs/operations.md`, `tests/test_origin_as_stored.py`,
-  `tests/test_commit_drift_cache.py`, `tests/test_origin_patch.py`,
-  `tests/test_origin.py`)
+  `GIT_ICASE_PATHSPECS`, which matches more paths. The memo keys still
+  stamp the files these settings live in, so a hit is read again when
+  one moves. (`src/bettermemory/origin_history.py`,
+  `src/bettermemory/origin.py`, `src/bettermemory/origin_patch.py`,
+  `src/bettermemory/_response.py`, `src/bettermemory/origin_gitfiles.py`,
+  `docs/internals.md`, `docs/operations.md`,
+  `tests/test_origin_as_stored.py`, `tests/test_commit_drift_cache.py`,
+  `tests/test_origin_patch.py`, `tests/test_origin.py`)
+
+- **An empty file's deletion fires its claim, and neither a decomposed
+  path nor the environment hides a change (ENG-220).** Git prints a
+  section whose header alone says its path changed, with no `---`/`+++`
+  line and no hunk: an empty file deleted or created, a mode changed, a
+  file renamed whole. The patch parser read paths from those lines only,
+  so beside another claimed file's edit a path claim on a deleted empty
+  file, or an absence claim on a created one, read as untouched: 0,
+  nothing named, in a full clone. The parser now reads the section's
+  header (`deleted file mode`, `new file mode`, `old mode`/`new mode`,
+  `rename from`/`rename to`, `copy to`): the path is touched, a deletion
+  or a rename's source is deleted, and a section with no lines names its
+  commit for a path or absence claim, so the claim fires and counts that
+  commit (1 in the tests' windows, where it read 0). A quoted `diff
+  --git` line or rename line is unquoted by the producer, as `---` and
+  `+++` already were. The split's `--raw` listing already showed these
+  changes from the trees (`D`, `A`, `M`), so a blobless clone that lacks
+  the empty blob counted them, as it still does. A mode change alone
+  fires no claim, since no claim kind reads a mode; a window whose only
+  change to a claimed file is one now reads 0 with the file indexed,
+  where the patch was taken for one that named no file and the per-file
+  count read 1. Where the empty file's claim was the one that could
+  name a commit, beside a fired claim that names none, the whole window
+  was counted (6 in the test's); its deletion now names the commits that
+  carry its lines and its deletion (3), as a binary file's did. On macOS,
+  `core.precomposeUnicode=true` rewrote each pathspec git was given in
+  decomposed Unicode to its composed form, so a claim spelled as a tree
+  stores `café.py` decomposed matched nothing, and its file's deletion
+  read 0 on both bases: the logs that take a claim's or an anchor's
+  paths now pin it off (`origin_history.AS_STORED_PATHS`), on those logs
+  alone, since the setting also spells the working tree's paths the
+  capture reads. A claim spelled in one normalization where the tree
+  stores the other still matches no path, whatever the setting. And
+  `GIT_DIFF_OPTS` in the environment set context lines over `-U0`,
+  which the parser read as a mismatch, so a hit fell back to the
+  per-file count with nothing named, and `GIT_ATTR_SOURCE` read the
+  attributes from a tree no stamp covers: both are removed from every
+  git the package runs, with `GIT_EXTERNAL_DIFF` and the counters git
+  hands an external diff (`_git.RESHAPING_ENV`).
+  (`src/bettermemory/claims.py`, `src/bettermemory/verify.py`,
+  `src/bettermemory/origin_gitfiles.py`, `src/bettermemory/origin.py`,
+  `src/bettermemory/origin_patch.py`, `src/bettermemory/origin_history.py`,
+  `src/bettermemory/_git.py`, `tests/test_claims.py`,
+  `tests/test_origin_patch.py`, `tests/test_origin_as_stored.py`)
 
 - **The migration homes a record in a part below a folder whose question
   was answered where a session there resolves (ENG-222).** A folder

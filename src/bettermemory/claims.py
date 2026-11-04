@@ -696,6 +696,77 @@ def anchors_from_value(value: str) -> tuple[str, ...]:
     return tuple(seen)
 
 
+#: Extended header lines that change the header's own path: a deletion, a
+#: creation, a mode change.
+_PATH_HEADERS = ("deleted file mode ", "new file mode ", "old mode ", "new mode ")
+#: Extended header lines that name their path (a rename's source is gone).
+#: The streams `origin` reads print no renames (`diff.renames=false`); a
+#: stream that does is read all the same.
+_NAMED_HEADERS = ("rename from ", "rename to ", "copy to ")
+
+
+def _header_path(rest: str) -> str:
+    """P, where `rest`, what follows ``diff --git ``, is ``a/P b/P``; ""
+    where the two sides name different paths (a rename's own lines name
+    them) or the line is not that shape."""
+    n, odd = divmod(len(rest) - 5, 2)
+    if n < 1 or odd or not rest.startswith("a/") or rest[2 + n : 5 + n] != " b/":
+        return ""
+    return rest[2 : 2 + n] if rest[2 : 2 + n] == rest[5 + n :] else ""
+
+
+class _Headers:
+    """The extended header of each ``diff --git`` section, between its
+    ``diff --git`` line and its ``---``/``+++`` lines or first hunk. A
+    section that deletes or creates an empty file, changes only a file's
+    mode, or renames a file whole has no ``---``/``+++`` lines and no hunk,
+    so its header is all that says the path changed: the path is touched
+    (deleted, too, for a deletion or a rename's source), and the commit is
+    kept in `only` for the path, since no line of it carries the commit."""
+
+    def __init__(self) -> None:
+        self.only: dict[str, set[str]] = {}
+        self._path = ""
+        self._open = False
+        self._touched: set[str] = set()
+
+    def start(self, line: str, sha: str) -> None:
+        """A ``diff --git`` line or a commit mark: the open section ends."""
+        self.close(sha)
+        self._open = line.startswith("diff --git ")
+        self._path = _header_path(line[11:]) if self._open else ""
+
+    def close(self, sha: str) -> None:
+        for path in self._touched:
+            self.only.setdefault(path, set()).add(sha)
+        self._open = False
+        self._touched = set()
+
+    def body(self) -> None:
+        """A ``---``, ``+++`` or hunk line: the section carries lines."""
+        self._open = False
+        self._touched = set()
+
+    def read(self, line: str, files: set[str], deleted: set[str]) -> bool:
+        """Whether `line` is an extended header line that touches a path,
+        which it records."""
+        if not self._open:
+            return False
+        if line.startswith(_PATH_HEADERS):
+            path, gone = self._path, line.startswith("deleted ")
+        else:
+            prefix = next((p for p in _NAMED_HEADERS if line.startswith(p)), "")
+            path, gone = line[len(prefix) :], prefix == "rename from "
+            if not prefix:
+                return False
+        if path:
+            files.add(path)
+            if gone:
+                deleted.add(path)
+            self._touched.add(path)
+        return True
+
+
 def build_binding_index(diff_text: str) -> dict[str, Any]:
     """Parse one `git log -p -U0` stream into a claim-agnostic index.
 
@@ -711,7 +782,10 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
     A ``\\ No newline at end of file`` marker is not a hunk line and is
     not counted as one: it follows the removed side's last line, mid-hunk,
     wherever an edit reaches a last line without a newline, and counted
-    there it ended the hunk one line early and read as a mismatch.
+    there it ended the hunk one line early and read as a mismatch. A
+    section whose header alone says its path changed (an empty file
+    deleted or created, a mode changed, a file renamed whole) touches the
+    path all the same (`_Headers`), and `header_only` names the commit.
     """
     bindings: dict[tuple[str, str, str], dict[str, Any]] = {}
     changed_text: dict[str, dict[str, set[str]]] = {}
@@ -724,19 +798,26 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
 
     sha = ""
     path = ""
+    headers = _Headers()
     lines = diff_text.split("\n")
     i = 0
     while i < len(lines):
         line = lines[i]
         i += 1
         if line.startswith(COMMIT_MARK):
+            headers.start(line, sha)
             sha = line[1:].strip()
             commits.add(sha)
             path = ""
             continue
         if line.startswith("diff --git "):
+            headers.start(line, sha)
             path = ""
             continue
+        if headers.read(line, files, deleted):
+            continue
+        if line.startswith(("--- ", "+++ ", "@@")):
+            headers.body()
         if line.startswith("--- ") and not line.startswith("--- a/"):
             continue
         if line.startswith("+++ "):
@@ -816,6 +897,7 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
                     entry[f"rhs_{side}"].add(rhs)
         if minus != removed or plus != added:
             mismatches += 1
+    headers.close(sha)
 
     return {
         "bindings": bindings,
@@ -823,6 +905,7 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
         "changed_fragments": changed_fragments,
         "deleted": deleted,
         "files": files,
+        "header_only": headers.only,
         "commits": len(commits),
         "hunks": hunks,
         "parse_mismatches": mismatches,

@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import shutil
 import struct
+import subprocess
+import sys
+import unicodedata
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from bettermemory import _caches, _response, origin, origin_history
+from bettermemory import _caches, _git, _response, origin, origin_history
 from bettermemory.claims import load_claims
 from bettermemory.verify import ResolvedCommitDrift
 
@@ -435,4 +438,112 @@ def test_a_gitlinks_change_is_never_ignored(tmp_path: Path, where: str) -> None:
         _plain(repo, "config", "diff.ignoreSubmodules", "all")
     shown = _plain(repo, "log", "--format=", "--name-only", "-2")
     assert sub not in shown.split(), "premise: git's own log drops the gitlink"
+    assert _both(repo, claims, anchor) == truth
+
+
+_APP = "src/app.py"
+
+
+def _arranged(*names: str) -> str:
+    """A module of `return 1` functions in the given order. From (handler,
+    other) to (other, handler, a, b) and on to (a, handler, other, b), git's
+    default algorithm leaves handler's lines alone and patience moves
+    them."""
+    head = '"""Module under claim."""\n\nTIMEOUT = 30\n'
+    return head + "".join(f"\n\ndef {name}():\n    return 1\n" for name in names)
+
+
+@pytest.mark.parametrize("name", _git.RESHAPING_ENV)
+def test_the_environment_reshapes_no_patch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """foo's def line changes after the verify while handler's functions
+    are rearranged around it: 1, foo named, on both bases. In the
+    environment of the process that reads it, ``GIT_DIFF_OPTS`` put
+    context lines in the ``-U0`` patch, which the parser reads as a
+    mismatch, so the hit fell back to the per-file count with nothing
+    named, and ``GIT_ATTR_SOURCE`` read the attributes from a tree, here
+    one naming a driver whose algorithm is patience, so handler read
+    touched. ``GIT_EXTERNAL_DIFF`` and the counters git hands an external
+    diff move nothing past ``--no-ext-diff``. Each is removed from every
+    git the package runs (`_git.RESHAPING_ENV`)."""
+    if name == "GIT_ATTR_SOURCE" and _git_version() < (2, 42):
+        pytest.skip("git reads GIT_ATTR_SOURCE and a driver's algorithm from 2.42")
+    repo = _repository(tmp_path)
+    _plain(repo, "config", "diff.lever.algorithm", "patience")
+    anchor = _commit(
+        repo, {_APP: _arranged("handler", "other"), _MOD: _module("", 0)}, -1
+    )
+    first = _commit(
+        repo,
+        {_APP: _arranged("other", "handler", "a", "b"), _MOD: _module("flag=False", 0)},
+        1,
+    )
+    _commit(repo, {_APP: _arranged("a", "handler", "other", "b")}, 2)
+    claims = [f"{_APP}::handler", _FOO]
+    truth = _both(repo, claims, anchor)
+    assert truth == [(1, (_FOO,))] * 2
+    blob = _object(repo, b"*.py diff=lever\n")
+    tree = (
+        subprocess.run(
+            ["git", "mktree"],
+            cwd=repo,
+            input=f"100644 blob {blob}\t.gitattributes\n".encode(),
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+    value = {
+        "GIT_DIFF_OPTS": "--unified=3",
+        "GIT_ATTR_SOURCE": tree,
+        "GIT_EXTERNAL_DIFF": "false",
+    }.get(name, "1")
+    monkeypatch.setenv(name, value)
+    if name in ("GIT_DIFF_OPTS", "GIT_ATTR_SOURCE"):
+        shown = _plain(repo, "log", "-p", "-U0", "--format=", "-1", first, "--", _APP)
+        assert "-def handler():" in shown or "\n " in shown, "premise: git reshapes it"
+    assert _both(repo, claims, anchor) == truth
+
+
+def _index_info(repo: Path, entries: list[tuple[str, str, str]]) -> None:
+    """Stage `entries` (mode, object, path) from git's standard input, so
+    no argument of git's is precomposed on the way in."""
+    subprocess.run(
+        ["git", "-c", "core.precomposeUnicode=false", "update-index", "--index-info"],
+        cwd=repo,
+        input="".join(f"{m} {o}\t{p}\n" for m, o, p in entries).encode("utf-8"),
+        check=True,
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="git precomposes its arguments on macOS only"
+)
+def test_a_decomposed_path_is_matched_as_stored(tmp_path: Path) -> None:
+    """A tree that stores ``src/café.py`` decomposed (``e`` and a combining
+    accent, as a git that did not precompose committed it) deletes it
+    after the verify, and two.py's bar is edited; a path claim spelled as
+    the tree stores it fires, 2 on both bases. With
+    ``core.precomposeUnicode=true`` git rewrote the claim's pathspec to the
+    composed spelling, which names no path the tree holds: the logs and the
+    patch missed the file, and the claim read 0. The logs that take a
+    claim's paths pin it off (`origin_history.AS_STORED_PATHS`)."""
+    repo = _repository(tmp_path)
+    stored = unicodedata.normalize("NFD", "src/café.py")
+    body = _object(repo, _module("", 0).encode())
+    _index_info(repo, [("100644", body, stored), ("100644", body, _BESIDE)])
+    when = _VERIFIED - timedelta(hours=1)
+    _plain(repo, "commit", "-q", "-m", "anchor", when=when)
+    anchor = _plain(repo, "rev-parse", "HEAD")
+    _index_info(repo, [("0", "0" * 40, stored)])
+    _plain(repo, "commit", "-q", "-m", "gone", when=_VERIFIED + timedelta(hours=1))
+    _commit(repo, {_BESIDE: _module("", 1)}, 2)
+    claims = [stored, _QUIET]
+    truth = _both(repo, claims, anchor)
+    assert truth == [(2, (stored,))] * 2
+    _plain(repo, "config", "core.precomposeUnicode", "true")
+    shown = _plain(repo, "log", "--format=%H", "--", f":(literal){stored}")
+    assert not shown, "premise: git's own log misses the decomposed path"
     assert _both(repo, claims, anchor) == truth

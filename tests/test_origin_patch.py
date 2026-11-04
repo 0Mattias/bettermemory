@@ -74,8 +74,9 @@ _GONE = "src/gone.py"
 _F = "src/f.py"
 _X, _Y, _Z = "src/x.py", "src/y.py", "src/z.py::foo"
 
-#: A file's text or bytes, a symbolic link (``("link", target)``), a gitlink
-#: (``("gitlink", commit)``), or None for a deletion.
+#: A file's text or bytes, an executable file's text (``("exec", text)``),
+#: a symbolic link (``("link", target)``), a gitlink (``("gitlink",
+#: commit)``), or None for a deletion.
 Entry = str | bytes | tuple[str, str] | None
 #: The commits of a history, each the paths it writes.
 History = list[dict[str, Entry]]
@@ -148,9 +149,9 @@ _EDITS: History = [
 ]
 #: x.py (short lines) is deleted in a local commit, so its path claim fires
 #: implicating nothing; y.py is made binary or empty and deleted in counted
-#: commits. The patch prints an empty file's deletion without a
-#: ``/dev/null`` header, and a binary file's as text, with one
-#: (`origin_history.AS_STORED_DIFF`).
+#: commits. The patch prints an empty file's deletion as its header alone,
+#: which names the commit (`claims.build_binding_index`), and a binary
+#: file's as text (`origin_history.AS_STORED_DIFF`).
 _BARE: dict[str, History] = {
     "binary": [
         {_X: "a = 1\n", _Y: _long(0), "src/z.py": _Z0},
@@ -248,6 +249,8 @@ class Partial:
             return
         if isinstance(entry, tuple) and entry[0] == "gitlink":
             mode, oid = "160000", entry[1]
+        elif isinstance(entry, tuple) and entry[0] == "exec":
+            mode, oid = "100755", _object(self.source, entry[1].encode())
         elif isinstance(entry, tuple):
             mode, oid = "120000", _object(self.source, entry[1].encode())
         else:
@@ -440,7 +443,7 @@ def test_a_typechange_in_a_counted_commit_fires_the_path_claim(
 @pytest.mark.parametrize("basis", _BASES)
 @pytest.mark.parametrize(
     ("kind", "local", "split", "full"),
-    [("binary", (0, 1, 2, 3), 5, 3), ("empty", (0, 1, 2, 3, 4), 6, 6)],
+    [("binary", (0, 1, 2, 3), 5, 3), ("empty", (0, 1, 2, 3, 4), 6, 3)],
 )
 @_CLONES
 def test_a_claim_only_the_trees_fire_keeps_the_whole_window(
@@ -453,15 +456,14 @@ def test_a_claim_only_the_trees_fire_keeps_the_whole_window(
     blobless: bool,
 ) -> None:
     """x.py's deletion is local and carries no line long enough to index,
-    so its path claim fires implicating nothing. An empty y.py's deletion
-    is printed without a ``/dev/null`` header, so a full clone's y claim
-    stays quiet, no fired claim implicates a commit, and the whole window
-    is counted: 6. A binary y.py's deletion is printed as text, so a full
-    clone's y claim fires and implicates the 3 commits carrying y's lines,
-    which x's fire, implicating nothing, does not widen. The split's trees
-    show either deletion, so y fires there and implicates its local edit,
-    and the whole window is counted: in a split, any fired claim that
-    implicates nothing takes it, 5 where the full clone counts 3."""
+    so its path claim fires implicating nothing. y.py's deletion fires its
+    claim in a full clone, printed as text where the file is binary and as
+    its header alone where it is empty, and y implicates the 3 commits
+    carrying its lines or its deletion, which x's fire, implicating
+    nothing, does not widen. The split's trees show either deletion, so y
+    fires there and implicates its local edit, and the whole window is
+    counted: in a split, any fired claim that implicates nothing takes it,
+    5 and 6 where the full clone counts 3."""
     partial = Partial(tmp_path, _BARE[kind])
     partial.clone(blobless=blobless)
     if blobless:
@@ -469,6 +471,73 @@ def test_a_claim_only_the_trees_fire_keeps_the_whole_window(
     resolved = partial.resolve([_X, _Y, _Z], basis)
     assert resolved.count == (split if blobless else full)
     assert _X in resolved.claims_drifted
+
+
+#: An empty y.py deleted after the verify, and z.py's body edited.
+_EMPTY_GONE: History = [{_Y: "", "src/z.py": _Z0}, {_Y: None}, {"src/z.py": _Z1}]
+#: An empty n.py created after the verify where its claim says none is, and
+#: z.py's body edited.
+_EMPTY_BORN: History = [{"src/z.py": _Z0}, {"src/n.py": ""}, {"src/z.py": _Z1}]
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@pytest.mark.parametrize(
+    ("history", "claim", "local", "split"),
+    [
+        pytest.param(_EMPTY_GONE, _Y, (0,), 1, id="deleted-local"),
+        pytest.param(_EMPTY_GONE, _Y, (), 2, id="deleted-missing"),
+        pytest.param(_EMPTY_BORN, "!src/n.py", (0, 1), 1, id="created-local"),
+        pytest.param(_EMPTY_BORN, "!src/n.py", (), 2, id="created-missing"),
+    ],
+)
+@_CLONES
+def test_an_empty_files_deletion_or_creation_fires_its_claim(
+    tmp_path: Path,
+    basis: str,
+    history: History,
+    claim: str,
+    local: tuple[int, ...],
+    split: int,
+    blobless: bool,
+) -> None:
+    """Git prints an empty file's deletion or creation as its header
+    alone, with no ``---``/``+++`` line and no hunk. Beside z.py's edit,
+    which the patch indexes, a full clone read the path claim on the
+    deleted file, or the absence claim on the created one, as untouched:
+    0, nothing named. The header's path is read now, so the claim fires
+    and names the commit: 1. A blobless clone that holds the window's
+    blobs reads the one stream a full clone does; one that lacks them
+    reads the deletion (``D``) or creation (``A``) from its trees in the
+    split's ``--raw`` listing and counts the commits it cannot stream: 2,
+    the claim named, never below the full clone's 1."""
+    partial = Partial(tmp_path, history)
+    partial.clone(blobless=blobless)
+    if blobless:
+        partial.fetch(*local)
+    resolved = partial.resolve([claim, _Z], basis)
+    assert resolved.claims_drifted == (claim,)
+    assert resolved.count == (split if blobless else 1)
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@_CLONES
+def test_a_mode_change_alone_fires_no_claim(
+    tmp_path: Path, basis: str, blobless: bool
+) -> None:
+    """src/m.py made executable after the verify, its text as it was: git
+    prints the change as its header alone. No claim kind reads a mode, so
+    neither the path claim nor foo's fires; the patch now names the file,
+    so it is read rather than taken for one that names none, which kept
+    the per-file count, 1. The count is 0, in a blobless clone too, whose
+    checkout holds the one blob the change reads."""
+    history: History = [
+        {"src/m.py": _module("", 0)},
+        {"src/m.py": ("exec", _module("", 0))},
+    ]
+    partial = Partial(tmp_path, history)
+    partial.clone(blobless=blobless)
+    resolved = partial.resolve(["src/m.py", "src/m.py::foo"], basis)
+    assert (resolved.count, resolved.claims_drifted) == (0, ())
 
 
 @needs_lazy_fetch_pin

@@ -435,6 +435,34 @@ def _unquote_c_path(quoted: str) -> str | None:
         return None
 
 
+#: What a stream holds where some header in it is quoted.
+_QUOTED_HEADER_MARKS = ('--- "', '+++ "', 'diff --git "', ' from "', ' to "')
+#: The extended header lines that name a path of their own.
+_NAMING_HEADERS = ("rename from ", "rename to ", "copy from ", "copy to ")
+
+
+def _dequote_named_header(line: str) -> str | None:
+    """`line` with its quoted path unquoted, where it is a ``diff --git``
+    line whose two sides are one complete quoted path each, ``a/P`` and
+    ``b/P``, or a rename or copy line whose remainder is one; None for any
+    other line, left as it stands."""
+    if line.startswith('diff --git "'):
+        rest = line[11:]
+        for k in range(1, len(rest) - 2):
+            if rest[k : k + 3] != '" "':
+                continue
+            old = _unquote_c_path(rest[: k + 1])
+            new = _unquote_c_path(rest[k + 2 :])
+            if old and new and old.startswith("a/") and new == "b/" + old[2:]:
+                return f"diff --git {old} {new}"
+        return None
+    for prefix in _NAMING_HEADERS:
+        if line.startswith(prefix + '"'):
+            decoded = _unquote_c_path(line[len(prefix) :])
+            return None if decoded is None else prefix + decoded
+    return None
+
+
 def _dequote_patch_headers(stream: str) -> str:
     """Rewrite residually-quoted ``---``/``+++`` headers to the unquoted
     shape `claims.build_binding_index` hard-requires.
@@ -458,11 +486,20 @@ def _dequote_patch_headers(stream: str) -> str:
     rewritable — the cost is one slightly-off change anchor, never a
     missed deletion.) The fast path keeps the zero-quoted-header case,
     i.e. essentially every real stream, allocation-free.
+
+    The ``diff --git`` line and the rename and copy lines are rewritten
+    the same way (`_dequote_named_header`): a section whose header alone
+    says its path changed (an empty file deleted or created) has no
+    ``---``/``+++`` line, and the parser reads its path from them.
     """
-    if '--- "' not in stream and '+++ "' not in stream:
+    if not any(mark in stream for mark in _QUOTED_HEADER_MARKS):
         return stream
     lines = stream.split("\n")
     for idx, line in enumerate(lines):
+        named = _dequote_named_header(line)
+        if named is not None:
+            lines[idx] = named
+            continue
         if not line.startswith(('--- "', '+++ "')):
             continue
         decoded = _unquote_c_path(line[4:])

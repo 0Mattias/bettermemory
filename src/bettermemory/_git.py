@@ -15,7 +15,9 @@ call here, with all four properties:
   the repository the call names (its `cwd`, or `git_dir`), never one the
   environment points at, and its walk tests each folder by that folder's
   own ``objects`` as membership's does (ENG-193); ``GIT_ALTERNATE_OBJECT_DIRECTORIES``
-  and ``GIT_SHALLOW_FILE`` go too, for the same reason; a caller's own
+  and ``GIT_SHALLOW_FILE`` go too, for the same reason, and the variables
+  that reshape a diff (`RESHAPING_ENV`: ``GIT_DIFF_OPTS``,
+  ``GIT_ATTR_SOURCE`` and the external diff's); a caller's own
   variables (`run_git`'s `env`, and its `unset`, removed) are applied to
   it first, so none of them puts back a variable removed here or undoes
   a setting below;
@@ -69,6 +71,22 @@ SCRUBBED_ENV = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_SHALLOW_FILE",
     "GIT_INDEX_FILE",
+)
+#: Environment variables that reshape the diff a log prints; removed from
+#: every call's environment, as the repository's own settings are pinned
+#: (`origin_history`, ENG-220's review). ``GIT_DIFF_OPTS`` sets the
+#: context lines over the command line's ``-U0``, which the patch parser
+#: reads as a mismatch, so a hit fell back to the per-file count;
+#: ``GIT_ATTR_SOURCE`` (git 2.40 and later) reads the attributes from a
+#: tree no stamp covers; ``GIT_EXTERNAL_DIFF`` names a diff program, and
+#: ``GIT_DIFF_PATH_COUNTER`` and ``GIT_DIFF_PATH_TOTAL`` are what git
+#: hands one.
+RESHAPING_ENV = (
+    "GIT_DIFF_OPTS",
+    "GIT_ATTR_SOURCE",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_DIFF_PATH_COUNTER",
+    "GIT_DIFF_PATH_TOTAL",
 )
 #: Set on every call so that no git the package runs fetches. A partial
 #: clone fetches an object a read needs and the clone lacks from its
@@ -178,7 +196,7 @@ def _environment(
     env.update(extra or {})
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env.update(NO_FETCH)
-    for name in SCRUBBED_ENV:
+    for name in (*SCRUBBED_ENV, *RESHAPING_ENV):
         env.pop(name, None)
     return env
 

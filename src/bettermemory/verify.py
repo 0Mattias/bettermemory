@@ -756,6 +756,9 @@ def _weak_tier_evaluation(
         if claim.kind in ("path", "absent"):
             for sha_set in index["changed_text"].get(claim.rel_path, {}).values():
                 claim_shas |= sha_set
+            # A deletion or creation the header alone prints (an empty
+            # file's) carries no line, and names its commit there.
+            claim_shas |= index.get("header_only", {}).get(claim.rel_path, set())
         bare = bare or not claim_shas & window
         implicated |= claim_shas
     if drifted and (not implicated or (split is not None and bare)):

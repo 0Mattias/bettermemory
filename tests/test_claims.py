@@ -442,6 +442,136 @@ def test_a_no_newline_marker_mid_hunk_is_not_a_hunk_line() -> None:
     assert (result["weak"], result["strict"]) == (True, True)
 
 
+def _header_only(sha: str, path: str, *extended: str) -> str:
+    """One commit's section whose header alone says `path` changed: no
+    ``---``/``+++`` line and no hunk, as git prints an empty file's
+    deletion or creation, or a mode change."""
+    return f"{_MARK}{sha}\ndiff --git a/{path} b/{path}\n" + "".join(
+        f"{line}\n" for line in extended
+    )
+
+
+_EDIT_BESIDE = (
+    f"{_MARK}sha2\n"
+    "diff --git a/pkg/other.py b/pkg/other.py\n"
+    "--- a/pkg/other.py\n"
+    "+++ b/pkg/other.py\n"
+    "@@ -1 +1 @@\n"
+    "-OTHER_CONSTANT_VALUE = 1\n"
+    "+OTHER_CONSTANT_VALUE = 2\n"
+)
+
+
+def test_an_empty_files_deletion_fires_its_path_claim() -> None:
+    """Git prints an empty file's deletion as its header alone, no
+    ``---``/``+++`` line and no hunk. Beside another file's edit, the
+    parser indexed the other file and not the deletion, so the path claim
+    read untouched: a changed claim reading fresh. The header's path is
+    deleted now, and the commit named for it."""
+    stream = (
+        _header_only(
+            "sha1",
+            "pkg/empty.py",
+            "deleted file mode 100644",
+            "index e69de29..0000000",
+        )
+        + _EDIT_BESIDE
+    )
+    index = build_binding_index(stream)
+    assert "pkg/empty.py" in index["deleted"] and "pkg/empty.py" in index["files"]
+    assert index["header_only"] == {"pkg/empty.py": {"sha1"}}
+    assert index["parse_mismatches"] == 0
+    result = claim_level_drift(parse_claim("pkg/empty.py"), index)
+    assert (result["weak"], result["strict"]) == (True, True)
+
+
+def test_an_empty_files_creation_fires_its_absence_claim() -> None:
+    stream = (
+        _header_only(
+            "sha1", "pkg/gone.py", "new file mode 100644", "index 0000000..e69de29"
+        )
+        + _EDIT_BESIDE
+    )
+    index = build_binding_index(stream)
+    assert "pkg/gone.py" in index["files"] and "pkg/gone.py" not in index["deleted"]
+    assert index["header_only"] == {"pkg/gone.py": {"sha1"}}
+    result = claim_level_drift(parse_claim("!pkg/gone.py"), index)
+    assert (result["weak"], result["strict"]) == (True, True)
+
+
+def test_a_mode_change_touches_the_file_and_fires_no_claim() -> None:
+    """A mode change alone is printed as its header: the file is touched,
+    so the stream is no longer read as naming no file, and no claim kind
+    reads a mode, so none fires."""
+    index = build_binding_index(
+        _header_only("sha1", "pkg/mod.py", "old mode 100644", "new mode 100755")
+    )
+    assert index["files"] == {"pkg/mod.py"} and not index["deleted"]
+    assert index["header_only"] == {"pkg/mod.py": {"sha1"}}
+    for spec in ("pkg/mod.py", "pkg/mod.py::handler", "pkg/mod.py::TIMEOUT=30"):
+        result = claim_level_drift(parse_claim(spec), index)
+        assert (result["weak"], result["strict"]) == (False, False), spec
+
+
+def test_a_whole_rename_deletes_its_source_and_touches_its_target() -> None:
+    """The streams claim drift reads print no renames; one that does is
+    read all the same: a rename's source is gone, its target touched."""
+    stream = (
+        f"{_MARK}sha1\n"
+        "diff --git a/pkg/old.py b/pkg/new.py\n"
+        "similarity index 100%\n"
+        "rename from pkg/old.py\n"
+        "rename to pkg/new.py\n"
+    )
+    index = build_binding_index(stream)
+    assert index["deleted"] == {"pkg/old.py"}
+    assert index["files"] == {"pkg/old.py", "pkg/new.py"}
+    assert index["header_only"] == {"pkg/old.py": {"sha1"}, "pkg/new.py": {"sha1"}}
+
+
+def test_a_section_with_lines_is_not_header_only() -> None:
+    """A deletion that prints its lines names its commit through them, as
+    before: its header touches the path, and `header_only` stays empty."""
+    stream = (
+        f"{_MARK}sha1\n"
+        "diff --git a/pkg/mod.py b/pkg/mod.py\n"
+        "deleted file mode 100644\n"
+        "index 1234567..0000000\n"
+        "--- a/pkg/mod.py\n"
+        "+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n"
+        "-TIMEOUT_SECONDS_VALUE = 30\n"
+    )
+    index = build_binding_index(stream)
+    assert index["deleted"] == {"pkg/mod.py"}
+    assert index["header_only"] == {}
+    assert index["changed_text"]["pkg/mod.py"] == {
+        "TIMEOUT_SECONDS_VALUE = 30": {"sha1"}
+    }
+
+
+def test_a_quoted_header_alone_is_read_unquoted() -> None:
+    """Git quotes a path holding a double quote even with quotePath off,
+    on the ``diff --git`` line as on ``---``/``+++``; the producer unquotes
+    both, so an empty file's deletion there is read under its own path."""
+    from bettermemory.origin import _dequote_patch_headers
+
+    raw = (
+        f"{_MARK}sha1\n"
+        'diff --git "a/pkg/we\\"ird.py" "b/pkg/we\\"ird.py"\n'
+        "deleted file mode 100644\n"
+        "index e69de29..0000000\n"
+        f"{_MARK}sha3\n"
+        'diff --git "a/pkg/a\\"b.py" b/pkg/c.py\n'
+        "similarity index 100%\n"
+        'rename from "pkg/a\\"b.py"\n'
+        "rename to pkg/c.py\n"
+    ) + _EDIT_BESIDE
+    index = build_binding_index(_dequote_patch_headers(raw))
+    assert index["deleted"] == {'pkg/we"ird.py', 'pkg/a"b.py'}
+    assert claim_level_drift(parse_claim('pkg/we"ird.py'), index)["weak"] is True
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 def test_a_patch_of_a_last_line_without_a_newline_parses_exactly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

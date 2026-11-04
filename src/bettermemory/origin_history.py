@@ -2,8 +2,9 @@
 dates `origin.commit_author_timestamps` keeps.
 
 Every git `origin` runs reads the history as its objects hold it, whatever
-the repository sets (`AS_STORED_ENV`, `AS_STORED_CONFIG`, `AS_STORED_DIFF`),
-and no count is read behind a shallow file's cut (`cuts`).
+the repository sets (`AS_STORED_ENV`, `AS_STORED_CONFIG`, `AS_STORED_DIFF`,
+`AS_STORED_PATHS`), and no count is read behind a shallow file's cut
+(`cuts`).
 
 `origin` reads from git the author date of every commit a head reaches
 (``git log --format=%at <head>``), or of the commits a head reaches that a
@@ -83,6 +84,16 @@ AS_STORED_CONFIG = (
 #: On every log that prints a diff (the walk's ``--name-only``, the split's
 #: ``--raw``, the patch stream's ``-p``), after the subcommand.
 AS_STORED_DIFF = ("--text", "--ignore-submodules=none")
+#: On every log given a claim's or an anchor's paths, before the
+#: subcommand. On macOS ``core.precomposeUnicode=true`` rewrites each
+#: argument git is given in decomposed Unicode to its composed form, so a
+#: pathspec spelled as a tree stores a decomposed path (``cafe`` and a
+#: combining accent) matched nothing: the windows and the patch missed the
+#: file, and a deleted claimed file read fresh. Pinned off, a pathspec
+#: matches the path its bytes spell. It is pinned on these logs alone:
+#: the setting also spells the working tree's paths, which the capture
+#: reads as the user's git does.
+AS_STORED_PATHS = ("-c", "core.precomposeUnicode=false")
 
 #: ``(root, head)``: the repository root as the caller resolved it and the
 #: full hash of the head the dates were read for.
@@ -330,6 +341,7 @@ __all__ = [
     "AS_STORED_CONFIG",
     "AS_STORED_DIFF",
     "AS_STORED_ENV",
+    "AS_STORED_PATHS",
     "Guard",
     "Key",
     "author_dates",

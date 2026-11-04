@@ -1706,6 +1706,7 @@ def commit_author_timestamps_touching_pathspecs(
             return None
     raw = _git(
         toplevel,
+        *origin_history.AS_STORED_PATHS,
         "log",
         "--format=%aI",
         "HEAD",
@@ -1774,6 +1775,7 @@ def commit_author_sha_pairs_touching_pathspecs(
             return None
     raw = _git(
         toplevel,
+        *origin_history.AS_STORED_PATHS,
         "log",
         "--format=%aI %H",
         "HEAD",
@@ -1934,6 +1936,7 @@ def commit_patch_stream(
         "core.quotePath=false",
         "-c",
         "diff.interHunkContext=0",
+        *origin_history.AS_STORED_PATHS,
         "log",
         *origin_history.AS_STORED_DIFF,
         "--no-walk=unsorted",
