@@ -1968,7 +1968,7 @@ def resolve_hook(
         ),
         model,
     )
-    reads = ExchangeReads(answers)
+    reads = ExchangeReads(answers, session=session, machine=identity.id)
     try:
         with _location_lock(loc):
             res = model.resolve(loc, strict=config.membership.strict, declared=reads)

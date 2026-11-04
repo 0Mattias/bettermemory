@@ -50,6 +50,7 @@ import shutil
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
@@ -70,7 +71,7 @@ from bettermemory import (
     membership_resolve,
     project_file,
 )
-from bettermemory._daemon_client import hook_budget_seconds
+from bettermemory._daemon_client import HOOK_EVENTS, hook_budget_seconds
 from bettermemory.config import Config, MembershipConfig, StorageConfig
 from bettermemory.location import path_liveness, resolve_caller
 from bettermemory.machine import open_machine
@@ -79,6 +80,7 @@ from bettermemory.membership_migrate import UNREACHABLE, migrate
 from bettermemory.origin import Origin
 from bettermemory.store import Store
 
+from . import test_membership_resolution
 from .test_membership_resolution import Container, _as_the_client
 from .test_membership_security import _git, checkout, neutral_git
 
@@ -1177,26 +1179,17 @@ class _Below(Container):
         return path
 
 
-def test_an_exchange_reads_each_declared_folder_once(
-    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """ENG-213: the witness exchange resolves once a round, and each round's
-    resolution read the declared folders it compares in the daemon's
-    namespace (`prefetch_declared`), a hung one at a budget a round. A
-    container client that saw the enclosing folder project stands in the
-    part's folder, which the daemon cannot read, and answers three
-    questions over four posts: its location, its view of the enclosing
+def _a_box_in_the_part(
+    tmp_path: Path, store: Store, config: Config, monkeypatch: pytest.MonkeyPatch
+) -> tuple[_Below, Any, list[tuple[str, bool]], str]:
+    """`_folder_with_a_part`, and a container client that saw the enclosing
+    folder project and now stands in the part's folder, which the daemon
+    cannot read: its exchange asks its location, its view of the enclosing
     project (planned for a commit-less caller), and a history question the
     ladder asks in its transaction (played here: a folder's ladder asks
-    none). The part's stored folder is read once in the exchange, where
-    9.0.0rc18 read it in each round after the views' and reading it beside
-    them with nothing kept read it in every round: the round that reads it
-    names the exchange (``exchange``), the client names it back with its
-    answers (`location.answer`), and the later rounds take the read as made
-    (`location_witness.ExchangeReads`). The reads never outlive the
-    exchange: the next prompt's exchange reads the folder afresh, once,
-    and nothing waits for a round once the resolution is made."""
-    store, config = lab
+    none). The client, the daemon its rounds post to (`_as_the_client`),
+    the declared folders read from now (`_declared_reads`) and the part's
+    stored folder."""
     here, stored, _part = _folder_with_a_part(tmp_path, store, config)
     machine = open_machine(
         tmp_path / "box-state", hardware=lambda: "HW-box", hostname=lambda: "box"
@@ -1208,8 +1201,6 @@ def test_an_exchange_reads_each_declared_folder_once(
     assert seen_there.checkout is not None
     box = _Below(here, "/work/Writing/novel", machine, base=here.parent, at=outer.mount)
     seen = _declared_reads(store, monkeypatch)
-    exchanges: dict[str, Any] = getattr(location_witness, "_EXCHANGES", {})
-    waiting = dict(exchanges)
     real = Membership._resolve
     witness = "c0" * 20
 
@@ -1219,6 +1210,31 @@ def test_an_exchange_reads_each_declared_folder_once(
         return real(self, loc, strict)
 
     monkeypatch.setattr(Membership, "_resolve", asking)
+    return box, daemon, seen, stored
+
+
+def test_an_exchange_reads_each_declared_folder_once(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-213: the witness exchange resolves once a round, and each round's
+    resolution read again the declared folders it compares in the daemon's
+    namespace (`prefetch_declared`): a call a round on the share, where a
+    hung folder's later reads cost nothing, answered by the read still in
+    flight (`location_reads.bounded_reads`), but a slow one's cost each
+    round. A container client in a part's folder answers three questions
+    over four posts (`_a_box_in_the_part`). The part's stored folder is
+    read once in the exchange, where 9.0.0rc18 read it in each round after
+    the views' and reading it beside them with nothing kept read it in
+    every round: the round that reads it names the exchange
+    (``exchange``), the client names it back with its answers
+    (`location.answer`), and the later rounds take the read as made
+    (`location_witness.ExchangeReads`). The reads never outlive the
+    exchange: the next prompt's exchange reads the folder afresh, once,
+    and nothing waits for a round once the resolution is made."""
+    store, config = lab
+    box, daemon, seen, stored = _a_box_in_the_part(tmp_path, store, config, monkeypatch)
+    exchanges: dict[str, Any] = getattr(location_witness, "_EXCHANGES", {})
+    waiting = dict(exchanges)
 
     for prompt in ("first", "next"):
         seen.clear()
@@ -1232,6 +1248,98 @@ def test_an_exchange_reads_each_declared_folder_once(
         ], prompt
         assert asked[0]["exchange"] == asked[1]["exchange"], prompt
         assert exchanges == waiting, prompt
+
+
+def test_a_client_that_names_no_exchange_back_leaves_nothing_kept(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-213 follow-up: a hook client before 9.0.0rc19 names no exchange
+    back. The exchange of `test_an_exchange_reads_each_declared_folder_once`
+    with such a client reads the part's folder each round, as before, and
+    leaves nothing kept: its first answers (no ``exchange``) drop what the
+    round before kept for its session on its machine, and no later round
+    keeps anything for it or names an exchange. Each such exchange left
+    an entry until 256 others crowded it out."""
+    store, config = lab
+    box, daemon, seen, stored = _a_box_in_the_part(tmp_path, store, config, monkeypatch)
+    exchanges: dict[str, Any] = getattr(location_witness, "_EXCHANGES", {})
+    waiting = dict(exchanges)
+    newer = location.answer
+
+    def older(question: Any, answers: Any, cap: Any) -> dict[str, Any]:
+        got = newer(question, answers, cap)
+        return {k: v for k, v in got.items() if not k.startswith(("exchange", "indep"))}
+
+    monkeypatch.setattr(test_membership_resolution, "answer", older)
+
+    for prompt in ("first", "next"):
+        seen.clear()
+        res, asked = _as_the_client(box, daemon, "s-box")
+
+        assert isinstance(res, membership.Resolution), (prompt, res)
+        assert [p for p, _held in seen] == [stored] * 3, prompt
+        assert [sorted(q) for q in asked] == [
+            ["exchange", "views", "write_token"],
+            ["held", "write_token"],
+        ], prompt
+        assert exchanges == waiting, prompt
+
+
+def test_an_exchanges_reads_wait_for_its_own_session_and_machine_within_a_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ENG-213 follow-up: the reads a round keeps for its exchange's next
+    (`location_witness.ExchangeReads`) are taken up only by a round of the
+    session and machine whose round kept them, naming the exchange back,
+    and only within `EXCHANGE_SECONDS`, no longer than the shortest hook's
+    budget. A round of another session or machine naming the nonce reads
+    afresh and leaves them be; past their time they are gone, as they are
+    when their client answers naming no exchange back."""
+    monkeypatch.setattr(location_witness, "_EXCHANGES", OrderedDict())
+    now = [1_000.0]
+    monkeypatch.setattr(
+        location_witness, "time", SimpleNamespace(monotonic=lambda: now[0])
+    )
+    kept = location_witness._EXCHANGES
+    folder = "/share/Writing/novel"
+
+    def round_of(
+        answers: dict[str, Any], session: str | None = "s-box", machine: str = "m-box"
+    ) -> location_witness.ExchangeReads:
+        return location_witness.ExchangeReads(answers, session=session, machine=machine)
+
+    first = round_of({})
+    first[folder] = folder
+    nonce = first.carried()["exchange"]
+    echo = {"remint_ok": True, "exchange": nonce}
+
+    for session, machine in (
+        ("s-other", "m-box"),
+        ("s-box", "m-other"),
+        (None, "m-box"),
+    ):
+        stranger = round_of(echo, session, machine)
+        assert (dict(stranger), stranger.nonce == nonce) == ({}, False)
+    assert list(kept) == [nonce]
+
+    now[0] += location_witness.EXCHANGE_SECONDS - 0.5
+    taken = round_of(echo)
+    assert (dict(taken), taken.nonce) == ({folder: folder}, nonce)
+    assert kept == {}
+    assert taken.carried() == {"exchange": nonce}
+
+    now[0] += location_witness.EXCHANGE_SECONDS
+    late = round_of(echo)
+    assert (dict(late), late.nonce == nonce, kept) == ({}, False, {})
+
+    again = round_of({})
+    again[folder] = None
+    again.carried()
+    older = round_of({"remint_ok": True})
+    older[folder] = None
+    assert (older.carried(), kept) == ({}, {})
+    budgets = [hook_budget_seconds(event) for event in HOOK_EVENTS]
+    assert 0 < location_witness.EXCHANGE_SECONDS <= min(budgets)
 
 
 def _a_part_located(

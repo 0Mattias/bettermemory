@@ -27,6 +27,7 @@ import dataclasses
 import re
 import secrets
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
@@ -314,14 +315,44 @@ class AnsweredToken:
 
 #: A nonce `ExchangeReads` names an exchange by: 128 bits, as hex.
 _NONCE = re.compile(r"[0-9a-f]{32}")
+#: How long the daemon keeps an exchange's reads for the client's next
+#: round, in seconds: the prompt hook's budget
+#: (`_daemon_client.hook_budget_seconds`, 8 s), the shortest any hook
+#: has, so nothing kept outlives the hook whose round kept it (the harness
+#: has killed it by then). A round of a longer hook that comes later reads
+#: afresh. A name of its own: `_daemon_client` is the hook client's
+#: module; tests/test_membership_hung_view.py holds it to the budget.
+EXCHANGE_SECONDS = 8.0
 #: The exchanges whose reads wait for the client's next round, oldest
 #: dropped first past `_EXCHANGES_CAP`: as many as the captures kept
 #: (`location_git.CACHE_CAP`, 256, under 1 MB as JSON), each holding a
 #: folder path or a few, far smaller than a capture. A name of its own, so
 #: a test's patch of the captures' bound does not reach it.
 _EXCHANGES_CAP = 256
-_EXCHANGES: OrderedDict[str, dict[str, str | None]] = OrderedDict()
 _EXCHANGES_LOCK = threading.Lock()
+
+
+@dataclasses.dataclass(frozen=True)
+class _Kept:
+    """One exchange's keeping between its rounds (`ExchangeReads`): the
+    session and machine whose round kept it, the only ones that take it
+    up; the `time.monotonic` it is dropped at; and the folders read."""
+
+    owner: tuple[str | None, str]
+    until: float
+    reads: Mapping[str, str | None]
+
+
+_EXCHANGES: OrderedDict[str, _Kept] = OrderedDict()
+
+
+def _drop(now: float, owner: tuple[str | None, str] | None = None) -> None:
+    """Drop each kept exchange whose time is up at `now`, and each one
+    `owner` kept where one is named; `_EXCHANGES_LOCK` held."""
+    for nonce in [
+        n for n, kept in _EXCHANGES.items() if kept.until <= now or kept.owner == owner
+    ]:
+        del _EXCHANGES[nonce]
 
 
 class ExchangeReads(dict[str, str | None]):
@@ -333,19 +364,33 @@ class ExchangeReads(dict[str, str | None]):
     names the exchange (``exchange``, a nonce the daemon mints, `carried`),
     and the client names it back with its answers (`location.answer`); the
     round that finds it takes the reads out of the daemon's keeping and
-    puts them back only when it asks again. So they never outlive the
-    exchange: a resolution ends it, a new prompt's exchange has a nonce of
-    its own and reads afresh, and one the client left (out of rounds, or
-    its post failed) is crowded out, never named again. A client before
-    9.0.0rc19 names none back, and each of its rounds reads as before."""
+    puts them back only when it asks again. Only a round of the session
+    and machine (the machine the client posted) whose round kept them
+    takes them up, within `EXCHANGE_SECONDS` of that round. So they never
+    outlive the exchange: a resolution ends it, a new prompt's exchange
+    has a nonce of its own and reads afresh, and one the client left (out
+    of rounds, or its post failed) is dropped when its time is up, or
+    crowded out first. A client before 9.0.0rc19 names none back, and
+    each of its rounds reads as before: its first answers (``remint_ok``
+    and no ``exchange``) drop what its session's first round kept on its
+    machine, and nothing is kept for it after, so it leaves nothing
+    behind."""
 
-    def __init__(self, answers: Mapping[str, Any]) -> None:
+    def __init__(
+        self, answers: Mapping[str, Any], *, session: str | None, machine: str
+    ) -> None:
+        self._owner = (session, machine)
+        #: The client answered and named no exchange back: it never will.
+        self.silent = bool(answers) and "exchange" not in answers
         named = answers.get("exchange")
-        got: dict[str, str | None] | None = None
-        if isinstance(named, str) and _NONCE.fullmatch(named):
-            with _EXCHANGES_LOCK:
-                got = _EXCHANGES.pop(named, None)
-        super().__init__(got or {})
+        got: _Kept | None = None
+        with _EXCHANGES_LOCK:
+            _drop(time.monotonic(), self._owner if self.silent else None)
+            if isinstance(named, str) and _NONCE.fullmatch(named):
+                kept = _EXCHANGES.get(named)
+                if kept is not None and kept.owner == self._owner:
+                    got = _EXCHANGES.pop(named)
+        super().__init__(got.reads if got is not None else {})
         self.nonce: str = (
             named
             if isinstance(named, str) and got is not None
@@ -353,12 +398,19 @@ class ExchangeReads(dict[str, str | None]):
         )
 
     def carried(self) -> dict[str, str]:
-        """Keep the reads for the exchange's next round, and the question's
-        key naming them; nothing where nothing was read."""
-        if not self:
+        """Keep the reads for the exchange's next round, for
+        `EXCHANGE_SECONDS`, and the question's key naming them; nothing
+        where nothing was read, or for a client that names no exchange
+        back."""
+        if self.silent or not self:
             return {}
+        now = time.monotonic()
         with _EXCHANGES_LOCK:
-            _EXCHANGES[self.nonce] = dict(self)
+            _drop(now)
+            _EXCHANGES[self.nonce] = _Kept(
+                self._owner, now + EXCHANGE_SECONDS, dict(self)
+            )
+            _EXCHANGES.move_to_end(self.nonce)
             while len(_EXCHANGES) > _EXCHANGES_CAP:
                 _EXCHANGES.popitem(last=False)
         return {"exchange": self.nonce}

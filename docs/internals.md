@@ -619,7 +619,12 @@ exchange (design 8.7) the daemon resolves once a round, and the declared
 folders a round reads in its own namespace are kept for the exchange's
 later rounds by a nonce the round's question names (``exchange``) and
 the client's answers name back (`location_witness.ExchangeReads`): each
-is read once an exchange, and a new prompt's exchange reads afresh.
+is read once an exchange, and a new prompt's exchange reads afresh. Only
+a round of the session and machine whose round kept them takes them up,
+within `EXCHANGE_SECONDS` (8 s, the prompt hook's budget) of that round;
+a client before 9.0.0rc19 names no exchange back, and its first answers
+drop what its session's round kept on its machine, so nothing is kept
+for it.
 
 Every sighting adds its HEAD as a witness, its remotes and its root file.
 A provisional project re-tallies when its evidence signature (HEAD,

@@ -103,13 +103,19 @@ eighteenth was built.
   round's question names (`exchange`) and the client's answers name
   back, so an exchange reads each folder once: over an exchange of three
   questions, once, where 9.0.0rc18 read it twice and reads beside the
-  views with nothing kept read it three times. The reads never outlive
-  the exchange: the round that resolves drops them, a new prompt's
-  exchange has a nonce of its own and reads afresh, and those of an
-  exchange a client left are crowded out. A hook client before 9.0.0rc19
-  names no exchange back, and its folders are read each round, the
-  views' round included; a daemon before it ignores the client's key.
-  (`src/bettermemory/membership_resolve.py`,
+  views with nothing kept read it three times. A hung folder cost no
+  more in the later rounds, whose reads the read still in flight answers
+  at once (ENG-156); a slow one cost its read each round. The reads
+  never outlive the exchange: the round that resolves
+  drops them, a new prompt's exchange has a nonce of its own and reads
+  afresh, only a round of the session and machine whose round kept them
+  takes them up, and they are dropped 8 s after that round (the prompt
+  hook's budget, the shortest a hook has), so those of an exchange a
+  client left go then. A hook client before 9.0.0rc19 names no exchange
+  back, and its folders are read each round, the views' round included;
+  its first answers drop what was kept for it, and nothing is kept for it
+  after, so it leaves nothing behind. A daemon before it ignores the
+  client's key. (`src/bettermemory/membership_resolve.py`,
   `src/bettermemory/location_witness.py`, `src/bettermemory/location.py`,
   `docs/internals.md`)
 
