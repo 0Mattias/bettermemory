@@ -68,6 +68,7 @@ from ..search import (
 )
 from ..store import MemoryNotFoundError, Store, TombstonedError
 from ..verdict import memory_verdict
+from ..verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION
 from ._shared import Context, _advance_turn, _attach_use_tokens, caller_anchoring
 
 if TYPE_CHECKING:
@@ -78,6 +79,7 @@ if TYPE_CHECKING:
     from ..config import BehaviorConfig
     from ..models import MemoryHit
     from ..origin import Origin
+    from ..verdict import MemoryVerdict
     from ..verify import Anchoring
 
 
@@ -869,6 +871,27 @@ def _attach_hit_relations(
                 row["held"] = True
 
 
+def _expand_unread(
+    deps: ToolHandlers, row: dict[str, Any], shown: MemoryVerdict
+) -> None:
+    """Take the top hit and its expanded verdict; make the hit's
+    `commit_drift_unread` the verdict's. The hit's pass and the expansion
+    read one memo, so they agree save where the expansion resolved the leg
+    again (a key the files do not settle, a head moved in between); the
+    later read is the one the response keeps, as for the count."""
+    if shown.commit_drift_unread:
+        for key in ("commit_drift_count", "commit_drift_basis", "claim_drift"):
+            row.pop(key, None)
+        deps.responses.apply_commit_drift_unread(row)
+    elif row.pop("commit_drift_unread", None):
+        verification = row.get("verification")
+        if (
+            isinstance(verification, dict)
+            and verification.get("recommendation") == COMMIT_DRIFT_UNREAD_RECOMMENDATION
+        ):
+            verification["recommendation"] = shown.verification.recommendation
+
+
 def _expand_top_hit(
     deps: ToolHandlers,
     out: list[dict[str, Any]],
@@ -968,6 +991,7 @@ def _expand_top_hit(
                 out[0]["path_drift"] = drift.to_dict()
             expanded_drift_missing = len(drift.missing)
             commit_drift = shown.commit_drift
+            _expand_unread(deps, out[0], shown)
             if commit_drift is not None:
                 out[0]["commit_drift"] = commit_drift.to_dict()
                 expanded_commit_drift_status = commit_drift.status

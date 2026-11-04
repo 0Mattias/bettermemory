@@ -66,6 +66,7 @@ from typing import TYPE_CHECKING
 from ._response import _DriftPass
 from .models import Memory
 from .origin import Origin
+from .verify_basis import CommitDriftUnread
 from .verify import (
     Anchoring,
     CommitDriftStatus,
@@ -97,13 +98,18 @@ class MemoryVerdict:
     no repository, the caller elsewhere, no anchor, or every anchor
     escaping the repository or a phantom); `staleness_verdict` is one of
     ``fresh`` / ``spot_check_recommended`` / ``spot_check_required``,
-    before the trust rule."""
+    before the trust rule. `commit_drift_unread` is True where the leg
+    applies but its history was not read in time
+    (`verify_basis.CommitDriftUnread`): `commit_drift` is None there too,
+    the verdict is ``spot_check_required``, and the surface flags the row
+    (`ResponseBuilder.apply_commit_drift_unread`)."""
 
     id: str
     verification: VerificationStatus
     path_drift: PathDriftReport
     commit_drift: CommitDriftStatus | None
     staleness_verdict: str
+    commit_drift_unread: bool = False
 
 
 @dataclass(frozen=True)
@@ -275,6 +281,7 @@ def _verdict(
         anchor=anchor,
     )
     commit_drift: CommitDriftStatus | None = None
+    unread = False
     if drift is not None:
         # The cwd-aware commit leg, claim-anchored and memoised exactly as
         # the search's per-hit count is (`_DriftPass.lookup`), counted from
@@ -286,7 +293,9 @@ def _verdict(
             return UnresolvedVerdict(
                 id=memory.id, verification=verification, path_drift=path_drift
             )
-        if resolved is not None:
+        if isinstance(resolved, CommitDriftUnread):
+            unread = True
+        elif resolved is not None:
             commit_drift = commit_drift_status(resolved)
     staleness_verdict = compute_staleness_verdict(
         verification=verification,
@@ -306,5 +315,8 @@ def _verdict(
         verification=verification,
         path_drift=path_drift,
         commit_drift=commit_drift,
-        staleness_verdict=staleness_verdict,
+        # A history not read in time never reads fresh: the row's standing
+        # could not be established, as under `apply_trust_unavailable`.
+        staleness_verdict="spot_check_required" if unread else staleness_verdict,
+        commit_drift_unread=unread,
     )

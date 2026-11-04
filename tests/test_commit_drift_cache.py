@@ -21,7 +21,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -1371,6 +1371,177 @@ async def test_memory_show_reads_the_same_block_around_a_warm_search(
         )
         assert by_id[memory_id]["commit_drift_count"] == block["commits_since_verify"]
         assert by_id[memory_id]["commit_drift_basis"] == block["basis"]
+
+
+# ---------------------------------------------------------------------------
+# A history not read in time is not fresh (ENG-220's review)
+# ---------------------------------------------------------------------------
+
+
+def _given_up(monkeypatch: pytest.MonkeyPatch, anchor: str) -> list[list[str]]:
+    """Every walk from `anchor`, its names and the listing of its commits
+    alone, meets its timeout; the argvs that did, in order."""
+    real_run = subprocess.run
+    met: list[list[str]] = []
+
+    def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if any(str(arg).startswith(f"{anchor}..") for arg in argv):
+            met.append(list(argv))
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return met
+
+
+async def test_a_history_not_read_in_time_is_flagged_and_never_fresh(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A memory verified an hour ago at its anchor, one commit on the file
+    it cites since: memory_show reads 1 and spot_check_recommended. Where
+    the walk from the anchor and its listing meet their timeout, the count
+    is omitted (`commit_drift` null on memory_show, no `commit_drift_count`
+    on the hit), and the row says `commit_drift_unread: true`, reads
+    spot_check_required where it would read fresh, and its recommendation
+    says the history was not read in time: on memory_show, on the search
+    hit, and on the expanded top hit, which reads it on its own where the
+    hit's pass read nothing."""
+    import bettermemory._handlers as handlers_module
+    from bettermemory.verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION
+
+    verified = datetime.now(timezone.utc) - timedelta(hours=1)
+    repo = _repo(tmp_path)
+    anchor = _commit(
+        repo, "seed", when=verified - timedelta(hours=1), files={"notes0.md": "a\n"}
+    )
+    store = Store(memory_dir)
+    config = Config(storage=StorageConfig(directory=str(memory_dir)))
+    caller = _caller(repo)
+    home = resolve_caller(store, config, str(repo)).home()
+    memory_id = _write(
+        store,
+        caller,
+        monkeypatch,
+        f"quokka widget rule lives in {repo / 'notes0.md'}",
+        at=verified,
+        verified_head=anchor,
+        home=home,
+    )
+    _commit(
+        repo, "post", when=verified + timedelta(minutes=30), files={"notes0.md": "a1\n"}
+    )
+    state = SessionState()
+    server = build_server(
+        config=config,
+        store=store,
+        state=state,
+        recorder=Recorder(store=store, session_id=state.session_id),
+    )
+    monkeypatch.setattr(handlers_module, "capture_origin", lambda cwd=None: caller)
+
+    async def search(expand_top: bool) -> dict[str, Any]:
+        raw = await _mcp_call(
+            server,
+            "memory_search",
+            {"query": "quokka widget rule", "expand_top": expand_top},
+        )
+        hits = raw.get("result", raw) if isinstance(raw, dict) else raw
+        assert [hit["id"] for hit in hits] == [memory_id]
+        return dict(hits[0])
+
+    shown = await _mcp_call(server, "memory_show", {"id": memory_id})
+    assert shown["commit_drift"]["commits_since_verify"] == 1, "premise: it applies"
+    assert shown["staleness_verdict"] == "spot_check_recommended"
+    assert "commit_drift_unread" not in shown
+    _caches.clear_all()
+    met = _given_up(monkeypatch, anchor)
+    shown = await _mcp_call(server, "memory_show", {"id": memory_id})
+    assert len(met) == 2, "the walk, then its listing"
+    hit = await search(expand_top=False)
+    top = await search(expand_top=True)
+    assert "body" not in hit and "body" in top, "premise: the top hit expanded"
+    monkeypatch.setattr(
+        ResponseBuilder, "attach_commit_drift_counts", lambda *a, **k: None
+    )
+    alone = await search(expand_top=True)
+    assert shown["commit_drift"] is None
+    for row in (shown, hit, top, alone):
+        assert row["commit_drift_unread"] is True
+        assert row["staleness_verdict"] == "spot_check_required"
+        assert row["verification"]["status"] == "fresh"
+        assert row["verification"]["recommendation"] == (
+            COMMIT_DRIFT_UNREAD_RECOMMENDATION
+        )
+        assert "commit_drift_count" not in row
+
+
+def test_the_trust_rule_s_remedy_stands_beside_an_unread_history() -> None:
+    """A row the trust rule demoted keeps the recommendation naming its
+    remedy (a local verify for a `remote` stamp, the key for
+    `trust_unavailable`); it is flagged and required all the same."""
+    remote: dict[str, Any] = {
+        "verification": {"status": "remote", "recommendation": "verify here"},
+        "staleness_verdict": "spot_check_required",
+    }
+    keyless: dict[str, Any] = {
+        "verification": {"status": "fresh", "recommendation": "the key"},
+        "trust_unavailable": True,
+        "staleness_verdict": "spot_check_required",
+    }
+    for row, remedy in ((remote, "verify here"), (keyless, "the key")):
+        ResponseBuilder.apply_commit_drift_unread(row)
+        assert row["commit_drift_unread"] is True
+        assert row["staleness_verdict"] == "spot_check_required"
+        assert row["verification"]["recommendation"] == remedy
+
+
+def test_the_top_hit_keeps_the_expansion_s_read_of_the_history() -> None:
+    """The hit's pass and the expansion read one memo, but where the
+    expansion resolves the leg again (no key, a head moved in between) the
+    two can differ, and the top hit keeps the later read: flagged with its
+    count dropped, or unflagged with the calendar's recommendation back,
+    save where the trust rule's stands."""
+    from types import SimpleNamespace
+
+    from bettermemory.handlers.search import _expand_unread
+    from bettermemory.verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION
+
+    deps = cast(Any, SimpleNamespace(responses=ResponseBuilder(stale_after_days=30)))
+    calendar = verify.compute_verification_status(
+        _NOW - timedelta(days=40), now=_NOW, stale_after_days=30
+    )
+    assert calendar.recommendation, "premise: a stale stamp names its remedy"
+    unread = cast(Any, SimpleNamespace(commit_drift_unread=True, verification=calendar))
+    read = cast(Any, SimpleNamespace(commit_drift_unread=False, verification=calendar))
+    row: dict[str, Any] = {
+        "verification": calendar.to_dict(),
+        "staleness_verdict": "spot_check_required",
+        "commit_drift_count": 2,
+        "commit_drift_basis": "reachability",
+        "claim_drift": {"checked": 1, "drifted": ["src/a.py::f"]},
+    }
+    _expand_unread(deps, row, unread)
+    assert row == {
+        "verification": {
+            **calendar.to_dict(),
+            "recommendation": COMMIT_DRIFT_UNREAD_RECOMMENDATION,
+        },
+        "staleness_verdict": "spot_check_required",
+        "commit_drift_unread": True,
+    }
+    _expand_unread(deps, row, read)
+    assert row == {
+        "verification": calendar.to_dict(),
+        "staleness_verdict": "spot_check_required",
+    }
+    trusted: dict[str, Any] = {
+        "verification": {**calendar.to_dict(), "recommendation": "the key"},
+        "trust_unavailable": True,
+        "commit_drift_unread": True,
+    }
+    _expand_unread(deps, trusted, read)
+    assert "commit_drift_unread" not in trusted
+    assert trusted["verification"]["recommendation"] == "the key"
 
 
 # ---------------------------------------------------------------------------

@@ -28,13 +28,14 @@ import unicodedata
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from bettermemory import _caches, _git, _response, origin, origin_history, verify
 from bettermemory.claims import load_claims
 from bettermemory.verify import ResolvedCommitDrift
+from bettermemory.verify_basis import CommitDriftUnread
 
 from .test_origin_patch import (  # noqa: F401
     _BASES,
@@ -184,6 +185,18 @@ def _hit(
 ) -> ResolvedCommitDrift | None:
     """One search hit's drift, cold, as the recall path resolves it: on
     the walk from `verified_head` where it answers, else on dates."""
+    got = _unread_or_hit(repo, claims, verified_head, anchors)
+    assert not isinstance(got, CommitDriftUnread), "the history was read"
+    return got
+
+
+def _unread_or_hit(
+    repo: Path,
+    claims: list[str],
+    verified_head: str | None,
+    anchors: tuple[str, ...] = (),
+) -> ResolvedCommitDrift | CommitDriftUnread | None:
+    """`_hit`, where the history may not be read in time."""
     _caches.clear_all()
     return _response._resolve_hit_drift(
         cwd=repo,
@@ -1229,37 +1242,31 @@ def test_a_walk_whose_names_time_out_keeps_the_conservative_count(
     assert again is first and len(met) == 2, "one walk for the pass"
 
 
-def test_a_walk_whose_listing_times_out_too_omits_the_count(
+def test_a_walk_whose_listing_times_out_too_reads_unread(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The walk's names and the listing of its commits alone both meet
-    their timeout: the count is omitted on the search hit (foo claimed,
-    which the author dates read as 0), on `memory_show`, and in the health
-    rollup (src/mod.py cited, which the dates read as 1 where the walk
-    reads 2), never read off the author dates that miss the rebased
-    commit. A later hit at the anchor in the same pass runs no walk and
-    omits its count too, counted as a timeout."""
+    their timeout: the search hit's resolution (foo claimed, which the
+    author dates read as 0) is `CommitDriftUnread`, neither a count nor
+    the None of a leg that does not apply, and the health rollup
+    (src/mod.py cited, which the dates read as 1 where the walk reads 2)
+    gives the memory no row and counts it unread; neither reads the
+    author dates that miss the rebased commit. A later hit at the anchor
+    in the same pass runs no walk and is unread too, counted as a
+    timeout. What the surfaces say of it: the tests below and
+    `test_commit_drift_cache`."""
     from bettermemory import health_stats, verify_basis
-    from bettermemory.health_model import MemoryStats
 
     repo = _repository(tmp_path)
     anchor = _rebased(repo)
     head = _plain(repo, "rev-parse", "HEAD")
-    stats = MemoryStats(
-        id="m",
-        scopes=[],
-        summary="s",
-        created=_VERIFIED,
-        updated=_VERIFIED,
-        last_verified_at=_VERIFIED,
-    )
 
-    def rollup() -> list[int]:
+    def rollup() -> tuple[list[int], int]:
         _caches.clear_all()
         history = origin.commit_author_timestamps(repo)
         assert history is not None
-        rows = health_stats._drift_rows_for_candidates(
-            [stats],
+        rows, unread = health_stats._drift_rows_for_candidates(
+            [_stats("m")],
             root=repo,
             timestamps=history,
             toplevel=repo,
@@ -1268,15 +1275,15 @@ def test_a_walk_whose_listing_times_out_too_omits_the_count(
             verified_head_by_id={"m": anchor},
             head=head,
         )
-        return [row.commits_since_verify for row in rows]
+        return [row.commits_since_verify for row in rows], unread
 
-    assert rollup() == [2], "premise: the walk reads both commits"
+    assert rollup() == ([2], 0), "premise: the walk reads both commits"
     met = _timing_out(monkeypatch, "--boundary")
-    assert _hit(repo, [_FOO], anchor) is None
+    assert _unread_or_hit(repo, [_FOO], anchor) is CommitDriftUnread.UNREAD
     assert len(met) == 2, "the walk, then its listing"
     _caches.clear_all()
     assert verify_basis._count_since_verify(repo, _VERIFIED, anchor) is None
-    assert rollup() == []
+    assert rollup() == ([], 1)
     _caches.clear_all()
     walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
     for _ in range(2):
@@ -1293,7 +1300,106 @@ def test_a_walk_whose_listing_times_out_too_omits_the_count(
             verified_head=anchor,
             walked=walked,
         )
-        assert got is None
+        assert got is CommitDriftUnread.UNREAD
         assert origin_history.unwalked() == unwalked + 1
         assert _git.timed_out_calls() > timed_out
     assert len(met) == 2 * 3 + 2, "the second hit ran no walk"
+
+
+_URL = "git@github.com:example/as-stored.git"
+
+
+def _stats(memory_id: str) -> Any:
+    from bettermemory.health_model import MemoryStats
+
+    return MemoryStats(
+        id=memory_id,
+        scopes=[],
+        summary="s",
+        created=_VERIFIED,
+        updated=_VERIFIED,
+        last_verified_at=_VERIFIED,
+    )
+
+
+class _Elsewhere:
+    """An anchoring stand-in that resolves every cited commit at `root`."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def for_record(self, memory_id: str) -> _Elsewhere:
+        return self
+
+    def commit_root(self, cited: str | None) -> tuple[str, str]:
+        return str(self.root), "stand-in"
+
+
+@pytest.mark.parametrize("drifting", [False, True], ids=["alone", "beside a row"])
+def test_the_health_rollups_count_a_walk_given_up_as_unread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drifting: bool
+) -> None:
+    """Where the walk from m's anchor and its listing meet their timeout,
+    m gets no row and is counted under `unread`, alone (where the rollup
+    read as caught up) and beside d, which the dates count: in
+    `commit_drift_debt`, counted at the caller's checkout or at a root its
+    cited commit resolves at, and in the estate check's groups, at a live
+    view and at a recorded worktree; and the text report says so."""
+    from types import SimpleNamespace
+
+    from bettermemory import health, health_render
+    from bettermemory.health_model import CrossRepoDrift
+    from bettermemory.origin import Origin
+
+    repo = _repository(tmp_path)
+    _plain(repo, "remote", "add", "origin", _URL)
+    anchor = _rebased(repo)
+    ids = ["m", "d"] if drifting else ["m"]
+    candidates = [_stats(memory_id) for memory_id in ids]
+    legs: dict[str, Any] = {
+        "anchor_paths_by_id": {memory_id: (_MOD,) for memory_id in ids},
+        "claims_by_id": None,
+        "verified_head_by_id": {"m": anchor},
+    }
+    met = _timing_out(monkeypatch, "--boundary")
+    _caches.clear_all()
+    debt = health._compute_commit_drift_debt(
+        by_id={stats.id: stats for stats in candidates},
+        origin_repo_by_id={memory_id: _URL for memory_id in ids},
+        caller_origin=Origin(cwd=str(repo), repo=_URL, branch=None),
+        **legs,
+    )
+    assert met, "premise: the walk met its timeout"
+    assert debt is not None
+    drifted = ["d"] if drifting else []
+    assert ([row.id for row in debt.rows], debt.unread) == (drifted, 1)
+    assert debt.to_dict()["unread"] == 1
+    history = origin.commit_author_timestamps(repo)
+    assert history is not None
+    rows, unconfirmed, unread = health._drift_rows_by_root(
+        candidates,
+        cwd_path=repo,
+        timestamps=history,
+        toplevel=None,
+        head=None,
+        anchoring=cast(Any, _Elsewhere(repo)),
+        **legs,
+    )
+    assert ([row.id for row in rows], unconfirmed, unread) == (drifted, 0, 1)
+    live = health._cross_repo_group(_URL, str(repo), candidates, **legs)
+    skipped: list[dict[str, str]] = []
+    recorded = health._recorded_root_group(
+        _URL, str(repo), repo, candidates, skipped, **legs
+    )
+    assert skipped == []
+    for group in (live, recorded):
+        assert group is not None
+        assert (group.total_drifted, group.unread) == (len(drifted), 1)
+        assert group.to_dict()["unread"] == 1
+    assert live is not None
+    report = SimpleNamespace(
+        commit_drift_debt=debt, cross_repo_drift=CrossRepoDrift(groups=[live])
+    )
+    text = "\n".join(health_render._drift_lines(cast(Any, report)))
+    assert "unread (1)" in text and "caught up" not in text
+    assert f"{len(drifted)} drifted, 1 unread of {len(ids)} candidate(s)" in text

@@ -290,8 +290,14 @@ def _drift_lines(report: HealthReport) -> list[str]:
             f"Commit drift — anchor={printable(cd.current_repo or '?')}  "
             f"drifted={cd.total_drifted}:"
         )
+        if cd.unread:
+            lines.append(
+                f"  unread ({cd.unread}): the commit history was not read in "
+                "time; spot-check them"
+            )
         if not cd.rows:
-            lines.append("  (none — anchored memories are caught up with HEAD)")
+            if not cd.unread:
+                lines.append("  (none — anchored memories are caught up with HEAD)")
         else:
             lines.append(f"  drifted ({cd.total_drifted}, most commits-ahead first):")
             for row in cd.rows:
@@ -318,6 +324,8 @@ def _drift_lines(report: HealthReport) -> list[str]:
         lines.append(header + ":")
         for group in xr.groups:
             state = f"{group.total_drifted} drifted" if group.total_drifted else "clean"
+            if group.unread:
+                state = f"{group.total_drifted} drifted, {group.unread} unread"
             lines.append(
                 f"  {printable(group.repo)} [{printable(group.worktree_root)}]: "
                 f"{state} of {group.candidates} candidate(s)"

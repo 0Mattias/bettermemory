@@ -530,15 +530,27 @@ eighteenth was built.
   now lists its commits alone, with no diff read, and claim drift keeps
   that whole length on the reachable basis (`ReachableWalk.listed`,
   which moved to `origin_history`); where that listing meets its timeout
-  too, the search hit and `memory_show` omit the count and the health
-  rollup leaves the memory out, as where git cannot read the history
-  (`origin_history.unwalked`). A later hit at the anchor in the same
+  too, no count is read (`origin_history.unwalked`), and the memory does
+  not read as fresh either: the search hit, the expanded top hit and
+  `memory_show` omit the count but carry `commit_drift_unread: true`,
+  read `spot_check_required` and recommend a spot-check because the
+  history was not read in time, as a row whose standing cannot be
+  established does under `trust_unavailable`
+  (`verify_basis.CommitDriftUnread`,
+  `ResponseBuilder.apply_commit_drift_unread`); and the health rollups
+  count it under `unread` in `commit_drift_debt` and in each
+  `cross_repo_drift` group, where it had no row and a rollup of such
+  memories alone read as caught up. A later hit at the anchor in the same
   pass runs no walk again, and the search keeps the value for a minute,
   as it keeps other timeouts'. (`src/bettermemory/origin.py`,
   `src/bettermemory/origin_history.py`, `src/bettermemory/_git.py`,
   `src/bettermemory/verify.py`, `src/bettermemory/verify_basis.py`,
-  `src/bettermemory/_response.py`, `src/bettermemory/health_stats.py`,
-  `tests/test_origin_as_stored.py`)
+  `src/bettermemory/_response.py`, `src/bettermemory/verdict.py`,
+  `src/bettermemory/handlers/show.py`,
+  `src/bettermemory/handlers/search.py`, `src/bettermemory/health.py`,
+  `src/bettermemory/health_stats.py`, `src/bettermemory/health_model.py`,
+  `src/bettermemory/health_render.py`, `docs/api.md`,
+  `tests/test_origin_as_stored.py`, `tests/test_commit_drift_cache.py`)
 
 - **No window passes a command line's bound (ENG-220).** The patch
   stream and the split's listing named up to 256 commits on git's

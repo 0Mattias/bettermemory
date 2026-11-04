@@ -51,6 +51,7 @@ from .origin import (
     walk_files_signature,
 )
 from .origin_history import Walked, unwalked
+from .verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION, CommitDriftUnread
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .time_utils import parse_event_ts
@@ -123,7 +124,8 @@ SIMILAR_HITS_SHOWN = 5
 # log, log.follow, log.showRoot and a submodule's ignore, are pinned on
 # every git `origin` runs, `origin_history.AS_STORED_CONFIG` and
 # `AS_STORED_DIFF`, and the stamps stay); the value is the resolved count,
-# basis and claim detail, or None for a hit whose count is omitted. A
+# basis and claim detail, None for a hit whose count is omitted, or
+# `CommitDriftUnread` where the history was not read in time. A
 # commit moves the head and so every key; a new stamp, a rewritten body, a
 # changed claim or an edited attributes file changes its own row's, and an
 # edited config or
@@ -155,7 +157,8 @@ _DriftKey: TypeAlias = tuple[
     tuple[object, ...] | None,
     tuple[object, ...],
 ]
-_DRIFT_MEMO: OrderedDict[_DriftKey, ResolvedCommitDrift | None] = OrderedDict()
+_Drift: TypeAlias = ResolvedCommitDrift | CommitDriftUnread | None
+_DRIFT_MEMO: OrderedDict[_DriftKey, _Drift] = OrderedDict()
 _DRIFT_MEMO_LOCK = threading.Lock()
 
 # The resolutions a git timeout cut short, by key, with when each was kept
@@ -169,9 +172,7 @@ _DRIFT_MEMO_LOCK = threading.Lock()
 # read is (`origin_history._FAILURE_SECONDS`), so a timeout a loaded host
 # met clears within it. Bounded as `_DRIFT_MEMO` is, and emptied with it.
 _TIMED_OUT_SECONDS = 60.0
-_DRIFT_TIMED_OUT: OrderedDict[_DriftKey, tuple[float, ResolvedCommitDrift | None]] = (
-    OrderedDict()
-)
+_DRIFT_TIMED_OUT: OrderedDict[_DriftKey, tuple[float, _Drift]] = OrderedDict()
 
 
 @_caches.register
@@ -181,7 +182,7 @@ def _clear_drift_memo() -> None:
         _DRIFT_TIMED_OUT.clear()
 
 
-def _recall_drift(key: _DriftKey) -> tuple[bool, ResolvedCommitDrift | None]:
+def _recall_drift(key: _DriftKey) -> tuple[bool, _Drift]:
     """Whether the per-hit memo holds `key`, and the value it holds (or a
     timeout's, less than `_TIMED_OUT_SECONDS` old); a hit becomes the most
     recently used entry."""
@@ -198,8 +199,7 @@ def _recall_drift(key: _DriftKey) -> tuple[bool, ResolvedCommitDrift | None]:
 
 
 def _remember_drift(
-    resolved: dict[_DriftKey, ResolvedCommitDrift | None],
-    timed_out: dict[_DriftKey, ResolvedCommitDrift | None],
+    resolved: dict[_DriftKey, _Drift], timed_out: dict[_DriftKey, _Drift]
 ) -> None:
     """Merge one search's resolutions, and those a timeout cut short, into
     the per-hit memo and evict the least recently used entries past
@@ -399,8 +399,8 @@ class _DriftPass:
         self._located_read = False
         # What this pass resolved, stored at the end if nothing it is keyed
         # on moved while it ran; and what a timeout cut short, kept a while.
-        self._resolved: dict[_DriftKey, ResolvedCommitDrift | None] = {}
-        self._timed_out: dict[_DriftKey, ResolvedCommitDrift | None] = {}
+        self._resolved: dict[_DriftKey, _Drift] = {}
+        self._timed_out: dict[_DriftKey, _Drift] = {}
         # The walks of this pass no memo keeps: several hits at one dead
         # anchor fork one walk, and so do several at one anchor where the
         # walk memo cannot key the walk (`commits_since_anchor`).
@@ -448,9 +448,10 @@ class _DriftPass:
 
     def lookup(
         self, record: Any, last_verified_at: datetime | None, *, resolve: bool = True
-    ) -> tuple[bool, ResolvedCommitDrift | None]:
+    ) -> tuple[bool, _Drift]:
         """One row's commit drift: whether it is answered, and the
-        resolution (None where the count is omitted).
+        resolution (None where the count is omitted, `CommitDriftUnread`
+        where the history was not read in time).
 
         Answered without git where the signal does not apply (never
         verified, written in no repository with a remote, a record the
@@ -1142,6 +1143,25 @@ class ResponseBuilder:
             verification["recommendation"] = recommendation
         row["staleness_verdict"] = "spot_check_required"
 
+    @staticmethod
+    def apply_commit_drift_unread(row: dict[str, Any]) -> None:
+        """Mutate one stamped row whose commit history was not read in time
+        (`verify_basis.CommitDriftUnread`): the count stays omitted, but
+        `commit_drift_unread: true` says it was not read, the verdict drops
+        to `spot_check_required`, as a row whose standing cannot be
+        established does (`apply_trust_unavailable`), and the
+        recommendation names it, unless the trust rule's names its own
+        remedy (a `remote` stamp, or `trust_unavailable`)."""
+        row["commit_drift_unread"] = True
+        row["staleness_verdict"] = "spot_check_required"
+        verification = row.get("verification")
+        if (
+            isinstance(verification, dict)
+            and verification.get("status") != "remote"
+            and not row.get("trust_unavailable")
+        ):
+            verification["recommendation"] = COMMIT_DRIFT_UNREAD_RECOMMENDATION
+
     def apply_trust(
         self,
         row: dict[str, Any],
@@ -1269,7 +1289,9 @@ class ResponseBuilder:
           invalidate — no cited/attested path anchors AND no declared
           claims at all, or none that resolve inside the caller's repo
           (the claim-anchored drift policy; see
-          `verify.resolve_commit_drift_count`).
+          `verify.resolve_commit_drift_count`),
+        - the history was not read in time; the hit then carries
+          `commit_drift_unread: true` (`apply_commit_drift_unread`).
 
         Absence-as-signal IS the right analogy to `path_drift` here — but
         only once the surface is named, because `path_drift` answers to two
@@ -1768,9 +1790,14 @@ def _open_drift_pass(
 
 
 def _stamp_hit_drift(
-    hit_dict: dict[str, Any], hit: MemoryHit, resolved: ResolvedCommitDrift
+    hit_dict: dict[str, Any],
+    hit: MemoryHit,
+    resolved: ResolvedCommitDrift | CommitDriftUnread,
 ) -> None:
     """Take one hit and its resolved drift; stamp `hit_dict` with them, return None."""
+    if isinstance(resolved, CommitDriftUnread):
+        ResponseBuilder.apply_commit_drift_unread(hit_dict)
+        return
     # Additive, claim-carrying hits only; mirrors
     # `CommitDriftStatus.to_dict`'s claim_drift block so both
     # display surfaces speak the same sub-dict. Built fresh per
@@ -1826,10 +1853,11 @@ def _resolve_hit_drift(
     since: datetime,
     verified_head: str | None,
     walked: Walked,
-) -> ResolvedCommitDrift | None:
+) -> _Drift:
     """One hit's commit drift as `ResponseBuilder.attach_commit_drift_
     counts` stamps it: the count, the basis it was measured on and the
-    claim detail, or None when the count is omitted. `timestamps` reads
+    claim detail, None when the count is omitted, or `CommitDriftUnread`
+    when the walk was given up. `timestamps` reads
     the head's whole history (`_DriftPass.timestamps`), called only on the
     author-date basis, as `verify.compute_commit_drift` reads it; a None
     there omits the count, as it does on that function. Everything else
@@ -1850,9 +1878,9 @@ def _resolve_hit_drift(
         )
         if walk is None and unwalked() != given_up:
             # The walk and the listing of its commits both met their
-            # timeout: omitted, as where the history cannot be read, never
-            # counted off the author dates (`origin_history.unwalked`).
-            return None
+            # timeout: no count, never one off the author dates
+            # (`origin_history.unwalked`), and not read as fresh.
+            return CommitDriftUnread.UNREAD
     if walk is not None:
         count = len(walk.commits)
         basis = BASIS_REACHABILITY

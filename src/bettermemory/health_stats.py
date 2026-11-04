@@ -916,12 +916,15 @@ def _drift_rows_for_candidates(
     claims_by_id: dict[str, tuple[str, ...]] | None,
     verified_head_by_id: dict[str, str | None] | None = None,
     head: str | None = None,
-) -> list[CommitDriftRow]:
+) -> tuple[list[CommitDriftRow], int]:
     """The per-candidate count-and-narrow loop, shared between the
     caller-repo rollup and the cross-repo estate check — one loop so
     the two cannot compute different drift policies for the same
-    memory. Returns drifting rows sorted heaviest-first; the caller
-    owns capping and the empty-vs-None distinction.
+    memory. Returns drifting rows sorted heaviest-first, and how many
+    candidates' history was not read in time (`unread`: the walk and its
+    listing met their timeout, `origin_history.unwalked`), which get no
+    row and are not counted clean either; the caller owns capping and the
+    empty-vs-None distinction.
 
     `verified_head_by_id` and `head` (the commit `root`'s HEAD names,
     resolved once by the caller) select the basis per candidate, the
@@ -930,6 +933,7 @@ def _drift_rows_for_candidates(
     reachable walk from it, the rest over the author-date bisect.
     """
     rows: list[CommitDriftRow] = []
+    unread = 0
     # The walks of this pass no memo keeps (`commits_since_anchor`): a store
     # verified at one dead anchor forks one walk for it, and so does one
     # anchor where the walk memo cannot key the walk.
@@ -957,7 +961,9 @@ def _drift_rows_for_candidates(
             if walk is None and unwalked() != given_up:
                 # The walk and its listing met their timeout: no row, as
                 # the per-memory surfaces omit the count, never one counted
-                # off the author dates (`origin_history.unwalked`).
+                # off the author dates (`origin_history.unwalked`), and
+                # counted apart, not read as caught up.
+                unread += 1
                 continue
         if walk is not None:
             count = len(walk.commits)
@@ -1014,7 +1020,7 @@ def _drift_rows_for_candidates(
                 )
             )
     rows.sort(key=lambda r: r.commits_since_verify, reverse=True)
-    return rows
+    return rows, unread
 
 
 # ---------------------------------------------------------------------------

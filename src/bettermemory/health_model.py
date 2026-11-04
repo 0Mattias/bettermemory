@@ -923,6 +923,9 @@ class CommitDriftDebt:
     store here could resolve (design 3.6: not the home checkout's, which
     has no live view here, nor the caller's, which does not hold it), so
     their commits were not counted; present in the payload when non-zero.
+    `unread` counts the candidates whose history was not read in time (the
+    walk from the stamp's head and its listing met their timeout), so they
+    have no row and are not caught up either; present when non-zero.
     """
 
     current_repo: str | None
@@ -930,6 +933,7 @@ class CommitDriftDebt:
     rows: list[CommitDriftRow] = field(default_factory=list)
     total_drifted: int = 0
     unconfirmed: int = 0
+    unread: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -940,6 +944,8 @@ class CommitDriftDebt:
         }
         if self.unconfirmed:
             out["unconfirmed"] = self.unconfirmed
+        if self.unread:
+            out["unread"] = self.unread
         return out
 
 
@@ -968,22 +974,27 @@ class CrossRepoDriftGroup:
     anchored to the memory's recorded worktree instead of the caller's
     cwd. `candidates` counts the claim-anchored, verified memories the
     group was judged over, so "clean" is legible as "checked N, none
-    drifted" rather than "nothing to check"."""
+    drifted" rather than "nothing to check". `unread` is
+    `CommitDriftDebt.unread` for the group, present when non-zero."""
 
     repo: str
     worktree_root: str
     rows: list[CommitDriftRow] = field(default_factory=list)
     total_drifted: int = 0
     candidates: int = 0
+    unread: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "repo": self.repo,
             "worktree_root": self.worktree_root,
             "total_drifted": self.total_drifted,
             "candidates": self.candidates,
             "rows": [r.to_dict() for r in self.rows],
         }
+        if self.unread:
+            out["unread"] = self.unread
+        return out
 
 
 @dataclass

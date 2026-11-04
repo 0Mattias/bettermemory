@@ -202,6 +202,10 @@ def _show_response(
         "verified_head": memory.verified_head,
         **index_reads,
     }
+    if shown.commit_drift_unread:
+        # The commit leg applies and its history was not read in time:
+        # `commit_drift` stays null, the row says why and is not fresh.
+        deps.responses.apply_commit_drift_unread(response)
     return response
 
 

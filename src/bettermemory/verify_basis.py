@@ -5,18 +5,22 @@ count was measured on; `verify` re-exports both, where callers import
 them. `_count_since_verify` is the first step of
 `verify.compute_commit_drift`: the commits since a verify, counted in
 reachability space from the stamp's `verified_head` while that commit is
-still an ancestor of HEAD, and by author date otherwise.
+still an ancestor of HEAD, and by author date otherwise. `CommitDriftUnread`
+is the third outcome, where neither basis was read in time.
 
 This module lives apart from `verify.py` to keep it well under the
 package's 1,900-line watch line (ENG-97). It is a leaf of the verify
-family: from the package it imports `origin` alone, and `verify` imports
-it. A patch on `commit_author_timestamps`, `commits_since_anchor` or
-`repo_toplevel_and_head` that must reach the count targets this module.
+family: from the package it imports `origin` and `origin_history` alone;
+`verify` imports it, and the per-hit surfaces (`_response`, `verdict`)
+import `CommitDriftUnread` from it. A patch on `commit_author_timestamps`,
+`commits_since_anchor` or `repo_toplevel_and_head` that must reach the
+count targets this module.
 """
 
 from __future__ import annotations
 
 import bisect
+import enum
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +39,27 @@ from .origin_history import unwalked
 # an ancestor of HEAD, the author-date count otherwise.
 BASIS_REACHABILITY = "reachability"
 BASIS_AUTHOR_DATE = "author-date"
+
+
+class CommitDriftUnread(enum.Enum):
+    """A commit leg whose history was not read in time: the walk from the
+    stamp's head and the listing of its commits both met their timeout
+    (`origin_history.unwalked`), and the dates are not read in their
+    place, since a rebased or back-dated commit moves them. Not None,
+    which says the leg does not apply: the per-memory surfaces omit the
+    count but flag the row and stop it reading fresh
+    (`_response.ResponseBuilder.apply_commit_drift_unread`), and the
+    health rollups count it under `unread`."""
+
+    UNREAD = "unread"
+
+
+# The recommendation such a row carries, on the search hit and memory_show.
+COMMIT_DRIFT_UNREAD_RECOMMENDATION = (
+    "The repository's commit history could not be read in time, so the "
+    "commits since this memory was verified were not counted. Spot-check "
+    "a claim before relying on the memory."
+)
 
 
 def _count_since_verify(
