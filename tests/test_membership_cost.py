@@ -57,7 +57,9 @@ _DEVELOPER_READLINKS = 1 if gitsystem._MACOS else 0
 #: git directory and again for the signature), HEAD, its ref, packed-refs
 #: and config (4), config.worktree and the ref files that decide a
 #: branch's short name in its git directory (11 for ``main``), and the
-#: probe's 2 of the git directory.
+#: probe's 2 of the git directory; on every Python, since the capture
+#: resolves its directory with `os.path.realpath` (`Path.resolve` stats it
+#: once more before 3.13).
 _ORIGIN_HIT_STATS = 19
 #: An origin cache hit's lstat calls besides three for each component of
 #: the resolved path: the probes of HEAD's ref (4), of the reading rule

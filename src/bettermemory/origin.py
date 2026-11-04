@@ -175,13 +175,9 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
             cwd, source = declared
         elif source is None:
             source = identity.SOURCE_PROCESS_CWD
-    if cwd is None:
-        try:
-            resolved = Path.cwd().resolve()
-        except (FileNotFoundError, OSError):
-            return Origin(source=source)
-    else:
-        resolved = cwd.resolve()
+    resolved = _resolved(cwd)
+    if resolved is None:
+        return Origin(source=source)
     cwd_str = str(resolved)
 
     started = time.monotonic()
@@ -255,6 +251,24 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
             ),
         )
     return origin
+
+
+def _resolved(cwd: Path | None) -> Path | None:
+    """`cwd`, or else the process's directory, resolved as
+    `os.path.realpath` resolves it; None where the process's directory is
+    gone (`capture`).
+
+    Not `Path.resolve`: before Python 3.13 it stats the path once more
+    after resolving it (pathlib's check for a symlink loop, which raised
+    RuntimeError out of `capture` for one), so a cache hit cost a stat more
+    on 3.11 and 3.12 than on 3.13 (tests/test_membership_cost.py).
+    """
+    if cwd is not None:
+        return Path(os.path.realpath(cwd))
+    try:
+        return Path(os.path.realpath(Path.cwd()))
+    except (FileNotFoundError, OSError):
+        return None
 
 
 def capture_caller(cwd: Path | None = None) -> Origin:

@@ -998,6 +998,23 @@ def test_a_capture_whose_later_probe_could_not_run_is_not_cached(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(os.name == "nt", reason="a symlink needs a privilege on Windows")
+def test_a_directory_in_a_symlink_loop_is_no_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory named through a symlink loop resolves as
+    `os.path.realpath` resolves it, on every Python: `Path.resolve` stated
+    the path once more before 3.13 and raised RuntimeError for a loop, out
+    of `capture`, from the caller's directory too. It is no repository."""
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.symlink_to(second)
+    second.symlink_to(first)
+    got = capture(first)
+    assert got.repo is None and got.worktree_root is None
+    monkeypatch.setattr(Path, "cwd", staticmethod(lambda: first))
+    assert capture().repo is None
+
+
 def test_two_directories_are_two_entries(
     tmp_path: Path, probes: list[tuple[str, ...]]
 ) -> None:
