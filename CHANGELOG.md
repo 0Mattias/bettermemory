@@ -658,16 +658,24 @@ eighteenth was built.
   global files git names, so one taken while git did not answer is read
   again once it does. Each such file costs a kept capture one stat: a
   steady prompt makes 17 stat calls (15 `os.stat`, 2 `os.lstat`) with a
-  home folder's three global files and macOS's two system files, where
-  E16 counted 12 (`docs/internals.md`, `docs/membership-design.md`). The
-  config a shell's environment gives git (`GIT_CONFIG_COUNT`, `git -c`)
-  is not read: it is not the repository's or the machine's.
-  `_git.run_git` takes `unset`, applied beneath its scrub and pins like
-  `env`. (`src/bettermemory/gitsystem.py`,
-  `src/bettermemory/gitconfig.py`, `src/bettermemory/location_git.py`,
-  `src/bettermemory/location.py`, `src/bettermemory/_git.py`,
+  home folder's three global files and macOS's two system files, and on
+  macOS one readlink, the developer directory's link, where E16 counted
+  12 (`docs/internals.md`, `docs/membership-design.md`). A file that is
+  no regular file, as the null device `GIT_CONFIG_GLOBAL` names in CI,
+  is stamped by its kind alone, since its times move with every write.
+  The origin cache (`origin.capture`), which saw a rule in the global
+  config only once its ten minutes ran out, is kept against the same
+  machine config files and the files they include, so it answers with
+  the URL the capture keys at once (`repos_match` in health and recall
+  compared the alias meanwhile). The config a shell's environment gives
+  git (`GIT_CONFIG_COUNT`, `git -c`) is not read: it is not the
+  repository's or the machine's. `_git.run_git` takes `unset`, applied
+  beneath its scrub and pins like `env`.
+  (`src/bettermemory/gitsystem.py`, `src/bettermemory/gitconfig.py`,
+  `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
+  `src/bettermemory/_git.py`, `src/bettermemory/origin.py`,
   `tests/test_location_git_config.py`, `tests/test_membership_cost.py`,
-  `tests/test_git_no_fetch.py`)
+  `tests/test_git_no_fetch.py`, `tests/test_origin_cache.py`)
 
 - **A plant seen first while the checkout's share answers with errors
   no longer takes its record (ENG-217).** Since 9.0.0rc18 a checkout

@@ -32,7 +32,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _caches, githead, identity, origin
+from bettermemory import _caches, githead, identity, location, origin
 from bettermemory._git import subcommand
 from bettermemory.origin import Origin, capture
 
@@ -352,6 +352,46 @@ def test_a_remote_set_url_inside_the_lifetime_is_seen_by_the_next_capture(
     assert probes == _PROBES
     assert after.repo == renamed
     _same(after, _uncached(repo))
+
+
+def test_a_global_insteadof_rule_inside_the_lifetime_is_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probes: list[tuple[str, ...]]
+) -> None:
+    """ENG-207's review, residual 5: the signature held the repository's
+    config alone, so an insteadOf rule added to the global config, or to
+    a file it includes, was answered from the capture for up to ten
+    minutes with the alias, while `location` keyed the URL it stands for
+    at once. The machine's config files and their includes are in the
+    signature now (`location_git.machine_config_stamps`): the next capture
+    runs the probes and answers with the URL location keys, and the one
+    after is a hit."""
+    config = tmp_path / "global-gitconfig"
+    config.write_text("[include]\n\tpath = rules.inc\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    repo = _repo(tmp_path / "repo", remote="gh:acme/lib")
+    assert capture(repo).repo == "gh:acme/lib"
+    probes.clear()
+    assert capture(repo).repo == "gh:acme/lib"
+    assert probes == []
+
+    with config.open("a") as fh:
+        fh.write('[url "https://example.invalid/"]\n\tinsteadOf = gh:\n')
+    after = capture(repo)
+    assert probes == _PROBES
+    assert after.repo == "https://example.invalid/acme/lib"
+    keys = location.capture(str(repo), write_token=False).remote_keys
+    assert location.remote_key(after.repo, str(repo)) == "example.invalid/acme/lib"
+    assert "example.invalid/acme/lib" in keys
+    _same(after, _uncached(repo))
+    probes.clear()
+    _same(capture(repo), after)
+    assert probes == []
+
+    (tmp_path / "rules.inc").write_text(
+        '[url "https://mirror.example.invalid/acme/"]\n\tinsteadOf = gh:acme/\n'
+    )
+    assert capture(repo).repo == "https://mirror.example.invalid/acme/lib"
+    assert probes == _PROBES
 
 
 def test_a_repository_created_or_removed_inside_the_lifetime_is_seen(

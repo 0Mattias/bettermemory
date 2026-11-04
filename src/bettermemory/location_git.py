@@ -417,6 +417,49 @@ def config_unchanged(cap: Capture) -> bool:
     return unchanged(cap.config_files)
 
 
+#: The machine's config files as `machine_config_stamps` last read each
+#: for a repository's git directory, with the files it included there,
+#: stamped; the most kept, the oldest evicted first.
+_MACHINE_READS: dict[tuple[str, str], tuple[ConfigFile, ...]] = {}
+_MACHINE_LOCK = threading.Lock()
+_MACHINE_KEPT = 256
+
+
+@_caches.register
+def _clear_machine_reads() -> None:
+    with _MACHINE_LOCK:
+        _MACHINE_READS.clear()
+
+
+def machine_config_stamps(git_dir: str) -> tuple[object, ...]:
+    """The machine's config as git reads it for the repository whose git
+    directory is `git_dir`, as stamps (ENG-207's review): the config
+    files git reads besides the repository's own (`_machine_configs`:
+    the system's, as `gitsystem` keeps git's answer, then the global
+    ones), each with the files it includes there, stamped as a capture
+    stamps them (`_rewrites`). `origin`'s capture is kept against it, so
+    a rule set there reaches its next capture as it reaches a capture's
+    (`config_unchanged`). Each file and its includes are read once and
+    then only stated: read again where one of them stamps otherwise
+    (`gitconfig.unchanged`)."""
+    named = _machine_configs(stamp=False)
+    out: list[object] = [named]
+    for path in named:
+        key = (path, git_dir)
+        with _MACHINE_LOCK:
+            files = _MACHINE_READS.get(key)
+        if files is None or not unchanged(files):
+            read = _config_values(path, git_dir=git_dir, stamped=True)
+            files = tuple(read.files or ())
+            with _MACHINE_LOCK:
+                _MACHINE_READS.pop(key, None)
+                _MACHINE_READS[key] = files
+                while len(_MACHINE_READS) > _MACHINE_KEPT:
+                    del _MACHINE_READS[next(iter(_MACHINE_READS))]
+        out.append(files)
+    return tuple(out)
+
+
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------

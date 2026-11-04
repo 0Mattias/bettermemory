@@ -528,7 +528,11 @@ git names now too, so one taken under the fallback is read again once
 git answers (R7); that check takes the process's answer without
 stating the git binary, which the capture's own re-read within
 `CACHE_SECONDS` does. Each such file costs a kept capture one stat
-(E16). A `.git`
+(E16). The origin cache (`origin.capture`) is kept against the same
+machine config files and the files they include, stamped and read again
+only once one stamps otherwise (`location_git.machine_config_stamps`),
+so a rule set there reaches it as it reaches a capture. A file that is
+no regular file (the null device) is stamped by its kind alone. A `.git`
 file is followed only
 where git's own pointers say the folder is its git directory's working
 tree (ENG-158): a linked worktree's git directory registered at
