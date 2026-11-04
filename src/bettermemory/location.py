@@ -48,7 +48,8 @@ the standard library, and are imported here unchanged: a hook posts the
 probe on every turn without importing this module, and imports it only
 for the witness exchange. Beyond the standard library this module imports
 only `_caches`, `_location_probe`, `checkout_token`, `githead`,
-`gitobjects`, `location_git`, `location_witness` and `project_file`, and
+`gitobjects`, `location_git`, `location_witness`, `machine` (whose
+`identity_to_json` it re-exports) and `project_file`, and
 `location_git` adds only `_git`, so that exchange stays light; the
 membership model, the store and the config are imported where a function
 needs them. The vocabulary, discovery, the `Capture` model and the
@@ -83,6 +84,8 @@ from ._location_probe import (
     view_path,
 )
 from .gitconfig import _config_values  # with the `.git` rule below: ENG-193
+from .machine import _identity_from  # the client's machine as posted
+from .machine import identity_to_json as identity_to_json  # the hook client's
 from .gitfile_rule import (
     _SF_DATALESS,
     _WINDOWS_RECALL,
@@ -1852,40 +1855,6 @@ def _same_namespace(cap_cwd: str, key: Key | None, hostname: str | None) -> bool
     if here[2] is not None and key[2] is not None and here[2] != key[2]:
         return False
     return hostname is None or hostname == _hostname()
-
-
-def _identity_from(raw: Any) -> MachineIdentity | None:
-    """The client's machine as it posted it (`machine.MachineIdentity`)."""
-    if not isinstance(raw, Mapping) or not isinstance(raw.get("id"), str):
-        return None
-    from .machine import MachineFacts, MachineIdentity
-
-    facts = MachineFacts.from_dict(raw.get("facts"))
-    if facts is None:
-        return None
-    predecessor = raw.get("predecessor")
-    return MachineIdentity(
-        id=raw["id"],
-        facts=facts,
-        predecessor=predecessor if isinstance(predecessor, str) else None,
-        minted=bool(raw.get("minted")),
-        cloned=bool(raw.get("cloned")),
-        facts_updated=bool(raw.get("facts_updated")),
-        recorded=MachineFacts.from_dict(raw.get("recorded")),
-    )
-
-
-def identity_to_json(identity: MachineIdentity) -> dict[str, Any]:
-    """A machine identity as the hook client posts it."""
-    return {
-        "id": identity.id,
-        "facts": identity.facts.to_dict(),
-        "predecessor": identity.predecessor,
-        "minted": identity.minted,
-        "cloned": identity.cloned,
-        "facts_updated": identity.facts_updated,
-        "recorded": None if identity.recorded is None else identity.recorded.to_dict(),
-    }
 
 
 def resolve_hook(

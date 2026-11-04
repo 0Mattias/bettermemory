@@ -38,7 +38,7 @@ import subprocess
 import sys
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,6 +112,38 @@ class MachineIdentity:
     cloned: bool
     facts_updated: bool
     recorded: MachineFacts | None
+
+
+def _identity_from(raw: Any) -> MachineIdentity | None:
+    """The client's machine as it posted it (`machine.MachineIdentity`)."""
+    if not isinstance(raw, Mapping) or not isinstance(raw.get("id"), str):
+        return None
+    facts = MachineFacts.from_dict(raw.get("facts"))
+    if facts is None:
+        return None
+    predecessor = raw.get("predecessor")
+    return MachineIdentity(
+        id=raw["id"],
+        facts=facts,
+        predecessor=predecessor if isinstance(predecessor, str) else None,
+        minted=bool(raw.get("minted")),
+        cloned=bool(raw.get("cloned")),
+        facts_updated=bool(raw.get("facts_updated")),
+        recorded=MachineFacts.from_dict(raw.get("recorded")),
+    )
+
+
+def identity_to_json(identity: MachineIdentity) -> dict[str, Any]:
+    """A machine identity as the hook client posts it."""
+    return {
+        "id": identity.id,
+        "facts": identity.facts.to_dict(),
+        "predecessor": identity.predecessor,
+        "minted": identity.minted,
+        "cloned": identity.cloned,
+        "facts_updated": identity.facts_updated,
+        "recorded": None if identity.recorded is None else identity.recorded.to_dict(),
+    }
 
 
 def new_machine_id() -> str:
