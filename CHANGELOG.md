@@ -282,8 +282,13 @@ eighteenth was built.
   clone or a replace ref written reads it again. A blob fetched under the
   same head is summed at the next head: a window read under the bound is
   read whole, within the patch's own 5 s bound, and one past it keeps the
-  per-file count. (`src/bettermemory/origin_patch.py`,
-  `tests/test_origin_patch.py`)
+  per-file count. The listing and the check are kept on every platform
+  too, under the common directory `githead.locate` reads where `githead`
+  settles none, as the history's guard reads it, so a commit reads the
+  sum again from the kept listing on Windows as on POSIX, where it ran
+  both processes again (CI on Windows); under a variable that moves
+  git's discovery nothing is kept (`origin_patch._memo_key`).
+  (`src/bettermemory/origin_patch.py`, `tests/test_origin_patch.py`)
 
 #### Fixed
 

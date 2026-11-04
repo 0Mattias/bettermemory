@@ -115,13 +115,16 @@ MAX_PATCH_STREAM_BYTES = 32 * 1024 * 1024
 # the listing and the check too. What the key does not see is sound to
 # miss: a blob that arrives loose reads as missing and its commit is
 # counted, and one that went reads as held and fails the local stream,
-# which declines the split. Off POSIX and wherever `githead` declines,
-# nothing is kept: the key needs the pack directory of the common
-# directory git reads, which `githead.gitdir_at` settles from the files on
-# POSIX alone (git on Windows also reads ownership and names by rules the
-# package does not replicate), and a listing is read only after a stream
-# failed, in a partial clone. Bounded LRU, emptied before each test
-# (`_caches`).
+# which declines the split. The common directory is the one
+# `githead.gitdir_at` settles from the files on POSIX, and where it
+# declines (off POSIX, another account's repository) the one
+# `githead.locate` reads at the root, as the history's guard reads it
+# (`origin_history.history_guard`): git on Windows also reads ownership
+# and names by rules the package does not replicate, but a repository git
+# refuses fails the listing, which is not kept, and a directory named
+# otherwise is the same files, whose stamps the key reads. Under a
+# variable that moves git's discovery nothing is kept. Bounded LRU,
+# emptied before each test (`_caches`).
 _MEMO_CAP = 256
 _MemoKey: TypeAlias = tuple[str, tuple[object, ...], tuple[str, ...], tuple[str, ...]]
 #: A window's changes per commit, and the size of each blob the clone holds.
@@ -130,10 +133,9 @@ _MEMO: OrderedDict[_MemoKey, _Listed] = OrderedDict()
 _MEMO_LOCK = threading.Lock()
 
 # The bytes a window's patch reads (`too_large`), memoised per process on
-# every platform, where the listing and check above are kept on POSIX
-# alone: every full-clone evaluation of a governed claim reads the bound,
-# and off POSIX paid its two git processes on every search (ENG-220's
-# re-review). Keyed as the history's dates are, on the root and head
+# every platform: every full-clone evaluation of a governed claim reads
+# the bound, and off POSIX paid its two git processes on every search
+# (ENG-220's re-review). Keyed as the history's dates are, on the root and head
 # `githead.locate` reads (`origin_history.located_key`) and the files that
 # change which commits a head reaches (`origin_history.history_guard`),
 # both of which answer off POSIX, with the commits and pathspecs. A
@@ -348,9 +350,13 @@ def _listed(
 def _memo_key(
     toplevel: Path, shas: Sequence[str], pathspecs: list[str]
 ) -> _MemoKey | None:
-    """The memo's key for a window (see `_MEMO`), or None where the
-    repository's files do not settle its common directory."""
+    """The memo's key for a window (see `_MEMO`), or None where neither
+    `githead.gitdir_at` nor `githead.locate` reads the repository at
+    `toplevel`, or a variable moves git's discovery past what `locate`
+    reads."""
     found = githead.gitdir_at(toplevel)
+    if found is None and not githead.discovery_moved():
+        found = githead.locate(toplevel, walk=False)
     if found is None:
         return None
     try:

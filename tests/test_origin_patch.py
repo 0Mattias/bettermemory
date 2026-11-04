@@ -728,12 +728,18 @@ def test_the_size_bound_sums_the_blobs_the_clone_holds(tmp_path: Path) -> None:
 def test_the_size_bound_s_sum_is_kept_until_the_head_moves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posix: bool
 ) -> None:
-    """The bound's listing and check are kept on POSIX alone, where
+    """The bound's listing and check were kept on POSIX alone, where
     `githead` settles the common directory, so off POSIX every full-clone
     evaluation paid two git processes for it on every search (ENG-220's
     re-review). The sum is kept under the head and the history's guard,
     which answer on every platform: a second read runs no git, a bound
-    moved since reads the kept sum, and a commit reads it again."""
+    moved since reads the kept sum, and a commit reads it again from the
+    listing, which is kept on every platform too, under the common
+    directory `githead.locate` reads where `githead` declines: after the
+    commit, Windows ran the listing and the check again. A host that is
+    not POSIX has only the off-POSIX leg."""
+    if posix and os.name != "posix":
+        pytest.skip("off POSIX the host's own leg is the off-posix one")
     partial = Partial(tmp_path, _SYMBOL)
     repo = partial.clone(blobless=False)
     if not posix:
@@ -759,7 +765,12 @@ def test_the_size_bound_s_sum_is_kept_until_the_head_moves(
     assert calls == []
     _plain(repo, "commit", "-q", "--allow-empty", "-m", "later")
     assert origin_patch.too_large(repo, partial.commits, specs, toplevel=repo)
-    assert calls == ([] if posix else ["log", "cat-file"])
+    assert calls == []
+    if not posix:
+        # Where a variable moves git's discovery, what `locate` reads may
+        # not be what git reads, and nothing is kept.
+        monkeypatch.setenv("GIT_DISCOVERY_ACROSS_FILESYSTEM", "1")
+        assert origin_patch._memo_key(repo, partial.commits, specs) is None
 
 
 @needs_lazy_fetch_pin
@@ -772,8 +783,7 @@ def test_the_split_keeps_its_listing_and_check_until_a_pack_arrives(
     checks again and streams the commits now local."""
     partial = Partial(tmp_path, _SYMBOL)
     repo = partial.clone()
-    if githead.gitdir_at(repo) is None:
-        pytest.skip("the repository's files do not settle it on this platform")
+    assert origin_patch._memo_key(repo, [], []) is not None, "premise: keyed"
     specs = [":(literal)src/mod.py"]
     calls: list[str] = []
     real = origin._git
@@ -931,8 +941,7 @@ def test_a_replace_ref_after_the_split_is_kept_moves_no_count(
     assert not partial.held(partial.blobs[3][_F]), "premise"
     first = partial.resolve([_F], basis)
     assert (first.count, first.claims_drifted) == (3, ())
-    if githead.gitdir_at(repo) is not None:
-        assert origin_patch._MEMO, "premise: the split's listing is kept"
+    assert origin_patch._MEMO, "premise: the split's listing is kept"
     _plain(repo, "replace", third, replacement)
     kept = partial.resolve([_F], basis)
     _caches.clear_all()
