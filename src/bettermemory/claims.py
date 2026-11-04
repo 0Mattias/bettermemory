@@ -108,6 +108,7 @@ __all__ = [
     "Claim",
     "parse_claim",
     "parse_claims",
+    "control_character",
     "load_claims",
     "check_claim",
     "claim_reason_is_indeterminate",
@@ -294,11 +295,23 @@ def parse_claim(raw: str) -> Claim:
     return Claim("literal", path_part, name, normalized)
 
 
+def control_character(path: str) -> str | None:
+    """The first control character `path` holds, or None: a C0 control or
+    DEL, which git quotes in every name it prints, ``core.quotePath``
+    notwithstanding (ENG-220's re-review). A patch's header then spells the
+    name quoted, which is never a claim's path, and one naming a line
+    break stays quoted (`origin_gitfiles._dequote_patch_headers`)."""
+    return next((ch for ch in path if ch < " " or ch == "\x7f"), None)
+
+
 def parse_claims(raw: list[str]) -> list[Claim]:
     """Parse a wire list, enforcing the count cap and per-entry syntax.
 
     Duplicates (after normalization) collapse silently — attesting the
-    same fact twice is redundancy, not an error.
+    same fact twice is redundancy, not an error. A path holding a control
+    character is refused (`control_character`): the declaration's rule,
+    which `load_claims` leaves to the read side for a claim stored before
+    it, since the drift readers decline on one.
     """
     if len(raw) > MAX_CLAIMS:
         raise ValueError(
@@ -309,6 +322,14 @@ def parse_claims(raw: list[str]) -> list[Claim]:
     seen: set[str] = set()
     for entry in raw:
         claim = parse_claim(entry)
+        control = control_character(claim.rel_path)
+        if control is not None:
+            raise ValueError(
+                f"claim path {claim.rel_path!r} holds a control character "
+                f"(U+{ord(control):04X}): git quotes such a name in every "
+                "patch it prints, so claim drift could not read the claim. "
+                "Claim a path whose name holds none."
+            )
         rendered = claim.render()
         if rendered in seen:
             continue

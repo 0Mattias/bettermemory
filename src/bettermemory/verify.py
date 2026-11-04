@@ -118,6 +118,7 @@ from .claims import (
     build_binding_index,
     claim_level_drift,
     claim_paths,
+    control_character,
     governed_claim_paths,
     load_claims,
 )
@@ -815,8 +816,15 @@ def resolve_commit_drift(
     claims keeps the conservative default. Fallbacks all point the same
     direction as the incumbent's: git failure on either half degrades to
     the unfiltered/any-touch count, never to silence. A claim whose path
-    the path gate refuses is not read (`_gated_claims`).
+    the path gate refuses is not read (`_gated_claims`), and one whose path
+    holds a control character keeps the conservative count (`_unreadable`).
     """
+    if _unreadable(claims):
+        if walk is not None:
+            return ResolvedCommitDrift(
+                len(walk.commits), len(claims), (), BASIS_REACHABILITY
+            )
+        return ResolvedCommitDrift(unfiltered, len(claims), ())
     claims = _gated_claims(claims)
     if walk is not None:
         return _resolve_reachable(
@@ -842,6 +850,18 @@ def resolve_commit_drift(
     if count is None:
         return None
     return ResolvedCommitDrift(count)
+
+
+def _unreadable(claims: Sequence[Claim]) -> bool:
+    """Whether a claim's path holds a control character
+    (`claims.control_character`), which declaration refuses and a claim
+    stored before may hold. git quotes such a name in every patch it
+    prints, and a header naming a line break stays quoted, so no stream
+    names the path as the claim spells it: read, the claim on such a file,
+    deleted, counted 0, or 1 naming no claim (ENG-220's re-review). The hit
+    keeps the conservative count, the walk's length or the unfiltered one,
+    as where git cannot answer."""
+    return any(control_character(claim.rel_path) for claim in claims)
 
 
 def _gated_claims(claims: Sequence[Claim]) -> list[Claim]:
@@ -1128,8 +1148,12 @@ def resolve_commit_drift_count(
     phantom signal — no spec ever appeared in history — so the separate
     existence probe is gone. A since-deleted cited file still resolves as
     real, since its removal commit keeps it in the log. A claim whose
-    path the path gate refuses is not read (`_gated_claims`).
+    path the path gate refuses is not read (`_gated_claims`), and one whose
+    path holds a control character keeps the conservative count
+    (`_unreadable`).
     """
+    if _unreadable(claims):
+        return len(walk.commits) if walk is not None else unfiltered
     claims = _gated_claims(claims)
     if walk is not None:
         reachable = _resolve_reachable(

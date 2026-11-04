@@ -439,6 +439,21 @@ eighteenth was built.
   `tests/test_origin_patch.py`, `tests/test_origin.py`,
   `tests/test_claims.py`, `tests/test_bench_rot.py`)
 
+- **A claimed path holding a control character is refused, and one
+  stored before keeps the conservative count (ENG-220).** Declaration
+  took a tab, a newline or a carriage return in a claim's path, and git
+  quotes such a name in every patch it prints, so no header named the
+  path as the claim does: a claimed file so named, deleted after the
+  verify, read 0 (or 1 naming no claim, where it was empty). `memory_write`
+  and `memory_verify` now refuse a claim whose path holds a C0 control or
+  DEL, naming the character (`claims.control_character`, in
+  `parse_claims`); a stored claim is still loaded, and a memory carrying
+  one keeps the conservative count on both bases, the walk's length or
+  the commits since the stamp, as where git cannot answer, never 0
+  (`verify._unreadable`). (`src/bettermemory/claims.py`,
+  `src/bettermemory/verify.py`, `docs/api.md`, `tests/test_claims.py`,
+  `tests/test_origin_as_stored.py`, `tests/test_server_claims.py`)
+
 - **The migration homes a record in a part below a folder whose question
   was answered where a session there resolves (ENG-222).** A folder
   holding a copy of a part's file and other content is asked about at

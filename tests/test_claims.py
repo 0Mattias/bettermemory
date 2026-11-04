@@ -152,6 +152,30 @@ def test_load_claims_skips_invalid_entries() -> None:
     assert [c.render() for c in loaded] == ["good.py::f", "also_good.py"]
 
 
+@pytest.mark.parametrize("control", ["\n", "\r", "\t", "\x01", "\x1f", "\x7f"])
+@pytest.mark.parametrize("shape", ["{}", "{}::handler", "{}::TIMEOUT=30", "!{}"])
+def test_a_declared_path_holding_a_control_character_is_refused(
+    control: str, shape: str
+) -> None:
+    """git quotes a name holding a C0 control or DEL in every patch it
+    prints, so claim drift cannot read a claim on it (ENG-220's re-review):
+    declaration refuses it, naming the character. A claim stored before is
+    still loaded, so the drift readers see it and decline."""
+    raw = shape.format(f"src/a{control}b.py")
+    with pytest.raises(
+        ValueError, match=f"control character \\(U\\+{ord(control):04X}"
+    ):
+        parse_claims([raw])
+    assert [claim.rel_path for claim in load_claims([raw])] == [f"src/a{control}b.py"]
+
+
+def test_a_path_with_no_control_character_is_declared() -> None:
+    """A space, a quote, a non-ASCII letter and a C1 control (which git
+    prints as it is under ``core.quotePath=false``) are not refused."""
+    for raw in ("src/a b.py", 'src/we"ird.py', "src/café.py", "src/a\x85b.py"):
+        assert parse_claims([raw])[0].rel_path == raw
+
+
 def test_claim_paths_deduplicates_preserving_order() -> None:
     claims = parse_claims(["b.py::f", "a.py", "b.py::G=1"])
     assert claim_paths(claims) == ["b.py", "a.py"]

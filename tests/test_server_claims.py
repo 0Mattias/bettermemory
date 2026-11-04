@@ -184,6 +184,25 @@ async def test_write_refuses_false_claim_with_reason(server_in_repo) -> None:
         )
 
 
+@pytest.mark.parametrize("name", ["pkg/a\nb.py", "pkg/c\rr.py", "pkg/t\tab.py"])
+async def test_write_refuses_a_claimed_path_holding_a_control_character(
+    server_in_repo, name: str
+) -> None:
+    """git quotes a name holding a control character in every patch it
+    prints, so claim drift cannot read a claim on it (ENG-220's re-review):
+    the declaration is refused, naming the character, before the tree is
+    asked."""
+    server, _repo = server_in_repo
+    with pytest.raises(Exception, match="control character"):
+        await _call(
+            server,
+            "memory_write",
+            content="A claim on a file whose name holds a control character.",
+            scopes=["tools"],
+            claims=[f"{name}::handler"],
+        )
+
+
 async def test_write_refuses_claims_without_worktree(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

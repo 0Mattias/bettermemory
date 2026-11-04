@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory import _caches, _git, _response, origin, origin_history
+from bettermemory import _caches, _git, _response, origin, origin_history, verify
 from bettermemory.claims import load_claims
 from bettermemory.verify import ResolvedCommitDrift
 
@@ -791,3 +791,84 @@ def test_git_output_keeps_its_carriage_returns(tmp_path: Path) -> None:
     assert done is not None and done.stdout == data.decode()
     raw = _git.run_git(["cat-file", "blob", blob], cwd=repo, text=False)
     assert raw is not None and raw.stdout == data
+
+
+# ---------------------------------------------------------------------------
+# A claimed name git quotes (ENG-220's re-review)
+# ---------------------------------------------------------------------------
+
+#: Windows takes no control character in a name.
+_POSIX_NAME = pytest.mark.skipif(
+    os.name == "nt", reason="a Windows name holds no control character"
+)
+
+
+@_POSIX_NAME
+@pytest.mark.parametrize("empty", [False, True], ids=["text", "empty"])
+@pytest.mark.parametrize("name", ["src/a\nb.py", "src/c\rr.py", "src/t\tab.py"])
+def test_a_stored_claim_on_a_name_git_quotes_keeps_the_conservative_count(
+    tmp_path: Path, name: str, empty: bool
+) -> None:
+    """A claimed file whose name holds a control character is deleted after
+    the verify, beside an edit of two.py's bar. git quotes the name in every
+    patch, so no header named it as the claim does: the claim read 0, or 1
+    naming no claim where the file was empty. Declaration refuses such a
+    path now; one stored before keeps the conservative count, the whole
+    window, on both bases, never 0."""
+    repo = _repository(tmp_path)
+    text = "" if empty else "LONG_ENOUGH_TO_ANCHOR = 'padding padding'\n"
+    anchor = _commit(repo, {name: text, _BESIDE: _module("", 0)}, -1)
+    _commit(repo, {_BESIDE: _module("", 1)}, 1)
+    _commit(repo, {name: None}, 2)
+    assert _both(repo, [name, _QUIET], anchor) == [(2, ())] * 2
+
+
+@pytest.mark.parametrize("walked", [False, True], ids=["dates", "walk"])
+def test_a_claim_holding_a_control_character_is_not_read(
+    monkeypatch: pytest.MonkeyPatch, walked: bool
+) -> None:
+    """The decline needs no git: both entry points answer the conservative
+    count before a claim is read or a log run, on every platform."""
+
+    def unread(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a log ran over a claim the readers decline")
+
+    for name in (
+        "commit_author_sha_pairs_touching_pathspecs",
+        "commit_author_timestamps_touching_pathspecs",
+        "commit_patch_stream",
+    ):
+        monkeypatch.setattr(verify, name, unread)
+    walk = None
+    if walked:
+        walk = origin.ReachableWalk(
+            anchor=_SHA, head="b" * 40, commits=("b" * 40, "c" * 40), touched={}
+        )
+    claims = load_claims(["src/a\nb.py", _QUIET])
+    nowhere = Path(os.devnull)
+    want = 2 if walked else 5
+    resolved = verify.resolve_commit_drift(
+        cwd=nowhere,
+        since=_VERIFIED,
+        unfiltered=5,
+        anchors=(),
+        claims=claims,
+        toplevel=nowhere,
+        walk=walk,
+    )
+    assert resolved is not None
+    assert (resolved.count, resolved.claims_checked, resolved.claims_drifted) == (
+        want,
+        2,
+        (),
+    )
+    count = verify.resolve_commit_drift_count(
+        cwd=nowhere,
+        since=_VERIFIED,
+        unfiltered=5,
+        anchors=(),
+        claims=claims,
+        toplevel=nowhere,
+        walk=walk,
+    )
+    assert count == want
