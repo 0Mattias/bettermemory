@@ -282,3 +282,53 @@ def test_a_plant_naming_a_worktree_on_a_share_that_is_down_is_refused(
         assert why is None
     else:
         assert why is not None and "worktree at" in why, why
+
+
+#: errnos with no Windows code: the four the OS answers "nothing there"
+#: with (`_location_probe.GONE_ERRNOS`), and two it does not.
+POSIX = {
+    "ENOENT": errno.ENOENT,
+    "ENOTDIR": errno.ENOTDIR,
+    "ELOOP": errno.ELOOP,
+    "ENAMETOOLONG": errno.ENAMETOOLONG,
+    "EACCES": errno.EACCES,
+    "EIO": errno.EIO,
+}
+
+
+@pytest.mark.parametrize("code", [*_CODES, *POSIX])
+def test_the_migration_s_probe_reads_a_path_as_the_location_probe_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    """The migration's probe and the location probe ask the one question,
+    whether anything is at a path, and take one answer from each error
+    (`path_gone`). The migration read only "no such file" as gone
+    (`path_missing`), so a symbolic link cycle and a name too long for this
+    system, gone to the location probe, were unreachable to it. The state
+    is a label there: only LIVE changes what the migration does."""
+    error = _error(code) if code in _CODES else OSError(POSIX[code], code)
+    probe = _probe(tmp_path, monkeypatch, error)
+    migration = _migration(tmp_path, monkeypatch, error)
+    expected = {
+        "gone": membership_migrate.GONE,
+        "unreachable": membership_migrate.UNREACHABLE,
+    }[probe]
+    assert migration == expected, (code, probe, migration)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a symbolic link needs a privilege")
+@pytest.mark.parametrize("shape", ["link_cycle", "name_too_long"])
+def test_a_link_cycle_and_a_name_too_long_are_gone_to_both_probes(
+    tmp_path: Path, shape: str
+) -> None:
+    """The OS's own ELOOP and ENAMETOOLONG: nothing is there, to the
+    location probe and to the migration's."""
+    if shape == "link_cycle":
+        path = tmp_path / "cycle"
+        os.symlink(path.name, path)
+    else:
+        path = tmp_path / ("n" * 300)
+    assert _location_probe._path_state(str(path))[0] == "gone"
+    run = cast(Any, None)  # the probe reads no state before its stat answers
+    found = membership_migrate._Run._read_probe(run, str(path), at_root=False)
+    assert found.state == membership_migrate.GONE

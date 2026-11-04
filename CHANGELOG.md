@@ -407,7 +407,11 @@ eighteenth was built.
   through one classifier (`_location_probe.path_gone`, and
   `path_missing` for a reader that takes ENOENT and ENOTDIR alone as
   "no such file"), which decides by the Windows code where one is set;
-  what each reads on Linux and macOS is unchanged.
+  what each reads on Linux and macOS is unchanged, but for the
+  migration's probe of a view, which now reads a path as the hook probe
+  does: a symbolic link cycle and a name too long for the system are
+  gone to both, where the migration recorded them as unreachable (a
+  label: only a live view changes what the migration does).
   (`src/bettermemory/_location_probe.py`, `src/bettermemory/gitfile_rule.py`,
   `src/bettermemory/origin.py`, `src/bettermemory/origin_gitfiles.py`,
   `src/bettermemory/githead.py`, `src/bettermemory/gitconfig.py`,
