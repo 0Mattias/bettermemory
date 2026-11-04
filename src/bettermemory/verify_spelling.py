@@ -149,12 +149,19 @@ def spelled(
     return Spelled(chosen, declined)
 
 
-def _held(toplevel: Path, head: str, names: set[str]) -> set[str] | None:
-    """The names among `names` that `head`'s tree holds, a file or a
-    folder, from one ``cat-file --batch-check`` (each ``<head>:<name>``
-    on its standard input, so no argument is precomposed); None where git
-    did not answer. A name holding a line break or a lone surrogate
-    (`claims.lone_surrogate`) cannot be asked and is not held."""
+def _held(toplevel: Path, rev: str, names: set[str]) -> set[str] | None:
+    """The names among `names` that `rev`'s tree holds, a file or a
+    folder, from one ``cat-file --batch-check=%(objectname)`` (each
+    ``<rev>:<name>`` on its standard input, so no argument is precomposed),
+    which reads no object's type or size; None where git did not answer. A
+    name holding a line break or a lone surrogate (`claims.lone_surrogate`)
+    cannot be asked and is not held.
+
+    git still asks whether the entry's object is in the repository, so in a
+    partial clone a file whose blob the clone lacks (a blobless clone with
+    no checkout) reads as not held, and every name in a treeless one: the
+    read falls back to every spelling, or past the bound declines, never
+    fewer. Nothing is fetched (`_git.NO_FETCH`)."""
     asked = sorted(
         name
         for name in names
@@ -166,21 +173,17 @@ def _held(toplevel: Path, head: str, names: set[str]) -> set[str] | None:
         toplevel,
         *origin_history.AS_STORED_PATHS,
         "cat-file",
-        "--batch-check",
+        "--batch-check=%(objectname)",
         timeout=5.0,
         empty_ok=True,
-        stdin="".join(f"{head}:{name}\n" for name in asked).encode("utf-8"),
+        stdin="".join(f"{rev}:{name}\n" for name in asked).encode("utf-8"),
     )
     if raw is None:
         return None
     lines = raw.split("\n")
     if len(lines) != len(asked):
         return None
-    return {
-        name
-        for name, line in zip(asked, lines)
-        if len(line.split()) == 3 and origin.is_full_commit_sha(line.split()[0])
-    }
+    return {name for name, line in zip(asked, lines) if origin.is_full_commit_sha(line)}
 
 
 def _changed(

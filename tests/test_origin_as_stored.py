@@ -1210,6 +1210,45 @@ def test_a_stored_claim_on_a_name_git_quotes_keeps_the_conservative_count(
     assert _both(repo, [name, _QUIET], anchor) == [(2, ())] * 2
 
 
+@pytest.mark.parametrize("clone", ["full", "blobless", "treeless"])
+def test_the_tree_check_reads_names_alone_and_fetches_nothing(
+    tmp_path: Path, clone: str
+) -> None:
+    """The anchor's tree check asks git for each name's object name alone
+    (`--batch-check=%(objectname)`), no type or size: a full clone holds
+    the decomposed file and its folder, the composed spelling neither. git
+    still asks whether the object is in the repository, so a clone with no
+    checkout whose filter left the blob out reads the file as not held, and
+    one that left the trees out reads nothing held: the read falls back to
+    every spelling there, never fewer (ENG-220's review, round D). No object
+    is fetched."""
+    from bettermemory import verify_spelling
+
+    source = _repository(tmp_path)
+    _plain(source, "config", "uploadpack.allowFilter", "true")
+    _index_info(source, [("100644", _object(source, b"A = 1\n"), _SPELLED["NFD"])])
+    _plain(source, "commit", "-q", "-m", "anchor", when=_VERIFIED)
+    anchor = _plain(source, "rev-parse", "HEAD")
+    extra = {
+        "full": [],
+        "blobless": ["--filter=blob:none", "--no-checkout"],
+        "treeless": ["--filter=tree:0", "--no-checkout"],
+    }[clone]
+    dest = tmp_path / clone
+    _plain(tmp_path, "clone", "-q", *extra, source.as_uri(), str(dest))
+    objects = _plain(dest, "count-objects", "-v")
+    folder = _SPELLED["NFD"].rsplit("/", 1)[0]
+    names = {_SPELLED["NFD"], _SPELLED["NFC"], folder}
+    held = verify_spelling._held(dest, anchor, names)
+    expected = {
+        "full": {_SPELLED["NFD"], folder},
+        "blobless": {folder},
+        "treeless": set(),
+    }
+    assert held == expected[clone]
+    assert _plain(dest, "count-objects", "-v") == objects, "nothing fetched"
+
+
 @pytest.mark.parametrize("name", ["src/a\ud800.py", "src/é\udbff.py", "src/a\udc80.py"])
 def test_a_claim_on_a_lone_surrogate_keeps_the_conservative_count(
     tmp_path: Path, name: str

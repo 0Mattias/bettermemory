@@ -524,10 +524,13 @@ eighteenth was built.
   deleted, read 1 with the claim named, for the composed twin's
   deletion. On the reachable basis a spec is now read under its own
   spelling where the anchor's tree holds it, the tree the claim was
-  verified against (one `cat-file --batch-check` for every
-  spec with another spelling), and under every spelling otherwise, so
-  twins read exactly and a single file stored in the other form still
-  matches; where git does not answer, every spelling is read, as before.
+  verified against (one `cat-file --batch-check=%(objectname)` for every
+  spec with another spelling, which reads no object's type or size), and
+  under every spelling otherwise, so twins read exactly and a single file
+  stored in the other form still matches; where git does not answer,
+  every spelling is read, as before, and so it is for a file a partial
+  clone with no checkout has no blob for, which git reports missing
+  whatever the format, nothing fetched.
   The tree is the anchor's, not the head's: the head's held the claim's
   own spelling once the window added a composed twin beside the
   decomposed file the claim was verified against, or renamed that file
