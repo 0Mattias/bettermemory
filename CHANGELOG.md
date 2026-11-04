@@ -1443,10 +1443,15 @@ eighteenth was built.
   re-mint, is asked about (`ask:several_projects`), where it joined the
   container's project silently. A second checkout 9.0.0rc18 registered
   this way, by a silent join on the token into the project of the other
-  machine's checkout recording it, with no question or declaration about
-  it, yields to the first checkout at the host's next sighting, which
-  records the token and so stays first; the records written at the
-  second checkout stay in its project. The rule costs one read of the
+  machine's checkout recording it, that no one chose (no question about
+  it, no log row about it a declaration wrote, an absorb among them, and
+  no project file bound to its project), yields to the first checkout at
+  the host's next sighting where nothing was written at it since, the
+  first recording the token and so staying first. Where records were
+  written at it, the sighting stays there and asks
+  (`duplicate_checkout`), naming the first checkout's project, joining
+  which moves the second checkout and its records there, and its own.
+  The rule costs one read of the
   checkouts' token index, with no views, at each reading of rung 2 where
   the token found is neither recorded nor the checkout's own re-mint
   (two for such a sighting, the liveness plan and the transaction, none
@@ -1460,8 +1465,12 @@ eighteenth was built.
   `src/bettermemory/membership_resolve.py`,
   `src/bettermemory/membership.py`,
   `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_declare.py`,
+  `src/bettermemory/membership_lines.py`,
+  `src/bettermemory/store_membership.py`,
   `src/bettermemory/location_git.py`, `docs/internals.md`,
-  `tests/test_membership_shared_git_dir.py`)
+  `tests/test_membership_shared_git_dir.py`,
+  `tests/test_membership_restated.py`)
 
 ### 9.0.0rc18
 

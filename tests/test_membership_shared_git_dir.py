@@ -29,7 +29,9 @@ that record read them as they are now. A record's stamps follow its
 files at each sighting its birth time or token proves; B reads such a
 token as the bind mount does; a linked worktree is stamped by its
 `commondir`; and a second checkout an earlier release registered for want
-of the rule yields to the first. A copy of the git directory, the token
+of the rule, which no one chose, yields to the first where nothing was
+written at it, and is asked about where something was. A copy of the git
+directory, the token
 of a re-mint in a copy carried into the checkout, a copy landed on the
 checkout's freed inode number that no record read, a token of another
 line and a re-mint naming nothing are refused as before.
@@ -42,6 +44,7 @@ times and sizes, and no birth time, as the probe measured.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import shutil
 import stat
@@ -58,6 +61,7 @@ from bettermemory import checkout_token, location, location_git
 from bettermemory.declare import declaring_model
 from bettermemory.location import capture, remint_answer
 from bettermemory.membership import ASK, SILENT, Declaration, Membership
+from bettermemory.membership_records import DUPLICATE_CHECKOUT, REMOTE_DIVERGED
 from bettermemory.membership_shared import _same_file
 from bettermemory.store import Store
 
@@ -791,6 +795,178 @@ def test_a_second_checkout_a_declaration_named_is_kept(
     assert res.checkout == dup
 
 
+def _written_at(
+    lab: Lab, label: str, line: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A memory written at `line` as 9.0.0rc18 resolved it, the rule off:
+    homed at the second checkout."""
+    with monkeypatch.context() as mp:
+        mp.setattr(Membership, "_shared_remint", lambda *_a, **_k: False)
+        lab.write(label, line)
+    location.forget()
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("answer", ["first", "keep"])
+def test_a_second_checkout_holding_records_is_asked_about_not_healed(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    """The same second checkout, where the user wrote h2 since. The heal
+    would hide it: the host's next sighting stays there, h2 delivered,
+    and asks naming the first record's project and its own
+    (``duplicate_checkout``). Joining the first record's project
+    (``first``) moves the checkout and h2 there, h1 and h2 delivered;
+    keeping it (``keep``) leaves it where it is. Either is silent from
+    then on. Before, the heal took the first checkout silently, h1
+    delivered and h2 not, with no line saying so."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    first = lab.model().checkout(hid).project
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    dup, _found = _without_the_rule(lab, line, monkeypatch)
+    project = lab.model().checkout(dup).project
+    _written_at(lab, "h2", line, monkeypatch)
+    assert lab.checkout_of("h2") == dup
+
+    res, admitted = lab.view(line)
+
+    assert (res.checkout, res.outcome, res.rule) == (dup, ASK, "object+token")
+    assert admitted == ["h2"] and res.proposal is not None
+    asked = lab.model().proposal(res.proposal)
+    assert (asked.kind, asked.candidates) == (DUPLICATE_CHECKOUT, (first, project))
+    assert any(res.proposal in line_ for line_ in res.lines)
+    lab._declaring().declare(
+        Declaration(
+            "join" if answer == "first" else "new",
+            "os:tester",
+            checkout=dup,
+            proposal=res.proposal,
+            target=first if answer == "first" else None,
+        )
+    )
+    location.forget()
+    after, admitted = lab.view(line)
+    assert (after.checkout, after.outcome) == (dup, SILENT)
+    if answer == "first":
+        assert after.project == first and admitted == ["h1", "h2"]
+    else:
+        assert after.project == project and admitted == ["h2"]
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_second_checkout_a_project_was_absorbed_at_is_kept(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the second checkout the agent absorbed the first checkout's
+    project (`join_project`), which writes a ``project_absorbed`` row
+    naming that checkout and the declaration: a choice made there, so the
+    checkout is kept, and undoing the absorb (`unjoin_project`) leaves the
+    host where the user worked. Before, the heal took the first checkout
+    and the unjoin then left the host in the first project."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    first = lab.model().checkout(hid).project
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    dup, _found = _without_the_rule(lab, line, monkeypatch)
+    project = lab.model().checkout(dup).project
+    lab._declaring().declare(
+        Declaration("absorb", "agent:s", checkout=dup, target=first)
+    )
+    location.forget()
+
+    res, admitted = lab.view(line)
+
+    assert (res.checkout, res.outcome) == (dup, SILENT) and admitted == ["h1"]
+    lab._declaring().declare(Declaration("unjoin", "agent:s", target=first))
+    location.forget()
+    after, admitted = lab.view(line)
+    assert (after.checkout, after.project, admitted) == (dup, project, [])
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_second_checkout_its_project_file_names_is_kept(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the second checkout the user ran `project init`: the root's
+    project file is bound to its project, a choice no log row about the
+    checkout carries, so the checkout is kept, silent. Before, the heal
+    took the first checkout and asked about the file
+    (``object+remint``, a file contradiction), over the declaration."""
+    line, box, _hid, kid = _shared(tmp_path, lab, "line")
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    dup, _found = _without_the_rule(lab, line, monkeypatch)
+    with monkeypatch.context() as mp:
+        mp.setattr(Membership, "_shared_remint", lambda *_a, **_k: False)
+        lab.init_file(line, "line")
+    location.forget()
+
+    res, _admitted = lab.view(line)
+
+    assert (res.checkout, res.outcome, res.rule) == (dup, SILENT, "object+token")
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("question", ["open", "answered"])
+def test_a_second_checkout_a_question_was_opened_about_is_kept(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, question: str
+) -> None:
+    """A question was opened about the same second checkout (its remote
+    changed), still open or answered since: someone was asked there, so
+    it is kept. An open question is the only trace of it (the proposals'
+    guard alone); an answered one is also the answer's declaration."""
+    line, box, _hid, kid = _shared(tmp_path, lab, "line")
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    dup, _found = _without_the_rule(lab, line, monkeypatch)
+    project = lab.model().checkout(dup).project
+    model = lab.model()
+    with lab.store.batch():
+        pr = model._open_proposal(
+            checkout=dup,
+            kind=REMOTE_DIVERGED,
+            candidates=[project],
+            evidence={"old": [], "new": []},
+            reason=REMOTE_DIVERGED,
+            line="a question about the second checkout",
+            signature=None,
+        )
+    if question == "answered":
+        lab._declaring().declare(
+            Declaration(
+                "join", "os:tester", checkout=dup, proposal=pr.id, target=project
+            )
+        )
+    location.forget()
+
+    res, _admitted = lab.view(line)
+
+    assert (res.checkout, res.rule) == (dup, "object+token")
+    assert res.outcome == (ASK if question == "open" else SILENT)
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_second_checkout_outside_the_tokens_project_is_kept(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The container's checkout, which holds the token, was declared into
+    the first checkout's project after 9.0.0rc18 registered the second
+    one in the container's: the second checkout is no longer in the
+    project of any checkout recording the token, so what registered it is
+    not read as the silent join on that token, and it is kept (the
+    project's guard alone: no declaration names it)."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    first = lab.model().checkout(hid).project
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    dup, found = _without_the_rule(lab, line, monkeypatch)
+    lab._declaring(box.identity).declare(
+        Declaration("join", "os:tester", checkout=kid, target=first)
+    )
+    assert lab.model().checkout(kid).project == first
+    assert _file_token(line) == found
+    location.forget()
+
+    res, _admitted = lab.view(line)
+
+    assert (res.checkout, res.rule) == (dup, "object+token")
+
+
 # ---------------------------------------------------------------------------
 # What the rule reads
 # ---------------------------------------------------------------------------
@@ -827,6 +1003,35 @@ def test_the_rule_reads_the_token_index_alone_and_only_on_a_mismatch(
     at = [i for i, r in enumerate(reads) if r == ("checkouts", "token")]
     assert len(at) == 2
     assert all(reads[i + 1 : i + 2] != [("checkout_views", "checkout")] for i in at)
+
+
+def test_the_log_rows_naming_a_checkout_are_read_alone(lab: Lab) -> None:
+    """`Store.membership_log` with a checkout reads only the rows whose
+    payload names it as their ``checkout``, of every kind, filtered in SQL:
+    what the heal reads of a second checkout's history is as long as it
+    is, not as the log's registrations and joins."""
+    model = lab.model()
+    with lab.store.batch():
+        model._event(
+            "resolution_joined", checkout="K901", project="P1", witnesses=["T"]
+        )
+        model._event(
+            "resolution_joined", checkout="K902", project="P1", witnesses=["T"]
+        )
+        model._event(
+            "project_absorbed",
+            project="P2",
+            into="P1",
+            checkout="K901",
+            evidence="declaration:os:tester",
+        )
+
+    rows = list(lab.store.membership_log(checkout="K901"))
+
+    assert [(r.kind, json.loads(r.payload)["checkout"]) for r in rows] == [
+        ("resolution_joined", "K901"),
+        ("project_absorbed", "K901"),
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -189,21 +189,35 @@ def committed_seq(self: Store) -> int | None:
 
 
 def membership_log(
-    self: Store, kinds: Collection[str] | None = None, *, since_seq: int = 0
+    self: Store,
+    kinds: Collection[str] | None = None,
+    *,
+    since_seq: int = 0,
+    checkout: str | None = None,
 ) -> Iterator[LogRow]:
     """The membership rows after `since_seq`, in log order: the
     mutation rows of the membership tables and the rows of design
     8.10, or only those of `kinds`, read through the log's kind
-    index."""
+    index; with `checkout`, only those whose payload names it as its
+    ``checkout``, filtered in SQL (a payload that is not JSON names
+    none)."""
     allowed = MEMBERSHIP_MUTATION_KINDS | MEMBERSHIP_EVENT_KINDS
     names = sorted(allowed if kinds is None else set(kinds) & allowed)
     if not names:
         return
     placeholders = ",".join("?" * len(names))
+    naming = ""
+    params: list[Any] = [*names, int(since_seq)]
+    if checkout is not None:
+        naming = (
+            " AND CASE WHEN json_valid(payload) "
+            "THEN json_extract(payload, '$.checkout') END = ?"
+        )
+        params.append(checkout)
     for raw in self._conn.execute(
         "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
-        f"WHERE kind IN ({placeholders}) AND seq > ? ORDER BY seq",
-        (*names, int(since_seq)),
+        f"WHERE kind IN ({placeholders}) AND seq > ?{naming} ORDER BY seq",
+        params,
     ):
         yield LogRow(
             int(raw[0]),

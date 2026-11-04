@@ -982,7 +982,8 @@ nothing more than any checkout's (E16).
 
 A question (a proposal) is opened once per checkout and question, with
 its kind (`first_sight`, `file_contradiction`, `remote_diverged`,
-`subproject_contradiction`, `legacy`, `import`), its candidates, its
+`subproject_contradiction`, `duplicate_checkout`, `legacy`, `import`),
+its candidates, its
 evidence, its reason (the contradiction, or what fell short:
 `one_witness`, `content_only`, `several_projects`, `a3_history_join`;
 the migration's `legacy_no_live_checkout`; `unresolved_location`, below)
@@ -1191,30 +1192,44 @@ project silently.
 A store that met this before 9.0.0rc19 holds a second checkout of the
 host's git directory, registered after the container's re-mint and
 joined silently to the container's project; it records the token found,
-so it comes first in ENG-205's order. Rung 2 takes the first checkout
-over it (`_healed`) where the rule continues the first, its stamps read
-as they are or without their ctimes, as above (a re-mint of its
-own lineage is ENG-205's, left in that order) and the second was
-registered by a silent first-sight join with the token among its
-witnesses, into the project of another machine's checkout recording the
-token, with no question opened about it and no declaration naming it
-(the membership log's `checkout_registered`, `resolution_joined` and
-`resolution_new` rows): with birth time the sighting that registered it
-would have continued the first. The healed sighting records the token
-on the first checkout, which then comes first, so the heal is read
-once; the second checkout stays, idle, with the records written at it
-in its project, where `memory move` can take them. A second checkout a
-declaration or an answer named is kept.
+so it comes first in ENG-205's order. `_healed` reads the two where the
+rule continues the first, its stamps read as they are or without their
+ctimes, as above (a re-mint of its own lineage is ENG-205's, left in
+that order), the second is in the project of another machine's
+checkout recording the token, and no one chose the second where it is
+(`_chosen`): the root's project file is not bound to a project other
+than the first's (`project init` there), no question was opened about
+it, the membership log registers it by a silent first-sight join with
+the token among its witnesses, and no row of the log naming it was
+written by a declaration (its principal, or its evidence or answerer
+`declaration:<principal>`: a join or a separation, an absorb, a question
+answered). With birth time the sighting that registered it would have
+continued the first. Where nothing was written at the second checkout
+since (its homes, one indexed read), rung 2 takes the first, silently;
+the healed sighting records the token there, which then comes first, so
+the heal is read once, and the second checkout stays, idle. Where
+records were written at it, taking the first would hide them, so the
+sighting stays at the second, its records delivered, and asks
+(`duplicate_checkout`, `_ask_which`), naming the first checkout's
+project and its own: joining the first's moves the second checkout and
+its records there, as a declared move does; keeping it (`separate`, or
+joining its own) leaves it where it is. Either way the question is read
+as a choice from then on.
 
 Cost: one read of the checkouts' token index, with no views, at each
 reading of rung 2 where the token found is neither recorded nor the
 checkout's own re-mint. A resolution reads rung 2 for its liveness plan
 and in its transaction, so such a sighting makes two reads, and a
 steady one none. Where a second record holds the token, the heal reads
-the index once more and, where the project matches, that record's
-questions and the log's registration and declaration rows: once for a
-store's duplicate, and at each sighting of one a declaration kept where
-it is.
+the index once more and, where the project matches, the root file's
+binding, the second record's questions, the log rows naming it and,
+where no one chose it, its homes. The log rows are filtered on the
+checkout in SQL (`Store.membership_log`, ``json_extract``), so only
+the matching ones are parsed; SQLite still visits every membership row
+to filter them. That is once for a store's duplicate, and at each
+sighting of one a declaration kept where it is. Measured (macOS): 0.05
+to 0.12 ms a read on a small store, 10.3 ms with 30,000 registrations
+added.
 
 Where the rule cannot read. A git directory with none of the stamped
 files (a template folder lacking them) is as before. A stamped file's

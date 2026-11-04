@@ -109,7 +109,14 @@ from .membership_records import (
     _same_path,
 )
 from .membership_rows import _Tally, _proposal_from, _signature, _unwritten
-from .membership_shared import _healed, _restamped, _view_made
+from .membership_shared import (
+    ASK_WHICH,
+    HEAL,
+    _ask_which,
+    _healed,
+    _restamped,
+    _view_made,
+)
 
 if TYPE_CHECKING:
     from .membership import Membership
@@ -416,19 +423,29 @@ def _token_read(git_dir: str) -> str | None:
 
 def _by_object(self: Membership, loc: Location) -> tuple[Checkout | None, str]:
     """Rung 2, O: the checkout whose git directory (or folder) object
-    this is, on this machine, the first in order that birth time or
-    `_continuity` continues. One the token found continues only as a
-    re-mint (``remint``, ENG-205 and ENG-215) yields to a later one that
-    birth time continues or that records the token found, and to no
-    other: two records of one git directory, as a reader before
-    9.0.0rc18 leaves them after a re-mint it missed, resolve to the one
-    that records the token. Unless that later one is the second checkout
-    a resolution that could not read another machine's re-mint of the
-    git directory registered, which yields to the earlier one in turn
-    (`membership_shared._healed`, ENG-215)."""
+    this is, on this machine, and how it is continued (`_rung_two`)."""
+    k, how, _first = _rung_two(self, loc)
+    return k, how
+
+
+def _rung_two(
+    self: Membership, loc: Location
+) -> tuple[Checkout | None, str, Checkout | None]:
+    """Rung 2: the first checkout in order at this object on this machine
+    that birth time or `_continuity` continues. One the token found
+    continues only as a re-mint (``remint``, ENG-205 and ENG-215) yields
+    to a later one that birth time continues or that records the token
+    found, and to no other: two records of one git directory, as a reader
+    before 9.0.0rc18 leaves them after a re-mint it missed, resolve to the
+    one that records the token. Unless that later one is the second
+    checkout a resolution that could not read another machine's re-mint
+    of the git directory registered, which no one chose: it yields to the
+    earlier one in turn where it holds no records, and where it holds
+    some it stays, the earlier one returned third for the question
+    naming both (`membership_shared._healed`, ENG-215). Reads only."""
     key = loc.object_key
     if key is None:
-        return None, ""
+        return None, "", None
     reminted: Checkout | None = None
     for k in self._checkouts(
         where={
@@ -441,19 +458,23 @@ def _by_object(self: Membership, loc: Location) -> tuple[Checkout | None, str]:
             continue
         verdict = k.object_key.compare(key)
         if verdict == SAME:
-            return k, "birth"
+            return k, "birth", None
         if verdict != UNPROVEN or (
             reminted is not None and k.token != _found_token(k, loc)
         ):
             continue
         ok, how = self._continuity(k, loc)
-        if ok and reminted is not None and _healed(self, reminted, k, loc):
-            return reminted, "remint"
+        if ok and reminted is not None:
+            read = _healed(self, reminted, k, loc)
+            if read == HEAL:
+                return reminted, "remint", None
+            if read == ASK_WHICH:
+                return k, how, reminted
         if ok and (how != "remint" or reminted is not None):
-            return k, how
+            return k, how, None
         if ok:
             reminted = k
-    return (reminted, "remint") if reminted is not None else (None, "")
+    return (reminted, "remint", None) if reminted is not None else (None, "", None)
 
 
 def _liveness_plan(self: Membership, loc: Location) -> list[tuple[Checkout, View]]:
@@ -762,10 +783,12 @@ def _resolve_repository(
     tenant: str | None,
     strict: bool,
 ) -> Resolution:
-    k, how = self._by_object(loc)
+    k, how, first = _rung_two(self, loc)
     if k is not None:
         k = self._touch_view(k, loc)
         k = _restamped(self, k, loc, how)
+        if first is not None:
+            _ask_which(self, k, first)
         k, lines = self._observe(k, loc, tenant, strict=strict)
         rule = "object" if how == "birth" else f"object+{how}"
         return self._caller(k, loc, rule, SILENT, enclosing, tenant, lines)

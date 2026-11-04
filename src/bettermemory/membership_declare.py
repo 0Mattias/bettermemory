@@ -26,6 +26,7 @@ from .membership_lines import line_unresolved
 from .membership_records import (
     ASK,
     DEFERRED,
+    DUPLICATE_CHECKOUT,
     FILE_CONTRADICTION,
     FIRST_SIGHT,
     FOLDER,
@@ -309,6 +310,11 @@ def _answer_join(
         pass  # that folder is the other project: read by `_nested_answer`
     elif pr.kind == FILE_CONTRADICTION:
         self._move_checkout(k, target, by)
+    elif pr.kind == DUPLICATE_CHECKOUT:
+        # The first record's project: this checkout and its records move
+        # there (ENG-215); its own project keeps it where it is.
+        if target != mine:
+            self._move_checkout(k, target, by)
     else:
         evidence = set(pr.evidence.get(target) or ())
         shallow = (

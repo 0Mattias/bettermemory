@@ -58,6 +58,7 @@ from bettermemory.membership import (
     PortableIdentity,
     Proposal,
 )
+from bettermemory.membership_records import DUPLICATE_CHECKOUT
 from bettermemory.store import Store
 
 from .test_membership_cli import Scene, scene
@@ -97,6 +98,7 @@ _STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
 #: The modules that open a question, and the calls they open one through.
 _OPENERS = (
     "membership_resolve",
+    "membership_shared",
     "membership_portable",
     "membership_declare",
     "membership_migrate",
@@ -250,6 +252,17 @@ _PINNED: list[tuple[str, str, str, str]] = [
         "the project around it until answered",
         f" That folder is that project, when the user says so: {_JOIN}; a part "
         'with an id of its own: bettermemory project init --new (in "/w/app/web")',
+    ),
+    (
+        DUPLICATE_CHECKOUT,
+        DUPLICATE_CHECKOUT,
+        "this checkout is a second record of a git directory another machine "
+        "shares, registered by 9.0.0rc18 or earlier after that machine re-minted "
+        "its token, while the first record is in the first project named; what "
+        "was written here since stays in this checkout's project until answered",
+        " The first record's project, this checkout and what was written here "
+        f"moving there, when the user says so: {_JOIN}; keep it where it is: "
+        f"{_SEPARATE}",
     ),
     (
         LEGACY,

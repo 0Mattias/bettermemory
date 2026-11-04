@@ -20,9 +20,11 @@ from the records of the other machines that see the same files:
 - `_restamped`: a checkout's init stamps as its object reads now, where
   birth time or the token proved it, so the files the rules compare
   follow a mode or an extended attribute set on them;
-- `_healed`: of two records of one git directory, the earlier one, where
-  the later one is the second checkout a resolution that could not tell
-  such a re-mint registered (9.0.0rc18 and earlier).
+- `_healed` and `_ask_which`: of two records of one git directory, the
+  earlier one, where the later one is the second checkout a resolution
+  that could not tell such a re-mint registered (9.0.0rc18 and earlier)
+  and no one chose it; a question naming both projects where records
+  were written at it since.
 
 The init stamps are what tells a view from a copy: the name, mtime, ctime
 and size of `description`, `info/exclude` and a linked worktree's
@@ -37,19 +39,20 @@ token found at its object.
 
 Each function takes the model as `self: Membership`, as the ladder's do
 (`membership_resolve`); the class binds `_shared_remint` by name. This
-module imports the standard library, `checkout_token` and the records and
-rows modules, and `membership` only under TYPE_CHECKING.
+module imports the standard library, `checkout_token` and the records,
+rows and lines modules, and `membership` only under TYPE_CHECKING.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import Collection, Sequence
-from typing import TYPE_CHECKING
+from collections.abc import Collection, Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 from . import checkout_token
-from .membership_records import Checkout, Location, _found_token
+from .membership_lines import line_restated
+from .membership_records import DUPLICATE_CHECKOUT, Checkout, Location, _found_token
 from .membership_rows import _checkout_from
 
 if TYPE_CHECKING:
@@ -63,6 +66,12 @@ RESTAMPED_BY = frozenset({"birth", "token", "remint"})
 #: Nanoseconds in a second: a share that keeps times to the second
 #: (`_same_file`).
 _SECOND_NS = 1_000_000_000
+#: What `_healed` reads of two records of one git directory: the earlier
+#: one, silently (``HEAL``); the later one, with a question naming both
+#: projects (``ASK_WHICH``); or the later one as ENG-205's order has it
+#: (the empty string).
+HEAL = "heal"
+ASK_WHICH = "ask"
 
 
 def _shared_remint(
@@ -138,15 +147,10 @@ def _exact(stamps: Collection[Sequence[object]]) -> set[tuple[object, ...]]:
 
 def _view_made(self: Membership, k: Checkout, found: str | None) -> bool:
     """Whether a checkout of another machine that saw the same files as
-    `k` (an init stamp in common by name, mtime, ctime and size,
-    `_same_files`) either records `found`, which it read or wrote in its
-    view of that git directory, or names the device and inode number
-    `found` is a re-mint of `k`'s token over (`checkout_token.succeeds`):
-    so `found` was written into `k`'s git directory through that view.
-    The candidates are the checkouts recording `k`'s token or `found`, one
-    indexed read by token with no views (`_carriers`); a record of `k`'s
-    own machine is never one, since a re-mint there names `k`'s own
-    lineage. False for no token, `k`'s own, or a malformed one."""
+    `k` (`_made_by`) made or recorded `found`: B's reading of a token at
+    the checkout's path, its object another (`membership_resolve._tally`).
+    One indexed read by token with no views (`_carriers`). False for no
+    token, `k`'s own, or a malformed one."""
     if not k.token or not checkout_token.valid(found) or found == k.token:
         return False
     if not k.stamps:
@@ -155,8 +159,14 @@ def _view_made(self: Membership, k: Checkout, found: str | None) -> bool:
 
 
 def _made_by(k: Checkout, found: str, carriers: Collection[Checkout]) -> bool:
-    """`_view_made` over `carriers`, the checkouts recording `k`'s token
-    or `found`."""
+    """Whether a checkout among `carriers` of another machine that saw the
+    same files as `k` (an init stamp in common by name, mtime, ctime and
+    size, `_same_files`) either records `found`, which it read or wrote in
+    its view of that git directory, or names the device and inode number
+    `found` is a re-mint of `k`'s token over (`checkout_token.succeeds`):
+    so `found` was written into `k`'s git directory through that view. A
+    record of `k`'s own machine is never one, since a re-mint there names
+    `k`'s own lineage."""
     for other in carriers:
         key = other.object_key
         if (
@@ -234,76 +244,120 @@ def _restamped(self: Membership, k: Checkout, loc: Location, how: str) -> Checko
     return self._put_checkout(dataclasses.replace(k, stamps=tuple(loc.stamps)))
 
 
-def _healed(self: Membership, kept: Checkout, later: Checkout, loc: Location) -> bool:
-    """Whether rung 2 takes `kept`, which `_shared_remint` continues,
-    over `later`, a later record of the same object on this machine that
-    records the token found (and which ENG-205's order would take): where
+def _healed(self: Membership, kept: Checkout, later: Checkout, loc: Location) -> str:
+    """What rung 2 reads of `kept`, which `_shared_remint` continues, and
+    `later`, a later record of the same object on this machine that
+    records the token found (which ENG-205's order would take), where
     `later` is the second checkout a resolution that could not read the
     other machine's re-mint registered (9.0.0rc18 and earlier, or while
-    the stamps had moved). All of:
+    the stamps had moved). `HEAL` (`kept`, silently) where all of these
+    hold and `later` holds no records; `ASK_WHICH` (`later`, with a
+    question naming both projects, `_ask_which`) where they hold and it
+    holds some; else the empty string (`later`):
 
     - `kept` is continued by another machine's re-mint (`_continues`),
       not its own (`checkout_token.succeeds` over its own lineage fails):
       two records after a re-mint of this machine's own are ENG-205's,
       left in its order;
-    - `later` was registered by a silent first-sight join on that token
-      (``join:`` with T among its witnesses), into the project of a
-      checkout of another machine recording the token, and no question
-      was opened about it and no declaration named it: no one chose it.
+    - `later` is in the project of a checkout of another machine
+      recording the token, and no one chose it there (`_chosen`).
 
     Then the git directory is `kept`'s and the token was written into it
     through another machine's view, so with birth time the sighting that
-    registered `later` would have continued `kept`. The sighting records the token on `kept`, which then comes
-    first in order, so this is read once; `later` stays, idle, with the
-    records written at it in its project. One read of the token index
-    (the rule's own, over the carriers it reads) and, where that and the
-    project hold, of `later`'s questions and of the log's registrations
-    and declarations (`_joined_silently_by_token`)."""
+    registered `later` would have continued `kept`. A healed sighting
+    records the token on `kept`, which then comes first in order, so this
+    is read once; `later` stays, idle. Reads only: the token index (the
+    rule's own read), and where the rest holds the root file's binding,
+    `later`'s questions, the log rows naming it and its homes, each
+    indexed or filtered on `later` in SQL."""
     found = _found_token(later, loc)
     if found is None or found != later.token or not kept.token or not kept.stamps:
-        return False
+        return ""
     if found == kept.token or checkout_token.succeeds(found, kept.lineage):
-        return False
+        return ""
     if not (_read_here(kept, loc) or _moved_under(kept, loc)):
-        return False
+        return ""
     carriers = _carriers(self, (kept.token, found))
     if not _continues(kept, loc, found, carriers):
-        return False
+        return ""
     projects = {
         self._canon(c.project)
         for c in carriers
         if c.token == found and c.machine != kept.machine
     }
-    if self._canon(later.project) not in projects:
-        return False
+    if self._canon(later.project) not in projects or _chosen(self, kept, later, loc):
+        return ""
+    if self._store.membership_rows("homes", where={"checkout": later.id}):
+        return ASK_WHICH
+    return HEAL
+
+
+def _chosen(self: Membership, kept: Checkout, later: Checkout, loc: Location) -> bool:
+    """Whether someone chose `later` where it is: the root's project file
+    bound to a project other than `kept`'s (`project init` there), a
+    question opened about it, or a log row naming it that a declaration
+    wrote (`_by_declaration`); or the log does not register it by a silent
+    first-sight join with the token among its witnesses."""
+    rf = loc.root_file
+    bound = self._file_binding(rf.id) if rf is not None else None
+    if bound is not None and self._canon(bound) != self._canon(kept.project):
+        return True
     if self._store.membership_rows("proposals", where={"checkout": later.id}):
-        return False
-    return _joined_silently_by_token(self, later.id)
+        return True
+    return not _joined_silently_by_token(self, later.id)
 
 
 def _joined_silently_by_token(self: Membership, checkout: str) -> bool:
     """Whether the membership log registers `checkout` by a first-sight
-    join with the token among its witnesses, and names it in no
-    declaration (a ``resolution_new``, or a ``resolution_joined`` whose
-    witness is the declaration). Read only where `_healed` has found the
-    rest, which is once a store's duplicate."""
+    join with the token among its witnesses, and holds no row naming it
+    that a declaration wrote (`_by_declaration`). The rows naming it are
+    filtered in SQL (`Store.membership_log`), so the read is as long as
+    they are."""
     registered = False
-    for row in self._store.membership_log(
-        ["checkout_registered", "resolution_joined", "resolution_new"]
-    ):
+    for row in self._store.membership_log(checkout=checkout):
         try:
             payload = json.loads(row.payload)
         except ValueError:
             continue
         if not isinstance(payload, dict) or payload.get("checkout") != checkout:
             continue
-        if row.kind == "resolution_new":
+        if _by_declaration(payload):
             return False
-        if row.kind == "resolution_joined":
-            if "declaration" in (payload.get("witnesses") or ()):
-                return False
-            continue
-        rule = str(payload.get("rule") or "")
-        codes = rule.split(":", 1)[1].split("+") if rule.startswith("join:") else []
-        registered = "T" in codes
+        if row.kind == "checkout_registered":
+            rule = str(payload.get("rule") or "")
+            codes = rule.split(":", 1)[1].split("+") if rule.startswith("join:") else []
+            registered = "T" in codes
     return registered
+
+
+def _by_declaration(payload: Mapping[str, Any]) -> bool:
+    """Whether a log row was written by a declaration: it names its
+    principal (a join or a separation, `membership_declare._declared`), or
+    its evidence or answerer is one (``declaration:<principal>``: an
+    absorb, a question answered), or a join's witness is one."""
+    if payload.get("principal"):
+        return True
+    for field in ("evidence", "by"):
+        if str(payload.get(field) or "").startswith("declaration:"):
+            return True
+    witnesses = payload.get("witnesses")
+    return isinstance(witnesses, list) and "declaration" in witnesses
+
+
+def _ask_which(self: Membership, later: Checkout, first: Checkout) -> None:
+    """The question about `later`, a second record of `first`'s git
+    directory that holds records written since (`_healed`): the first
+    record's project, where an answer joining it moves `later` and its
+    records (`membership_declare._answer_join`), and `later`'s own, where
+    it stays until answered. One per checkout (`_open_proposal`)."""
+    theirs, mine = self._canon(first.project), self._canon(later.project)
+    named = [(self.project(x).name, x) for x in (theirs, mine)]
+    self._open_proposal(
+        checkout=later.id,
+        kind=DUPLICATE_CHECKOUT,
+        candidates=[theirs, mine],
+        evidence={"first": first.id},
+        reason=DUPLICATE_CHECKOUT,
+        line=lambda q: line_restated(q, DUPLICATE_CHECKOUT, DUPLICATE_CHECKOUT, named),
+        signature=None,
+    )

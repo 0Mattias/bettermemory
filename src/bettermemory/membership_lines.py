@@ -47,6 +47,7 @@ from collections.abc import Iterable, Sequence
 
 from .history import printable, quoted
 from .membership_records import (
+    DUPLICATE_CHECKOUT,
     FILE_CONTRADICTION,
     FIRST_SIGHT,
     IMPORT,
@@ -375,6 +376,12 @@ REASON_SAID: dict[str, str] = {
         "part of the project around that folder, and the folder is treated as "
         "the project around it until answered"
     ),
+    DUPLICATE_CHECKOUT: (
+        "this checkout is a second record of a git directory another machine "
+        "shares, registered by 9.0.0rc18 or earlier after that machine re-minted "
+        "its token, while the first record is in the first project named; what "
+        "was written here since stays in this checkout's project until answered"
+    ),
     LEGACY_NO_LIVE_CHECKOUT: (
         "the records of a project whose folder is gone may belong to it: this "
         "repository holds some of their recorded commits"
@@ -445,6 +452,17 @@ def line_restated(
         options = (
             f"Still the same project, when the user says so: {joins}; a project "
             f"of its own: {separate}"
+        )
+    elif kind == DUPLICATE_CHECKOUT:
+        first = (
+            _answer(question, "join", candidates[0][1], said=True)
+            if candidates
+            else "(no project to join)"
+        )
+        options = (
+            "The first record's project, this checkout and what was written "
+            f"here moving there, when the user says so: {first}; keep it where "
+            f"it is: {separate}"
         )
     elif kind == IMPORT:
         options = (
