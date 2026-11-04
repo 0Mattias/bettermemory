@@ -535,7 +535,7 @@ def test_auroc_permutation_p_calls_a_real_effect_significant() -> None:
 
 def _diff(*hunks: str) -> str:
     """A minimal `git log -p -U0` stream, one commit."""
-    return "\x01" + "deadbeef\n" + "".join(hunks)
+    return "\x01" + "d" * 40 + "\n" + "".join(hunks)
 
 
 def _file_hunk(path: str, removed: list[str], added: list[str]) -> str:
@@ -719,7 +719,7 @@ def test_hunk_parsing_survives_content_that_looks_like_a_diff() -> None:
         "+def handler():\n"
         "+TIMEOUT = 5\n"
     )
-    index = rot.build_binding_index("\x01deadbeef\n" + hostile)
+    index = rot.build_binding_index("\x01" + "d" * 40 + "\n" + hostile)
     assert index["parse_mismatches"] == 0, "the -U0 line-count check failed"
     assert index["hunks"] == 1
     # The decoy header lines were consumed as CONTENT, not as structure.

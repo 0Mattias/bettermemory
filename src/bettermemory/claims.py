@@ -115,6 +115,7 @@ __all__ = [
     "claim_is_addressable",
     "governed_claim_paths",
     "build_binding_index",
+    "hunk_lines",
     "claim_level_drift",
     "string_fragment",
     "anchors_from_value",
@@ -146,6 +147,9 @@ _ASSIGN_RE = re.compile(
     r"(?:\+|-|\*|/|//|%|\*\*|>>|<<|&|\^|\|)?=(?!=)"
 )
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+#: What a record mark carries: a full commit hash, 40 hex digits for a
+#: SHA-1 repository and 64 for a SHA-256 one, as ``%H`` prints it.
+_MARK_HASH_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 
 # An anchor line must carry this many non-whitespace characters to be
 # treated as a content address. Short interior lines (`}`, `],`,
@@ -767,6 +771,17 @@ class _Headers:
         return True
 
 
+def hunk_lines(line: str) -> int | None:
+    """The lines a ``-U0`` hunk whose header is `line` holds, removed and
+    added together, or None where `line` is no hunk header: the count
+    `build_binding_index` reads a hunk's lines by, which the producer
+    (`origin_gitfiles._dequote_patch_headers`) reads them past by too."""
+    match = _HUNK_RE.match(line)
+    if match is None:
+        return None
+    return int(match.group(2) or 1) + int(match.group(4) or 1)
+
+
 def build_binding_index(diff_text: str) -> dict[str, Any]:
     """Parse one `git log -p -U0` stream into a claim-agnostic index.
 
@@ -785,7 +800,9 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
     there it ended the hunk one line early and read as a mismatch. A
     section whose header alone says its path changed (an empty file
     deleted or created, a mode changed, a file renamed whole) touches the
-    path all the same (`_Headers`), and `header_only` names the commit.
+    path all the same (`_Headers`), and `header_only` names the commit. A
+    record mark is read only with the full hash ``%H`` prints; any other
+    is a mismatch, and names no commit (ENG-220's re-review).
     """
     bindings: dict[tuple[str, str, str], dict[str, Any]] = {}
     changed_text: dict[str, dict[str, set[str]]] = {}
@@ -806,9 +823,13 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
         i += 1
         if line.startswith(COMMIT_MARK):
             headers.start(line, sha)
-            sha = line[1:].strip()
-            commits.add(sha)
             path = ""
+            mark = line[1:].strip()
+            if not _MARK_HASH_RE.fullmatch(mark):
+                mismatches += 1
+                continue
+            sha = mark
+            commits.add(sha)
             continue
         if line.startswith("diff --git "):
             headers.start(line, sha)

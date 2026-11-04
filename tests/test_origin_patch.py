@@ -588,6 +588,76 @@ def test_a_carriage_return_in_a_file_is_its_content(
     assert (resolved.count, resolved.claims_drifted) == (1, (_FOO,))
 
 
+#: A full hash a file's line spells after an escaped line feed.
+_FAKE = "f" * 40
+
+
+def _quoted_history(before: str, after: str) -> History:
+    """src/mod.py's first line `before`, then `after`, with foo's def line
+    changed in the same commit."""
+    first = _CR_BEFORE.replace("# header line", before)
+    second = _CR_BEFORE.replace("# header line", after).replace("foo()", "foo(x)")
+    return [{"src/mod.py": first}, {"src/mod.py": second}]
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@pytest.mark.parametrize(
+    "history",
+    [
+        pytest.param(
+            _quoted_history("# header line", f'++ "b/x\\n\\001{_FAKE}"'),
+            id="added-mark",
+        ),
+        pytest.param(
+            _quoted_history(f'-- "a/x\\n\\001{_FAKE}"', "# plain"), id="removed-mark"
+        ),
+        pytest.param(
+            _quoted_history("# header line", '++ "b/x\\n--- a/src/other.py"'),
+            id="added-header",
+        ),
+        pytest.param(
+            _quoted_history("# header line", '++ "b/x\\n+++ /dev/null"'),
+            id="added-deletion",
+        ),
+    ],
+)
+@_CLONES
+def test_a_line_that_reads_as_a_quoted_header_is_a_line(
+    tmp_path: Path, basis: str, history: History, blobless: bool
+) -> None:
+    """One commit changes foo's def line and the file's first line, which
+    reads as a quoted header once the patch prefixes it (``++ "b/..."``
+    added prints ``+++ "b/..."``, ``-- "a/..."`` removed ``--- "a/..."``),
+    its quoted path holding an escaped line feed and then a record mark
+    with a full hash, a ``---`` header of another file or a deletion's
+    ``+++``: 1, foo named and the file's path claim not, on both bases, in
+    both clones. The producer unquoted it as a header and wrote the escape
+    back as a line break, so foo's hunk went to a commit outside the
+    window or to another file and the count read 0, or the file read as
+    deleted and its path claim fired. A hunk's lines are read past by its
+    count, and a header naming a line break is left quoted
+    (`origin_gitfiles._dequote_patch_headers`)."""
+    partial = Partial(tmp_path, history)
+    partial.clone(blobless=blobless)
+    if blobless:
+        partial.fetch(0, 1)
+    resolved = partial.resolve([_FOO, _MOD_PATH], basis)
+    assert (resolved.count, resolved.claims_drifted) == (1, (_FOO,))
+
+
+def test_a_listed_mark_without_a_full_hash_declines_the_listing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The split's listing reads a mark only with the full hash ``%H``
+    prints; any other declines it, and the window keeps its per-file
+    count."""
+    raw = (
+        f"{COMMIT_MARK}{'d' * 39}\n\n:100644 100644 {'e' * 40} {'1' * 40} M\tsrc/f.py\n"
+    )
+    monkeypatch.setattr(origin, "_git", lambda *a, **k: raw)
+    assert origin_patch._changes(tmp_path, ["d" * 40], ["src"]) is None
+
+
 def _read_by(history: History, path: str) -> int:
     """The bytes a patch of the window reads for `path`: both sides of each
     commit's change."""

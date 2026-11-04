@@ -345,7 +345,11 @@ def _changes(
     current: list[Change] | None = None
     for line in raw.split("\n"):
         if line.startswith(COMMIT_MARK):
-            current = changes.setdefault(line[1:].strip().lower(), [])
+            sha = line[1:].strip().lower()
+            if not origin.is_full_commit_sha(sha):
+                # A mark carries the hash ``%H`` prints, and no other.
+                return None
+            current = changes.setdefault(sha, [])
             continue
         if not line.startswith(":") or current is None:
             continue

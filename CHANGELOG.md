@@ -419,6 +419,26 @@ eighteenth was built.
   `tests/test_origin_as_stored.py`, `tests/test_origin_patch.py`,
   `tests/test_commit_drift_cache.py`, `tests/test_origin_name_space.py`)
 
+- **A file's line that reads as a quoted header hides no claim
+  (ENG-220).** The producer unquoted every `---`/`+++` line whose quoted
+  path started `a/` or `b/`, hunk lines included, so an added line
+  `++ "b/x\n\001<40 hex digits>"` (printed `+++ "b/..."`) had its `\n`
+  escape written back as a line break: what followed read as a record
+  mark with that hash or a `--- a/<another path>` header, and foo's hunk
+  went to a commit outside the window or to another file, so the count
+  read 0 against 1 on both bases; read as a deletion's `+++ /dev/null`,
+  the edited file read as deleted, and its path claim fired.
+  A hunk's lines are now read past by the count its `@@` line gives, as
+  the parser reads them (`claims.hunk_lines`), so no line of a file is
+  rewritten, and a header whose quoted path names a line feed or a
+  carriage return stays quoted. The parser reads a record mark only
+  where it carries a full hash, 40 or 64 hex digits as `%H` prints them,
+  and counts any other as a mismatch, which keeps the per-file count; the
+  split's listing declines on one. (`src/bettermemory/origin_gitfiles.py`,
+  `src/bettermemory/claims.py`, `src/bettermemory/origin_patch.py`,
+  `tests/test_origin_patch.py`, `tests/test_origin.py`,
+  `tests/test_claims.py`, `tests/test_bench_rot.py`)
+
 - **The migration homes a record in a part below a folder whose question
   was answered where a session there resolves (ENG-222).** A folder
   holding a copy of a part's file and other content is asked about at

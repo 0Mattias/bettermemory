@@ -11,7 +11,8 @@ entry, and the file signatures the drift memos key on
 
 This module lives apart from `origin.py` to keep each module under the
 package's 2,000-line bound (ENG-96). It imports the standard library,
-`_caches` and `githead`; `origin` imports it, never the reverse, and
+`_caches` and `githead`, and `claims.hunk_lines` where it reads a patch;
+`origin` imports it, never the reverse, and
 re-exports every name a caller reads. Patches of `_config_variable_names`
 and `_INDEX_FIRST_READ` go here, where their readers are.
 """
@@ -441,6 +442,17 @@ _QUOTED_HEADER_MARKS = ('--- "', '+++ "', 'diff --git "', ' from "', ' to "')
 _NAMING_HEADERS = ("rename from ", "rename to ", "copy from ", "copy to ")
 
 
+def _quoted_header_path(quoted: str) -> str | None:
+    """The path a quoted header names, decoded (`_unquote_c_path`), or
+    None where it is not one complete quoted string or names a line break:
+    a header is one line, and a decoded LF or CR written back into the
+    stream would start another (ENG-220's re-review)."""
+    decoded = _unquote_c_path(quoted)
+    if decoded is None or "\n" in decoded or "\r" in decoded:
+        return None
+    return decoded
+
+
 def _dequote_named_header(line: str) -> str | None:
     """`line` with its quoted path unquoted, where it is a ``diff --git``
     line whose two sides are one complete quoted path each, ``a/P`` and
@@ -451,14 +463,14 @@ def _dequote_named_header(line: str) -> str | None:
         for k in range(1, len(rest) - 2):
             if rest[k : k + 3] != '" "':
                 continue
-            old = _unquote_c_path(rest[: k + 1])
-            new = _unquote_c_path(rest[k + 2 :])
+            old = _quoted_header_path(rest[: k + 1])
+            new = _quoted_header_path(rest[k + 2 :])
             if old and new and old.startswith("a/") and new == "b/" + old[2:]:
                 return f"diff --git {old} {new}"
         return None
     for prefix in _NAMING_HEADERS:
         if line.startswith(prefix + '"'):
-            decoded = _unquote_c_path(line[len(prefix) :])
+            decoded = _quoted_header_path(line[len(prefix) :])
             return None if decoded is None else prefix + decoded
     return None
 
@@ -476,16 +488,20 @@ def _dequote_patch_headers(stream: str) -> str:
     happens HERE, on the producer side, so the parser keeps its
     one-argument no-lookup guarantee and its exact prefix match.
 
-    A header line is rewritten only when the whole remainder decodes as
-    one complete quoted string AND the decoded path starts with the
-    pinned ``a/`` (old side) or ``b/`` (new side) prefix. That guard
-    keeps hunk-body content lines out: a removed source line
-    ``-- "x"`` renders as ``--- "x"`` in the stream, but its decoded
-    body doesn't start with a prefix, so it passes through byte-exact.
-    (A content line spelling a quoted a/-path remains theoretically
-    rewritable — the cost is one slightly-off change anchor, never a
-    missed deletion.) The fast path keeps the zero-quoted-header case,
-    i.e. essentially every real stream, allocation-free.
+    Only a header is rewritten, never a hunk's line: a hunk's lines are
+    read past by the count its ``@@`` line gives (`claims.hunk_lines`), as
+    the parser reads them, so a file's line that reads as a quoted header
+    (an added ``++ "b/x"`` prints as ``+++ "b/x"``) stays as git printed
+    it. Read as a header, such a line's ``\\n`` escape was written back as
+    a line break, and what followed it, a record mark and a hash or a
+    ``--- a/<another path>`` line, read as the stream's own: foo's hunk went
+    to a commit outside the window or to another file, and the count read
+    0 on both bases (ENG-220's re-review). A header is rewritten where its
+    whole remainder decodes as one complete quoted string, naming no line
+    break (`_quoted_header_path`), whose path starts with the pinned ``a/`` (old
+    side) or ``b/`` (new side) prefix. The fast path keeps the
+    zero-quoted-header case, i.e. essentially every real stream,
+    allocation-free.
 
     The ``diff --git`` line and the rename and copy lines are rewritten
     the same way (`_dequote_named_header`): a section whose header alone
@@ -494,15 +510,32 @@ def _dequote_patch_headers(stream: str) -> str:
     """
     if not any(mark in stream for mark in _QUOTED_HEADER_MARKS):
         return stream
+    from .claims import hunk_lines
+
     lines = stream.split("\n")
+    left = 0
     for idx, line in enumerate(lines):
+        if left:
+            # A hunk's line, which the parser counts (a no-newline marker
+            # it reads past), or the line after a hunk cut short, where
+            # the parser resynchronises too.
+            if line.startswith("\\"):
+                continue
+            if line.startswith(("-", "+")):
+                left -= 1
+                continue
+            left = 0
+        size = hunk_lines(line)
+        if size is not None:
+            left = size
+            continue
         named = _dequote_named_header(line)
         if named is not None:
             lines[idx] = named
             continue
         if not line.startswith(('--- "', '+++ "')):
             continue
-        decoded = _unquote_c_path(line[4:])
+        decoded = _quoted_header_path(line[4:])
         if decoded is None:
             continue
         prefix = "a/" if line.startswith("--- ") else "b/"

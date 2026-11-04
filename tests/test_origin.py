@@ -1576,6 +1576,40 @@ def test_dequote_patch_headers_rewrites_only_complete_prefixed_headers() -> None
     assert _dequote_patch_headers(plain) is plain
 
 
+def test_dequote_patch_headers_leaves_a_hunk_s_lines_and_a_line_break_quoted() -> None:
+    """A hunk's lines are read past by its count, a no-newline marker not
+    counted, so a file's line that reads as a quoted header stays as git
+    printed it; after the hunk, headers are read again. A header whose
+    quoted path names a line feed or a carriage return stays quoted: written
+    back, it would start a line of its own (ENG-220's re-review)."""
+    from bettermemory.origin import _dequote_patch_headers
+
+    body = [
+        '+++ "b/x\\n\\001' + "f" * 40 + '"',
+        '--- "a/src/other.py"',
+        "\\ No newline at end of file",
+        '+++ "b/y"',
+    ]
+    stream = "\n".join(
+        [
+            "diff --git a/src/mod.py b/src/mod.py",
+            "--- a/src/mod.py",
+            "+++ b/src/mod.py",
+            "@@ -1 +1,2 @@",
+            *body,
+            'diff --git "a/src/we\\"ird.py" "b/src/we\\"ird.py"',
+            '--- "a/src/we\\"ird.py"',
+            '+++ "b/src/n\\nl.py"',
+            'rename from "src/c\\rr.py"',
+        ]
+    )
+    out = _dequote_patch_headers(stream).split("\n")
+    assert out[4:8] == body
+    assert out[8] == 'diff --git a/src/we"ird.py b/src/we"ird.py'
+    assert out[9] == '--- a/src/we"ird.py'
+    assert out[10:] == ['+++ "b/src/n\\nl.py"', 'rename from "src/c\\rr.py"']
+
+
 # ---------------------------------------------------------------------------
 # Worktree isolation — `worktree_root` capture and the secondary filter
 # ---------------------------------------------------------------------------

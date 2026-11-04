@@ -356,9 +356,12 @@ def test_oracle_absence_refuses_escapes_like_presence(tree: Path) -> None:
 # ---------------------------------------------------------------------------
 
 _MARK = "\x01"
+#: The full hashes the streams' marks carry, as ``%H`` prints them: the
+#: parser reads no other mark.
+_H1, _H2, _H3, _H9 = ("1" * 40, "2" * 40, "3" * 40, "9" * 40)
 
 
-def _readd_stream(sha: str = "sha1") -> str:
+def _readd_stream(sha: str = _H1) -> str:
     return (
         f"{_MARK}{sha}\n"
         "diff --git a/pkg/gone.py b/pkg/gone.py\n"
@@ -370,7 +373,7 @@ def _readd_stream(sha: str = "sha1") -> str:
     )
 
 
-def _delete_stream(sha: str = "sha2") -> str:
+def _delete_stream(sha: str = _H2) -> str:
     return (
         f"{_MARK}{sha}\n"
         "diff --git a/pkg/gone.py b/pkg/gone.py\n"
@@ -394,7 +397,7 @@ def test_absent_claim_reads_weak_only_when_window_ends_absent() -> None:
     a touch and a deletion; under the declare-time invariant (the window
     STARTS absent) that sequence can only end absent — weak says
     spot-check, strict stays quiet."""
-    index = build_binding_index(_readd_stream("sha1") + _delete_stream("sha2"))
+    index = build_binding_index(_readd_stream(_H1) + _delete_stream(_H2))
     result = claim_level_drift(parse_claim("!pkg/gone.py"), index)
     assert result["weak"] is True
     assert result["strict"] is False
@@ -402,7 +405,7 @@ def test_absent_claim_reads_weak_only_when_window_ends_absent() -> None:
 
 def test_absent_claim_stays_quiet_on_unrelated_churn() -> None:
     stream = (
-        f"{_MARK}sha9\n"
+        f"{_MARK}{_H9}\n"
         "diff --git a/pkg/other.py b/pkg/other.py\n"
         "--- a/pkg/other.py\n"
         "+++ b/pkg/other.py\n"
@@ -423,7 +426,7 @@ def test_a_no_newline_marker_mid_hunk_is_not_a_hunk_line() -> None:
     hunk before the added line, a mismatch that sent the whole window to
     the per-file count, and the added binding was never indexed."""
     stream = (
-        f"{_MARK}sha1\n"
+        f"{_MARK}{_H1}\n"
         "diff --git a/pkg/mod.py b/pkg/mod.py\n"
         "--- a/pkg/mod.py\n"
         "+++ b/pkg/mod.py\n"
@@ -442,6 +445,43 @@ def test_a_no_newline_marker_mid_hunk_is_not_a_hunk_line() -> None:
     assert (result["weak"], result["strict"]) == (True, True)
 
 
+@pytest.mark.parametrize(
+    "mark", ["sha1", "f" * 39, "F" * 40, "f" * 41, "f" * 40 + " x", ""]
+)
+def test_a_mark_without_a_full_hash_is_a_mismatch(mark: str) -> None:
+    """A record mark carries the full hash ``%H`` prints; any other is
+    counted as a mismatch, which sends the window to the per-file count,
+    and no hunk after it is given to the commit it names (ENG-220's
+    re-review)."""
+    stream = (
+        f"{_MARK}{_H1}\n"
+        "diff --git a/pkg/mod.py b/pkg/mod.py\n"
+        "--- a/pkg/mod.py\n"
+        "+++ b/pkg/mod.py\n"
+        "@@ -1 +1 @@\n"
+        "-TIMEOUT_SECONDS = 30\n"
+        "+TIMEOUT_SECONDS = 45\n"
+        f"{_MARK}{mark}\n"
+        "diff --git a/pkg/mod.py b/pkg/mod.py\n"
+        "--- a/pkg/mod.py\n"
+        "+++ b/pkg/mod.py\n"
+        "@@ -1 +1 @@\n"
+        "-TIMEOUT_SECONDS = 45\n"
+        "+TIMEOUT_SECONDS = 60\n"
+    )
+    index = build_binding_index(stream)
+    assert index["parse_mismatches"] == 1
+    assert index["commits"] == 1
+    entry = index["bindings"][("pkg/mod.py", "assign", "TIMEOUT_SECONDS")]
+    assert entry["commits"] == {_H1}
+
+
+def test_a_sha256_mark_is_read() -> None:
+    stream = f"{_MARK}{'a' * 64}\n" + _EDIT_BESIDE.split("\n", 1)[1]
+    index = build_binding_index(stream)
+    assert (index["parse_mismatches"], index["commits"]) == (0, 1)
+
+
 def _header_only(sha: str, path: str, *extended: str) -> str:
     """One commit's section whose header alone says `path` changed: no
     ``---``/``+++`` line and no hunk, as git prints an empty file's
@@ -452,7 +492,7 @@ def _header_only(sha: str, path: str, *extended: str) -> str:
 
 
 _EDIT_BESIDE = (
-    f"{_MARK}sha2\n"
+    f"{_MARK}{_H2}\n"
     "diff --git a/pkg/other.py b/pkg/other.py\n"
     "--- a/pkg/other.py\n"
     "+++ b/pkg/other.py\n"
@@ -470,7 +510,7 @@ def test_an_empty_files_deletion_fires_its_path_claim() -> None:
     deleted now, and the commit named for it."""
     stream = (
         _header_only(
-            "sha1",
+            _H1,
             "pkg/empty.py",
             "deleted file mode 100644",
             "index e69de29..0000000",
@@ -479,7 +519,7 @@ def test_an_empty_files_deletion_fires_its_path_claim() -> None:
     )
     index = build_binding_index(stream)
     assert "pkg/empty.py" in index["deleted"] and "pkg/empty.py" in index["files"]
-    assert index["header_only"] == {"pkg/empty.py": {"sha1"}}
+    assert index["header_only"] == {"pkg/empty.py": {_H1}}
     assert index["parse_mismatches"] == 0
     result = claim_level_drift(parse_claim("pkg/empty.py"), index)
     assert (result["weak"], result["strict"]) == (True, True)
@@ -488,13 +528,13 @@ def test_an_empty_files_deletion_fires_its_path_claim() -> None:
 def test_an_empty_files_creation_fires_its_absence_claim() -> None:
     stream = (
         _header_only(
-            "sha1", "pkg/gone.py", "new file mode 100644", "index 0000000..e69de29"
+            _H1, "pkg/gone.py", "new file mode 100644", "index 0000000..e69de29"
         )
         + _EDIT_BESIDE
     )
     index = build_binding_index(stream)
     assert "pkg/gone.py" in index["files"] and "pkg/gone.py" not in index["deleted"]
-    assert index["header_only"] == {"pkg/gone.py": {"sha1"}}
+    assert index["header_only"] == {"pkg/gone.py": {_H1}}
     result = claim_level_drift(parse_claim("!pkg/gone.py"), index)
     assert (result["weak"], result["strict"]) == (True, True)
 
@@ -504,10 +544,10 @@ def test_a_mode_change_touches_the_file_and_fires_no_claim() -> None:
     so the stream is no longer read as naming no file, and no claim kind
     reads a mode, so none fires."""
     index = build_binding_index(
-        _header_only("sha1", "pkg/mod.py", "old mode 100644", "new mode 100755")
+        _header_only(_H1, "pkg/mod.py", "old mode 100644", "new mode 100755")
     )
     assert index["files"] == {"pkg/mod.py"} and not index["deleted"]
-    assert index["header_only"] == {"pkg/mod.py": {"sha1"}}
+    assert index["header_only"] == {"pkg/mod.py": {_H1}}
     for spec in ("pkg/mod.py", "pkg/mod.py::handler", "pkg/mod.py::TIMEOUT=30"):
         result = claim_level_drift(parse_claim(spec), index)
         assert (result["weak"], result["strict"]) == (False, False), spec
@@ -517,7 +557,7 @@ def test_a_whole_rename_deletes_its_source_and_touches_its_target() -> None:
     """The streams claim drift reads print no renames; one that does is
     read all the same: a rename's source is gone, its target touched."""
     stream = (
-        f"{_MARK}sha1\n"
+        f"{_MARK}{_H1}\n"
         "diff --git a/pkg/old.py b/pkg/new.py\n"
         "similarity index 100%\n"
         "rename from pkg/old.py\n"
@@ -526,14 +566,14 @@ def test_a_whole_rename_deletes_its_source_and_touches_its_target() -> None:
     index = build_binding_index(stream)
     assert index["deleted"] == {"pkg/old.py"}
     assert index["files"] == {"pkg/old.py", "pkg/new.py"}
-    assert index["header_only"] == {"pkg/old.py": {"sha1"}, "pkg/new.py": {"sha1"}}
+    assert index["header_only"] == {"pkg/old.py": {_H1}, "pkg/new.py": {_H1}}
 
 
 def test_a_section_with_lines_is_not_header_only() -> None:
     """A deletion that prints its lines names its commit through them, as
     before: its header touches the path, and `header_only` stays empty."""
     stream = (
-        f"{_MARK}sha1\n"
+        f"{_MARK}{_H1}\n"
         "diff --git a/pkg/mod.py b/pkg/mod.py\n"
         "deleted file mode 100644\n"
         "index 1234567..0000000\n"
@@ -545,9 +585,7 @@ def test_a_section_with_lines_is_not_header_only() -> None:
     index = build_binding_index(stream)
     assert index["deleted"] == {"pkg/mod.py"}
     assert index["header_only"] == {}
-    assert index["changed_text"]["pkg/mod.py"] == {
-        "TIMEOUT_SECONDS_VALUE = 30": {"sha1"}
-    }
+    assert index["changed_text"]["pkg/mod.py"] == {"TIMEOUT_SECONDS_VALUE = 30": {_H1}}
 
 
 def test_a_quoted_header_alone_is_read_unquoted() -> None:
@@ -557,11 +595,11 @@ def test_a_quoted_header_alone_is_read_unquoted() -> None:
     from bettermemory.origin import _dequote_patch_headers
 
     raw = (
-        f"{_MARK}sha1\n"
+        f"{_MARK}{_H1}\n"
         'diff --git "a/pkg/we\\"ird.py" "b/pkg/we\\"ird.py"\n'
         "deleted file mode 100644\n"
         "index e69de29..0000000\n"
-        f"{_MARK}sha3\n"
+        f"{_MARK}{_H3}\n"
         'diff --git "a/pkg/a\\"b.py" b/pkg/c.py\n'
         "similarity index 100%\n"
         'rename from "pkg/a\\"b.py"\n'
