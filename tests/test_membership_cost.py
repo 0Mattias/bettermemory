@@ -45,7 +45,9 @@ _NOW = datetime.fromtimestamp(1_800_000_000, tz=timezone.utc)
 _URL = "https://example.invalid/acme/game.git"
 #: The steady prompt's stat calls at a known checkout with no config file
 #: read for its remotes (E16, tests/test_membership_capture.py); each such
-#: file adds one (ENG-207).
+#: file adds one (ENG-207), and so does each of the two legacy remote
+#: folders every capture states (``remotes``, ``branches``), which
+#: `Capture.config_files` lists with them.
 _BASE_STATS = 10
 #: The steady prompt's readlink calls where the system config is read for
 #: a checkout's remotes: on macOS the one that keys git's answer of its
@@ -57,11 +59,17 @@ _DEVELOPER_READLINKS = 1 if gitsystem._MACOS else 0
 #: git directory and again for the signature), HEAD, its ref, packed-refs
 #: and config (4), the ref files that decide a branch's short name in its
 #: git directory (10 for ``main``), and the probe's 2 of the git
-#: directory; config.worktree is stated only where git reads it
-#: (`location_git.repository_config_stamps`, the reviewer's R14). On every
-#: Python, since the capture resolves its directory with
-#: `os.path.realpath` (`Path.resolve` stats it once more before 3.13).
-_ORIGIN_HIT_STATS = 18
+#: directory, and the legacy files git reads the URL of ``origin`` from,
+#: ``remotes/origin`` and ``branches/origin`` (2,
+#: `location_git.legacy_remote_stamps`); config.worktree is stated only
+#: where git reads it (`location_git.repository_config_stamps`, the
+#: reviewer's R14). On every Python, since the capture resolves its
+#: directory with `os.path.realpath` (`Path.resolve` stats it once more
+#: before 3.13).
+_ORIGIN_HIT_STATS = 20
+#: The legacy remote folders a location capture states with its config
+#: files (`location_git._legacy_remotes`), which an origin hit does not.
+_LEGACY_FOLDERS = ("remotes", "branches")
 #: An origin cache hit's lstat calls besides three for each component of
 #: the resolved path: the probes of HEAD's ref (4), of the reading rule
 #: (2) and, on githead's POSIX leg alone, of the git directory's owner (4).
@@ -303,13 +311,14 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     recorded, since the migration writes no token, and from then on by
     the token that sighting wrote. Measured on macOS (APFS, the test's
     temporary directory), with birth time and without: the migration 0
-    spawns; the steady prompt 0 spawns, 11 os.stat and 2 os.lstat calls:
-    the 10 and 2 of a checkout no migration registered
-    (tests/test_membership_capture.py, where the ``.git`` entry's
-    ``lstat`` since ENG-206 is the ``stat`` it was) and one stat for the
-    one config file read for its remote, the global config this test
-    names, whose stamp a kept capture is checked against since ENG-207
-    (`test_e16_a_config_file_read_costs_one_stat_and_no_git`)."""
+    spawns; the steady prompt 0 spawns, 13 os.stat and 2 os.lstat calls:
+    the 10 and 2 of a checkout no migration registered and no legacy
+    remote folder stated (tests/test_membership_capture.py, where the
+    ``.git`` entry's ``lstat`` since ENG-206 is the ``stat`` it was), one
+    stat for the one config file read for its remote, the global config
+    this test names, whose stamp a kept capture is checked against since
+    ENG-207 (`test_e16_a_config_file_read_costs_one_stat_and_no_git`),
+    and one for each legacy remote folder (ENG-207's review)."""
     store, identity, config = lab
     synthetic = _synthetic(store, identity.id, projects=20, checkouts_each=10)
     repo = make_repo(tmp_path.resolve() / "Developer" / "game", remote=_URL)
@@ -364,9 +373,15 @@ def test_e16_a_migrated_checkout_is_known_and_costs_no_git(
     # Discovery reads HEAD with lstat, git's test (ENG-193): the total of 12
     # stays, as the steady state's E16 test in test_membership_capture says,
     # with one stat more for each config file read for the remotes besides
-    # the repository's own (ENG-207): here the one GIT_CONFIG_GLOBAL names.
+    # the repository's own (ENG-207): here the one GIT_CONFIG_GLOBAL names,
+    # and the two legacy remote folders git reads a remote from, which no
+    # checkout lacks (ENG-207's review).
     files = location.capture(str(repo), write_token=False).config_files
-    assert len(files) == 1
+    assert sorted(os.path.basename(p) for p, _ in files) == [
+        "branches",
+        "gitconfig-empty",
+        "remotes",
+    ]
     assert warm.stats <= _BASE_STATS + len(files) and warm.lstats <= 2
     # GIT_CONFIG_NOSYSTEM: the system config's answer is not asked for.
     assert warm.readlinks == 0
@@ -383,15 +398,16 @@ def test_e16_a_config_file_read_costs_one_stat_and_no_git(
     XDG folder with no config in it, a ``~/.gitconfig`` including a file
     that is not there, and the system files the git on PATH names (on
     macOS the developer directory's and ``/etc/gitconfig``). A kept
-    capture is checked against each config file read for its remote, so
-    the steady prompt makes the 10 stat calls of a checkout with no
-    remote and one for each of those files, no more lstat calls, and on
-    macOS the one readlink of the developer directory's link that keys the
-    system files' answer; and a new process (the caches cleared, as a hook
-    client starts each prompt) asks git nothing while the state
-    directory's record of the system files stands (`gitsystem`). Measured
-    on macOS: 15 stat, 2 lstat and 1 readlink calls, 5 files; the new
-    process 0 spawns."""
+    capture is checked against each config file read for its remote and
+    the two legacy remote folders, so the steady prompt makes the 10 stat
+    calls of a checkout with no remote and one for each of those, no more
+    lstat calls, and on macOS the one readlink of the developer
+    directory's link that keys the system files' answer; and a new
+    process (the caches cleared, as a hook client starts each prompt) asks
+    git nothing while the state directory's record of the system files
+    stands (`gitsystem`). Measured on macOS: 17 stat, 2 lstat and 1
+    readlink calls, 7 files (15 and 5 before the legacy folders were
+    stated); the new process 0 spawns."""
     store, identity, config = lab
     repo = make_repo(tmp_path / "game", remote=_URL)
     home = tmp_path / "home"
@@ -447,11 +463,12 @@ def test_an_origin_cache_hit_spawns_no_git_and_states_its_signature(
     and two discoveries, githead's on POSIX and the file walk off it,
     `githead._POSIX`) and `_ORIGIN_HIT_LSTATS`; and the developer
     directory's readlink where the system config is read. Measured on
-    macOS at a path of 10 components: 20 stat (24 with a home folder's
+    macOS at a path of 10 components: 22 stat (26 with a home folder's
     files and the system's), 40 lstat (36 off POSIX), 1 readlink with the
-    system files, the reviewer's 24, 40 and 1 before the repository's
-    config was stated, and 21 (25) while config.worktree was stated where
-    git does not read it."""
+    system files; the reviewer's 24, 40 and 1 before the repository's
+    config was stated, 21 (25) while config.worktree was stated where git
+    does not read it, and 20 (24) before the legacy files of ``origin``
+    were."""
     if leg == "off-posix":
         monkeypatch.setattr(githead, "_POSIX", False)
     repo = make_repo(tmp_path / "game", remote=_URL)
@@ -465,7 +482,11 @@ def test_an_origin_cache_hit_spawns_no_git_and_states_its_signature(
     origin.capture(repo)
     origin.capture(repo)
     hit = counted(lambda: origin.capture(repo))
-    files = location.capture(str(repo), write_token=False).config_files
+    files = [
+        path
+        for path, _ in location.capture(str(repo), write_token=False).config_files
+        if os.path.basename(path) not in _LEGACY_FOLDERS
+    ]
     components = len(repo.resolve().parts) - 1
     print(
         f"origin hit: spawns={hit.spawns} stat={hit.stats} lstat={hit.lstats} "

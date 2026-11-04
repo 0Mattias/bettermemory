@@ -398,7 +398,7 @@ def _include(repo: Path, where: str, condition: str | None, target: Path) -> Non
     """Have the repository's `where` (``config``, or ``config.worktree``
     under extensions.worktreeConfig) include `target`, under `condition`
     (None: ``include.path``; ``gitdir``: an includeIf that holds;
-    ``onbranch``: one that holds on main, which only git evaluates)."""
+    ``onbranch``: one that holds on main, which git evaluates against HEAD)."""
     gitdir = repo / ".git"
     if where == "config.worktree":
         _run(repo, "config", "extensions.worktreeConfig", "true")
@@ -457,10 +457,11 @@ def test_an_insteadof_rule_in_a_file_the_repository_config_includes_is_seen(
 def test_an_include_under_a_condition_only_git_evaluates_is_in_the_signature(
     tmp_path: Path, probes: list[tuple[str, ...]]
 ) -> None:
-    """An includeIf on ``onbranch:`` is evaluated by git and not by the
-    reader (`gitconfig.ConfigValues.undecided`), and git takes a rule from
-    it where it holds: the file is stamped all the same, so the next
-    capture after a write to it runs the probes."""
+    """An includeIf on ``onbranch:`` is evaluated by git, and git takes a
+    rule from it where it holds: the signature's stamps read it whatever
+    its condition (`location_git._stamped_read`, and HEAD is in the base
+    signature), so the next capture after a write to it runs the
+    probes."""
     repo = _repo(tmp_path / "repo", remote="gh:acme/lib")
     rules = tmp_path / "rules.inc"
     rules.write_text("[user]\n\tname = Test\n", encoding="utf-8")

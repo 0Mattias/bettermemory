@@ -58,6 +58,7 @@ from . import _git as _git_runner
 from . import _caches, githead, gitfile_rule, identity, origin_history
 from ._location_probe import path_gone
 from .location_git import (  # the config the cache is kept against
+    legacy_remote_stamps,
     machine_config_stamps,
     repository_config_stamps,
 )
@@ -165,8 +166,7 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     repository either is an answer, "not a repository", and is kept for the
     lifetime like any other; where they hold one, git refused it, and the
     indeterminate capture is not kept. The lifetime is ten minutes, so what
-    the signature does not see (a remote changed outside the repository's
-    config file, among the rest `ORIGIN_CACHE_SECONDS` lists) can be
+    the signature does not see (`ORIGIN_CACHE_SECONDS` lists it) can be
     answered from a capture up to ten minutes old.
     """
     if cwd is None:
@@ -308,10 +308,8 @@ def capture_caller(cwd: Path | None = None) -> Origin:
 #: old spelling), or a change to GIT_DIR, GIT_WORK_TREE or
 #: GIT_CEILING_DIRECTORIES is answered on the next call as before. The
 #: cost is what the signature does not see, which is now served for up to
-#: ten minutes where it was served for two seconds: a remote or its URL
-#: changed outside the config files git reads (a legacy `.git/remotes`
-#: or `.git/branches` file); such a rename on a platform
-#: other than macOS whose filesystem ignores case or normalisation (the
+#: ten minutes where it was served for two seconds: such a rename on a
+#: platform other than macOS whose filesystem ignores case or normalisation (the
 #: signature then holds the resolved path, which keeps the caller's
 #: spelling); whether git can run; and a capture whose first probe ran and
 #: exited non-zero where the files hold no repository, kept as "not a
@@ -402,7 +400,13 @@ def _capture_signature(start: Path) -> githead.Signature:
     own, its config and, where git reads it, config.worktree (whose
     core.worktree git reads too), with the files each includes
     (`location_git.repository_config_stamps`), so an insteadOf rule or a
-    remote set in any is seen as a location capture sees it. Where the files do not settle the repository,
+    remote set in any is seen as a location capture sees it; and the
+    legacy files git reads the URL of ``origin`` from where the config
+    gives none, ``remotes/origin`` and ``branches/origin`` in the common
+    directory (`location_git.legacy_remote_stamps`). An include under
+    ``onbranch:`` or ``hasconfig:`` is stamped whatever its condition, and
+    HEAD is in the base signature, so a branch switch that changes what
+    git includes is seen. Where the files do not settle the repository,
     the base signature already equals no other; where a stamp or the
     spelling cannot be read, a new object makes this one equal no other
     either."""
@@ -412,6 +416,7 @@ def _capture_signature(start: Path) -> githead.Signature:
     try:
         extra: list[object] = [machine_config_stamps(str(gd.gitdir))]
         extra.append(repository_config_stamps(str(gd.commondir), str(gd.gitdir)))
+        extra.append(legacy_remote_stamps(str(gd.commondir), "origin"))
         spelled = _spelled_as_git(gd.worktree_root)
         extra.append(object() if spelled is None else str(spelled))
         ref = githead.head_ref(gd)
@@ -435,7 +440,8 @@ def _capture_signature(start: Path) -> githead.Signature:
 # refs HEAD's chain reads, of packed-refs and of the ref files that decide
 # the branch's short name, the root spelled as git prints it, the stamps of
 # the machine's git config files, of the repository's and of the files
-# each includes, and the GIT_DIR, GIT_WORK_TREE and GIT_CEILING_DIRECTORIES
+# each includes, of the legacy remotes/origin and branches/origin files,
+# and the GIT_DIR, GIT_WORK_TREE and GIT_CEILING_DIRECTORIES
 # values, so a branch switch, a remote changed in the repository's config
 # or a file it includes or by a global or system insteadOf rule (ENG-207),
 # core.worktree set in
@@ -447,8 +453,8 @@ def _capture_signature(start: Path) -> githead.Signature:
 # rename, which leaves a new inode and ctime); where the files do not
 # settle what git would find, the signature equals no other and every
 # capture asks git. What the signature does not see (whether git can run,
-# a legacy `.git/remotes` file, such a rename on
-# another platform's case-ignoring filesystem) holds for at most the
+# such a rename on another platform's case-ignoring filesystem) holds for
+# at most the
 # lifetime, ten minutes, and so does a capture whose first probe ran and
 # exited non-zero where the files hold no repository: `_probe_worktree_root`
 # reads that exit as "not a repository", an answer, and a failure that

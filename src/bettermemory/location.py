@@ -623,8 +623,14 @@ def _capture_uncached(
     tips = _ref_tips(git)
     base = git.root or git.git_dir
     # Each remote as written and as its insteadOf rewrites it (ENG-160),
-    # its alias keys and the config files read for it (ENG-207).
+    # its alias keys and the config files read for it (ENG-207). Where the
+    # files do not settle what git reads of them (an include under a
+    # condition not evaluated as git does, a configuration git refuses, a
+    # legacy remote file not read), the capture declines rather than key
+    # another answer, and is not kept.
     remotes = read_remotes(git.common_dir, git.git_dir, lambda u: remote_key(u, base))
+    if remotes.declined is not None:
+        return _indeterminate(real, f"remotes not settled: {remotes.declined}", cwd_key)
     token, written, status = _token_fields(git, write_token=write_token)
     # A git directory kept apart (`kept`, read above) keeps no pointer back
     # to its tree, so `capture` records the folder followed in the state

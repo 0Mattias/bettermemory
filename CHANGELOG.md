@@ -661,11 +661,12 @@ eighteenth was built.
   include too, each stamped before it was read, so one written, created
   or removed is read at the next capture, and against the system and
   global files git names, so one taken while git did not answer is read
-  again once it does. Each such file costs a kept capture one stat: a
-  steady prompt makes 17 stat calls (15 `os.stat`, 2 `os.lstat`) with a
-  home folder's three global files and macOS's two system files, and on
-  macOS one readlink, the developer directory's link, where E16 counted
-  12 (`docs/internals.md`, `docs/membership-design.md`). A file that is
+  again once it does. Each such file costs a kept capture one stat, and
+  so does each of the two legacy remote folders below: a steady prompt
+  makes 19 stat calls (17 `os.stat`, 2 `os.lstat`) with a home folder's
+  three global files and macOS's two system files, and on macOS one
+  readlink, the developer directory's link, where E16 counted 12
+  (`docs/internals.md`, `docs/membership-design.md`). A file that is
   no regular file, as the null device `GIT_CONFIG_GLOBAL` names in CI,
   is stamped by its kind alone, since its times move with every write.
   The capture reads `config.worktree` after the repository's config
@@ -677,12 +678,33 @@ eighteenth was built.
   took it through an include too and keyed a remote `git remote` does
   not list; where git dies on that format, no remote is read. Where git
   does not read `config.worktree`, an origin hit no longer states it,
-  one stat fewer. The origin cache
-  (`origin.capture`), which saw a rule in the global config or in a file
-  the repository's config includes only once its ten minutes ran out, is
-  kept against the same config files, the machine's and the
-  repository's, and the files they include (an `onbranch:` or
-  `hasconfig:` include among them), so it answers with the URL the
+  one stat fewer. An include under `onbranch:` or
+  `hasconfig:remote.*.url:` gave the capture none of its values, where
+  git takes them; both are evaluated as git 2.54 does now: `onbranch:`
+  against the branch HEAD's chain of symbolic refs ends at (a pattern
+  ending in `/` takes `**`), `hasconfig:` against every
+  `remote.<name>.url` of the config git reads, collected first as git
+  collects them, the machine's files included and in either order. git
+  refuses a configuration where that collection finds a remote URL in a
+  file an includeIf reads, and the capture declines there
+  (indeterminate, not kept). The legacy `remotes/<name>` and
+  `branches/<name>` files of the common directory, which git still reads
+  for a remote whose config gives no URL, are read as git reads them, so
+  their remotes are keyed, and a capture is kept against the two folders
+  and each file read; the origin's signature stamps `remotes/origin` and
+  `branches/origin`, which `git remote get-url origin` reads (two stats
+  a hit). A remote's URLs are taken as git takes them, an empty `url`
+  emptying the list, and an insteadOf rule as git chooses it (an empty
+  prefix matches every URL; of equal prefixes the first under the base
+  git met first). Where git's reading is not mirrored (a HEAD githead
+  declines, a character class or a backslash in a pattern, a legacy file
+  that is no regular file or is over 64 KiB), the capture declines
+  rather than key another answer. The origin cache (`origin.capture`),
+  which saw a rule in the global config or in a file the repository's
+  config includes only once its ten minutes ran out, is kept against the
+  same config files, the machine's and the repository's, and the files
+  they include (an `onbranch:` or `hasconfig:` include among them
+  whatever its condition), so it answers with the URL the
   capture keys at once (`repos_match` in health and recall compared the
   alias meanwhile); a hit states each such file once. The config a
   shell's environment gives git (`GIT_CONFIG_COUNT`, `git -c`) is not

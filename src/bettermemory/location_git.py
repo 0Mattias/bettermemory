@@ -40,14 +40,18 @@ from typing import Any
 
 from . import _caches, githead, gitobjects, gitsystem, project_file
 from . import _git as _git_runner
-from ._location_probe import INDETERMINATE, TOKEN_VERSION
+from ._location_probe import INDETERMINATE, TOKEN_VERSION, path_missing
 from .gitconfig import (
+    UNSETTLED,
     ConfigValues,
+    IncludeContext,
     Stamp,
     _config_values,
     _home,
     _native,
+    _remote_url_names,
     _truthy,
+    file_stamp,
     unchanged,
 )
 from .gitfile_rule import (
@@ -56,6 +60,7 @@ from .gitfile_rule import (
     _git_reads,
     _is_git_directory,
     _not_registered,
+    _Unsettled,
     inside_reading,
     judge,
     reads_worktree_config,
@@ -298,42 +303,241 @@ def _machine_configs(*, stamp: bool = True) -> tuple[str, ...]:
 ConfigFile = tuple[str, Stamp | None]
 
 
-def _repository_config(
-    common_dir: str, git_dir: str
-) -> tuple[ConfigValues, list[ConfigFile]]:
-    """The repository's own config as git reads it: the common config,
-    then, where git reads it (`gitfile_rule.reads_worktree_config`: the
-    common config file itself sets ``extensions.worktreeConfig`` true, as
-    git's read of a format takes it, no include followed), the git
-    directory's ``config.worktree`` (ENG-207's review: a remote or an
-    insteadOf rule set there is the repository's too), each with its
-    includes; and the files read, stamped, but for the common config,
-    which the capture's signature stamps (`location.signature`).
-    ``config.worktree`` is stamped itself, so one created, written or
-    removed is read at the next capture. Where git dies on the common
-    config's format, it reads no variable of the repository, and nothing
-    is read here either (the reviewer's R14)."""
+def _repository_paths(common_dir: str, git_dir: str) -> list[str] | None:
+    """The repository's own config files git reads, in its order: the
+    common config, then, where git reads it
+    (`gitfile_rule.reads_worktree_config`: the common config file itself
+    sets ``extensions.worktreeConfig`` true, as git's read of a format
+    takes it, no include followed), the git directory's
+    ``config.worktree`` (ENG-207's review: a remote or an insteadOf rule
+    set there is the repository's too). None where git dies on the common
+    config's format, and reads no variable of the repository (the
+    reviewer's R14)."""
     worktree_config = reads_worktree_config(common_dir)
     if worktree_config is None:
-        return ConfigValues(), []
-    values = _config_values(
-        os.path.join(common_dir, "config"),
-        git_dir=git_dir,
-        stamped=True,
-        stamp_self=False,
+        return None
+    paths = [os.path.join(common_dir, "config")]
+    if worktree_config:
+        paths.append(os.path.join(git_dir, "config.worktree"))
+    return paths
+
+
+def _read_configs(
+    paths: Sequence[str],
+    git_dir: str,
+    context: IncludeContext,
+    files: list[ConfigFile],
+    *,
+    stamp_first: bool = True,
+) -> list[ConfigValues]:
+    """Each of the config files `paths` read with its includes, as git
+    reads it under `context` (`gitconfig.IncludeContext`), the files each
+    read stamped into `files`; the first file itself left out where
+    `stamp_first` is off (the common config, which the capture's
+    signature stamps, `location.signature`)."""
+    out: list[ConfigValues] = []
+    for i, path in enumerate(paths):
+        read = _config_values(
+            path,
+            git_dir=git_dir,
+            stamped=True,
+            stamp_self=stamp_first or i > 0,
+            context=context,
+        )
+        files.extend(read.files or ())
+        out.append(read)
+    return out
+
+
+def _settles_remotes(name: tuple[str, str | None, str]) -> bool:
+    """Whether the config variable `name` is one the reading of the
+    remotes takes (a ``remote.<name>.url``, a ``url.<base>.insteadOf``),
+    which the capture declines on where an include git may read sets it
+    under a condition not settled here."""
+    section, sub, key = name
+    return sub is not None and (
+        (section == "remote" and key == "url")
+        or (section == "url" and key == "insteadof")
     )
-    files = list(values.files or ())
-    if not worktree_config:
-        return values, files
-    worktree = _config_values(
-        os.path.join(git_dir, "config.worktree"), git_dir=git_dir, stamped=True
+
+
+def _head_branch(common_dir: str, git_dir: str, files: list[ConfigFile]) -> str | None:
+    """The branch an ``onbranch:`` include is matched against, read from
+    HEAD the way the capture reads it (githead's reader of
+    ``refs_resolve_ref_unsafe`` over the files backend): the name under
+    ``refs/heads/`` of the ref HEAD's chain ends at, born or unborn; None
+    where HEAD is detached or ends at another ref, where git's condition
+    never holds; `gitconfig.UNSETTLED` where the files do not settle it
+    (a shape githead declines, a chain past git's depth, a reftable
+    repository). HEAD and each loose ref file the chain reads go into
+    `files`, stamped before they are read, so a branch switch that leaves
+    HEAD's bytes as they were (a symbolic ref along the chain moved) is
+    seen too."""
+    gd = githead.GitDir(Path(git_dir), Path(common_dir), Path(git_dir))
+    head = os.path.join(git_dir, "HEAD")
+    files.append((head, file_stamp(head)))
+    try:
+        content = githead.head_bytes(gd)
+        if content is None:
+            return UNSETTLED
+        name, _sha = githead._parse(content)
+        reads = 1
+        while name is not None:
+            if reads == githead._MAX_READS:
+                return UNSETTLED
+            reads += 1
+            base = git_dir if name.startswith(githead._PER_WORKTREE) else common_dir
+            loose = os.path.join(base, *os.fsdecode(name).split("/"))
+            files.append((loose, file_stamp(loose)))
+            target, _sha = githead._lookup(gd, name)
+            if target is None:
+                break
+            name = target
+        if name is None:
+            return None
+        text = name.decode("utf-8")
+    except (_Unsettled, OSError, ValueError):
+        return UNSETTLED
+    return text[len("refs/heads/") :] if text.startswith("refs/heads/") else None
+
+
+#: The folders of the common directory whose files name a remote git
+#: still reads (remote.c's ``read_remotes_file`` and
+#: ``read_branches_file``, "nominated for removal"), in the order git
+#: reads them for a remote.
+_LEGACY_FOLDERS = ("remotes", "branches")
+#: The bytes read of one such file; git reads any size. One larger is not
+#: read, and the capture declines (fail closed).
+_LEGACY_LIMIT = 1 << 16
+#: The remotes these folders name that a capture reads; past it, it
+#: declines.
+_LEGACY_NAMES = 256
+#: The bytes git's ``isspace`` takes (git-compat-util.h's ``sane_ctype``:
+#: space, tab, LF and CR, not VT or FF), which its ``strbuf_trim`` trims.
+_GIT_SPACE = b" \t\n\r"
+
+
+def _legacy_file(path: str, files: list[ConfigFile]) -> bytes | str | None:
+    """The bytes of the legacy remote file `path`, stamped into `files`
+    before it is read; None where git reads nothing from it (no file, a
+    folder or one git cannot open: ``fopen_or_warn`` warns and reads
+    none); why the capture declines where it is no regular file (a FIFO
+    would block git), is larger than `_LEGACY_LIMIT` or cannot be read."""
+    files.append((path, file_stamp(path)))
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_BINARY", 0)
     )
-    files.extend(worktree.files or ())
-    both = ConfigValues()
-    for read in (values, worktree):
-        for name, found in read.items():
-            both.setdefault(name, []).extend(found)
-    return both, files
+    try:
+        fd = os.open(path, flags)
+    except (OSError, ValueError) as exc:
+        if path_missing(exc) or isinstance(exc, (PermissionError, IsADirectoryError)):
+            return None
+        return f"{path} cannot be read ({type(exc).__name__})"
+    chunks: list[bytes] = []
+    size = 0
+    try:
+        st = os.fstat(fd)
+        if stat.S_ISDIR(st.st_mode):
+            return None
+        if not stat.S_ISREG(st.st_mode):
+            return f"{path} is not a regular file"
+        while size <= _LEGACY_LIMIT:
+            chunk = os.read(fd, _LEGACY_LIMIT + 1 - size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError as exc:
+        return f"{path} cannot be read ({type(exc).__name__})"
+    finally:
+        os.close(fd)
+    if size > _LEGACY_LIMIT:
+        return f"{path} is larger than {_LEGACY_LIMIT >> 10} KiB"
+    return b"".join(chunks)
+
+
+def _remotes_file_urls(data: bytes) -> list[str]:
+    """The URLs a ``remotes/<name>`` file gives, as git reads it: each
+    line (to its LF) with git's blank space trimmed from its end, the
+    rest of each that starts ``URL:``, its leading blank space skipped,
+    to a NUL byte (a C string); an empty one empties the list, as an
+    empty ``remote.<name>.url`` does (remote.c's ``add_url``)."""
+    urls: list[str] = []
+    for line in data.split(b"\n"):
+        line = line.rstrip(_GIT_SPACE)
+        if not line.startswith(b"URL:"):
+            continue
+        value = line[len(b"URL:") :].lstrip(_GIT_SPACE).split(b"\0", 1)[0]
+        if value:
+            urls.append(value.decode("utf-8", errors="replace"))
+        else:
+            urls.clear()
+    return urls
+
+
+def _branches_file_urls(data: bytes) -> list[str]:
+    """The URL a ``branches/<name>`` file gives, as git reads it: its
+    first line (to its LF), trimmed of git's blank space at both ends,
+    to a ``#`` (the branch fetched) or a NUL byte; nothing where that is
+    empty. A blank before the ``#`` stays, as git keeps it."""
+    line = data.split(b"\n", 1)[0].strip(_GIT_SPACE)
+    url = line.split(b"\0", 1)[0].split(b"#", 1)[0]
+    return [url.decode("utf-8", errors="replace")] if url else []
+
+
+def _legacy_remotes(
+    common_dir: str, files: list[ConfigFile]
+) -> dict[str, list[str]] | str:
+    """The remotes git reads from the legacy files of the common
+    directory (`_LEGACY_FOLDERS`), each name with the URLs it gives: those
+    of ``remotes/<name>``, else of ``branches/<name>`` (remote.c's
+    ``remotes_remote_get_1``, which reads them for a remote whose config
+    gives no URL, `_rewrites`). Each folder is stamped into `files` (an
+    entry made or removed moves its times) and each file read; why the
+    capture declines where a folder cannot be listed, names more than
+    `_LEGACY_NAMES` remotes or a file declines (`_legacy_file`). git
+    lists none of these remotes (``git remote``), but fetches from each,
+    and ``git remote get-url`` names its URL."""
+    names: dict[str, None] = {}
+    for folder in _LEGACY_FOLDERS:
+        path = os.path.join(common_dir, folder)
+        files.append((path, file_stamp(path)))
+        try:
+            entries = os.listdir(path)
+        except (OSError, ValueError) as exc:
+            if path_missing(exc):
+                continue
+            return f"{path} cannot be listed ({type(exc).__name__})"
+        names.update(dict.fromkeys(sorted(entries)))
+        if len(names) > _LEGACY_NAMES:
+            return f"the legacy remote folders name more than {_LEGACY_NAMES} remotes"
+    out: dict[str, list[str]] = {}
+    for name in names:
+        found = _legacy_file(os.path.join(common_dir, "remotes", name), files)
+        if isinstance(found, str):
+            return found
+        urls = _remotes_file_urls(found) if found is not None else []
+        if not urls:
+            found = _legacy_file(os.path.join(common_dir, "branches", name), files)
+            if isinstance(found, str):
+                return found
+            urls = _branches_file_urls(found) if found is not None else []
+        out[name] = urls
+    return out
+
+
+def legacy_remote_stamps(common_dir: str, name: str) -> tuple[Stamp | None, ...]:
+    """The stamps of the legacy files git reads for the remote `name`
+    where its config gives it no URL, ``remotes/<name>`` and
+    ``branches/<name>`` in the common directory (`_legacy_remotes`):
+    `origin`'s capture asks git for the URL of ``origin``, which such a
+    file can give (ENG-207's review), and is kept against them."""
+    return tuple(
+        file_stamp(os.path.join(common_dir, folder, name)) for folder in _LEGACY_FOLDERS
+    )
 
 
 #: A remote URL as written, the URL git rewrites it to (None where no
@@ -342,81 +546,163 @@ def _repository_config(
 Spelling = tuple[str, str | None, bool]
 
 
-def _rewrites(
-    common_dir: str, git_dir: str
-) -> tuple[list[Spelling], list[ConfigFile], tuple[str, ...]]:
-    """Each remote URL in the repository's config with the URL git
-    rewrites it to, where a ``url.<base>.insteadOf`` prefix in the system,
-    the global or the repository's config matches it (the longest prefix
-    wins, the first read of equal ones, as in remote.c's ``alias_url``;
-    ENG-160, the system's since ENG-207), else None, and whether that
-    prefix is the machine's (`Spelling`); and every config file
-    read for them, stamped, the files each includes with it, but for the
-    repository's own config, which the capture's signature stamps
-    already (`location.signature`); and the machine's config files read
-    (`_machine_configs`). The repository's config is the common config
-    and, where git reads it, the git directory's
-    ``config.worktree`` git reads after it (`_repository_config`). A
-    repository with no remote reads its own config alone, and names none
-    of the machine's. The config a process's environment gives git
-    (``GIT_CONFIG_COUNT`` and its keys, ``GIT_CONFIG_PARAMETERS`` from
-    ``git -c``) is not read: it is the setting of one shell, not of the
-    repository or the machine, and the hook client or the daemon that
-    captures is not the shell that runs git."""
-    values, files = _repository_config(common_dir, git_dir)
-    urls = [
-        u
-        for (section, _sub, key), found in values.items()
-        if section == "remote" and key == "url"
-        for u in found
-    ]
-    if not urls:
-        return [], files, ()
-    rules: list[tuple[str, str, bool]] = []
+@dataclass(frozen=True)
+class _Remotes:
+    """What `_rewrites` reads of a repository's remotes: each URL keyed
+    (`Spelling`), the config files read for them, stamped, the machine's
+    config files named, and why the files do not settle what git reads,
+    where they do not (`declined`)."""
+
+    spellings: list[Spelling]
+    files: list[ConfigFile]
+    named: tuple[str, ...] = ()
+    declined: str | None = None
+
+
+def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
+    """Each remote URL of the repository with the URL git rewrites it to,
+    where a ``url.<base>.insteadOf`` prefix in the system, the global or
+    the repository's config matches it, else None, and whether that prefix
+    is the machine's (`Spelling`); every config file read for them,
+    stamped, the files each includes with it, but for the repository's
+    common config, which the capture's signature stamps already
+    (`location.signature`); and the machine's config files read
+    (`_machine_configs`). Read as git 2.54 reads them, checked against
+    ``git config`` and ``git ls-remote --get-url``
+    (tests/test_location_git_include_conditions.py):
+
+    - The config is read in git's order: the machine's files, then the
+      repository's (`_repository_paths`). Its includes are followed
+      (`gitconfig._config_values`), under ``onbranch:`` against the
+      branch HEAD names (`_head_branch`) and under
+      ``hasconfig:remote.*.url:`` against every ``remote.<name>.url`` of
+      that config, read as git collects them first: every includeIf that
+      holds there is forbidden to set one, and one that does has git
+      refuse the configuration, as the capture declines.
+    - A remote's URLs are its ``remote.<name>.url`` values in that order,
+      an empty one emptying the list (remote.c's ``add_url``); a remote
+      with none, the machine's included, takes them from its legacy files
+      (`_legacy_remotes`). The capture keys those the repository's own
+      config or files give, not the machine's: a remote the global config
+      sets is every repository's.
+    - A URL is rewritten as remote.c's ``alias_url`` rewrites it: the
+      longest matching prefix wins, an empty one matching every URL, and
+      of equal ones the first under the base git met first.
+
+    `declined` says why the files do not settle what git reads, where an
+    include git may read sets a remote's URL or an insteadOf rule under a
+    condition not settled here (a HEAD githead declines, a pattern
+    `gitconfig._wildmatch` does not read as git does), where the remote
+    URLs a ``hasconfig:`` condition is matched against are not, where git
+    refuses the configuration, or where a legacy file is not
+    (`_legacy_remotes`): the capture declines there rather than read
+    another answer. A repository with no remote reads its own config and
+    folders alone, and names none of the machine's. The config a
+    process's environment gives git (``GIT_CONFIG_COUNT`` and its keys,
+    ``GIT_CONFIG_PARAMETERS`` from ``git -c``) is not read: it is the
+    setting of one shell, not of the repository or the machine, and the
+    hook client or the daemon that captures is not the shell that runs
+    git."""
+    paths = _repository_paths(common_dir, git_dir)
+    if paths is None:
+        return _Remotes([], [])
+    files: list[ConfigFile] = []
+    context = IncludeContext(lambda: _head_branch(common_dir, git_dir, files))
+    own = _read_configs(paths, git_dir, context, files, stamp_first=False)
+    legacy = _legacy_remotes(common_dir, files)
+    if isinstance(legacy, str):
+        return _Remotes([], files, (), legacy)
+    if not legacy and not any(
+        _remote_url_names(read) or _remote_url_names(read.undecided) for read in own
+    ):
+        return _Remotes([], files)
     named = _machine_configs()
-    configs = [_config_values(p, git_dir=git_dir, stamped=True) for p in named]
-    for config in configs:
-        files.extend(config.files or ())
-    for config in [*configs, values]:
-        machine = config is not values
-        for (section, sub, key), found in config.items():
-            if section == "url" and sub is not None and key == "insteadof":
-                rules.extend((prefix, sub, machine) for prefix in found if prefix)
-    out: list[Spelling] = []
-    for url in urls:
-        best = max(
-            (r for r in rules if url.startswith(r[0])),
-            key=lambda r: len(r[0]),
-            default=None,
+    machine = _read_configs(named, git_dir, context, files)
+    if any(read.asks_remote_urls for read in (*machine, *own)):
+        collect = context.collect()
+        collected = [
+            *_read_configs(named, git_dir, collect, files),
+            *_read_configs(paths, git_dir, collect, files, stamp_first=False),
+        ]
+        if any(read.forbidden for read in collected):
+            why = "git refuses a remote URL a file an includeIf reads sets"
+            return _Remotes([], files, named, why)
+        if any(
+            not read.complete or _remote_url_names(read.undecided) for read in collected
+        ):
+            why = "the remote URLs a hasconfig include is matched against are unsettled"
+            return _Remotes([], files, named, why)
+        collected_urls = frozenset(
+            url
+            for read in collected
+            for name in _remote_url_names(read)
+            for url in read[name]
         )
+        settled = context.with_urls(collected_urls)
+        machine = _read_configs(named, git_dir, settled, files)
+        own = _read_configs(paths, git_dir, settled, files, stamp_first=False)
+    if any(
+        _settles_remotes(name) for read in (*machine, *own) for name in read.undecided
+    ):
+        why = "an include sets a remote URL or insteadOf rule under an unsettled condition"
+        return _Remotes([], files, named, why)
+    remotes: dict[str, list[tuple[str, bool]]] = {}
+    rewrites: dict[str, list[tuple[str, bool]]] = {}
+    for read, mine in [*((r, False) for r in machine), *((r, True) for r in own)]:
+        for (section, sub, key), found in read.items():
+            if sub is None:
+                continue
+            if section == "remote" and key == "url":
+                for url in found:
+                    if url:
+                        remotes.setdefault(sub, []).append((url, mine))
+                    else:
+                        remotes[sub] = []
+            elif section == "url" and key == "insteadof":
+                rewrites.setdefault(sub, []).extend((p, not mine) for p in found)
+    for name, urls in legacy.items():
+        if not remotes.get(name):
+            remotes[name] = [(url, True) for url in urls]
+    out: list[Spelling] = []
+    for url in (u for found in remotes.values() for u, mine in found if mine):
+        best: tuple[str, str, bool] | None = None
+        for base, prefixes in rewrites.items():
+            for prefix, by_machine in prefixes:
+                if url.startswith(prefix) and (
+                    best is None or len(best[1]) < len(prefix)
+                ):
+                    best = (base, prefix, by_machine)
         if best is None:
             out.append((url, None, False))
         else:
-            out.append((url, best[1] + url[len(best[0]) :], best[2]))
-    return out, files, named
+            out.append((url, best[0] + url[len(best[1]) :], best[2]))
+    return _Remotes(out, files, named)
 
 
 def remote_urls(common_dir: str, git_dir: str) -> list[str]:
-    """Every remote URL in the repository's config, as written and, where a
+    """Every remote URL of the repository, as written and, where a
     ``url.<base>.insteadOf`` prefix in the system, the global or the
     repository's config matches it, as git rewrites it (`_rewrites`):
     ENG-160. Both are kept, so a checkout keyed on the alias before
     matches as it did, and a clone of the URL the alias stands for
-    matches too."""
-    spellings, _files, _named = _rewrites(common_dir, git_dir)
+    matches too. None are where the files do not settle them
+    (`_Remotes.declined`)."""
+    spellings = _rewrites(common_dir, git_dir).spellings
     return [u for u, _r, _m in spellings] + [r for _u, r, _m in spellings if r]
 
 
 @dataclass(frozen=True)
 class RemoteKeys:
     """A repository's remotes as a capture keys them (`read_remotes`):
-    every key, the alias keys among them, the config files read for them
-    and the machine's config files named (`_rewrites`)."""
+    every key, the alias keys among them, the config files read for them,
+    the machine's config files named, and why the files do not settle
+    them, where they do not (`_rewrites`), where the capture declines."""
 
     keys: tuple[str, ...]
     aliases: tuple[str, ...]
     files: tuple[ConfigFile, ...]
     sources: tuple[str, ...] = ()
+    declined: str | None = None
 
 
 def read_remotes(
@@ -432,12 +718,14 @@ def read_remotes(
     join two projects (`membership_alias`). The config files read for the
     remotes are kept with their stamps, and the machine's config files
     git read, so a capture kept against them is read again once one
-    changes or git names others (`config_unchanged`; ENG-207)."""
-    spellings, files, named = _rewrites(common_dir, git_dir)
+    changes or git names others (`config_unchanged`; ENG-207). Where the
+    files do not settle the remotes, none is keyed and `declined` says
+    why."""
+    found = _rewrites(common_dir, git_dir)
     keys: set[str] = set()
     fetched: set[str] = set()
     aliased: set[str] = set()
-    for url, rewritten, machine in spellings:
+    for url, rewritten, machine in found.spellings:
         written = key(url)
         as_fetched = written if rewritten is None else key(rewritten)
         keys.update(k for k in (written, as_fetched) if k)
@@ -447,8 +735,9 @@ def read_remotes(
     return RemoteKeys(
         keys=tuple(sorted(keys)),
         aliases=tuple(sorted(aliased - fetched)),
-        files=tuple(files),
-        sources=named,
+        files=tuple(found.files),
+        sources=found.named,
+        declined=found.declined,
     )
 
 
@@ -483,7 +772,12 @@ def _stamped_read(path: str, git_dir: str) -> ConfigValues:
     is `git_dir`, stamped, its includes with it (`_config_values`): kept
     for that directory and the home directory an include's ``~/`` names,
     and read again only where one of the files it read stamps otherwise
-    (`gitconfig.unchanged`), so a steady call states them and reads none."""
+    (`gitconfig.unchanged`), so a steady call states them and reads none.
+    It is read with no `gitconfig.IncludeContext`: an include under
+    ``onbranch:`` or ``hasconfig:`` is read and stamped whatever its
+    condition (`gitconfig.ConfigValues.undecided`), so the stamps name
+    every file git may read there, whichever branch HEAD names (which the
+    signatures hold already) and whichever remote URLs the files set."""
     key = (path, git_dir, _home())
     with _STAMPED_LOCK:
         read = _STAMPED_READS.get(key)
@@ -515,9 +809,10 @@ def repository_config_stamps(common_dir: str, git_dir: str) -> tuple[object, ...
     """The repository's own config as git reads it, as stamps (ENG-207's
     review): the common config and, where git reads it
     (`gitfile_rule.reads_worktree_config`), the git directory's
-    ``config.worktree``, each with the files it includes there, stamped
-    as a capture stamps them (`_repository_config`), and read once and
-    then only stated (`_stamped_read`). `origin`'s capture is kept
+    ``config.worktree``, each with the files it includes there under any
+    condition but ``gitdir:``, stamped as a capture stamps them
+    (`_repository_paths`), and read once and then only stated
+    (`_stamped_read`). `origin`'s capture is kept
     against it, so a rule set in an included file reaches its next
     capture as it reaches a capture's (`config_unchanged`). Where git
     does not read ``config.worktree`` it is not stated: only the common

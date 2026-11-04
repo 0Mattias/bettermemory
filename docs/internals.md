@@ -548,14 +548,38 @@ from the file alone, no include followed, and cleared where no
 Where git does not read `config.worktree`, neither a capture nor an
 origin hit states it; the common config's stamp sees the extension
 switched on.
-An include under a condition the reader does not evaluate (`onbranch:`,
-`hasconfig:`) gives the capture none of its values, where git may take
-them, and is stamped all the same. The origin cache (`origin.capture`)
-is kept against the same config files, the machine's and the
-repository's, and the files they include, stamped and read again only
-once one stamps otherwise (`location_git.machine_config_stamps`,
+An include under `onbranch:` or `hasconfig:remote.*.url:` is taken
+where git takes it (`gitconfig.IncludeContext`, `location_git._rewrites`):
+`onbranch:` against the name under `refs/heads/` HEAD's chain of
+symbolic refs ends at (githead's reader; never detached; a pattern
+ending in `/` takes `**`), HEAD and each ref file the chain reads
+stamped; `hasconfig:` against every `remote.<name>.url` of the config
+git reads, the machine's files and the repository's, collected first as
+git collects them: with every includeIf that holds forbidden to set
+one, where one that does has git refuse the configuration. Another
+`hasconfig:` key holds nowhere, as in git. Where a condition is not
+settled here (a HEAD githead declines; a character class or a
+backslash in a pattern, which this wildmatch does not read as git's
+does) and its file sets a remote URL or an insteadOf rule, where the
+URLs `hasconfig:` is matched against are not settled, or where git
+refuses the configuration, the capture declines (indeterminate, not
+kept) rather than key another answer. A remote's URLs are its
+`remote.<name>.url` values in git's order, an empty one emptying the
+list, the machine's counted and the repository's keyed; a remote with
+none takes them from `remotes/<name>` (its `URL:` lines), else
+`branches/<name>` (its first line, to a `#`) in the common directory,
+read as remote.c reads them, the two folders and each file read
+stamped (one stat each a prompt). An insteadOf rule is chosen as
+remote.c's `alias_url` chooses it: the longest prefix, an empty one
+matching every URL, of equal ones the first under the base git met
+first. The origin cache (`origin.capture`) is kept against the same
+config files, the machine's and the repository's, and the files they
+include under any condition, stamped and read again only once one
+stamps otherwise (`location_git.machine_config_stamps`,
 `location_git.repository_config_stamps`), so a rule set in any reaches
-it as it reaches a capture; an origin hit states each such file once.
+it as it reaches a capture; an origin hit states each such file once,
+and the legacy files git reads `origin` from (`remotes/origin`,
+`branches/origin`, `location_git.legacy_remote_stamps`).
 A file that is no regular file (the null device) is stamped by its kind
 alone. A `.git`
 file is followed only

@@ -3,8 +3,10 @@
 `_config_values` reads a config file as bytes and bounded, its includes
 followed in place as git's ``config.c`` follows them (``include.path``,
 and ``includeIf.<condition>.path`` where the condition is ``gitdir:`` or
-``gitdir/i:``), into a `ConfigValues` that says where it read less than
-git would (`ConfigValues.complete`), which names an include sets under a
+``gitdir/i:``, and, given an `IncludeContext`, ``onbranch:`` and
+``hasconfig:remote.*.url:``), into a `ConfigValues` that says where it
+read less than git would (`ConfigValues.complete`), which names an
+include sets under a
 condition not evaluated here (`ConfigValues.undecided`) and each file it
 read or looked for, stamped as it read it (`ConfigValues.files`), so a
 reader kept against them sees a change to any (`unchanged`, ENG-207);
@@ -33,7 +35,7 @@ import re
 import stat
 import threading
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from types import ModuleType
 
@@ -104,10 +106,17 @@ class ConfigValues(dict[_Name, list[str]]):
     not be read or is not a regular file (one that does not exist is
     skipped, as git skips it). The first three stop the read where it
     stands, as git stops at its depth; what was read before stands. `undecided` holds the names an include sets under a
-    condition not evaluated here (``onbranch:``, ``hasconfig:``, a
-    ``gitdir:`` with no git directory given); their values are not
-    taken. `files`, for a read asked to stamp (`_config_values`'s
-    `stamped`), holds each file the read opened or looked for, in the
+    condition not evaluated here (``onbranch:`` or
+    ``hasconfig:remote.*.url:`` with no `IncludeContext`, or one that
+    cannot settle it, a ``gitdir:`` with no git directory given); their
+    values are not taken. `asks_remote_urls` says a
+    ``hasconfig:remote.*.url:`` condition was reached before the URLs
+    were collected (`IncludeContext.remote_urls`), and `forbidden` that
+    the collecting read (`IncludeContext.collecting`) found a remote URL
+    set in a file an ``includeIf`` read, which git refuses outright
+    (config.c's ``forbid_remote_url``). `files`, for a read asked to
+    stamp (`_config_values`'s `stamped`), holds each file the read
+    opened or looked for, in the
     order it did, with its stamp taken before it was opened (a change
     after it reads as a change to what was read): None for one that was
     not there, which git skips and whose creation changes what git reads
@@ -121,6 +130,53 @@ class ConfigValues(dict[_Name, list[str]]):
         self.complete = True
         self.undecided: set[_Name] = set()
         self.files: list[tuple[str, Stamp | None]] | None = [] if stamped else None
+        self.asks_remote_urls = False
+        self.forbidden = False
+
+
+class IncludeContext:
+    """What git evaluates an ``includeIf`` past ``gitdir:`` against
+    (ENG-207's review): the branch HEAD names, for ``onbranch:``, from
+    `branch`, called at the first such condition and kept (a branch name
+    under ``refs/heads/``; None where HEAD is detached or names another
+    ref, where git's condition never holds; `UNSETTLED` where the files do
+    not settle it, where the condition is not evaluated); and, for
+    ``hasconfig:remote.*.url:``, `remote_urls`, every ``remote.<name>.url``
+    of the config git reads (None until they are collected), or, with
+    `collecting`, the read that collects them, where git takes every such
+    condition as holding and refuses a remote URL in a file an
+    ``includeIf`` reads."""
+
+    def __init__(
+        self,
+        branch: Callable[[], str | None],
+        *,
+        remote_urls: frozenset[str] | None = None,
+        collecting: bool = False,
+        _known: list[str | None] | None = None,
+    ) -> None:
+        self._branch_of = branch
+        self._known: list[str | None] = [] if _known is None else _known
+        self.remote_urls = remote_urls
+        self.collecting = collecting
+
+    def branch(self) -> str | None:
+        if not self._known:
+            self._known.append(self._branch_of())
+        return self._known[0]
+
+    def collect(self) -> IncludeContext:
+        """This context for the read that collects the remote URLs."""
+        return IncludeContext(self._branch_of, collecting=True, _known=self._known)
+
+    def with_urls(self, urls: frozenset[str]) -> IncludeContext:
+        """This context with the remote URLs collected."""
+        return IncludeContext(self._branch_of, remote_urls=urls, _known=self._known)
+
+
+#: What `IncludeContext.branch` answers where the files do not settle the
+#: branch HEAD names.
+UNSETTLED = "\0unsettled"
 
 
 class _Overflow(Exception):
@@ -137,6 +193,10 @@ class _Reading:
     files: int = 0
     chain: list[tuple[int, int]] = field(default_factory=list)
     stamp_self: bool = True
+    context: IncludeContext | None = None
+    forbidding: bool = False
+    asks_remote_urls: bool = False
+    forbidden: bool = False
 
 
 def _config_values(
@@ -145,6 +205,7 @@ def _config_values(
     git_dir: str | None = None,
     stamped: bool = False,
     stamp_self: bool = True,
+    context: IncludeContext | None = None,
 ) -> ConfigValues:
     """``{(section, subsection, key): values}`` of a git config file, read
     as bytes and bounded, its includes followed in place as git follows
@@ -156,12 +217,16 @@ def _config_values(
     before stand, and the answer is incomplete. `stamped` has the answer
     name each file read and its stamp (`ConfigValues.files`, ENG-207),
     `path` itself left out with `stamp_self` off (a caller that stamps it
-    already)."""
+    already). `context` evaluates ``onbranch:`` and
+    ``hasconfig:remote.*.url:`` as git does (`IncludeContext`)."""
     out = ConfigValues(stamped=stamped)
+    reading = _Reading(stamp_self=stamp_self, context=context)
     try:
-        _read_config(path, out, git_dir, 0, _Reading(stamp_self=stamp_self))
+        _read_config(path, out, git_dir, 0, reading)
     except _Overflow:
         out.complete = False
+    out.asks_remote_urls = reading.asks_remote_urls
+    out.forbidden = reading.forbidden
     return out
 
 
@@ -278,16 +343,17 @@ def _parse_config(
             continue
         text = _unquote(value) if eq else "true"
         out.setdefault((section[0], section[1], key), []).append(text)
-        if key == "path" and section[0] in ("include", "includeif"):
-            _include(
-                path,
-                section[1] if section[0] == "includeif" else None,
-                text,
-                out,
-                git_dir,
-                depth,
-                reading,
-            )
+        if section[0] == "include" and key == "path":
+            _include(path, None, text, out, git_dir, depth, reading)
+        elif section[0] == "includeif" and section[1] is not None:
+            # git evaluates an includeIf's condition at each of its keys,
+            # not only at ``path`` (config.c's ``git_config_include``):
+            # a ``hasconfig:remote.*.url:`` one collects the remote URLs
+            # there, which can make git refuse the configuration.
+            if key == "path":
+                _include(path, section[1], text, out, git_dir, depth, reading)
+            elif section[1].startswith(_HAS_REMOTE_URL):
+                _condition(section[1], path, git_dir, reading)
 
 
 def _include(
@@ -313,11 +379,28 @@ def _include(
     if not os.path.isabs(target):
         target = os.path.join(os.path.dirname(including), target)
     target = _native(target)
-    holds = True if condition is None else _condition(condition, including, git_dir)
+    holds = (
+        True
+        if condition is None
+        else _condition(condition, including, git_dir, reading)
+    )
     if holds is False:
         return
     if depth + 1 > _INCLUDE_DEPTH:
         raise _Overflow(target)
+    context = reading.context
+    if (
+        holds
+        and condition is not None
+        and context is not None
+        and context.collecting
+        and not reading.forbidding
+    ):
+        # git collects the remote URLs with every file an includeIf reads
+        # forbidden to set one (config.c's ``forbid_remote_url``), its
+        # includes with it: such a URL fails git's read.
+        _forbidding(target, out, git_dir, depth, reading)
+        return
     if holds:
         _read_config(target, out, git_dir, depth + 1, reading)
         return
@@ -337,11 +420,15 @@ def file_stamp(path: str) -> Stamp | None:
     file that is no regular file (the null device GIT_CONFIG_GLOBAL names
     in CI, a FIFO) is stamped by its inode and type alone: the reader
     takes no value from it, and the null device's times move with every
-    write to it."""
+    write to it. A directory is stamped by its times too, which move as
+    an entry is made or removed (the legacy remote directories,
+    `location_git._legacy_remotes`)."""
     try:
         st = os.stat(path)
     except (OSError, ValueError) as exc:
         return None if path_missing(exc) else _UNSTATED
+    if stat.S_ISDIR(st.st_mode):
+        return (st.st_mtime_ns, st.st_ctime_ns, 0, st.st_ino, st.st_mode)
     if not stat.S_ISREG(st.st_mode):
         return (0, 0, 0, st.st_ino, st.st_mode)
     return (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino, st.st_mode)
@@ -394,20 +481,105 @@ def _expand_home(value: str) -> str:
     return value
 
 
-def _condition(condition: str, including: str, git_dir: str | None) -> bool | None:
+def _forbidding(
+    target: str, out: ConfigValues, git_dir: str | None, depth: int, reading: _Reading
+) -> None:
+    """Read `target`, which an ``includeIf`` names, for the read that
+    collects the remote URLs: its values are not taken, and a remote URL
+    it or a file it includes sets marks the read `forbidden`."""
+    sink = ConfigValues(stamped=out.files is not None)
+    reading.forbidding = True
+    try:
+        _read_config(target, sink, git_dir, depth + 1, reading)
+    finally:
+        reading.forbidding = False
+        out.complete = out.complete and sink.complete
+        out.undecided.update(sink.undecided)
+        if out.files is not None:
+            out.files.extend(sink.files or ())
+        if _remote_url_names(sink) or _remote_url_names(sink.undecided):
+            reading.forbidden = True
+
+
+def _remote_url_names(names: Collection[_Name]) -> list[_Name]:
+    """The names among `names` that set a remote's URL, as git parses
+    them (``remote.<name>.url``; a ``remote.url`` with no name is none)."""
+    return [n for n in names if n[0] == "remote" and n[1] is not None and n[2] == "url"]
+
+
+#: The prefix of the one ``hasconfig:`` condition git knows.
+_HAS_REMOTE_URL = "hasconfig:remote.*.url:"
+
+
+def _condition(
+    condition: str, including: str, git_dir: str | None, reading: _Reading
+) -> bool | None:
     """Whether an ``includeIf`` condition holds (config.c's
     ``include_condition_is_true``): ``gitdir:`` and ``gitdir/i:`` against
-    `git_dir`; None where it is not evaluated here (``onbranch:``,
-    ``hasconfig:``, or no git directory given); False for a condition git
-    does not know, which git ignores."""
+    `git_dir`; ``onbranch:`` and ``hasconfig:remote.*.url:`` against the
+    read's `IncludeContext` (`_branch_condition`, `_remote_url_condition`);
+    None where it is not evaluated here (no context or git directory
+    given, or one that cannot settle it); False for a condition git does
+    not know, another ``hasconfig:`` among them, which git ignores."""
     for prefix, icase in (("gitdir:", False), ("gitdir/i:", True)):
         if condition.startswith(prefix):
             if git_dir is None:
                 return None
             return _gitdir_matches(condition[len(prefix) :], including, git_dir, icase)
-    if condition.startswith(("onbranch:", "hasconfig:")):
-        return None
+    if condition.startswith("onbranch:"):
+        return _branch_condition(condition[len("onbranch:") :], reading.context)
+    if condition.startswith(_HAS_REMOTE_URL):
+        return _remote_url_condition(condition[len(_HAS_REMOTE_URL) :], reading)
     return False
+
+
+def _unmatched(pattern: str) -> bool:
+    """Whether `pattern` holds what `_wildmatch` does not read as git's
+    wildmatch does, read from where this reader reads a subsection: a
+    character class (``[:alpha:]``), and a backslash, which git's parser
+    of a subsection takes as an escape before wildmatch takes it as one
+    again, where this reader takes it once (``\\"`` alone)."""
+    return "[:" in pattern or "\\" in pattern
+
+
+def _branch_condition(pattern: str, context: IncludeContext | None) -> bool | None:
+    """config.c's ``include_by_branch``: the branch HEAD names, its name
+    under ``refs/heads/``, matched as a path against `pattern`, with
+    ``**`` put after one that ends in ``/``; never where HEAD is detached
+    or names another ref. None with no context, where the files do not
+    settle the branch, or where the pattern holds what `_wildmatch` does
+    not read as git does (`_unmatched`)."""
+    if context is None or _unmatched(pattern):
+        return None
+    branch = context.branch()
+    if branch == UNSETTLED:
+        return None
+    if branch is None:
+        return False
+    if pattern.endswith("/"):
+        pattern += "**"
+    return _wildmatch(pattern, branch, 0, False)
+
+
+def _remote_url_condition(pattern: str, reading: _Reading) -> bool | None:
+    """config.c's ``include_by_remote_url``: whether any remote URL of
+    the config git reads matches `pattern` as a path, the pattern as it
+    is (no ``**`` put after a ``/``); true, whatever the pattern, for the
+    read that collects them (`IncludeContext.collecting`). None with no
+    context, before the URLs are collected (`ConfigValues.asks_remote_urls`)
+    and where the pattern holds what `_wildmatch` does not read as git
+    does (`_unmatched`)."""
+    context = reading.context
+    if context is None:
+        return None
+    if context.collecting:
+        return True
+    if context.remote_urls is None:
+        reading.asks_remote_urls = True
+        return None
+    if _unmatched(pattern):
+        return None
+    return any(_wildmatch(pattern, url, 0, False) for url in context.remote_urls)
 
 
 def _slashed(path: str) -> str:

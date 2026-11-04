@@ -563,8 +563,13 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     reported, not bounded: the first grow with the depth of the temporary
     directory. Measured on macOS (APFS), the same at any depth of the
     temporary directory, as (os.stat, os.lstat, opens, os.access) on so
-    many paths: steady state 0 spawns, (10, 2, 3, 2) on 12 paths; after a
-    commit 0 spawns, (41, 17, 34, 6) on 22. The fresh capture opens the
+    many paths: steady state 0 spawns, (12, 2, 3, 2) on 14 paths; after a
+    commit 0 spawns, (43, 17, 34, 6) on 24. Each counts the two legacy
+    remote folders git reads a remote from (``remotes`` and ``branches``
+    in the common directory, `location_git._legacy_remotes`, ENG-207's
+    review), stated by a kept capture's check and by the fresh capture's
+    read, which made them (10, 2, 3, 2) on 12 and (41, 17, 34, 6) on 22
+    before. The fresh capture opens the
     common config once more than it did (33), for its format alone,
     whether git reads ``config.worktree`` (ENG-207's review, R14:
     `gitfile_rule.reads_worktree_config`, no include followed, which the
@@ -603,14 +608,14 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     warm = counted(prompt, within)
     report("steady", warm)
     assert warm.spawns == 0
-    assert warm.stats <= 10 and warm.lstats <= 2 and len(warm.files) <= 12
+    assert warm.stats <= 12 and warm.lstats <= 2 and len(warm.files) <= 14
     assert warm.opens <= 3 and warm.accesses <= 2
 
     git(repo, "commit", "-q", "--allow-empty", "-m", "work")
     moved = counted(prompt, within)
     report("after a commit", moved)
     assert moved.spawns == 0
-    assert moved.stats <= 41 and moved.lstats <= 17 and len(moved.files) <= 22
+    assert moved.stats <= 43 and moved.lstats <= 17 and len(moved.files) <= 24
     assert moved.opens <= 34 and moved.accesses <= 6
 
 
