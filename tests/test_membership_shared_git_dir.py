@@ -1230,7 +1230,7 @@ def test_a_question_on_a_second_checkout_keeps_it_where_it_asks_its_project(
     qid = _asked_on(lab, dup, kind, project)
     if answer in ("join_own", "join_other"):
         # `project join <target>` there, answering the open question.
-        target = project
+        target: str | None = project
         if answer == "join_other":
             target = lab.write("r1", make_repo(tmp_path / "r", commits=1)).project
         assert target is not None
