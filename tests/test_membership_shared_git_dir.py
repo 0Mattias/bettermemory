@@ -23,14 +23,16 @@ made or recorded it (`membership_shared`): its init stamps read there now
 (the object is the recorded git directory), the other record shares an
 init stamp with it by name, mtime, ctime and size (it saw the same files,
 where a copy has ctimes of its own), and the token is a re-mint of its
-token over that record's numbers, or the token that record holds. A
-record's stamps follow its files at each sighting its birth time or token
-proves; B reads such a token as the bind mount does; a linked worktree is
-stamped by its `commondir`; and a second checkout an earlier release
-registered for want of the rule yields to the first. A copy of the git
-directory, the token of a re-mint in a copy carried into the checkout, a
-copy landed on the checkout's freed inode number, a token of another line
-and a re-mint naming nothing are refused as before.
+token over that record's numbers, or the token that record holds; or,
+the files' ctimes moved since, its stamps read there without them and
+that record read them as they are now. A record's stamps follow its
+files at each sighting its birth time or token proves; B reads such a
+token as the bind mount does; a linked worktree is stamped by its
+`commondir`; and a second checkout an earlier release registered for want
+of the rule yields to the first. A copy of the git directory, the token
+of a re-mint in a copy carried into the checkout, a copy landed on the
+checkout's freed inode number that no record read, a token of another
+line and a re-mint naming nothing are refused as before.
 
 The container is played on this host (`Shared`): it posts made-up device
 and inode numbers for every object and for its init stamps, keeping their
@@ -44,6 +46,7 @@ import os
 import shutil
 import stat
 import sys
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -212,56 +215,164 @@ def _carried_in(src: Path, dst: Path) -> None:
 
 
 @pytest.mark.usefixtures("no_birth")
-@pytest.mark.parametrize("shape", ["copy_carried_in", "copy_on_the_freed_number"])
-def test_a_re_mint_in_a_copy_or_a_copy_on_the_freed_number_is_not_the_hosts(
-    tmp_path: Path, lab: Lab, shape: str
+def test_a_re_mint_in_a_copy_carried_into_the_checkout_is_not_the_hosts(
+    tmp_path: Path, lab: Lab
 ) -> None:
-    """The mapping joins no other git directory to the host's checkout.
-
-    ``copy_carried_in``: the container works on a copy of the host's
-    repository (an image's `COPY` with `.git`), not on a share. Its
-    checkout is separated and re-minted there, and the re-mint's token is
-    carried into the host's git directory (a sync of `.git/info`). The
-    copy's init stamps have ctimes of their own, so its record saw other
-    files than the host's: the host does not read the token as its
-    re-mint.
-
-    ``copy_on_the_freed_number``: the container shares the host's git
-    directory and re-mints it; then the host's repository is replaced at
-    its path by a copy that lands on its inode number (E15). The copy
-    holds the re-mint, and its init stamps are not the recorded ones: not
-    the host's checkout."""
-    if shape == "copy_carried_in":
-        line = make_repo(tmp_path / "host" / "line", commits=2)
-        host = lab.write("h1", line)
-        hid = host.checkout
-        assert hid is not None
-        other = copy(line, tmp_path / "box" / "copy")
-        box = Shared(other, "/workspaces/copy", _container_machine(lab, "copy"))
-        joined = box.post(lab)
-        assert joined.checkout is not None and joined.project == host.project
-        _the_containers_re_mint(lab, box, joined.checkout, "recorded")
-        _carried_in(other, line)
-        found = _file_token(line)
-        key = None
-    else:
-        line, box, hid, kid = _shared(tmp_path, lab, "line")
-        _the_containers_re_mint(lab, box, kid, "recorded")
-        found = _file_token(line)
-        key = location.object_key(str(line / ".git"))
-        os.rename(line, tmp_path / "host" / "line-old")
-        copy(tmp_path / "host" / "line-old", line)
-    assert found is not None and found == _file_token(line)
+    """The container works on a copy of the host's repository (an image's
+    `COPY` with `.git`), not on a share. Its checkout is separated and
+    re-minted there, and the re-mint's token is carried into the host's
+    git directory (a sync of `.git/info`). The copy's init stamps have
+    ctimes of their own, so its record saw other files than the host's:
+    the host does not read the token as its re-mint."""
+    line = make_repo(tmp_path / "host" / "line", commits=2)
+    host = lab.write("h1", line)
+    hid = host.checkout
+    assert hid is not None
+    other = copy(line, tmp_path / "box" / "copy")
+    box = Shared(other, "/workspaces/copy", _container_machine(lab, "copy"))
+    joined = box.post(lab)
+    assert joined.checkout is not None and joined.project == host.project
+    _the_containers_re_mint(lab, box, joined.checkout, "recorded")
+    _carried_in(other, line)
+    found = _file_token(line)
+    assert found is not None
     location.forget()
 
-    if key is None:
-        res, _admitted = lab.view(line)
-    else:
-        with posing(line / ".git", key):
-            res, _admitted = lab.view(line)
+    res, _admitted = lab.view(line)
 
     assert res.rule != "object+remint" and res.checkout != hid
     assert lab.model().checkout(hid).token != found
+
+
+@pytest.mark.parametrize("birth", ["birth", "no_birth"])
+def test_a_copy_on_the_freed_number_joins_the_tokens_project_or_is_asked(
+    tmp_path: Path, lab: Lab, birth: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The container shares the host's git directory, is separated and
+    re-mints it; then the host's repository is replaced at its path by a
+    copy (`cp -a`) whose git directory lands on the freed inode number
+    (E15), its stamped files on numbers of their own. The copy holds the
+    container's re-mint, and its stamps are not the host record's: never
+    the host's checkout. Without birth time it is a checkout of its own,
+    joined silently to the project of the container's checkout, whose
+    token it carries, with the commits (``join:H+T``), and none of the
+    host's memories delivered; with birth time (the copy's own) it is
+    asked about, B finding the host's checkout at the path and T the
+    container's project (``ask:several_projects``)."""
+    if birth == "no_birth":
+        monkeypatch.setattr(location, "REPORT_BIRTH", False)
+        location.forget()
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    found = _file_token(line)
+    project = lab.model().checkout(kid).project
+    freed = location.object_key(str(line / ".git"))
+    assert found is not None and freed is not None
+    os.rename(line, tmp_path / "host" / "line-old")
+    copy(tmp_path / "host" / "line-old", line)
+    own = location.object_key(str(line / ".git"))
+    assert own is not None and _file_token(line) == found
+    location.forget()
+
+    with posing(line / ".git", (freed[0], freed[1], own[2])):
+        res, admitted = lab.view(line)
+
+    assert res.checkout not in (None, hid) and admitted == []
+    if birth == "no_birth":
+        assert (res.rule, res.outcome, res.project) == ("join:H+T", SILENT, project)
+    else:
+        assert (res.rule, res.outcome) == ("ask:several_projects", ASK)
+    assert lab.model().checkout(hid).token != found
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("seen", ["unseen", "seen_by_the_container"])
+def test_a_copy_on_reused_numbers_passes_only_where_the_other_side_read_it(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, seen: str
+) -> None:
+    """Where inode numbers are reused (ext4, an NFS export; posed here, as
+    APFS never reuses one), a copy of the host's repository that keeps
+    mtimes and sizes (`cp -a`) can land at the path with its git directory
+    and its stamped files on the freed numbers, so the host record's
+    stamps read there but for their ctimes. The container re-minted the
+    original over the share. Where the container has not read the copy
+    (``unseen``), no record of it holds the copy's ctimes: not the host's
+    checkout, the copy joined silently to the container's project
+    (``join:H+T``). Where the container's record read the copy since
+    (``seen_by_the_container``), it is the host's checkout: a stated
+    property, no more than ENG-205's own lineage accepts of a copy on the
+    freed number that carries the checkout's re-mint."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    found = _file_token(line)
+    freed = location.object_key(str(line / ".git"))
+    assert freed is not None
+    inodes = {s.name: s.inode for s in lab.model().checkout(hid).stamps}
+    os.rename(line, tmp_path / "host" / "line-old")
+    time.sleep(0.01)
+    copy(tmp_path / "host" / "line-old", line)
+    shutil.rmtree(tmp_path / "host" / "line-old")
+    target = os.path.realpath(line / ".git")
+    real = location_git._init_stamps
+
+    def reused(
+        git_dir: str, *, linked: bool = False
+    ) -> tuple[tuple[str, int, int, int, int], ...]:
+        got = real(git_dir, linked=linked)
+        if os.path.realpath(git_dir) != target:
+            return got
+        return tuple((n, inodes.get(n, i), m, c, z) for n, i, m, c, z in got)
+
+    monkeypatch.setattr(location, "_init_stamps", reused)
+    if seen == "seen_by_the_container":
+        assert box.post(lab).checkout == kid
+    location.forget()
+
+    with posing(line / ".git", freed):
+        res, admitted = lab.view(line)
+
+    if seen == "unseen":
+        assert (res.rule, res.outcome) == ("join:H+T", SILENT)
+        assert res.checkout != hid and admitted == []
+        assert lab.model().checkout(hid).token != found
+    else:
+        assert (res.checkout, res.outcome, res.rule) == (hid, SILENT, "object+remint")
+        assert admitted == ["h1"] and lab.model().checkout(hid).token == found
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("moved", ["before_the_container", "after_both"])
+def test_a_ctime_moved_before_the_containers_re_mint_reads_the_hosts(
+    tmp_path: Path, lab: Lab, moved: str
+) -> None:
+    """Every stamped file's ctime moves (a `chmod -R` in a container's
+    set-up) before the container first sees the git directory, or after
+    both machines did; the container then sees it, is separated and
+    re-mints, and the host's next prompt is the first sighting of the
+    host since the move. The host's record reads its files here but for
+    their ctimes, and the container's record, holding the token found,
+    read them as they are now: the host's own checkout, silent, whose
+    stamps then follow, so the next sighting is by its token. Before, a
+    second checkout joined silently to the container's project
+    (``join:H+T``), none of the host's memories delivered, for good."""
+    line = make_repo(tmp_path / "host" / "line", commits=2)
+    hid = lab.write("h1", line).checkout
+    box = Shared(line, "/workspaces/line", _container_machine(lab, "line"))
+    if moved == "after_both":
+        assert box.post(lab).checkout is not None
+    _ctime_moved(line)
+    kid = box.post(lab).checkout
+    assert kid is not None
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    location.forget()
+
+    res, admitted = lab.view(line)
+
+    assert (res.checkout, res.outcome, res.rule) == (hid, SILENT, "object+remint")
+    assert admitted == ["h1"] and _host_checkouts(lab) == [hid]
+    location.forget()
+    steady, _admitted = lab.view(line)
+    assert (steady.checkout, steady.rule) == (hid, "object+token")
 
 
 def _host_checkouts(lab: Lab) -> list[str]:
@@ -624,21 +735,29 @@ def _without_the_rule(
 
 
 @pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("files", ["as_they_were", "ctime_moved_since"])
 def test_a_second_checkout_an_earlier_release_registered_yields_to_the_first(
-    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, files: str
 ) -> None:
     """9.0.0rc18 registered a second checkout of the host's git directory
     after the container's re-mint, joined silently to the container's
     project, and ENG-205's order resolves the record holding the token
     found. That record was registered by a silent join on the token, with
-    no question opened and no declaration made about it, and the first
-    record's files read at the object: the host's next sighting is the
-    first checkout again, which records the token and so comes first from
-    then on. Its memories are delivered there again."""
+    no question opened, no declaration made about it and nothing written
+    at it, and the first record's files read at the object, as they were
+    or with their ctimes moved since (``ctime_moved_since``, the
+    container's record reading them as they are now, as the rule reads
+    them): the host's next sighting is the first checkout again, which
+    records the token and so comes first from then on. Its memories are
+    delivered there again."""
     line, box, hid, kid = _shared(tmp_path, lab, "line")
     _the_containers_re_mint(lab, box, kid, "recorded")
     dup, found = _without_the_rule(lab, line, monkeypatch)
     assert dup != hid
+    if files == "ctime_moved_since":
+        _ctime_moved(line)
+        assert box.post(lab).checkout == kid
+        location.forget()
 
     res, admitted = lab.view(line)
 

@@ -1409,18 +1409,29 @@ eighteenth was built.
   machine's record keeps its own project, as over a bind mount, and a
   chain of re-mints the host did not see one by one (the container
   separated twice, or a rebuilt container re-minting the first one's
-  token) reads the same where the store recorded its last step. A
-  re-mint made in a file-level copy (an image built with `.git`) is not
-  the host's, even with its token synced into the host's git directory,
-  as the copy's files have ctimes of their own, and a copy landed on the
-  checkout's freed inode number is refused as before. A snapshot, an
-  overlay's lower layer or a block-level clone keeps the ctimes, but the
-  rule reads only a token found in the checkout's own git directory,
-  which with birth time the checkout takes anyway, so it takes no token
-  a checkout with birth time would not. A record's stamps now follow its
-  files at each sighting birth time, its token or a re-mint proves, so a
-  `chmod -R` or an extended attribute set on them in a container's
-  set-up no longer leaves them behind; a linked worktree's git
+  token) reads the same where the store recorded its last step. Where
+  the stamped files' ctimes moved before the other side's re-mint (a
+  `chmod -R` in a container's set-up), the host's stamps read there by
+  name, inode number, mtime and size and the other side's record holding
+  the token read every stamp there exactly, ctime included: the host's
+  checkout, where it registered a second checkout for good. A re-mint
+  made in a file-level copy (an image built with `.git`) is not the
+  host's, even with its token synced into the host's git directory, as
+  the copy's files have ctimes of their own. A snapshot, an overlay's
+  lower layer or a block-level clone keeps the ctimes, but the rule
+  reads only a token found in the checkout's own git directory, which
+  with birth time the checkout takes anyway, so it takes no token a
+  checkout with birth time would not. A copy landed on the checkout's
+  freed inode number is a stated property: APFS never reuses a freed
+  number; where numbers are reused (ext4, NFS), a copy keeping mtimes
+  and sizes that lands with its stamped files on the freed numbers, and
+  that the other side's record has read since, is read as the checkout,
+  no more than ENG-205's own lineage accepts; one no record has read is
+  a checkout of its own, joined silently to the token's project
+  (`join:H+T`) without birth time and asked about
+  (`ask:several_projects`) with it. A record's stamps now follow its
+  files at each sighting birth time, its token or a re-mint proves; a
+  linked worktree's git
   directory, which holds neither `description` nor `info/exclude`, is
   stamped by its `commondir`; on Windows a stamp's ctime is NTFS's
   ChangeTime (`GetFileInformationByHandleEx`), where `os.stat` reports
@@ -1440,8 +1451,7 @@ eighteenth was built.
   the token found is neither recorded nor the checkout's own re-mint
   (two for such a sighting, the liveness plan and the transaction, none
   for a steady one). It cannot read a git directory with none of the
-  stamped files, or every stamped file's ctime moved after either
-  machine's last proven sighting and before the other's re-mint, or a
+  stamped files, a stamped file rewritten under the checkout, or a
   chain whose last step the store missed, where a second checkout is
   registered as before. A view's liveness still reads the checkout's own
   lineage, so a view whose git directory the other machine re-minted

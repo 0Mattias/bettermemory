@@ -1108,10 +1108,18 @@ token or the one found shares an init stamp with it by name, mtime,
 ctime and size, the inode number left out (`_same_files`: it saw the
 same files), and either records the token found or names the device and
 inode number over which that token is a re-mint of the checkout's
-(`_view_made`). The first covers a chain the checkout did not see step
+(`_made_by`). The first covers a chain the checkout did not see step
 by step whose last step the store recorded: the container separated
 twice, or a rebuilt container (a machine of its own) re-minting what the
-first one wrote. Each machine's record keeps its own project, as over a
+first one wrote. Where the stamped files' ctimes moved since the
+checkout last took its stamps (a `chmod -R` or `chown -R` in a
+container's set-up, an extended attribute, a hard link) and before the
+other machine's re-mint, the stamps cannot be read there as they are,
+so the rule reads them without their ctimes: every one of the
+checkout's stamps is read there by name, inode number, mtime and size,
+and a record of another machine holding the token found read every
+stamp there exactly, ctime included (`_continues`: `_moved_under`,
+`_read_as_now`). Each machine's record keeps its own project, as over a
 bind mount, whether the store recorded the re-mint or missed it. A
 record of the checkout's own machine is never such a view: a re-mint
 there names the checkout's own lineage.
@@ -1120,18 +1128,36 @@ What makes it safe is where the token is. The stamps tell a view from a
 file-level copy, since no call sets a file's ctime: every copy a tool
 makes (`cp -a`, rsync, an image's `COPY`) has ctimes of its own, so a
 re-mint in such a copy is not read as the checkout's, even with its
-token synced into the checkout's git directory, and a copy landed on the
-checkout's freed inode number is refused as before. A filesystem
-snapshot, an overlay's lower layer or a block-level clone of a disk
-keeps the ctimes, so a record of such a copy can pass for a view. The
-rule does not rest on that: it reads only a token found in the
-checkout's own git directory (its stamps read at the object, inode
-number included), and with birth time a checkout takes any token found
-at its object (rung 2's `birth`). Whatever writes a token there can
-already write one the checkout reads as its own re-mint, having read
-the checkout's token and the git directory's numbers. So the rule takes
-no token a checkout with birth time would not: without birth time the
-checkout stays itself, as with it.
+token synced into the checkout's git directory. A filesystem snapshot,
+an overlay's lower layer or a block-level clone of a disk keeps the
+ctimes, so a record of such a copy can pass for a view. The rule does
+not rest on that: it reads only a token found in the checkout's own git
+directory (its stamps read at the object, inode number included), and
+with birth time a checkout takes any token found at its object (rung
+2's `birth`). Whatever writes a token there can already write one the
+checkout reads as its own re-mint, having read the checkout's token and
+the git directory's numbers. So the rule takes no token a checkout with
+birth time would not: without birth time the checkout stays itself, as
+with it.
+
+A copy landed on the checkout's freed inode number is the one object
+the rule's reading of the stamps cannot tell from the checkout's own,
+and what it takes of one is a stated property. Where a filesystem never
+hands a freed inode number out again (APFS: 0 of 20 rounds of the probe
+did), no copy lands there. Where numbers are reused (ext4, an NFS
+export), a copy that keeps mtimes and sizes (`cp -a`) can land with its
+git directory and its stamped files on the freed numbers, so the
+checkout's stamps read there but for their ctimes; the copy carries the
+other machine's re-mint, and where that machine's record has read the
+copy since, it is read as the checkout, as ENG-205's own lineage already
+reads a copy on the freed number that carries the checkout's own
+re-mint. Where no record has read the copy, it is not the checkout:
+without birth time it is a checkout of its own, joined silently to the
+project of the checkout whose token it carries, with the commits
+(`join:H+T`), and none of the first checkout's memories delivered; with
+birth time (the copy's own) it is asked about, B finding the first
+checkout at the path and T the other machine's project
+(`ask:several_projects`).
 
 The stamps follow the files. A sighting that birth time, the token or a
 re-mint proves takes the init stamps its object reads now where they
@@ -1166,7 +1192,8 @@ A store that met this before 9.0.0rc19 holds a second checkout of the
 host's git directory, registered after the container's re-mint and
 joined silently to the container's project; it records the token found,
 so it comes first in ENG-205's order. Rung 2 takes the first checkout
-over it (`_healed`) where the rule continues the first (a re-mint of its
+over it (`_healed`) where the rule continues the first, its stamps read
+as they are or without their ctimes, as above (a re-mint of its
 own lineage is ENG-205's, left in that order) and the second was
 registered by a silent first-sight join with the token among its
 witnesses, into the project of another machine's checkout recording the
@@ -1190,12 +1217,11 @@ store's duplicate, and at each sighting of one a declaration kept where
 it is.
 
 Where the rule cannot read. A git directory with none of the stamped
-files (a template folder lacking them) is as before. A ctime moved on
-every stamped file after the last sighting either machine proved, and
-before the other machine's re-mint, leaves no common stamp, so the
-second checkout is registered as before; the host's capture is read
-afresh when its signature changes or after the cache's ten minutes, and
-its next proven sighting takes the new stamps. A chain of re-mints
+files (a template folder lacking them) is as before. A stamped file's
+mtime, size or inode number changed under the checkout (the file
+rewritten) leaves the checkout's stamps unread there, with or without
+their ctimes, so the second checkout is registered as before. A chain of
+re-mints
 whose last step the store missed, after steps the checkout never saw,
 ends in a token no record holds: finding the record that held it two
 writes back would need an index of every token a record held. Whether a

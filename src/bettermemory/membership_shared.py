@@ -13,10 +13,10 @@ from the records of the other machines that see the same files:
 
 - `_shared_remint`, for rung 2 (`Membership._continuity`): a token at a
   checkout's own git directory is its re-mint where another machine's
-  view of the same files made or recorded it (`_view_made`);
-- `_view_made`, for that and for B (`membership_resolve._tally`): the
-  same without the reading of the object here, as B reads a checkout at
-  another object at its path;
+  view of the same files made or recorded it (`_continues`);
+- `_view_made`, for B (`membership_resolve._tally`): the same without
+  the reading of the object here, as B reads a checkout at another
+  object at its path;
 - `_restamped`: a checkout's init stamps as its object reads now, where
   birth time or the token proved it, so the files the rules compare
   follow a mode or an extended attribute set on them;
@@ -27,12 +27,13 @@ from the records of the other machines that see the same files:
 The init stamps are what tells a view from a copy: the name, mtime, ctime
 and size of `description`, `info/exclude` and a linked worktree's
 `commondir` (`location_git._init_stamps`), each namespace numbering the
-inode its own way. Every copy tool the probe tried gives a copy new
-ctimes; a filesystem snapshot, an overlay's lower layer or a block-level
-clone of a VM's disk keeps them. None of the rules reads a token that is
-not in the checkout's own git directory: whatever writes there can
-already make a token the checkout takes (`checkout_token.succeeds`), and
-with birth time the checkout takes any token found at its object.
+inode its own way. No call sets a file's ctime, so a file-level copy has
+ctimes of its own; a filesystem snapshot, an overlay's lower layer or a
+block-level clone of a VM's disk keeps them. None of the rules reads a
+token that is not in the checkout's own git directory: whatever writes
+there can already make a token the checkout takes
+(`checkout_token.succeeds`), and with birth time the checkout takes any
+token found at its object.
 
 Each function takes the model as `self: Membership`, as the ladder's do
 (`membership_resolve`); the class binds `_shared_remint` by name. This
@@ -69,20 +70,70 @@ def _shared_remint(
 ) -> bool:
     """Whether `found`, a token at `k`'s object that `k` does not record
     and that names no lineage of `k`'s own, is `k`'s re-mint made through
-    another machine's view of the same git directory. Two things must
-    hold: `k`'s init stamps read here now, inode number included (A2: the
-    object is the recorded git directory, not another one on its freed
-    number, whose files have other ctimes and inodes), and another
-    machine's view of the same files made or recorded the token
-    (`_view_made`). Read only for a sighting without birth time whose
-    token is neither recorded nor `k`'s own re-mint."""
-    return _read_here(k, loc) and _view_made(self, k, found)
+    another machine's view of the same git directory (`_continues`). One
+    read of the checkouts' token index, made only where `k`'s stamps are
+    read here, with or without their ctimes. Read only for a sighting
+    without birth time whose token is neither recorded nor `k`'s own
+    re-mint."""
+    if not k.token or not k.stamps or not checkout_token.valid(found):
+        return False
+    if found == k.token or not (_read_here(k, loc) or _moved_under(k, loc)):
+        return False
+    return _continues(k, loc, found, _carriers(self, (k.token, found)))
+
+
+def _continues(
+    k: Checkout, loc: Location, found: str, carriers: Collection[Checkout]
+) -> bool:
+    """The rule over `carriers`, the checkouts recording `k`'s token or
+    `found`. Either one of `k`'s init stamps is read here, inode number
+    included (A2: the object is the recorded git directory), and another
+    machine's view of the same files made or recorded `found`
+    (`_made_by`); or every one of `k`'s stamps is read here but for its
+    ctime (`_moved_under`: a mode, an owner or an extended attribute set
+    on the files since `k` last took them) and a record of another
+    machine holding `found` read every stamp here exactly, ctime included
+    (`_read_as_now`)."""
+    if _read_here(k, loc):
+        return _made_by(k, found, carriers)
+    return _moved_under(k, loc) and _read_as_now(k, loc, found, carriers)
 
 
 def _read_here(k: Checkout, loc: Location) -> bool:
     """Whether one of `k`'s init stamps is read at the sighting's object,
     inode number included."""
     return bool({tuple(s) for s in k.stamps} & {tuple(s) for s in loc.stamps})
+
+
+def _moved_under(k: Checkout, loc: Location) -> bool:
+    """Whether every one of `k`'s init stamps is read here by name, inode
+    number, mtime and size, its ctime left out."""
+    if not k.stamps or not loc.stamps:
+        return False
+    return _loose(k.stamps) <= _loose(loc.stamps)
+
+
+def _read_as_now(
+    k: Checkout, loc: Location, found: str, carriers: Collection[Checkout]
+) -> bool:
+    """Whether a record of another machine holding `found` read every
+    init stamp here by name, mtime, ctime and size (its inode number its
+    namespace's own)."""
+    here = _exact(loc.stamps)
+    for other in carriers:
+        if other.machine == k.machine or other.token != found:
+            continue
+        if here and here <= _exact(other.stamps):
+            return True
+    return False
+
+
+def _loose(stamps: Collection[Sequence[object]]) -> set[tuple[object, ...]]:
+    return {(s[0], s[1], s[2], s[4]) for s in stamps if len(s) == 5}
+
+
+def _exact(stamps: Collection[Sequence[object]]) -> set[tuple[object, ...]]:
+    return {(s[0], s[2], s[3], s[4]) for s in stamps if len(s) == 5}
 
 
 def _view_made(self: Membership, k: Checkout, found: str | None) -> bool:
@@ -191,19 +242,18 @@ def _healed(self: Membership, kept: Checkout, later: Checkout, loc: Location) ->
     other machine's re-mint registered (9.0.0rc18 and earlier, or while
     the stamps had moved). All of:
 
-    - `kept` is continued by another machine's re-mint, not its own
-      (`checkout_token.succeeds` over its own lineage fails): two records
-      after a re-mint of this machine's own are ENG-205's, left in its
-      order;
+    - `kept` is continued by another machine's re-mint (`_continues`),
+      not its own (`checkout_token.succeeds` over its own lineage fails):
+      two records after a re-mint of this machine's own are ENG-205's,
+      left in its order;
     - `later` was registered by a silent first-sight join on that token
       (``join:`` with T among its witnesses), into the project of a
       checkout of another machine recording the token, and no question
       was opened about it and no declaration named it: no one chose it.
 
-    Then the git directory is `kept`'s (its init stamps read here) and the
-    token was written into it through another machine's view, so with
-    birth time the sighting that registered `later` would have continued
-    `kept`. The sighting records the token on `kept`, which then comes
+    Then the git directory is `kept`'s and the token was written into it
+    through another machine's view, so with birth time the sighting that
+    registered `later` would have continued `kept`. The sighting records the token on `kept`, which then comes
     first in order, so this is read once; `later` stays, idle, with the
     records written at it in its project. One read of the token index
     (the rule's own, over the carriers it reads) and, where that and the
@@ -212,10 +262,12 @@ def _healed(self: Membership, kept: Checkout, later: Checkout, loc: Location) ->
     found = _found_token(later, loc)
     if found is None or found != later.token or not kept.token or not kept.stamps:
         return False
-    if checkout_token.succeeds(found, kept.lineage) or not _read_here(kept, loc):
+    if found == kept.token or checkout_token.succeeds(found, kept.lineage):
+        return False
+    if not (_read_here(kept, loc) or _moved_under(kept, loc)):
         return False
     carriers = _carriers(self, (kept.token, found))
-    if found == kept.token or not _made_by(kept, found, carriers):
+    if not _continues(kept, loc, found, carriers):
         return False
     projects = {
         self._canon(c.project)
