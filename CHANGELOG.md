@@ -663,14 +663,19 @@ eighteenth was built.
   12 (`docs/internals.md`, `docs/membership-design.md`). A file that is
   no regular file, as the null device `GIT_CONFIG_GLOBAL` names in CI,
   is stamped by its kind alone, since its times move with every write.
-  The origin cache (`origin.capture`), which saw a rule in the global
-  config only once its ten minutes ran out, is kept against the same
-  machine config files and the files they include, so it answers with
-  the URL the capture keys at once (`repos_match` in health and recall
-  compared the alias meanwhile). The config a shell's environment gives
-  git (`GIT_CONFIG_COUNT`, `git -c`) is not read: it is not the
-  repository's or the machine's. `_git.run_git` takes `unset`, applied
-  beneath its scrub and pins like `env`.
+  The capture reads `config.worktree` after the repository's config
+  where `extensions.worktreeConfig` is set, as git does, so a remote or
+  a rule set there is the repository's. The origin cache
+  (`origin.capture`), which saw a rule in the global config or in a file
+  the repository's config includes only once its ten minutes ran out, is
+  kept against the same config files, the machine's and the
+  repository's, and the files they include (an `onbranch:` or
+  `hasconfig:` include among them), so it answers with the URL the
+  capture keys at once (`repos_match` in health and recall compared the
+  alias meanwhile); a hit states each such file once. The config a
+  shell's environment gives git (`GIT_CONFIG_COUNT`, `git -c`) is not
+  read: it is not the repository's or the machine's. `_git.run_git`
+  takes `unset`, applied beneath its scrub and pins like `env`.
   (`src/bettermemory/gitsystem.py`, `src/bettermemory/gitconfig.py`,
   `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
   `src/bettermemory/_git.py`, `src/bettermemory/origin.py`,

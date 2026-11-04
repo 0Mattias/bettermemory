@@ -394,6 +394,114 @@ def test_a_global_insteadof_rule_inside_the_lifetime_is_seen(
     assert probes == _PROBES
 
 
+def _include(repo: Path, where: str, condition: str | None, target: Path) -> None:
+    """Have the repository's `where` (``config``, or ``config.worktree``
+    under extensions.worktreeConfig) include `target`, under `condition`
+    (None: ``include.path``; ``gitdir``: an includeIf that holds;
+    ``onbranch``: one that holds on main, which only git evaluates)."""
+    gitdir = repo / ".git"
+    if where == "config.worktree":
+        _run(repo, "config", "extensions.worktreeConfig", "true")
+    if condition is None:
+        section = "include"
+    elif condition == "gitdir":
+        section = f'includeIf "gitdir:{Path(os.path.realpath(repo)).as_posix()}/"'
+    else:
+        section = 'includeIf "onbranch:main"'
+    with (gitdir / where).open("a", encoding="utf-8") as fh:
+        fh.write(f"[{section}]\n\tpath = {target.as_posix()}\n")
+
+
+@pytest.mark.parametrize("where", ["config", "config.worktree"])
+@pytest.mark.parametrize("condition", [None, "gitdir"])
+def test_an_insteadof_rule_in_a_file_the_repository_config_includes_is_seen(
+    tmp_path: Path, probes: list[tuple[str, ...]], where: str, condition: str | None
+) -> None:
+    """ENG-207's review: the signature stamped the repository's config but
+    not the files it includes, so an insteadOf rule added to one was
+    answered from the capture for up to ten minutes with the alias, while
+    `location` keyed the URL it stands for at once. The repository's
+    config, config.worktree under extensions.worktreeConfig, and the files
+    each includes are in the signature now, as in a location capture's
+    (`location_git.repository_config_stamps`): the next origin capture runs
+    the probes and answers with the URL, the next location capture keys
+    it, and the call after each is a hit. The file is outside the git
+    directory, so no stamp of the git directory's sees the write."""
+    repo = _repo(tmp_path / "repo", remote="gh:acme/lib")
+    rules = tmp_path / "rules.inc"
+    rules.write_text("[user]\n\tname = Test\n", encoding="utf-8")
+    _include(repo, where, condition, rules)
+    assert capture(repo).repo == "gh:acme/lib"
+    kept = location.capture(str(repo), write_token=False)
+    assert "example.invalid/acme/lib" not in kept.remote_keys
+    probes.clear()
+    assert capture(repo).repo == "gh:acme/lib"
+    assert probes == []
+    assert location.capture(str(repo), write_token=False) is kept
+
+    with rules.open("a", encoding="utf-8") as fh:
+        fh.write('[url "https://example.invalid/"]\n\tinsteadOf = gh:\n')
+    after = capture(repo)
+    assert probes == _PROBES
+    assert after.repo == "https://example.invalid/acme/lib"
+    located = location.capture(str(repo), write_token=False)
+    assert location.remote_key(after.repo, str(repo)) == "example.invalid/acme/lib"
+    assert "example.invalid/acme/lib" in located.remote_keys
+    assert location.capture(str(repo), write_token=False) is located
+    probes.clear()
+    _same(capture(repo), after)
+    assert probes == []
+    _same(after, _uncached(repo))
+
+
+def test_an_include_under_a_condition_only_git_evaluates_is_in_the_signature(
+    tmp_path: Path, probes: list[tuple[str, ...]]
+) -> None:
+    """An includeIf on ``onbranch:`` is evaluated by git and not by the
+    reader (`gitconfig.ConfigValues.undecided`), and git takes a rule from
+    it where it holds: the file is stamped all the same, so the next
+    capture after a write to it runs the probes."""
+    repo = _repo(tmp_path / "repo", remote="gh:acme/lib")
+    rules = tmp_path / "rules.inc"
+    rules.write_text("[user]\n\tname = Test\n", encoding="utf-8")
+    _include(repo, "config", "onbranch", rules)
+    assert capture(repo).repo == "gh:acme/lib"
+    probes.clear()
+    assert capture(repo).repo == "gh:acme/lib"
+    assert probes == []
+    with rules.open("a", encoding="utf-8") as fh:
+        fh.write('[url "https://example.invalid/"]\n\tinsteadOf = gh:\n')
+    after = capture(repo)
+    assert probes == _PROBES
+    assert after.repo == "https://example.invalid/acme/lib"
+    _same(after, _uncached(repo))
+
+
+def test_an_include_named_from_home_follows_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probes: list[tuple[str, ...]]
+) -> None:
+    """An include the repository's config names under ``~/`` is the file in
+    the home directory git expands it to: the read the signature keeps is
+    kept per home (`location_git._stamped_read`), so a capture after HOME
+    names another reads that file's stamp and answers as git does."""
+    repo = _repo(tmp_path / "repo", remote="gh:acme/lib")
+    _run(repo, "config", "include.path", "~/rules.inc")
+    one, two = tmp_path / "one", tmp_path / "two"
+    one.mkdir()
+    two.mkdir()
+    (two / "rules.inc").write_text(
+        '[url "https://example.invalid/"]\n\tinsteadOf = gh:\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(one))
+    assert capture(repo).repo == "gh:acme/lib"
+    monkeypatch.setenv("HOME", str(two))
+    probes.clear()
+    after = capture(repo)
+    assert probes == _PROBES
+    assert after.repo == "https://example.invalid/acme/lib"
+    _same(after, _uncached(repo))
+
+
 def test_a_repository_created_or_removed_inside_the_lifetime_is_seen(
     tmp_path: Path,
 ) -> None:

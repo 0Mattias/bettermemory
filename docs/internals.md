@@ -528,11 +528,20 @@ git names now too, so one taken under the fallback is read again once
 git answers (R7); that check takes the process's answer without
 stating the git binary, which the capture's own re-read within
 `CACHE_SECONDS` does. Each such file costs a kept capture one stat
-(E16). The origin cache (`origin.capture`) is kept against the same
-machine config files and the files they include, stamped and read again
-only once one stamps otherwise (`location_git.machine_config_stamps`),
-so a rule set there reaches it as it reaches a capture. A file that is
-no regular file (the null device) is stamped by its kind alone. A `.git`
+(E16). The repository's config is its common config and, where that
+sets `extensions.worktreeConfig`, the git directory's `config.worktree`,
+which git reads after it: a remote or a rule set there, or in a file it
+includes, is the repository's, and `config.worktree` is stamped itself.
+An include under a condition the reader does not evaluate (`onbranch:`,
+`hasconfig:`) gives the capture none of its values, where git may take
+them, and is stamped all the same. The origin cache (`origin.capture`)
+is kept against the same config files, the machine's and the
+repository's, and the files they include, stamped and read again only
+once one stamps otherwise (`location_git.machine_config_stamps`,
+`location_git.repository_config_stamps`), so a rule set in any reaches
+it as it reaches a capture; an origin hit states each such file once.
+A file that is no regular file (the null device) is stamped by its kind
+alone. A `.git`
 file is followed only
 where git's own pointers say the folder is its git directory's working
 tree (ENG-158): a linked worktree's git directory registered at

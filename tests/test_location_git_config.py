@@ -180,6 +180,46 @@ def test_a_remote_is_keyed_as_insteadof_rewrites_it_too(tmp_path: Path) -> None:
     assert "github.com/acme/lib" not in keys
 
 
+def test_config_worktree_is_read_where_git_reads_it(tmp_path: Path) -> None:
+    """ENG-207's review: where ``extensions.worktreeConfig`` is true, git
+    reads the git directory's ``config.worktree`` after the common config,
+    and a remote or an insteadOf rule set there, or in a file it includes,
+    is the repository's; the capture read the common config alone. It
+    reads both now (`location_git._repository_config`), and a kept capture
+    is read again once ``config.worktree`` or a file it includes changes,
+    and served while neither does. Where the extension is not set git
+    reads no ``config.worktree``, and neither does the capture."""
+    repo = _repo(tmp_path / "wt")
+    _git(repo, "remote", "add", "origin", "gh:acme/lib")
+    worktree_config = repo / ".git" / "config.worktree"
+    rules = tmp_path / "rules.inc"
+    rules.write_text("[user]\n\tname = Test\n", encoding="utf-8")
+    worktree_config.write_text(
+        '[remote "wt"]\n\turl = https://example.invalid/team/wt\n'
+        f"[include]\n\tpath = {rules.as_posix()}\n",
+        encoding="utf-8",
+    )
+    assert "wt" not in _git_remotes(repo)
+    assert "example.invalid/team/wt" not in _keys(repo)
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    assert "wt" in _git_remotes(repo)
+    assert "example.invalid/team/wt" in _keys(repo)
+
+    kept = location.capture(str(repo), write_token=False)
+    assert location.capture(str(repo), write_token=False) is kept
+    _append(rules, '[url "https://github.com/"]\n\tinsteadOf = gh:\n')
+    fetched = remote_key(_git(repo, "remote", "get-url", "origin"))
+    assert fetched == "github.com/acme/lib"
+    rewritten = location.capture(str(repo), write_token=False)
+    assert fetched in rewritten.remote_keys
+    assert location.capture(str(repo), write_token=False) is rewritten
+    _append(worktree_config, '[remote "more"]\n\turl = https://example.invalid/m\n')
+    assert "example.invalid/m" in _git_remotes(repo)["more"][0]
+    added = location.capture(str(repo), write_token=False)
+    assert "example.invalid/m" in added.remote_keys
+    assert location.capture(str(repo), write_token=False) is added
+
+
 def test_a_gitfile_target_s_working_tree_is_read_as_git_reads_its_format(
     tmp_path: Path,
 ) -> None:

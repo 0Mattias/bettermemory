@@ -110,9 +110,10 @@ class ConfigValues(dict[_Name, list[str]]):
     order it did, with its stamp taken before it was opened (a change
     after it reads as a change to what was read): None for one that was
     not there, which git skips and whose creation changes what git reads
-    (ENG-207); an include under a condition not evaluated is not among
-    them, since none of its values is taken. It is None for a read not
-    asked to stamp."""
+    (ENG-207); an include under a condition not evaluated is among them,
+    though none of its values is taken: git takes them where the
+    condition holds, so a change to one may change what git reads. It is
+    None for a read not asked to stamp."""
 
     def __init__(self, *, stamped: bool = False) -> None:
         super().__init__()
@@ -317,12 +318,14 @@ def _include(
     if holds:
         _read_config(target, out, git_dir, depth + 1, reading)
         return
-    maybe = ConfigValues()
+    maybe = ConfigValues(stamped=out.files is not None)
     try:
         _read_config(target, maybe, git_dir, depth + 1, reading)
     finally:
         out.undecided.update(maybe, maybe.undecided)
         out.complete = out.complete and maybe.complete
+        if out.files is not None:
+            out.files.extend(maybe.files or ())
 
 
 def file_stamp(path: str) -> Stamp | None:

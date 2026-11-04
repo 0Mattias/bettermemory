@@ -41,7 +41,14 @@ from typing import Any
 from . import _caches, githead, gitobjects, gitsystem, project_file
 from . import _git as _git_runner
 from ._location_probe import INDETERMINATE, TOKEN_VERSION
-from .gitconfig import Stamp, _config_values, _home, _truthy, unchanged
+from .gitconfig import (
+    ConfigValues,
+    Stamp,
+    _config_values,
+    _home,
+    _truthy,
+    unchanged,
+)
 from .gitfile_rule import (
     _common_of,
     _foreign_commondir,
@@ -285,6 +292,41 @@ def _machine_configs(*, stamp: bool = True) -> tuple[str, ...]:
 #: A config file as a read stamped it (`gitconfig.ConfigValues.files`).
 ConfigFile = tuple[str, Stamp | None]
 
+#: The variable that has git read ``config.worktree`` after the common
+#: config, as `_config_values` names it.
+_WORKTREE_CONFIG = ("extensions", None, "worktreeconfig")
+
+
+def _repository_config(
+    common_dir: str, git_dir: str
+) -> tuple[ConfigValues, list[ConfigFile]]:
+    """The repository's own config as git reads it: the common config,
+    then, where it sets ``extensions.worktreeConfig`` true, the git
+    directory's ``config.worktree`` (ENG-207's review: a remote or an
+    insteadOf rule set there is the repository's too), each with its
+    includes; and the files read, stamped, but for the common config,
+    which the capture's signature stamps (`location.signature`).
+    ``config.worktree`` is stamped itself, so one created, written or
+    removed is read at the next capture."""
+    values = _config_values(
+        os.path.join(common_dir, "config"),
+        git_dir=git_dir,
+        stamped=True,
+        stamp_self=False,
+    )
+    files = list(values.files or ())
+    if not _truthy(values.get(_WORKTREE_CONFIG)):
+        return values, files
+    worktree = _config_values(
+        os.path.join(git_dir, "config.worktree"), git_dir=git_dir, stamped=True
+    )
+    files.extend(worktree.files or ())
+    both = ConfigValues()
+    for read in (values, worktree):
+        for name, found in read.items():
+            both.setdefault(name, []).extend(found)
+    return both, files
+
 
 #: A remote URL as written, the URL git rewrites it to (None where no
 #: rule matches it), and whether the rule that does is the machine's (the
@@ -304,19 +346,16 @@ def _rewrites(
     read for them, stamped, the files each includes with it, but for the
     repository's own config, which the capture's signature stamps
     already (`location.signature`); and the machine's config files read
-    (`_machine_configs`). A repository with no remote reads its own
-    config alone, and names none of the machine's. The config a
-    process's environment gives git (``GIT_CONFIG_COUNT`` and its keys,
-    ``GIT_CONFIG_PARAMETERS`` from ``git -c``) is not read: it is the setting of one shell, not of the
+    (`_machine_configs`). The repository's config is the common config
+    and, where it sets ``extensions.worktreeConfig``, the git directory's
+    ``config.worktree`` git reads after it (`_repository_config`). A
+    repository with no remote reads its own config alone, and names none
+    of the machine's. The config a process's environment gives git
+    (``GIT_CONFIG_COUNT`` and its keys, ``GIT_CONFIG_PARAMETERS`` from
+    ``git -c``) is not read: it is the setting of one shell, not of the
     repository or the machine, and the hook client or the daemon that
     captures is not the shell that runs git."""
-    values = _config_values(
-        os.path.join(common_dir, "config"),
-        git_dir=git_dir,
-        stamped=True,
-        stamp_self=False,
-    )
-    files = list(values.files or ())
+    values, files = _repository_config(common_dir, git_dir)
     urls = [
         u
         for (section, _sub, key), found in values.items()
@@ -417,18 +456,37 @@ def config_unchanged(cap: Capture) -> bool:
     return unchanged(cap.config_files)
 
 
-#: The machine's config files as `machine_config_stamps` last read each
-#: for a repository's git directory, with the files it included there,
-#: stamped; the most kept, the oldest evicted first.
-_MACHINE_READS: dict[tuple[str, str], tuple[ConfigFile, ...]] = {}
-_MACHINE_LOCK = threading.Lock()
-_MACHINE_KEPT = 256
+#: The config files `_stamped_read` last read, each for a repository's
+#: git directory and the home directory ``~/`` named, with the files it
+#: included there, stamped; the most kept, the oldest evicted first.
+_STAMPED_READS: dict[tuple[str, str, str | None], ConfigValues] = {}
+_STAMPED_LOCK = threading.Lock()
+_STAMPED_KEPT = 256
 
 
 @_caches.register
-def _clear_machine_reads() -> None:
-    with _MACHINE_LOCK:
-        _MACHINE_READS.clear()
+def _clear_stamped_reads() -> None:
+    with _STAMPED_LOCK:
+        _STAMPED_READS.clear()
+
+
+def _stamped_read(path: str, git_dir: str) -> ConfigValues:
+    """The config file `path` read for the repository whose git directory
+    is `git_dir`, stamped, its includes with it (`_config_values`): kept
+    for that directory and the home directory an include's ``~/`` names,
+    and read again only where one of the files it read stamps otherwise
+    (`gitconfig.unchanged`), so a steady call states them and reads none."""
+    key = (path, git_dir, _home())
+    with _STAMPED_LOCK:
+        read = _STAMPED_READS.get(key)
+    if read is None or not unchanged(read.files or ()):
+        read = _config_values(path, git_dir=git_dir, stamped=True)
+        with _STAMPED_LOCK:
+            _STAMPED_READS.pop(key, None)
+            _STAMPED_READS[key] = read
+            while len(_STAMPED_READS) > _STAMPED_KEPT:
+                del _STAMPED_READS[next(iter(_STAMPED_READS))]
+    return read
 
 
 def machine_config_stamps(git_dir: str) -> tuple[object, ...]:
@@ -440,23 +498,25 @@ def machine_config_stamps(git_dir: str) -> tuple[object, ...]:
     stamps them (`_rewrites`). `origin`'s capture is kept against it, so
     a rule set there reaches its next capture as it reaches a capture's
     (`config_unchanged`). Each file and its includes are read once and
-    then only stated: read again where one of them stamps otherwise
-    (`gitconfig.unchanged`)."""
+    then only stated (`_stamped_read`)."""
     named = _machine_configs(stamp=False)
-    out: list[object] = [named]
-    for path in named:
-        key = (path, git_dir)
-        with _MACHINE_LOCK:
-            files = _MACHINE_READS.get(key)
-        if files is None or not unchanged(files):
-            read = _config_values(path, git_dir=git_dir, stamped=True)
-            files = tuple(read.files or ())
-            with _MACHINE_LOCK:
-                _MACHINE_READS.pop(key, None)
-                _MACHINE_READS[key] = files
-                while len(_MACHINE_READS) > _MACHINE_KEPT:
-                    del _MACHINE_READS[next(iter(_MACHINE_READS))]
-        out.append(files)
+    return (named, *(tuple(_stamped_read(p, git_dir).files or ()) for p in named))
+
+
+def repository_config_stamps(common_dir: str, git_dir: str) -> tuple[object, ...]:
+    """The repository's own config as git reads it, as stamps (ENG-207's
+    review): the common config and, where it sets
+    ``extensions.worktreeConfig`` true, the git directory's
+    ``config.worktree``, each with the files it includes there, stamped
+    as a capture stamps them (`_repository_config`), and read once and
+    then only stated (`_stamped_read`). `origin`'s capture is kept
+    against it, so a rule set in an included file reaches its next
+    capture as it reaches a capture's (`config_unchanged`)."""
+    common = _stamped_read(os.path.join(common_dir, "config"), git_dir)
+    out: list[object] = [tuple(common.files or ())]
+    if _truthy(common.get(_WORKTREE_CONFIG)):
+        worktree = _stamped_read(os.path.join(git_dir, "config.worktree"), git_dir)
+        out.append(tuple(worktree.files or ()))
     return tuple(out)
 
 
