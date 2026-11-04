@@ -616,16 +616,17 @@ def test_the_system_config_is_the_file_git_names(
     asked = subprocess.run(
         ["git", "var", "GIT_CONFIG_SYSTEM"], capture_output=True, text=True
     )
+    where = gitsystem._where()
+    assert where is not None
+    folder, ceiling = where
     env = {
         **os.environ,
         "GIT_CONFIG_SYSTEM": os.devnull,
         "GIT_CONFIG_GLOBAL": os.devnull,
+        **ceiling,
     }
     listed = subprocess.run(
-        list(("git", *gitsystem._LIST)),
-        capture_output=True,
-        env=env,
-        cwd=Path(str(shutil.which("git"))).anchor,
+        list(("git", *gitsystem._LIST)), capture_output=True, env=env, cwd=folder
     )
     found = gitsystem.sources()
     if asked.returncode == 0 and asked.stdout.strip():
@@ -645,10 +646,10 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
     gitconfig before the system file, and GIT_CONFIG_SYSTEM replaces only
     the system file; GIT_CONFIG_NOSYSTEM, read as git reads a boolean
     variable, suppresses both. An equal ``insteadOf`` prefix in the two is
-    the build's, which git reads first. git is asked at the root of its
-    own drive (`gitsystem._root`), without
-    the caller's GIT_CONFIG_SYSTEM, the listing with the system and global
-    files at the null device."""
+    the build's, which git reads first. git is asked in the state
+    directory's empty folder under its ceiling (`gitsystem._where`),
+    without the caller's GIT_CONFIG_SYSTEM, the listing with the system
+    and global files at the null device."""
     fake = _FakeGit(monkeypatch, tmp_path / "git")
     own = tmp_path / "vendor-gitconfig"
     own.write_text('[url "https://vendor.example.invalid/"]\n\tinsteadOf = sy:\n')
@@ -664,12 +665,17 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
     assert location_git._system_configs() == [str(own), str(named)]
     (var, var_kw), (listing, list_kw) = fake.asked
     assert (var, listing) == (gitsystem._VAR, gitsystem._LIST)
+    where = gitsystem._where()
+    assert where is not None
+    folder, ceiling = where
     for kw in (var_kw, list_kw):
-        assert kw["cwd"] == Path(fake.binary).anchor
+        assert kw["cwd"] == folder
         assert "GIT_CONFIG_SYSTEM" in kw["unset"]
+    assert var_kw["env"] == ceiling
     assert list_kw["env"] == {
         "GIT_CONFIG_SYSTEM": os.devnull,
         "GIT_CONFIG_GLOBAL": os.devnull,
+        **ceiling,
     }
 
     other = tmp_path / "other-gitconfig"
@@ -960,9 +966,7 @@ def test_windows_paths_are_read_one_way_on_any_python(
     file left the listing there and not on 3.12. Such a path names a file
     on whatever drive the reader stands on, and is never kept, on any
     Python (`gitsystem._absolute`); git for Windows names its files with
-    their drive. git is asked at the root of the drive it is on
-    (`gitsystem._root`), not of the drive the process started on. Run here
-    as ``ntpath`` reads, on any platform."""
+    their drive. Run here as ``ntpath`` reads, on any platform."""
     assert gitsystem._absolute("C:/Program Files/Git/etc/gitconfig", ntpath)
     assert gitsystem._absolute("C:\\ProgramData\\Git\\config", ntpath)
     assert gitsystem._absolute("\\\\server\\share\\git\\config", ntpath)
@@ -988,22 +992,69 @@ def test_windows_paths_are_read_one_way_on_any_python(
         "D:\\ProgramData\\Git\\config",
     )
 
-    git = "C:\\Program Files\\Git\\cmd\\git.exe"
-    assert gitsystem._root(git, ntpath) == "C:\\"
-    assert gitsystem._root("D:/tools/git/bin/git.exe", ntpath) == "D:\\"
-    assert (
-        gitsystem._root("\\\\server\\share\\git.exe", ntpath) == "\\\\server\\share\\"
-    )
-    assert gitsystem._root("/usr/bin/git", posixpath) == "/"
 
-    # Both questions run where `_root` says for the binary found on PATH,
-    # wherever the process stands.
+def test_git_is_asked_where_it_finds_no_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reviewer's follow-up to ENG-207: git was asked at the root of
+    its own drive, which can be a working tree (a share's root or a
+    ``subst`` drive on Windows, ``/`` in a container built with ``COPY .
+    /``), whose config then reached the setup of both questions. It is
+    asked in an empty owner-only folder under the state directory with
+    GIT_CEILING_DIRECTORIES at the state directory (`gitsystem._where`),
+    on every platform, so git finds no repository there and reads none of
+    its config, here with the state directory inside a repository whose
+    working tree git finds from that folder without the ceiling. Both
+    questions run there, wherever the process stands; a folder that holds
+    an entry is not asked in."""
+    repo = _repo(tmp_path / "tree")
+    _git(repo, "config", "probe.from", "the-repository")
+    state = repo / "nested" / "state"
+    monkeypatch.setenv("BETTERMEMORY_STATE_DIR", str(state))
+    where = gitsystem._where()
+    assert where is not None
+    folder, ceiling = where
+    assert Path(folder) == Path(os.path.realpath(state)) / gitsystem.ASK_FOLDER
+    assert ceiling == {"GIT_CEILING_DIRECTORIES": os.path.realpath(state)}
+    assert os.listdir(folder) == []
+    if os.name == "posix":
+        assert os.stat(folder).st_mode & 0o077 == 0
+    bare = {k: v for k, v in os.environ.items() if k != "GIT_CEILING_DIRECTORIES"}
+    found = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=folder,
+        env=bare,
+        capture_output=True,
+        text=True,
+    )
+    assert Path(found.stdout.strip()) == Path(os.path.realpath(repo)), "premise"
+    asked = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        cwd=folder,
+        env={**bare, **ceiling},
+        capture_output=True,
+        text=True,
+    )
+    assert asked.returncode != 0 and "not a git repository" in asked.stderr
+    listed = subprocess.run(
+        ["git", "config", "--list", "--show-scope"],
+        cwd=folder,
+        env={**bare, **ceiling, "GIT_CONFIG_GLOBAL": os.devnull},
+        capture_output=True,
+        text=True,
+    )
+    assert "the-repository" not in listed.stdout and "local" not in listed.stdout
+
     fake = _FakeGit(monkeypatch, tmp_path / "git")
     fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
-    monkeypatch.setattr(gitsystem, "_root", lambda found: f"root of {found}")
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.chdir(repo)
     assert gitsystem._ask("key", 0.0).ok
-    assert [kw["cwd"] for _args, kw in fake.asked] == [f"root of {fake.binary}"] * 2
+    assert [kw["cwd"] for _args, kw in fake.asked] == [folder] * 2
+    assert all(kw["env"].items() >= ceiling.items() for _args, kw in fake.asked)
+    (Path(folder) / ".git").mkdir()
+    assert gitsystem._where() is None
+    assert not gitsystem._ask("key", 0.0).ok
+    assert len(fake.asked) == 2
 
 
 def test_a_config_file_is_named_one_way(

@@ -486,7 +486,11 @@ GIT_CONFIG_SYSTEM` (git 2.42 and later) names the system file, and `git
 config --list --show-scope --show-origin -z`, with the system and global
 files at the null device, the build's own files that hold an entry
 (git 2.26 and later); a file it names by a path with no drive on
-Windows is not kept. Both run at the root of the drive git is on, with
+Windows is not kept. Both run in an empty owner-only folder under the
+state directory (`git-ask`), with `GIT_CEILING_DIRECTORIES` naming the
+state directory, so git finds no repository there wherever the state
+directory sits (the root of git's drive, asked before, can be a working
+tree: a share's root, a `subst` drive, `/` in a container), and with
 the caller's `GIT_CONFIG_SYSTEM` unset, within 0.3 s together (the
 capture's fetch budget), only for a repository with a remote. A config
 file's path is spelled with the platform's separator where it enters

@@ -636,8 +636,12 @@ eighteenth was built.
   then the file `GIT_CONFIG_SYSTEM` names, else the one that git was
   built to read. git names them (`git var GIT_CONFIG_SYSTEM`, and `git
   config --list --show-scope --show-origin` with the system and global
-  files at the null device), asked at the root of the drive git is on
-  within the capture's 0.3 s fetch budget, only for a repository with a
+  files at the null device), asked in an empty owner-only folder under
+  the state directory with `GIT_CEILING_DIRECTORIES` at the state
+  directory, so git finds no repository there (the root of git's drive,
+  asked at first, can be a working tree: a share's root, a `subst`
+  drive, `/` in a container), within the capture's 0.3 s fetch budget,
+  only for a repository with a
   remote, and each file's path spelled with the platform's separator; a
   hook client, a new process each prompt, does not ask again while the
   answer kept in the state directory for its PATH stands (the git binary

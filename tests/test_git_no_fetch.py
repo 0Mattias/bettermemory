@@ -176,17 +176,17 @@ def test_a_callers_own_variables_cannot_loosen_the_pins_or_the_scrub(
     assert "GIT_CONFIG_SYSTEM" in _git._environment()
 
 
-def test_the_system_config_questions_run_at_the_root_under_the_pins(
+def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ENG-207: `gitsystem` asks the git on PATH which system config
     files it reads, with the runner's pins, scrub and no-fetch variables,
-    at the root of the drive git is on (`gitsystem._root`; the root of
-    the working directory's drive differed on Windows CI, which checks
-    out on D: and keeps git on C:), so the config of the repository a
-    process stands in never reaches git; the caller's GIT_CONFIG_SYSTEM
-    is unset for ``git var`` and the system and global files are the
-    null device for the listing."""
+    in the state directory's empty folder under its ceiling
+    (`gitsystem._where`; the root of git's drive, asked before, can be a
+    working tree), so the config of the repository a process stands in
+    never reaches git; the caller's GIT_CONFIG_SYSTEM is unset for ``git
+    var`` and the system and global files are the null device for the
+    listing."""
     _plain_git(tmp_path, "init", "-q")
     calls: list[tuple[list[str], object, dict[str, str]]] = []
     real = subprocess.run
@@ -210,9 +210,13 @@ def test_the_system_config_questions_run_at_the_root_under_the_pins(
         list(gitsystem._VAR),
         list(gitsystem._LIST),
     ]
+    where = gitsystem._where()
+    assert where is not None
+    folder, ceiling = where
     for command, cwd, env in calls:
         assert command[: 1 + len(_git.PINS)] == ["git", *_git.PINS]
-        assert cwd == Path(git).anchor
+        assert cwd == folder
+        assert env.items() >= ceiling.items()
         assert (env["GIT_NO_LAZY_FETCH"], env["GIT_ALLOW_PROTOCOL"]) == ("1", "")
         assert not set(_git.SCRUBBED_ENV) & set(env)
     assert "GIT_CONFIG_SYSTEM" not in calls[0][2]

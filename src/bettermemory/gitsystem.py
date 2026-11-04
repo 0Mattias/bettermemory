@@ -30,9 +30,11 @@ process's or the record's), and where it never answered as naming the
 fallback file (`/etc/gitconfig`, none on Windows) and no file of its
 own; either way it is asked again after `RETRY_SECONDS`, and a failed
 ask never replaces a recorded answer of git's (ENG-207's review, R6).
-git is asked at the root of its own drive (`_root`), with the
-caller's ``GIT_CONFIG_SYSTEM`` unset, so no repository's config and no
-override of this process reaches the answer.
+git is asked in an empty owner-only folder under the state directory
+(`ASK_FOLDER`), with ``GIT_CEILING_DIRECTORIES`` naming the state
+directory and the caller's ``GIT_CONFIG_SYSTEM`` unset (`_where`), so git
+finds no repository wherever the state directory sits, and no
+repository's config and no override of this process reaches the answer.
 """
 
 from __future__ import annotations
@@ -89,6 +91,8 @@ _MAX_PATH = 4096
 XCODE_SELECT_LINK = "/var/db/xcode_select_link"
 #: Whether this is macOS, where `_developer` reads the developer directory.
 _MACOS = sys.platform == "darwin"
+#: The folder under the state directory git is asked in (`_where`).
+ASK_FOLDER = "git-ask"
 
 
 @dataclass(frozen=True)
@@ -211,17 +215,29 @@ def _kept(key: str, now: float, *seen: _Answer | None) -> _Answer | None:
     return dataclasses.replace(max(good, key=lambda a: a.asked), tried=now)
 
 
-def _root(git: str, flavour: ModuleType = os.path) -> str:
-    """Where the git binary `git` is asked: the root of the drive it is
-    on (``/`` but on Windows; `flavour` the path module, ``ntpath`` or
-    ``posixpath``), so the setup git runs reads no repository's config,
-    which neither question needs. That drive holds git, so its root is
-    there whenever git is, and it is the same wherever the process stands:
-    the root of the working directory's drive at import was ``D:\\`` for
-    a process started on the drive Windows CI checks out on and ``C:\\``
-    for one that moved to the temporary directory (ENG-207)."""
-    drive: str = flavour.splitdrive(git)[0]
-    return drive + str(flavour.sep)
+def _where() -> tuple[str, dict[str, str]] | None:
+    """Where git is asked, and the variable that keeps it there: the
+    folder `ASK_FOLDER` under the state directory, made owner-only and
+    empty, with ``GIT_CEILING_DIRECTORIES`` naming the state directory, so
+    git's walk looks for a repository in that folder alone and finds
+    none, and the setup git runs reads no repository's config, which
+    neither question needs. The root of git's own drive, asked before,
+    can be a working tree: a share's root or a ``subst`` drive on
+    Windows, ``/`` in a container built with ``COPY . /`` (the reviewer's
+    follow-up to ENG-207). None where the folder cannot be made or holds
+    an entry, and git is not asked: the fallback stands, as for a git that
+    cannot run."""
+    from . import _daemon_client
+
+    try:
+        folder = _daemon_client.resolve_state_dir() / ASK_FOLDER
+        ensure_owner_only_dir(folder, parents=True)
+        real = os.path.realpath(folder)
+        if os.listdir(real):
+            return None
+    except (OSError, ValueError):
+        return None
+    return real, {"GIT_CEILING_DIRECTORIES": os.path.dirname(real)}
 
 
 def _absolute(path: str, flavour: ModuleType = os.path) -> bool:
@@ -247,13 +263,23 @@ def _ask(key: str, now: float) -> _Answer:
     if git is None or stamp is None or stamp == _UNSTATED:
         return failed
     deadline = time.monotonic() + ASK_SECONDS
-    where = _root(git)
-    named = _git_runner.run_git(_VAR, cwd=where, timeout=ASK_SECONDS, unset=_OVERRIDES)
+    where = _where()
+    if where is None:
+        return failed
+    folder, ceiling = where
+    named = _git_runner.run_git(
+        _VAR, cwd=folder, timeout=ASK_SECONDS, env=ceiling, unset=_OVERRIDES
+    )
     left = deadline - time.monotonic()
     if named is None or left <= 0:
         return failed
     listed = _git_runner.run_git(
-        _LIST, cwd=where, timeout=left, text=False, env=_DEVNULL, unset=_OVERRIDES
+        _LIST,
+        cwd=folder,
+        timeout=left,
+        text=False,
+        env={**_DEVNULL, **ceiling},
+        unset=_OVERRIDES,
     )
     if listed is None:
         return failed
