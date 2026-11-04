@@ -236,11 +236,43 @@ def history_guard(root: Path) -> Guard | None:
     return (*stamps, *(os.environ.get(name) for name in _HISTORY_ENV))
 
 
+#: The longest ``shallow`` file `cuts` reads: 400,000 commits.
+_CUTS_MAX = 1 << 24
+
+
+def cuts(start: Path, *, walk: bool = False) -> frozenset[str] | None:
+    """The commits the ``shallow`` file of the repository at `start` lists,
+    in its common directory, as `history_guard` finds it: git reads none of
+    their parents, so the history behind them is not read, whether a clone
+    left them there or the file was written by hand (ENG-220's review: a
+    cut hid the commit that changed a claim, and the count read 0). Empty
+    where there is no such file; None where the repository's files or the
+    file cannot be read, or the file is longer than `_CUTS_MAX` bytes."""
+    gd = githead.gitdir_at(start) or githead.locate(start, walk=walk)
+    if gd is None:
+        return None
+    try:
+        with open(gd.commondir / "shallow", "rb") as handle:
+            raw = handle.read(_CUTS_MAX + 1)
+    except FileNotFoundError:
+        return frozenset()
+    except OSError:
+        return None
+    if len(raw) > _CUTS_MAX:
+        return None
+    return frozenset(
+        line.strip().decode("ascii", "replace").lower()
+        for line in raw.splitlines()
+        if line.strip()
+    )
+
+
 __all__ = [
     "Guard",
     "Key",
     "author_dates",
     "base_for",
+    "cuts",
     "history_guard",
     "located_key",
     "recall",

@@ -1129,10 +1129,13 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
 ) -> None:
     """A shallow file changes which commits a head reaches without moving
     it, so an entry read before such a change is no base for a head read
-    after it (`origin_history.history_guard`). A graft or a replacement ref
-    changes what git's own log reaches but not what `origin` reads, the
-    history as its objects hold it (`origin._AS_STORED`); its stamp still
-    reads the history whole, which reads the seed."""
+    after it (`origin_history.history_guard`); and since the dates behind
+    its cut are not read, no history is read under it at all
+    (`origin_history.cuts`): None, as a failed read, and no log. A graft
+    or a replacement ref changes what git's own log reaches but not what
+    `origin` reads, the history as its objects hold it
+    (`origin._AS_STORED`); its stamp still reads the history whole, which
+    reads the seed."""
     repo = _repo(tmp_path)
     seed = _commit(repo, "seed", when=_T0)
     second = _commit(repo, "second", when=_T1)
@@ -1146,12 +1149,15 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
         _git(repo, "replace", "--graft", second)
     moved = _commit(repo, "third", when=_T2)
     calls = _history_calls(monkeypatch)
+    failed = origin.failed_git_calls()
     got = origin.commit_author_timestamps(repo)
-    assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, moved)]
     assert seed not in _git(repo, "log", "--format=%H", moved)
     if history == "shallow":
-        assert got == [_T1, _T2], "the history git reaches now, without the seed"
+        assert got is None, "behind the cut the dates are not read"
+        assert _whole_history_logs(calls) == []
+        assert origin.failed_git_calls() == failed + 1
     else:
+        assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, moved)]
         assert got == [_T0, _T1, _T2], "the history as stored, with the seed"
 
 
@@ -3375,9 +3381,11 @@ class _Interleaved(OrderedDict[Any, Any]):
 def test_the_whole_history_memo_touches_a_hit_under_its_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The read is stubbed, so the other thread inserts at once."""
+    """The read is stubbed, so the other thread inserts at once; so is the
+    shallow file's, since neither root is a repository."""
     monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_CAP", 1)
     monkeypatch.setattr(origin, "_read_author_timestamps", lambda cwd, revision: [_T0])
+    monkeypatch.setattr(origin_history, "cuts", lambda start, walk=False: frozenset())
     touched = (Path("/touched"), "a" * 40)
     evicting = (Path("/evicting"), "b" * 40)
     first = origin.commit_author_timestamps(touched[0], located=touched)

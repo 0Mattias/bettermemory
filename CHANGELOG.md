@@ -218,26 +218,53 @@ eighteenth was built.
   what 9.0.0rc18 paid there). Measured on a 1,000-commit window of one
   file, with half its blobs local: the split 101 ms, a stream per commit
   15.3 s; a full clone's one-call stream, which still runs alone, 47 ms.
-  Replace refs and the grafts file are ignored for claim drift: every git
-  `origin` runs, the windows, the unfiltered count and the author dates
-  included, reads the history as its objects hold it
+  Replace refs, the grafts file and the commit-graph are ignored for
+  claim drift: every git `origin` runs, the windows, the unfiltered count
+  and the author dates included, reads the history as its objects hold it
   (`GIT_NO_REPLACE_OBJECTS` with `-c core.useReplaceRefs=false`, which the
-  repository's own setting cannot turn back on under any git version, and
-  `GIT_GRAFT_FILE` set to the null device), and the patch stream and its
-  split also set aside the repository's commit-graph, as the hardened
-  history call does. A repository's replace refs are its own and
-  untrusted, and they rewrote which commits a window held and what each
-  changed under a head that stayed; one written under a reftable ref
-  store moved none of the stamps the split's listing was kept under, so
-  the kept listing read the history without it and a fresh one with it
-  (3, then 5 and the claim named, in the tests' replaced window). Neither
-  does now, so the listing needs no replace-ref stamp, and a replace ref
-  or a graft no longer moves a count.
+  repository's own setting cannot turn back on under any git version,
+  `GIT_GRAFT_FILE` set to the null device, and `-c
+  core.commitGraph=false`, as the hardened history call does). A
+  repository's replace refs are its own and untrusted, and they rewrote
+  which commits a window held and what each changed under a head that
+  stayed; one written under a reftable ref store moved none of the stamps
+  the split's listing was kept under, so the kept listing read the
+  history without it and a fresh one with it (3, then 5 and the claim
+  named, in the tests' replaced window). A forged commit-graph moved the
+  windows alone: a commit's parent, its root tree or its changed-path
+  filter rewritten in the graph hid the commit that changed a claim, and
+  the count read 0 where the objects say 1. Neither does now, so the
+  listing needs no replace-ref stamp, and a replace ref, a graft or the
+  graph no longer moves a count. Reading no graph costs most where a
+  changed-path filter answered: on a synthetic 60,000-commit repository
+  with filters, cold, a hit on the author-date basis took 0.80 s against
+  0.35 s (its log of the claimed file's whole history 478 ms against
+  37 ms), and one on the walk over 20, 2,000 and 50,000 commits 24, 67
+  and 1,026 ms against 24, 59 and 863 ms; on this repository's 2,365
+  commits that log took 40 ms against 28 ms. Nor is a count read behind
+  a shallow file's cut, whose commits git reads without their parents,
+  whether a clone left the file or it was written by hand: a cut hid the
+  commit that changed a claim, behind a commit authored before the verify
+  or on a merged branch, and the count read 0. A walk whose range holds a
+  cut is not taken, and a shallow repository's author dates are not read,
+  so the hit's count is omitted there, never a measured 0; in a shallow
+  clone a stamp whose range the clone holds still counts on the walk.
   (`src/bettermemory/origin_patch.py`, `src/bettermemory/verify.py`,
   `src/bettermemory/origin.py`, `src/bettermemory/origin_history.py`,
   `src/bettermemory/_response.py`, `docs/api.md`, `docs/internals.md`,
-  `tests/test_origin_patch.py`, `tests/test_git_no_fetch.py`,
-  `tests/test_commit_drift_cache.py`)
+  `tests/test_origin_patch.py`, `tests/test_origin_as_stored.py`,
+  `tests/test_git_no_fetch.py`, `tests/test_commit_drift_cache.py`)
+
+- **Upgrading: history stitched by replace refs or grafts counts as
+  stored (ENG-220).** A repository that joins histories with `git
+  replace` or a grafts file (an imported history grafted under a newer
+  one) now has claim drift counted over the commits as their objects
+  hold them, so a window the stitch added commits to or took them from
+  counts what the objects reach, and a stamp whose commit only the stitch
+  reached reads on the author-date basis. In a shallow clone, a stamp
+  behind the cut reads no count until the clone is deepened (`git fetch
+  --unshallow`). (`src/bettermemory/origin.py`,
+  `src/bettermemory/origin_history.py`)
 
 #### Fixed
 

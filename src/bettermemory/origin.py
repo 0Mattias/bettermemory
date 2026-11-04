@@ -766,16 +766,16 @@ def _git_result(
 #: history reads it (`location_git`). Replace refs and a grafts file are the
 #: repository's own, untrusted, and rewrite which commits a head reaches
 #: and what each changed, under a head and stamps that stay (a replace ref
-#: under a reftable ref store, ENG-220's review). The ``-c`` setting is read
-#: after the repository's config, so it holds where a git before 2.42 lets
-#: the repository's ``core.useReplaceRefs=true`` override the variable, and
-#: the variable holds on a git before 2.19, which has no such setting.
+#: under a reftable ref store, ENG-220's review). The ``-c`` settings are read
+#: after the repository's config, so the first holds where a git before 2.42
+#: lets the repository's ``core.useReplaceRefs=true`` override the variable,
+#: and the variable holds on a git before 2.19, which has no such setting.
+#: A commit-graph file is the repository's too, and git takes a commit's
+#: parents and tree from it in place of the object's: forged, it moved the
+#: windows apart from the patch. So no call reads it, at a cost measured in
+#: ENG-220's review.
 _AS_STORED = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.devnull}
-_AS_STORED_CONFIG = ("-c", "core.useReplaceRefs=false")
-#: On top, for the patch stream and its split (`origin_patch`): a
-#: commit-graph file can name other parents than the objects, and neither
-#: call walks, so the graph saves them nothing.
-AS_STORED_PINS = ("-c", "core.commitGraph=false")
+_AS_STORED_CONFIG = ("-c", "core.useReplaceRefs=false", "-c", "core.commitGraph=false")
 
 
 def follow_unsettled(found: Origin) -> bool:
@@ -1399,6 +1399,11 @@ def _walk_reachable(toplevel: Path, anchor: str, head: str) -> ReachableWalk | N
         # anchor: a rewritten history. The range measures the distance
         # from the merge base, not from the verified tree state.
         return None
+    cut = origin_history.cuts(toplevel)
+    if cut is None or cut.intersection(commits):
+        # The range holds a shallow file's cut, behind which git read none
+        # of the range's commits (ENG-220's review).
+        return None
     return ReachableWalk(
         anchor=anchor,
         head=head,
@@ -1556,9 +1561,10 @@ def commit_author_timestamps(
     returned, and remembered as a failed read is, so the calls of the next
     minute answer None without reading it again. A hit returns the stored
     list itself: every caller only bisects it. Replace refs and grafts
-    move nothing (`_AS_STORED`); the key does not see a shallow clone
-    deepened while the head stays, which reads the earlier walk until the
-    head moves.
+    move nothing (`_AS_STORED`). A shallow repository's history, cut where
+    the dates behind the cut are not read (`origin_history.cuts`), answers
+    None, as a failed read does; a history kept before the cut was written
+    is still returned until the head moves.
     """
     if cwd is None:
         return None
@@ -1570,10 +1576,18 @@ def commit_author_timestamps(
         else (str(located[0]), located[1])
     )
     if key is None:
+        if origin_history.cuts(cwd, walk=True) != frozenset():
+            _git_runner.note_failed()
+            return None
         return _read_author_timestamps(cwd, "HEAD")
     stored, failed = origin_history.recall(key)
     if stored is not None:
         return stored
+    if not failed and origin_history.cuts(Path(key[0])) != frozenset():
+        # A shallow file's cut: the commits behind it, whose dates git
+        # does not read, may be the window's (ENG-220's review).
+        origin_history.remember_failure(key)
+        failed = True
     if failed:
         _git_runner.note_failed()
         return None
@@ -1926,7 +1940,6 @@ def commit_patch_stream(
         "core.quotePath=false",
         "-c",
         "diff.interHunkContext=0",
-        *AS_STORED_PINS,
         "log",
         "--no-walk=unsorted",
         "-p",
@@ -1947,7 +1960,6 @@ def commit_patch_stream(
 
 
 __all__ = [
-    "AS_STORED_PINS",
     "MAX_PATCH_STREAM_COMMITS",
     "Origin",
     "attribute_files_signature",

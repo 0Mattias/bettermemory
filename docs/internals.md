@@ -1584,7 +1584,9 @@ extracts; the commit-drift count's bases in `verify_basis.py`; a claim
 window's patch over the commits whose blobs a partial clone holds, the
 rest counted per file, in `origin_patch.py`; every git `origin.py` runs
 reads the history as its objects hold it, past the repository's replace
-refs and grafts file, and the patch reads past its commit-graph too), with
+refs, grafts file and commit-graph, and reads no count behind a shallow
+file's cut, `origin_history.cuts`: there the count is omitted, never a
+measured 0), with
 `symbols.py` for advisory symbol citations, and
 the store's `trust_rows` supplies the provenance label and this host's
 stamp. The warm daemon's caches sit on this path and keep every answer
