@@ -3632,9 +3632,13 @@ def test_i40_a_clone_or_a_copy_inside_a_container(tmp_path: Path, lab: Lab) -> N
 class _Asked(Container):
     """A container client that keeps each question it answers. With
     `before_rc19` it plays a client before 9.0.0rc19: it leaves a question
-    for git's reading of tied witnesses unread and says nothing of it."""
+    for git's reading of tied witnesses unread, says nothing of it and
+    names no exchange back. `told` plays a client that says it answers
+    that question and does not: ``"none"`` leaves its answer out,
+    ``"another set"`` answers a set holding one more commit."""
 
     before_rc19: bool = False
+    told: str = ""
     asked: list[dict[str, Any]] = field(default_factory=list)
 
     def answer(
@@ -3648,7 +3652,16 @@ class _Asked(Container):
             question = {k: v for k, v in question.items() if k != "independent"}
         out = super().answer(cap, question, answers)
         if self.before_rc19:
-            out = {k: v for k, v in out.items() if not k.startswith("independent")}
+            out = {
+                k: v
+                for k, v in out.items()
+                if not k.startswith(("independent", "exchange"))
+            }
+        tie = sorted(question.get("independent") or ())
+        if tie and self.told == "none":
+            out.pop("independent", None)
+        elif tie and self.told == "another set":
+            out["independent"] = [{"of": [*tie, "e" * 40], "top": tie[:1]}]
         return out
 
 
@@ -3674,19 +3687,7 @@ def test_e10_a_tie_in_a_container_is_ordered_as_on_the_host(
     the product by the same rule. A client before 9.0.0rc19 is never asked
     it; its traversal decides, as before, and the clone asks which project
     it is, naming the bound."""
-    monkeypatch.setattr(location.RepositoryHistory, "reachable_among", _cut_short)
-    template = make_repo(tmp_path / "host" / "template", commits=2, remote=_DEVC)
-    lab.write("t1", template)
-    product = clone(template, tmp_path / "host" / "product", url=_DEVC)
-    joined = lab.caller(product).resolution
-    assert joined.project == lab.project_of("t1") and joined.checkout is not None
-    declared = lab._declaring().declare(
-        Declaration("new", _PRINCIPAL, checkout=joined.checkout, name="product")
-    )
-    location.forget()
-    commit(product)
-    lab.write("p1", product)
-    assert lab.project_of("p1") == declared.project != lab.project_of("t1")
+    product, declared = _e10_tie(tmp_path, lab, monkeypatch)
 
     on_host = lab.caller(clone(product, tmp_path / "host" / "fresh", url=_DEVC))
     host = on_host.resolution
@@ -3704,7 +3705,7 @@ def test_e10_a_tie_in_a_container_is_ordered_as_on_the_host(
     )
     asked = older.post(lab)
 
-    assert (host.outcome, host.project) == (SILENT, declared.project)
+    assert (host.outcome, host.project) == (SILENT, declared)
     assert (there.outcome, there.project, there.rule) == (
         host.outcome,
         host.project,
@@ -3713,10 +3714,120 @@ def test_e10_a_tie_in_a_container_is_ordered_as_on_the_host(
     tied = [q["independent"] for q in box.asked if "independent" in q]
     assert len(tied) == 1 and len(tied[0]) > 1
     assert not any("ancestry" in q for q in box.asked)
-    assert (asked.outcome, asked.rule) == (ASK, "ask:several_projects")
-    assert set(asked.candidates) == {declared.project, lab.project_of("t1")}
-    assert "(at most 512 commits read)" in asked.lines[-1]
+    _asks_both(lab, asked, declared)
     assert any("ancestry" in q for q in older.asked)
+
+
+def _e10_tie(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, str]:
+    """E10's tie (`test_e10_a_tie_in_a_container_is_ordered_as_on_the_host`):
+    the traversal cut short, a template written to (``t1``), a product
+    cloned from it, declared a project of its own and committed to, and
+    written to (``p1``). The product's checkout and its project."""
+    monkeypatch.setattr(location.RepositoryHistory, "reachable_among", _cut_short)
+    template = make_repo(tmp_path / "host" / "template", commits=2, remote=_DEVC)
+    lab.write("t1", template)
+    product = clone(template, tmp_path / "host" / "product", url=_DEVC)
+    joined = lab.caller(product).resolution
+    assert joined.project == lab.project_of("t1") and joined.checkout is not None
+    declared = lab._declaring().declare(
+        Declaration("new", _PRINCIPAL, checkout=joined.checkout, name="product")
+    )
+    location.forget()
+    commit(product)
+    lab.write("p1", product)
+    assert lab.project_of("p1") == declared.project != lab.project_of("t1")
+    assert declared.project is not None
+    return product, declared.project
+
+
+def _asks_both(lab: Lab, res: Resolution, declared: str) -> None:
+    """`res` is the traversal's reading of E10's tie, cut short: it asks
+    which of the product (`declared`) and the template it is, naming the
+    bound."""
+    assert (res.outcome, res.rule) == (ASK, "ask:several_projects")
+    assert set(res.candidates) == {declared, lab.project_of("t1")}
+    assert "(at most 512 commits read)" in res.lines[-1]
+
+
+def _ladder_runs(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """From now, the runs of the ladder (`Membership._resolve`) each
+    resolution (`Membership.resolve`) makes, one entry a resolution: more
+    than one where its transaction rolled back to ask git of a tie
+    (`NeedIndependent`)."""
+    runs: list[int] = []
+    resolve, ladder = Membership.resolve, Membership._resolve
+
+    def resolving(self: Membership, *args: Any, **kwargs: Any) -> Any:
+        runs.append(0)
+        return resolve(self, *args, **kwargs)
+
+    def laddered(self: Membership, *args: Any, **kwargs: Any) -> Any:
+        runs[-1] += 1
+        return ladder(self, *args, **kwargs)
+
+    monkeypatch.setattr(Membership, "resolve", resolving)
+    monkeypatch.setattr(Membership, "_resolve", laddered)
+    return runs
+
+
+def test_e10_a_client_before_rc19_runs_the_ladder_once_a_round(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-216 follow-up: a client before 9.0.0rc19 answers no question for
+    git's reading of a tie, and its history (`AnsweredHistory`) is no
+    `IndependentReader`, so each of its rounds runs the ladder once, as in
+    9.0.0rc18: its tie read by the traversal inside the transaction. Its
+    history was one, and the round that met the tie rolled back to ask a
+    client that could not answer, a second run in each round from the tie
+    on (1, 2, 2 over its three rounds). A client that answers runs the
+    ladder twice in the one round that reads git's answer, the rollback
+    the question costs."""
+    product, declared = _e10_tie(tmp_path, lab, monkeypatch)
+    runs = _ladder_runs(monkeypatch)
+    box = _Asked(
+        clone(product, tmp_path / "box" / "fresh", url=_DEVC),
+        "/work/fresh",
+        _container_machine(lab, "container-a"),
+    )
+    assert box.post(lab).project == declared
+    assert sorted(runs) == [1] * (len(runs) - 1) + [2], runs
+
+    runs.clear()
+    older = _Asked(
+        clone(product, tmp_path / "older" / "fresh", url=_DEVC),
+        "/work/fresh",
+        _container_machine(lab, "container-b"),
+        before_rc19=True,
+    )
+    _asks_both(lab, older.post(lab), declared)
+    assert runs == [1, 1, 1], runs
+
+
+@pytest.mark.parametrize("told", ["none", "another set"])
+def test_e10_a_tie_a_client_does_not_answer_is_read_by_the_traversal(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, told: str
+) -> None:
+    """ENG-216 follow-up: a client that says it answers git's reading of a
+    tie (``independent_ok``) and whose next answer holds none for exactly
+    the set asked (none at all, or another set) is asked once; the round
+    after reads the tie by the traversal, which asks for the client's
+    ancestry, and the exchange ends as a client before 9.0.0rc19's does,
+    one round later than one that answers. Before, each round asked again
+    and the exchange ran out of its rounds with no resolution."""
+    product, declared = _e10_tie(tmp_path, lab, monkeypatch)
+    box = _Asked(
+        clone(product, tmp_path / "box" / "fresh", url=_DEVC),
+        "/work/fresh",
+        _container_machine(lab, "container-a"),
+        told=told,
+    )
+
+    _asks_both(lab, box.post(lab), declared)
+    keys = [sorted(set(q) - {"exchange", "write_token"}) for q in box.asked]
+    assert keys[-2:] == [["independent"], ["ancestry"]], keys
+    assert len(keys) < location.EXCHANGE_ROUNDS
 
 
 def test_i41_throwaway_containers_cloning_with_the_committed_file(

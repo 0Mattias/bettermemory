@@ -36,6 +36,7 @@ import shutil
 import struct
 import subprocess
 import time
+from collections import OrderedDict
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -43,7 +44,7 @@ from typing import Any
 import pytest
 
 from bettermemory import _git as git_runner
-from bettermemory import location, location_git, membership_records
+from bettermemory import location, location_git, location_witness, membership_records
 from bettermemory.location import WALK_LIMIT, capture
 from bettermemory.location_git import (
     EDGE_LIMIT,
@@ -1063,8 +1064,20 @@ def _ordered(
 
 def _before_rc19(answers: dict[str, Any]) -> dict[str, Any]:
     """`answers` as a hook client before 9.0.0rc19 posts them: nothing said
-    of git's reading of tied witnesses."""
-    return {k: v for k, v in answers.items() if not k.startswith("independent")}
+    of git's reading of tied witnesses, and no exchange named back."""
+    return {
+        k: v
+        for k, v in answers.items()
+        if not k.startswith(("independent", "exchange"))
+    }
+
+
+def _git_of(answers: dict[str, Any]) -> location_witness.AnsweredGit:
+    """The history `resolve_hook` reads `answers` through
+    (`answered_history`), which asks the client's git of a tie."""
+    history = location_witness.answered_history(answers)
+    assert isinstance(history, location_witness.AnsweredGit)
+    return history
 
 
 @pytestmark_git
@@ -1077,11 +1090,12 @@ def test_a_container_client_orders_a_tie_past_the_bound_as_git_on_the_host(
     says it answers git's reading (``independent_ok``); the daemon asks it
     of the tied witnesses once (``independent``), and the client runs the
     call the host runs (`RepositoryHistory.independent`), in its own
-    namespace: its answer, read back through `AnsweredHistory`, names the
+    namespace: its answer, read back through `AnsweredGit`, names the
     witness the host's git names, and the rule keeps the fork as on the
     host. A client before 9.0.0rc19 says nothing, is never asked, and its
     traversal, cut short by the bound, keeps both lines and asks, as
-    before."""
+    before; its history is no `IndependentReader`, so the rule runs once,
+    with no rollback to ask git, as in 9.0.0rc18."""
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
     repo = tmp_path / "repo"
@@ -1096,10 +1110,10 @@ def test_a_container_client_orders_a_tie_past_the_bound_as_git_on_the_host(
     assert answers["independent_ok"] is True and "independent" not in answers
 
     with pytest.raises(location.NeedWitnesses) as need:
-        location.AnsweredHistory(answers).independent(witnesses)
+        _git_of(answers).independent(witnesses)
     assert need.value.question == {"independent": sorted(witnesses)}
     answers = location.answer(need.value.question, answers, cap)
-    client = location.AnsweredHistory(answers)
+    client = _git_of(answers)
 
     assert client.independent(witnesses) == host.independent(witnesses)
     assert client.independent(witnesses) == frozenset({newest})
@@ -1108,15 +1122,18 @@ def test_a_container_client_orders_a_tie_past_the_bound_as_git_on_the_host(
     assert on_host == in_container == (["P2"], [tuple(sorted(witnesses))])
 
     older = _before_rc19(answers)
-    assert location.AnsweredHistory(older).independent(witnesses) is None
+    reader = location_witness.answered_history(older)
+    assert not isinstance(reader, membership_records.IndependentReader)
     with pytest.raises(location.NeedWitnesses) as need:
-        _ordered(location.AnsweredHistory(older), held, tmp_path / "older")
+        _ordered(reader, held, tmp_path / "older")
     assert sorted(need.value.question) == ["ancestry"]
     older = _before_rc19(location.answer(need.value.question, older, cap))
     assert older["ancestry_bounded"] is True
-    kept, asked = _ordered(location.AnsweredHistory(older), held, tmp_path / "old")
+    kept, asked = _ordered(
+        location_witness.answered_history(older), held, tmp_path / "old"
+    )
     assert kept == ["P1", "P2"]
-    assert asked == [tuple(sorted(witnesses))]
+    assert asked == []
 
 
 def test_a_client_answer_that_names_no_commit_it_was_asked_about_is_none() -> None:
@@ -1134,8 +1151,9 @@ def test_a_client_answer_that_names_no_commit_it_was_asked_about_is_none() -> No
             {"of": [b, c], "top": [c]},
             {"of": "garbage"},
         ],
+        "exchange": None,
     }
-    answered = location.AnsweredHistory(told)
+    answered = _git_of(told)
 
     assert answered.independent([b, a]) is None
     assert answered.independent([c, a]) is None
@@ -1144,6 +1162,74 @@ def test_a_client_answer_that_names_no_commit_it_was_asked_about_is_none() -> No
     assert answered.independent([_sha(i) for i in range(INDEPENDENT_MAX + 1)]) is None
     with pytest.raises(location.NeedWitnesses):
         answered.independent([a, b, c])
+    unechoed = {k: v for k, v in told.items() if k != "exchange"}
+    assert type(location_witness.answered_history(unechoed)) is location.AnsweredHistory
+
+
+@pytest.mark.parametrize(
+    "told",
+    [
+        pytest.param(None, id="no answer"),
+        pytest.param({"of": "ab", "top": None}, id="git did not answer"),
+        pytest.param({"of": "ab", "top": []}, id="names none"),
+        pytest.param({"of": "ab", "top": "c"}, id="names one not asked"),
+        pytest.param({"of": "abc", "top": "a"}, id="answers another set"),
+        pytest.param({"of": "a", "top": "a"}, id="answers part of the set"),
+    ],
+)
+def test_a_tie_is_asked_of_the_clients_git_once_an_exchange(
+    monkeypatch: pytest.MonkeyPatch, told: dict[str, str] | None
+) -> None:
+    """ENG-216 follow-up: the daemon asks a client's git of a tie once an
+    exchange (`ExchangeReads.asked`, kept with the exchange's reads). A
+    client that says it answers (``independent_ok``) and whose next answer
+    holds none for exactly the set asked (none at all, a null or empty
+    top, a commit not asked, another set or part of it) is read by the
+    traversal from that round on, and asked of no tie again in the
+    exchange: before, each round asked again, and such a client ran out of
+    the exchange's rounds with no resolution. A new exchange asks again,
+    and an answer for exactly the set is read as before."""
+    monkeypatch.setattr(location_witness, "_EXCHANGES", OrderedDict())
+    ids = {"a": _sha(10), "b": _sha(11), "c": _sha(12)}
+    tie = [ids["b"], ids["a"]]
+    first = {"remint_ok": True, "independent_ok": True, "exchange": None}
+
+    def round_of(answers: dict[str, Any]) -> location_witness.ExchangeReads:
+        return location_witness.ExchangeReads(answers, session="s", machine="m")
+
+    def asked(answers: dict[str, Any]) -> str:
+        reads = round_of(answers)
+        assert isinstance(reads.history, location_witness.AnsweredGit)
+        with pytest.raises(location.NeedWitnesses) as need:
+            reads.history.independent(tie)
+        assert need.value.question == {"independent": sorted(tie)}
+        return reads.carried()["exchange"]
+
+    nonce = asked(first)
+    said = [] if told is None else [_entry(told, ids)]
+    later = round_of({**first, "exchange": nonce, "independent": said})
+    assert isinstance(later.history, location_witness.AnsweredGit)
+    assert later.history.independent(tie) is None
+    assert later.history.independent([ids["a"], ids["c"]]) is None
+    assert later.carried() == {"exchange": nonce}
+    last = round_of({**first, "exchange": nonce, "independent": said})
+    assert isinstance(last.history, location_witness.AnsweredGit)
+    assert last.history.independent(tie) is None
+
+    again = asked(first)
+    right = {"of": sorted(tie), "top": [ids["b"]]}
+    exact = round_of({**first, "exchange": again, "independent": [*said, right]})
+    assert isinstance(exact.history, location_witness.AnsweredGit)
+    assert exact.history.independent(tie) == frozenset({ids["b"]})
+
+
+def _entry(told: dict[str, str], ids: dict[str, str]) -> dict[str, Any]:
+    """A client's ``independent`` entry from letters naming `ids`."""
+    top = told["top"]
+    return {
+        "of": sorted(ids[x] for x in told["of"]),
+        "top": None if top is None else [ids[x] for x in top],
+    }
 
 
 @pytestmark_git

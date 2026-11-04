@@ -1,15 +1,16 @@
 """The witness exchange's messages (design 8.7): `NeedWitnesses`, the
 question the daemon raises when the membership model asks of a
 repository it cannot read, and the readers that answer the model from
-what the client sent instead: `AnsweredHistory` (the history),
+what the client sent instead: `AnsweredHistory` (the history, and
+`AnsweredGit` for a client that runs git for a tie, `answered_history`),
 `AnsweredToken` (the checkout token, and the location of a client whose
 re-mint the store already recorded) and `AnsweredLiveness` (a view's
 liveness); and the client's reading of a view question (`asked_views`),
 its answer to a re-mint question (`remint_answer`) and whether that
 answer found another session's re-mint (`remint_refused`), and its
 answer to a question for git's reading of tied witnesses
-(`independent_answer`); and what the daemon read itself for one
-exchange, kept from round to round (`ExchangeReads`).
+(`independent_answer`); and what the daemon read itself and asked for
+one exchange, kept from round to round (`ExchangeReads`).
 
 They live apart from `location.py` to keep that module under the
 package's 2,000-line bound (ENG-96). They import nothing from
@@ -97,9 +98,11 @@ class AnsweredHistory:
     `NeedWitnesses` naming it, so the daemon reads none of the client's
     paths. The first question for held commits names every witness id the
     caller passed, so one round answers the model's one batch (design
-    3.2). It is a `membership_records.IndependentReader`: git's reading
-    of tied witnesses is asked of a client that says it answers one
-    (`independent`, ENG-216)."""
+    3.2). It is no `membership_records.IndependentReader`: a tie the
+    resolution meets is read by the bounded traversal in its transaction,
+    with no rollback to ask git, as in 9.0.0rc18, for a client that does
+    not answer git's reading of tied witnesses (`answered_history`; one
+    that does has `AnsweredGit`, ENG-216)."""
 
     def __init__(self, answers: Mapping[str, Any]) -> None:
         self._asked = {str(x).lower() for x in answers.get("asked") or ()}
@@ -124,9 +127,6 @@ class AnsweredHistory:
         if isinstance(raw_blobs, Mapping):
             for sha, ids in raw_blobs.items():
                 self._blobs[str(sha).lower()] = tuple(str(i).lower() for i in ids or ())
-        # A client before 9.0.0rc19 does not say: the traversal decides.
-        self._independent_ok = answers.get("independent_ok") is True
-        self._independent = _independent_answers(answers.get("independent"))
 
     def _ids(self, ids: Sequence[str]) -> set[str]:
         wanted = {i.lower() for i in ids}
@@ -177,6 +177,20 @@ class AnsweredHistory:
             return hit
         raise NeedWitnesses({"blobs": [sha]})
 
+
+class AnsweredGit(AnsweredHistory):
+    """The `AnsweredHistory` of a client that answers git's reading of tied
+    witnesses (``independent_ok``, ENG-216): a
+    `membership_records.IndependentReader`, asked of one tie in the
+    exchange `exchange` keeps (`independent`)."""
+
+    def __init__(
+        self, answers: Mapping[str, Any], exchange: ExchangeReads | None = None
+    ) -> None:
+        super().__init__(answers)
+        self._independent = _independent_answers(answers.get("independent"))
+        self._exchange = exchange
+
     def independent(self, commits: Sequence[str]) -> frozenset[str] | None:
         """The commits of `commits` (full ids) no other of them reaches, as
         the client's ``git merge-base --independent`` named them in its own
@@ -185,20 +199,44 @@ class AnsweredHistory:
         (`location_git.RepositoryHistory.independent`). A set not answered
         yet raises `NeedWitnesses` naming it; the resolution asks before
         its transaction (`membership_resolve.resolve`), so its round ends
-        there. None, and the bounded traversal decides as before, for a
-        client before 9.0.0rc19 (no ``independent_ok``), where the
-        client's git did not answer, and for more than `INDEPENDENT_MAX`
-        commits, which are never asked."""
+        there. One set is asked an exchange (`ExchangeReads.asked`), as a
+        resolution asks one: None, and the bounded traversal decides as
+        before, where the client's next answer holds none for exactly that
+        set (none at all, another set or part of it), and for any set
+        after it; where the client's git did not answer, and where it
+        named no commit or one not asked; and for more than
+        `INDEPENDENT_MAX` commits, which are never asked. So a client that
+        says it answers and does not costs one round, not the exchange's
+        `location_git.EXCHANGE_ROUNDS` and no resolution."""
         given = tuple(
             sorted({c.lower() for c in commits if _FULL_HASH.fullmatch(c.lower())})
         )
         if len(given) < 2:
             return frozenset(given)
-        if len(given) > INDEPENDENT_MAX or not self._independent_ok:
+        if len(given) > INDEPENDENT_MAX:
             return None
         if given in self._independent:
             return self._independent[given]
+        if self._exchange is not None:
+            if self._exchange.asked:
+                return None
+            self._exchange.asked.add(given)
         raise NeedWitnesses({"independent": list(given)})
+
+
+def answered_history(
+    answers: Mapping[str, Any], exchange: ExchangeReads | None = None
+) -> AnsweredHistory:
+    """The history reader over a round's `answers`: `AnsweredGit`, asking
+    one tie of the client's git in `exchange`, where the client says it
+    answers that (``independent_ok``) and names its exchange back
+    (``exchange``), as a client from 9.0.0rc19 does; else `AnsweredHistory`,
+    so a client before 9.0.0rc19, or one that names no exchange back and
+    so could not be held to one question, pays for a tie what it paid in
+    9.0.0rc18: the traversal, with no rollback (ENG-216)."""
+    if answers.get("independent_ok") is True and "exchange" in answers:
+        return AnsweredGit(answers, exchange)
+    return AnsweredHistory(answers)
 
 
 def _independent_answers(raw: Any) -> dict[tuple[str, ...], frozenset[str] | None]:
@@ -336,11 +374,13 @@ _EXCHANGES_LOCK = threading.Lock()
 class _Kept:
     """One exchange's keeping between its rounds (`ExchangeReads`): the
     session and machine whose round kept it, the only ones that take it
-    up; the `time.monotonic` it is dropped at; and the folders read."""
+    up; the `time.monotonic` it is dropped at; the folders read; and the
+    sets of tied witnesses asked of the client's git."""
 
     owner: tuple[str | None, str]
     until: float
     reads: Mapping[str, str | None]
+    asked: frozenset[tuple[str, ...]]
 
 
 _EXCHANGES: OrderedDict[str, _Kept] = OrderedDict()
@@ -357,14 +397,18 @@ def _drop(now: float, owner: tuple[str | None, str] | None = None) -> None:
 
 class ExchangeReads(dict[str, str | None]):
     """What the daemon read in its own namespace for one witness exchange,
-    kept from one round to the next (ENG-213): the declared folders
-    `membership_resolve.prefetch_declared` read, by folder (None where the
-    read gave no spelling), which a round takes as read, so each is read
-    once an exchange, not once a round. A round whose question asks again
-    names the exchange (``exchange``, a nonce the daemon mints, `carried`),
-    and the client names it back with its answers (`location.answer`); the
-    round that finds it takes the reads out of the daemon's keeping and
-    puts them back only when it asks again. Only a round of the session
+    and asked there, kept from one round to the next (ENG-213): the
+    declared folders `membership_resolve.prefetch_declared` read, by
+    folder (None where the read gave no spelling), which a round takes as
+    read, so each is read once an exchange, not once a round; and the tie
+    asked of the client's git (`asked`), one an exchange
+    (`AnsweredGit.independent`, ENG-216), by the round's history reader
+    (`history`, `answered_history`). A round whose question
+    asks again names the exchange (``exchange``, a nonce the daemon mints,
+    `carried`), and the client names it back with its answers
+    (`location.answer`); the round that finds it takes the reads out of
+    the daemon's keeping and puts them back only when it asks again. Only
+    a round of the session
     and machine (the machine the client posted) whose round kept them
     takes them up, within `EXCHANGE_SECONDS` of that round. So they never
     outlive the exchange: a resolution ends it, a new prompt's exchange
@@ -391,24 +435,26 @@ class ExchangeReads(dict[str, str | None]):
                 if kept is not None and kept.owner == self._owner:
                     got = _EXCHANGES.pop(named)
         super().__init__(got.reads if got is not None else {})
+        self.asked: set[tuple[str, ...]] = set(got.asked if got is not None else ())
         self.nonce: str = (
             named
             if isinstance(named, str) and got is not None
             else secrets.token_hex(16)
         )
+        self.history = answered_history(answers, self)
 
     def carried(self) -> dict[str, str]:
-        """Keep the reads for the exchange's next round, for
-        `EXCHANGE_SECONDS`, and the question's key naming them; nothing
-        where nothing was read, or for a client that names no exchange
-        back."""
-        if self.silent or not self:
+        """Keep the reads and the questions asked for the exchange's next
+        round, for `EXCHANGE_SECONDS`, and the question's key naming them;
+        nothing where nothing was read or asked, or for a client that
+        names no exchange back."""
+        if self.silent or not (self or self.asked):
             return {}
         now = time.monotonic()
         with _EXCHANGES_LOCK:
             _drop(now)
             _EXCHANGES[self.nonce] = _Kept(
-                self._owner, now + EXCHANGE_SECONDS, dict(self)
+                self._owner, now + EXCHANGE_SECONDS, dict(self), frozenset(self.asked)
             )
             _EXCHANGES.move_to_end(self.nonce)
             while len(_EXCHANGES) > _EXCHANGES_CAP:

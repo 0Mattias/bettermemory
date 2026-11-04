@@ -139,11 +139,18 @@ eighteenth was built.
   client spawns one more git only when a resolution ties, and the
   exchange takes as many rounds as before (two questions in the
   measured tie: the held commits, then git's reading in place of the
-  traversal's), one more where the client's git does not answer. Only a client that says it answers
-  (`independent_ok`, from 9.0.0rc19) is asked: one before it is not, and
-  its traversal decides as before; a daemon before it never asks, and
-  ignores the client's key. The ENG-203 entry's "a container's hook
-  client runs no `merge-base`" no longer holds for a client of this
+  traversal's), one more where the client's git does not answer. One
+  tie is asked an exchange, kept with its reads (ENG-213): where the
+  client's next answer holds none for exactly the set asked (none at
+  all, another set or part of it), the traversal decides from that round
+  on, so a client that says it answers and does not costs one round, not
+  all eight of the exchange's and no resolution. Only a client that says
+  it answers (`independent_ok`) and names its exchange back, as one from
+  9.0.0rc19 does, is asked: one before it is not, and its traversal
+  decides as before, at its 9.0.0rc18 cost, one run of the ladder a
+  round with no rollback to ask git. A daemon before 9.0.0rc19 never
+  asks, and ignores the client's key. The ENG-203 entry's "a container's
+  hook client runs no `merge-base`" no longer holds for a client of this
   candidate. (`src/bettermemory/location_witness.py`,
   `src/bettermemory/location.py`, `src/bettermemory/location_git.py`,
   `src/bettermemory/membership_records.py`,

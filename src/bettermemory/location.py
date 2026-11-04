@@ -1911,8 +1911,8 @@ def resolve_hook(
     the final reply for a client that cannot be asked
     (`Resolution.remint_token` stays set). Each resolution is kept as the
     session's latest for the process's lifetime (decision B24), until the
-    session is forgotten (`forget_session`) or crowded out. The declared
-    folders a round reads are kept for the next (`ExchangeReads`, ENG-213)."""
+    session is forgotten (`forget_session`) or crowded out. What a round
+    reads and asks is kept for the next (`ExchangeReads`, ENG-213, ENG-216)."""
     raw = posted.get("location") if posted is not None else None
     if not isinstance(raw, Mapping):
         return _hooked(store, config, _cwd_of(cwd), session)
@@ -1962,13 +1962,11 @@ def resolve_hook(
     writer = AnsweredToken(answers, posted=isinstance(given, Mapping))
     liveness = AnsweredLiveness(answers)
     model = _model(store, identity, session, liveness=liveness, token_writer=writer)
+    reads = ExchangeReads(answers, session=session, machine=identity.id)
     loc = writer.located(
-        to_location(
-            cap, machine=identity.id, session=session, history=AnsweredHistory(answers)
-        ),
+        to_location(cap, machine=identity.id, session=session, history=reads.history),
         model,
     )
-    reads = ExchangeReads(answers, session=session, machine=identity.id)
     try:
         with _location_lock(loc):
             res = model.resolve(loc, strict=config.membership.strict, declared=reads)

@@ -579,7 +579,13 @@ The first rung that answers decides (`Membership.resolve`):
    the witness exchange asks the hook client instead, once, in a round of
    its own (``independent``, ENG-216): the client runs the same call in
    its own namespace, and only a client that says it answers
-   (``independent_ok``, from 9.0.0rc19) is asked. Git is held to the parent lines the objects hold (no replace
+   (``independent_ok``) and names its exchange back, as one from
+   9.0.0rc19 does, is asked (`location_witness.AnsweredGit`). One tie is
+   asked an exchange: where the client's next answer holds none for
+   exactly that set, the traversal decides from that round on. A client
+   before 9.0.0rc19 is no `IndependentReader`, so its tie is read by the
+   traversal with no rollback, as in 9.0.0rc18. Git is held to the
+   parent lines the objects hold (no replace
    refs, commit-graph or grafts file; the runner fetches nothing) and to
    one second, and the history reader takes a commit's parents as git
    does, from the `parent` lines directly after `tree`. Otherwise, or
@@ -616,10 +622,11 @@ folders the declarations that bound its location's project file stored
 in another spelling (`Membership.prefetch_declared`, ENG-213), so a
 share hung under both costs one budget, not one each. In the witness
 exchange (design 8.7) the daemon resolves once a round, and the declared
-folders a round reads in its own namespace are kept for the exchange's
-later rounds by a nonce the round's question names (``exchange``) and
-the client's answers name back (`location_witness.ExchangeReads`): each
-is read once an exchange, and a new prompt's exchange reads afresh. Only
+folders a round reads in its own namespace, and the tie it asks of the
+client's git, are kept for the exchange's later rounds by a nonce the
+round's question names (``exchange``) and the client's answers name back
+(`location_witness.ExchangeReads`): each folder is read once an
+exchange, one tie is asked, and a new prompt's exchange reads afresh. Only
 a round of the session and machine whose round kept them takes them up,
 within `EXCHANGE_SECONDS` (8 s, the prompt hook's budget) of that round;
 a client before 9.0.0rc19 names no exchange back, and its first answers
