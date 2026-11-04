@@ -243,6 +243,49 @@ def _spelled_as_git(root: Path) -> Path | None:
     return Path(os.fsdecode(raw.split(b"\0", 1)[0]))
 
 
+# git's ref_rev_parse_rules (refs.c), in order: the names `git
+# symbolic-ref --short HEAD` tries a short name against. With
+# `_shortening_refs`, moved here from `origin` to keep it under the
+# package's 2,000-line bound (ENG-207's round 6); the capture's signature
+# stamps the refs it names (`origin._capture_signature`).
+_REV_PARSE_RULES = (
+    "{}",
+    "refs/{}",
+    "refs/tags/{}",
+    "refs/heads/{}",
+    "refs/remotes/{}",
+    "refs/remotes/{}/HEAD",
+)
+
+
+def _shortening_refs(refname: str) -> list[str]:
+    """The refs whose existence decides how `git symbolic-ref --short
+    HEAD` shortens `refname` (``refs_shorten_unambiguous_ref``): for each
+    rule after the first that `refname` matches, the short name it gives
+    spelled under every other rule. Git keeps a short name only while none
+    of the refs it tries for it exists, and it tries a subset of these (the
+    rules before the matched one, not strict); for ``refs/heads/<b>`` it
+    tries ``<b>``, ``refs/<b>`` and ``refs/tags/<b>``, then ``heads/<b>``,
+    and ``refs/remotes/<b>`` and ``refs/remotes/<b>/HEAD`` are in the set
+    too."""
+    names: list[str] = []
+    for index in range(len(_REV_PARSE_RULES) - 1, 0, -1):
+        prefix, _, suffix = _REV_PARSE_RULES[index].partition("{}")
+        if not (
+            refname.startswith(prefix)
+            and refname.endswith(suffix)
+            and len(refname) > len(prefix) + len(suffix)
+        ):
+            continue
+        short = refname[len(prefix) : len(refname) - len(suffix)]
+        names.extend(
+            rule.format(short)
+            for other, rule in enumerate(_REV_PARSE_RULES)
+            if other != index
+        )
+    return list(dict.fromkeys(names))
+
+
 def relative_to_root(candidate: Path, root: Path) -> Path:
     """`candidate`, a resolved path, relative to the working tree `root`.
 
