@@ -563,8 +563,13 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     reported, not bounded: the first grow with the depth of the temporary
     directory. Measured on macOS (APFS), the same at any depth of the
     temporary directory, as (os.stat, os.lstat, opens, os.access) on so
-    many paths: steady state 0 spawns, (10, 2, 2, 2) on 12 paths; after a
-    commit 0 spawns, (41, 17, 30, 6) on 22. Before ENG-193 they were
+    many paths: steady state 0 spawns, (10, 2, 3, 2) on 12 paths; after a
+    commit 0 spawns, (41, 17, 33, 6) on 22. ENG-211 reads a folder's own
+    ``.git`` directory's config (its ``core.worktree`` and ``core.bare``)
+    at each judgment of it: one open a prompt, by the signature's walk
+    (about 35 microseconds), and three after a commit, by the signatures
+    before and after the capture and the capture's walk; it was (10, 2, 2,
+    2) and (41, 17, 30, 6) before. Before ENG-193 they were
     (11, 1, 1, 0) on 9 and (44, 14, 26, 0) on 20, with each ``.git`` entry
     read with ``lstat`` since ENG-206 (a link is a pointer, judged as one).
     ENG-193's discovery stops where git's walk does, by git's own test of
@@ -594,14 +599,14 @@ def test_e16_a_known_checkout_spawns_no_git_and_stats_little(
     report("steady", warm)
     assert warm.spawns == 0
     assert warm.stats <= 10 and warm.lstats <= 2 and len(warm.files) <= 12
-    assert warm.opens <= 2 and warm.accesses <= 2
+    assert warm.opens <= 3 and warm.accesses <= 2
 
     git(repo, "commit", "-q", "--allow-empty", "-m", "work")
     moved = counted(prompt, within)
     report("after a commit", moved)
     assert moved.spawns == 0
     assert moved.stats <= 41 and moved.lstats <= 17 and len(moved.files) <= 22
-    assert moved.opens <= 30 and moved.accesses <= 6
+    assert moved.opens <= 33 and moved.accesses <= 6
 
 
 # ---------------------------------------------------------------------------

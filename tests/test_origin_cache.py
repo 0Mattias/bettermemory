@@ -396,8 +396,10 @@ def test_core_worktree_in_config_worktree_inside_the_lifetime_is_seen(
     tmp_path: Path,
 ) -> None:
     """Under extensions.worktreeConfig, git reads core.worktree from
-    config.worktree in the git directory, which moves the root the capture
-    records; its stamp is in the capture's signature."""
+    config.worktree in the git directory, which moves the root off the
+    folder: membership refuses the folder there, so the capture records no
+    root and runs no git (ENG-211), and a capture kept before is not
+    served past the change."""
     repo = _repo(tmp_path / "repo")
     _commit(repo)
     _run(repo, "config", "extensions.worktreeConfig", "true")
@@ -407,9 +409,12 @@ def test_core_worktree_in_config_worktree_inside_the_lifetime_is_seen(
     (repo / ".git" / "config.worktree").write_text(
         f"[core]\n\tworktree = {elsewhere}\n", encoding="utf-8"
     )
+    assert Path(_run(repo, "rev-parse", "--show-toplevel")).resolve() == Path(
+        _key(elsewhere)
+    ), "premise: git moved the root"
     after = capture(repo)
     uncached = _uncached(repo)
-    assert uncached.worktree_root == _key(elsewhere), "premise: git moved the root"
+    assert uncached.worktree_root is None, "refused: the root moved off the folder"
     _same(after, uncached)
 
 

@@ -48,6 +48,7 @@ from .gitfile_rule import (
     _git_reads,
     _is_git_directory,
     _not_registered,
+    inside_refusal,
     judge,
 )
 
@@ -459,7 +460,9 @@ def _discover(
     and a ``commondir`` that names a repository it is not registered under
     (the directory, that repository's common directory, why): git reads
     it as a git directory of that repository, membership passes over it
-    (review M G5). With `read_head` False a ``HEAD`` is taken by its
+    (review M G5), and so does a git directory the walk reaches whose
+    config names another working tree (the directory, itself, why;
+    `gitfile_rule.inside_refusal`, ENG-211). With `read_head` False a ``HEAD`` is taken by its
     presence where git's test reads it (`gitfile_rule._valid_headref`):
     the caller reads the one where the walk stops and tests it, as
     `location.signature` does."""
@@ -485,15 +488,21 @@ def _discover(
         # Git's own test first, as at a `.git` entry (`judge`), so this walk
         # stops where git's, and origin's, does (ENG-193).
         if _git_reads(d, fetch=False, read=read_head) and _is_git_directory(d):
-            common, linked = _common_of(d)
-            values = _config_values(os.path.join(common, "config"), git_dir=d)
-            if os.path.basename(d) == ".git" and not _truthy(
-                values.get(("core", None, "bare"))
-            ):
-                parent = os.path.dirname(d)
-                return _Git(d, d, common, parent, LINKED if linked else PRIMARY)
-            return _Git(None, d, common, None, BARE)
-        if refused is not None and os.path.isfile(os.path.join(d, "HEAD")):
+            # Not where its config names another working tree (ENG-211):
+            # passed over, as a refused `.git` entry is.
+            why = inside_refusal(d)
+            if why is None:
+                common, linked = _common_of(d)
+                values = _config_values(os.path.join(common, "config"), git_dir=d)
+                if os.path.basename(d) == ".git" and not _truthy(
+                    values.get(("core", None, "bare"))
+                ):
+                    parent = os.path.dirname(d)
+                    return _Git(d, d, common, parent, LINKED if linked else PRIMARY)
+                return _Git(None, d, common, None, BARE)
+            if refused is not None:
+                refused.append((d, d, why))
+        elif refused is not None and os.path.isfile(os.path.join(d, "HEAD")):
             named = _foreign_commondir(d)
             if named is not None:
                 refused.append((d, named, _not_registered(d, named)))

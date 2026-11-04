@@ -893,18 +893,23 @@ def test_the_files_decline_where_git_names_another_working_tree(
 ) -> None:
     """`core.worktree` moves the root git names, and a true `core.bare`
     leaves it none. The reader walks to the directory holding `.git`
-    either way, so it declines and git answers."""
+    either way, so it declines. git answered with the root it names, which
+    membership did not; membership now refuses the folder and no git runs
+    there (ENG-211), so neither names a root."""
     repo = _repo(tmp_path)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     head = _commit(repo, "seed", when=_T0)
     _git(repo, "config", "core.worktree", str(elsewhere))
+    assert Path(_git(repo, "rev-parse", "--show-toplevel")).resolve() == (
+        elsewhere.resolve()
+    ), "premise: git names the folder core.worktree names"
     assert origin.toplevel_and_head_from_files(repo) is None
-    assert origin.repo_toplevel_and_head(repo) == (elsewhere.resolve(), head)
+    assert origin.repo_toplevel_and_head(repo) is None, "refused: no git runs"
     _git(repo, "config", "--unset", "core.worktree")
     _git(repo, "config", "core.bare", "true")
     assert origin.toplevel_and_head_from_files(repo) is None
-    assert origin.repo_toplevel_and_head(repo) is None, "git: no working tree"
+    assert origin.repo_toplevel_and_head(repo) is None, "refused: no working tree"
     _git(repo, "config", "core.bare", "false")
     assert origin.toplevel_and_head_from_files(repo) == (repo.resolve(), head)
 
@@ -953,15 +958,20 @@ def test_the_files_answer_where_the_config_only_mentions_worktree(
 @files_only
 def test_the_files_decline_where_config_worktree_moves_the_root(tmp_path: Path) -> None:
     """Under extensions.worktreeConfig, `core.worktree` in config.worktree
-    moves the root git names, as it does in the common config."""
+    moves the root git names, as it does in the common config, so the
+    reader declines, and membership refuses the folder, so no git runs
+    there either (ENG-211)."""
     repo = _repo(tmp_path)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    head = _commit(repo, "seed", when=_T0)
+    _commit(repo, "seed", when=_T0)
     _git(repo, "config", "extensions.worktreeConfig", "true")
     _git(repo, "config", "--worktree", "core.worktree", str(elsewhere))
+    assert Path(_git(repo, "rev-parse", "--show-toplevel")).resolve() == (
+        elsewhere.resolve()
+    ), "premise: git names the folder core.worktree names"
     assert origin.toplevel_and_head_from_files(repo) is None
-    assert origin.repo_toplevel_and_head(repo) == (elsewhere.resolve(), head)
+    assert origin.repo_toplevel_and_head(repo) is None
 
 
 @files_only
@@ -977,7 +987,8 @@ def test_the_files_decline_where_a_nul_byte_names_core_worktree(
 ) -> None:
     """Git ends a variable's name at a NUL byte, so a quoted subsection
     `worktree\\0` (or an escaped spelling of it) sets core.worktree. A
-    config holding a NUL byte declines."""
+    config holding a NUL byte declines, membership refuses the folder, and
+    no git runs there (ENG-211)."""
     repo = _repo(tmp_path)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -989,6 +1000,7 @@ def test_the_files_decline_where_a_nul_byte_names_core_worktree(
     git_root = Path(_git(repo, "rev-parse", "--show-toplevel")).resolve()
     assert git_root == elsewhere.resolve(), "premise: git reads core.worktree"
     assert origin.toplevel_and_head_from_files(repo) is None
+    assert origin.repo_toplevel_and_head(repo) is None
 
 
 @pytest.mark.skipif(

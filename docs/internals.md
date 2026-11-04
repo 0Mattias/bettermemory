@@ -564,7 +564,30 @@ symlink or another case is the same), a
 `commondir` naming a repository the directory is not registered under,
 a `core.worktree` naming another folder, a separate git directory whose
 recorded tree is another folder and a bare repository read as no
-repository, and the walk goes on upward. Each witness is one observable
+repository, and the walk goes on upward. A git directory's working tree
+is read where git reads it: its `config`, and `config.worktree` after it
+where the config sets `extensions.worktreeConfig`; a NUL byte that hides
+one of its names from this reader (git ends a name there, so
+`[core "worktree\0"]` sets `core.worktree`) or cuts its value refuses
+it. A folder's own `.git`
+directory is followed only where its config gives that folder as the
+working tree (ENG-211, `gitfile_rule.own_refusal`): a `core.worktree`
+naming another folder, absolute or relative to the git directory as git
+takes it, makes git read that folder as the toplevel, and git writes no
+pointer back from it, so a planted config could move a checkout's root
+to any folder; one naming nothing (git dies there) and a `core.bare` of
+true (git reads no working tree) are refused with it. A walk started
+inside a git directory reads it as its parent's `.git`, or as a bare
+repository, only where its config names no working tree or names that
+parent (`gitfile_rule.inside_refusal`): a submodule's git directory
+under `modules/`, whose `core.worktree` names the submodule's tree, is
+passed over. Such an own `.git` directory's config is judged by what was
+read: git reads these names from the file alone, no include, and a
+config past the 1 MiB bound is an ordinary repository's, so neither
+refuses it (a `.git` file's target whose config could not be read whole
+is refused, as above). Where membership refuses the entry the origin
+family runs no git, so membership and an origin's `worktree_root` never
+name two roots for one checkout. Each witness is one observable
 fact:
 
 | Code | The witness | Read from | Alone |

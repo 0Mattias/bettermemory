@@ -69,13 +69,13 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
         else:
             refused.append((found.dotgit, found.git_dir, why))
     if refused:
-        first, _target, why = refused[0]
+        first, target, why = refused[0]
         return {
             "id": GITFILE_FINDING,
             "status": "warn",
             "summary": f"{first} names a git directory membership does not follow: {why}",
             "path": first,
-            "fix": _gitfile_fix(first, why),
+            "fix": _gitfile_fix(first, why, target),
             "details": {
                 "cwd": start,
                 "refused": [
@@ -148,17 +148,32 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
     }
 
 
-def _gitfile_fix(refused: str, why: str) -> str:
+def _gitfile_fix(refused: str, why: str, target: str) -> str:
     """The warning's fix for the refused `.git` file or folder `refused`,
-    not followed for the reason `why` (review M D4): a check by hand of
-    where it points and the removal of a plant. It suggests no command
-    that rewrites a worktree's registration: one run in a copy of a live
-    worktree moves the live worktree's registration to the copy, and
-    membership then follows the copy. Where the working tree recorded for
-    the git directory could not be read or did not answer
-    (`gitfile_rule.UNREAD_TREE`, ENG-217), it says first how that record
-    is freed: the recorded folder's .git read again, or its share
-    unmounted."""
+    which names the git directory `target`, not followed for the reason
+    `why` (review M D4): a check by hand of where it points and the removal
+    of a plant. It suggests no command that rewrites a worktree's
+    registration: one run in a copy of a live worktree moves the live
+    worktree's registration to the copy, and membership then follows the
+    copy. Where the working tree recorded for the git directory could not
+    be read or did not answer (`gitfile_rule.UNREAD_TREE`, ENG-217), it
+    says first how that record is freed: the recorded folder's .git read
+    again, or its share unmounted. Where `refused` is a git directory
+    itself refused for what its own config names (`gitfile_rule.own_refusal`
+    and `inside_refusal`, ENG-211), it says how to make that config name
+    this folder."""
+    if refused == target and why.startswith(f"{target}'s config names "):
+        return (
+            "git reads it as a git directory whose working tree is not the "
+            "folder it sits in: its config names another folder (core.worktree) "
+            "or none (core.bare), or holds a NUL byte, past which git reads "
+            "names this check does not. A git command here acts on the tree it "
+            "names, and neither membership nor the origin of a record written "
+            "here follows it. If this folder is its working tree, remove "
+            "core.worktree, a core.bare of true and any NUL byte from that "
+            "config; the next session here follows it. If it came from an "
+            "archive, a copy or someone else, remove it."
+        )
     plant = (
         "its .git file"
         if os.path.basename(refused) == ".git"

@@ -212,14 +212,12 @@ def _refusal(directory: str, target: str) -> tuple[str | None, bool]:
         if _names_folder(back, target, directory) is False:
             return f"{target} is the git directory of the worktree at {back}", False
         return None, False
-    values = _config_values(os.path.join(target, "config"), git_dir=target)
-    if not values.complete or values.undecided & _TREE_NAMES:
+    whole, garbled, configured, bare = _tree_config(target)
+    if not whole or garbled:
         # Where its working tree is cannot be told (ENG-160): a config over
-        # the bound, an include past git's depth or unreadable, or one under
-        # a condition not evaluated here that names it.
+        # the bound, an include past git's depth or unreadable, one under a
+        # condition not evaluated here that names it, or a NUL byte (ENG-211).
         return f"{target}'s config could not be read whole", False
-    listed = values.get(("core", None, "worktree")) or []
-    configured = listed[-1] if listed else ""
     if configured:
         if _names_here(configured, target, directory) is False:
             return (
@@ -227,7 +225,7 @@ def _refusal(directory: str, target: str) -> tuple[str | None, bool]:
                 False,
             )
         return None, False
-    if _truthy(values.get(("core", None, "bare"))):
+    if bare:
         return f"{target} is a bare repository", False
     tree = _working_tree_of(target)
     if tree is not None and _same_folder(tree, directory) is not True:
@@ -236,6 +234,130 @@ def _refusal(directory: str, target: str) -> tuple[str | None, bool]:
     # Followed with no record naming this folder: membership's next
     # capture records a tree, which may be another folder (`Entry`).
     return why, why is None and not here
+
+
+def _tree_config(git_dir: str) -> tuple[bool, bool, str, bool]:
+    """Where the git directory `git_dir`'s config puts its working tree:
+    whether that was read whole (not, ENG-160, where a config is over the
+    bound, an include past git's depth or unreadable, or one under a
+    condition not evaluated here names it); whether a NUL byte hides one
+    of the names below, or cuts its value: git ends a name and a value at
+    one, so a subsection ``"worktree\\0"`` of ``core`` sets
+    ``core.worktree`` to git (`_cut_name`); the last ``core.worktree``
+    read, or ``""``; and whether ``core.bare`` reads true. git reads both
+    from ``config`` and, where that sets ``extensions.worktreeConfig``,
+    from ``config.worktree`` after it, whose values win (setup.c's
+    ``check_repository_format_gently``), so this reads that file too
+    (ENG-211)."""
+    values = _config_values(os.path.join(git_dir, "config"), git_dir=git_dir)
+    if _truthy(values.get(("extensions", None, "worktreeconfig"))):
+        more = _config_values(os.path.join(git_dir, "config.worktree"), git_dir=git_dir)
+        for name, listed in more.items():
+            values.setdefault(name, []).extend(listed)
+        values.complete = values.complete and more.complete
+        values.undecided |= more.undecided
+    whole = values.complete and not values.undecided & _TREE_NAMES
+    garbled = any(
+        _cut_name(name) in _NUL_NAMES
+        or (name in _TREE_NAMES and any("\0" in v for v in listed))
+        for name, listed in values.items()
+    )
+    listed = values.get(("core", None, "worktree")) or []
+    bare = _truthy(values.get(("core", None, "bare"))) is True
+    return whole, garbled, listed[-1] if listed else "", bare
+
+
+#: The names git reads a git directory's working tree by, as `_cut_name`
+#: spells them.
+_NUL_NAMES = frozenset({"core.worktree", "core.bare", "extensions.worktreeconfig"})
+#: A backslash escape in a quoted subsection: git keeps the character after it.
+_ESCAPED = re.compile(r"\\(.)", re.DOTALL)
+
+
+def _cut_name(name: tuple[str, str | None, str]) -> str | None:
+    """The variable git reads for the config name `name` where a NUL byte
+    ends it (a quoted subsection's escapes undone, as git undoes them),
+    lower case; None where the name holds no NUL byte."""
+    section, sub, key = name
+    if "\0" not in (sub or "") + key:
+        return None
+    spelled = section if sub is None else section + "." + _ESCAPED.sub(r"\1", sub)
+    return (spelled + "." + key).split("\0", 1)[0].lower()
+
+
+def _garbled(git_dir: str) -> str:
+    """Why `git_dir` is refused where its config holds a NUL byte."""
+    return f"{git_dir}'s config names what git reads past a NUL byte"
+
+
+def own_refusal(dotgit: str, directory: str) -> str | None:
+    """Why the folder `directory`'s own ``.git`` directory `dotgit` (no
+    link) is not followed (ENG-211), or None where it is.
+
+    git reads that directory's config for where its working tree is, and a
+    ``core.worktree`` there moves the tree off the folder: ``git rev-parse
+    --show-toplevel`` from the folder prints the folder it names, so an
+    origin captured there carried that toplevel while membership rooted the
+    checkout at the folder. git writes no pointer back from that folder (a
+    ``git init`` with ``GIT_DIR`` and ``GIT_WORK_TREE``, or a ``git
+    config``), so nothing tells the folder it names from any other, and
+    an archive can carry such a config naming a folder of the user's.
+    Rooted there, membership would read that folder's project file and
+    content for a checkout that is not its own. So it is followed only
+    where its config names this folder as the working tree, or none
+    (compared as filesystem objects, a relative path taken from `dotgit`
+    as git takes it), and refused otherwise, as a ``.git`` file naming such
+    a git directory is (`gitfile_refusal`): a ``core.worktree`` naming
+    another folder or nothing (git dies there), and a ``core.bare`` that
+    is true (git reads no working tree). Refused, it is passed over, and
+    the origin family runs no git in the folder (`discovery_refusal`), so
+    the two readers agree.
+
+    A config read in part is judged by what was read, where a ``.git``
+    file's target is refused (`_refusal`): git reads ``core.worktree`` and
+    ``core.bare`` here from the config file alone, no include, and a
+    config past the 1 MiB bound is an ordinary repository's (a branch
+    section per branch, ENG-160), which a refusal would drop. A value an
+    include sets, which git does not read here, refuses all the same: the
+    readers agree on no repository. A config whose NUL byte hides one of
+    these names, or cuts its value, is refused: git ends a name there, so
+    ``[core "worktree\\0"]`` names its working tree to git and nothing to
+    this reader."""
+    _whole, garbled, configured, bare = _tree_config(dotgit)
+    if garbled:
+        return _garbled(dotgit)
+    if configured and _names_here(configured, dotgit, directory) is not True:
+        return f"{dotgit}'s config names the working tree {configured} (core.worktree)"
+    if bare:
+        return f"{dotgit}'s config names no working tree (core.bare)"
+    return None
+
+
+def inside_refusal(git_dir: str) -> str | None:
+    """Why the git directory `git_dir`, at which git's walk stops as the
+    folder it reads (a walk started inside a git directory), is not read
+    as a repository (ENG-211), or None where it is.
+
+    Membership reads such a folder as the git directory of the folder
+    above it where it is a ``.git`` that is not bare, and as a bare
+    repository otherwise. A ``core.worktree`` in its config (a submodule's
+    git directory under ``modules/``, a ``.git`` set by ``git config``)
+    makes git read it as the git directory of the folder that names, so it
+    is read as a repository only where that is the folder above a ``.git``
+    membership reads it for, and refused otherwise, its config read as
+    `own_refusal` reads it."""
+    _whole, garbled, configured, bare = _tree_config(git_dir)
+    if garbled:
+        return _garbled(git_dir)
+    if not configured:
+        return None
+    if (
+        os.path.basename(git_dir) == ".git"
+        and not bare
+        and _names_here(configured, git_dir, os.path.dirname(git_dir)) is True
+    ):
+        return None
+    return f"{git_dir}'s config names the working tree {configured} (core.worktree)"
 
 
 def _recorded_refusal(
@@ -848,7 +970,9 @@ def judge(
     reaches nothing and an entry that is neither a file nor a directory
     name none either.
 
-    A ``.git`` directory that is no link is the folder's own. A link (a
+    A ``.git`` directory that is no link is the folder's own, followed
+    where its config gives the folder as its working tree (`own_refusal`,
+    ENG-211). A link (a
     symbolic link, or a Windows junction, `_is_link`) that reaches another
     working tree's own ``.git`` is that tree's, whatever it holds
     (`_working_tree_of`, ENG-206); any other link to a git directory, and
@@ -878,7 +1002,7 @@ def judge(
             )
     if stat.S_ISDIR(st.st_mode):
         if not linked_entry:
-            return Entry(dotgit, own=True)
+            return Entry(dotgit, own_refusal(dotgit, directory), own=True)
         # A link to a git directory is a pointer to it, read by the rule a
         # `.git` file's is (ENG-206).
         target = os.path.realpath(dotgit)
@@ -935,7 +1059,9 @@ def reading_at(directory: str) -> Reading | None:
     whose ``commondir`` names a repository it is not registered under is a
     refusal (`_foreign_commondir`, review M G5), since git reads that
     repository's refs, objects and config through it while membership
-    reads none of them."""
+    reads none of them; so is the folder itself where its config names a
+    working tree membership does not root it at (`inside_refusal`,
+    ENG-211)."""
     dotgit = os.path.join(directory, ".git")
     try:
         st: os.stat_result | None = os.lstat(dotgit)
@@ -955,7 +1081,7 @@ def reading_at(directory: str) -> Reading | None:
     named = _foreign_commondir(directory)
     if named is not None:
         return Reading(_not_registered(directory, named))
-    return Reading()
+    return Reading(inside_refusal(directory))
 
 
 def _entry_reading(directory: str, dotgit: str, st: os.stat_result) -> Reading | None:

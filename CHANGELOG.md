@@ -59,6 +59,47 @@ eighteenth was built.
   `tests/test_config_numeric_values.py`,
   `tests/test_pin_notice_as_loaded.py`)
 
+- **A `.git` directory whose config names another working tree reads as
+  no repository (ENG-211).** Membership followed a folder's own `.git`
+  directory with the folder as the checkout's root whatever its config
+  said, while git, where that config sets `core.worktree` to another
+  folder, reads that folder as the working tree: `git rev-parse
+  --show-toplevel` from the folder printed it, so a record written there
+  carried an origin `worktree_root` other than its membership root, and
+  its claims and verify's stamps were anchored in that folder. Following
+  git instead would need a pointer back from the folder `core.worktree`
+  names, which git does not write (a `git init` with `GIT_DIR` and
+  `GIT_WORK_TREE`, or a `git config`), and without one a planted config
+  could root a checkout in any folder of the user's. So both readers now
+  refuse the shape, as a `.git` file naming such a git directory has been
+  refused since 9.0.0rc14: membership passes over the entry and goes on
+  upward, and the origin family runs no git in the folder, whose origin
+  is that of a folder outside any repository. Refused with it, where
+  membership and the origin disagreed too: a `core.worktree` naming
+  nothing (git dies there; the origin was indeterminate), a `core.bare`
+  of true in a folder's own `.git` (git reads no working tree), and a
+  walk started inside a git directory whose config names a working tree
+  other than the parent membership roots it at (a submodule's git
+  directory under `.git/modules/`). A `core.worktree` naming the folder
+  itself, by its path or as `..`, is followed by both as before. The
+  config is read where git reads these names, `config.worktree` too
+  under `extensions.worktreeConfig`, so a `.git` file whose git
+  directory names another tree there is refused as well, and so is a
+  config whose NUL byte hides one of these names (git ends a name there,
+  so `[core "worktree\0"]` sets `core.worktree`); a folder's own config
+  past the 1 MiB bound is judged by what was read within it, as git
+  reads it, no include, rather than refused. A checkout set up this
+  way loses its membership at that folder: remove `core.worktree` (and a
+  `core.bare` of true) from its config if the folder is its working tree,
+  as `bettermemory security audit` there now says. Each prompt at a
+  checkout reads its `.git` directory's config once more (one open,
+  about 35 µs). (`src/bettermemory/gitfile_rule.py`,
+  `src/bettermemory/location_git.py`,
+  `src/bettermemory/location_audit.py`, `docs/internals.md`,
+  `SECURITY.md`, `tests/test_location_gitdir_worktree.py`,
+  `tests/test_membership_capture.py`, `tests/test_commit_drift_cache.py`,
+  `tests/test_origin_cache.py`, `tests/test_origin_refused.py`)
+
 #### Fixed
 
 - **The migration homes a record in a part below a folder whose question

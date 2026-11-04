@@ -82,6 +82,17 @@ def _repo(path: Path) -> Path:
     return Path(_run(path, "rev-parse", "--show-toplevel")).resolve()
 
 
+def _unsettled(repo: Path, elsewhere: Path) -> None:
+    """A ``config.worktree`` in `repo`'s git directory naming `elsewhere`:
+    git, with no ``extensions.worktreeConfig``, does not read it, and
+    membership follows the checkout as git does, but the files reader
+    reads it either way and cannot settle the root from the files."""
+    elsewhere.mkdir()
+    (repo / ".git" / "config.worktree").write_text(
+        f"[core]\n\tworktree = {elsewhere}\n", encoding="utf-8"
+    )
+
+
 def _assume_another_owner(monkeypatch: pytest.MonkeyPatch, repo: Path) -> None:
     """Have git refuse `repo` as another account's; skip where this git does
     not honour the switch."""
@@ -187,13 +198,15 @@ def test_where_the_files_hold_no_repository_the_exit_is_still_no(
 def test_a_refused_repository_whose_config_moves_the_root_names_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``core.worktree`` makes git name another directory as the root, which
-    the files do not settle: the capture stays indeterminate with no root
-    rather than recording the directory holding ``.git``."""
+    """A configuration the files do not settle the root from (a
+    ``config.worktree`` naming another directory, which the files read
+    whether or not ``extensions.worktreeConfig`` is set) leaves the capture
+    indeterminate with no root rather than recording the directory holding
+    ``.git``. A ``core.worktree`` git reads moves the root off that
+    directory, which membership refuses, so no git runs there at all
+    (ENG-211, tests/test_location_gitdir_worktree.py)."""
     root = _repo(tmp_path / "shared")
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    _run(root, "config", "core.worktree", str(elsewhere))
+    _unsettled(root, tmp_path / "elsewhere")
     _refuse_every_probe(monkeypatch, root)
     got = origin.capture(root)
     assert got.worktree_root is None
@@ -263,15 +276,14 @@ async def test_a_claim_write_in_a_refused_repository_is_checked_against_its_root
 async def test_a_claim_write_where_the_refused_root_is_unknown_names_the_refusal(
     tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """G1: where the refused repository's configuration moves its working
-    tree, no root is known and the claims cannot be checked. The refusal
+    """G1: where the files cannot settle the refused repository's working
+    tree from its configuration (`_unsettled`), no root is known and the
+    claims cannot be checked. The refusal
     says git refused the repository the caller stands in, quoting git, and
     what trusting it through ``safe.directory`` means, never "not inside a
     git worktree"."""
     root = _repo(tmp_path / "shared")
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    _run(root, "config", "core.worktree", str(elsewhere))
+    _unsettled(root, tmp_path / "elsewhere")
     server, _ = _writing_from(root, memory_dir, monkeypatch)
     with pytest.raises(Exception) as refused:
         await call_tool(server, "memory_write", _claiming("src/a.py"))
