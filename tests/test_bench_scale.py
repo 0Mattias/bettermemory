@@ -91,3 +91,33 @@ def test_a_replayed_store_verifies_and_its_stamps_rise(scratch: Path) -> None:
         ]
     assert report["status"] == "ok", report["problems"][:3]
     assert stamps == sorted(stamps)
+
+
+def test_an_event_loop_runs_where_the_socketpair_is_tcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows has no AF_UNIX pair: `socket.socketpair` pairs two TCP
+    sockets on 127.0.0.1, and every asyncio event loop makes such a pair
+    for its self-pipe. The guard lets that connect through, made inside
+    `socketpair` to loopback, and still refuses and lists any other: the
+    Windows leg's loop, simulated with CPython's own fallback."""
+    import asyncio
+    import socket
+
+    fallback = getattr(socket, "_fallback_socketpair", None)
+    if fallback is None:
+        pytest.skip("this Python has no TCP socketpair fallback to simulate with")
+    monkeypatch.setattr(socket, "socketpair", fallback)
+    world = _load("world")
+    with world.no_network() as attempts:
+        asyncio.run(asyncio.sleep(0))
+        assert attempts == []
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            with pytest.raises(world._Refused):
+                probe.connect(("127.0.0.1", 9))
+            assert probe.connect_ex(("127.0.0.1", 9)) == 111
+        finally:
+            probe.close()
+    assert len(attempts) == 2
+    assert socket.socketpair is fallback

@@ -26,6 +26,7 @@ import socket
 import statistics
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -143,34 +144,62 @@ class _Refused(OSError):
     pass
 
 
+#: The loopback hosts `socket.socketpair` connects to where the platform
+#: has no AF_UNIX pair (Windows): the only TCP connect `no_network` lets
+#: through, and only from inside that call.
+_PAIR_HOSTS = frozenset({"127.0.0.1", "::1"})
+
+
 @contextlib.contextmanager
 def no_network() -> Iterator[list[str]]:
     """Every TCP connect made in this process inside the block fails, and
     each one is listed in the yielded list: the in-process arms make
-    none, so a non-empty list means an arm reached for a daemon."""
+    none, so a non-empty list means an arm reached for a daemon.
+
+    One connect is let through: `socket.socketpair`'s own, to a loopback
+    listener it opened in the same call. Windows has no AF_UNIX pair, so
+    the fallback pairs two TCP sockets on 127.0.0.1, and every asyncio
+    event loop makes such a pair for its self-pipe; the bench's arms run
+    on one. Only a connect made from inside `socketpair`, on this thread,
+    to a loopback host, passes."""
     attempts: list[str] = []
     real = socket.socket.connect
     real_ex = socket.socket.connect_ex
+    real_pair = socket.socketpair
+    pairing = threading.local()
+
+    def paired(address: Any) -> bool:
+        host = address[0] if isinstance(address, tuple) and address else None
+        return bool(getattr(pairing, "depth", 0)) and host in _PAIR_HOSTS
 
     def refused(self: socket.socket, address: Any) -> Any:
-        if self.family in (socket.AF_INET, socket.AF_INET6):
+        if self.family in (socket.AF_INET, socket.AF_INET6) and not paired(address):
             attempts.append(repr(address))
             raise _Refused(f"the scale bench makes no TCP connection ({address!r})")
         return real(self, address)
 
     def refused_ex(self: socket.socket, address: Any) -> Any:
-        if self.family in (socket.AF_INET, socket.AF_INET6):
+        if self.family in (socket.AF_INET, socket.AF_INET6) and not paired(address):
             attempts.append(repr(address))
             return 111
         return real_ex(self, address)
 
-    socket.socket.connect = refused  # type: ignore[method-assign]
-    socket.socket.connect_ex = refused_ex  # type: ignore[method-assign]
+    def socketpair(*args: Any, **kwargs: Any) -> tuple[socket.socket, socket.socket]:
+        pairing.depth = getattr(pairing, "depth", 0) + 1
+        try:
+            return real_pair(*args, **kwargs)
+        finally:
+            pairing.depth -= 1
+
+    socket.socket.connect = refused  # type: ignore[method-assign, assignment]
+    socket.socket.connect_ex = refused_ex  # type: ignore[method-assign, assignment]
+    socket.socketpair = socketpair
     try:
         yield attempts
     finally:
         socket.socket.connect = real  # type: ignore[method-assign]
         socket.socket.connect_ex = real_ex  # type: ignore[method-assign]
+        socket.socketpair = real_pair
 
 
 # ---------------------------------------------------------------------------
