@@ -57,7 +57,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import checkout_token, location, location_git
+from bettermemory import checkout_token, location, location_git, membership_shared
 from bettermemory.declare import declaring_model
 from bettermemory.location import capture, remint_answer
 from bettermemory.membership import ASK, SILENT, Declaration, Membership
@@ -1034,6 +1034,60 @@ def test_the_log_rows_naming_a_checkout_are_read_alone(lab: Lab) -> None:
         ("resolution_joined", "K901"),
         ("project_absorbed", "K901"),
     ]
+
+
+def _steps(lab: Lab, checkout: str) -> tuple[bool, int]:
+    """What the heal reads of `checkout`'s history
+    (`_joined_silently_by_token`), and the SQLite instructions it ran."""
+    model = lab.model()
+    conn = lab.store._conn
+    ran = [0]
+
+    def tick() -> int:
+        ran[0] += 1
+        return 0
+
+    conn.set_progress_handler(tick, 1)
+    try:
+        joined = membership_shared._joined_silently_by_token(model, checkout)
+    finally:
+        conn.set_progress_handler(None, 1)
+    return joined, ran[0]
+
+
+def test_the_heal_reads_no_mutation_row_nor_a_sightings(
+    tmp_path: Path, lab: Lab
+) -> None:
+    """The heal's reading of a second checkout's history visits the rows
+    of the kinds that register a checkout or record a declaration about
+    it, through the log's kind index: 4,000 rows more of the kinds it does
+    not read, each naming the checkout as its ``checkout`` (a view's
+    deletion, a mutation row; a session resolved there), add no
+    instruction to the read. Before, it visited every membership row of
+    the log to filter them, 0.5 s a sighting at 373,000 rows."""
+    line = make_repo(tmp_path / "line", commits=1)
+    kid = lab.write("h1", line).checkout
+    assert kid is not None
+    before = _steps(lab, kid)
+    conn = lab.store._conn
+    seq = conn.execute("SELECT max(seq) FROM log").fetchone()[0]
+    rows = []
+    for i in range(4_000):
+        kind = "checkout_view_delete" if i % 2 else "resolution_session"
+        body = json.dumps({"checkout": kid, "machine": "M1", "path": f"/w/{i}"})
+        rows.append(
+            (seq + 1 + i, "2026-11-04T00:00:00Z", None, kind, body, "x", f"m{i}")
+        )
+    conn.executemany(
+        "INSERT INTO log (seq, ts, session, kind, payload, prev_mac, mac) "
+        "VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+
+    after = _steps(lab, kid)
+
+    assert after[0] == before[0]
+    assert after[1] - before[1] < 100, (before, after)
 
 
 # ---------------------------------------------------------------------------

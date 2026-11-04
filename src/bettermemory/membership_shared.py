@@ -72,6 +72,22 @@ _SECOND_NS = 1_000_000_000
 #: (the empty string).
 HEAL = "heal"
 ASK_WHICH = "ask"
+#: The log rows `_joined_silently_by_token` reads of a checkout, each kind
+#: through the log's kind index: its registration, and the rows a
+#: declaration writes naming it as their ``checkout`` (a join or a
+#: separation that answered no question, a question's answer, an absorb,
+#: a part's project file bound in it). The membership tables' mutation
+#: rows record no declaration, and the rows of its sightings
+#: (``resolution_session``, a view added) are as many as its sessions, so
+#: neither is read.
+_NAMING = (
+    "checkout_registered",
+    "proposal_answered",
+    "project_absorbed",
+    "project_file_bound",
+    "resolution_joined",
+    "resolution_new",
+)
 
 
 def _shared_remint(
@@ -310,11 +326,12 @@ def _chosen(self: Membership, kept: Checkout, later: Checkout, loc: Location) ->
 def _joined_silently_by_token(self: Membership, checkout: str) -> bool:
     """Whether the membership log registers `checkout` by a first-sight
     join with the token among its witnesses, and holds no row naming it
-    that a declaration wrote (`_by_declaration`). The rows naming it are
-    filtered in SQL (`Store.membership_log`), so the read is as long as
-    they are."""
+    that a declaration wrote (`_by_declaration`). Only the kinds that can
+    be one are read (`_NAMING`), and of those the rows naming it are
+    filtered in SQL (`Store.membership_log`), so the read visits the rows
+    of those kinds and parses only its own."""
     registered = False
-    for row in self._store.membership_log(checkout=checkout):
+    for row in self._store.membership_log(_NAMING, checkout=checkout):
         try:
             payload = json.loads(row.payload)
         except ValueError:

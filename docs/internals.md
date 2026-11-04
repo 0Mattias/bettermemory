@@ -1223,13 +1223,18 @@ and in its transaction, so such a sighting makes two reads, and a
 steady one none. Where a second record holds the token, the heal reads
 the index once more and, where the project matches, the root file's
 binding, the second record's questions, the log rows naming it and,
-where no one chose it, its homes. The log rows are filtered on the
-checkout in SQL (`Store.membership_log`, ``json_extract``), so only
-the matching ones are parsed; SQLite still visits every membership row
-to filter them. That is once for a store's duplicate, and at each
-sighting of one a declaration kept where it is. Measured (macOS): 0.05
-to 0.12 ms a read on a small store, 10.3 ms with 30,000 registrations
-added.
+where no one chose it, its homes. The log is read only for the kinds
+that register a checkout or record a declaration naming one
+(`membership_shared._NAMING`, through the log's kind index), never its
+membership mutation rows or a session's resolution, and those rows are
+filtered on the checkout in SQL (`Store.membership_log`,
+``json_extract``), so only the matching ones are parsed. That is once
+for a store's duplicate, and at each sighting of one a declaration kept
+where it is. Measured (macOS, the best of 7): 0.014 ms on a small store,
+11.4 ms with 30,000 registrations added, and 0.016 ms with 373,000
+membership mutation rows or 0.015 ms with 100,000 sessions resolved at
+the checkout added, which a read of every membership kind took 202 ms
+and 240 ms to filter.
 
 Where the rule cannot read. A git directory with none of the stamped
 files (a template folder lacking them) is as before. A stamped file's
