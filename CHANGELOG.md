@@ -210,9 +210,15 @@ eighteenth was built.
   it holds the trees of the commits it checked out and none of their
   parents', so a split by local trees would recover nearly no commit. A
   window that took the split is not memoised, as no value computed after a
-  failed git call is. Measured on a 1,000-commit window of one file, with
-  half its blobs local: the split 101 ms, a stream per commit 15.3 s; a
-  full clone's one-call stream, which still runs alone, 47 ms.
+  failed git call is, so a blob fetched since is read at the next search;
+  the split's listing and check are kept per process while the object
+  store's pack directory, alternates, config, shallow file, grafts and
+  replace refs hold still, so a search after the first pays the failed
+  stream and the stream over the local commits alone (one `git log` in a
+  fresh blobless clone, about what 9.0.0rc18 paid there). Measured on a
+  1,000-commit window of one file, with half its blobs local: the split
+  101 ms, a stream per commit 15.3 s; a full clone's one-call stream,
+  which still runs alone, 47 ms.
   (`src/bettermemory/origin_patch.py`, `src/bettermemory/verify.py`,
   `src/bettermemory/origin.py`, `src/bettermemory/_response.py`,
   `docs/api.md`, `docs/internals.md`, `tests/test_origin_patch.py`,

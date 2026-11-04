@@ -291,8 +291,9 @@ class _DriftPass:
     reads a blob the clone lacks, since no git the package runs fetches:
     its local commits are narrowed after the stream fails,
     `origin_patch.local_patch_window`) therefore resolves again on every
-    search and forks what a cold search forks for it, the split's two
-    calls included. The other way round, a memoised
+    search and forks what a cold search forks for it, less the split's
+    listing and check, which `origin_patch` keeps while the object store
+    holds still. The other way round, a memoised
     hit serves the value computed when git answered, so a failure that
     strikes a later search (an object made unreadable after the value
     was kept) is not observed on that hit, where the uncached code

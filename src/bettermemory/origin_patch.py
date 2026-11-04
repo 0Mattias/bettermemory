@@ -58,18 +58,58 @@ no commit, at a tree walk per path component.
 
 from __future__ import annotations
 
+import os
+import threading
+from collections import OrderedDict
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
-from . import origin
+from . import _caches, githead, origin
 from .claims import COMMIT_MARK
 from .origin_gitfiles import _unquote_c_path
 
 #: The mode of a gitlink: its object is a commit of the submodule, never a
 #: blob of this repository, and the patch prints it without reading it.
 _GITLINK = "160000"
+
+# The split's listing and check, memoised per process: the window's
+# changes and the blobs among them the clone held, keyed on the common
+# directory, the commits, the pathspecs and the stamps (`githead.stamp`) of
+# what decides them: the pack directory, which every fetch of the missing
+# objects writes a pack into, the alternates file, the config, and the
+# shallow, grafts, packed-refs and replace refs that change which parent a
+# commit is diffed against. The first stream still runs and fails on every
+# search (and keeps the drift memo from keeping the value, so a blob
+# fetched since is read at once where its pack is new); a search after the
+# first pays it and the stream over the local commits alone, where it paid
+# the listing and the check too. What the key does not see is sound to
+# miss: a blob that arrives loose reads as missing and its commit is
+# counted, and one that went reads as held and fails the local stream,
+# which declines the split. Off POSIX and wherever `githead` declines,
+# nothing is kept. Bounded LRU, emptied before each test (`_caches`).
+_MEMO_CAP = 256
+_MemoKey: TypeAlias = tuple[str, tuple[object, ...], tuple[str, ...], tuple[str, ...]]
+_MEMO: OrderedDict[_MemoKey, tuple[dict[str, list[Change]], frozenset[str]]] = (
+    OrderedDict()
+)
+_MEMO_LOCK = threading.Lock()
+_STAMPED = (
+    ("objects", "pack"),
+    ("objects", "info", "alternates"),
+    ("config",),
+    ("shallow",),
+    ("info", "grafts"),
+    ("packed-refs",),
+    ("refs", "replace"),
+)
+
+
+@_caches.register
+def _clear_memo() -> None:
+    with _MEMO_LOCK:
+        _MEMO.clear()
 
 
 @dataclass(frozen=True)
@@ -124,15 +164,10 @@ def local_patch_window(
         toplevel = origin.repo_toplevel(cwd)
         if toplevel is None:
             return None
-    changes = _changes(toplevel, shas, pathspecs)
-    if changes is None:
+    listed = _listed(toplevel, shas, pathspecs)
+    if listed is None:
         return None
-    blobs = {
-        blob for found in changes.values() for change in found for blob in change.blobs
-    }
-    held = _held(toplevel, blobs) if blobs else set()
-    if held is None:
-        return None
+    changes, held = listed
     counted = {
         sha
         for sha, found in changes.items()
@@ -155,6 +190,59 @@ def local_patch_window(
         deleted=frozenset(
             change.path for change in mine if change.status in ("D", "T")
         ),
+    )
+
+
+def _listed(
+    toplevel: Path, shas: Sequence[str], pathspecs: list[str]
+) -> tuple[dict[str, list[Change]], frozenset[str]] | None:
+    """The window's changes (`_changes`) and the blobs among them the clone
+    holds (`_held`), from the memo where its key holds; None where git did
+    not answer, which is not kept."""
+    key = _memo_key(toplevel, shas, pathspecs)
+    if key is not None:
+        with _MEMO_LOCK:
+            kept = _MEMO.get(key)
+            if kept is not None:
+                _MEMO.move_to_end(key)
+                return kept
+    changes = _changes(toplevel, shas, pathspecs)
+    if changes is None:
+        return None
+    blobs = {
+        blob for found in changes.values() for change in found for blob in change.blobs
+    }
+    held = _held(toplevel, blobs) if blobs else set()
+    if held is None:
+        return None
+    listed = (changes, frozenset(held))
+    if key is not None:
+        with _MEMO_LOCK:
+            _MEMO[key] = listed
+            while len(_MEMO) > _MEMO_CAP:
+                _MEMO.popitem(last=False)
+    return listed
+
+
+def _memo_key(
+    toplevel: Path, shas: Sequence[str], pathspecs: list[str]
+) -> _MemoKey | None:
+    """The memo's key for a window (see `_MEMO`), or None where the
+    repository's files do not settle its common directory."""
+    found = githead.gitdir_at(toplevel)
+    if found is None:
+        return None
+    try:
+        stamps = tuple(
+            githead.stamp(os.path.join(found.commondir, *parts)) for parts in _STAMPED
+        )
+    except (OSError, ValueError):
+        return None
+    return (
+        os.fspath(found.commondir),
+        stamps,
+        tuple(sha.lower() for sha in shas),
+        tuple(pathspecs),
     )
 
 

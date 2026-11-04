@@ -21,10 +21,11 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from bettermemory import _git, origin, origin_patch
+from bettermemory import _git, githead, origin, origin_patch
 from bettermemory import verify as verify_mod
 from bettermemory.claims import COMMIT_MARK, load_claims, parse_claim
 from bettermemory.origin_patch import PatchWindow, local_patch_window
@@ -441,6 +442,39 @@ def test_a_claim_only_the_trees_fire_keeps_the_whole_window(
     resolved = partial.resolve([_X, _Y, _Z], basis)
     assert resolved.count == expected
     assert _X in resolved.claims_drifted
+
+
+@needs_lazy_fetch_pin
+def test_the_split_keeps_its_listing_and_check_until_a_pack_arrives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The split's listing and check are kept for the window: a second
+    split runs no git where nothing was streamed. A fetch of the missing
+    blobs writes a pack, which the key sees, so the next split lists and
+    checks again and streams the commits now local."""
+    partial = Partial(tmp_path, _SYMBOL)
+    repo = partial.clone()
+    if githead.gitdir_at(repo) is None:
+        pytest.skip("the repository's files do not settle it on this platform")
+    specs = [":(literal)src/mod.py"]
+    calls: list[str] = []
+    real = origin._git
+
+    def spy(cwd: Path, *args: str, **kwargs: Any) -> str | None:
+        calls.append(_git.subcommand(args))
+        return real(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin, "_git", spy)
+    first = local_patch_window(repo, partial.commits, specs, toplevel=repo)
+    assert first is not None and len(first.counted) == 4
+    assert calls == ["log", "cat-file"]
+    calls.clear()
+    assert local_patch_window(repo, partial.commits, specs, toplevel=repo) == first
+    assert calls == []
+    partial.fetch(0, 1, 2)
+    again = local_patch_window(repo, partial.commits, specs, toplevel=repo)
+    assert again is not None and len(again.counted) == 2
+    assert calls == ["log", "cat-file", "log"]
 
 
 def test_a_window_whose_blobs_are_all_local_is_not_split(tmp_path: Path) -> None:
