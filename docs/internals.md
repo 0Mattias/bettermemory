@@ -1582,7 +1582,9 @@ in `verify_anchoring.py`, with its body-candidate pass in
 `path_drift_steps.py`, over the candidates `verify_candidates.py`
 extracts; the commit-drift count's bases in `verify_basis.py`; a claim
 window's patch over the commits whose blobs a partial clone holds, the
-rest counted per file, in `origin_patch.py`), with
+rest counted per file, in `origin_patch.py`; every git `origin.py` runs
+reads the history as its objects hold it, past the repository's replace
+refs and grafts file, and the patch reads past its commit-graph too), with
 `symbols.py` for advisory symbol citations, and
 the store's `trust_rows` supplies the provenance label and this host's
 stamp. The warm daemon's caches sit on this path and keep every answer

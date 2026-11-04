@@ -128,8 +128,8 @@ SIMILAR_HITS_SHOWN = 5
 # (`origin.failed_git_calls`), and a search during which the head, a keyed
 # file or the index moved, even to move back, stores nothing
 # (`_files_held`, `githead.signature`). What the key does not see
-# (git's configuration outside the repository's config file, a history
-# rewritten under an unchanged head, a change within one tick of the
+# (git's configuration outside the repository's config file, a shallow
+# clone deepened under an unchanged head, a change within one tick of the
 # filesystem's clock that reuses an inode number, and the rest) is listed
 # on `_DriftPass`. The values are frozen,
 # so a hit can share one without a later hit's edit reaching it. Bounded
@@ -327,9 +327,9 @@ class _DriftPass:
     global and system files, a file an include names, the environment, and
     what they set: a ``core.attributesFile`` naming a file other than
     the default, ``log.follow``, ``log.showRoot``, a diff driver, the
-    program a textconv runs); the system attributes file; a history
-    rewritten under an unchanged head (a deepened shallow clone, a
-    replace ref, a graft); and a change that leaves every stamped field
+    program a textconv runs); the system attributes file; a shallow clone
+    deepened under an unchanged head (replace refs and grafts move no
+    answer: `origin._AS_STORED`); and a change that leaves every stamped field
     and every held directory as it was: a file rewritten, or a head
     moved and moved back, within one tick of the filesystem's clock
     with the inode number reused; a ``config`` created and removed

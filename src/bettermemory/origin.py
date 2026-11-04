@@ -753,7 +753,22 @@ def _git_result(
             stdout="",
             stderr=f"fatal: not a git repository: {why}\n",
         )
-    return _git_runner.run_git(args, cwd=cwd, timeout=timeout, stdin=stdin)
+    return _git_runner.run_git(
+        args, cwd=cwd, timeout=timeout, stdin=stdin, env=_AS_STORED
+    )
+
+
+#: Set on every call: the history as its objects hold it, as the hardened
+#: history reads it (`location_git`). Replace refs and a grafts file are the
+#: repository's own, untrusted, and rewrite which commits a head reaches
+#: and what each changed, under a head and stamps that stay (a replace ref
+#: under a reftable ref store, ENG-220's review).
+_AS_STORED = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.devnull}
+#: On top, for the patch stream and its split (`origin_patch`): a git
+#: before 2.42 lets the repository's ``core.useReplaceRefs`` turn replace
+#: refs back on, and a commit-graph file can name other parents than the
+#: objects; neither call walks, so the graph saves them nothing.
+AS_STORED_PINS = ("-c", "core.useReplaceRefs=false", "-c", "core.commitGraph=false")
 
 
 def follow_unsettled(found: Origin) -> bool:
@@ -1189,7 +1204,7 @@ class ReachableWalk:
 # POSIX, under GIT_DIR; GIT_INDEX_FILE is set; the index is split), no
 # walk is kept. What the stamps do not see
 # (git's configuration outside the repository's own config files, a
-# history rewritten under an unchanged head, and the
+# shallow clone deepened under an unchanged head, and the
 # two changes undone mid-walk `walk_files_signature` names) reads the
 # memoised walk until the head moves; while files are created and removed
 # in the root steadily, no walk is kept (`_hold_directory`). Bounded so a
@@ -1533,10 +1548,10 @@ def commit_author_timestamps(
     history longer than the memo's budget (`origin_history.remember`) is
     returned, and remembered as a failed read is, so the calls of the next
     minute answer None without reading it again. A hit returns the stored
-    list itself: every caller only bisects it. The key does not see a
-    history rewritten under an unchanged head (a ``git replace`` ref or a
-    graft written while the head stays), which reads the earlier walk
-    until the head moves.
+    list itself: every caller only bisects it. Replace refs and grafts
+    move nothing (`_AS_STORED`); the key does not see a shallow clone
+    deepened while the head stays, which reads the earlier walk until the
+    head moves.
     """
     if cwd is None:
         return None
@@ -1904,6 +1919,7 @@ def commit_patch_stream(
         "core.quotePath=false",
         "-c",
         "diff.interHunkContext=0",
+        *AS_STORED_PINS,
         "log",
         "--no-walk=unsorted",
         "-p",
@@ -1924,6 +1940,7 @@ def commit_patch_stream(
 
 
 __all__ = [
+    "AS_STORED_PINS",
     "MAX_PATCH_STREAM_COMMITS",
     "Origin",
     "attribute_files_signature",

@@ -79,8 +79,12 @@ _GITLINK = "160000"
 # directory, the commits, the pathspecs and the stamps (`githead.stamp`) of
 # what decides them: the pack directory, which every fetch of the missing
 # objects writes a pack into, the alternates file, the config, and the
-# shallow, grafts, packed-refs and replace refs that change which parent a
-# commit is diffed against. The first stream still runs and fails on every
+# shallow file, which changes which parent a commit is diffed against.
+# Replace refs, a grafts file and the commit-graph decide nothing here:
+# both calls read the objects as stored (`origin._AS_STORED`,
+# `origin.AS_STORED_PINS`), as the stream does, so a replace ref written
+# under a ref store no stamp sees (reftable) moves no answer (ENG-220's
+# review). The first stream still runs and fails on every
 # search (and keeps the drift memo from keeping the value, so a blob
 # fetched since is read at once where its pack is new); a search after the
 # first pays it and the stream over the local commits alone, where it paid
@@ -100,9 +104,6 @@ _STAMPED = (
     ("objects", "info", "alternates"),
     ("config",),
     ("shallow",),
-    ("info", "grafts"),
-    ("packed-refs",),
-    ("refs", "replace"),
 )
 
 
@@ -264,6 +265,7 @@ def _changes(
         "core.quotePath=false",
         "-c",
         "log.follow=false",
+        *origin.AS_STORED_PINS,
         "log",
         "--no-walk=unsorted",
         "--raw",
@@ -316,6 +318,7 @@ def _held(toplevel: Path, blobs: Collection[str]) -> set[str] | None:
     None where git did not answer."""
     raw = origin._git(
         toplevel,
+        *origin.AS_STORED_PINS,
         "cat-file",
         "--batch-check",
         timeout=5.0,

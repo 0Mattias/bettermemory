@@ -1127,9 +1127,12 @@ def test_a_head_that_does_not_descend_reads_its_whole_history(
 def test_a_head_after_the_history_files_moved_reads_its_whole_history(
     history: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A shallow file, a graft or a replacement ref changes which commits a
-    head reaches without moving it, so an entry read before such a change
-    is no base for a head read after it (`origin_history.history_guard`)."""
+    """A shallow file changes which commits a head reaches without moving
+    it, so an entry read before such a change is no base for a head read
+    after it (`origin_history.history_guard`). A graft or a replacement ref
+    changes what git's own log reaches but not what `origin` reads, the
+    history as its objects hold it (`origin._AS_STORED`); its stamp still
+    reads the history whole, which reads the seed."""
     repo = _repo(tmp_path)
     seed = _commit(repo, "seed", when=_T0)
     second = _commit(repo, "second", when=_T1)
@@ -1145,8 +1148,11 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
     calls = _history_calls(monkeypatch)
     got = origin.commit_author_timestamps(repo)
     assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, moved)]
-    assert got == [_T1, _T2], "the history git reaches now, without the seed"
     assert seed not in _git(repo, "log", "--format=%H", moved)
+    if history == "shallow":
+        assert got == [_T1, _T2], "the history git reaches now, without the seed"
+    else:
+        assert got == [_T0, _T1, _T2], "the history as stored, with the seed"
 
 
 @pytest.mark.usefixtures("discovery")

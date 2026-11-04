@@ -212,17 +212,31 @@ eighteenth was built.
   window that took the split is not memoised, as no value computed after a
   failed git call is, so a blob fetched since is read at the next search;
   the split's listing and check are kept per process while the object
-  store's pack directory, alternates, config, shallow file, grafts and
-  replace refs hold still, so a search after the first pays the failed
-  stream and the stream over the local commits alone (one `git log` in a
-  fresh blobless clone, about what 9.0.0rc18 paid there). Measured on a
-  1,000-commit window of one file, with half its blobs local: the split
-  101 ms, a stream per commit 15.3 s; a full clone's one-call stream,
-  which still runs alone, 47 ms.
+  store's pack directory, alternates, config and shallow file hold still,
+  so a search after the first pays the failed stream and the stream over
+  the local commits alone (one `git log` in a fresh blobless clone, about
+  what 9.0.0rc18 paid there). Measured on a 1,000-commit window of one
+  file, with half its blobs local: the split 101 ms, a stream per commit
+  15.3 s; a full clone's one-call stream, which still runs alone, 47 ms.
+  Replace refs and the grafts file are ignored for claim drift: every git
+  `origin` runs, the windows, the unfiltered count and the author dates
+  included, reads the history as its objects hold it
+  (`GIT_NO_REPLACE_OBJECTS`, and `GIT_GRAFT_FILE` set to the null device),
+  and the patch stream and its split also set aside the repository's
+  `core.useReplaceRefs` and commit-graph, as the hardened history call
+  does. A repository's replace refs are its own and untrusted, and they
+  rewrote which commits a window held and what each changed under a head
+  that stayed; one written under a reftable ref store moved none of the
+  stamps the split's listing was kept under, so the kept listing read the
+  history without it and a fresh one with it (3, then 5 and the claim
+  named, in the tests' replaced window). Neither does now, so the listing
+  needs no replace-ref stamp, and a replace ref or a graft no longer moves
+  a count.
   (`src/bettermemory/origin_patch.py`, `src/bettermemory/verify.py`,
-  `src/bettermemory/origin.py`, `src/bettermemory/_response.py`,
-  `docs/api.md`, `docs/internals.md`, `tests/test_origin_patch.py`,
-  `tests/test_git_no_fetch.py`)
+  `src/bettermemory/origin.py`, `src/bettermemory/origin_history.py`,
+  `src/bettermemory/_response.py`, `docs/api.md`, `docs/internals.md`,
+  `tests/test_origin_patch.py`, `tests/test_git_no_fetch.py`,
+  `tests/test_commit_drift_cache.py`)
 
 #### Fixed
 

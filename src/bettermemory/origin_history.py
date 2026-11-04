@@ -188,9 +188,10 @@ def located_key(cwd: Path) -> Key | None:
 
 # The variables that change which commits a head reaches in git's eyes: the
 # replacement refs and their namespace, the graft and shallow files. Since
-# ENG-218 `_git` removes GIT_SHALLOW_FILE from every git it runs, so that
-# one no longer moves git's answer; it stays listed, so a change in its
-# value reads the history whole again where an extension would serve.
+# ENG-218 `_git` removes GIT_SHALLOW_FILE from every git it runs, and since
+# ENG-220 `origin` sets the replace and graft ones on every call
+# (`origin._AS_STORED`), so none moves git's answer; they stay listed, so a
+# change in one reads the history whole again where an extension would serve.
 _HISTORY_ENV = (
     "GIT_NO_REPLACE_OBJECTS",
     "GIT_REPLACE_REF_BASE",
@@ -206,9 +207,11 @@ def history_guard(root: Path) -> Guard | None:
     ``refs/replace`` directory, ``packed-refs`` and ``config``
     (``core.useReplaceRefs``) in the common directory, and the variables
     that move them. A head's dates are extended from an earlier head's only
-    where the two guards are equal, so a shallow clone deepened, a graft or
-    a replacement written, or such a setting changed, reads the history
-    whole again. Where `githead.gitdir_at` declines (off POSIX, another
+    where the two guards are equal, so a shallow clone deepened reads the
+    history whole again. Replace refs and grafts move no answer since
+    `origin` reads past them (`origin._AS_STORED`); their stamps stay, and a
+    change in one reads the history whole where an extension would serve.
+    Where `githead.gitdir_at` declines (off POSIX, another
     account's repository) the files are those `githead.locate` reads at
     `root`, which are only stamped here. None, and no extension, where
     neither reads a repository at `root` or a stat fails for any reason

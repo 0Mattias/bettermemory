@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _git, githead, origin, origin_patch
+from bettermemory import _caches, _git, githead, origin, origin_patch
 from bettermemory import verify as verify_mod
 from bettermemory.claims import COMMIT_MARK, load_claims, parse_claim
 from bettermemory.origin_patch import PatchWindow, local_patch_window
@@ -54,6 +54,9 @@ def _git_version() -> tuple[int, ...]:
 #: clone lacks, and the window keeps the per-file count.
 needs_lazy_fetch_pin = pytest.mark.skipif(
     _git_version() < (2, 44), reason="GIT_NO_LAZY_FETCH is read from git 2.44"
+)
+needs_reftable = pytest.mark.skipif(
+    _git_version() < (2, 45), reason="git clones into a reftable from 2.45"
 )
 
 _T0 = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -126,6 +129,16 @@ _TO_GITLINK: History = [
     {_F: _long(1)},
     {_F: _long(2)},
     {_F: ("gitlink", "1" * 40)},
+]
+#: f.py edited in every commit; a replacement of the third (`_replacement`)
+#: deletes it.
+_EDITS: History = [
+    {_F: _long(0), "src/keep.py": "k = 1\n"},
+    {_F: _long(1)},
+    {_F: _long(2)},
+    {_F: _long(3)},
+    {_F: _long(4)},
+    {_F: _long(5)},
 ]
 #: x.py (short lines) is deleted in a local commit, so its path claim fires
 #: implicating nothing; y.py is made binary or empty and deleted in counted
@@ -245,10 +258,12 @@ class Partial:
                 blobs[path] = oid
         return blobs
 
-    def clone(self, *, blobless: bool = True) -> Path:
+    def clone(self, *, blobless: bool = True, reftable: bool = False) -> Path:
         args = ["clone", "-q"]
         if blobless:
             args.append("--filter=blob:none")
+        if reftable:
+            args.append("--ref-format=reftable")
         _plain(self.base, *args, self.source.as_uri(), str(self.repo))
         return self.repo
 
@@ -475,6 +490,107 @@ def test_the_split_keeps_its_listing_and_check_until_a_pack_arrives(
     again = local_patch_window(repo, partial.commits, specs, toplevel=repo)
     assert again is not None and len(again.counted) == 2
     assert calls == ["log", "cat-file", "log"]
+
+
+def _replacement(partial: Partial) -> tuple[str, str]:
+    """The window's third commit, and a commit on a branch of the source
+    that replaces it: its parent's tree without f.py, so under ``git
+    replace`` the third commit deletes f.py, which fires f.py's path claim
+    and implicates every commit carrying its lines. Made before the clone,
+    which fetches it."""
+    source = partial.source
+    third, parent = partial.commits[2], partial.commits[1]
+    _plain(source, "read-tree", parent)
+    _plain(source, "update-index", "--force-remove", "--", _F)
+    tree = _plain(source, "write-tree")
+    _plain(source, "read-tree", "HEAD")
+    when = _VERIFIED + timedelta(hours=3)
+    replacement = _plain(
+        source, "commit-tree", tree, "-p", parent, "-m", "R", when=when
+    )
+    _plain(source, "branch", "replacement", replacement)
+    return third, replacement
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@pytest.mark.parametrize("config", [False, True], ids=["ref", "ref-and-config"])
+def test_a_replace_ref_changes_no_full_clone_count(
+    tmp_path: Path, basis: str, config: bool
+) -> None:
+    """A replace ref is the repository's own, untrusted, and rewrites what
+    a commit changed under a head that stays. Claim drift reads the history
+    as its objects hold it, whatever ``core.useReplaceRefs`` the repository
+    sets (`origin._AS_STORED`, `origin.AS_STORED_PINS`): f.py is edited in
+    every commit and deleted in none, so nothing escalates before the ref
+    or after it, where git's own diff shows the deletion."""
+    partial = Partial(tmp_path, _EDITS)
+    third, replacement = _replacement(partial)
+    repo = partial.clone(blobless=False)
+    before = partial.resolve([_F], basis)
+    assert (before.count, before.claims_drifted) == (0, ())
+    _plain(repo, "replace", third, replacement)
+    if config:
+        _plain(repo, "config", "core.useReplaceRefs", "true")
+    shown = _plain(repo, "diff-tree", "-r", "--name-status", third)
+    assert f"D\t{_F}" in shown.splitlines(), "premise: git's own diff replaces it"
+    _caches.clear_all()
+    after = partial.resolve([_F], basis)
+    assert (after.count, after.claims_drifted) == (0, ())
+
+
+@pytest.mark.parametrize("basis", _BASES)
+@pytest.mark.parametrize("how", ["replace", "grafts"])
+def test_a_rewritten_parent_changes_no_window(
+    tmp_path: Path, basis: str, how: str
+) -> None:
+    """A replacement, or a line of the grafts file, that makes the deletion
+    a child of the first edit drops the second edit from what git's own log
+    reaches. The window is read past both, so it keeps all three commits,
+    each carrying gone.py's lines: 3, as before the rewrite."""
+    partial = Partial(tmp_path, _PATH)
+    repo = partial.clone(blobless=False)
+    deletion, first = partial.commits[2], partial.commits[0]
+    if how == "replace":
+        _plain(repo, "replace", "--graft", deletion, first)
+    else:
+        (repo / ".git" / "info" / "grafts").write_text(f"{deletion} {first}\n")
+    reached = _plain(repo, "log", "--format=%H").split()
+    assert partial.commits[1] not in reached, "premise: git's own log drops it"
+    resolved = partial.resolve([_GONE], basis)
+    assert (resolved.count, resolved.claims_drifted) == (3, (_GONE,))
+
+
+@needs_lazy_fetch_pin
+@pytest.mark.parametrize("basis", _BASES)
+@pytest.mark.parametrize(
+    "reftable",
+    [pytest.param(True, marks=needs_reftable), False],
+    ids=["reftable", "files"],
+)
+def test_a_replace_ref_after_the_split_is_kept_moves_no_count(
+    tmp_path: Path, basis: str, reftable: bool
+) -> None:
+    """ENG-220's review: in a reftable ref store a replace ref moves no
+    file the split's memo stamped, so the kept listing read the history
+    without it while a fresh one read it with it: 3, then 5 and f.py named
+    once the memo was emptied. Every call now reads the objects as stored,
+    so the count kept, the count after the ref and the count read afresh
+    are one: the three commits that read a blob the clone lacks, never
+    below the full clone's 0."""
+    partial = Partial(tmp_path, _EDITS)
+    third, replacement = _replacement(partial)
+    repo = partial.clone(reftable=reftable)
+    partial.fetch(0, 1, 2)
+    assert not partial.held(partial.blobs[3][_F]), "premise"
+    first = partial.resolve([_F], basis)
+    assert (first.count, first.claims_drifted) == (3, ())
+    if githead.gitdir_at(repo) is not None:
+        assert origin_patch._MEMO, "premise: the split's listing is kept"
+    _plain(repo, "replace", third, replacement)
+    kept = partial.resolve([_F], basis)
+    _caches.clear_all()
+    fresh = partial.resolve([_F], basis)
+    assert [(r.count, r.claims_drifted) for r in (kept, fresh)] == [(3, ())] * 2
 
 
 def test_a_window_whose_blobs_are_all_local_is_not_split(tmp_path: Path) -> None:
