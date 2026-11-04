@@ -1094,36 +1094,116 @@ record did not read it as its own: a host whose filesystem gives none
 (NFS, ext3) registered a second checkout of its git directory after the
 container re-minted it, joined to the project the container's checkout
 was declared into, and a container (no birth time over the share) did
-the same after the host re-minted, its token re-minted once more. Rung 2
-now reads such a token as the checkout's re-mint
-(`membership_resolve._shared_remint`, the rule `object+remint`) where
-three things hold: the checkout's init stamps are read there now, inode
-number included (A2: the object is the recorded git directory, not a
-copy on its freed number, whose files have new ctimes and inodes); a
-checkout of another machine that records the checkout's token, or the
-token found, shares an init stamp with it by name, mtime, ctime and
-size, the inode number left out (it saw the same files, so it is a view
-of the same git directory: no copy keeps a file's ctime); and the token
-found is a re-mint of the checkout's token in that checkout's git
-directory (`succeeds` over its device and inode number). Each machine's
-record keeps its own project, as over a bind mount, whether the store
-recorded the re-mint or missed it. A re-mint in a copy of the git
-directory (an image built with `.git`) never passes for the checkout,
-even with its token synced into the checkout's git directory, and a copy
-landed on the checkout's freed inode number is refused as before. One
-indexed read by token, made only where the token found is neither
-recorded nor the checkout's own re-mint. Where the rule cannot read: a
-git directory without `description` and `info/exclude` (a template
-folder lacking both) has no stamps, so it is as before; a file whose
-ctime moved since either machine first saw it (an extended attribute or
-a mode set on it) gives no common stamp, and neither does a share that
-rounds the times, so the second checkout is registered as before; on a
-filesystem that keeps times to the second or coarser, a copy made within
-the tick of the init and carrying the checkout's token would read as the
-same files. A view's liveness (the daemon's read and the client's
-answer) and B read the checkout's own lineage only, so until the view's
-own machine next sees it at its path, a view whose git directory the
-other machine re-minted reads as replaced there.
+the same after the host re-minted, its token re-minted once more.
+
+`membership_shared` reads such a token from the records of the other
+machines that see the same files. Rung 2 takes a token found at the
+checkout's object, which it neither records nor names its own lineage,
+as the checkout's re-mint (`_shared_remint`, the rule `object+remint`)
+where two things hold. The checkout's init stamps are read there now,
+inode number included (A2: the object is the recorded git directory, not
+another one on its freed number, whose files have other inodes and
+ctimes). And a checkout of another machine recording the checkout's
+token or the one found shares an init stamp with it by name, mtime,
+ctime and size, the inode number left out (`_same_files`: it saw the
+same files), and either records the token found or names the device and
+inode number over which that token is a re-mint of the checkout's
+(`_view_made`). The first covers a chain the checkout did not see step
+by step whose last step the store recorded: the container separated
+twice, or a rebuilt container (a machine of its own) re-minting what the
+first one wrote. Each machine's record keeps its own project, as over a
+bind mount, whether the store recorded the re-mint or missed it. A
+record of the checkout's own machine is never such a view: a re-mint
+there names the checkout's own lineage.
+
+What makes it safe is where the token is. The stamps tell a view from a
+file-level copy, since no call sets a file's ctime: every copy a tool
+makes (`cp -a`, rsync, an image's `COPY`) has ctimes of its own, so a
+re-mint in such a copy is not read as the checkout's, even with its
+token synced into the checkout's git directory, and a copy landed on the
+checkout's freed inode number is refused as before. A filesystem
+snapshot, an overlay's lower layer or a block-level clone of a disk
+keeps the ctimes, so a record of such a copy can pass for a view. The
+rule does not rest on that: it reads only a token found in the
+checkout's own git directory (its stamps read at the object, inode
+number included), and with birth time a checkout takes any token found
+at its object (rung 2's `birth`). Whatever writes a token there can
+already write one the checkout reads as its own re-mint, having read
+the checkout's token and the git directory's numbers. So the rule takes
+no token a checkout with birth time would not: without birth time the
+checkout stays itself, as with it.
+
+The stamps follow the files. A sighting that birth time, the token or a
+re-mint proves takes the init stamps its object reads now where they
+differ (`_restamped`, one checkout row), so a mode, an owner or an
+extended attribute set on a stamped file (a `chmod -R` in a container's
+set-up) does not leave the record's stamps behind; a kept capture posts
+the stamps it read, and the token is in its signature, so a re-mint is
+read afresh. A linked worktree's git directory holds neither
+`description` nor `info/exclude`: its `commondir`, which
+`git worktree add` writes and no git command rewrites, is stamped
+instead (one stat, where the two missing files took two), and a
+worktree's record without stamps takes them at its next proven
+sighting. On Windows a stamp's ctime is NTFS's ChangeTime, read through
+`GetFileInformationByHandleEx` (`location_git.basic_info_ns`), as
+`os.stat`'s ctime there is the creation time. Where either side keeps a
+stamped file's times to the whole second (a share that rounds them), the
+two match within that second (`_same_file`).
+
+B reads such a token as over a bind mount. The host's repository at its
+path as another object (moved to another volume and back, restored),
+carrying a token a view of its files made or recorded, is not a
+re-clone: B finds the checkout at the path, T the project of the
+checkout recording the token, and the sighting is asked
+(`ask:several_projects`), with birth time and without. Before, over a
+VM-backed share the token refuted B and the host joined the container's
+project silently.
+
+A store that met this before 9.0.0rc19 holds a second checkout of the
+host's git directory, registered after the container's re-mint and
+joined silently to the container's project; it records the token found,
+so it comes first in ENG-205's order. Rung 2 takes the first checkout
+over it (`_healed`) where the rule continues the first (a re-mint of its
+own lineage is ENG-205's, left in that order) and the second was
+registered by a silent first-sight join with the token among its
+witnesses, into the project of another machine's checkout recording the
+token, with no question opened about it and no declaration naming it
+(the membership log's `checkout_registered`, `resolution_joined` and
+`resolution_new` rows): with birth time the sighting that registered it
+would have continued the first. The healed sighting records the token
+on the first checkout, which then comes first, so the heal is read
+once; the second checkout stays, idle, with the records written at it
+in its project, where `memory move` can take them. A second checkout a
+declaration or an answer named is kept.
+
+Cost: one read of the checkouts' token index, with no views, at each
+reading of rung 2 where the token found is neither recorded nor the
+checkout's own re-mint. A resolution reads rung 2 for its liveness plan
+and in its transaction, so such a sighting makes two reads, and a
+steady one none. Where a second record holds the token, the heal reads
+the index once more and, where the project matches, that record's
+questions and the log's registration and declaration rows: once for a
+store's duplicate, and at each sighting of one a declaration kept where
+it is.
+
+Where the rule cannot read. A git directory with none of the stamped
+files (a template folder lacking them) is as before. A ctime moved on
+every stamped file after the last sighting either machine proved, and
+before the other machine's re-mint, leaves no common stamp, so the
+second checkout is registered as before; the host's capture is read
+afresh when its signature changes or after the cache's ten minutes, and
+its next proven sighting takes the new stamps. A chain of re-mints
+whose last step the store missed, after steps the checkout never saw,
+ends in a token no record holds: finding the record that held it two
+writes back would need an index of every token a record held. Whether a
+Windows share reports ChangeTime as the ctime a Linux view of it reads
+is not measured. On a share that keeps times to the second, a copy made
+within the second of the stamped files' last change matches them. A
+view's liveness (the daemon's read and the client's answer) still reads
+the checkout's own lineage, so until the view's own machine next sees
+it at its path, a view whose git directory the other machine re-minted
+reads as replaced there; that machine's next sighting reads the re-mint
+at rung 2 as above.
 
 What a re-mint that names its lineage leaves in place, writing nothing
 and reporting it as `exists`, depends on its caller. A hook client

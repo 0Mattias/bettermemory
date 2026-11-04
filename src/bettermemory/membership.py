@@ -58,8 +58,9 @@ it. It keeps the `Membership` class: its state, plumbing, machines,
 projects, evidence, checkouts, history, proposals and `why`, with the
 method groups it binds by name from `membership_resolve` (the ladder),
 `membership_declare` (declarations and the B6 writes),
-`membership_queries` (homes, surfaces, run-state, anchoring and health)
-and `membership_portable` (export and import). Below them,
+`membership_queries` (homes, surfaces, run-state, anchoring and health),
+`membership_portable` (export and import) and `membership_shared` (a git
+directory several machines see, ENG-215). Below them,
 `membership_records` holds the vocabulary, the records, `relation`,
 `admitted` and the path helpers, `membership_lines` the lines and
 `membership_rows` the row conversions.
@@ -81,6 +82,7 @@ from . import (
     membership_portable,
     membership_queries,
     membership_resolve,
+    membership_shared,
 )
 from .location import continuity, path_liveness, path_liveness_many, view_path
 from .membership_lines import (
@@ -217,6 +219,7 @@ from .membership_records import (
     _common_by_pointer,
     _dir_below,
     _dir_key,
+    _found_token,
     _live_key,
     _norm,
     _path_under,
@@ -1114,42 +1117,6 @@ class Membership:
         commits = self.witness_commits(pid)
         return bool(commits) and bool(self._holds(loc, commits))
 
-    def _by_object(self, loc: Location) -> tuple[Checkout | None, str]:
-        """Rung 2, O: the checkout whose git directory (or folder) object
-        this is, on this machine, the first in order that birth time or
-        `_continuity` continues. One the token found continues only as the
-        re-mint of its own (``remint``, ENG-205) yields to a later one that
-        birth time continues or that records the token found, and to no
-        other: two records of one git directory, as a reader before
-        9.0.0rc18 leaves them after a re-mint it missed, resolve to the one
-        that records the token."""
-        key = loc.object_key
-        if key is None:
-            return None, ""
-        reminted: Checkout | None = None
-        for k in self._checkouts(
-            where={
-                "machine": loc.machine,
-                "object_device": key.device,
-                "object_inode": key.inode,
-            }
-        ):
-            if k.object_key is None:
-                continue
-            verdict = k.object_key.compare(key)
-            if verdict == SAME:
-                return k, "birth"
-            if verdict != UNPROVEN or (
-                reminted is not None and k.token != _found_token(k, loc)
-            ):
-                continue
-            ok, how = self._continuity(k, loc)
-            if ok and (how != "remint" or reminted is not None):
-                return k, how
-            if ok:
-                reminted = k
-        return (reminted, "remint") if reminted is not None else (None, "")
-
     def _by_common(self, loc: Location) -> tuple[Checkout | None, str]:
         """Rung 3, S: a checkout of this object store (a linked
         worktree's common directory, or the primary's git directory), and
@@ -1355,7 +1322,8 @@ class Membership:
     _resolve_folder = membership_resolve._resolve_folder
     _declared_folder = membership_resolve._declared_folder
     _liveness_plan = membership_resolve._liveness_plan
-    _shared_remint = membership_resolve._shared_remint
+    _by_object = membership_resolve._by_object
+    _shared_remint = membership_shared._shared_remint
     prefetch_liveness = membership_resolve.prefetch_liveness
     prefetch_declared = membership_resolve.prefetch_declared
 
@@ -1841,13 +1809,6 @@ def _foreign(k: Checkout, token: str | None, status: str) -> bool:
     recording it here would give the checkout another line's token, so
     the sighting that reads it decides (ENG-205)."""
     return status == "exists" and not checkout_token.succeeds(token, k.lineage)
-
-
-def _found_token(k: Checkout, loc: Location) -> str | None:
-    """The token a sighting holds against `k`'s (`Membership._continuity`):
-    the one found or, where none was, the one its capture wrote; for a
-    superseded token only the one found (E15; ENG-193)."""
-    return loc.token if k.token_superseded else loc.token or loc.token_written
 
 
 def _decides(

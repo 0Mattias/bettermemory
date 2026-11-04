@@ -305,9 +305,11 @@ class ObjectKey:
 
 
 class InitStamp(NamedTuple):
-    """A file ``git init`` writes and no git command rewrites
-    (``description``, ``info/exclude``), compared by equality only
-    (amendment A2): no clock enters it."""
+    """A file ``git init`` or ``git worktree add`` writes and no git
+    command rewrites (``description``, ``info/exclude``, a linked
+    worktree's ``commondir``), compared by equality only (amendment A2):
+    no clock enters it. Another machine's record is compared by name,
+    times and size alone (`membership_shared._same_file`, ENG-215)."""
 
     name: str
     inode: int
@@ -1123,6 +1125,13 @@ def _same_number(a: ObjectKey | None, b: ObjectKey | None) -> bool:
     return (
         a is not None and b is not None and (a.device, a.inode) == (b.device, b.inode)
     )
+
+
+def _found_token(k: Checkout, loc: Location) -> str | None:
+    """The token a sighting holds against `k`'s (`Membership._continuity`):
+    the one found or, where none was, the one its capture wrote; for a
+    superseded token only the one found (E15; ENG-193)."""
+    return loc.token if k.token_superseded else loc.token or loc.token_written
 
 
 def _common_by_pointer(kind: str | None, git_dir: str | None) -> str | None:

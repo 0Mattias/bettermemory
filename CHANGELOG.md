@@ -1402,25 +1402,53 @@ eighteenth was built.
   reads such a token as the checkout's re-mint (rule `object+remint`,
   silent, the sighting recording it) where the checkout's init stamps
   read there now, inode number included, so the object is the recorded
-  git directory; a checkout of another machine recording the checkout's
-  token or the one found shares an init stamp with it by name, mtime,
-  ctime and size, the inode number left out, so it saw the same files
-  and is a view of the same git directory, as no copy keeps a ctime; and
-  the token is a re-mint of the checkout's token in that checkout's git
-  directory. Each machine's record keeps its own project, as over a bind
-  mount. A re-mint made in a copy (an image built with `.git`) never
-  passes for the host's checkout, even with its token synced into the
-  host's git directory, and a copy landed on the checkout's freed inode
-  number is refused as before. The rule costs one indexed read by token,
-  made only where the token found is neither recorded nor the checkout's
-  own re-mint. It cannot read a git directory without `description` and
-  `info/exclude`, a file whose ctime moved since either machine first
-  saw it, or a share that rounds the times, where a second checkout is
-  registered as before; a view's liveness and B still read the
-  checkout's own lineage, so a view whose git directory the other
-  machine re-minted reads as replaced until its own machine next sees
-  it. (`src/bettermemory/membership_resolve.py`,
-  `src/bettermemory/membership.py`, `docs/internals.md`,
+  git directory; and a checkout of another machine that shares an init
+  stamp with it by name, mtime, ctime and size, the inode number left
+  out, so it saw the same files, either records the token found or names
+  the numbers over which that token is a re-mint of the checkout's. Each
+  machine's record keeps its own project, as over a bind mount, and a
+  chain of re-mints the host did not see one by one (the container
+  separated twice, or a rebuilt container re-minting the first one's
+  token) reads the same where the store recorded its last step. A
+  re-mint made in a file-level copy (an image built with `.git`) is not
+  the host's, even with its token synced into the host's git directory,
+  as the copy's files have ctimes of their own, and a copy landed on the
+  checkout's freed inode number is refused as before. A snapshot, an
+  overlay's lower layer or a block-level clone keeps the ctimes, but the
+  rule reads only a token found in the checkout's own git directory,
+  which with birth time the checkout takes anyway, so it takes no token
+  a checkout with birth time would not. A record's stamps now follow its
+  files at each sighting birth time, its token or a re-mint proves, so a
+  `chmod -R` or an extended attribute set on them in a container's
+  set-up no longer leaves them behind; a linked worktree's git
+  directory, which holds neither `description` nor `info/exclude`, is
+  stamped by its `commondir`; on Windows a stamp's ctime is NTFS's
+  ChangeTime (`GetFileInformationByHandleEx`), where `os.stat` reports
+  the creation time; and where a share keeps times to the whole second
+  the stamps match within it. B reads such a token as over a bind mount:
+  the host's repository restored at its path, carrying the container's
+  re-mint, is asked about (`ask:several_projects`), where it joined the
+  container's project silently. A second checkout 9.0.0rc18 registered
+  this way, by a silent join on the token into the project of the other
+  machine's checkout recording it, with no question or declaration about
+  it, yields to the first checkout at the host's next sighting, which
+  records the token and so stays first; the records written at the
+  second checkout stay in its project. The rule costs one read of the
+  checkouts' token index, with no views, at each reading of rung 2 where
+  the token found is neither recorded nor the checkout's own re-mint
+  (two for such a sighting, the liveness plan and the transaction, none
+  for a steady one). It cannot read a git directory with none of the
+  stamped files, or every stamped file's ctime moved after either
+  machine's last proven sighting and before the other's re-mint, or a
+  chain whose last step the store missed, where a second checkout is
+  registered as before. A view's liveness still reads the checkout's own
+  lineage, so a view whose git directory the other machine re-minted
+  reads as replaced until its own machine next sees it.
+  (`src/bettermemory/membership_shared.py`,
+  `src/bettermemory/membership_resolve.py`,
+  `src/bettermemory/membership.py`,
+  `src/bettermemory/membership_records.py`,
+  `src/bettermemory/location_git.py`, `docs/internals.md`,
   `tests/test_membership_shared_git_dir.py`)
 
 ### 9.0.0rc18
