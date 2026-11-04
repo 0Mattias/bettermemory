@@ -6,7 +6,9 @@ what the client sent instead: `AnsweredHistory` (the history),
 re-mint the store already recorded) and `AnsweredLiveness` (a view's
 liveness); and the client's reading of a view question (`asked_views`),
 its answer to a re-mint question (`remint_answer`) and whether that
-answer found another session's re-mint (`remint_refused`).
+answer found another session's re-mint (`remint_refused`); and what the
+daemon read itself for one exchange, kept from round to round
+(`ExchangeReads`).
 
 They live apart from `location.py` to keep that module under the
 package's 2,000-line bound (ENG-96). They import nothing from
@@ -20,6 +22,10 @@ hook loads it only with `location`, for the exchange.
 from __future__ import annotations
 
 import dataclasses
+import re
+import secrets
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -218,6 +224,58 @@ class AnsweredToken:
         return dataclasses.replace(
             loc, token=token, token_written=None, token_status="present"
         )
+
+
+#: A nonce `ExchangeReads` names an exchange by: 128 bits, as hex.
+_NONCE = re.compile(r"[0-9a-f]{32}")
+#: The exchanges whose reads wait for the client's next round, oldest
+#: dropped first past `_EXCHANGES_CAP`: as many as the captures kept
+#: (`location_git.CACHE_CAP`, 256, under 1 MB as JSON), each holding a
+#: folder path or a few, far smaller than a capture. A name of its own, so
+#: a test's patch of the captures' bound does not reach it.
+_EXCHANGES_CAP = 256
+_EXCHANGES: OrderedDict[str, dict[str, str | None]] = OrderedDict()
+_EXCHANGES_LOCK = threading.Lock()
+
+
+class ExchangeReads(dict[str, str | None]):
+    """What the daemon read in its own namespace for one witness exchange,
+    kept from one round to the next (ENG-213): the declared folders
+    `membership_resolve.prefetch_declared` read, by folder (None where the
+    read gave no spelling), which a round takes as read, so each is read
+    once an exchange, not once a round. A round whose question asks again
+    names the exchange (``exchange``, a nonce the daemon mints, `carried`),
+    and the client names it back with its answers (`location.answer`); the
+    round that finds it takes the reads out of the daemon's keeping and
+    puts them back only when it asks again. So they never outlive the
+    exchange: a resolution ends it, a new prompt's exchange has a nonce of
+    its own and reads afresh, and one the client left (out of rounds, or
+    its post failed) is crowded out, never named again. A client before
+    9.0.0rc19 names none back, and each of its rounds reads as before."""
+
+    def __init__(self, answers: Mapping[str, Any]) -> None:
+        named = answers.get("exchange")
+        got: dict[str, str | None] | None = None
+        if isinstance(named, str) and _NONCE.fullmatch(named):
+            with _EXCHANGES_LOCK:
+                got = _EXCHANGES.pop(named, None)
+        super().__init__(got or {})
+        self.nonce: str = (
+            named
+            if isinstance(named, str) and got is not None
+            else secrets.token_hex(16)
+        )
+
+    def carried(self) -> dict[str, str]:
+        """Keep the reads for the exchange's next round, and the question's
+        key naming them; nothing where nothing was read."""
+        if not self:
+            return {}
+        with _EXCHANGES_LOCK:
+            _EXCHANGES[self.nonce] = dict(self)
+            while len(_EXCHANGES) > _EXCHANGES_CAP:
+                _EXCHANGES.popitem(last=False)
+        return {"exchange": self.nonce}
 
 
 def remint_answer(cap: Capture, question: Mapping[str, Any]) -> dict[str, Any]:

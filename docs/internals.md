@@ -593,6 +593,18 @@ The first rung that answers decides (`Membership.resolve`):
 5. A contradiction, one witness, or content alone: ASK ONCE.
 6. No witness: NEW, line L2.
 
+A resolution reads the paths its ladder may read before its transaction,
+each read bounded by `PROBE_BUDGET` (ENG-156), and decides on the values:
+the liveness of the views it plans and, side by side with it, the
+folders the declarations that bound its location's project file stored
+in another spelling (`Membership.prefetch_declared`, ENG-213), so a
+share hung under both costs one budget, not one each. In the witness
+exchange (design 8.7) the daemon resolves once a round, and the declared
+folders a round reads in its own namespace are kept for the exchange's
+later rounds by a nonce the round's question names (``exchange``) and
+the client's answers name back (`location_witness.ExchangeReads`): each
+is read once an exchange, and a new prompt's exchange reads afresh.
+
 Every sighting adds its HEAD as a witness, its remotes and its root file.
 A provisional project re-tallies when its evidence signature (HEAD,
 remotes, file, token, shallow) changes and joins by itself when two

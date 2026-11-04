@@ -56,7 +56,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -64,6 +64,7 @@ from bettermemory import (
     location,
     location_git,
     location_reads,
+    location_witness,
     membership,
     membership_declare,
     membership_resolve,
@@ -78,6 +79,7 @@ from bettermemory.membership_migrate import UNREACHABLE, migrate
 from bettermemory.origin import Origin
 from bettermemory.store import Store
 
+from .test_membership_resolution import Container, _as_the_client
 from .test_membership_security import _git, checkout, neutral_git
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
@@ -1083,6 +1085,153 @@ def test_the_migration_reads_declared_folders_beside_its_views(
         "views before the declared gave up": True,
     }
     assert report.homed == 1
+
+
+def test_a_resolution_reads_its_declared_folders_beside_its_views(
+    tmp_path: Path,
+    lab: tuple[Store, Config],
+    monkeypatch: pytest.MonkeyPatch,
+    hang: Hang,
+) -> None:
+    """ENG-213: a resolution reads its location's declared folders side by
+    side with its views' liveness, as the migration does (ENG-204), not
+    one batch after the other. The part's first sight plans the view of
+    the enclosing folder project (a commit-less caller reads every
+    checkout of a project with no witness); with that view and the part's
+    stored folder both hung, each read starts before the other batch has
+    given up on its own, so a share hung under both costs the prompt one
+    `PROBE_BUDGET`, not two."""
+    store, config = lab
+    here, stored, _part = _folder_with_a_part(tmp_path, store, config)
+    model = Membership(store, location.process_machine().id)
+    loc = location.capture_location(
+        str(here), machine=model.machine, session=None, config=config
+    )
+    with model.liveness_held():
+        planned = [v.path for _k, v in model._liveness_plan(loc)]
+    assert planned, "the part's first sight plans no view"
+    declared_done = threading.Event()
+    views_done = threading.Event()
+    release = threading.Event()
+    started: dict[str, bool] = {}
+    reads = location_git.bounded_reads
+    views = Membership.prefetch_liveness
+    spied = location.view_path
+
+    def read_declared(*args: Any, **kwargs: Any) -> list[Any]:
+        try:
+            return reads(*args, **kwargs)
+        finally:
+            declared_done.set()
+
+    def read_views(self: Membership, pairs: Any) -> None:
+        try:
+            views(self, pairs)
+        finally:
+            views_done.set()
+
+    def blocking(path: str) -> str:
+        if path == stored:
+            started["declared before the views gave up"] = not views_done.is_set()
+            release.wait(60)
+        return spied(path)
+
+    def watch_views() -> None:
+        if hang.entered.wait(20):
+            started["views before the declared gave up"] = not declared_done.is_set()
+
+    monkeypatch.setattr(membership_resolve, "bounded_reads", read_declared)
+    monkeypatch.setattr(Membership, "prefetch_liveness", read_views)
+    monkeypatch.setattr(membership_resolve, "view_path", blocking)
+    # The view's path as recorded, through the link: the capture of the
+    # part's folder stats the enclosing folder by its real path.
+    hang.paths.update(planned)
+    watcher = threading.Thread(target=watch_views, daemon=True)
+    watcher.start()
+    try:
+        res = resolve_caller(store, config, str(here)).resolution
+    finally:
+        release.set()
+        hang.release.set()
+    watcher.join(10)
+
+    assert started == {
+        "declared before the views gave up": True,
+        "views before the declared gave up": True,
+    }
+    assert res.rule != "declared_folder"
+
+
+@dataclass
+class _Below(Container):
+    """A container client standing below the folder `base`, which the
+    container mounts at `at`: the paths it posts are spelled from there."""
+
+    base: Path = Path()
+    at: str = ""
+
+    def _inside(self, path: str) -> str:
+        for base in {str(self.base), os.path.realpath(self.base)}:
+            if path == base or path.startswith(base + os.sep):
+                return self.at + path[len(base) :]
+        return path
+
+
+def test_an_exchange_reads_each_declared_folder_once(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-213: the witness exchange resolves once a round, and each round's
+    resolution read the declared folders it compares in the daemon's
+    namespace (`prefetch_declared`), a hung one at a budget a round. A
+    container client that saw the enclosing folder project stands in the
+    part's folder, which the daemon cannot read, and answers three
+    questions over four posts: its location, its view of the enclosing
+    project (planned for a commit-less caller), and a history question the
+    ladder asks in its transaction (played here: a folder's ladder asks
+    none). The part's stored folder is read once in the exchange, where
+    9.0.0rc18 read it in each round after the views' and reading it beside
+    them with nothing kept read it in every round: the round that reads it
+    names the exchange (``exchange``), the client names it back with its
+    answers (`location.answer`), and the later rounds take the read as made
+    (`location_witness.ExchangeReads`). The reads never outlive the
+    exchange: the next prompt's exchange reads the folder afresh, once,
+    and nothing waits for a round once the resolution is made."""
+    store, config = lab
+    here, stored, _part = _folder_with_a_part(tmp_path, store, config)
+    machine = open_machine(
+        tmp_path / "box-state", hardware=lambda: "HW-box", hostname=lambda: "box"
+    )
+    daemon = cast(Any, SimpleNamespace(store=store, config=config))
+    outer = Container(here.parent, "/work/Writing", machine)
+    seen_there, _asked = _as_the_client(outer, daemon, "s-box")
+    assert isinstance(seen_there, membership.Resolution)
+    assert seen_there.checkout is not None
+    box = _Below(here, "/work/Writing/novel", machine, base=here.parent, at=outer.mount)
+    seen = _declared_reads(store, monkeypatch)
+    exchanges: dict[str, Any] = getattr(location_witness, "_EXCHANGES", {})
+    waiting = dict(exchanges)
+    real = Membership._resolve
+    witness = "c0" * 20
+
+    def asking(self: Membership, loc: membership.Location, strict: bool) -> Any:
+        assert loc.history is not None
+        loc.history.holds([witness])
+        return real(self, loc, strict)
+
+    monkeypatch.setattr(Membership, "_resolve", asking)
+
+    for prompt in ("first", "next"):
+        seen.clear()
+        res, asked = _as_the_client(box, daemon, "s-box")
+
+        assert isinstance(res, membership.Resolution), (prompt, res)
+        assert [p for p, _held in seen] == [stored], prompt
+        assert [sorted(q) for q in asked] == [
+            ["exchange", "views", "write_token"],
+            ["exchange", "held", "write_token"],
+        ], prompt
+        assert asked[0]["exchange"] == asked[1]["exchange"], prompt
+        assert exchanges == waiting, prompt
 
 
 def _a_part_located(

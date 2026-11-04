@@ -82,6 +82,33 @@ eighteenth was built.
   (`src/bettermemory/membership_migrate.py`,
   `tests/test_membership_migrate_parts.py`, `docs/internals.md`)
 
+- **A resolution reads its declared folders beside its views, and the
+  witness exchange reads each once (ENG-213).** Before its transaction a
+  resolution reads, each read bounded by `PROBE_BUDGET` (0.5 s), the
+  liveness of the views its ladder may read (ENG-156) and the folders a
+  declaration stored for its location's project file in another spelling
+  (ENG-152). The migration has read the two side by side since 9.0.0rc18
+  (ENG-204); a resolution read them one after the other, so a prompt
+  whose view and declared folder lay on one hung share paid two budgets
+  of the hook's 8 s. It now reads them side by side: with both hung, the
+  resolution took 0.52 s where it took 1.02 s. The witness exchange
+  resolves once a round, and each round read the declared folders again
+  in the daemon's namespace; read beside the views, the round that asks
+  the client about its views would read them too. The folders a round
+  reads are now kept for the exchange's later rounds, by a nonce the
+  round's question names (`exchange`) and the client's answers name
+  back, so an exchange reads each folder once: over an exchange of three
+  questions, once, where 9.0.0rc18 read it twice and reads beside the
+  views with nothing kept read it three times. The reads never outlive
+  the exchange: the round that resolves drops them, a new prompt's
+  exchange has a nonce of its own and reads afresh, and those of an
+  exchange a client left are crowded out. A hook client before 9.0.0rc19
+  names no exchange back, and its folders are read each round, the
+  views' round included; a daemon before it ignores the client's key.
+  (`src/bettermemory/membership_resolve.py`,
+  `src/bettermemory/location_witness.py`, `src/bettermemory/location.py`,
+  `docs/internals.md`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a

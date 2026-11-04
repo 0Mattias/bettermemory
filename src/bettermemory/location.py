@@ -164,6 +164,7 @@ from .location_witness import (
     AnsweredHistory as AnsweredHistory,  # tests/test_location_reachable.py
     AnsweredLiveness as AnsweredLiveness,  # tests/test_membership_resolution.py
     AnsweredToken as AnsweredToken,  # resolve_hook's witness path, below
+    ExchangeReads as ExchangeReads,  # resolve_hook's declared folders, below
     NeedWitnesses as NeedWitnesses,  # tests/test_membership_resolution.py
     asked_views as asked_views,  # answer's view questions, below
     remint_answer as remint_answer,  # answer's re-mint question, below
@@ -1232,9 +1233,11 @@ def answer(
     exchange, naming the token it replaces, unless another session's
     re-mint replaced that first (`remint_answer`, ENG-205), and answers
     the token and status, which the daemon records in the resolution's
-    transaction (`AnsweredToken`); ``remint_ok`` says it answers that."""
+    transaction (`AnsweredToken`); ``remint_ok`` says it answers that. It
+    names back the exchange the question names (`ExchangeReads`, ENG-213)."""
     out: dict[str, Any] = {k: v for k, v in answers.items()}
     out["remint_ok"] = True
+    out["exchange"] = question.get("exchange")
     if question.get("remint") and "remint" not in out:
         out["remint"] = remint_answer(cap, question)
     history = (
@@ -1905,7 +1908,8 @@ def resolve_hook(
     the final reply for a client that cannot be asked
     (`Resolution.remint_token` stays set). Each resolution is kept as the
     session's latest for the process's lifetime (decision B24), until the
-    session is forgotten (`forget_session`) or crowded out."""
+    session is forgotten (`forget_session`) or crowded out. The declared
+    folders a round reads are kept for the next (`ExchangeReads`, ENG-213)."""
     raw = posted.get("location") if posted is not None else None
     if not isinstance(raw, Mapping):
         return _hooked(store, config, _cwd_of(cwd), session)
@@ -1961,11 +1965,12 @@ def resolve_hook(
         ),
         model,
     )
+    reads = ExchangeReads(answers)
     try:
         with _location_lock(loc):
-            res = model.resolve(loc, strict=config.membership.strict)
+            res = model.resolve(loc, strict=config.membership.strict, declared=reads)
     except NeedWitnesses as need:
-        return Exchange({**need.question, "write_token": policy})
+        return Exchange({**need.question, **reads.carried(), "write_token": policy})
     res = _with_file_errors(res, cap.file_errors)
     _keep_stand(store, session, loc, res)
     return res

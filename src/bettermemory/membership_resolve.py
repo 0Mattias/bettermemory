@@ -26,7 +26,7 @@ import dataclasses
 import json
 import os
 from collections import defaultdict
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
@@ -281,7 +281,13 @@ def _strength(
 # -- the ladder --------------------------------------------------------------------------
 
 
-def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolution:
+def resolve(
+    self: Membership,
+    loc: Location,
+    *,
+    strict: bool = False,
+    declared: MutableMapping[str, str | None] | None = None,
+) -> Resolution:
     """The ladder of design 3.2 for one location, in one store
     transaction. `strict` is the A3 switch (decision D8,
     ``membership.strict``): a join resting on history without F or B
@@ -289,7 +295,12 @@ def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolut
     first, outside the transaction and bounded (`prefetch_liveness`,
     ENG-156), and enters it as values: a view on a hung mount reads
     unreachable without holding the store's write lock. A declared
-    folder's stored spelling is read the same way (`prefetch_declared`).
+    folder's stored spelling is read the same way, side by side with the
+    views (`prefetch_declared`), so a share hung under a view and a
+    declared folder costs one budget, not one each (ENG-213). `declared`
+    holds the folders an earlier round of the witness exchange read, taken
+    as read, and takes this round's reads, so an exchange reads each
+    folder once (`location_witness.ExchangeReads`).
     Inside a transaction its caller holds, the lock is held already and
     nothing is read first: the migration, which resolves inside its own,
     reads both for every location it resolves before it opens it
@@ -306,8 +317,11 @@ def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolut
     outside = not self._store.in_batch
     with self.liveness_held():
         if outside:
-            self.prefetch_liveness(self._liveness_plan(loc))
-            self.prefetch_declared([loc])
+            self.prefetch_declared(
+                [loc],
+                beside=lambda: self.prefetch_liveness(self._liveness_plan(loc)),
+                kept=declared,
+            )
         asked: dict[tuple[str, ...], frozenset[str] | None] | None = (
             {} if outside else None
         )
@@ -1572,6 +1586,7 @@ def prefetch_declared(
     self: Membership,
     locs: Sequence[Location],
     beside: Callable[[], object] | None = None,
+    kept: MutableMapping[str, str | None] | None = None,
 ) -> None:
     """Read, before the transaction of a resolution or of the migration,
     each folder a declaration bound one of `locs`' project files in whose
@@ -1579,22 +1594,29 @@ def prefetch_declared(
     records it (`_location_probe.view_path`): on one thread, more as reads
     turn out slow, each bounded by `PROBE_BUDGET` (`bounded_reads`,
     ENG-156), and kept for the span `liveness_held` opened, where
-    `_declared_folder` reads it as a value (review M D2). The migration
-    reads the folders of every location it resolves in one batch, with
-    its views' liveness as `beside` (ENG-204): that runs on the calling
-    thread while the folders are read on a thread of their own, so a share
-    hung under a view and a declared folder costs one budget, not one
-    each; where no thread can start, `beside` runs first and the folders
-    are read after it. What `beside` raises is raised once the folders
-    read are kept. A batch of reads that fails keeps none, so each folder
-    is compared as stored, and raises nothing in place of `beside`.
+    `_declared_folder` reads it as a value (review M D2). A resolution
+    reads its location's folders with its views' liveness as `beside`
+    (ENG-213), and the migration the folders of every location it
+    resolves in one batch with its views' (ENG-204): `beside` runs on the
+    calling thread while the folders are read on a thread of their own,
+    so a share hung under a view and a declared folder costs one budget,
+    not one each; where no thread can start, `beside` runs first and the
+    folders are read after it. What `beside` raises is raised once the
+    folders read are kept. A batch of reads that fails keeps none, so each
+    folder is compared as stored, and raises nothing in place of `beside`.
     Inside the store's write transaction nothing is read (`beside` still
     runs), so no folder is read with the write lock held. A folder that
-    does not answer in time is not kept, so it matches nothing."""
+    does not answer in time is not kept, so it matches nothing. `kept`
+    holds the reads of a witness exchange's earlier rounds by folder (None
+    where the read gave no spelling): those are not read again, and every
+    folder read here is added to it (ENG-213)."""
     live = self._live
     todo: list[str] = []
     if live is not None and not self._store.in_batch:
-        todo = sorted({d for loc in locs for d in _declared_todo(self, loc, live)})
+        if kept:
+            live.update({(_DECLARED, d): s for d, s in kept.items() if s is not None})
+        found = {d for loc in locs for d in _declared_todo(self, loc, live)}
+        todo = sorted(found - set(kept or ()))
     if live is None or not todo:
         if beside is not None:
             beside()
@@ -1611,6 +1633,8 @@ def prefetch_declared(
         for folder, value in zip(todo, got, strict=True):
             if isinstance(value, str):
                 live[(_DECLARED, folder)] = value
+            if kept is not None:
+                kept[folder] = value if isinstance(value, str) else None
 
     jobs = [job(d) for d in todo]
     if beside is not None:
