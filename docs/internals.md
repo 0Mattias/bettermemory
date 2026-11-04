@@ -1146,7 +1146,10 @@ instead (one stat, where the two missing files took two), and a
 worktree's record without stamps takes them at its next proven
 sighting. On Windows a stamp's ctime is NTFS's ChangeTime, read through
 `GetFileInformationByHandleEx` (`location_git.basic_info_ns`), as
-`os.stat`'s ctime there is the creation time. Where either side keeps a
+`os.stat`'s ctime there is the creation time; a file whose ChangeTime
+cannot be read is not stamped, so the field holds a change time or
+nothing (every reader of a stamp, an older release's among them, takes
+five integers). Where either side keeps a
 stamped file's times to the whole second (a share that rounds them), the
 two match within that second (`_same_file`).
 

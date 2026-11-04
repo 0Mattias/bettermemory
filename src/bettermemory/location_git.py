@@ -1490,6 +1490,8 @@ _STAMPED_LINKED = ("commondir",)
 _FILETIME_UNIX = 116_444_736_000_000_000
 _BASIC_INFO_LOCK = threading.Lock()
 _BASIC_INFO: list[Any] = []
+#: Whether a stamp's change time is NTFS's ChangeTime (`_init_stamps`).
+_WINDOWS = sys.platform == "win32"
 
 
 def _init_stamps(
@@ -1501,9 +1503,10 @@ def _init_stamps(
     ``(name, inode, mtime, ctime, size)``, in ns. On Windows the change
     time is NTFS's ChangeTime (`basic_info_ns`), which a metadata change
     moves as one moves a ctime elsewhere, where ``st_ctime`` holds the
-    creation time; ``st_ctime`` where it cannot be read. Another
-    machine's record of the same files compares the times
-    (`membership_shared`, ENG-215)."""
+    creation time: a file whose ChangeTime cannot be read is not stamped,
+    so the ctime field holds a change time or nothing (every reader of a
+    stamp takes five integers). Another machine's record of the same
+    files compares the times (`membership_shared`, ENG-215)."""
     out: list[tuple[str, int, int, int, int]] = []
     for name in _STAMPED_LINKED if linked else _STAMPED:
         path = os.path.join(git_dir, *name.split("/"))
@@ -1511,8 +1514,12 @@ def _init_stamps(
             st = os.stat(path)
         except OSError:
             continue
-        info = basic_info_ns(path) if sys.platform == "win32" else None
-        changed = st.st_ctime_ns if info is None else info[3]
+        changed = st.st_ctime_ns
+        if _WINDOWS:
+            info = basic_info_ns(path)
+            if info is None:
+                continue
+            changed = info[3]
         out.append((name, st.st_ino, st.st_mtime_ns, changed, st.st_size))
     return tuple(out)
 

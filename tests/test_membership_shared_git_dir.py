@@ -771,3 +771,31 @@ def test_the_change_time_is_ntfs_change_time_on_windows(tmp_path: Path) -> None:
         assert location_git._init_stamps(str(tmp_path))[0][3] == after[3]
     finally:
         os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+
+
+@pytest.mark.parametrize("read", ["read", "unread"])
+def test_a_windows_stamp_holds_the_change_time_or_is_not_made(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, read: str
+) -> None:
+    """On Windows a stamp's ctime is the FILE_BASIC_INFO change time
+    (``read``), never ``os.stat``'s ctime, which is the creation time
+    there: where the basic information cannot be read (``unread``) the
+    file is not stamped, the other stamped files still are."""
+    for name in ("description", "info/exclude"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("x\n")
+    changed = 1_793_810_133_992_271_400
+
+    def basic(path: str) -> tuple[int, int, int, int] | None:
+        if read == "unread" and path.endswith("description"):
+            return None
+        return (1, 2, 3, changed)
+
+    monkeypatch.setattr(location_git, "_WINDOWS", True)
+    monkeypatch.setattr(location_git, "basic_info_ns", basic)
+
+    stamps = location_git._init_stamps(str(tmp_path))
+
+    names = ["info/exclude"] if read == "unread" else ["description", "info/exclude"]
+    assert [s[0] for s in stamps] == names
+    assert all(s[3] == changed for s in stamps)

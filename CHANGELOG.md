@@ -1424,7 +1424,9 @@ eighteenth was built.
   directory, which holds neither `description` nor `info/exclude`, is
   stamped by its `commondir`; on Windows a stamp's ctime is NTFS's
   ChangeTime (`GetFileInformationByHandleEx`), where `os.stat` reports
-  the creation time; and where a share keeps times to the whole second
+  the creation time, and a file whose ChangeTime cannot be read is not
+  stamped rather than stamped with its creation time; and where a share
+  keeps times to the whole second
   the stamps match within it. B reads such a token as over a bind mount:
   the host's repository restored at its path, carrying the container's
   re-mint, is asked about (`ask:several_projects`), where it joined the
