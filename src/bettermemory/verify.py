@@ -108,7 +108,7 @@ from __future__ import annotations
 import bisect
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -121,6 +121,8 @@ from .claims import (
     control_character,
     governed_claim_paths,
     load_claims,
+    path_key,
+    stored_spellings,
 )
 from .origin import (
     MAX_PATCH_STREAM_COMMITS,
@@ -655,10 +657,25 @@ def _literal_pathspecs(specs: Sequence[str]) -> list[str]:
     Where the environment already makes git read every pathspec
     literally (``GIT_LITERAL_PATHSPECS``), git reads no magic either and
     would take the prefix as part of the name, so the specs pass as they
-    stand."""
+    stand. Each spec is given in every spelling a tree may store it under
+    (`_spelled`), as the walk compares them."""
+    spelled = _spelled(specs)
     if _git_bool(os.environ.get("GIT_LITERAL_PATHSPECS")):
-        return list(specs)
-    return [f":(literal){spec}" for spec in specs]
+        return spelled
+    return [f":(literal){spec}" for spec in spelled]
+
+
+def _spelled(specs: Sequence[str]) -> list[str]:
+    """`specs`, each followed by the other spellings a tree may store its
+    name under by Unicode normalisation (`claims.stored_spellings`). A
+    claim spelled composed against a tree that stores the name decomposed
+    (a git on macOS that did not precompose committed it), or the reverse,
+    named no path: the logs and the walk missed the file, and a changed
+    claim read 0 (ENG-220's re-review). Every log, phantom check and patch
+    stream reads its specs so (`_literal_pathspecs`), and the walk too."""
+    return list(
+        dict.fromkeys(name for spec in specs for name in stored_spellings(spec))
+    )
 
 
 def _git_bool(value: str | None) -> bool:
@@ -751,19 +768,22 @@ def _weak_tier_evaluation(
     drifted: list[str] = []
     implicated: set[str] = set()
     bare = False
+    named = _index_spellings(index)
     for claim in claims:
-        result = claim_level_drift(claim, index)
-        if not result["weak"]:
+        paths = named.get(path_key(claim.rel_path)) or [claim.rel_path]
+        results = [claim_level_drift(replace(claim, rel_path=p), index) for p in paths]
+        if not any(result["weak"] for result in results):
             continue
         drifted.append(claim.render())
-        claim_shas: set[str] = set(result["binding_shas"])
-        claim_shas |= set(result["anchor_shas"])
-        if claim.kind in ("path", "absent"):
-            for sha_set in index["changed_text"].get(claim.rel_path, {}).values():
+        claim_shas: set[str] = set()
+        for result in results:
+            claim_shas |= result["binding_shas"] | result["anchor_shas"]
+        for path in paths if claim.kind in ("path", "absent") else ():
+            for sha_set in index["changed_text"].get(path, {}).values():
                 claim_shas |= sha_set
             # A deletion or creation the header alone prints (an empty
             # file's) carries no line, and names its commit there.
-            claim_shas |= index.get("header_only", {}).get(claim.rel_path, set())
+            claim_shas |= index.get("header_only", {}).get(path, set())
         bare = bare or not claim_shas & window
         implicated |= claim_shas
     if drifted and (not implicated or (split is not None and bare)):
@@ -771,6 +791,26 @@ def _weak_tier_evaluation(
     if split is not None:
         implicated |= split.counted
     return drifted, implicated & window
+
+
+def _index_spellings(index: dict[str, Any]) -> dict[str, list[str]]:
+    """Each path a `claims.build_binding_index` index names, by its composed
+    spelling (`claims.path_key`): a claim is read under every spelling of
+    its path the stream holds, so one spelled composed reads a tree that
+    stores the name decomposed, and one name stored both ways is read in
+    both (ENG-220's re-review)."""
+    paths = (
+        set(index["files"])
+        | set(index["deleted"])
+        | set(index["changed_text"])
+        | set(index["changed_fragments"])
+        | set(index.get("header_only", {}))
+        | {key[0] for key in index["bindings"]}
+    )
+    named: dict[str, list[str]] = {}
+    for path in sorted(paths):
+        named.setdefault(path_key(path), []).append(path)
+    return named
 
 
 def resolve_commit_drift(
@@ -906,7 +946,7 @@ def _claim_legs(
     neither leg: a claims-only memory read not-applicable on the
     reachable basis and the repo-wide count on the author-date one."""
     governed = governed_claim_paths(list(claims)) if claims else []
-    governed_set = set(governed)
+    governed_set = {path_key(path) for path in governed}
     specs: list[str] = []
     if anchors:
         resolved = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
@@ -915,7 +955,9 @@ def _claim_legs(
         specs = resolved
     claimed = claim_paths(list(claims)) if claims else []
     ungoverned = [
-        spec for spec in dict.fromkeys((*specs, *claimed)) if spec not in governed_set
+        spec
+        for spec in dict.fromkeys((*specs, *claimed))
+        if path_key(spec) not in governed_set
     ]
     return ungoverned, governed
 
@@ -967,10 +1009,10 @@ def _resolve_reachable(
 
     escalating: set[str] = set()
     if ungoverned:
-        escalating |= walk.shas_touching(ungoverned)
+        escalating |= walk.shas_touching(_spelled(ungoverned))
     drifted: list[str] = []
     if governed:
-        touched = walk.shas_touching(governed)
+        touched = walk.shas_touching(_spelled(governed))
         # Walk order, so the patch stream names the commits the way a
         # log would; `--no-walk=unsorted` does not care, a reader does.
         post = [sha for sha in walk.commits if sha in touched]

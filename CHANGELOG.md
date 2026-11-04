@@ -373,7 +373,7 @@ eighteenth was built.
   paths now pin it off (`origin_history.AS_STORED_PATHS`), on those logs
   alone, since the setting also spells the working tree's paths the
   capture reads. A claim spelled in one normalization where the tree
-  stores the other still matches no path, whatever the setting. And
+  stores the other is matched too (the entry below). And
   `GIT_DIFF_OPTS` in the environment set context lines over `-U0`,
   which the parser read as a mismatch, so a hit fell back to the
   per-file count with nothing named, and `GIT_ATTR_SOURCE` read the
@@ -468,6 +468,28 @@ eighteenth was built.
   (`verify._unreadable`). (`src/bettermemory/claims.py`,
   `src/bettermemory/verify.py`, `docs/api.md`, `tests/test_claims.py`,
   `tests/test_origin_as_stored.py`, `tests/test_server_claims.py`)
+
+- **A claim reads the tree's spelling of its path, composed or
+  decomposed (ENG-220).** A tree stores a name as the git that committed
+  it read it, decomposed where a git on macOS did not precompose
+  (`core.precomposeUnicode` off, or before git had it), and a claim
+  spelled composed, as the user typed it, named no path there: the logs,
+  the walk and the patch missed the file, and a changed claim read 0 on
+  both bases; so did one spelled decomposed against a tree that stores
+  the name composed. Every spec a log, phantom check, patch stream or the
+  walk reads is now looked for in each spelling a tree may store it
+  under, every component as written, composed and decomposed
+  (`claims.stored_spellings`, `verify._spelled`), and a claim is read
+  under every spelling of its path the patch holds, compared composed
+  (`claims.path_key`, `verify._index_spellings`), so a tree that stores
+  both spellings, two files, is read in both. An unaddressable claim
+  keeps its file in the any-touch leg whichever spelling each claim on
+  it uses, and a file the body cites in one spelling and claims in
+  another is the claim's. The claim stays as written: a tree's spelling
+  stored at declaration would not hold once a commit renames the name to
+  the other form, and would not reach claims already stored.
+  (`src/bettermemory/claims.py`, `src/bettermemory/verify.py`,
+  `docs/api.md`, `tests/test_origin_as_stored.py`)
 
 - **The migration homes a record in a part below a folder whose question
   was answered where a session there resolves (ENG-222).** A folder

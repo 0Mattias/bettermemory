@@ -93,8 +93,11 @@ alarm for that file, silence keeps the conservative default.
 from __future__ import annotations
 
 import ast
+import itertools
+import math
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -115,6 +118,8 @@ __all__ = [
     "claim_paths",
     "claim_is_addressable",
     "governed_claim_paths",
+    "path_key",
+    "stored_spellings",
     "build_binding_index",
     "hunk_lines",
     "claim_level_drift",
@@ -357,6 +362,46 @@ def load_claims(raw: list[str] | tuple[str, ...]) -> list[Claim]:
     return out
 
 
+#: The most spellings a path is looked for under (`stored_spellings`).
+_MAX_SPELLINGS = 64
+
+
+def path_key(path: str) -> str:
+    """`path` composed (NFC): the spelling two names that differ only by
+    Unicode normalisation share, as a claim spelled one way and a tree
+    storing the other do (ENG-220's re-review)."""
+    return unicodedata.normalize("NFC", path)
+
+
+def stored_spellings(path: str) -> tuple[str, ...]:
+    """`path` as written, then each other spelling a tree may store the same
+    name under by Unicode normalisation: every component as written,
+    composed (NFC) and decomposed (NFD), in every combination, so a folder
+    a decomposing filesystem named and a file another tool did are both
+    found. A tree stores a name as the git that committed it read it: on
+    macOS a git that did not precompose read it decomposed, where the user
+    typed it composed (ENG-220's re-review). Past `_MAX_SPELLINGS`
+    combinations, the whole path in each form; an ASCII path has the one."""
+    if path.isascii():
+        return (path,)
+    forms = [
+        tuple(
+            dict.fromkeys(
+                (
+                    part,
+                    unicodedata.normalize("NFC", part),
+                    unicodedata.normalize("NFD", part),
+                )
+            )
+        )
+        for part in path.split("/")
+    ]
+    if math.prod(len(form) for form in forms) > _MAX_SPELLINGS:
+        whole = (path, path_key(path), unicodedata.normalize("NFD", path))
+        return tuple(dict.fromkeys(whole))
+    return tuple(dict.fromkeys("/".join(parts) for parts in itertools.product(*forms)))
+
+
 def claim_paths(claims: list[Claim]) -> list[str]:
     """Distinct rel_paths across `claims`, declaration order preserved."""
     seen: dict[str, None] = {}
@@ -431,9 +476,11 @@ def governed_claim_paths(claims: list[Claim]) -> list[str]:
     is implicated"), and it cannot be kept for a file holding a binding
     nothing can implicate. The path stays in the ungoverned any-touch
     leg, which is precisely the floor — never worse than not declaring.
+    A claim blocks every spelling of its path by Unicode normalisation
+    (`path_key`), since each names the one file a tree stores.
     """
-    blocked = {c.rel_path for c in claims if not claim_is_addressable(c)}
-    return [p for p in claim_paths(claims) if p not in blocked]
+    blocked = {path_key(c.rel_path) for c in claims if not claim_is_addressable(c)}
+    return [p for p in claim_paths(claims) if path_key(p) not in blocked]
 
 
 def _resolve_claim_path(root: Path, rel_path: str) -> Path | None:

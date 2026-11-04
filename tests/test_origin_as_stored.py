@@ -559,6 +559,145 @@ def test_a_decomposed_path_is_matched_as_stored(tmp_path: Path) -> None:
     assert _both(repo, claims, anchor) == truth
 
 
+#: A claimed file whose folder and name each hold an accent, in each
+#: spelling a tree may store: composed, decomposed, and a folder a
+#: decomposing filesystem named holding a file another tool named.
+_ACCENTED = "src/dé/café.py"
+_SPELLED = {
+    "NFC": unicodedata.normalize("NFC", _ACCENTED),
+    "NFD": unicodedata.normalize("NFD", _ACCENTED),
+    "mixed": unicodedata.normalize("NFD", "src/dé/")
+    + unicodedata.normalize("NFC", "café.py"),
+}
+#: What the claim counts: foo's def line changed, the one commit; the file
+#: deleted, the whole window, since its lines are too short to name the
+#: commit that removed them (`verify._weak_tier_evaluation`).
+_COUNTED = {"edit": 1, "delete": 2}
+
+
+def _accented(repo: Path, stored: list[str], change: str) -> str:
+    """The files `stored` before the verify, with two.py, then `change`
+    made to the last of them after it, then bar's edit in two.py; the
+    anchor. Staged from git's standard input, so each path is stored as
+    spelled."""
+    body = _object(repo, _module("", 0).encode())
+    _index_info(
+        repo, [("100644", body, path) for path in stored] + [("100644", body, _BESIDE)]
+    )
+    _plain(repo, "commit", "-q", "-m", "anchor", when=_VERIFIED - timedelta(hours=1))
+    anchor = _plain(repo, "rev-parse", "HEAD")
+    if change == "delete":
+        _index_info(repo, [("0", "0" * 40, stored[-1])])
+    else:
+        text = _module("flag=False", 0) if change == "edit" else _module("", 1)
+        _index_info(repo, [("100644", _object(repo, text.encode()), stored[-1])])
+    _plain(repo, "commit", "-q", "-m", change, when=_VERIFIED + timedelta(hours=1))
+    _commit(repo, {_BESIDE: _module("", 1)}, 2)
+    return anchor
+
+
+@pytest.mark.parametrize("change", ["edit", "delete"])
+@pytest.mark.parametrize(
+    ("claimed", "stored"),
+    [
+        ("NFC", "NFD"),
+        ("NFD", "NFC"),
+        ("NFC", "mixed"),
+        ("NFD", "mixed"),
+        ("NFC", "NFC"),
+        ("NFD", "NFD"),
+    ],
+)
+def test_a_claim_reads_the_tree_s_spelling_of_its_path(
+    tmp_path: Path, claimed: str, stored: str, change: str
+) -> None:
+    """A claim spelled composed against a tree that stores its path
+    decomposed (a git on macOS that did not precompose committed it, with
+    ``core.precomposeUnicode`` off or before git had it), or the reverse:
+    foo's def line changes after the verify, or the file is deleted, and
+    two.py's bar is edited. The claim fires on both bases, as where it is
+    spelled as stored (`_COUNTED`). It matched no path: the logs and the
+    walk missed the file, the patch named it otherwise, and the claim read
+    0. Every
+    spec is looked for in each spelling (`verify._spelled`), and a claim
+    read under each the stream holds (`verify._index_spellings`)."""
+    repo = _repository(tmp_path)
+    anchor = _accented(repo, [_SPELLED[stored]], change)
+    claim = _SPELLED[claimed] + ("::foo" if change == "edit" else "")
+    if claimed != stored:
+        spec = f":(literal){_SPELLED[claimed]}"
+        pinned = ("-c", "core.precomposeUnicode=false")
+        shown = _plain(repo, *pinned, "log", "--format=%H", "--", spec)
+        assert not shown, "premise: git's own log misses the claimed spelling"
+    assert _both(repo, [claim, _QUIET], anchor) == [(_COUNTED[change], (claim,))] * 2
+
+
+@pytest.mark.parametrize("change", ["edit", "delete"])
+@pytest.mark.parametrize("claimed", ["NFC", "NFD"])
+def test_a_name_stored_in_two_spellings_is_read_in_both(
+    tmp_path: Path, claimed: str, change: str
+) -> None:
+    """A tree that stores both spellings of one name holds two files, which
+    a filesystem that ignores normalisation shows as one: the change to
+    the spelling the claim does not use fires it all the same, on both
+    bases (`_COUNTED`)."""
+    other = "NFD" if claimed == "NFC" else "NFC"
+    repo = _repository(tmp_path)
+    anchor = _accented(repo, [_SPELLED[claimed], _SPELLED[other]], change)
+    claim = _SPELLED[claimed] + ("::foo" if change == "edit" else "")
+    assert _both(repo, [claim, _QUIET], anchor) == [(_COUNTED[change], (claim,))] * 2
+
+
+def test_an_unaddressable_claim_keeps_each_spelling_of_its_file_any_touch(
+    tmp_path: Path,
+) -> None:
+    """A container literal claimed on a file spelled composed, and foo on it
+    spelled decomposed: the file stays in the any-touch leg whichever
+    spelling each claim uses, so bar's edit in it counts, 1 on both bases.
+    Blocked by spelling alone, the decomposed one was governed and the
+    composed one left the any-touch leg as the governed file's, and the
+    edit read 0 (`claims.governed_claim_paths`)."""
+    repo = _repository(tmp_path)
+    anchor = _accented(repo, [_SPELLED["NFC"]], "bar")
+    claims = [_SPELLED["NFD"] + "::foo", _SPELLED["NFC"] + "::LIMITS=[1, 2]"]
+    assert _both(repo, claims, anchor) == [(1, ())] * 2
+
+
+@pytest.mark.parametrize("cited", ["NFD", "NFC"])
+def test_a_file_cited_in_one_spelling_and_claimed_in_another_is_the_claims(
+    tmp_path: Path, cited: str
+) -> None:
+    """The body cites the file in either spelling and claims foo on it
+    decomposed, as the tree stores it: the file is the claim's, so bar's
+    edit in it escalates nothing, 0 on both bases, as where both are
+    spelled alike. Kept apart by spelling, the cited one stayed in the
+    any-touch leg and counted the edit (`verify._claim_legs`)."""
+    repo = _repository(tmp_path)
+    anchor = _accented(repo, [_SPELLED["NFD"]], "bar")
+    claims = [_SPELLED["NFD"] + "::foo"]
+    assert _both(repo, claims, anchor, (_SPELLED[cited],)) == [(0, ())] * 2
+
+
+def test_each_spelling_of_a_path_is_looked_for() -> None:
+    """Every component as written, composed and decomposed, in every
+    combination; an ASCII path has the one spelling; past the bound, the
+    whole path in each form."""
+    from bettermemory.claims import path_key, stored_spellings
+
+    spellings = stored_spellings(_SPELLED["NFC"])
+    assert spellings[0] == _SPELLED["NFC"]
+    assert set(spellings) == {
+        unicodedata.normalize(folder, "src/dé/")
+        + unicodedata.normalize(name, "café.py")
+        for folder in ("NFC", "NFD")
+        for name in ("NFC", "NFD")
+    }
+    assert {path_key(path) for path in spellings} == {_SPELLED["NFC"]}
+    assert stored_spellings("src/plain.py") == ("src/plain.py",)
+    deep = "/".join(["é"] * 7)
+    assert stored_spellings(deep) == (deep, unicodedata.normalize("NFD", deep))
+
+
 # ---------------------------------------------------------------------------
 # What a format prints, and how its lines are read (ENG-220's re-review)
 # ---------------------------------------------------------------------------
