@@ -1645,11 +1645,13 @@ class _Run:
 
         The view stays, and a later run finds it as a root, as it finds one
         a session's question left there: a record at that location goes to
-        the provisional project, the one a session there joins where birth
-        time is read. Below it at a location of its own, while the question
-        is open (`_asked_below`), the gate also reads the cwd against the
-        next root outside that checkout's views, so a part of that root's
-        project declared there keeps its records, as within a run."""
+        that checkout's project (the provisional project, or the one an
+        answer gave it), the one a session there joins where birth time is
+        read. Below any root at a location of its own (`_own_below`),
+        whether or not a question about its checkout is open (ENG-222), the
+        gate also reads the cwd against the next root outside that
+        checkout's views, so a part of that root's project declared there
+        keeps its records, as within a run."""
         inside = self._recorded_root_of(cwd, prior)
         if inside is None:
             return None
@@ -1660,7 +1662,7 @@ class _Run:
             inside = over[0]
         if self._finer_at(cwd, *inside[1:]) is not None:
             return None
-        if self._asked_below(cwd, inside[0], inside[2]):
+        if self._own_below(cwd, inside[0], inside[2]):
             outer = self._recorded_root_of(cwd, prior, skip=inside[2])
             if outer is not None and self._finer_at(cwd, *outer[1:]) is not None:
                 return None
@@ -1673,20 +1675,13 @@ class _Run:
                 )
         return inside
 
-    def _asked_below(self, cwd: str, root: str, checkout: str | None) -> bool:
+    def _own_below(self, cwd: str, root: str, checkout: str | None) -> bool:
         """Whether `cwd` lies at a location of its own below `root`, a root
-        of `checkout`, whose project is still in question: an open
-        first-sight question about the checkout, as the ladder's ask leaves
-        at a copy of a part's file. One table read, after the probe's root."""
+        of `checkout`: its probe's root (a project file between, or another
+        repository) is not `root`. Whatever that checkout's project and its
+        questions, open or answered (ENG-222); the prefetched probe only."""
         at = self._root_at(cwd)
-        return (
-            checkout is not None
-            and at is not None
-            and at != _norm(root)
-            and any(
-                pr.kind == mb.FIRST_SIGHT for pr in self.model._open_proposals(checkout)
-            )
-        )
+        return checkout is not None and at is not None and at != _norm(root)
 
     def _root_at(self, cwd: str) -> str | None:
         """The root of the location `cwd`'s probe found: a repository's

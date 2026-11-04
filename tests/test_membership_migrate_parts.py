@@ -39,7 +39,8 @@ every record at that folder, and one below it, keeps D4, with the ladder
 asked once; what the question leaves is counted, and a later run's record
 there goes to the provisional project through the view it left. A part
 declared below that copy is still found, in the same run and in a later
-one, after an earlier run or a session asked at the copy; and a moved
+one, after an earlier run or a session asked at the copy, and after the
+question was answered either way (ENG-222); and a moved
 copy's records keep D4 while one at its old path keeps the asked
 checkout, whose views the run does not pass over.
 """
@@ -613,6 +614,68 @@ def test_a_part_below_a_copy_asked_about_before_the_run_keeps_its_records(
     t = report.totals
     assert (t.projects, t.proposals) == (0, 0)
     assert _pending(store) == [question]
+    assert _live(store, config, deep)[0] == essay
+
+
+@pytest.mark.parametrize("records", ["deep", "essay,deep"])
+@pytest.mark.parametrize("answer", ["separate", "join"])
+def test_a_part_below_a_copy_whose_question_was_answered_keeps_its_records(
+    tmp_path: Path, lab: tuple[Store, Config], answer: str, records: str
+) -> None:
+    """The copy of a part's file (`_copy_of_a_part`), asked about by a
+    session there and answered before this run: a project of its own
+    (``separate``: for a folder whose file another project holds, ``project
+    init --new``, a fresh file), or joined to the part whose file it copies
+    (``join``). Below the copy a part of the enclosing project is declared
+    (`essay`), and `essay/deep` holds no file. The records an earlier build
+    wrote at `deep`, or at the part's folder and at `deep`, find the copy's
+    view as their root, but go to the part, as a session at `deep`
+    resolves: the gate reads them against the root outside the copy's view
+    whatever its question became (ENG-222). Gated only while the question
+    was open, they went by D4 to the copy's own project or to the part it
+    joined, whose records a session at `deep` is not given. A record at the
+    copy itself still goes by D4 to the project a session there resolves
+    to."""
+    store, config = lab
+    copy, known, part = _copy_of_a_part(tmp_path, store, config)
+    essay = _declare(store, known, copy / "essay", "essay")
+    deep = copy / "essay" / "deep"
+    deep.mkdir()
+    _live(store, config, copy)
+    (question,) = _pending(store)
+    fresh = None
+    if answer == "separate":
+        fresh = project_file.write(copy, name="copy", rebind=True).id
+        location.forget()
+    Membership(store, location.process_machine().id).declare(
+        Declaration(
+            "join" if fresh is None else "init_new",
+            "os:tester",
+            checkout=question.checkout,
+            proposal=question.id,
+            target=part if fresh is None else None,
+            file_id=fresh,
+            name=None if fresh is None else "copy",
+            directory=None if fresh is None else str(copy),
+        )
+    )
+    assert _pending(store) == []
+    at = {"essay": copy / "essay", "deep": deep}
+    ids = [_rootless(store, at[n], f"in {n}") for n in records.split(",")]
+    in_copy = _rootless(store, copy, "in the copy")
+    location.forget()
+
+    report = migrate(store, location.process_machine(), now=lambda: _NOW)
+
+    homes = _homes(report)
+    assert [homes[i][0] for i in ids] == [essay] * len(ids), (homes, essay)
+    assert homes[ids[0]][2] == "migration:cwd:declared_folder"
+    settled = _live(store, config, copy)[0]
+    assert settled != known.project and (settled == part) == (answer == "join")
+    assert homes[in_copy] == (settled, question.checkout, "migration:cwd_in_root")
+    t = report.totals
+    assert (t.projects, t.proposals) == (0, 0)
+    assert _pending(store) == []
     assert _live(store, config, deep)[0] == essay
 
 

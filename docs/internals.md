@@ -1131,13 +1131,16 @@ only: a capture with the token write off.
   repository) goes through the gate against that home, as before. A
   later run, like a run after a session asked at that folder, finds the
   view as a root: a record written at that folder since, or below it at
-  no location of its own, goes to the provisional project by D4, the
-  project a session there joins where birth time is read. Below it at a
-  location of its own, while the question is open (`_Run._asked_below`),
-  the gate also reads the cwd against the next root outside that
-  checkout's views, so a part of the enclosing project declared below
-  the folder keeps its records in a later run too, where a session in
-  the part receives them.
+  no location of its own, goes to that checkout's project by D4: the
+  provisional project while the question is open, the project a session
+  there joins where birth time is read, and once it is answered the
+  project its answer gave the checkout. Below any root at a location of
+  its own (`_Run._own_below`), the gate also reads the cwd against the
+  next root outside that root's checkout's views, whether a question
+  about that checkout is open, answered or was never asked (ENG-222), so
+  a part of the enclosing project declared below the folder keeps its
+  records in a later run too, where a session in the part receives
+  them, after the folder's question is answered as before it.
   A store migrated before this rule keeps its homes, since the migration
   homes only records with none: a record `cwd_in_root` homed in what is
   now a part's folder stays with the enclosing project, whose records a

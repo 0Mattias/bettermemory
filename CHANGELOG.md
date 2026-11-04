@@ -61,6 +61,27 @@ eighteenth was built.
 
 #### Fixed
 
+- **The migration homes a record in a part below a folder whose question
+  was answered where a session there resolves (ENG-222).** A folder
+  holding a copy of a part's file and other content is asked about at
+  its first sight, which leaves a checkout with a view at that folder.
+  A later migration run finds that view as the root of a record written
+  below it, and the 9.0.0rc18 ENG-212 entry read such a record at a
+  location of its own also against the root outside that checkout's
+  views only while the question was open. So with a part of the
+  enclosing project declared below the folder and the question answered
+  before the run, records at the part's folder and below it went by
+  `cwd_in_root` (D4) to the folder's own project when the answer was
+  separate, or to the part it joined, while a session there resolves to
+  the declared part, with birth time and without; the brief, recall and
+  scoped search there did not deliver them. The outer read now applies
+  wherever the cwd lies at a location of its own below D4's root,
+  whatever that checkout's questions, so those records go to the part in
+  both cases and both modes. A record at the folder itself, or below it
+  at no location of its own, still goes by D4 to the checkout's project.
+  (`src/bettermemory/membership_migrate.py`,
+  `tests/test_membership_migrate_parts.py`, `docs/internals.md`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a
