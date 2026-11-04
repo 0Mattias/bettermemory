@@ -636,10 +636,11 @@ eighteenth was built.
   then the file `GIT_CONFIG_SYSTEM` names, else the one that git was
   built to read. git names them (`git var GIT_CONFIG_SYSTEM`, and `git
   config --list --show-scope --show-origin` with the system and global
-  files at the null device), asked at the root within the capture's
-  0.3 s fetch budget, only for a repository with a remote; a hook
-  client, a new process each prompt, does not ask again while the answer
-  kept in the state directory for its PATH stands (the git binary
+  files at the null device), asked at the root of the drive git is on
+  within the capture's 0.3 s fetch budget, only for a repository with a
+  remote, and each file's path spelled with the platform's separator; a
+  hook client, a new process each prompt, does not ask again while the
+  answer kept in the state directory for its PATH stands (the git binary
   unchanged, under an hour old, and on macOS the developer directory
   `DEVELOPER_DIR` or `xcode-select` names the same), so a prompt spawns
   no git for it. A git that does not answer, or none on PATH, reads for

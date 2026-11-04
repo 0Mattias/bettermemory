@@ -46,6 +46,7 @@ from .gitconfig import (
     Stamp,
     _config_values,
     _home,
+    _native,
     _truthy,
     unchanged,
 )
@@ -285,8 +286,11 @@ def _global_configs() -> list[str]:
 
 def _machine_configs(*, stamp: bool = True) -> tuple[str, ...]:
     """The machine's config files git reads, in its order: the system's
-    (`_system_configs`), then the global ones (`_global_configs`)."""
-    return (*_system_configs(stamp=stamp), *_global_configs())
+    (`_system_configs`), then the global ones (`_global_configs`), each
+    spelled with the platform's separator (`gitconfig._native`)."""
+    return tuple(
+        _native(p) for p in (*_system_configs(stamp=stamp), *_global_configs())
+    )
 
 
 #: A config file as a read stamped it (`gitconfig.ConfigValues.files`).

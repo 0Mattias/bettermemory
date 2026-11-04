@@ -21,7 +21,9 @@ Each expectation is git's own answer where git gives one: the remotes
 from __future__ import annotations
 
 import json
+import ntpath
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -47,6 +49,13 @@ from bettermemory.location import remote_key
 from .test_membership_security import neutral_git
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+
+#: Files a fake git names: absolute here, with the drive on Windows, where
+#: a path rooted with none is not (`gitsystem._absolute`).
+_OPT = Path(os.path.abspath(os.sep)) / "opt"
+_ETC = str(_OPT / "example" / "etc" / "gitconfig")
+_VENDOR = str(_OPT / "example" / "vendor")
+_OTHER = str(_OPT / "other" / "etc" / "gitconfig")
 
 
 @pytest.fixture(autouse=True)
@@ -521,7 +530,7 @@ def test_the_system_config_is_the_file_git_names(
         list(("git", *gitsystem._LIST)),
         capture_output=True,
         env=env,
-        cwd=os.path.abspath(os.sep),
+        cwd=Path(str(shutil.which("git"))).anchor,
     )
     found = gitsystem.sources()
     if asked.returncode == 0 and asked.stdout.strip():
@@ -541,7 +550,8 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
     gitconfig before the system file, and GIT_CONFIG_SYSTEM replaces only
     the system file; GIT_CONFIG_NOSYSTEM, read as git reads a boolean
     variable, suppresses both. An equal ``insteadOf`` prefix in the two is
-    the build's, which git reads first. git is asked at the root, without
+    the build's, which git reads first. git is asked at the root of its
+    own drive (`gitsystem._root`), without
     the caller's GIT_CONFIG_SYSTEM, the listing with the system and global
     files at the null device."""
     fake = _FakeGit(monkeypatch, tmp_path / "git")
@@ -560,7 +570,7 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
     (var, var_kw), (listing, list_kw) = fake.asked
     assert (var, listing) == (gitsystem._VAR, gitsystem._LIST)
     for kw in (var_kw, list_kw):
-        assert kw["cwd"] == os.path.abspath(os.sep)
+        assert kw["cwd"] == Path(fake.binary).anchor
         assert "GIT_CONFIG_SYSTEM" in kw["unset"]
     assert list_kw["env"] == {
         "GIT_CONFIG_SYSTEM": os.devnull,
@@ -604,8 +614,8 @@ def test_git_is_asked_once_for_a_path_and_the_answer_kept_in_the_state_directory
     assert gitsystem.ASK_SECONDS == location_git.FETCH_BUDGET
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     fake = _FakeGit(monkeypatch, tmp_path / "git")
-    fake.named, fake.own = "/opt/example/etc/gitconfig\n", ["/opt/example/vendor"]
-    answer = gitsystem.Sources(("/opt/example/vendor",), "/opt/example/etc/gitconfig")
+    fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
+    answer = gitsystem.Sources((_VENDOR,), _ETC)
 
     def asks() -> int:
         before = len(fake.asked)
@@ -658,7 +668,7 @@ def test_a_git_that_does_not_answer_reads_as_the_fallback_until_asked_again(
     raw["entries"][0]["asked"] -= gitsystem.RETRY_SECONDS
     (state / gitsystem.RECORD).write_text(json.dumps(raw))
     _caches.clear_all()
-    fake.named, fake.own = "/opt/example/etc/gitconfig\n", None
+    fake.named, fake.own = f"{_ETC}\n", None
     assert gitsystem.sources() == fallback
     assert len(fake.asked) == 3
 
@@ -687,8 +697,8 @@ def test_a_failed_ask_keeps_the_answer_git_gave(
     takes that answer."""
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     fake = _FakeGit(monkeypatch, tmp_path / "git")
-    fake.named, fake.own = "/opt/example/etc/gitconfig\n", ["/opt/example/vendor"]
-    good = gitsystem.Sources(("/opt/example/vendor",), "/opt/example/etc/gitconfig")
+    fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
+    good = gitsystem.Sources((_VENDOR,), _ETC)
     assert gitsystem.sources() == good
     asked = len(fake.asked)
 
@@ -698,7 +708,7 @@ def test_a_failed_ask_keeps_the_answer_git_gave(
     assert gitsystem.sources() == good
     assert len(fake.asked) == asked + 1
     entry = _record(state)["entries"][0]
-    assert entry["ok"] is True and entry["system"] == "/opt/example/etc/gitconfig"
+    assert entry["ok"] is True and entry["system"] == _ETC
     assert entry["tried"] is not None
     _caches.clear_all()
     assert gitsystem.sources() == good
@@ -713,10 +723,10 @@ def test_a_failed_ask_keeps_the_answer_git_gave(
     gitsystem._record(gitsystem._Answer(key, None, None, time.time(), False, fallback))
     assert _record(state)["entries"][0]["ok"] is True
 
-    fake.named, fake.own = "/opt/other/etc/gitconfig\n", []
+    fake.named, fake.own = f"{_OTHER}\n", []
     _aged(state, "tried", gitsystem.RETRY_SECONDS)
     _caches.clear_all()
-    assert gitsystem.sources() == gitsystem.Sources((), "/opt/other/etc/gitconfig")
+    assert gitsystem.sources() == gitsystem.Sources((), _OTHER)
     assert _record(state)["entries"][0]["tried"] is None
 
     racer = gitsystem._Answer(
@@ -732,7 +742,7 @@ def test_a_failed_ask_keeps_the_answer_git_gave(
     fake.named = None
     fake.during = lambda: gitsystem._record(racer)
     assert gitsystem.sources() == good
-    assert _record(state)["entries"][0]["system"] == "/opt/example/etc/gitconfig"
+    assert _record(state)["entries"][0]["system"] == _ETC
 
 
 def test_a_capture_taken_under_the_fallback_is_read_again_once_git_answers(
@@ -844,6 +854,117 @@ def test_the_files_a_build_reads_are_read_off_gits_listing() -> None:
     assert gitsystem._own_files(listing) == (vendor, data)
     assert gitsystem._own_files(b"") == ()
     assert gitsystem._own_files(b"garbage") == ()
+
+
+def test_windows_paths_are_read_one_way_on_any_python(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows CI on Python 3.14: ``ntpath.isabs`` takes a path rooted
+    with no drive for relative since 3.13, so a fake git's ``/opt/...``
+    file left the listing there and not on 3.12. Such a path names a file
+    on whatever drive the reader stands on, and is never kept, on any
+    Python (`gitsystem._absolute`); git for Windows names its files with
+    their drive. git is asked at the root of the drive it is on
+    (`gitsystem._root`), not of the drive the process started on. Run here
+    as ``ntpath`` reads, on any platform."""
+    assert gitsystem._absolute("C:/Program Files/Git/etc/gitconfig", ntpath)
+    assert gitsystem._absolute("C:\\ProgramData\\Git\\config", ntpath)
+    assert gitsystem._absolute("\\\\server\\share\\git\\config", ntpath)
+    assert not gitsystem._absolute("/opt/example/vendor", ntpath)
+    assert not gitsystem._absolute("\\opt\\example\\vendor", ntpath)
+    assert not gitsystem._absolute("C:relative\\gitconfig", ntpath)
+    assert not gitsystem._absolute("relative/gitconfig", ntpath)
+    assert gitsystem._absolute("/opt/example/vendor", posixpath)
+    assert not gitsystem._absolute("relative/gitconfig", posixpath)
+
+    def absolute(path: str, flavour: Any = ntpath) -> bool:
+        return real(path, ntpath)
+
+    real = gitsystem._absolute
+    monkeypatch.setattr(gitsystem, "_absolute", absolute)
+    listing = _listing(
+        ("unknown", "file:/opt/example/vendor"),
+        ("system", "file:C:/Program Files/Git/etc/gitconfig"),
+        ("system", "file:D:\\ProgramData\\Git\\config"),
+    )
+    assert gitsystem._own_files(listing) == (
+        "C:/Program Files/Git/etc/gitconfig",
+        "D:\\ProgramData\\Git\\config",
+    )
+
+    git = "C:\\Program Files\\Git\\cmd\\git.exe"
+    assert gitsystem._root(git, ntpath) == "C:\\"
+    assert gitsystem._root("D:/tools/git/bin/git.exe", ntpath) == "D:\\"
+    assert (
+        gitsystem._root("\\\\server\\share\\git.exe", ntpath) == "\\\\server\\share\\"
+    )
+    assert gitsystem._root("/usr/bin/git", posixpath) == "/"
+
+    # Both questions run where `_root` says for the binary found on PATH,
+    # wherever the process stands.
+    fake = _FakeGit(monkeypatch, tmp_path / "git")
+    fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
+    monkeypatch.setattr(gitsystem, "_root", lambda found: f"root of {found}")
+    monkeypatch.chdir(tmp_path)
+    assert gitsystem._ask("key", 0.0).ok
+    assert [kw["cwd"] for _args, kw in fake.asked] == [f"root of {fake.binary}"] * 2
+
+
+def test_a_config_file_is_named_one_way(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows CI: ``~/x`` expanded to ``<home>/x``, and a relative include
+    joined under git's ``C:/Program Files/Git/etc``, named a file with
+    both separators, which the stamps and the reads agreed on but a path
+    spelled as the platform spells it did not. A config file's path is
+    spelled with the platform's separator where it enters
+    (`gitconfig._native`): an include's target and the machine's files.
+    Nothing else is rewritten (a ``..`` is the system's to resolve, and a
+    backslash is part of a POSIX name). As ``ntpath`` and ``posixpath``
+    read, then here."""
+    assert (
+        gitconfig._native("C:\\Users\\me\\home/.gitconfig.local", ntpath)
+        == "C:\\Users\\me\\home\\.gitconfig.local"
+    )
+    assert gitconfig._native("D:/a/../b\\c", ntpath) == "D:\\a\\..\\b\\c"
+    assert gitconfig._native("//server/share/x", ntpath) == "\\\\server\\share\\x"
+    assert gitconfig._native("/home/me/a\\b/../c", posixpath) == "/home/me/a\\b/../c"
+
+    home = tmp_path / "home"
+    (tmp_path / "sub").mkdir()
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    main = tmp_path / "main-gitconfig"
+    main.write_text("[include]\n\tpath = ~/a.inc\n[include]\n\tpath = sub/b.inc\n")
+    read = gitconfig._config_values(str(main), stamped=True)
+    assert [p for p, _stamp in read.files or ()] == [
+        str(main),
+        str(home / "a.inc"),
+        str(tmp_path / "sub" / "b.inc"),
+    ]
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(main))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    assert location_git._machine_configs() == (str(main),)
+
+    # Where a path enters, it goes through `_native`: on POSIX, which has
+    # no other separator, only the calls tell.
+    seen: list[str] = []
+    native = gitconfig._native
+
+    def spy(path: str, flavour: Any = os.path) -> str:
+        seen.append(path)
+        return native(path, flavour)
+
+    monkeypatch.setattr(gitconfig, "_native", spy)
+    monkeypatch.setattr(location_git, "_native", spy)
+    gitconfig._config_values(str(main), stamped=True)
+    location_git._machine_configs()
+    assert seen == [
+        str(home) + "/a.inc",
+        os.path.join(str(tmp_path), "sub/b.inc"),
+        str(main),
+    ]
 
 
 def test_a_change_to_a_config_file_read_reaches_a_cached_capture(

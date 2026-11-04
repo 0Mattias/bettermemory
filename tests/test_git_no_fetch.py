@@ -30,6 +30,7 @@ fetches.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -180,10 +181,12 @@ def test_the_system_config_questions_run_at_the_root_under_the_pins(
 ) -> None:
     """ENG-207: `gitsystem` asks the git on PATH which system config
     files it reads, with the runner's pins, scrub and no-fetch variables,
-    at the root, so the config of the repository a process stands in
-    never reaches git; the caller's GIT_CONFIG_SYSTEM is unset for ``git
-    var`` and the system and global files are the null device for the
-    listing."""
+    at the root of the drive git is on (`gitsystem._root`; the root of
+    the working directory's drive differed on Windows CI, which checks
+    out on D: and keeps git on C:), so the config of the repository a
+    process stands in never reaches git; the caller's GIT_CONFIG_SYSTEM
+    is unset for ``git var`` and the system and global files are the
+    null device for the listing."""
     _plain_git(tmp_path, "init", "-q")
     calls: list[tuple[list[str], object, dict[str, str]]] = []
     real = subprocess.run
@@ -200,6 +203,8 @@ def test_the_system_config_questions_run_at_the_root_under_the_pins(
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "mine"))
     monkeypatch.chdir(tmp_path)
     answer = gitsystem._ask("key", 0.0)
+    git = shutil.which("git")
+    assert git is not None
     assert answer.ok and answer.sources.system != str(tmp_path / "mine")
     assert [c[0][1 + len(_git.PINS) :] for c in calls] == [
         list(gitsystem._VAR),
@@ -207,7 +212,7 @@ def test_the_system_config_questions_run_at_the_root_under_the_pins(
     ]
     for command, cwd, env in calls:
         assert command[: 1 + len(_git.PINS)] == ["git", *_git.PINS]
-        assert cwd == os.path.abspath(os.sep)
+        assert cwd == Path(git).anchor
         assert (env["GIT_NO_LAZY_FETCH"], env["GIT_ALLOW_PROTOCOL"]) == ("1", "")
         assert not set(_git.SCRUBBED_ENV) & set(env)
     assert "GIT_CONFIG_SYSTEM" not in calls[0][2]

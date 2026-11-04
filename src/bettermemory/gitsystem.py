@@ -30,9 +30,9 @@ process's or the record's), and where it never answered as naming the
 fallback file (`/etc/gitconfig`, none on Windows) and no file of its
 own; either way it is asked again after `RETRY_SECONDS`, and a failed
 ask never replaces a recorded answer of git's (ENG-207's review, R6).
-git is asked at the root, with the caller's ``GIT_CONFIG_SYSTEM``
-unset, so no repository's config and no override of this process
-reaches the answer.
+git is asked at the root of its own drive (`_root`), with the
+caller's ``GIT_CONFIG_SYSTEM`` unset, so no repository's config and no
+override of this process reaches the answer.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from . import _caches
@@ -70,9 +71,6 @@ REASK_SECONDS = 3600.0
 #: How long the fallback stands for a git that did not answer, or none.
 RETRY_SECONDS = 60.0
 _FALLBACK = None if os.name == "nt" else "/etc/gitconfig"
-#: Where git is asked: the root, so the setup git runs reads no
-#: repository's config (neither question needs one).
-_NOWHERE = os.path.abspath(os.sep)
 _VAR = ("var", "GIT_CONFIG_SYSTEM")
 _LIST = ("config", "--list", "--show-scope", "--show-origin", "-z")
 _OVERRIDES = ("GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM")
@@ -213,6 +211,32 @@ def _kept(key: str, now: float, *seen: _Answer | None) -> _Answer | None:
     return dataclasses.replace(max(good, key=lambda a: a.asked), tried=now)
 
 
+def _root(git: str, flavour: ModuleType = os.path) -> str:
+    """Where the git binary `git` is asked: the root of the drive it is
+    on (``/`` but on Windows; `flavour` the path module, ``ntpath`` or
+    ``posixpath``), so the setup git runs reads no repository's config,
+    which neither question needs. That drive holds git, so its root is
+    there whenever git is, and it is the same wherever the process stands:
+    the root of the working directory's drive at import was ``D:\\`` for
+    a process started on the drive Windows CI checks out on and ``C:\\``
+    for one that moved to the temporary directory (ENG-207)."""
+    drive: str = flavour.splitdrive(git)[0]
+    return drive + str(flavour.sep)
+
+
+def _absolute(path: str, flavour: ModuleType = os.path) -> bool:
+    """Whether `path` names one file wherever it is read from: absolute,
+    and on Windows with its drive (``C:/x``, ``\\\\server\\share\\x``). A
+    path rooted with no drive (``/x``) names a file on the drive the
+    reader stands on; Python before 3.13 took it for absolute on Windows
+    and 3.13 does not, so the rule is spelled here, not left to
+    ``isabs``. Git for Windows names its files with their drive."""
+    if flavour.sep == "\\":
+        drive, rest = flavour.splitdrive(path)
+        return bool(drive) and rest[:1] in ("\\", "/")
+    return bool(flavour.isabs(path))
+
+
 def _ask(key: str, now: float) -> _Answer:
     """git's answer for the PATH `key` names, both questions within
     `ASK_SECONDS` together; the fallback, not ok, where git is not on
@@ -223,14 +247,13 @@ def _ask(key: str, now: float) -> _Answer:
     if git is None or stamp is None or stamp == _UNSTATED:
         return failed
     deadline = time.monotonic() + ASK_SECONDS
-    named = _git_runner.run_git(
-        _VAR, cwd=_NOWHERE, timeout=ASK_SECONDS, unset=_OVERRIDES
-    )
+    where = _root(git)
+    named = _git_runner.run_git(_VAR, cwd=where, timeout=ASK_SECONDS, unset=_OVERRIDES)
     left = deadline - time.monotonic()
     if named is None or left <= 0:
         return failed
     listed = _git_runner.run_git(
-        _LIST, cwd=_NOWHERE, timeout=left, text=False, env=_DEVNULL, unset=_OVERRIDES
+        _LIST, cwd=where, timeout=left, text=False, env=_DEVNULL, unset=_OVERRIDES
     )
     if listed is None:
         return failed
@@ -246,7 +269,8 @@ def _own_files(listing: bytes) -> tuple[str, ...]:
     run with the system and global files at the null device names at
     system or unknown scope, in its order, each once: the files a build
     reads of its own. Each entry is the scope, the origin and the
-    ``key\\nvalue``, each ended by a NUL."""
+    ``key\\nvalue``, each ended by a NUL. A file named by a path that is
+    not absolute (`_absolute`) is not kept."""
     parts = listing.split(b"\0")
     found: list[str] = []
     for i in range(0, len(parts) - 2, 3):
@@ -254,7 +278,7 @@ def _own_files(listing: bytes) -> tuple[str, ...]:
         if scope not in (b"system", b"unknown") or not origin.startswith(b"file:"):
             continue
         path = os.fsdecode(origin[len(b"file:") :])
-        if os.path.isabs(path) and path not in found:
+        if _absolute(path) and path not in found:
             found.append(path)
     return tuple(found[:_OWN_MAX])
 

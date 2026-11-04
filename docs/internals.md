@@ -485,9 +485,13 @@ Where those are is built into the binary, so git is asked: `git var
 GIT_CONFIG_SYSTEM` (git 2.42 and later) names the system file, and `git
 config --list --show-scope --show-origin -z`, with the system and global
 files at the null device, the build's own files that hold an entry
-(git 2.26 and later). Both run at the root, with the caller's
-`GIT_CONFIG_SYSTEM` unset, within 0.3 s together (the capture's fetch
-budget), only for a repository with a remote. A hook client is a new
+(git 2.26 and later); a file it names by a path with no drive on
+Windows is not kept. Both run at the root of the drive git is on, with
+the caller's `GIT_CONFIG_SYSTEM` unset, within 0.3 s together (the
+capture's fetch budget), only for a repository with a remote. A config
+file's path is spelled with the platform's separator where it enters
+(an include's target, the machine's files), so one file is named one
+way wherever it is stamped or compared. A hook client is a new
 process each prompt, so the answer is kept in the state directory
 (`git-config-sources.json`) for the PATH, as its digest, with the stamp
 of the git binary found on that PATH; a capture stats that binary and

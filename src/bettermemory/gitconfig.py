@@ -35,6 +35,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from types import ModuleType
 
 from . import _caches
 from ._location_probe import path_missing
@@ -300,7 +301,8 @@ def _include(
 ) -> None:
     """Read the file an include names into `out`, as git does (config.c's
     ``handle_path_include``): ``~/`` is the home directory and a relative
-    path is taken from the including file's directory; a missing file is
+    path is taken from the including file's directory, and the path is
+    spelled with the platform's separator (`_native`); a missing file is
     skipped. Under `condition` (an ``includeIf`` section's) only where it
     holds; where it is not evaluated here, the names the file sets go to
     `out.undecided` and its values are not taken. Past git's depth,
@@ -310,6 +312,7 @@ def _include(
         return
     if not os.path.isabs(target):
         target = os.path.join(os.path.dirname(including), target)
+    target = _native(target)
     holds = True if condition is None else _condition(condition, including, git_dir)
     if holds is False:
         return
@@ -356,6 +359,20 @@ def unchanged(files: Sequence[tuple[str, Stamp | None]]) -> bool:
         if seen[path] != was:
             return False
     return True
+
+
+def _native(path: str, flavour: ModuleType = os.path) -> str:
+    """`path` with the platform's other separator written as its own
+    (`flavour` the path module: on Windows ``C:/x\\y`` is ``C:\\x\\y``;
+    POSIX has none, and a backslash there is part of a name). A config
+    file's path is spelled so where it enters (an include's target, the
+    machine's config files), so one file is named one way wherever it is
+    stamped, read or compared: ``~/x`` expanded to ``<home>/x`` and a
+    relative include under git's ``C:/Program Files/Git/etc`` mixed the
+    two (ENG-207, Windows CI). Nothing else is rewritten: a ``..`` is left
+    for the system to resolve, as git leaves it."""
+    other = flavour.altsep
+    return path.replace(other, flavour.sep) if other else path
 
 
 def _home() -> str | None:
