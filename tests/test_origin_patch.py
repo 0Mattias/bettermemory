@@ -1050,3 +1050,127 @@ def test_the_claims_the_tests_name_are_governed() -> None:
     assert parse_claim(_FOO).kind == "symbol"
     assert parse_claim(_F).kind == "path"
     assert parse_claim(_Z).kind == "symbol"
+
+
+# ---------------------------------------------------------------------------
+# No window passes a command line's bound (ENG-220's review, round C)
+# ---------------------------------------------------------------------------
+
+#: The most characters Windows takes on a command line (CreateProcess).
+_WINDOWS_COMMAND_LINE = 32_767
+
+
+def test_no_window_passes_a_command_line_s_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worst case: a patch stream's 256 hashes
+    (`origin.MAX_PATCH_STREAM_COMMITS`, 10,496 characters with their
+    separators) and a memory's 64 claims (`claims.MAX_CLAIMS`) of 1,024
+    characters (`claims.MAX_CLAIM_LEN`), each in 64 spellings
+    (`claims.MAX_SPELLINGS`) and spelled ``:(literal)``: 4,096 pathspecs,
+    4.2 MB. On the command line, eight claims of 64 spellings passed the
+    32,767 characters Windows takes, and process creation failed. Every
+    log that takes commits or pathspecs (the two touching logs, the patch
+    stream, the split's listing) now puts them on standard input, so its
+    command line is the same whatever the window, under 1,000 characters,
+    and the input carries each commit and pathspec on its line."""
+    from bettermemory.claims import MAX_CLAIM_LEN, MAX_CLAIMS, MAX_SPELLINGS
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _plain(repo, "init", "-q")
+    shas = [f"{i:040x}" for i in range(origin.MAX_PATCH_STREAM_COMMITS)]
+    specs = [
+        f":(literal)src/{i:04d}" + "x" * (MAX_CLAIM_LEN - 9)
+        for i in range(MAX_CLAIMS * MAX_SPELLINGS)
+    ]
+    assert len(shas) == 256 and len(specs) == 4096
+    seen: list[tuple[list[str], bytes | None]] = []
+
+    def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.append((list(argv), kwargs.get("input")))
+        return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    def reads(window: list[str], paths: list[str]) -> list[list[str]]:
+        seen.clear()
+        assert (
+            origin.commit_author_timestamps_touching_pathspecs(
+                repo, paths, toplevel=repo
+            )
+            == []
+        )
+        assert (
+            origin.commit_author_sha_pairs_touching_pathspecs(
+                repo, paths, toplevel=repo
+            )
+            == []
+        )
+        assert origin.commit_patch_stream(repo, window, paths, toplevel=repo) == ""
+        assert origin_patch._changes(repo, window, paths) == {}
+        assert len(seen) == 4, "one git process each"
+        for i, (argv, stdin) in enumerate(seen):
+            revisions = ["HEAD"] if i < 2 else window
+            assert (
+                stdin
+                == "".join(f"{line}\n" for line in (*revisions, "--", *paths)).encode()
+            )
+        return [argv for argv, _ in seen]
+
+    widest = reads(shas, specs)
+    for argv in widest:
+        line = subprocess.list2cmdline(argv)
+        assert len(line) < 1000 < _WINDOWS_COMMAND_LINE, line
+    assert reads(shas[:1], specs[:1]) == widest, "the same whatever the window"
+
+
+def test_a_line_that_cannot_carry_a_pathspec_reads_as_no_answer() -> None:
+    """A pathspec holding a line break, or empty, cannot be put on a line
+    of git's standard input (git ends its read at an empty line and takes a
+    CR off a line's end), nor can a revision that starts with a dash: the
+    log reads as git not answering, and the caller keeps its conservative
+    count."""
+    assert origin_history.log_stdin(["HEAD"], ["a.py"]) == b"HEAD\n--\na.py\n"
+    for revisions, pathspecs in (
+        (["HEAD"], ["a\nb.py"]),
+        (["HEAD"], ["a.py\r"]),
+        (["HEAD"], [""]),
+        (["--all"], ["a.py"]),
+    ):
+        assert origin_history.log_stdin(revisions, pathspecs) is None
+    assert (
+        origin.commit_author_timestamps_touching_pathspecs(
+            Path(os.devnull), [":(literal)a\nb.py"], toplevel=Path(os.devnull)
+        )
+        is None
+    )
+
+
+def test_pathspecs_past_a_command_line_s_bound_read_as_git_reads_them(
+    tmp_path: Path,
+) -> None:
+    """Real git, a window whose pathspecs on a command line would pass
+    32,767 characters: 300 claimed files that no commit touched, each
+    spelled ``:(literal)`` with a 200-character name, beside src/mod.py.
+    Read from standard input, the touching logs, the patch stream and the
+    split's listing answer as for src/mod.py alone, and src/mod.py's own
+    ``:(literal)`` is read as its magic, as on the command line."""
+    partial = Partial(tmp_path, _SYMBOL)
+    repo = partial.clone(blobless=False)
+    alone = [f":(literal){_MOD_PATH}"]
+    noise = [f":(literal)src/n{i:03d}" + "y" * 200 for i in range(300)]
+    wide = [*noise, *alone]
+    assert len(" ".join(wide)) > _WINDOWS_COMMAND_LINE
+    for read in (
+        origin.commit_author_timestamps_touching_pathspecs,
+        origin.commit_author_sha_pairs_touching_pathspecs,
+    ):
+        got = read(repo, wide, toplevel=repo)
+        assert got and got == read(repo, alone, toplevel=repo)
+    stream = origin.commit_patch_stream(repo, partial.commits, wide, toplevel=repo)
+    assert stream and stream == origin.commit_patch_stream(
+        repo, partial.commits, alone, toplevel=repo
+    )
+    listed = origin_patch._changes(repo, partial.commits, wide)
+    assert listed and listed == origin_patch._changes(repo, partial.commits, alone)

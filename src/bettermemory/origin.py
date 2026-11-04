@@ -1694,17 +1694,7 @@ def commit_author_timestamps_touching_pathspecs(
         toplevel = repo_toplevel(cwd)
         if toplevel is None:
             return None
-    raw = _git(
-        toplevel,
-        *origin_history.AS_STORED_PATHS,
-        "log",
-        "--format=%aI",
-        "HEAD",
-        "--",
-        *pathspecs,
-        timeout=5.0,
-        empty_ok=True,
-    )
+    raw = _touching_log(toplevel, "%aI", pathspecs)
     if raw is None:
         # Git could not answer (non-zero exit, missing binary, timeout).
         return None
@@ -1754,17 +1744,7 @@ def commit_author_sha_pairs_touching_pathspecs(
         toplevel = repo_toplevel(cwd)
         if toplevel is None:
             return None
-    raw = _git(
-        toplevel,
-        *origin_history.AS_STORED_PATHS,
-        "log",
-        "--format=%aI %H",
-        "HEAD",
-        "--",
-        *pathspecs,
-        timeout=5.0,
-        empty_ok=True,
-    )
+    raw = _touching_log(toplevel, "%aI %H", pathspecs)
     if raw is None:
         return None
     if not raw:
@@ -1778,6 +1758,26 @@ def commit_author_sha_pairs_touching_pathspecs(
         return None
     out.sort(key=lambda pair: _instant(pair[0]))
     return out
+
+
+def _touching_log(toplevel: Path, form: str, pathspecs: list[str]) -> str | None:
+    """``git log --format=<form> HEAD -- <pathspecs>``, the head and the
+    pathspecs on git's standard input (`origin_history.log_stdin`), so no
+    count of them passes a command line's bound; None where git did not
+    answer or a pathspec cannot be put on a line."""
+    stdin = origin_history.log_stdin(["HEAD"], pathspecs)
+    if stdin is None:
+        return None
+    return _git(
+        toplevel,
+        *origin_history.AS_STORED_PATHS,
+        "log",
+        f"--format={form}",
+        "--stdin",
+        timeout=5.0,
+        empty_ok=True,
+        stdin=stdin,
+    )
 
 
 def _dated_sha(line: str) -> tuple[datetime, str] | None:
@@ -1894,6 +1894,9 @@ def commit_patch_stream(
             return None
     from .claims import COMMIT_MARK
 
+    stdin = origin_history.log_stdin(shas, pathspecs)
+    if stdin is None:
+        return None
     raw = _git(
         toplevel,
         # Global `-c` options must precede the subcommand. See the
@@ -1920,11 +1923,12 @@ def commit_patch_stream(
         "--no-ext-diff",
         "-U0",
         f"--format={COMMIT_MARK}%H",
-        *shas,
-        "--",
-        *pathspecs,
+        # The commits and pathspecs on standard input, so no window passes
+        # a command line's bound (`origin_history.log_stdin`).
+        "--stdin",
         timeout=5.0,
         empty_ok=True,
+        stdin=stdin,
     )
     if raw is None:
         return None

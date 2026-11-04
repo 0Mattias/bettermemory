@@ -571,7 +571,7 @@ def test_the_memo_is_bounded(
     warm, calls = _attach(memories, caller, monkeypatch)
     assert warm == cold
     assert len(calls) == 1, "one evicted hit: its one path-filtered log"
-    assert calls[0][:3] == ("log", "--format=%aI", "HEAD") and "--" in calls[0]
+    assert calls[0][:3] == ("log", "--format=%aI", "--stdin")
     assert len(_response._DRIFT_MEMO) == 2
 
 
@@ -606,7 +606,7 @@ def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
     real_run = subprocess.run
 
     def filtered_log_fails(argv: Any, *args: Any, **kwargs: Any) -> Any:
-        if "--" not in argv:
+        if "--stdin" not in argv:
             return real_run(argv, *args, **kwargs)
         if failure == "timeout":
             raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))

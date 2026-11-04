@@ -393,6 +393,29 @@ def cuts(start: Path, *, walk: bool = False) -> frozenset[str] | None:
     )
 
 
+def log_stdin(revisions: Sequence[str], pathspecs: Sequence[str]) -> bytes | None:
+    """What ``git log --stdin`` reads in place of its revisions and
+    pathspecs on the command line: each revision on a line, a ``--`` line,
+    then each pathspec on a line (git's ``read_revisions_from_stdin``).
+
+    Windows holds a command line to 32,767 characters, which a patch
+    stream's 256 hashes and a memory's claims in each spelling of their
+    paths (64 of up to 1,024 characters, each in up to 64 spellings) pass,
+    and process creation then fails; standard input has no such bound
+    (ENG-220's review, round C). None where a line cannot carry an element
+    as git reads it, and the caller reads that as git not answering: one
+    holding a line break (git also takes a CR before the LF off a line), an
+    empty one, which ends git's read, or a revision that starts with a
+    dash, which git takes for an option there and dies on. Encoded as
+    ``os.fsencode`` encodes an argument on POSIX."""
+    lines = (*revisions, "--", *pathspecs)
+    if any(not line or "\n" in line or "\r" in line for line in lines):
+        return None
+    if any(revision.startswith("-") for revision in revisions):
+        return None
+    return "".join(f"{line}\n" for line in lines).encode("utf-8", "surrogateescape")
+
+
 @dataclass(frozen=True)
 class ReachableWalk:
     """The commits reachable from `head` but not from `anchor` — the
@@ -491,6 +514,7 @@ __all__ = [
     "history_guard",
     "instant",
     "located_key",
+    "log_stdin",
     "note_unwalked",
     "read_lines",
     "recall",

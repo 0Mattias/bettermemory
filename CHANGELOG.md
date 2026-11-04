@@ -540,6 +540,22 @@ eighteenth was built.
   `src/bettermemory/_response.py`, `src/bettermemory/health_stats.py`,
   `tests/test_origin_as_stored.py`)
 
+- **No window passes a command line's bound (ENG-220).** The patch
+  stream and the split's listing named up to 256 commits on git's
+  command line (10,496 characters), and they and the two path-filtered
+  date logs named every pathspec there: a claim in each of its 64
+  spellings, spelled `:(literal)`, so eight claims on long accented
+  paths in one memory passed the 32,767 characters Windows takes, where
+  process creation fails. The four logs now read their commits and
+  pathspecs from standard input (`git log --stdin`, a `--` line between
+  them; `origin_history.log_stdin`), so each command line is the same
+  few hundred characters whatever the window. A pathspec a line cannot
+  carry (a line break, or empty) reads as git not answering, and the hit
+  keeps its conservative count. (`src/bettermemory/origin.py`,
+  `src/bettermemory/origin_history.py`, `src/bettermemory/origin_patch.py`,
+  `tests/test_origin_patch.py`, `tests/test_commit_drift_cache.py`,
+  `tests/test_verify_literal_pathspecs.py`)
+
 - **The migration homes a record in a part below a folder whose question
   was answered where a session there resolves (ENG-222).** A folder
   holding a copy of a part's file and other content is asked about at

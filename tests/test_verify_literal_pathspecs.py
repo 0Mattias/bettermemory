@@ -226,12 +226,16 @@ _REFUSED_CLAIMS = (
 
 @pytest.fixture
 def git_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
-    """The argv of every git process spawned from here on."""
+    """The argv of every git process spawned from here on, with what it
+    was given on its standard input as one more element: the logs take
+    their commits and pathspecs there (`origin_history.log_stdin`)."""
     seen: list[list[str]] = []
     real = subprocess.run
 
     def run(args: Any, *rest: Any, **kwargs: Any) -> Any:
-        seen.append([str(a) for a in args])
+        given = kwargs.get("input")
+        stdin = [given.decode("utf-8", "replace")] if given else []
+        seen.append([*(str(a) for a in args), *stdin])
         return real(args, *rest, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", run)

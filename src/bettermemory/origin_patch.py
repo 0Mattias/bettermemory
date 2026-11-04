@@ -384,7 +384,11 @@ def _changes(
     whose blobs a stream that pairs them reads; nor is ``log.follow``
     obeyed, whose rename search reads blobs outside the pathspecs (a
     stream it reaches that far fails, and the window is counted per file).
-    None where git did not answer."""
+    None where git did not answer. The commits and pathspecs go on git's
+    standard input, as the stream's do (`origin_history.log_stdin`)."""
+    stdin = origin_history.log_stdin(shas, pathspecs)
+    if stdin is None:
+        return None
     raw = origin._git(
         toplevel,
         "-c",
@@ -400,11 +404,10 @@ def _changes(
         "--no-abbrev",
         "--no-color",
         f"--format={COMMIT_MARK}%H",
-        *shas,
-        "--",
-        *pathspecs,
+        "--stdin",
         timeout=5.0,
         empty_ok=True,
+        stdin=stdin,
     )
     if raw is None:
         return None
