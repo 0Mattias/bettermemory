@@ -746,6 +746,47 @@ remotes, file, token, shallow) changes and joins by itself when two
 witnesses now agree; the question is answered by evidence, with a
 `proposal_answered` row naming it.
 
+**An alias clone and its full-URL clone** (ENG-207). Before 9.0.0rc14 a
+remote spelled with an `insteadOf` alias (`gh:acme/lib`) keyed as
+written, so a clone of the alias and a clone of the URL it stands for
+could be kept as two projects; since rc14 the alias clone's sightings
+record the full URL's key too, and a third clone of either names both
+with two witnesses each and asks. A sighting of a known alias clone
+(`membership_alias.rejoin`; born, outside the strict switch, its capture
+naming an alias key: a remote spelled with an `insteadOf` prefix of the
+system or the global config that git rewrites to another key, never one
+of the repository's own config, which its own files set) merges its
+project P into one other project Q where all of these hold:
+
+- P and Q are settled: neither provisional, a part, a folder project or
+  a boundary, both in the location's tenant; no question is open on a
+  checkout of either, and no project file is bound to either.
+- Q is the one settled project besides P that holds every remote the
+  checkout fetches from (its keys less its alias keys; a provisional
+  project, such as a third clone's that was asked, is not counted), and
+  one of Q's checkouts names exactly those keys, so Q fetches from them
+  and does not hold them only as an alias of its own. R is read on the
+  URL git fetches on both sides, so two repositories whose aliases share
+  a prefix (`gh:acme/lib`, `gh:acme/app`) or one spelling under two
+  machines' rules (`gh:lib`) are not joined by it, nor a fork whose own
+  remote Q does not hold.
+- No declaration names P, Q, a project merged into either or a checkout
+  of either: no join, move, init, new or separate project, unjoin,
+  absorb, declared remote or record moved there. Evidence never
+  overrides what a user said.
+- The checkout holds one of Q's witness commits (H), read last: one
+  repository by two independent witnesses, rung 4's bar.
+
+Q stands, with a `project_merged` row naming the alias, and the L4 line
+names P and its undo (`unjoin_project` on P); what is written at either
+clone before an undo stays with Q. A first-sight question whose
+candidates a merge made one re-tallies at its checkout's next sighting
+(L4), so a third clone asked between the two joins Q without asking
+again. Where any condition fails the two stay as they were, and that is
+kept for the checkout's project, HEAD, remotes and alias keys in the
+process, so a steady prompt at an alias clone that never joins reads
+nothing more than any checkout's (E16).
+
 ### Contradictions and questions
 
 - `token_shared_no_commit`: the caller carries the token of a live

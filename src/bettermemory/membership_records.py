@@ -442,7 +442,11 @@ class Location:
     time; ``detail`` then says which. ``session`` is the harness session
     id the caller carries (None when unknown): a resolution at a path
     written at while it could not be read merges those writes when the
-    same session resolves it (decision B6)."""
+    same session resolves it (decision B6). ``alias_keys`` are the
+    remote keys spelled with an ``insteadOf`` prefix of the system or
+    the global config that git rewrites to another key, so
+    ``remote_keys`` less them are the remotes git fetches from
+    (`location_git.read_remotes`, `membership_alias`, ENG-207)."""
 
     machine: str
     cwd: str
@@ -457,6 +461,7 @@ class Location:
     branch: str | None = None
     ref_tips: tuple[str, ...] = ()
     remote_keys: frozenset[str] = frozenset()
+    alias_keys: frozenset[str] = frozenset()
     shallow: bool = False
     token: str | None = None
     token_written: str | None = None

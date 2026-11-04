@@ -623,7 +623,7 @@ def _capture_uncached(
     tips = _ref_tips(git)
     base = git.root or git.git_dir
     # Each remote as written and as its insteadOf rewrites it (ENG-160),
-    # and the config files read for it (ENG-207).
+    # its alias keys and the config files read for it (ENG-207).
     remotes = read_remotes(git.common_dir, git.git_dir, lambda u: remote_key(u, base))
     token, written, status = _token_fields(git, write_token=write_token)
     # A git directory kept apart (`kept`, read above) keeps no pointer back
@@ -653,6 +653,7 @@ def _capture_uncached(
         branch=branch,
         ref_tips=tips,
         remote_keys=remotes.keys,
+        alias_keys=remotes.aliases,
         config_files=remotes.files,
         shallow=os.path.isfile(os.path.join(git.common_dir, "shallow")),
         token=token,
@@ -1353,6 +1354,7 @@ def to_location(
         branch=cap.branch,
         ref_tips=cap.ref_tips,
         remote_keys=frozenset(cap.remote_keys),
+        alias_keys=frozenset(cap.alias_keys),
         shallow=cap.shallow,
         token=cap.token,
         token_written=cap.token_written,

@@ -178,6 +178,29 @@ def line_joined(root: str, name: str, project_id: str, codes: Iterable[str]) -> 
     )
 
 
+def line_alias_joined(
+    root: str,
+    name: str,
+    project_id: str,
+    merged: str,
+    merged_id: str,
+    codes: Iterable[str],
+) -> str:
+    """L4, for an alias clone's project merged into the project of the
+    URL its alias stands for (`membership_alias`, ENG-207): the project
+    merged and its undo, which leaves what was written meanwhile where
+    it is."""
+    words = ", ".join(WORDS[c] for c in sorted(codes) if c in WORDS)
+    return (
+        f"bettermemory: {quoted(root)} is project {_named(name, project_id)} "
+        f"({words}); its project {_named(merged, merged_id)}, the same "
+        "repository under a remote alias, joined it with what was written "
+        "there. Undo, when the user says so: "
+        f'memory_admin(action="unjoin_project", id={quoted(merged_id)}); '
+        f"what is written here until then stays with {_named(name, project_id)}"
+    )
+
+
 def line_remote_diverged(
     root: str,
     new_key: str,

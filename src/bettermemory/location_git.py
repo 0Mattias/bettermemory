@@ -280,14 +280,19 @@ def _global_configs() -> list[str]:
 ConfigFile = tuple[str, Stamp | None]
 
 
-def _rewrites(
-    common_dir: str, git_dir: str
-) -> tuple[list[tuple[str, str | None]], list[ConfigFile]]:
+#: A remote URL as written, the URL git rewrites it to (None where no
+#: rule matches it), and whether the rule that does is the machine's (the
+#: system or the global config) rather than the repository's own.
+Spelling = tuple[str, str | None, bool]
+
+
+def _rewrites(common_dir: str, git_dir: str) -> tuple[list[Spelling], list[ConfigFile]]:
     """Each remote URL in the repository's config with the URL git
     rewrites it to, where a ``url.<base>.insteadOf`` prefix in the system,
     the global or the repository's config matches it (the longest prefix
     wins, the first read of equal ones, as in remote.c's ``alias_url``;
-    ENG-160, the system's since ENG-207), else None; and every config file
+    ENG-160, the system's since ENG-207), else None, and whether that
+    prefix is the machine's (`Spelling`); and every config file
     read for them, stamped, the files each includes with it, but for the
     repository's own config, which the capture's signature stamps
     already (`location.signature`). A repository with no remote reads its
@@ -311,7 +316,7 @@ def _rewrites(
     ]
     if not urls:
         return [], files
-    rules: list[tuple[str, str]] = []
+    rules: list[tuple[str, str, bool]] = []
     configs = [
         _config_values(p, git_dir=git_dir, stamped=True)
         for p in [*_system_configs(), *_global_configs()]
@@ -319,17 +324,21 @@ def _rewrites(
     for config in configs:
         files.extend(config.files or ())
     for config in [*configs, values]:
+        machine = config is not values
         for (section, sub, key), found in config.items():
             if section == "url" and sub is not None and key == "insteadof":
-                rules.extend((prefix, sub) for prefix in found if prefix)
-    out: list[tuple[str, str | None]] = []
+                rules.extend((prefix, sub, machine) for prefix in found if prefix)
+    out: list[Spelling] = []
     for url in urls:
         best = max(
             (r for r in rules if url.startswith(r[0])),
             key=lambda r: len(r[0]),
             default=None,
         )
-        out.append((url, None if best is None else best[1] + url[len(best[0]) :]))
+        if best is None:
+            out.append((url, None, False))
+        else:
+            out.append((url, best[1] + url[len(best[0]) :], best[2]))
     return out, files
 
 
@@ -341,15 +350,17 @@ def remote_urls(common_dir: str, git_dir: str) -> list[str]:
     matches as it did, and a clone of the URL the alias stands for
     matches too."""
     spellings, _files = _rewrites(common_dir, git_dir)
-    return [u for u, _ in spellings] + [r for _, r in spellings if r is not None]
+    return [u for u, _r, _m in spellings] + [r for _u, r, _m in spellings if r]
 
 
 @dataclass(frozen=True)
 class RemoteKeys:
     """A repository's remotes as a capture keys them (`read_remotes`):
-    every key, and the config files read for them (`_rewrites`)."""
+    every key, the alias keys among them, and the config files read for
+    them (`_rewrites`)."""
 
     keys: tuple[str, ...]
+    aliases: tuple[str, ...]
     files: tuple[ConfigFile, ...]
 
 
@@ -357,16 +368,31 @@ def read_remotes(
     common_dir: str, git_dir: str, key: Callable[[str], str | None]
 ) -> RemoteKeys:
     """The keys (`key` of each URL) of the repository's remotes, each as
-    written and as git rewrites it (`remote_urls`). The config files read
-    for them are kept with their stamps, so a capture kept against them is
+    written and as git rewrites it (`remote_urls`). An alias key is a
+    remote's key as written where an ``insteadOf`` prefix of the system or
+    the global config rewrites it to another key, and no remote is fetched
+    from under it: a spelling the machine's config gives a meaning, never
+    the URL git fetches (ENG-207). A prefix of the repository's own config
+    makes none: the checkout's own files set it, and an alias key may
+    join two projects (`membership_alias`). The config files read for the
+    remotes are kept with their stamps, so a capture kept against them is
     read again once one changes (`gitconfig.unchanged`; ENG-207)."""
     spellings, files = _rewrites(common_dir, git_dir)
     keys: set[str] = set()
-    for url, rewritten in spellings:
-        for spelling in (url, rewritten):
-            found = key(spelling) if spelling is not None else None
-            keys.update([found] if found else [])
-    return RemoteKeys(keys=tuple(sorted(keys)), files=tuple(files))
+    fetched: set[str] = set()
+    aliased: set[str] = set()
+    for url, rewritten, machine in spellings:
+        written = key(url)
+        as_fetched = written if rewritten is None else key(rewritten)
+        keys.update(k for k in (written, as_fetched) if k)
+        fetched.update([as_fetched] if as_fetched else [])
+        if written and as_fetched and machine and as_fetched != written:
+            aliased.add(written)
+    return RemoteKeys(
+        keys=tuple(sorted(keys)),
+        aliases=tuple(sorted(aliased - fetched)),
+        files=tuple(files),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +612,8 @@ class Capture:
     provider's placeholder the fetch did not bring within the budget;
     ``detail`` then names the file. ``cwd_key`` and ``hostname`` let the
     daemon tell whether it reads the same object at ``cwd``.
+    ``alias_keys`` are the remote keys spelled with an ``insteadOf``
+    prefix of the system or the global config (`read_remotes`, ENG-207).
     ``kept_apart`` is set where the repository was reached through a
     ``.git`` entry naming a git directory kept apart (`kept_apart`),
     ``tree_recorded`` where this capture made the first record of its
@@ -621,6 +649,7 @@ class Capture:
     detail: str = ""
     manifest: tuple[str, tuple[tuple[str, int], ...]] | None = None
     hostname: str | None = None
+    alias_keys: tuple[str, ...] = ()
     kept_apart: bool = False
     tree_recorded: bool = False
     config_files: tuple[ConfigFile, ...] = field(default=(), compare=False, repr=False)
@@ -653,6 +682,7 @@ class Capture:
             "branch": self.branch,
             "ref_tips": list(self.ref_tips),
             "remotes": list(self.remote_keys),
+            "aliases": list(self.alias_keys),
             "shallow": self.shallow,
             "token": self.token,
             "token_written": self.token_written,
@@ -710,6 +740,7 @@ class Capture:
                     _hash(x) for x in _bounded(raw.get("ref_tips"), REF_TIPS_MAX)
                 ),
                 remote_keys=tuple(_text(x) for x in _bounded(raw.get("remotes"), 256)),
+                alias_keys=tuple(_text(x) for x in _bounded(raw.get("aliases"), 256)),
                 shallow=bool(raw.get("shallow")),
                 token=_opt_text(raw.get("token")),
                 token_written=_opt_text(raw.get("token_written")),

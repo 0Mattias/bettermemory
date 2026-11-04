@@ -764,6 +764,38 @@ eighteenth was built.
   indexes such windows where it scored them as unreadable.
   (`src/bettermemory/claims.py`, `tests/test_claims.py`)
 
+- **An alias clone joins its full-URL clone's project (ENG-207).** The
+  third of 9.0.0rc14's Known limitations of the capture's config reader
+  is closed. An alias clone and a full-URL clone kept as two projects
+  before rc14, which a third clone of either named both and asked about,
+  become one: a sighting of the alias clone (its remote spelled with an
+  `insteadOf` prefix of the system or the global config, never of the
+  repository's own) merges its project into the one other settled
+  project, in its tenant, that fetches from every remote it fetches
+  from (one of that project's checkouts names exactly those keys) and
+  whose witness commit it holds, outside the strict switch. Nothing is
+  merged where a question is open on a checkout of either, a project
+  file is bound to either, or a declaration names either, a project
+  merged into either or a checkout of either (a join, move, init, new
+  or separate project, unjoin, absorb, declared remote or moved
+  record): evidence never overrides what the user said. The project
+  that fetches from the URL stands; the line names the project merged
+  and its undo (`unjoin_project`), after which what was written at
+  either clone meanwhile stays with the project that stood. A
+  first-sight question whose candidates a merge made one re-tallies at
+  its next sighting, so a third clone asked between the two joins
+  without a question. Two repositories whose aliases share a prefix or
+  a spelling stay apart, as does a fork whose own remote the other does
+  not hold. A sighting that merges nothing is kept for the checkout's
+  evidence, so a steady prompt at an alias clone costs what any
+  checkout's does. `docs/internals.md` states the rule.
+  (`src/bettermemory/membership_alias.py`,
+  `src/bettermemory/membership_resolve.py`,
+  `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_lines.py`,
+  `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
+  `tests/test_membership_alias.py`, `tests/test_membership_lines.py`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a

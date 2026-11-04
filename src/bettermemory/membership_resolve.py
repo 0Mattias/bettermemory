@@ -17,7 +17,8 @@ names as the lines write theirs, ENG-193), `location` (for `view_path`,
 and `_evicted` for the token read again, `_token_now`), `checkout_token`
 (that read), `location_git` (for the bounded read of a declared folder,
 `prefetch_declared`, and of the token), `location_witness` (for the
-exchange's one question of the planned views, `prefetch_liveness`), and
+exchange's one question of the planned views, `prefetch_liveness`),
+`membership_alias` (an alias clone's join, `_observe`, ENG-207), and
 `membership` only under TYPE_CHECKING.
 """
 
@@ -36,6 +37,7 @@ from .history import quoted
 from .location import view_path
 from .location_git import PROBE_BUDGET, UNANSWERED, bounded_read, bounded_reads
 from .location_witness import NeedWitnesses
+from .membership_alias import rejoin
 from .membership_lines import (
     line_across_boundary,
     line_content_crowded,
@@ -1168,8 +1170,10 @@ def _observe(
     root file (design 3.2); a remote replaced on a known checkout while
     the project's other repositories keep the old one asks (L5); a
     root file naming another project asks (L3); an open first-sight
-    proposal re-tallies when the evidence signature changed and is
-    answered by evidence when two witnesses now agree (L4)."""
+    proposal re-tallies when the evidence signature changed, or a merge
+    made two of its candidates one, and is answered by evidence when two
+    witnesses now agree (L4); a known alias clone's project joins the one
+    its remotes, as git fetches them, name (`rejoin`, ENG-207)."""
     lines: list[str] = []
     pid = self._canon(k.project)
     p = self.project(pid)
@@ -1261,9 +1265,14 @@ def _observe(
                     self._close(pr, "join", "project_file")
                     continue
             sig = _signature(loc)
-            if pr.kind != FIRST_SIGHT or pr.signature == sig:
+            # A merge since the question was asked made two of its
+            # candidates one (`rejoin`, ENG-207): it is asked again of the
+            # evidence, once, its candidates the projects they stand for.
+            named = tuple(dict.fromkeys(self._canon(c) for c in pr.candidates))
+            collapsed = len(named) < len(pr.candidates)
+            if pr.kind != FIRST_SIGHT or (pr.signature == sig and not collapsed):
                 continue
-            self._put_proposal(dataclasses.replace(pr, signature=sig))
+            self._put_proposal(dataclasses.replace(pr, signature=sig, candidates=named))
             t = self._tally(loc, tenant, exclude={pid})
             strong = [q for q, c in t.cands.items() if self._strength(loc, q, c) >= 2]
             if len(strong) == 1 and not t.contradictions and not strict:
@@ -1283,6 +1292,8 @@ def _observe(
                         codes,
                     )
                 )
+    if not first and not strict:
+        lines.extend(rejoin(self, k, loc, tenant))  # an alias clone (ENG-207)
     if (not loc.born and not updated.token) or loc.kind == FOLDER:
         if loc.manifest is not None and loc.manifest != updated.manifest:
             updated = dataclasses.replace(updated, manifest=loc.manifest)
