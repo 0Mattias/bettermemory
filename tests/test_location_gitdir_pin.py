@@ -21,6 +21,7 @@ directory is the test's own (``tests/conftest.py``).
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -29,7 +30,8 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -39,6 +41,7 @@ from bettermemory import (
     location,
     location_audit,
     location_git,
+    origin,
 )
 from bettermemory.config import Config, StorageConfig
 from bettermemory.location import OUTSIDE, REPO, capture, resolve_caller
@@ -783,6 +786,295 @@ def test_an_earlier_view_that_did_not_answer_gives_way_once_it_names_nothing(
     assert again.resolution.checkout == known.resolution.checkout
     pin = gitdir_pin.recorded(str(sep))
     assert pin is not None and _same(pin.tree, moved)
+
+
+def _under(paths: set[str]) -> Callable[[Any], bool]:
+    """Whether a path is one of the folders `paths`, or below one, compared
+    in this platform's case."""
+    names = {os.path.normcase(p) for p in paths}
+
+    def under(path: Any) -> bool:
+        if not isinstance(path, (str, os.PathLike)):
+            return False
+        here = os.path.normcase(os.fspath(path))
+        return any(here == n or here.startswith(n + os.sep) for n in names)
+
+    return under
+
+
+def _failing(monkeypatch: pytest.MonkeyPatch, folders: set[str], code: int) -> None:
+    """Every `os.stat`, `os.lstat` and `gitfile_rule` open of a folder in
+    `folders`, or of a path below one, raises the OSError `code`, as a share
+    that answers with an error does (a dead sshfs's ENOTCONN, NFS's ESTALE,
+    EIO, EACCES), until `monkeypatch` is undone: the share unmounted, or
+    answering again."""
+    under = _under(folders)
+
+    def raising(real: Callable[..., Any]) -> Callable[..., Any]:
+        def call(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if under(path):
+                raise OSError(code, os.strerror(code), os.fspath(path))
+            return real(path, *args, **kwargs)
+
+        return call
+
+    monkeypatch.setattr(os, "stat", raising(os.stat))
+    monkeypatch.setattr(os, "lstat", raising(os.lstat))
+    monkeypatch.setattr(gitfile_rule, "open", raising(open), raising=False)
+
+
+def _evicted(monkeypatch: pytest.MonkeyPatch, entry: Path) -> list[str]:
+    """`entry` a file provider's placeholder, its data held elsewhere
+    (`gitfile_rule._placeholder`, which reads SF_DATALESS on macOS and the
+    recall attributes on Windows, told here by the file's object so it
+    holds on every platform): the opens of it `gitfile_rule` makes, each a
+    download it would wait on."""
+    held = os.stat(entry)
+    real = gitfile_rule._placeholder
+    opened: list[str] = []
+    under = _under({str(entry), os.path.realpath(entry)})
+
+    def opening(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if under(path):
+            opened.append(os.fspath(path))
+        return open(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        gitfile_rule,
+        "_placeholder",
+        lambda st: os.path.samestat(st, held) or real(st),
+    )
+    monkeypatch.setattr(gitfile_rule, "open", opening, raising=False)
+    return opened
+
+
+_SHARE_ERRORS = [
+    pytest.param(getattr(errno, name), id=name)
+    for name in ("ENOTCONN", "EIO", "ESTALE", "EACCES")
+    if hasattr(errno, name)
+]
+
+
+@pytest.mark.parametrize("code", _SHARE_ERRORS)
+def test_an_earlier_view_that_answers_with_an_error_takes_the_record_from_a_plant(
+    tmp_path: Path,
+    lab: tuple[Store, Config],
+    monkeypatch: pytest.MonkeyPatch,
+    code: int,
+) -> None:
+    """ENG-217: a checkout seen before the records, and a plant naming its
+    git directory seen first after the upgrade, while the share holding
+    the checkout's tree answers with an error rather than hanging. The
+    view was passed over, as unreadable, so the plant made the first
+    record and the tree resolved as outside for good. It fails closed now,
+    as a view that does not answer does: it takes the record, the plant
+    reads it as a recorded tree that could not be read and is refused, the
+    security audit there says how the record is freed, and once the share
+    answers the tree resolves as the checkout and the plant stays
+    refused."""
+    store, config = lab
+    tree, sep = _separate(tmp_path)
+    known = resolve_caller(store, config, str(tree))
+    planted = _plant(tmp_path / "downloads" / "archive", sep)
+    _forget_records()
+
+    with monkeypatch.context() as share:
+        _failing(share, {str(tree), os.path.realpath(tree)}, code)
+        there = resolve_caller(store, config, str(planted))
+        assert there.resolution.checkout is None
+        assert there.resolution.outcome == GLOBAL_OUTCOME
+        pin = gitdir_pin.recorded(str(sep))
+        assert pin is not None and pin.tree == os.path.realpath(tree)
+        found = _finding(planted)
+    assert found["status"] == "warn", found
+    assert found["summary"].endswith(gitfile_rule.UNREAD_TREE[0]), found
+    assert "unmount" in found["fix"] and "remove its .git file" in found["fix"]
+
+    location._clear_cache()
+    again = resolve_caller(store, config, str(tree))
+    assert again.resolution.checkout == known.resolution.checkout
+    assert resolve_caller(store, config, str(planted)).resolution.checkout is None
+    assert _see(planted).state == OUTSIDE
+
+
+def test_an_earlier_view_whose_git_is_a_placeholder_takes_the_record_unread(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-217: the same, the checkout's ``.git`` file a provider's
+    placeholder (evicted from a synced folder). It is not read, since a
+    read would wait on its download, and it was passed over as
+    unreadable, so the plant took the record; it takes the record now,
+    with no open of it, and once it is back on this disk the tree resolves
+    as the checkout."""
+    store, config = lab
+    tree, sep = _separate(tmp_path)
+    known = resolve_caller(store, config, str(tree))
+    planted = _plant(tmp_path / "downloads" / "archive", sep)
+    _forget_records()
+
+    with monkeypatch.context() as provider:
+        opened = _evicted(provider, tree / ".git")
+        there = resolve_caller(store, config, str(planted))
+        assert there.resolution.checkout is None
+        pin = gitdir_pin.recorded(str(sep))
+        assert pin is not None and _same(pin.tree, tree)
+        assert _see(planted).state == OUTSIDE
+        found = _finding(planted)
+        assert opened == []
+    assert found["summary"].endswith(gitfile_rule.UNREAD_TREE[0]), found
+
+    location._clear_cache()
+    again = resolve_caller(store, config, str(tree))
+    assert again.resolution.checkout == known.resolution.checkout
+    assert _see(planted).state == OUTSIDE
+
+
+def test_an_earlier_view_that_answers_with_an_error_gives_way_once_unmounted(
+    tmp_path: Path, lab: tuple[Store, Config], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-217, the cost of failing closed and its end: a checkout seen
+    before the records and moved since, its old folder on a share that
+    answers ENOTCONN (a dead sshfs, until ``fusermount -u``), is refused
+    at its new folder, and stays refused while the share errors, since the
+    old folder takes the record and keeps it. The audit's fix names the
+    unmount. Unmounted, the old folder reads ENOENT: the record gives way,
+    and the new folder resolves as the checkout and is recorded."""
+    store, config = lab
+    tree, sep = _separate(tmp_path)
+    known = resolve_caller(store, config, str(tree))
+    moved = tmp_path / "work" / "moved"
+    tree.rename(moved)
+    _forget_records()
+
+    with monkeypatch.context() as share:
+        _failing(share, {str(tree), os.path.realpath(tree)}, errno.ENOTCONN)
+        there = resolve_caller(store, config, str(moved))
+        assert there.resolution.checkout is None
+        pin = gitdir_pin.recorded(str(sep))
+        assert pin is not None and pin.tree == os.path.realpath(tree)
+        location._clear_cache()
+        assert resolve_caller(store, config, str(moved)).resolution.checkout is None
+        found = _finding(moved)
+    assert found["status"] == "warn", found
+    assert found["summary"].endswith(gitfile_rule.UNREAD_TREE[0]), found
+    assert "unmount it" in found["fix"], found
+
+    location._clear_cache()
+    assert not os.path.lexists(tree)
+    again = resolve_caller(store, config, str(moved))
+    assert again.resolution.checkout == known.resolution.checkout
+    pin = gitdir_pin.recorded(str(sep))
+    assert pin is not None and _same(pin.tree, moved)
+
+
+def test_a_view_that_raised_takes_the_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-217: a view whose read raised, rather than answer, cannot tell
+    what its ``.git`` names either, so it takes the record as one that
+    could not be read does, as the store spells it; the views after it
+    are not reached."""
+    tree, sep = _separate(tmp_path)
+    broken = str(tmp_path / "share" / "app")
+    real_view = gitfile_rule._view
+
+    def view(at: str, here: str | None, git_dir: str) -> tuple[str, str]:
+        if at == broken:
+            raise RuntimeError("the read raised")
+        return real_view(at, here, git_dir)
+
+    monkeypatch.setattr(gitfile_rule, "_view", view)
+    later = str(tree)
+    assert gitfile_rule.earliest_naming([broken, later], None, str(sep)) == broken
+    assert _same(gitfile_rule.earliest_naming([later], None, str(sep)), tree)
+
+
+class _WindowsError(OSError):
+    """An OSError carrying a Windows code, as CPython raises on Windows."""
+
+    def __init__(self, winerror: int) -> None:
+        super().__init__(errno.EINVAL, "a Windows error")
+        self.winerror = winerror
+
+
+@pytest.mark.parametrize(
+    ("error", "verdict"),
+    [
+        pytest.param(OSError(errno.ENOENT, "x"), "gone", id="ENOENT"),
+        pytest.param(OSError(errno.ENOTDIR, "x"), "gone", id="ENOTDIR"),
+        pytest.param(OSError(errno.ELOOP, "x"), "gone", id="ELOOP"),
+        pytest.param(OSError(errno.ENAMETOOLONG, "x"), "gone", id="ENAMETOOLONG"),
+        pytest.param(FileNotFoundError(), "gone", id="FileNotFoundError-bare"),
+        pytest.param(ValueError("embedded null byte"), "gone", id="ValueError"),
+        pytest.param(_WindowsError(123), "gone", id="ERROR_INVALID_NAME"),
+        pytest.param(_WindowsError(1921), "gone", id="ERROR_CANT_RESOLVE_FILENAME"),
+        pytest.param(_WindowsError(21), "unknown", id="ERROR_NOT_READY"),
+        *(
+            pytest.param(OSError(getattr(errno, name), "x"), "unknown", id=name)
+            for name in ("ENOTCONN", "EIO", "ESTALE", "EACCES", "EPERM", "ETIMEDOUT")
+            if hasattr(errno, name)
+        ),
+    ],
+)
+@pytest.mark.parametrize("call", ["lstat", "stat", "open"])
+def test_only_an_answer_that_nothing_is_there_reads_as_gone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    verdict: str,
+    call: str,
+) -> None:
+    """ENG-217: a ``.git`` whose read fails reads as gone only where the
+    OS answered that nothing is at the path (ENOENT, ENOTDIR, ELOOP,
+    ENAMETOOLONG, a path it cannot be asked about, and the Windows codes
+    CPython folds into none of them), as origin reads a worktree root's
+    liveness; any other error, at whichever read it comes, cannot tell
+    what is there, so a view takes the record and a recorded tree keeps
+    it. ERROR_NOT_READY, a volume not ready, which `pathlib` reads as
+    absent, cannot tell either."""
+    tree, sep = _separate(tmp_path)
+    entry = str(tree / ".git")
+    reads: dict[str, Callable[..., Any]] = {
+        "lstat": os.lstat,
+        "stat": os.stat,
+        "open": open,
+    }
+    real = reads[call]
+
+    def failing(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if os.fspath(path) == entry:
+            raise error
+        return real(path, *args, **kwargs)
+
+    if call == "open":
+        monkeypatch.setattr(gitfile_rule, "open", failing, raising=False)
+    else:
+        monkeypatch.setattr(os, call, failing)
+    assert gitfile_rule._entry_names(entry, str(sep)) == verdict
+
+
+def test_the_errors_that_read_as_gone_are_origins() -> None:
+    """The one classification of a failed read as gone: membership's rule
+    and origin's worktree liveness read the same errors so."""
+    assert gitfile_rule._GONE_ERRNOS == origin._WORKTREE_GONE_ERRNOS
+    assert gitfile_rule._GONE_WINERRORS == origin._WORKTREE_GONE_WINERRORS
+
+
+@pytest.mark.parametrize(
+    ("st", "held"),
+    [
+        (SimpleNamespace(st_flags=0x40000000), True),
+        (SimpleNamespace(st_file_attributes=0x00400000), True),
+        (SimpleNamespace(st_file_attributes=0x00040000), True),
+        (SimpleNamespace(st_flags=0, st_file_attributes=0x20), False),
+        (SimpleNamespace(), False),
+    ],
+    ids=["SF_DATALESS", "recall-on-data-access", "recall-on-open", "local", "bare"],
+)
+def test_a_placeholder_is_told_by_its_stat(st: SimpleNamespace, held: bool) -> None:
+    """A provider's placeholder is told by its ``stat`` alone, SF_DATALESS
+    on macOS and the recall attributes on Windows, with no read of it."""
+    assert gitfile_rule._placeholder(cast(os.stat_result, st)) is held
 
 
 def test_a_view_of_another_object_sharing_the_inode_number_is_not_read(

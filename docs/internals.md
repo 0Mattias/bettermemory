@@ -530,7 +530,14 @@ that git directory is not followed while the recorded folder's still
 names it, cannot be read or does not answer within half a second (read
 on a worker thread, as every recorded path is, ENG-156); a recorded tree
 moved, removed or pointed at another git directory gives way to the next
-one followed. Each
+one followed. A `.git` is gone where its read fails with ENOENT,
+ENOTDIR, ELOOP or ENAMETOOLONG (on Windows also ERROR_INVALID_NAME and
+ERROR_CANT_RESOLVE_FILENAME), the errors in which the OS answers that
+nothing is at the path, as origin reads a worktree root's liveness; any
+other error (a share answering ENOTCONN, EIO or ESTALE, EACCES, EPERM)
+cannot be read, and so is a file provider's placeholder (SF_DATALESS on
+macOS, the recall attributes on Windows), which is not read, since a
+read would wait on its download (`gitfile_rule._entry_names`). Each
 pointer back is compared with the folder, not its `.git` file, and a
 `.git` that is a symbolic link to a directory is judged as a pointer to
 it, so a link to the right `.git` from another folder is refused. A first record is checked against the
@@ -538,19 +545,20 @@ store (`location._earlier_tree`): where the checkout's earliest view on
 this machine is another folder whose `.git` file still names the git
 directory, that folder is recorded and the cwd is read again. The views
 are read side by side within the same bound
-(`gitfile_rule.earliest_naming`), and one that does not answer takes
-the record, failing closed as a recorded tree that does not answer
-does: the cwd is refused while it does not answer or answers with an
-error, and once its share answers readably, or is unmounted, the record
-stands while its `.git` still names the git directory and gives way
-otherwise. So a plant seen first while the checkout's share is slow
-takes nothing, and a checkout moved off a share that hangs is refused
-at its new folder until the old share answers readably or is
-unmounted. The views are matched by inode number and, where both carry
+(`gitfile_rule.earliest_naming`), and one that does not answer, or
+whose `.git` cannot be read, takes the record, failing closed as a
+recorded tree does (ENG-217): the cwd is refused while that view does
+not answer or cannot be read, and once its `.git` reads, or is gone
+(its share unmounted), the record stands while that `.git` still names
+the git directory and gives way otherwise. So a plant seen first while
+the checkout's share is slow or answers with errors, or while its
+`.git` is a provider's placeholder, takes nothing, and a checkout moved
+off a share that hangs or answers with errors is refused at its new
+folder until the old share answers readably or is unmounted; the
+security audit's fix for that refusal says so. The views are matched by inode number and, where both carry
 one, birth time, which a remount keeps (`ObjectKey.on_any_device`); a
 filesystem whose birth time does not tell objects apart (one placeholder
-for every object) is matched by inode number alone. A
-view whose `.git` cannot be read at the first record is passed over. A git directory that is the
+for every object) is matched by inode number alone. A git directory that is the
 `.git` of the folder above it (compared as a filesystem object, so a
 symlink or another case is the same), a
 `commondir` naming a repository the directory is not registered under,

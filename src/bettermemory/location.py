@@ -1742,12 +1742,12 @@ def _earlier_tree(model: Membership, cap: Capture) -> bool:
     directory kept apart (`Capture.tree_recorded`, ENG-206), whether this
     machine's store saw that git directory first at another tree whose
     ``.git`` file still names it: the earliest view of its checkout that
-    still does, or that does not answer (`earliest_naming`, failing
-    closed), unless the capture's own tree was seen no later. Then the
-    record is made to name that tree, and True is returned. A checkout
-    seen before 9.0.0rc18, which keeps no record, so keeps the tree it was
-    first seen at, whichever folder naming it is seen first after the
-    upgrade."""
+    still does, does not answer or cannot be read (`earliest_naming`,
+    failing closed, ENG-217), unless the capture's own tree was seen no
+    later. Then the record is made to name that tree, and True is
+    returned. A checkout seen before 9.0.0rc18, which keeps no record, so
+    keeps the tree it was first seen at, whichever folder naming it is
+    seen first after the upgrade."""
     if not cap.tree_recorded or cap.git_dir is None or cap.object_key is None:
         return False
     # Not by device: one a remount changed must still find the views

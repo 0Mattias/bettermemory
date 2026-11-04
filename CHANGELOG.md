@@ -234,6 +234,38 @@ eighteenth was built.
   `tests/test_location_git_config.py`, `tests/test_membership_cost.py`,
   `tests/test_git_no_fetch.py`)
 
+- **A plant seen first while the checkout's share answers with errors
+  no longer takes its record (ENG-217).** Since 9.0.0rc18 a checkout
+  kept apart with `--separate-git-dir` that the store saw before records
+  were kept keeps the tree the store saw first, and an earlier view of it
+  that does not answer takes the first record; but a view whose `.git`
+  could not be read was passed over. So a plant (a folder whose `.git`
+  file names that git directory, as an archive can carry) seen first
+  while the share holding the checkout's tree answered with an error
+  (a dead sshfs's ENOTCONN, NFS's ESTALE, EIO, EACCES), or while its
+  `.git` was a file provider's placeholder, made the first record and
+  was delivered the checkout's memories, and the tree itself read as
+  outside any repository for good. Such a view now takes the record as
+  one that does not answer does, so the plant is refused. The cost is
+  the one a share that hangs already had: a checkout moved off a share
+  that keeps answering with errors is refused at its new folder until
+  that share answers readably or is unmounted (an unmounted share reads
+  as gone, and the record gives way to the next folder followed), and
+  `bettermemory security audit` there now says so: fix or unmount the
+  share, bring the placeholder back to this disk, or make it readable.
+  A placeholder is told by its stat and still never read. A `.git` reads
+  as gone only where its read fails with ENOENT, ENOTDIR, ELOOP or
+  ENAMETOOLONG (on Windows also ERROR_INVALID_NAME and
+  ERROR_CANT_RESOLVE_FILENAME), the errors origin already reads a
+  worktree root's liveness by; any other error cannot tell what is there.
+  So a recorded tree whose path now loops through symbolic links, or is
+  too long to name, gives way as a removed one does, where it refused
+  the follow. docs/internals.md said that a view that cannot be read at
+  the first record is passed over; it now states this rule.
+  (`src/bettermemory/gitfile_rule.py`,
+  `src/bettermemory/location_audit.py`, `src/bettermemory/location.py`,
+  `docs/internals.md`, `tests/test_location_gitdir_pin.py`)
+
 ### 9.0.0rc18
 
 The eighteenth candidate follows a `.git` file naming a

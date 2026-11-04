@@ -70,6 +70,22 @@ _HEX_PREFIX = re.compile(rb"[0-9a-fA-F]{40}")
 # on a download.
 _SF_DATALESS = 0x40000000
 _WINDOWS_RECALL = 0x00040000 | 0x00400000
+# The errors in which the OS answered that nothing is at a path, as origin
+# reads a worktree root's liveness (`origin._WORKTREE_GONE_ERRNOS`, whose
+# comment gives each; tests/test_location_gitdir_pin.py holds the two
+# equal): ENOENT, ENOTDIR, ELOOP and ENAMETOOLONG, and on Windows the codes
+# CPython folds into none of them, ERROR_INVALID_NAME (123) and the
+# reparse-point cycle ERROR_CANT_RESOLVE_FILENAME (1921). Each is a
+# property of the path as it is spelled, which a share that fails does not
+# give and an unmount does give (the mount point's folder is empty). Every
+# other error (ENOTCONN, EIO, ESTALE, EACCES, EPERM, ETIMEDOUT, and any a
+# platform adds) cannot tell what is there (`_entry_names`, ENG-217).
+_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG})
+_GONE_WINERRORS = frozenset({123, 1921})
+#: The ends of the refusals whose recorded working tree could not be read or
+#: did not answer (`_recorded_reading`): the security audit's fix for them
+#: says how the record is freed (`location_audit._gitfile_fix`, ENG-217).
+UNREAD_TREE = ("whose .git could not be read", "which did not answer")
 #: The names that say where a git directory's working tree is.
 _TREE_NAMES = frozenset({("core", None, "worktree"), ("core", None, "bare")})
 # How long a read of a recorded tree waits (`_recorded_reading`): the bound
@@ -230,10 +246,11 @@ def _recorded_refusal(
     (ENG-206), or None: nothing recorded, the record names `directory`, or
     the recorded folder's ``.git`` is gone or names another git directory
     now (the tree moved or was removed), so the follow is recorded in its
-    place. A recorded ``.git`` that cannot be read (a permission refused,
-    an I/O error, a provider's placeholder) or does not answer within
-    `_RECORDED_BUDGET` refuses the follow and keeps the record: what
-    cannot be told is not given away."""
+    place. A recorded ``.git`` that cannot be read (a share answering with
+    an error, a permission refused, a provider's placeholder:
+    `_entry_names`) or does not answer within `_RECORDED_BUDGET` refuses
+    the follow and keeps the record: what cannot be told is not given
+    away."""
     return _recorded_reading(pin, target, directory)[0]
 
 
@@ -271,7 +288,7 @@ def _recorded_reading(
     if found is UNANSWERED:
         return (
             f"{target} is recorded as the git directory of the working tree "
-            f"{pin.tree}, which did not answer"
+            f"{pin.tree}, {UNREAD_TREE[1]}"
         ), False
     answer: tuple[str | None, bool] = found
     return answer
@@ -302,7 +319,7 @@ def _read_recorded(
     if entry == "unknown":
         return (
             f"{target} is recorded as the git directory of the working tree "
-            f"{pin.tree}, whose .git could not be read"
+            f"{pin.tree}, {UNREAD_TREE[0]}"
         ), False
     return None, False
 
@@ -311,10 +328,11 @@ def earliest_naming(views: Sequence[str], tree: str | None, git_dir: str) -> str
     """The folder to record as the working tree of the git directory
     `git_dir` in place of the folder `tree`, which made its first record,
     from the folders `views`, earliest first (the store's views of its
-    checkout, `location._earlier_tree`): the first that does not answer,
-    as the store spells it, or the first whose ``.git`` entry names the git
-    directory (`names_git_dir`), resolved through its links; None where
-    none does, or where one before them is the folder `tree` itself.
+    checkout, `location._earlier_tree`): the first that does not answer or
+    cannot be read, as the store spells it, or the first whose ``.git``
+    entry names the git directory (`names_git_dir`), resolved through its
+    links; None where none does, or where one before them is the folder
+    `tree` itself.
 
     The views are recorded paths, and one may sit on a share that does
     not answer, or answers late (a cold SMB share, a provider's folder).
@@ -322,23 +340,26 @@ def earliest_naming(views: Sequence[str], tree: str | None, git_dir: str) -> str
     a worker thread within `_RECORDED_BUDGET`, all side by side
     (`location_reads.bounded_reads`), so the views of one dead share cost
     one budget together. A view that does not answer may still name the
-    git directory, so it takes the record, failing closed as a recorded
-    tree that does not answer does: the folder `tree` then reads it as a
-    recorded tree that did not answer and is refused (a plant seen first
-    while the checkout's own share is slow takes nothing). The record
-    stands while the view does not answer or answers with an error (a
-    share back with ENOTCONN, EIO, ESTALE or EACCES), as a recorded tree's
-    does; once the share answers readably, or is unmounted, it stands
-    while the view's ``.git`` still names the git directory and gives way
-    to the next folder followed otherwise. Passed over, it left the record
-    with `tree` for good. The cost is that of a recorded tree that hangs:
-    a checkout moved off a share that hangs is refused at its new folder
-    until the old share answers readably or is unmounted, and so is a
-    folder naming a git directory whose inode number a hung view's
-    checkout shares on another device, where either filesystem reports no
-    birth time that tells objects apart (`ObjectKey.on_any_device`). A view
-    whose ``.git`` cannot be read at the first record is passed over
-    (ENG-206)."""
+    git directory, and so may one whose ``.git`` read fails with any error
+    but those that say nothing is there (`_entry_names`: a share answering
+    with ENOTCONN, EIO, ESTALE or EACCES, a provider's placeholder, which
+    is not read, or a read that raised), so each takes the record, failing
+    closed as a recorded tree does (ENG-217): the folder `tree` then reads
+    it as a recorded tree that did not answer, or could not be read, and
+    is refused (a plant seen first while the checkout's own share is slow
+    or failing takes nothing). The record stands while the view does not
+    answer or cannot be read, as a recorded tree's does; once its ``.git``
+    reads, or is gone (the share unmounted: ENOENT), it stands while that
+    ``.git`` still names the git directory and gives way to the next
+    folder followed otherwise. Passed over, such a view left the record
+    with `tree` for good. The cost is that of a recorded tree that hangs
+    or fails: a checkout moved off a share that hangs or answers with
+    errors is refused at its new folder until the old share answers
+    readably or is unmounted (the security audit's fix says so,
+    `UNREAD_TREE`), and so is a folder naming a git directory whose inode
+    number such a view's checkout shares on another device, where either
+    filesystem reports no birth time that tells objects apart
+    (`ObjectKey.on_any_device`)."""
     jobs = [
         (
             view,
@@ -348,13 +369,13 @@ def earliest_naming(views: Sequence[str], tree: str | None, git_dir: str) -> str
         for view in views
     ]
     for view, seen in zip(views, bounded_reads(jobs, _RECORDED_BUDGET)):
-        if seen is UNANSWERED:
+        if seen is UNANSWERED or seen is NOT_READ:
             return view
-        if seen is NOT_READ:
-            continue
         verdict, path = seen
         if verdict == "here":
             return None
+        if verdict == "unknown":
+            return view
         if verdict == "names":
             return str(path)
     return None
@@ -382,15 +403,16 @@ def _entry_names(entry: str, git_dir: str) -> str:
     """What the ``.git`` entry `entry` names, against the git directory
     `git_dir`: ``names`` (it is a ``.git`` file whose ``gitdir:`` reaches
     `git_dir`, or reaches it as a directory itself), ``other`` (it reaches
-    something else, or is not a pointer), ``gone`` (nothing is there, or a
-    link that reaches nothing) or ``unknown`` (it could not be read, or is
-    a provider's placeholder that a read would fetch)."""
+    something else, or is not a pointer), ``gone`` (the OS answered that
+    nothing is there, `_gone`, or a link that reaches nothing) or
+    ``unknown`` (a read failed with any other error, a share's ENOTCONN,
+    EIO or ESTALE, a refused permission, so what is there cannot be told,
+    or it is a provider's placeholder, which is not read: a read would
+    fetch it, and wait on the download, ENG-217)."""
     try:
         lst = os.lstat(entry)
-    except (FileNotFoundError, NotADirectoryError):
-        return "gone"
-    except (OSError, ValueError):
-        return "unknown"
+    except (OSError, ValueError) as exc:
+        return "gone" if _gone(exc) else "unknown"
     if _is_link(lst):
         # A link reaching another working tree's own `.git` names nothing
         # for this folder, as discovery reads it (`judge`).
@@ -403,10 +425,8 @@ def _entry_names(entry: str, git_dir: str) -> str:
     try:
         st = os.stat(entry)
         want = os.stat(git_dir)
-    except (FileNotFoundError, NotADirectoryError):
-        return "gone"
-    except (OSError, ValueError):
-        return "unknown"
+    except (OSError, ValueError) as exc:
+        return "gone" if _gone(exc) else "unknown"
     if stat.S_ISDIR(st.st_mode):
         return "names" if os.path.samestat(st, want) else "other"
     if not stat.S_ISREG(st.st_mode):
@@ -416,12 +436,25 @@ def _entry_names(entry: str, git_dir: str) -> str:
     try:
         with open(entry, "rb") as fh:
             data = fh.read(_GITFILE_LIMIT + 1)
-    except OSError:
-        return "unknown"
+    except (OSError, ValueError) as exc:
+        return "gone" if _gone(exc) else "unknown"
     named = _parse_gitfile(data, entry)
     if named is None:
         return "other"
     return "names" if _names_here(named, git_dir, git_dir) is True else "other"
+
+
+def _gone(exc: OSError | ValueError) -> bool:
+    """Whether the error `exc`, raised by a read of a path, is the OS's
+    answer that nothing is there (`_GONE_ERRNOS`): a ValueError is a path
+    the OS cannot be asked about (an embedded NUL), where nothing can be,
+    as `origin._worktree_root_is_gone` reads it."""
+    if not isinstance(exc, OSError) or isinstance(
+        exc, (FileNotFoundError, NotADirectoryError)
+    ):
+        return True
+    winerror: object = getattr(exc, "winerror", None)
+    return exc.errno in _GONE_ERRNOS or winerror in _GONE_WINERRORS
 
 
 def _names_folder(raw: str, base: str, directory: str) -> bool | None:

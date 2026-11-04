@@ -17,7 +17,7 @@ import os
 from typing import Any
 
 from . import gitdir_pin
-from .gitfile_rule import _recorded_reading
+from .gitfile_rule import UNREAD_TREE, _recorded_reading
 from .location import kept_apart
 from .location_git import _discover
 
@@ -75,7 +75,7 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
             "status": "warn",
             "summary": f"{first} names a git directory membership does not follow: {why}",
             "path": first,
-            "fix": _gitfile_fix(first),
+            "fix": _gitfile_fix(first, why),
             "details": {
                 "cwd": start,
                 "refused": [
@@ -148,18 +148,37 @@ def gitfile_posture(cwd: str | None) -> dict[str, Any]:
     }
 
 
-def _gitfile_fix(refused: str) -> str:
-    """The warning's fix for the refused `.git` file or folder `refused`
-    (review M D4): a check by hand of where it points and the removal of a
-    plant. It suggests no command that rewrites a worktree's registration:
-    one run in a copy of a live worktree moves the live worktree's
-    registration to the copy, and membership then follows the copy."""
+def _gitfile_fix(refused: str, why: str) -> str:
+    """The warning's fix for the refused `.git` file or folder `refused`,
+    not followed for the reason `why` (review M D4): a check by hand of
+    where it points and the removal of a plant. It suggests no command
+    that rewrites a worktree's registration: one run in a copy of a live
+    worktree moves the live worktree's registration to the copy, and
+    membership then follows the copy. Where the working tree recorded for
+    the git directory could not be read or did not answer
+    (`gitfile_rule.UNREAD_TREE`, ENG-217), it says first how that record
+    is freed: the recorded folder's .git read again, or its share
+    unmounted."""
     plant = (
         "its .git file"
         if os.path.basename(refused) == ".git"
         else "the HEAD and commondir files in it"
     )
-    return (
+    unread = ""
+    if why.endswith(UNREAD_TREE):
+        unread = (
+            "The working tree recorded for this git directory could not be read "
+            "or did not answer, and while that lasts no other folder naming the "
+            "git directory is followed. If this folder is that checkout, moved "
+            "here from a share that hangs or answers with errors, fix that share "
+            "or unmount it (an unmounted share reads as gone); if the recorded "
+            ".git is a file provider's placeholder, or this account cannot read "
+            "it, bring it back to this disk or make it readable. Once that .git "
+            "reads, the record stays with that folder while it names the git "
+            "directory; once it is gone, the next session here records this "
+            "folder. "
+        )
+    return unread + (
         "git still follows it, so a git command here acts on the repository it "
         "names. Check by hand where it points: a worktree's .git file names "
         "<common>/worktrees/<name>, whose gitdir file names that .git file back, "
