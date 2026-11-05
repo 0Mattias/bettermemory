@@ -372,13 +372,11 @@ def _common_format(
 def _extension_reads(rule: str | frozenset[bytes], value: bytes | None) -> bool:
     """Whether git reads an extension's `value` by its `rule`
     (`_EXTENSIONS_V0`, `_EXTENSIONS_V1`), and does not die on it."""
-    if rule == _ANY:
-        return True
+    if isinstance(rule, frozenset):
+        return value is not None and value.split(b"\0", 1)[0] in rule
     if rule == _BOOLEAN:
         return gitconfig.git_bool(value) is not None
-    if value is None:
-        return False
-    return rule == _SOME_VALUE or value.split(b"\0", 1)[0] in rule
+    return rule == _ANY or value is not None
 
 
 def reads_worktree_config(common_dir: str) -> bool | None:
