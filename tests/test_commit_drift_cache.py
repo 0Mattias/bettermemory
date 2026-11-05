@@ -25,6 +25,7 @@ from typing import Any, cast
 
 import pytest
 
+from bettermemory import _git as _git_runner
 from bettermemory import (
     _caches,
     _response,
@@ -48,6 +49,7 @@ from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 from bettermemory.verdict import MemoryVerdict, UnresolvedVerdict, memoised_verdicts
+from bettermemory.verify_basis import CommitDriftUnread
 
 from ._mcp import call_tool as _mcp_call
 from .test_origin_patch import _git_version
@@ -1475,6 +1477,12 @@ def test_the_whole_history_is_memoised_per_root_and_head(
     ]
 
 
+def _listed(history: object) -> list[datetime]:
+    """`history`, a whole-history read that answered with its dates."""
+    assert isinstance(history, list), history
+    return history
+
+
 def _history_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
     """Every git process spawned from here on, by its arguments."""
     calls: list[tuple[str, ...]] = []
@@ -1506,7 +1514,7 @@ def test_a_head_that_does_not_descend_reads_its_whole_history(
         _git(repo, "checkout", "-q", "-b", "side", base)
         _commit(repo, "side 1", when=_T2)
     tip = _git(repo, "rev-parse", "HEAD")
-    assert len(origin_dates.commit_author_timestamps(repo) or []) == 2
+    assert len(_listed(origin_dates.commit_author_timestamps(repo))) == 2
     if move == "switch":
         _git(repo, "checkout", "-q", "main")
     elif move == "back":
@@ -1532,7 +1540,8 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
     it, so an entry read before such a change is no base for a head read
     after it (`origin_history.history_guard`); and since the dates behind
     its cut are not read, no history is read under it at all
-    (`origin_history.cuts`): None, as a failed read, and no log. A graft
+    (`origin_history.cuts`): unread for the cut, counted as a failed read,
+    and no log. A graft
     or a replacement ref changes what git's own log reaches but not what
     `origin` reads, the history as its objects hold it
     (`origin_history.AS_STORED_ENV`); its stamp still reads the history whole, which
@@ -1554,7 +1563,7 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
     got = origin_dates.commit_author_timestamps(repo)
     assert seed not in _git(repo, "log", "--format=%H", moved)
     if history == "shallow":
-        assert got is None, "behind the cut the dates are not read"
+        assert got is CommitDriftUnread.SHALLOW, "behind the cut nothing is read"
         assert _whole_history_logs(calls) == []
         assert origin.failed_git_calls() == failed + 1
     else:
@@ -1567,9 +1576,10 @@ def test_a_failed_whole_history_read_is_remembered_for_a_minute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A read that fails is not retried by every row that needs it: for a
-    minute the same root and head answer None with no process, counting
-    the failure on the calling thread as the read did, so no caller keeps
-    a value it computed from the fallback. Then it is read again."""
+    minute the same root and head answer why it failed with no process,
+    counting the failure on the calling thread as the read did (a timeout
+    as a timeout), so no caller keeps a value it computed from it, save a
+    timeout's for a while. Then it is read again."""
     clock = [1000.0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     repo = _repo(tmp_path)
@@ -1582,14 +1592,17 @@ def test_a_failed_whole_history_read_is_remembered_for_a_minute(
         raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
 
     monkeypatch.setattr(subprocess, "run", times_out)
-    assert origin_dates.commit_author_timestamps(repo) is None
+    timeout = CommitDriftUnread.TIMEOUT
+    assert origin_dates.commit_author_timestamps(repo) is timeout
     assert len(spawned) == 1
     monkeypatch.setattr(subprocess, "run", real_run)
     calls = _history_calls(monkeypatch)
     for _ in range(3):
         failed = origin.failed_git_calls()
-        assert origin_dates.commit_author_timestamps(repo) is None
+        timed_out = _git_runner.timed_out_calls()
+        assert origin_dates.commit_author_timestamps(repo) is timeout
         assert origin.failed_git_calls() == failed + 1
+        assert _git_runner.timed_out_calls() == timed_out + 1
     assert calls == []
     clock[0] += origin_history._FAILURE_SECONDS
     assert origin_dates.commit_author_timestamps(repo) == [_T0]
@@ -1616,8 +1629,8 @@ def test_the_whole_history_memo_is_bounded_in_dates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The entries hold at most `_TIMESTAMPS_MEMO_SLOTS` dates together, the
-    oldest going first, and a history longer than that is returned and not
-    kept."""
+    oldest going first, and a history longer than that is not kept, nor
+    counted (`OVER_BUDGET`)."""
     monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_SLOTS", 3)
     first = _repo(tmp_path, "first")
     second = _repo(tmp_path, "second")
@@ -1632,7 +1645,8 @@ def test_the_whole_history_memo_is_bounded_in_dates(
     ]
     _commit(second, "three", when=_NOW)
     _commit(second, "four", when=_NOW)
-    assert len(origin_dates.commit_author_timestamps(second) or []) == 4
+    over = CommitDriftUnread.OVER_BUDGET
+    assert origin_dates.commit_author_timestamps(second) is over
     assert [len(e.dates) for e in origin_history._TIMESTAMPS_MEMO.values()] == [2]
 
 
@@ -1640,11 +1654,12 @@ def test_the_whole_history_memo_is_bounded_in_dates(
 def test_a_history_past_the_date_budget_is_remembered_as_a_failed_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A history longer than `_TIMESTAMPS_MEMO_SLOTS` is returned and not
-    kept, and its root and head are remembered as a failed read's are: for
-    a minute the rows that ask again answer None with no process, counting
-    the failure, where each would read the history whole again (review Ob,
-    D3). Then it is read again."""
+    """A history longer than `_TIMESTAMPS_MEMO_SLOTS` is not kept, nor
+    counted: the read that met it answers `OVER_BUDGET`, counted as a
+    failure, and its root and head are remembered as a failed read's are:
+    for a minute the rows that ask again answer the same with no process,
+    counting the failure, where each would read the history whole again
+    (review Ob, D3). Then it is read again."""
     clock = [1000.0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_SLOTS", 1)
@@ -1652,16 +1667,20 @@ def test_a_history_past_the_date_budget_is_remembered_as_a_failed_read(
     _commit(repo, "one", when=_T0)
     head = _commit(repo, "two", when=_T1)
     calls = _history_calls(monkeypatch)
-    assert origin_dates.commit_author_timestamps(repo) == [_T0, _T1]
+    over = CommitDriftUnread.OVER_BUDGET
+    failed = origin.failed_git_calls()
+    assert origin_dates.commit_author_timestamps(repo) is over
+    assert origin.failed_git_calls() == failed + 1
     assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, head)]
     assert not origin_history._TIMESTAMPS_MEMO
     calls.clear()
     for _ in range(3):
         failed = origin.failed_git_calls()
-        assert origin_dates.commit_author_timestamps(repo) is None
+        assert origin_dates.commit_author_timestamps(repo) is over
         assert origin.failed_git_calls() == failed + 1
     assert calls == []
     clock[0] += origin_history._FAILURE_SECONDS
+    monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_SLOTS", 2)
     assert origin_dates.commit_author_timestamps(repo) == [_T0, _T1]
     assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, head)]
 
@@ -1787,7 +1806,7 @@ async def test_a_history_not_read_in_time_is_flagged_and_never_fresh(
     hit, and on the expanded top hit, which reads it on its own where the
     hit's pass read nothing."""
     import bettermemory._handlers as handlers_module
-    from bettermemory.verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION
+    from bettermemory.verify_basis import unread_recommendation
 
     verified = datetime.now(timezone.utc) - timedelta(hours=1)
     repo = _repo(tmp_path)
@@ -1850,7 +1869,7 @@ async def test_a_history_not_read_in_time_is_flagged_and_never_fresh(
         assert row["staleness_verdict"] == "spot_check_required"
         assert row["verification"]["status"] == "fresh"
         assert row["verification"]["recommendation"] == (
-            COMMIT_DRIFT_UNREAD_RECOMMENDATION
+            unread_recommendation(CommitDriftUnread.TIMEOUT)
         )
         assert "commit_drift_count" not in row
 
@@ -1869,7 +1888,7 @@ def test_the_trust_rule_s_remedy_stands_beside_an_unread_history() -> None:
         "staleness_verdict": "spot_check_required",
     }
     for row, remedy in ((remote, "verify here"), (keyless, "the key")):
-        ResponseBuilder.apply_commit_drift_unread(row)
+        ResponseBuilder.apply_commit_drift_unread(row, CommitDriftUnread.TIMEOUT)
         assert row["commit_drift_unread"] is True
         assert row["staleness_verdict"] == "spot_check_required"
         assert row["verification"]["recommendation"] == remedy
@@ -1884,15 +1903,18 @@ def test_the_top_hit_keeps_the_expansion_s_read_of_the_history() -> None:
     from types import SimpleNamespace
 
     from bettermemory.handlers.search import _expand_unread
-    from bettermemory.verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION
+    from bettermemory.verify_basis import unread_recommendation
 
     deps = cast(Any, SimpleNamespace(responses=ResponseBuilder(stale_after_days=30)))
     calendar = verify.compute_verification_status(
         _NOW - timedelta(days=40), now=_NOW, stale_after_days=30
     )
     assert calendar.recommendation, "premise: a stale stamp names its remedy"
-    unread = cast(Any, SimpleNamespace(commit_drift_unread=True, verification=calendar))
-    read = cast(Any, SimpleNamespace(commit_drift_unread=False, verification=calendar))
+    shallow = CommitDriftUnread.SHALLOW
+    unread = cast(
+        Any, SimpleNamespace(commit_drift_unread=shallow, verification=calendar)
+    )
+    read = cast(Any, SimpleNamespace(commit_drift_unread=None, verification=calendar))
     row: dict[str, Any] = {
         "verification": calendar.to_dict(),
         "staleness_verdict": "spot_check_required",
@@ -1904,7 +1926,7 @@ def test_the_top_hit_keeps_the_expansion_s_read_of_the_history() -> None:
     assert row == {
         "verification": {
             **calendar.to_dict(),
-            "recommendation": COMMIT_DRIFT_UNREAD_RECOMMENDATION,
+            "recommendation": unread_recommendation(shallow),
         },
         "staleness_verdict": "spot_check_required",
         "commit_drift_unread": True,

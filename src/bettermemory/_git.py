@@ -45,7 +45,8 @@ call here, with all four properties:
 * a call git could not run at all (no binary on PATH, the timeout, an
   OSError from the spawn) comes back None with a WARNING, and is
   counted (`unanswered_calls` for the process, `failed_calls` for the
-  calling thread, and `timed_out_calls` for a timeout); a non-zero exit
+  calling thread, `timed_out_calls` for a timeout, and `missing_calls`
+  for a binary or a working directory that is not there); a non-zero exit
   is an ANSWER ("not a repository", "not an ancestor") and comes back as
   the completed process for the caller to read, `log_nonzero_exit`
   noting it at DEBUG.
@@ -156,6 +157,17 @@ class _TimedOut(threading.local):
 _TIMED_OUT = _TimedOut()
 
 
+class _Missing(threading.local):
+    """The number of git calls on the current thread that could not start
+    because the binary or the working directory is not there. Read through
+    `missing_calls`."""
+
+    count = 0
+
+
+_MISSING = _Missing()
+
+
 def unanswered_calls() -> int:
     """How many git invocations since import could not run at all (the
     None `run_git` returns), on every thread."""
@@ -185,6 +197,15 @@ def timed_out_calls() -> int:
     every failure meanwhile was a timeout, which the same call meets
     again on the same history (`_response._DriftPass`)."""
     return _TIMED_OUT.count
+
+
+def missing_calls() -> int:
+    """How many git calls on the current thread could not start because
+    the binary is not on PATH or the working directory is not there; each
+    is also counted in `failed_calls`. A reader that tells a history that
+    does not apply (no git, no directory) from one git could not read
+    (`origin_history.unanswered`) reads this before and after its call."""
+    return _MISSING.count
 
 
 def note_failed() -> None:
@@ -326,6 +347,7 @@ def run_git(
             log.warning("git cannot run in %s: the directory does not exist", cwd)
         else:
             log.warning("git binary not found on PATH: %s", exc)
+        _MISSING.count += 1
     except subprocess.TimeoutExpired:
         log.warning(
             "git %s timed out after %ss in %s", subcommand(args), timeout, where
@@ -333,6 +355,9 @@ def run_git(
         _TIMED_OUT.count += 1
     except OSError as exc:
         log.warning("git invocation failed in %s: %s", where, exc)
+        if cwd is not None and not os.path.isdir(cwd):
+            # Windows reports a working directory that is not there here.
+            _MISSING.count += 1
     _unanswered += 1
     _FAILED.count += 1
     return None

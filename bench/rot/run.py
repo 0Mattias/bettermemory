@@ -79,6 +79,7 @@ if str(_SRC) not in sys.path:
 from bettermemory.origin import Origin  # noqa: E402
 from bettermemory.verify import (  # noqa: E402
     ClaimAnchor,
+    CommitDriftUnread,
     compute_commit_drift,
     compute_staleness_verdict,
     compute_verification_status,
@@ -544,6 +545,9 @@ def verdict_for(
             verified_head=anchor_sha,
             anchor=_home_checkout(tree1),
         )
+        if isinstance(drift_status, CommitDriftUnread):
+            # The history was not read: never fresh, as the product reads it.
+            return "spot_check_required", len(drift.missing), 0
         count = drift_status.commits_since_verify if drift_status is not None else 0
         verdict = compute_staleness_verdict(
             verification=verification,
@@ -567,6 +571,9 @@ def verdict_for(
         body=body,
         anchor=_home_checkout(repo),
     )
+    if isinstance(drift_status, CommitDriftUnread):
+        # The history was not read: never fresh, as the product reads it.
+        return "spot_check_required", len(drift.missing), 0
     commits = commits_touching.get(claim.rel_path, 0)
     count = commits if drift_status is not None else 0
     # The ROW keeps an int (`count`) so the scoring schema is unchanged,

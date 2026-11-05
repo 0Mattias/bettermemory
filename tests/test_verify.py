@@ -1719,7 +1719,9 @@ def test_commit_drift_compares_no_remotes(tmp_path: Path) -> None:
         body="claims about notes.md hold",
         anchor=_home_checkout(tmp_path),
     )
-    assert anchored is not None and anchored.commits_since_verify == 1
+    assert (
+        isinstance(anchored, CommitDriftStatus) and anchored.commits_since_verify == 1
+    )
     elsewhere = compute_commit_drift(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
@@ -1763,7 +1765,7 @@ def test_commit_drift_status_clean_when_no_commits_after_verify(
         anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     assert result.status == "clean"
     assert result.commits_since_verify == 0
     assert result.recommendation is None
@@ -1796,7 +1798,7 @@ def test_commit_drift_status_drift_when_commits_after_verify(
         anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     assert result.status == "drift"
     assert result.commits_since_verify == 3
     assert result.recommendation is not None
@@ -1822,7 +1824,7 @@ def test_commit_drift_recommendation_singular_for_one_commit(
         anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     assert result.commits_since_verify == 1
     assert result.recommendation is not None
     assert "1 commit touching" in result.recommendation
@@ -1844,7 +1846,7 @@ def test_commit_drift_to_dict_shape_clean(tmp_path: Path) -> None:
         anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     payload = result.to_dict()
     assert payload == {
         "status": "clean",
@@ -1874,7 +1876,7 @@ def test_commit_drift_normalised_repo_url_still_matches(tmp_path: Path) -> None:
         body="claims about notes.md hold",
         anchor=_home_checkout(tmp_path),
     )
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     assert result.status == "drift"
     assert result.commits_since_verify == 1
 
@@ -2119,7 +2121,7 @@ def test_commit_drift_clean_when_cited_path_untouched(tmp_path: Path) -> None:
         anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     assert result.status == "clean"
     assert result.commits_since_verify == 0
 
@@ -2190,7 +2192,7 @@ def test_commit_drift_clean_when_quiescent_and_governed_claim_real(
         body="a workflow note that cites nothing path-shaped",
         claims=["notes.md"],
     )
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     assert result.status == "clean"
     assert result.commits_since_verify == 0
 
@@ -2225,7 +2227,7 @@ def test_commit_drift_quiescent_deleted_but_real_anchor_stays_clean(
         anchor=_home_checkout(tmp_path),
         body="gone.py was removed on purpose; see its final revision",
     )
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     assert result.status == "clean"
     assert result.commits_since_verify == 0
 
@@ -2318,7 +2320,7 @@ def test_commit_drift_root_citation_does_not_drag_in_unrelated_churn(
         anchor=_home_checkout(tmp_path),
         body=f"the project lives at {tmp_path} and claims about notes.md hold",
     )
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     assert result.status == "clean"
     assert result.commits_since_verify == 0
 
@@ -2586,7 +2588,7 @@ def test_commit_drift_resolves_repo_toplevel_exactly_once(
     )
     # The narrowing path must have actually run (drift on the cited file),
     # otherwise a skipped narrowing would trivially satisfy the fork count.
-    assert result is not None
+    assert isinstance(result, CommitDriftStatus)
     assert result.status == "drift"
     assert result.commits_since_verify == 1
     assert toplevel_forks == 1

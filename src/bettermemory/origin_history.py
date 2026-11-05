@@ -4,7 +4,8 @@ dates `origin_dates.commit_author_timestamps` keeps.
 Every git `origin` runs reads the history as its objects hold it, whatever
 the repository sets (`AS_STORED_ENV`, `AS_STORED_CONFIG`, `AS_STORED_DIFF`,
 `AS_STORED_PATHS`), and no count is read behind a shallow file's cut
-(`cuts`).
+(`cuts`). A history that applies and was not read says why
+(`HistoryUnread`), apart from the None that says none applies.
 
 `origin_dates` reads from git the author date of every commit a head reaches
 (``git log --format=%at <head>``), or of the commits a head reaches that a
@@ -16,12 +17,13 @@ and remembers for a while each read that failed. The reachable walk
 
 This module lives apart from `origin.py` to keep each module under the
 package's 2,000-line bound (ENG-96). It imports the standard library,
-`_caches` and `githead`; `origin` and `origin_dates` import it, never the
+`_caches`, `_git` and `githead`; `origin` and `origin_dates` import it, never the
 reverse.
 """
 
 from __future__ import annotations
 
+import enum
 import os
 import threading
 import time
@@ -33,6 +35,7 @@ from pathlib import Path
 from typing import TypeAlias, TypeVar
 
 from . import _caches, githead
+from . import _git as _git_runner
 
 # What every git `origin` runs is set to, so that it reads the history as
 # its objects hold it and nothing the repository sets can make a changed
@@ -137,6 +140,73 @@ _TIMESTAMPS_MEMO_CAP = 16
 # key is remembered as a failed read's is (`remember`).
 _TIMESTAMPS_MEMO_SLOTS = 2_000_000
 
+
+class HistoryUnread(enum.Enum):
+    """Why the history of a repository that holds one was not read, so no
+    count is read off it: the row it would count reads neither fresh nor
+    not applicable. The per-memory surfaces flag it and stop it reading
+    fresh, and the health rollups count it under `unread`
+    (`verify_basis.CommitDriftUnread` is this enum). None, apart from
+    these, says no history applies: no repository, no git on PATH, no
+    commit.
+
+    - ``TIMEOUT``: git met its 5 s bound, on the dates' log, or on the walk
+      from a stamp's head and the listing of its commits both
+      (`origin.commits_since_anchor`, `unwalked`).
+    - ``OVER_BUDGET``: the history is longer than the memo keeps
+      (`_TIMESTAMPS_MEMO_SLOTS` dates), so it is not counted, the read that
+      met it as much as the calls of the next minute (`remember`).
+    - ``SHALLOW``: the clone is shallow, its ``shallow`` file listing a
+      commit (or unreadable, `cuts`), and git reads no commit behind one.
+      No window on the dates can be shown to stop short of the cut: a
+      commit there authored before the stamp hides parents authored after
+      it. A walk from a stamp's head whose range holds no cut is read in
+      full, and counts.
+    - ``ERROR``: git ran and failed on a head named by its hash (a non-zero
+      exit), printed a line its format does not print (`read_lines`), or
+      could not be spawned for another reason than a binary or a directory
+      that is not there."""
+
+    TIMEOUT = "timeout"
+    OVER_BUDGET = "over_budget"
+    SHALLOW = "shallow"
+    ERROR = "error"
+
+
+def git_counts() -> tuple[int, int]:
+    """The calling thread's git timeouts and the calls that found no binary
+    or no directory (`_git.timed_out_calls`, `_git.missing_calls`), which
+    `unanswered` reads a read's failure off."""
+    return _git_runner.timed_out_calls(), _git_runner.missing_calls()
+
+
+def unanswered(before: tuple[int, int], *, named: bool) -> HistoryUnread | None:
+    """Why a history read that came back with no answer since `before`
+    (`git_counts`) was not read: ``TIMEOUT`` where git met its bound; None
+    where the binary or the directory is not there, so no history applies;
+    otherwise ``ERROR`` for a head `named` by its hash, which a repository
+    holds, and None for ``HEAD``, where git's refusal also answers a folder
+    that is no repository and a branch with no commit."""
+    timed_out, missing = git_counts()
+    if timed_out != before[0]:
+        return HistoryUnread.TIMEOUT
+    if missing != before[1] or not named:
+        return None
+    return HistoryUnread.ERROR
+
+
+def note_unread(why: HistoryUnread) -> None:
+    """Count, on the calling thread, an unread history served without a
+    process (`recall`, a pass's kept read), as the read that met it was
+    counted: a timeout as a failure and a timeout (`_git.note_timed_out`),
+    any other cause as a failure, so a caller that keeps a value only when
+    no git call failed keeps none from it, save a timeout's for a while."""
+    if why is HistoryUnread.TIMEOUT:
+        _git_runner.note_timed_out()
+    else:
+        _git_runner.note_failed()
+
+
 # How long a failed read is remembered, in seconds of `time.monotonic`. A
 # read fails at its 5 s ceiling on a history too long for it, and fails
 # again for the same head. Remembered for a minute, it runs at most once a
@@ -165,7 +235,9 @@ class _Entry:
 # outside it. Registered with `_caches`, which empties both before each
 # test.
 _TIMESTAMPS_MEMO: OrderedDict[Key, _Entry] = OrderedDict()
-_TIMESTAMPS_FAILED: OrderedDict[Key, tuple[float, Guard | None]] = OrderedDict()
+_TIMESTAMPS_FAILED: OrderedDict[Key, tuple[float, Guard | None, HistoryUnread]] = (
+    OrderedDict()
+)
 _TIMESTAMPS_MEMO_LOCK = threading.Lock()
 
 
@@ -176,24 +248,26 @@ def _clear_timestamps_memo() -> None:
         _TIMESTAMPS_FAILED.clear()
 
 
-def recall(key: Key, guard: Guard | None) -> tuple[list[datetime] | None, bool]:
-    """``(dates, failed)`` for `key`: the dates kept for it (the stored list
-    itself), or None; and whether a read for it failed less than
-    `_FAILURE_SECONDS` ago under `guard`, where none is kept."""
+def recall(
+    key: Key, guard: Guard | None
+) -> tuple[list[datetime] | None, HistoryUnread | None]:
+    """``(dates, failure)`` for `key`: the dates kept for it (the stored
+    list itself), or None; and why a read for it failed less than
+    `_FAILURE_SECONDS` ago under `guard`, where none is kept, or None."""
     with _TIMESTAMPS_MEMO_LOCK:
         entry = _TIMESTAMPS_MEMO.get(key)
         if entry is not None:
             _TIMESTAMPS_MEMO.move_to_end(key)
-            return entry.dates, False
+            return entry.dates, None
         failed = _TIMESTAMPS_FAILED.get(key)
         if failed is not None:
-            failed_at, failed_under = failed
+            failed_at, failed_under, why = failed
             if failed_under == guard and (
                 0.0 <= time.monotonic() - failed_at < _FAILURE_SECONDS
             ):
-                return None, True
+                return None, why
             del _TIMESTAMPS_FAILED[key]
-    return None, False
+    return None, None
 
 
 def base_for(root: str, guard: Guard) -> tuple[str, list[datetime]] | None:
@@ -211,9 +285,9 @@ def remember(key: Key, dates: list[datetime], guard: Guard | None) -> bool:
     """Keep `dates` for `key`, read under `guard`, and evict the oldest
     entries past `_TIMESTAMPS_MEMO_CAP` or `_TIMESTAMPS_MEMO_SLOTS`; True.
     A list longer than the slots is not kept, and False says so: the caller
-    remembers its key as a failed read's (`remember_failure`), so the calls
-    of the next minute answer None where each would read the history whole
-    again (review Ob, D3)."""
+    remembers its key as a failed read's (`remember_failure`, with
+    `HistoryUnread.OVER_BUDGET`), so the calls of the next minute answer
+    that where each would read the history whole again (review Ob, D3)."""
     if len(dates) > _TIMESTAMPS_MEMO_SLOTS:
         return False
     with _TIMESTAMPS_MEMO_LOCK:
@@ -229,10 +303,10 @@ def remember(key: Key, dates: list[datetime], guard: Guard | None) -> bool:
     return True
 
 
-def remember_failure(key: Key, guard: Guard | None) -> None:
-    """Remember that a read for `key` failed, now, under `guard`."""
+def remember_failure(key: Key, guard: Guard | None, why: HistoryUnread) -> None:
+    """Remember that a read for `key` failed, now, under `guard`, and why."""
     with _TIMESTAMPS_MEMO_LOCK:
-        _TIMESTAMPS_FAILED[key] = (time.monotonic(), guard)
+        _TIMESTAMPS_FAILED[key] = (time.monotonic(), guard, why)
         _TIMESTAMPS_FAILED.move_to_end(key)
         while len(_TIMESTAMPS_FAILED) > _TIMESTAMPS_MEMO_CAP:
             _TIMESTAMPS_FAILED.popitem(last=False)
@@ -494,9 +568,9 @@ def unwalked() -> int:
     twice, with their names and as the listing of their commits alone
     (`origin.commits_since_anchor`), served from a pass's `Walked` too. A
     caller that reads this before and after a walk and finds it moved
-    omits the count, as where git cannot read the history, and never reads
-    the author dates in its place: a rebased or back-dated commit moves
-    them (ENG-220's review, round C)."""
+    omits the count and reads the row unread (`HistoryUnread.TIMEOUT`), and
+    never reads the author dates in its place: a rebased or back-dated
+    commit moves them (ENG-220's review, round C)."""
     return _UNWALKED.count
 
 
@@ -511,21 +585,25 @@ __all__ = [
     "AS_STORED_ENV",
     "AS_STORED_PATHS",
     "Guard",
+    "HistoryUnread",
     "Key",
     "ReachableWalk",
     "Walked",
     "author_dates",
     "base_for",
     "cuts",
+    "git_counts",
     "history_guard",
     "instant",
     "located_key",
     "log_stdin",
+    "note_unread",
     "note_unwalked",
     "read_lines",
     "recall",
     "remember",
     "remember_failure",
     "seconds",
+    "unanswered",
     "unwalked",
 ]

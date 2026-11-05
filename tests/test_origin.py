@@ -785,7 +785,7 @@ def test_commit_author_timestamps_returns_all_commits(tmp_path: Path) -> None:
     _make_commit(tmp_path, "b", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
     _make_commit(tmp_path, "c", when=datetime(2026, 3, 1, tzinfo=timezone.utc))
     timestamps = commit_author_timestamps(tmp_path)
-    assert timestamps is not None
+    assert isinstance(timestamps, list)
     assert len(timestamps) == 3
     # Every entry must be timezone-aware so downstream comparisons don't
     # raise on naive-vs-aware mixing.
@@ -805,7 +805,7 @@ def test_commit_author_timestamps_returns_ascending(tmp_path: Path) -> None:
     _make_commit(tmp_path, "a", when=datetime(2026, 1, 1, 12, tzinfo=timezone.utc))
     _make_commit(tmp_path, "c", when=datetime(2026, 3, 1, 12, tzinfo=timezone.utc))
     timestamps = commit_author_timestamps(tmp_path)
-    assert timestamps is not None
+    assert isinstance(timestamps, list)
     assert timestamps == sorted(timestamps), "must be ascending for bisect_right"
 
 
@@ -1524,7 +1524,7 @@ def test_a_repository_signature_check_does_not_run_on_a_read(tmp_path: Path) -> 
     _set_repo_config(repo, "gpg.program", str(program))
     dates = commit_author_timestamps(repo)
     assert not ran.exists()
-    assert dates is not None and sorted(dates) == [seeded, signed]
+    assert isinstance(dates, list) and sorted(dates) == [seeded, signed]
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")

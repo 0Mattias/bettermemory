@@ -6,7 +6,9 @@ them. `_count_since_verify` is the first step of
 `verify.compute_commit_drift`: the commits since a verify, counted in
 reachability space from the stamp's `verified_head` while that commit is
 still an ancestor of HEAD, and by author date otherwise. `CommitDriftUnread`
-is the third outcome, where neither basis was read in time.
+is the third outcome, where the history the basis reads was not read,
+and says why; `unread_recommendation` is what such a row tells the
+reader to do.
 
 This module lives apart from `verify.py` to keep it well under the
 package's 1,900-line watch line (ENG-97). It is a leaf of the verify
@@ -21,7 +23,6 @@ count targets this module.
 from __future__ import annotations
 
 import bisect
-import enum
 from datetime import datetime
 from pathlib import Path
 
@@ -31,7 +32,7 @@ from .origin import (
     repo_toplevel_and_head,
 )
 from .origin_dates import commit_author_timestamps
-from .origin_history import unwalked
+from .origin_history import HistoryUnread, unwalked
 
 # The axis a commit-drift count was measured on, carried as `basis` on
 # every block the four surfaces emit, so they cannot disagree about which
@@ -42,31 +43,69 @@ BASIS_REACHABILITY = "reachability"
 BASIS_AUTHOR_DATE = "author-date"
 
 
-class CommitDriftUnread(enum.Enum):
-    """A commit leg whose history was not read in time: the walk from the
-    stamp's head and the listing of its commits both met their timeout
-    (`origin_history.unwalked`), and the dates are not read in their
-    place, since a rebased or back-dated commit moves them. Not None,
-    which says the leg does not apply: the per-memory surfaces omit the
-    count but flag the row and stop it reading fresh
-    (`_response.ResponseBuilder.apply_commit_drift_unread`), and the
-    health rollups count it under `unread`."""
+#: A commit leg whose history was not read, and why
+#: (`origin_history.HistoryUnread`): the walk from the stamp's head and the
+#: listing of its commits both met their timeout (`origin_history.unwalked`),
+#: whose dates are not read in their place since a rebased or back-dated
+#: commit moves them, or the dates themselves were not read. Not None,
+#: which says the leg does not apply: the per-memory surfaces omit the
+#: count but flag the row and stop it reading fresh
+#: (`_response.ResponseBuilder.apply_commit_drift_unread`), and the health
+#: rollups count it under `unread`.
+CommitDriftUnread = HistoryUnread
 
-    UNREAD = "unread"
+# The recommendation such a row carries, on the search hit and memory_show,
+# by cause.
+_UNREAD_RECOMMENDATIONS: dict[HistoryUnread, str] = {
+    HistoryUnread.TIMEOUT: (
+        "The repository's commit history could not be read in time, so the "
+        "commits since this memory was verified were not counted. Spot-check "
+        "a claim before relying on the memory."
+    ),
+    HistoryUnread.OVER_BUDGET: (
+        "The repository's commit history is longer than bettermemory reads, "
+        "so the commits since this memory was verified were not counted. "
+        "Spot-check a claim before relying on the memory."
+    ),
+    HistoryUnread.SHALLOW: (
+        "The checkout is a shallow clone, whose history is cut, so the "
+        "commits since this memory was verified were not counted. Fetch the "
+        "missing history (git fetch --unshallow), or spot-check a claim "
+        "before relying on the memory."
+    ),
+    HistoryUnread.ERROR: (
+        "git failed reading the repository's commit history, so the commits "
+        "since this memory was verified were not counted. Spot-check a "
+        "claim before relying on the memory."
+    ),
+}
+#: Every recommendation an unread row carries.
+UNREAD_RECOMMENDATIONS = frozenset(_UNREAD_RECOMMENDATIONS.values())
 
 
-# The recommendation such a row carries, on the search hit and memory_show.
-COMMIT_DRIFT_UNREAD_RECOMMENDATION = (
-    "The repository's commit history could not be read in time, so the "
-    "commits since this memory was verified were not counted. Spot-check "
-    "a claim before relying on the memory."
-)
+def unread_recommendation(why: HistoryUnread) -> str:
+    """The recommendation a row whose history was not read carries."""
+    return _UNREAD_RECOMMENDATIONS[why]
+
+
+def dates_since(
+    history: list[datetime] | HistoryUnread | None, since: datetime
+) -> int | HistoryUnread | None:
+    """The commits authored strictly after `since` on `history`, ascending
+    author dates (`origin_dates.commit_author_timestamps`), by
+    ``bisect_right``: an equal instant falls before the cut, so a verify in
+    the same instant as a commit is no drift. Why the history was not
+    read, or None where none applies, passed through."""
+    if history is None or isinstance(history, HistoryUnread):
+        return history
+    return len(history) - bisect.bisect_right(history, since)
 
 
 def _count_since_verify(
     cwd_path: Path, last_verified_at: datetime, verified_head: str | None
-) -> tuple[int, str, ReachableWalk | None, Path | None] | None:
-    """Take the stamp; return (count, basis, walk, toplevel) since it, or None."""
+) -> tuple[int, str, ReachableWalk | None, Path | None] | HistoryUnread | None:
+    """Take the stamp; return (count, basis, walk, toplevel) since it, why
+    the history was not read, or None where none applies."""
     # The basis. A stamp that recorded the checkout's HEAD is counted in
     # reachability space — the commits in `verified_head..HEAD`, which
     # hold a branch authored before the stamp and merged after it — when
@@ -92,8 +131,8 @@ def _count_since_verify(
             if walk is None and unwalked() != given_up:
                 # The walk and its listing met their timeout: the count is
                 # omitted, never read off the author dates
-                # (`origin_history.unwalked`).
-                return None
+                # (`origin_history.unwalked`), and the row is unread.
+                return HistoryUnread.TIMEOUT
     if walk is not None:
         count = len(walk.commits)
         basis = BASIS_REACHABILITY
@@ -120,10 +159,9 @@ def _count_since_verify(
         # per-hit search count exactly. The sort lives at the source
         # because THIS function runs once per memory: doing it here
         # re-sorted the repo's whole history per row.
-        timestamps = commit_author_timestamps(cwd_path)
-        if timestamps is None:
-            return None
-        idx = bisect.bisect_right(timestamps, last_verified_at)
-        count = len(timestamps) - idx
+        counted = dates_since(commit_author_timestamps(cwd_path), last_verified_at)
+        if counted is None or isinstance(counted, HistoryUnread):
+            return counted
+        count = counted
         basis = BASIS_AUTHOR_DATE
     return count, basis, walk, toplevel

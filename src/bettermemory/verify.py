@@ -137,13 +137,14 @@ from .origin_dates import (
     commit_author_sha_pairs_touching_pathspecs,
     commit_author_timestamps_touching_pathspecs,
 )
-from .origin_history import Walked, unwalked
+from .origin_history import HistoryUnread, Walked, unwalked
 from .origin_patch import local_patch_window, too_large
 from .verify_basis import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
     CommitDriftUnread,
     _count_since_verify,
+    dates_since,
 )
 from .verify_spelling import Spelled, spelled
 from .verify_status import (
@@ -1097,18 +1098,12 @@ def _quiescent_drift_applicable(
     """
     if toplevel is None:
         toplevel = repo_toplevel(cwd)
-    specs: list[str] = []
-    if anchors:
-        resolved = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
-        if resolved is None:
-            # Git itself couldn't answer. We can't judge anchoring, so
-            # keep the signal (conservative), mirroring the positive
-            # branch's unfiltered fallback.
-            return True
-        specs = resolved
-    gated = _gated_claims(claims)
-    governed = claim_paths(gated) if gated else []
-    combined = list(dict.fromkeys((*specs, *governed)))
+    combined = _anchor_specs(cwd, anchors, claims, toplevel=toplevel)
+    if combined is None:
+        # Git itself couldn't answer. We can't judge anchoring, so keep the
+        # signal (conservative), mirroring the positive branch's unfiltered
+        # fallback.
+        return True
     if not combined:
         return False
     spell = spelled(cwd, combined, toplevel=toplevel, anchor=None)
@@ -1126,6 +1121,51 @@ def _quiescent_drift_applicable(
     return bool(touching)
 
 
+def _anchor_specs(
+    cwd: Path,
+    anchors: Sequence[str],
+    claims: Sequence[Claim],
+    *,
+    toplevel: Path | None,
+) -> list[str] | None:
+    """The pathspecs a memory's commit leg reads: its anchors resolved
+    into the repository (`resolve_repo_pathspecs`), then the paths its
+    governed claims name, toplevel-relative by construction. Empty where
+    every anchor escapes the repository and no claim governs a path; None
+    where git could not resolve the anchors (no root)."""
+    specs: list[str] = []
+    if anchors:
+        resolved = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
+        if resolved is None:
+            return None
+        specs = resolved
+    gated = _gated_claims(claims)
+    governed = claim_paths(gated) if gated else []
+    return list(dict.fromkeys((*specs, *governed)))
+
+
+def applicable_unread(
+    why: HistoryUnread,
+    cwd: Path,
+    anchors: Sequence[str],
+    claims: Sequence[Claim],
+    *,
+    toplevel: Path | None,
+) -> HistoryUnread | None:
+    """`why`, for a commit leg whose history was not read, where the leg
+    still applies; None where it would read not applicable without the
+    history: every anchor escaping the repository and no claim governing
+    a path (`_anchor_specs`, the escape half of the applicability rule,
+    path arithmetic alone, with one ``rev-parse`` where `toplevel` is
+    None). The phantom half reads the history, so a leg whose anchors land
+    in the repository stays unread: a memory whose claims live outside the
+    repository reads not applicable whether or not its history was read."""
+    if toplevel is None:
+        toplevel = repo_toplevel(cwd)
+    specs = _anchor_specs(cwd, anchors, claims, toplevel=toplevel)
+    return None if specs == [] else why
+
+
 def compute_commit_drift(
     last_verified_at: datetime | None,
     memory_origin_repo: str | None,
@@ -1136,8 +1176,10 @@ def compute_commit_drift(
     claims: list[str] | tuple[str, ...] = (),
     verified_head: str | None = None,
     anchor: ClaimAnchor | None = None,
-) -> CommitDriftStatus | None:
-    """Return a commit-drift verdict, or None when the signal isn't useful.
+) -> CommitDriftStatus | CommitDriftUnread | None:
+    """Return a commit-drift verdict, or None when the signal isn't useful,
+    or why the history was not read where it is (`CommitDriftUnread`: the
+    count is omitted and the memory never reads fresh).
 
     The commits are counted where the record's cited commit resolves
     under its `anchor` (design 3.6, `ClaimAnchor.commit_root`): in the
@@ -1165,7 +1207,11 @@ def compute_commit_drift(
       not None — without an anchor we have nothing to count from, and
       `verification.status == "never"` already maxes the alarm);
     - the record has an anchor whose commit root resolves (above);
-    - `commit_author_timestamps` returned a list (git was reachable);
+    - `commit_author_timestamps` returned a list (git was reachable),
+      or the walk from `verified_head` answered; where either was not read
+      (a timeout, an error, a history past the memo's budget, a shallow
+      clone), the cause is returned instead, unless every anchor escapes
+      the repository (`applicable_unread`);
     - the memory makes CLAIMS this repo's commits could invalidate —
       it has at least one claim anchor (`commit_drift_anchor_paths`:
       attested `verified_paths` or body-cited paths), and when commits
@@ -1236,6 +1282,10 @@ def compute_commit_drift(
     counted = _count_since_verify(cwd_path, last_verified_at, verified_head)
     if counted is None:
         return None
+    if isinstance(counted, HistoryUnread):
+        return applicable_unread(
+            counted, cwd_path, anchors, parsed_claims, toplevel=None
+        )
     count, basis, walk, toplevel = counted
     resolved = _narrow_commit_drift(
         cwd_path, last_verified_at, count, anchors, parsed_claims, toplevel, walk, basis
@@ -1327,7 +1377,7 @@ def resolve_hit_drift(
     cwd: Path,
     toplevel: Path | None,
     head: str | None,
-    timestamps: Callable[[], list[datetime] | None],
+    timestamps: Callable[[], list[datetime] | HistoryUnread | None],
     anchors: tuple[str, ...],
     claims: Sequence[Claim],
     since: datetime,
@@ -1337,8 +1387,10 @@ def resolve_hit_drift(
     """One hit's commit drift as `_response.ResponseBuilder.attach_commit_
     drift_counts` stamps it and `_response._DriftPass.lookup` resolves it
     for every surface: the count, the basis it was measured on and the
-    claim detail, None when the count is omitted, or `CommitDriftUnread`
-    when the walk was given up. `timestamps` reads
+    claim detail, None when the count is omitted, or why the history was
+    not read (`CommitDriftUnread`: the walk was given up, or the dates were
+    not read), unless every anchor escapes the repository
+    (`applicable_unread`). `timestamps` reads
     the head's whole history (`_response._DriftPass.timestamps`), called
     only on the author-date basis, as `compute_commit_drift` reads it; a
     None there omits the count, as it does on that function. Everything
@@ -1362,7 +1414,9 @@ def resolve_hit_drift(
             # The walk and the listing of its commits both met their
             # timeout: no count, never one off the author dates
             # (`origin_history.unwalked`), and not read as fresh.
-            return CommitDriftUnread.UNREAD
+            return applicable_unread(
+                HistoryUnread.TIMEOUT, cwd, anchors, claims, toplevel=toplevel
+            )
     if walk is not None:
         count = len(walk.commits)
         basis = BASIS_REACHABILITY
@@ -1372,13 +1426,15 @@ def resolve_hit_drift(
         # commits strictly after the verify timestamp.
         # Equal-timestamp commits are not counted as drift,
         # matching the health rollup's semantics. The search read the
-        # history before its first hit and stopped where it failed, so
-        # only a pass that reads it here can meet the None.
-        history = timestamps()
-        if history is None:
+        # history before its first hit and stopped where none applies, so
+        # only a pass that reads it here can meet the None; an unread one
+        # reads every author-date hit unread.
+        counted = dates_since(timestamps(), since)
+        if counted is None:
             return None
-        idx = bisect.bisect_right(history, since)
-        count = len(history) - idx
+        if isinstance(counted, HistoryUnread):
+            return applicable_unread(counted, cwd, anchors, claims, toplevel=toplevel)
+        count = counted
         basis = BASIS_AUTHOR_DATE
     # Narrow to commits that touched an anchor (mirrors memory_show
     # / the expand_top block), so stable-claim memories don't nag
@@ -1790,9 +1846,11 @@ __all__ = [
     "Anchoring",
     "ClaimAnchor",
     "CommitDriftStatus",
+    "CommitDriftUnread",
     "PathDriftReport",
     "ResolvedCommitDrift",
     "VerificationStatus",
+    "applicable_unread",
     "commit_drift_anchor_paths",
     "commit_drift_status",
     "compute_commit_drift",

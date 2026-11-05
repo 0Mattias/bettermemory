@@ -22,6 +22,7 @@ from pathlib import Path
 
 from . import _git as _git_runner
 from . import origin, origin_history
+from .origin_history import HistoryUnread
 
 
 def _instant(stamp: datetime) -> float:
@@ -37,15 +38,19 @@ def _instant(stamp: datetime) -> float:
 
 def commit_author_timestamps(
     cwd: Path | None, *, located: tuple[Path, str] | None = None
-) -> list[datetime] | None:
+) -> list[datetime] | HistoryUnread | None:
     """All author timestamps from the HEAD history of `cwd`'s repo.
 
-    Returns a list of timezone-aware datetimes, or None on any failure
-    (cwd is None, git not on PATH, not a repo, no commits, parse error
-    on every line). An empty list is theoretically possible but almost
-    never happens — `git log` on a repo with no commits exits non-zero
-    and we surface that as None. Lines that fail to parse are skipped
-    individually rather than poisoning the whole result.
+    Returns a list of timezone-aware datetimes; None where no history
+    applies (cwd is None, git not on PATH, a directory that is not there,
+    no repository the files name, and from ``HEAD``, where no pair names
+    the head, a refusal: not a repository, no commits); and where a history
+    applies and was not read, why (`origin_history.HistoryUnread`): git
+    met its timeout, failed on the head named by its hash or printed a
+    line its format does not print (one such line declines the whole
+    read), the history is longer than the memo's budget, or the clone is
+    shallow. A caller reads the third outcome as neither a count nor a
+    leg that does not apply: the row is flagged and never reads fresh.
 
     Returned ASCENDING, ready to `bisect_right`. Every caller wants that
     order and none wants git's; leaving the sort to them meant the
@@ -75,23 +80,28 @@ def commit_author_timestamps(
     its ancestor and the files that change which commits a head reaches
     read as they did (`origin_history.history_guard`); elsewhere it reads
     its whole history. A read that fails is remembered for the key for a
-    minute: a call meanwhile returns None without a process and counts the
-    failure on the calling thread (`origin.failed_git_calls`), as the read did, so
-    a caller that keeps a value only when no git call failed keeps none
-    from it. Where the files git's discovery reads do not settle the pair
-    and the caller passed none (off POSIX, in another account's
+    minute, with why: a call meanwhile returns the cause without a process
+    and counts the failure on the calling thread
+    (`origin.failed_git_calls`, a timeout as a timeout too), as the read
+    did, so a caller that keeps a value only when no git call failed keeps
+    none from it. Where the files git's discovery reads do not settle the
+    pair and the caller passed none (off POSIX, in another account's
     repository), the root and the head are those `githead.locate` reads
     (`origin_history.located_key`), kept and extended alike; only where
     those do not settle it either does the log run from HEAD, uncached. A
     history longer than the memo's budget (`origin_history.remember`) is
-    returned, and remembered as a failed read is, so the calls of the next
-    minute answer None without reading it again. A hit returns the stored
-    list itself: every caller only bisects it. Replace refs and grafts
-    move nothing (`origin_history.AS_STORED_ENV`). A shallow repository's
-    history, cut where the dates behind the cut are not read
-    (`origin_history.cuts`), answers None, as a failed read does; a
-    history kept before the cut was written is still returned until the
-    head moves.
+    not counted: it answers ``OVER_BUDGET``, counted as a failure, and is
+    remembered as a failed read is, so the calls of the next minute answer
+    the same without reading it again. A hit returns the stored list
+    itself: every caller only bisects it. Replace refs and grafts move
+    nothing (`origin_history.AS_STORED_ENV`). A shallow repository, its
+    ``shallow`` file listing a commit or unreadable (`origin_history.cuts`),
+    answers ``SHALLOW`` with no process, counted as a failure and
+    remembered under the file's stamp (`origin_history.history_guard`), so
+    a fetch that deepens or unshallows the clone is read on the next call:
+    git reads no commit behind a cut, and no window on the dates can be
+    shown to stop short of it. A history kept before the cut was written
+    is still returned until the head moves.
     """
     if cwd is None:
         return None
@@ -103,36 +113,51 @@ def commit_author_timestamps(
         else (str(located[0]), located[1])
     )
     if key is None:
-        if origin_history.cuts(cwd, walk=True) != frozenset():
+        cut = origin_history.cuts(cwd, walk=True)
+        if cut is None:
+            # No repository the files name: none applies, as before.
             _git_runner.note_failed()
             return None
+        if cut:
+            _git_runner.note_failed()
+            return HistoryUnread.SHALLOW
         return _read_author_timestamps(cwd, "HEAD")
     guard = origin_history.history_guard(Path(key[0]))
-    stored, failed = origin_history.recall(key, guard)
+    stored, failure = origin_history.recall(key, guard)
     if stored is not None:
         return stored
-    if not failed and origin_history.cuts(Path(key[0])) != frozenset():
+    if failure is None and origin_history.cuts(Path(key[0])) != frozenset():
         # A shallow file's cut: the commits behind it, whose dates git
         # does not read, may be the window's (ENG-220's review).
-        origin_history.remember_failure(key, guard)
-        failed = True
-    if failed:
-        _git_runner.note_failed()
-        return None
+        failure = HistoryUnread.SHALLOW
+        origin_history.remember_failure(key, guard, failure)
+    if failure is not None:
+        origin_history.note_unread(failure)
+        return failure
     base = None if guard is None else origin_history.base_for(key[0], guard)
-    dates = None
+    dates: list[datetime] | HistoryUnread | None = None
     if base is not None:
         dates = _extended_author_timestamps(cwd, base[0], base[1], key[1])
     if dates is None:
         dates = _read_author_timestamps(cwd, key[1])
-    if dates is None or not origin_history.remember(key, dates, guard):
-        origin_history.remember_failure(key, guard)
+    if isinstance(dates, HistoryUnread):
+        origin_history.remember_failure(key, guard, dates)
+    elif dates is not None and not origin_history.remember(key, dates, guard):
+        dates = HistoryUnread.OVER_BUDGET
+        origin_history.remember_failure(key, guard, dates)
+        _git_runner.note_failed()
     return dates
 
 
-def _read_author_timestamps(cwd: Path, revision: str) -> list[datetime] | None:
+def _read_author_timestamps(
+    cwd: Path, revision: str
+) -> list[datetime] | HistoryUnread | None:
     """`commit_author_timestamps`' read: the author dates of every commit
-    reachable from `revision`, ascending, or None."""
+    reachable from `revision`, ascending; or why they were not read, or
+    None where none applies (`origin_history.unanswered`: a `revision`
+    named by its hash is a head the repository holds, so git's refusal of
+    it is an error, where for ``HEAD`` it also answers a folder that is no
+    repository and a branch with no commit)."""
     # timeout=5.0, not the 1.0 default: the default is calibrated for
     # write-path origin capture, where origin is nice-to-have and a
     # hanging git must never stall a memory_write. This log and its two
@@ -141,15 +166,16 @@ def _read_author_timestamps(cwd: Path, revision: str) -> list[datetime] | None:
     # on a slow host (observed: the windows-latest CI runner) times out,
     # collapsing a real count into the omitted/conservative branch. Same
     # ceiling `commit_patch_stream` already runs at.
+    before = origin_history.git_counts()
     raw = origin._git(cwd, "log", "--format=%at", revision, timeout=5.0)
-    values = (
-        None if raw is None else origin_history.read_lines(raw, origin_history.seconds)
-    )
+    if raw is None:
+        named = origin.is_full_commit_sha(revision)
+        return origin_history.unanswered(before, named=named)
+    values = origin_history.read_lines(raw, origin_history.seconds)
     if not values:
-        if raw is not None:
-            # A line that reads as no date declines the read.
-            _git_runner.note_failed()
-        return None
+        # A line that reads as no date declines the read.
+        _git_runner.note_failed()
+        return HistoryUnread.ERROR
     return origin_history.author_dates(values)
 
 

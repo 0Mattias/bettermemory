@@ -291,9 +291,10 @@ def _drift_lines(report: HealthReport) -> list[str]:
             f"drifted={cd.total_drifted}:"
         )
         if cd.unread:
+            causes = ", ".join(f"{why} {n}" for why, n in cd.unread_causes.items())
             lines.append(
-                f"  unread ({cd.unread}): the commit history was not read in "
-                "time; spot-check them"
+                f"  unread ({cd.unread}{': ' + causes if causes else ''}): the "
+                "commit history was not read; spot-check them"
             )
         if not cd.rows:
             if not cd.unread:

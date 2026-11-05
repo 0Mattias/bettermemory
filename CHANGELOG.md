@@ -624,6 +624,47 @@ eighteenth was built.
   than the one its history was read at (`_DriftPass._history_at`).
   (`src/bettermemory/_response.py`, `tests/test_commit_drift_cache.py`)
 
+- **A history that was not read reads unread, whatever stopped the read
+  (ENG-220).** Only a walk given up on read unread: where the whole
+  history's log met its timeout, git failed on the head, the history was
+  longer than the memo keeps, or the clone was shallow, the dates came
+  back as None, which every surface reads as a leg that does not apply,
+  so a memory on the author-date basis read fresh on the calendar alone.
+  `origin_dates.commit_author_timestamps` now tells the two apart: None
+  where no history applies (no repository the files name, no git, a
+  directory that is not there, and, from `HEAD`, git's refusal), and
+  otherwise why it was not read (`origin_history.HistoryUnread`: a
+  timeout, an error, over the budget, shallow; `verify_basis.
+  CommitDriftUnread` is that enum). The search hit, the expanded top hit
+  and `memory_show` flag such a memory, as a walk given up is flagged,
+  and its recommendation names the cause and its remedy
+  (`verify_basis.unread_recommendation`); `verify.compute_commit_drift`
+  returns the cause; the health rollups count it under `unread`, with
+  `unread_causes` and `unread_ids`, at the caller's checkout, at a root
+  its cited commit resolves at and in each estate group, where a root
+  whose history was not read had been skipped as unreachable or counted
+  unconfirmed. A root where no history applies is skipped or unconfirmed
+  as before: unread does not replace unconfirmed, which says no live
+  store resolves the cited commit. A memory whose anchors all lie outside
+  the repository reads not applicable whether or not the history was
+  read (`verify.applicable_unread`). A history past the memo's budget is
+  no longer counted on the call that met it. A shallow clone reads every
+  author-date memory unread, since a commit at the cut authored before
+  the stamp hides parents authored after it; a walk whose range holds no
+  cut is read in full and counts, and `git fetch --unshallow` is read on
+  the next call, since an unread result is kept under no key (a
+  timeout's for a minute). (`src/bettermemory/origin_dates.py`,
+  `src/bettermemory/origin_history.py`, `src/bettermemory/_git.py`,
+  `src/bettermemory/verify.py`, `src/bettermemory/verify_basis.py`,
+  `src/bettermemory/_response.py`, `src/bettermemory/verdict.py`,
+  `src/bettermemory/handlers/show.py`,
+  `src/bettermemory/handlers/search.py`, `src/bettermemory/health.py`,
+  `src/bettermemory/health_stats.py`, `src/bettermemory/health_model.py`,
+  `src/bettermemory/health_render.py`, `bench/rot/run.py`,
+  `bench/rot/live_census.py`, `docs/api.md`,
+  `tests/test_unread_history.py`, `tests/test_commit_drift_cache.py`,
+  `tests/test_origin_as_stored.py`)
+
 - **No window passes a command line's bound (ENG-220).** The patch
   stream and the split's listing named up to 256 commits on git's
   command line (10,496 characters), and they and the two path-filtered

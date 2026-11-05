@@ -29,7 +29,13 @@ from .models import Memory, first_summary_line
 from .origin import commits_since_anchor
 from .origin_history import Walked, unwalked
 from .claims import load_claims
-from .verify import BASIS_AUTHOR_DATE, BASIS_REACHABILITY, resolve_commit_drift
+from .verify import (
+    BASIS_AUTHOR_DATE,
+    BASIS_REACHABILITY,
+    applicable_unread,
+    resolve_commit_drift,
+)
+from .verify_basis import CommitDriftUnread, dates_since
 from .time_utils import ensure_utc, parse_event_ts
 from .health_model import (
     ActorSlice,
@@ -910,21 +916,23 @@ def _drift_rows_for_candidates(
     candidates: list[MemoryStats],
     *,
     root: Path,
-    timestamps: list[datetime],
+    timestamps: list[datetime] | CommitDriftUnread,
     toplevel: Path | None,
     anchor_paths_by_id: dict[str, tuple[str, ...]],
     claims_by_id: dict[str, tuple[str, ...]] | None,
     verified_head_by_id: dict[str, str | None] | None = None,
     head: str | None = None,
-) -> tuple[list[CommitDriftRow], int]:
+) -> tuple[list[CommitDriftRow], dict[str, CommitDriftUnread]]:
     """The per-candidate count-and-narrow loop, shared between the
     caller-repo rollup and the cross-repo estate check — one loop so
     the two cannot compute different drift policies for the same
-    memory. Returns drifting rows sorted heaviest-first, and how many
-    candidates' history was not read in time (`unread`: the walk and its
-    listing met their timeout, `origin_history.unwalked`), which get no
-    row and are not counted clean either; the caller owns capping and the
-    empty-vs-None distinction.
+    memory. Returns drifting rows sorted heaviest-first, and, by memory id,
+    why each candidate's history was not read (`unread`: the walk and its
+    listing met their timeout, `origin_history.unwalked`, or `timestamps`,
+    the root's dates, were not read and the candidate counts on them),
+    which get no row and are not counted clean either, save where every
+    anchor escapes the repository (`verify.applicable_unread`); the caller
+    owns capping and the empty-vs-None distinction.
 
     `verified_head_by_id` and `head` (the commit `root`'s HEAD names,
     resolved once by the caller) select the basis per candidate, the
@@ -933,7 +941,7 @@ def _drift_rows_for_candidates(
     reachable walk from it, the rest over the author-date bisect.
     """
     rows: list[CommitDriftRow] = []
-    unread = 0
+    unread: dict[str, CommitDriftUnread] = {}
     # The walks of this pass no memo keeps (`commits_since_anchor`): a store
     # verified at one dead anchor forks one walk for it, and so does one
     # anchor where the walk memo cannot key the walk.
@@ -945,6 +953,7 @@ def _drift_rows_for_candidates(
             since = since.replace(tzinfo=timezone.utc)
         stored_claims = claims_by_id.get(stats.id, ()) if claims_by_id else ()
         parsed_claims = load_claims(list(stored_claims)) if stored_claims else []
+        anchors = anchor_paths_by_id.get(stats.id, ())
         # The basis, per memory: the reachable walk from the stamp's
         # recorded HEAD when the record carries one and the anchor is
         # still an ancestor of this root's HEAD (memoised per anchor,
@@ -963,7 +972,15 @@ def _drift_rows_for_candidates(
                 # the per-memory surfaces omit the count, never one counted
                 # off the author dates (`origin_history.unwalked`), and
                 # counted apart, not read as caught up.
-                unread += 1
+                why = applicable_unread(
+                    CommitDriftUnread.TIMEOUT,
+                    root,
+                    anchors,
+                    parsed_claims,
+                    toplevel=toplevel,
+                )
+                if why is not None:
+                    unread[stats.id] = why
                 continue
         if walk is not None:
             count = len(walk.commits)
@@ -973,9 +990,19 @@ def _drift_rows_for_candidates(
             # `since`; len - idx is then the count of timestamps after that
             # cut. Equal timestamps fall before the cut on bisect_right
             # semantics, which is what we want — a verify call that lands
-            # at the same instant as a commit doesn't count as drift.
-            idx = bisect.bisect_right(timestamps, since)
-            count = len(timestamps) - idx
+            # at the same instant as a commit doesn't count as drift. Dates
+            # not read leave the row unread, as the walk given up does.
+            counted = dates_since(timestamps, since)
+            if counted is None or isinstance(counted, CommitDriftUnread):
+                why = None
+                if counted is not None:
+                    why = applicable_unread(
+                        counted, root, anchors, parsed_claims, toplevel=toplevel
+                    )
+                if why is not None:
+                    unread[stats.id] = why
+                continue
+            count = counted
             basis = BASIS_AUTHOR_DATE
         # Narrow to commits that actually touched the memory's claim
         # anchors — mirrors memory_show and the memory_search top-hit
@@ -999,7 +1026,7 @@ def _drift_rows_for_candidates(
                 cwd=root,
                 since=since,
                 unfiltered=count,
-                anchors=anchor_paths_by_id.get(stats.id, ()),
+                anchors=anchors,
                 claims=parsed_claims,
                 toplevel=toplevel,
                 walk=walk,

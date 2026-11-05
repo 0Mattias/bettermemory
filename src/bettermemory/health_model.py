@@ -12,8 +12,11 @@ reads, so callers keep importing from `health`. Nothing here imports
 from __future__ import annotations
 
 import math
+from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from .models import Category
@@ -923,9 +926,13 @@ class CommitDriftDebt:
     store here could resolve (design 3.6: not the home checkout's, which
     has no live view here, nor the caller's, which does not hold it), so
     their commits were not counted; present in the payload when non-zero.
-    `unread` counts the candidates whose history was not read in time (the
-    walk from the stamp's head and its listing met their timeout), so they
-    have no row and are not caught up either; present when non-zero.
+    `unread` counts the candidates whose history was not read (the walk
+    from the stamp's head and its listing met their timeout, or the dates
+    were not read: a timeout, an error, a history past the memo's budget, a
+    shallow clone), so they have no row and are not caught up either;
+    present when non-zero, with `unread_causes`, how many were not read
+    for each cause, and `unread_ids`, their ids, capped as the rows are
+    (`unread_fields`).
     """
 
     current_repo: str | None
@@ -934,6 +941,8 @@ class CommitDriftDebt:
     total_drifted: int = 0
     unconfirmed: int = 0
     unread: int = 0
+    unread_causes: dict[str, int] = field(default_factory=dict)
+    unread_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -944,9 +953,33 @@ class CommitDriftDebt:
         }
         if self.unconfirmed:
             out["unconfirmed"] = self.unconfirmed
-        if self.unread:
-            out["unread"] = self.unread
+        out.update(_unread_dict(self.unread, self.unread_causes, self.unread_ids))
         return out
+
+
+def unread_fields(unread: Mapping[str, Enum]) -> dict[str, Any]:
+    """The `unread`, `unread_causes` and `unread_ids` of a rollup whose
+    candidates in `unread`, by memory id, were not read, each for its
+    cause (`verify_basis.CommitDriftUnread`): the count, the count per
+    cause, and the ids, capped at `_COMMIT_DRIFT_DEBT_CAP` as the rows
+    are."""
+    causes = Counter(str(why.value) for why in unread.values())
+    return {
+        "unread": len(unread),
+        "unread_causes": dict(sorted(causes.items())),
+        "unread_ids": list(unread)[:_COMMIT_DRIFT_DEBT_CAP],
+    }
+
+
+def _unread_dict(unread: int, causes: dict[str, int], ids: list[str]) -> dict[str, Any]:
+    """The unread keys of a rollup's payload: none where nothing is unread."""
+    if not unread:
+        return {}
+    return {
+        "unread": unread,
+        "unread_causes": dict(causes),
+        "unread_ids": list(ids),
+    }
 
 
 # Cap on distinct foreign worktrees a single health run walks git in.
@@ -974,8 +1007,9 @@ class CrossRepoDriftGroup:
     anchored to the memory's recorded worktree instead of the caller's
     cwd. `candidates` counts the claim-anchored, verified memories the
     group was judged over, so "clean" is legible as "checked N, none
-    drifted" rather than "nothing to check". `unread` is
-    `CommitDriftDebt.unread` for the group, present when non-zero."""
+    drifted" rather than "nothing to check". `unread`, `unread_causes`
+    and `unread_ids` are `CommitDriftDebt`'s for the group, present when
+    `unread` is non-zero."""
 
     repo: str
     worktree_root: str
@@ -983,6 +1017,8 @@ class CrossRepoDriftGroup:
     total_drifted: int = 0
     candidates: int = 0
     unread: int = 0
+    unread_causes: dict[str, int] = field(default_factory=dict)
+    unread_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -992,8 +1028,7 @@ class CrossRepoDriftGroup:
             "candidates": self.candidates,
             "rows": [r.to_dict() for r in self.rows],
         }
-        if self.unread:
-            out["unread"] = self.unread
+        out.update(_unread_dict(self.unread, self.unread_causes, self.unread_ids))
         return out
 
 

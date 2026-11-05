@@ -30,6 +30,7 @@ from bettermemory.verify import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
     ClaimAnchor,
+    CommitDriftStatus,
     compute_commit_drift,
     resolve_commit_drift,
     resolve_commit_drift_count,
@@ -172,7 +173,7 @@ def test_the_record_reads_drifted_after_the_falsifying_commit(
         verified_head=head if basis == BASIS_REACHABILITY else None,
         anchor=ClaimAnchor(root=str(repo), rule="home_checkout"),
     )
-    assert status is not None
+    assert isinstance(status, CommitDriftStatus)
     assert status.status == "drift"
     assert status.commits_since_verify == 1
     assert status.basis == basis

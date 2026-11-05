@@ -48,8 +48,8 @@ from .origin import (
     walk_files_signature,
 )
 from .origin_dates import commit_author_timestamps
-from .origin_history import Walked
-from .verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION, CommitDriftUnread
+from .origin_history import Walked, note_unread
+from .verify_basis import CommitDriftUnread, unread_recommendation
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .time_utils import parse_event_ts
@@ -121,7 +121,7 @@ SIMILAR_HITS_SHOWN = 5
 # every git `origin` runs, `origin_history.AS_STORED_CONFIG` and
 # `AS_STORED_DIFF`, and the stamps stay); the value is the resolved count,
 # basis and claim detail, None for a hit whose count is omitted, or
-# `CommitDriftUnread` where the history was not read in time. A
+# `CommitDriftUnread` where the history was not read, with why. A
 # commit moves the head and so every key; a new stamp, a rewritten body, a
 # changed claim or an edited attributes file changes its own row's, and an
 # edited config or
@@ -374,7 +374,7 @@ class _DriftPass:
         # The root and the head the rows key on (`_keyed_pair`).
         self._keyed = self.settled
         self._keyed_read = self.settled is not None
-        self._timestamps: list[datetime] | None = None
+        self._timestamps: list[datetime] | CommitDriftUnread | None = None
         # The head the whole history was read at (None where no pair named
         # one), once `timestamps` has read it.
         self._history_read = False
@@ -409,11 +409,15 @@ class _DriftPass:
         # is stored after that.
         self._broken = False
 
-    def timestamps(self) -> list[datetime] | None:
+    def timestamps(self) -> list[datetime] | CommitDriftUnread | None:
         """The head's whole history (`commit_author_timestamps`, memoised
-        per root and head), read on first use and kept once it answers. A
-        read that failed is made again by the next row that needs it, as
-        the uncached `verify.compute_commit_drift` makes it per show.
+        per root and head), read on first use and kept for the pass once it
+        answers: the dates, or why they were not read, which each later row
+        that reads it counts as a failure again (`origin_history.
+        note_unread`, a timeout as a timeout), as the row that read it did,
+        so no row counted on it is kept, save a timeout's for a while. A
+        read where none applies is made again by the next row that needs
+        it, as the uncached `verify.compute_commit_drift` makes it per show.
 
         Read at the root and the head the rows key on (`located`: the
         files' pair, else the pass's one ``git rev-parse``), the log naming
@@ -427,6 +431,8 @@ class _DriftPass:
             self._history_read = True
             self._history_head = None if pair is None else pair[1]
             self._timestamps = commit_author_timestamps(self.cwd, located=pair)
+        elif isinstance(self._timestamps, CommitDriftUnread):
+            note_unread(self._timestamps)
         return self._timestamps
 
     def _history_at(self, head: str) -> bool:
@@ -472,7 +478,7 @@ class _DriftPass:
     ) -> tuple[bool, _Drift]:
         """One row's commit drift: whether it is answered, and the
         resolution (None where the count is omitted, `CommitDriftUnread`
-        where the history was not read in time).
+        where the history was not read, with why).
 
         Answered without git where the signal does not apply (never
         verified, written in no repository with a remote, a record the
@@ -1183,14 +1189,15 @@ class ResponseBuilder:
         row["staleness_verdict"] = "spot_check_required"
 
     @staticmethod
-    def apply_commit_drift_unread(row: dict[str, Any]) -> None:
-        """Mutate one stamped row whose commit history was not read in time
-        (`verify_basis.CommitDriftUnread`): the count stays omitted, but
-        `commit_drift_unread: true` says it was not read, the verdict drops
-        to `spot_check_required`, as a row whose standing cannot be
+    def apply_commit_drift_unread(row: dict[str, Any], why: CommitDriftUnread) -> None:
+        """Mutate one stamped row whose commit history was not read
+        (`verify_basis.CommitDriftUnread`, `why`): the count stays omitted,
+        but `commit_drift_unread: true` says it was not read, the verdict
+        drops to `spot_check_required`, as a row whose standing cannot be
         established does (`apply_trust_unavailable`), and the
-        recommendation names it, unless the trust rule's names its own
-        remedy (a `remote` stamp, or `trust_unavailable`)."""
+        recommendation names the cause and its remedy
+        (`verify_basis.unread_recommendation`), unless the trust rule's
+        names its own (a `remote` stamp, or `trust_unavailable`)."""
         row["commit_drift_unread"] = True
         row["staleness_verdict"] = "spot_check_required"
         verification = row.get("verification")
@@ -1199,7 +1206,7 @@ class ResponseBuilder:
             and verification.get("status") != "remote"
             and not row.get("trust_unavailable")
         ):
-            verification["recommendation"] = COMMIT_DRIFT_UNREAD_RECOMMENDATION
+            verification["recommendation"] = unread_recommendation(why)
 
     def apply_trust(
         self,
@@ -1329,7 +1336,8 @@ class ResponseBuilder:
           claims at all, or none that resolve inside the caller's repo
           (the claim-anchored drift policy; see
           `verify.resolve_commit_drift_count`),
-        - the history was not read in time; the hit then carries
+        - the history was not read (a timeout, an error, a history past
+          the memo's budget, a shallow clone); the hit then carries
           `commit_drift_unread: true` (`apply_commit_drift_unread`).
 
         Absence-as-signal IS the right analogy to `path_drift` here — but
@@ -1820,7 +1828,9 @@ def _open_drift_pass(
     # otherwise pay a `git rev-parse` fork+exec per hit), from git where
     # the files did not settle them; the reachable walks are keyed on the
     # same head. A None pair is tolerated (the resolver re-derives; a hit
-    # with an anchor then counts in author-date space).
+    # with an anchor then counts in author-date space). A history that
+    # applies and was not read opens the pass all the same: a hit on the
+    # walk counts, and one on the dates reads unread.
     if drift.timestamps() is None:
         return None
     return drift
@@ -1833,7 +1843,7 @@ def _stamp_hit_drift(
 ) -> None:
     """Take one hit and its resolved drift; stamp `hit_dict` with them, return None."""
     if isinstance(resolved, CommitDriftUnread):
-        ResponseBuilder.apply_commit_drift_unread(hit_dict)
+        ResponseBuilder.apply_commit_drift_unread(hit_dict, resolved)
         return
     # Additive, claim-carrying hits only; mirrors
     # `CommitDriftStatus.to_dict`'s claim_drift block so both

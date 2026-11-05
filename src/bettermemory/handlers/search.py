@@ -68,7 +68,7 @@ from ..search import (
 )
 from ..store import MemoryNotFoundError, Store, TombstonedError
 from ..verdict import memory_verdict
-from ..verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION
+from ..verify_basis import UNREAD_RECOMMENDATIONS
 from ._shared import Context, _advance_turn, _attach_use_tokens, caller_anchoring
 
 if TYPE_CHECKING:
@@ -879,15 +879,15 @@ def _expand_unread(
     read one memo, so they agree save where the expansion resolved the leg
     again (a key the files do not settle, a head moved in between); the
     later read is the one the response keeps, as for the count."""
-    if shown.commit_drift_unread:
+    if shown.commit_drift_unread is not None:
         for key in ("commit_drift_count", "commit_drift_basis", "claim_drift"):
             row.pop(key, None)
-        deps.responses.apply_commit_drift_unread(row)
+        deps.responses.apply_commit_drift_unread(row, shown.commit_drift_unread)
     elif row.pop("commit_drift_unread", None):
         verification = row.get("verification")
         if (
             isinstance(verification, dict)
-            and verification.get("recommendation") == COMMIT_DRIFT_UNREAD_RECOMMENDATION
+            and verification.get("recommendation") in UNREAD_RECOMMENDATIONS
         ):
             verification["recommendation"] = shown.verification.recommendation
 

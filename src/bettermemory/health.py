@@ -58,6 +58,7 @@ from .origin import (
     repos_match,
 )
 from .origin_dates import commit_author_timestamps
+from .verify_basis import CommitDriftUnread
 from .verify import (
     Anchoring,
     commit_drift_anchor_paths,
@@ -86,6 +87,7 @@ from .health_model import (
     SilentMissStats,
     TelemetryCoverage,
     VerificationDebt,
+    unread_fields,
     _COLD_ENDORSEMENT_CAP,
     _COLD_ENDORSEMENT_MIN_RETRIEVALS as _COLD_ENDORSEMENT_MIN_RETRIEVALS,
     _COMMIT_DRIFT_DEBT_CAP,
@@ -1034,6 +1036,9 @@ def _recorded_root_group(
             }
         )
         return None
+    # None where no history applies there; a history that applies and was
+    # not read is judged all the same: a candidate on the walk counts, one
+    # on the dates is unread.
     timestamps = commit_author_timestamps(root)
     if timestamps is None:
         skipped.append(
@@ -1061,7 +1066,7 @@ def _recorded_root_group(
         rows=rows[:_COMMIT_DRIFT_DEBT_CAP],
         total_drifted=len(rows),
         candidates=len(candidates),
-        unread=unread,
+        **unread_fields(unread),
     )
 
 
@@ -1243,8 +1248,10 @@ def _cross_repo_group(
 ) -> CrossRepoDriftGroup | None:
     """One group of the estate check judged at `worktree`, a live view the
     membership model read as the checkout itself (design 3.6), by the same
-    claim-anchored legs `_compute_cross_repo_drift` runs. None when git
-    cannot answer there."""
+    claim-anchored legs `_compute_cross_repo_drift` runs. None where no
+    history applies there (no git, no repository the files name); a history
+    that applies and was not read is judged all the same, its candidates on
+    the dates counted unread."""
     root = Path(worktree)
     timestamps = commit_author_timestamps(root)
     if timestamps is None:
@@ -1266,7 +1273,7 @@ def _cross_repo_group(
         rows=rows[:_COMMIT_DRIFT_DEBT_CAP],
         total_drifted=len(rows),
         candidates=len(candidates),
-        unread=unread,
+        **unread_fields(unread),
     )
 
 
@@ -1285,7 +1292,10 @@ def _compute_commit_drift_debt(
     Emits None — rather than an empty `CommitDriftDebt` — when:
     - `caller_origin` was not provided,
     - the caller isn't currently inside a repo,
-    - git was unreachable (`commit_author_timestamps` returned None),
+    - no history applies there (`commit_author_timestamps` returned
+      None: no git, no repository the files name); one that applies and
+      was not read is judged all the same, its candidates on the dates
+      counted under `unread`,
     - or no memory's origin matches the caller's current repo.
 
     The "no matches" case is silenced because surfacing an empty bucket
@@ -1385,7 +1395,7 @@ def _compute_commit_drift_debt(
             rows=[],
             total_drifted=0,
             unconfirmed=unconfirmed,
-            unread=unread,
+            **unread_fields(unread),
         )
 
     return CommitDriftDebt(
@@ -1394,7 +1404,7 @@ def _compute_commit_drift_debt(
         rows=rows[:_COMMIT_DRIFT_DEBT_CAP],
         total_drifted=len(rows),
         unconfirmed=unconfirmed,
-        unread=unread,
+        **unread_fields(unread),
     )
 
 
@@ -1402,22 +1412,27 @@ def _drift_rows_by_root(
     candidates: list[MemoryStats],
     *,
     cwd_path: Path,
-    timestamps: list[datetime],
+    timestamps: list[datetime] | CommitDriftUnread,
     toplevel: Path | None,
     head: str | None,
     anchor_paths_by_id: dict[str, tuple[str, ...]],
     claims_by_id: dict[str, tuple[str, ...]] | None,
     verified_head_by_id: dict[str, str | None] | None,
     anchoring: Anchoring | None,
-) -> tuple[list[CommitDriftRow], int, int]:
+) -> tuple[list[CommitDriftRow], int, dict[str, CommitDriftUnread]]:
     """`_drift_rows_for_candidates` with each candidate counted at the root
     its cited commit resolves at (design 3.6, `verify_anchoring.ClaimAnchor.
     commit_root`), the count of candidates no live store here could
-    resolve, and the count whose history was not read in time (`unread`,
-    at every root). A candidate with no home row, and every candidate without
-    `anchoring`, is counted at the caller's directory as before; so is a
-    homed one whose root is the caller's own work tree, with the history
-    already read for it."""
+    resolve, and, by memory id, why each candidate's history was not read
+    (`unread`, at every root). A candidate with no home row, and every
+    candidate without `anchoring`, is counted at the caller's directory as
+    before; so is a homed one whose root is the caller's own work tree,
+    with the history already read for it. At a root where no history
+    applies (`commit_author_timestamps` None: no git, no repository the
+    files name) the candidates are unconfirmed, as before; where one
+    applies and was not read they are judged there, and those on the dates
+    are unread: the two buckets do not mean the same thing, and neither
+    replaces the other."""
     at_caller: list[MemoryStats] = []
     elsewhere: dict[str, list[MemoryStats]] = {}
     unconfirmed = 0
@@ -1436,7 +1451,7 @@ def _drift_rows_by_root(
         else:
             elsewhere.setdefault(commit_root, []).append(stats)
     rows: list[CommitDriftRow] = []
-    unread = 0
+    unread: dict[str, CommitDriftUnread] = {}
     if at_caller:
         rows, unread = _drift_rows_for_candidates(
             at_caller,
@@ -1466,7 +1481,7 @@ def _drift_rows_by_root(
             head=located[1] if located is not None else None,
         )
         rows.extend(found)
-        unread += not_read
+        unread.update(not_read)
     rows.sort(key=lambda r: r.commits_since_verify, reverse=True)
     return rows, unconfirmed, unread
 

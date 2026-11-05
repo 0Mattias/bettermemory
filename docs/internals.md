@@ -1778,7 +1778,9 @@ format did not print (`origin_history.read_lines`), reads no patch
 whose blobs sum past `origin_patch.MAX_PATCH_STREAM_BYTES`, and reads
 no count behind a shallow
 file's cut, `origin_history.cuts`: there the count is omitted, never a
-measured 0), with
+measured 0, and a history that applies and was not read, for that or
+another cause, reads unread, never fresh, `origin_history.HistoryUnread`),
+with
 `symbols.py` for advisory symbol citations, and
 the store's `trust_rows` supplies the provenance label and this host's
 stamp. The warm daemon's caches sit on this path and keep every answer

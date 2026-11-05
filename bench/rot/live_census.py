@@ -66,6 +66,7 @@ from bettermemory.origin import Origin  # noqa: E402
 from bettermemory.store import Store, store_path  # noqa: E402
 from bettermemory.verify import (  # noqa: E402
     ClaimAnchor,
+    CommitDriftUnread,
     compute_commit_drift,
     compute_staleness_verdict,
     compute_verification_status,
@@ -262,6 +263,9 @@ def _verdict_from_own_worktree(
         claims=row["claims_raw"],
         anchor=_home_checkout(Path(worktree)) if worktree else None,
     )
+    if isinstance(commit_drift, CommitDriftUnread):
+        # The history was not read: never fresh, as the product reads it.
+        return "spot_check_required"
     return compute_staleness_verdict(
         verification=verification,
         path_drift_missing=len(drift.claim_anchored_missing),

@@ -10,7 +10,8 @@ claim, and the count read 0. No origin call reads it now
 commits it lists, behind which git reads nothing: a range that holds a cut
 is not walked, and a shallow repository's dates are not read
 (`origin_history.cuts`), so no count is read where the commits behind the
-cut may be the window's.
+cut may be the window's, and the row reads unread
+(`origin_history.HistoryUnread.SHALLOW`), never caught up.
 
 Each repository is built with git's plumbing from `test_origin_patch`'s
 helpers; the graph is forged by rewriting its chunks in place.
@@ -253,8 +254,8 @@ def test_a_forged_shallow_file_reads_no_count_behind_its_cut(
     declined (the anchor behind the cut) or walked past it (the cut a root
     on the side branch), the dates missed it, and the count read 0 with
     nothing named, from the stamp's head and without one. Now no count is
-    read behind a cut: the hit's count is omitted (None), never a measured
-    0."""
+    read behind a cut: the hit's count is omitted, never a measured 0, and
+    the hit reads unread for the cut (`SHALLOW`), never not applicable."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _plain(repo, "init", "-q")
@@ -263,15 +264,18 @@ def test_a_forged_shallow_file_reads_no_count_behind_its_cut(
     assert truth is not None and truth.count >= 1 and truth.claims_drifted
     (repo / ".git" / "shallow").write_text(f"{cut}\n")
     assert len(_plain(repo, "log", "--format=%H").split()) < 5, "premise: cut"
-    assert _hit(repo, claims, anchor) is None
-    assert _hit(repo, claims, None) is None
+    shallow = CommitDriftUnread.SHALLOW
+    assert _unread_or_hit(repo, claims, anchor) is shallow
+    assert _unread_or_hit(repo, claims, None) is shallow
 
 
 def test_a_shallow_clone_counts_where_the_range_holds_no_cut(tmp_path: Path) -> None:
     """A clone three commits deep is cut at the commit before the change.
     Stamped there, the walk's range holds the change and the commit after
-    it and no cut, and counts as a full clone does: 1, foo named. Stamped
-    at a commit behind the cut, no count is read."""
+    it and no cut, and counts as a full clone does: 1, foo named: the
+    window is wholly inside the shallow history. Stamped at a commit behind
+    the cut, the window crosses it and no count is read: the hit is unread
+    for the cut (`SHALLOW`)."""
     partial = Partial(tmp_path, _LATE)
     full = tmp_path / "full"
     _plain(tmp_path, "clone", "-q", partial.source.as_uri(), str(full))
@@ -283,7 +287,7 @@ def test_a_shallow_clone_counts_where_the_range_holds_no_cut(tmp_path: Path) -> 
         got = _hit(repo, [_FOO], held)
         assert got is not None and (got.count, got.claims_drifted) == (1, (_FOO,))
     assert _hit(full, [_FOO], behind) is not None
-    assert _hit(shallow, [_FOO], behind) is None
+    assert _unread_or_hit(shallow, [_FOO], behind) is CommitDriftUnread.SHALLOW
 
 
 def test_the_cut_is_read_from_the_common_directory(tmp_path: Path) -> None:
@@ -1071,7 +1075,8 @@ def test_a_line_the_format_did_not_print_declines_the_read(
     (a date a re-encoding spelled otherwise, a hash or a mark it garbled)
     dropped out of the count, which read lower; it declines the read now,
     counted as a failed git call, so the hit keeps its fallback and no memo
-    keeps the value."""
+    keeps the value; the whole history's read says why it was not read
+    (`ERROR`), and the row reads unread."""
     monkeypatch.setattr(origin, "_git", lambda *a, **k: raw)
     failed = origin.failed_git_calls()
     got: object
@@ -1087,7 +1092,7 @@ def test_a_line_the_format_did_not_print_declines_the_read(
         got = origin_dates._read_author_timestamps(tmp_path, "HEAD")
     else:
         got = origin._walk_reachable(tmp_path, _SHA, "b" * 40)
-    assert got is None
+    assert got is (CommitDriftUnread.ERROR if reader == "whole" else None)
     assert origin.failed_git_calls() == failed + 1
 
 
@@ -1162,9 +1167,10 @@ def test_a_deepened_clone_is_read_at_once(
     shallow = tmp_path / "shallow"
     _plain(tmp_path, "clone", "-q", "--depth=3", partial.source.as_uri(), str(shallow))
     every = origin_dates.commit_author_timestamps(full)
-    assert every is not None and len(every) == len(_LATE)
-    assert origin_dates.commit_author_timestamps(shallow) is None
-    assert origin_dates.commit_author_timestamps(shallow) is None, "remembered"
+    assert isinstance(every, list) and len(every) == len(_LATE)
+    shallow_read = CommitDriftUnread.SHALLOW
+    assert origin_dates.commit_author_timestamps(shallow) is shallow_read
+    assert origin_dates.commit_author_timestamps(shallow) is shallow_read, "remembered"
     _plain(shallow, "fetch", "-q", deepen)
     assert origin_dates.commit_author_timestamps(shallow) == every
 
@@ -1436,7 +1442,7 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
     anchor = _rebased(repo)
     head = _plain(repo, "rev-parse", "HEAD")
 
-    def rollup() -> tuple[list[int], int]:
+    def rollup() -> tuple[list[int], dict[str, CommitDriftUnread]]:
         _caches.clear_all()
         history = origin_dates.commit_author_timestamps(repo)
         assert history is not None
@@ -1452,13 +1458,14 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
         )
         return [row.commits_since_verify for row in rows], unread
 
-    assert rollup() == ([2], 0), "premise: the walk reads both commits"
+    assert rollup() == ([2], {}), "premise: the walk reads both commits"
     met = _timing_out(monkeypatch, "--boundary")
-    assert _unread_or_hit(repo, [_FOO], anchor) is CommitDriftUnread.UNREAD
+    assert _unread_or_hit(repo, [_FOO], anchor) is CommitDriftUnread.TIMEOUT
     assert len(met) == 2, "the walk, then its listing"
     _caches.clear_all()
-    assert verify_basis._count_since_verify(repo, _VERIFIED, anchor) is None
-    assert rollup() == ([], 1)
+    counted = verify_basis._count_since_verify(repo, _VERIFIED, anchor)
+    assert counted is CommitDriftUnread.TIMEOUT
+    assert rollup() == ([], {"m": CommitDriftUnread.TIMEOUT})
     _caches.clear_all()
     walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
     for _ in range(2):
@@ -1475,7 +1482,7 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
             verified_head=anchor,
             walked=walked,
         )
-        assert got is CommitDriftUnread.UNREAD
+        assert got is CommitDriftUnread.TIMEOUT
         assert origin_history.unwalked() == unwalked + 1
         assert _git.timed_out_calls() > timed_out
     assert len(met) == 2 * 3 + 2, "the second hit ran no walk"
@@ -1549,6 +1556,8 @@ def test_the_health_rollups_count_a_walk_given_up_as_unread(
     drifted = ["d"] if drifting else []
     assert ([row.id for row in debt.rows], debt.unread) == (drifted, 1)
     assert debt.to_dict()["unread"] == 1
+    assert debt.to_dict()["unread_causes"] == {"timeout": 1}
+    assert debt.to_dict()["unread_ids"] == ["m"]
     history = origin_dates.commit_author_timestamps(repo)
     assert history is not None
     rows, unconfirmed, unread = health._drift_rows_by_root(
@@ -1560,7 +1569,8 @@ def test_the_health_rollups_count_a_walk_given_up_as_unread(
         anchoring=cast(Any, _Elsewhere(repo)),
         **legs,
     )
-    assert ([row.id for row in rows], unconfirmed, unread) == (drifted, 0, 1)
+    assert ([row.id for row in rows], unconfirmed) == (drifted, 0)
+    assert unread == {"m": CommitDriftUnread.TIMEOUT}
     live = health._cross_repo_group(_URL, str(repo), candidates, **legs)
     skipped: list[dict[str, str]] = []
     recorded = health._recorded_root_group(
@@ -1576,5 +1586,5 @@ def test_the_health_rollups_count_a_walk_given_up_as_unread(
         commit_drift_debt=debt, cross_repo_drift=CrossRepoDrift(groups=[live])
     )
     text = "\n".join(health_render._drift_lines(cast(Any, report)))
-    assert "unread (1)" in text and "caught up" not in text
+    assert "unread (1: timeout 1)" in text and "caught up" not in text
     assert f"{len(drifted)} drifted, 1 unread of {len(ids)} candidate(s)" in text

@@ -25,6 +25,7 @@ from bettermemory.verify import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
     ClaimAnchor,
+    CommitDriftStatus,
     commit_drift_anchor_paths,
     compute_commit_drift,
 )
@@ -136,7 +137,7 @@ def test_an_attested_file_counts_its_commit_under_every_spelling(
             verified_head=head if basis == BASIS_REACHABILITY else None,
             anchor=ClaimAnchor(root=str(root), rule="home_checkout"),
         )
-        assert status is not None, spelled
+        assert isinstance(status, CommitDriftStatus), spelled
         assert status.status == "drift", spelled
         assert status.commits_since_verify == 1, spelled
         assert status.basis == basis, spelled
