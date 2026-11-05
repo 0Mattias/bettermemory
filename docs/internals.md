@@ -1805,7 +1805,8 @@ model in `eval_model.py`, the walk and the counts behind the rates in
 `eval_rates.py` and its renderers in `eval_render.py`; `health.py` is
 the rollup `handlers/health.py` and the CLI serve (`cli/health_cmd.py`),
 with its report model in `health_model.py`, the event-log arithmetic in
-`health_stats.py` and its renderers in `health_render.py`.
+`health_stats.py`, the recommendations it distills in
+`health_recommend.py` and its renderers in `health_render.py`.
 
 **Hooks.** `bettermemory hook session-start|stop|prompt` runs the
 standard-library client in `_daemon_client.py`, which posts the hook's

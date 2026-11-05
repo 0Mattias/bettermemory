@@ -110,7 +110,6 @@ from .health_stats import (
     _StatsAccumulator as _StatsAccumulator,
     _build_actor_slices,
     _build_recent_silent_misses,
-    _compute_recommendations,
     _drift_rows_for_candidates,
     _edit_distance_within as _edit_distance_within,
     _rare_scopes,
@@ -118,6 +117,7 @@ from .health_stats import (
     find_prior_session_boundary as find_prior_session_boundary,
     provenance_debt as provenance_debt,
 )
+from .health_recommend import _compute_recommendations
 from .health_render import render_json, render_text
 
 if TYPE_CHECKING:

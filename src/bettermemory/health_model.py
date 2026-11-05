@@ -1301,7 +1301,8 @@ _RECOMMENDATION_SIZE_FLOOR = 3
 
 # Closed set of recommendation kinds. Exhaustive enumeration so a
 # consumer can switch over them without a missing-case branch. Adding
-# a new kind requires extending this constant and `_compute_recommendations`.
+# a new kind requires extending this constant and
+# `health_recommend._compute_recommendations`.
 RECOMMENDATION_KINDS: tuple[str, ...] = (
     "remove_dead_weight",
     "resolve_contradicted",

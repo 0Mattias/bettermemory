@@ -3,7 +3,8 @@
 `health.compute_health` walks the event log through `_StatsAccumulator`,
 builds the actor-slice, silent-miss and recent-miss rollups with the
 helpers here, and distills the finished report with
-`_compute_recommendations`. The claim-anchored commit-drift rows
+`health_recommend._compute_recommendations`. The claim-anchored
+commit-drift rows
 (`_drift_rows_for_candidates`), the scope-typo check,
 `find_prior_session_boundary` and `provenance_debt` live here too.
 `health` re-exports every public name here and every private one a
@@ -41,17 +42,13 @@ from .health_model import (
     ActorSlice,
     ActorSlices,
     CommitDriftRow,
-    HealthReport,
     MemoryStats,
     ProvenanceDebt,
     ProvenanceRow,
     RecentSilentMiss,
-    Recommendation,
     SilentMissStats,
     _PROVENANCE_ROW_CAP,
     _RECENT_SILENT_MISSES_CAP,
-    _RECOMMENDATION_ROW_CAP,
-    _RECOMMENDATION_SIZE_FLOOR,
     _iso,
     endorsement_tier,
     is_hook_telemetry_event,
@@ -739,177 +736,6 @@ def _build_actor_slices(
         key=lambda s: (-s.memories, s.client or ""),
     )
     return ActorSlices(declared=declared, undeclared=slice_for(None))
-
-
-def _recommend_from_buckets(report: HealthReport) -> list[Recommendation]:
-    """Recommend on the dead weight, the contradicted and the cold endorsements; returns them in order."""
-    out: list[Recommendation] = []
-    if len(report.dead_weight) >= _RECOMMENDATION_SIZE_FLOOR:
-        out.append(
-            Recommendation(
-                kind="remove_dead_weight",
-                summary=(
-                    f"{len(report.dead_weight)} memories are retrieved but "
-                    "never applied — the ranker keeps surfacing them but "
-                    "they don't shape replies."
-                ),
-                action=(
-                    "memory_remove(id, reason=...) on the unhelpful ones; "
-                    "memory_record_use(applied) on the ones that are still "
-                    "valuable clears the signal without touching bodies."
-                ),
-                count=len(report.dead_weight),
-                memory_ids=[s.id for s in report.dead_weight[:_RECOMMENDATION_ROW_CAP]],
-            )
-        )
-
-    if report.contradicted:
-        out.append(
-            Recommendation(
-                kind="resolve_contradicted",
-                summary=(
-                    f"{len(report.contradicted)} memories carry an "
-                    "unresolved contradiction — recorded as `contradicted` "
-                    "and not since updated or re-verified."
-                ),
-                action=(
-                    "memory_update(id, content=...) with the corrected "
-                    "fact, then memory_verify(id, verified_paths=...) to "
-                    "clear the flag."
-                ),
-                count=len(report.contradicted),
-                memory_ids=[
-                    s.id for s in report.contradicted[:_RECOMMENDATION_ROW_CAP]
-                ],
-            )
-        )
-
-    if report.cold_endorsement_memories.total >= _RECOMMENDATION_SIZE_FLOOR:
-        out.append(
-            Recommendation(
-                kind="cleanup_cold_endorsements",
-                summary=(
-                    f"{report.cold_endorsement_memories.total} memories "
-                    f"crossed the retrieval floor "
-                    f"({report.cold_endorsement_memories.min_retrievals}+ "
-                    "retrievals) but were never explicitly endorsed — the "
-                    "auto-applied pass has been closing the loop without "
-                    "the model deliberately reaching for them."
-                ),
-                action=(
-                    "memory_record_use(applied) on the ones you are sure are "
-                    "useful clears the signal; memory_remove on the ones "
-                    "that aren't."
-                ),
-                count=report.cold_endorsement_memories.total,
-                memory_ids=[
-                    s.id
-                    for s in report.cold_endorsement_memories.rows[
-                        :_RECOMMENDATION_ROW_CAP
-                    ]
-                ],
-            )
-        )
-    return out
-
-
-def _recommend_from_drift_and_scopes(report: HealthReport) -> list[Recommendation]:
-    """Recommend on the commit drift, the unaccounted records and the typo scopes; returns them in order."""
-    out: list[Recommendation] = []
-    if (
-        report.commit_drift_debt is not None
-        and report.commit_drift_debt.total_drifted >= _RECOMMENDATION_SIZE_FLOOR
-    ):
-        out.append(
-            Recommendation(
-                kind="verify_drifted",
-                summary=(
-                    f"{report.commit_drift_debt.total_drifted} memories "
-                    "anchored in this repo are behind HEAD — verified "
-                    "before recent commits landed."
-                ),
-                action=(
-                    "memory_verify(id, verified_paths=[...]) to re-anchor "
-                    "if claims still hold — paths are what this count is "
-                    "narrowed by, and any verify slides the boundary "
-                    "forward; memory_update where the body needs to track "
-                    "the new code."
-                ),
-                count=report.commit_drift_debt.total_drifted,
-                memory_ids=[
-                    r.id
-                    for r in report.commit_drift_debt.rows[:_RECOMMENDATION_ROW_CAP]
-                ],
-            )
-        )
-
-    if report.provenance is not None and report.provenance.unaccounted_total >= 1:
-        # Floor of one, like `contradicted`: a single record that entered
-        # the store outside every recorded path is independently
-        # actionable, and the label exists so nobody waits for three.
-        out.append(
-            Recommendation(
-                kind="review_unaccounted",
-                summary=(
-                    f"{report.provenance.unaccounted_total} memories entered "
-                    "the store outside every recorded path: the event log "
-                    "covers their creation, nothing wrote them, nothing "
-                    "pulled them."
-                ),
-                action=(
-                    "memory_show(id) each one. To keep a record you "
-                    "recognise, memory_remove(id, reason=...) then "
-                    'memory_admin(action="restore", id=...): the restore '
-                    "re-admits it through the store and it reads local from "
-                    "then on. Remove the rest."
-                ),
-                count=report.provenance.unaccounted_total,
-                memory_ids=[
-                    r.id
-                    for r in report.provenance.unaccounted[:_RECOMMENDATION_ROW_CAP]
-                ],
-            )
-        )
-
-    if report.rare_scopes:
-        # One recommendation per typo singleton — each carries its own
-        # candidate fix surfaced via the scope name. The model reads
-        # the list and picks the rename target.
-        out.append(
-            Recommendation(
-                kind="fix_typo_scopes",
-                summary=(
-                    f"{len(report.rare_scopes)} singleton scopes look like "
-                    "typos of more common scopes."
-                ),
-                action=(
-                    'memory_admin(action="rename_scope", old_scope=..., '
-                    "new_scope=...) to fold each singleton into the intended "
-                    "scope name."
-                ),
-                count=len(report.rare_scopes),
-                memory_ids=[],
-                scope=", ".join(report.rare_scopes[:_RECOMMENDATION_ROW_CAP]),
-            )
-        )
-    return out
-
-
-def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
-    """Distill the bucket rollups into proactive curation suggestions.
-
-    Order is fixed (matches `RECOMMENDATION_KINDS`) so the first
-    actionable item is the one that most likely warrants attention.
-    Size-driven kinds (dead_weight, cold_endorsement_memories,
-    drifted) only fire when the bucket crosses
-    `_RECOMMENDATION_SIZE_FLOOR`; per-row kinds (contradicted,
-    rare_scopes) fire on first occurrence because each instance is
-    independently actionable.
-    """
-    out: list[Recommendation] = []
-    out.extend(_recommend_from_buckets(report))
-    out.extend(_recommend_from_drift_and_scopes(report))
-    return out
 
 
 def _drift_rows_for_candidates(
