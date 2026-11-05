@@ -52,6 +52,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -73,12 +74,14 @@ from bettermemory.membership_records import (
     IMPORT,
     LEGACY,
     REMOTE_DIVERGED,
+    RETIRE_AFTER,
     SUBPROJECT_CONTRADICTION,
     UNRESOLVED_LOCATION,
 )
 from bettermemory.membership_shared import _same_file
 from bettermemory.server import main as cli_main
 from bettermemory.store import Store
+from bettermemory.time_utils import isoformat_utc
 
 from . import test_membership_resolution
 from .test_membership_remint import (
@@ -1552,7 +1555,16 @@ def test_a_question_whose_checkout_is_retired_later_is_asked_again(
 @pytest.mark.usefixtures("no_birth")
 @pytest.mark.parametrize(
     "holder",
-    ["gone", "retired", "asked_here_too", "live", "other_machine", "its_own"],
+    [
+        "gone",
+        "retired",
+        "asked_here_too",
+        "live",
+        "other_machine",
+        "other_machine_quiet",
+        "other_machine_within",
+        "its_own",
+    ],
 )
 def test_a_question_no_sighting_shows_is_asked_where_one_does(
     tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, holder: str
@@ -1565,7 +1577,12 @@ def test_a_question_no_sighting_shows_is_asked_where_one_does(
     the checkout sighted asks the same already, it is closed as settled
     into that one (``asked_here_too``). It stays where it is on a live
     checkout here (``live``) and on another machine's checkout, whose
-    folder is read there alone (``other_machine``); and a question about
+    folder is read there alone (``other_machine``), while one of its views
+    was sighted within `RETIRE_AFTER` (``other_machine_within``, a day
+    short of it); once none was for that long, as health retires a
+    checkout, it is unseen too and the question is moved
+    (``other_machine_quiet``: review R8 4, where it stayed there for good
+    with its folder gone); and a question about
     the checkout it is on (a changed remote's), whose folder is gone,
     stays there, as it asks about that one (``its_own``). Each view the
     sighting reads to place the question is read before its transaction
@@ -1577,7 +1594,7 @@ def test_a_question_no_sighting_shows_is_asked_where_one_does(
     wrote = lab.write("here", here)
     project, sighted_id = wrote.project, wrote.checkout
     assert project is not None and sighted_id is not None
-    third = _container_machine(lab, "third") if holder == "other_machine" else None
+    third = _container_machine(lab, "third") if holder.startswith("other") else None
     where = tmp_path / ("third" if third else "host") / "there"
     there = make_repo(where, commits=1)
     on = _joined_to(lab, there, "there", project, third)
@@ -1604,6 +1621,10 @@ def test_a_question_no_sighting_shows_is_asked_where_one_does(
         shutil.rmtree(there)
     elif holder == "retired":
         _quiet(lab, on)
+    elif holder == "other_machine_quiet":
+        _last_sighted(lab, on, RETIRE_AFTER + timedelta(days=1))
+    elif holder == "other_machine_within":
+        _last_sighted(lab, on, RETIRE_AFTER - timedelta(days=1))
     location.forget()
     stats = _stats_in_the_transaction(lab, monkeypatch)
 
@@ -1613,7 +1634,7 @@ def test_a_question_no_sighting_shows_is_asked_where_one_does(
     model = lab.model()
     q = model.proposal(qid)
     assert res.checkout == sighted_id
-    if holder in ("live", "other_machine", "its_own"):
+    if holder in ("live", "other_machine", "other_machine_within", "its_own"):
         assert (q.state, q.checkout) == ("open", on)
         assert not any(qid in x for x in res.lines)
     elif holder == "asked_here_too":
@@ -1837,6 +1858,16 @@ def test_a_later_revival_or_quiet_retirement_supersedes_retired_into(
         shown = ", retired," if k.retired else ","
         assert listed[0].startswith(f"  {idle} primary{shown} ")
     assert line.exists()
+
+
+def _last_sighted(lab: Lab, checkout: str, ago: timedelta) -> None:
+    """Every view of `checkout` last sighted `ago` before now, as a
+    checkout no sighting reached since reads."""
+    model = lab.model()
+    stamp = isoformat_utc(datetime.now(timezone.utc) - ago)
+    with model._call():
+        for v in model.checkout(checkout).views:
+            model._put_view(dataclasses.replace(v, last_seen=stamp))
 
 
 def _quiet(lab: Lab, checkout: str) -> None:

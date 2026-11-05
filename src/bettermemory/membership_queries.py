@@ -425,8 +425,11 @@ def translate(
 
 def retire_quiet(self: Membership, *, quiet: timedelta = RETIRE_AFTER) -> list[str]:
     """Checkouts unseen for `quiet` leave the health lists
-    (``checkout_retired``); their rows stay, and no rule reads the flag
-    (D15, X12). A sighting brings one back."""
+    (``checkout_retired``); their rows stay (D15, X12), and a question
+    open on one is asked where a sighting shows it
+    (`membership_shared._unseen`, which reads a checkout of another
+    machine unseen this long as retired). A sighting brings one back.
+    No flow calls it: health lists such checkouts still."""
     with self._call():
         cutoff = self._now() - quiet
         out: list[str] = []

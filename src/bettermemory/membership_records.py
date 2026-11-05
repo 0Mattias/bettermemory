@@ -131,13 +131,20 @@ CONTENT_MATCH = 0.9
 #: commit-less repository matching three empty projects asks naming them,
 #: one matching four is new and names the count.
 CONTENT_MAX = 3
-#: A checkout unseen this long leaves health (decision D15); no rule reads
-#: the flag, and a sighting undoes it (`_touch_view`), so an early
-#: retirement costs one health line and a late one keeps a dead checkout
-#: listed: not load-bearing (ENG-160).
+#: A checkout unseen this long leaves health (decision D15,
+#: `retire_quiet`), and another machine's checkout whose views were last
+#: sighted this long ago shows its questions at no sighting
+#: (`membership_shared._unseen`, ENG-215): they are asked where a live
+#: checkout of their project is sighted, and hold no alias clone's join.
+#: A sighting undoes a retirement (`_touch_view`) and keeps its view's
+#: sighting fresh, so an early one costs a health line, or a question
+#: asked at another checkout of its project, and a late one keeps a dead
+#: checkout listed and its questions where no sighting shows them longer
+#: (ENG-160).
 RETIRE_AFTER = timedelta(days=180)
 #: How stale a view's last sighting may get before a sighting writes it
-#: again: only health's retirement reads it, so a sighting at a known
+#: again: only health's retirement and `_unseen` read it, at
+#: `RETIRE_AFTER`, so a sighting at a known
 #: path writes nothing more often. A day is 1/180 of `RETIRE_AFTER`, and a
 #: prompt at a known path writes its view once a day, not each prompt
 #: (ENG-160). Measured (macOS): a steady resolution at a known path took

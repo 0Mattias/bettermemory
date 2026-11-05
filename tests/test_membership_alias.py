@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import shutil
+from datetime import timedelta
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -35,12 +36,14 @@ from bettermemory.membership_records import (
     FIRST_SIGHT,
     IMPORT,
     LEGACY,
+    RETIRE_AFTER,
     UNREADABLE,
     Location,
     ProjectFileRef,
 )
 from bettermemory.membership_shared import _SUBJECT
 from bettermemory.store import Store
+from bettermemory.time_utils import isoformat_utc
 
 from .test_membership_cost import (
     _BASE_STATS,
@@ -646,7 +649,9 @@ def test_an_open_question_on_either_project_leaves_the_two_apart(
     _stays_apart(world, alias, second)
 
 
-@pytest.mark.parametrize("holder", ["retired", "gone", "live"])
+@pytest.mark.parametrize(
+    "holder", ["retired", "gone", "live", "elsewhere", "quiet_elsewhere"]
+)
 @pytest.mark.parametrize("about", ["the_alias_project", "another_project"])
 def test_a_question_no_sighting_shows_leaves_the_two_to_join(
     world: World, about: str, holder: str
@@ -661,12 +666,19 @@ def test_a_question_no_sighting_shows_leaves_the_two_to_join(
     checkout; about the third project, it stays, asked at that project's
     next sighting. Where a sighting shows it (``live``), the two stay
     apart while it is open. Before, it held the join, shown at no
-    sighting. The second checkout's views, which the rule and the
-    placing of the question read, are read before the sighting's
-    transaction (`membership_alias.planned`, review R8 1)."""
+    sighting. On another machine (a container's checkout, ``elsewhere``)
+    its folder is read there alone, so it holds the join while one of its
+    views was sighted within `RETIRE_AFTER`, and holds nothing once none
+    was for that long (``quiet_elsewhere``, review R8 4: it held the join
+    for good with its folder gone there). The second checkout's views,
+    which the rule and the placing of the question read, are read before
+    the sighting's transaction (`membership_alias.planned`, review R8 1)."""
     full, alias, first, second = _split_pair(world)
-    twin = world.clone(alias, "/w/alias-twin", remote=ALIAS)
-    other = world.see(twin)
+    box = holder.endswith("elsewhere")
+    twin = world.clone(
+        alias, "/w/alias-twin", remote=ALIAS, machine="M2" if box else world.machine
+    )
+    other = world.see(twin, model=world.model_for("M2") if box else None)
     assert other.project == second.project and other.checkout != second.checkout
     third = world.repo("/w/third", remote="example.invalid/third")
     x = world.see(third)
@@ -692,6 +704,12 @@ def test_a_question_no_sighting_shows_leaves_the_two_to_join(
             world.model._event("checkout_retired", checkout=k.id)
     elif holder == "gone":
         del world.disk[(twin.machine, twin.path)]
+    elif holder == "quiet_elsewhere":
+        with world.model._call():
+            k = world.model.checkout(str(other.checkout))
+            old = isoformat_utc(world.clock - RETIRE_AFTER - timedelta(days=1))
+            for v in k.views:
+                world.model._put_view(dataclasses.replace(v, last_seen=old))
     _caught_up(full, alias)
     reads = _reads_in_the_transaction(world)
 
@@ -699,7 +717,7 @@ def test_a_question_no_sighting_shows_leaves_the_two_to_join(
 
     assert reads == []
     q = world.model.proposal(pr.id)
-    if holder == "live":
+    if holder in ("live", "elsewhere"):
         assert seen.project == second.project and _merges(world) == []
         assert (q.state, q.checkout) == ("open", other.checkout)
         return

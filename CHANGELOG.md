@@ -1353,7 +1353,8 @@ eighteenth was built.
   whose witness commit it holds, outside the strict switch. Nothing is
   merged where a question is open on a checkout of either where a
   sighting shows it (not one retired, nor one of this machine's whose
-  folder is gone: ENG-215), a project
+  folder is gone, nor another machine's last sighted 180 days ago or
+  more: ENG-215), a project
   file is bound to either, or a declaration says which project either
   is (a join, move or separation of the alias clone or of a full-URL
   clone, a record written at one moved, an answer at one about its own
@@ -1490,12 +1491,16 @@ eighteenth was built.
   where the folder could not be read) is moved to a checkout of the
   project it offers to join that one to (the one read, the container's
   after a heal of a record in the container's project, never one of
-  this machine's whose folder is gone, or with no live one left open
+  this machine's whose folder is gone nor another's last sighted 180
+  days ago or more, or with no live one left open
   where it was), so its line and its answers name one
   project, unless that checkout asks the same. A sighting of a live
   checkout of that project then asks such a question wherever no
-  sighting shows it where it is (on a retired checkout, or one of this
-  machine's whose folder is gone): the container's checkout brought back
+  sighting shows it where it is (on a retired checkout, one of this
+  machine's whose folder is gone, or another machine's none of whose
+  views was sighted for 180 days, `RETIRE_AFTER`, the quiet after which
+  health retires a checkout, where one on a removed container's
+  checkout stayed for good): the container's checkout brought back
   by its next sighting, or one joined to the project since, takes it
   and names it, where it stayed shown nowhere, named by `project
   pending` and `bettermemory health` alone; and such a question holds

@@ -33,7 +33,8 @@ nothing a user said or a file binds stands against it:
 * P and Q are settled (`_settled`): neither provisional, a part, a folder
   project or a boundary, both in the location's tenant; no question is
   open on a checkout of either where a sighting shows it (one on a
-  retired checkout, or on one of this machine's whose folder is gone,
+  retired checkout, on one of this machine's whose folder is gone, or on
+  another machine's none of whose views was sighted for `RETIRE_AFTER`,
   holds nothing, and the sighting that joins asks it where it offers to
   join another project to P's or Q's: `membership_shared._asked_here`,
   ENG-215), and no project file is bound to either;

@@ -44,8 +44,9 @@ token found at its object.
 
 Each function takes the model as `self: Membership`, as the ladder's do
 (`membership_resolve`); the class binds `_shared_remint` by name. This
-module imports the standard library, `checkout_token` and the records,
-rows and lines modules, and `membership` only under TYPE_CHECKING.
+module imports the standard library, `checkout_token`, `time_utils` and
+the records, rows and lines modules, and `membership` only under
+TYPE_CHECKING.
 """
 
 from __future__ import annotations
@@ -65,6 +66,7 @@ from .membership_records import (
     IMPORT,
     LEGACY,
     OPEN,
+    RETIRE_AFTER,
     SUBPROJECT_CONTRADICTION,
     Checkout,
     Location,
@@ -73,6 +75,7 @@ from .membership_records import (
     _norm,
 )
 from .membership_rows import _checkout_from, _proposal_from
+from .time_utils import parse_event_ts
 
 if TYPE_CHECKING:
     from .membership import Membership
@@ -557,8 +560,9 @@ def _asked_at(
     `_SUBJECT`); else `kept` where `kept` is in the project it offers to
     join that one to (its candidate: the same project after a heal of a
     record in the first one's, and after an answer joining it); else a
-    live checkout of that project (`_unseen`: not retired, and one of
-    this machine's only where one of its views holds it now), this
+    live checkout of that project (`_unseen`: not retired, one of this
+    machine's only where one of its views holds it now, and another's
+    only where one was sighted within `RETIRE_AFTER`), this
     machine's first, then by id (the container's after a heal of a
     second record in its project, holding nothing); and with none,
     `idle`, where it stays open until a sighting of a live checkout of
@@ -590,7 +594,8 @@ def _asked_here(self: Membership, k: Checkout) -> None:
     where `k` asks the same already, it is closed as settled into `k`.
     A question open on a live checkout stays where it is, asked at that
     checkout's sightings, and so does one on another machine's checkout
-    that is not retired, whose views are read there alone. The rows are
+    that is not retired, whose views are read there alone, until none of
+    them was sighted for `RETIRE_AFTER` (a container removed). The rows are
     a question's put and ``proposal_answered``, of kinds 9.0.0rc18 reads.
     One read of the open questions of those kinds at each sighting, and
     for each one of `k`'s project open elsewhere, its checkout and that
@@ -624,11 +629,20 @@ def _unseen(self: Membership, k: Checkout) -> bool:
     retired (rung 2 and B pass over one retired into another), or it is
     this machine's and none of its views here holds it now
     (`Membership.live_view`: its folder gone or replaced, or a share
-    that does not answer). Another machine's checkout is read as seen,
-    as its views are read on its own machine alone. A bounded read of
-    the liveness of `k`'s views where it is this machine's and not
-    retired."""
-    return k.retired or (k.machine == self.machine and self.live_view(k) is None)
+    that does not answer). Another machine's checkout, whose views are
+    read on that machine alone, is unseen once none of them was sighted
+    for `RETIRE_AFTER`, the quiet after which health retires a checkout
+    (`membership_queries.retire_quiet`, decision D15): its folder gone
+    there, or the machine itself, as a container removed. A bounded read
+    of the liveness of `k`'s views where it is this machine's and not
+    retired; another's last sightings are read from its row."""
+    if k.retired:
+        return True
+    if k.machine == self.machine:
+        return self.live_view(k) is None
+    seen = [parse_event_ts(v.last_seen) for v in k.views]
+    newest = max((s for s in seen if s is not None), default=None)
+    return newest is not None and newest < self._now() - RETIRE_AFTER
 
 
 def _asked_plan(

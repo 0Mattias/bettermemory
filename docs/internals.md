@@ -940,9 +940,10 @@ project P into one other project Q where all of these hold:
 - P and Q are settled: neither provisional, a part, a folder project or
   a boundary, both in the location's tenant; no question is open on a
   checkout of either where a sighting shows it, and no project file is
-  bound to either. A question on a retired checkout, or on one of this
-  machine's whose folder is gone (`membership_shared._unseen`), holds
-  nothing: no sighting shows it there, and the next sighting of a live
+  bound to either. A question on a retired checkout, on one of this
+  machine's whose folder is gone, or on another machine's none of whose
+  views was sighted for `RETIRE_AFTER` (`membership_shared._unseen`),
+  holds nothing: no sighting shows it there, and the next sighting of a live
   checkout of the project it offers to join another to asks it there
   (`_asked_here`, ENG-215), the joining sighting included where that
   project is P or Q.
@@ -1283,8 +1284,10 @@ project, an answer joining it); else a live checkout of that project,
 this machine's first, then by id (the container's, after the heal of a
 second record in the container's project that held nothing), where a
 live one is not retired and, if it is this machine's, holds one of its
-views now (`_unseen`), so a checkout here whose folder is gone, which
-no sighting shows, is passed over; and with none it stays open on the
+views now, and if it is another's, had one sighted within
+`RETIRE_AFTER` (`_unseen`), so a checkout here whose folder is gone, or
+a container's removed long since, which no sighting shows, is passed
+over; and with none it stays open on the
 idle record until a sighting asks it (below). Where the
 checkout it goes to already asks the same (the same imported or
 unresolved project), the idle one's is closed as settled.
@@ -1296,16 +1299,20 @@ each question about another project offering to join that one to the
 checkout's project that is open where no sighting shows it
 (`_asked_here`, `_unseen`): on a retired checkout (a record retired
 while that project had no live checkout, a checkout retired since, into
-a record of another project or as quiet) or on one of this machine's
-whose views hold it no longer (its folder gone). So the container's
+a record of another project or as quiet), on one of this machine's
+whose views hold it no longer (its folder gone), or on another
+machine's none of whose views was sighted for `RETIRE_AFTER` (180 days,
+the quiet after which health retires a checkout, decision D15: a
+container removed, or its folder gone there). So the container's
 checkout, brought back by its next sighting, or a checkout joined to
 that project since asks it at its next sighting, its candidates,
 evidence and line kept, and its answer acts there; where that checkout
 asks the same already, the other is closed as settled into it (by
 `sighting`). A question on a live checkout stays, asked at that
 checkout's sightings, and so does one on another machine's checkout
-that is not retired, as its folder is read on that machine alone, whose
-own sightings of a checkout of the project move it. A question about
+that is not retired and was sighted within `RETIRE_AFTER`, as its folder
+is read on that machine alone, whose own sightings of a checkout of the
+project move it. A question about
 the checkout it is on (a first sight's, a changed remote's, the root
 file's, a duplicate's, a part's) stays on it, as it asks about that one.
 The rows are a question's put and `proposal_answered`; the cost, one
@@ -1321,7 +1328,8 @@ the views the ladder reads (`membership_resolve._liveness_plan`,
 (`membership_alias.planned`): none is read with the store's write lock
 held, and the witness exchange asks a container for them all in one
 round. A question whose project has no live checkout anywhere, and
-one about a checkout no sighting reaches, are named by `bettermemory
+one on another machine's checkout whose folder is gone there, until
+`RETIRE_AFTER` has passed since its last sighting, are named by `bettermemory
 health` (its open questions, with each one's checkout and path) and by
 `project pending`, and `project show` names those of each project.
 
