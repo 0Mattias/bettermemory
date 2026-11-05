@@ -609,6 +609,21 @@ eighteenth was built.
   `src/bettermemory/health_render.py`, `docs/api.md`,
   `tests/test_origin_as_stored.py`, `tests/test_commit_drift_cache.py`)
 
+- **A commit that lands during a search is never counted under the head
+  after it (ENG-220).** Off POSIX and in another account's repository a
+  search's rows key on its one `git rev-parse`, and the search read the
+  whole history before it, at the head `githead.locate` read. A commit
+  landing between the two, during a cold log of up to 5 s, put the
+  earlier head's dates under the later head's key: the check at the
+  search's end found that head unmoved, and every later search there
+  read a dates-basis memory as 0 and fresh where the truth was 1 and
+  `spot_check_required`. The history is now read at the rows' root and
+  head, after the rev-parse, the log naming that head by its hash, so a
+  commit landing after either read moves the head the search keyed on
+  and nothing is kept; and no row is keyed, or kept, under another head
+  than the one its history was read at (`_DriftPass._history_at`).
+  (`src/bettermemory/_response.py`, `tests/test_commit_drift_cache.py`)
+
 - **No window passes a command line's bound (ENG-220).** The patch
   stream and the split's listing named up to 256 commits on git's
   command line (10,496 characters), and they and the two path-filtered

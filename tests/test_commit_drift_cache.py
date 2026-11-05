@@ -28,6 +28,7 @@ import pytest
 from bettermemory import (
     _caches,
     _response,
+    gitfile_rule,
     githead,
     origin,
     origin_gitfiles,
@@ -1117,8 +1118,10 @@ def test_where_the_files_do_not_settle_the_head_git_answers_the_same(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With the reader declining, the root and head come from `git
-    rev-parse` and nothing is memoised, exactly as before the cache; the
-    decorated hits are the ones the files' path produces."""
+    rev-parse`, and no row is memoised where `githead.locate` reads no head
+    there; the decorated hits are the ones the files' path produces. The
+    whole history is read at the head git named, by its hash, and kept
+    under that pair (ENG-220's review, round E)."""
     repo = _repo(tmp_path)
     anchor = _commit(
         repo,
@@ -1161,13 +1164,127 @@ def test_where_the_files_do_not_settle_the_head_git_answers_the_same(
     drift = _response._DriftPass(repo, _REMOTE, _counted(memories))
     assert drift.located() is not None, "premise: git answers"
     assert drift._keyed_pair(True) is None, "locate reads no head there"
-    for _ in range(2):
+    head = _git(repo, "rev-parse", "HEAD")
+    for read in (True, False):
         from_git, calls = _attach(memories, caller, monkeypatch)
         assert from_git == from_files
         assert ("rev-parse", "--show-toplevel", "HEAD") in calls
-        assert (*_WHOLE_HISTORY, "HEAD") in calls
+        assert ((*_WHOLE_HISTORY, head) in calls) is read
+        assert (*_WHOLE_HISTORY, "HEAD") not in calls
     assert len(_response._DRIFT_MEMO) == 0
-    assert len(origin_history._TIMESTAMPS_MEMO) == 0
+    assert list(origin_history._TIMESTAMPS_MEMO) == [(str(repo.resolve()), head)]
+
+
+@pytest.fixture(params=["posix", "off-posix", "other-owner"])
+def keyed_by(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Who keys the rows: the files (POSIX), or the pass's one ``git
+    rev-parse`` where they decline, off POSIX and in another account's
+    repository. A host that is not POSIX has only the second."""
+    if request.param == "off-posix":
+        monkeypatch.setattr(githead, "_POSIX", False)
+    elif os.name != "posix":
+        pytest.skip("off POSIX the host's own leg is the off-posix one")
+    elif request.param == "other-owner":
+
+        def another_account(*paths: str) -> None:
+            raise gitfile_rule._Unsettled
+
+        monkeypatch.setattr(githead, "_check_owner", another_account)
+    return str(request.param)
+
+
+@pytest.mark.parametrize("dated", [True, False], ids=["dates", "walk"])
+def test_a_commit_after_the_history_is_read_is_never_kept_under_its_head(
+    dated: bool,
+    keyed_by: str,
+    tmp_path: Path,
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit lands as the pass's whole-history log ends. Off POSIX and
+    in another account's repository the log ran at the head `githead.
+    locate` read and the rev-parse that keys the rows after it, so the
+    earlier head's dates were counted under the later head's key: the
+    end of the pass found that head unmoved, and every search at it read
+    0 and fresh where the truth is 1 (ENG-220's review, round E). The
+    history is read at the rows' key now, after the rev-parse, and the
+    commit moves the head the pass keyed on, so nothing is kept: the next
+    search counts as an uncached one, on the dates and on the walk."""
+    repo = _repo(tmp_path)
+    anchor = _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n1\n2\n3\nz\n"})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    memory_id = _write(
+        store,
+        caller,
+        monkeypatch,
+        f"widget rule a lives in {repo / 'notes0.md'}",
+        verified_head=None if dated else anchor,
+    )
+    memories = store.load_all()
+    real = origin.commit_author_timestamps
+    landed: list[str] = []
+
+    def read_then_commit(*args: Any, **kwargs: Any) -> Any:
+        got = real(*args, **kwargs)
+        if not landed:
+            post = {"notes0.md": "a1\n1\n2\n3\nz\n"}
+            landed.append(_commit(repo, "post", when=_T1, files=post))
+        return got
+
+    monkeypatch.setattr(_response, "commit_author_timestamps", read_then_commit)
+    _caches.clear_all()
+    _, racing = _attach(memories, caller, monkeypatch)
+    monkeypatch.setattr(_response, "commit_author_timestamps", real)
+    assert landed, "premise: the commit landed mid-pass"
+    keying = ("rev-parse", "--show-toplevel", "HEAD")
+    history = [c for c in racing if c[:2] == _WHOLE_HISTORY]
+    assert history == [(*_WHOLE_HISTORY, anchor)], "read at the head it is keyed on"
+    if keyed_by != "posix":
+        assert racing.index(keying) < racing.index(history[0]), "the key read first"
+    assert not _response._DRIFT_MEMO
+
+    def row(out: list[dict[str, Any]]) -> tuple[object, object]:
+        hit = _by_id(out)[memory_id]
+        return hit.get("commit_drift_count"), hit.get("staleness_verdict")
+
+    later, _ = _attach(memories, caller, monkeypatch)
+    _caches.clear_all()
+    truth, _ = _attach(memories, caller, monkeypatch)
+    assert row(later) == row(truth) == (1, "spot_check_required")
+
+
+@pytest.mark.usefixtures("discovery")
+def test_no_row_is_keyed_under_another_head_than_the_historys(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Belt and braces for the read above: a pass whose whole history was
+    read at another head than its rows' key keys no row (`_keyed_pair`),
+    and a row keyed before the history was read is not kept when its
+    resolution read it at another head (`lookup`)."""
+    repo, caller, memory_id, memories = _cited_once(memory_dir, tmp_path, monkeypatch)
+    record = next(m for m in memories if m.id == memory_id)
+    other = "0" * 40
+    drift = _response._DriftPass(repo, _REMOTE, _counted(memories))
+    keyed = drift._keyed_pair(True)
+    assert keyed is not None, "premise: the rows are keyed"
+    drift._history_read, drift._history_head = True, keyed[1]
+    assert drift._keyed_pair(True) == keyed
+    drift._history_head = other
+    assert drift._keyed_pair(True) is None
+
+    drift = _response._DriftPass(repo, _REMOTE, _counted(memories))
+    real = drift.timestamps
+
+    def read_elsewhere() -> Any:
+        got = real()
+        drift._history_head = other
+        return got
+
+    monkeypatch.setattr(drift, "timestamps", read_elsewhere)
+    answered, resolved = drift.lookup(record, record.last_verified_at)
+    assert answered and resolved is not None and drift._history_read
+    assert drift.unstored == 0, "resolved at another head, kept under none"
 
 
 @files_only

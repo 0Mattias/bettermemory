@@ -239,7 +239,11 @@ class _DriftPass:
     the root and head from git where the files decline (`located`) are
     read on first use, so a pass the memo answers whole runs no git
     process where the files settle the root and the head, and the one
-    ``git rev-parse`` that keys its rows where they do not (below). What
+    ``git rev-parse`` that keys its rows where they do not (below). The
+    history is read at the head the rows key on, named by its hash, so a
+    commit landing between the two reads is never counted under the other
+    head's key; a row is keyed only where the history the pass read was
+    read at its key's head (`_history_at`). What
     the pass resolves is kept by `store`, at its end (or
     after each row, for the brief's fill), only while what it was keyed on
     still reads as it did when the pass opened.
@@ -371,6 +375,10 @@ class _DriftPass:
         self._keyed = self.settled
         self._keyed_read = self.settled is not None
         self._timestamps: list[datetime] | None = None
+        # The head the whole history was read at (None where no pair named
+        # one), once `timestamps` has read it.
+        self._history_read = False
+        self._history_head: str | None = None
         self._located: tuple[Path, str] | None = None
         self._located_read = False
         # What this pass resolved, stored at the end if nothing it is keyed
@@ -405,10 +413,27 @@ class _DriftPass:
         """The head's whole history (`commit_author_timestamps`, memoised
         per root and head), read on first use and kept once it answers. A
         read that failed is made again by the next row that needs it, as
-        the uncached `verify.compute_commit_drift` makes it per show."""
+        the uncached `verify.compute_commit_drift` makes it per show.
+
+        Read at the root and the head the rows key on (`located`: the
+        files' pair, else the pass's one ``git rev-parse``), the log naming
+        the head by its hash. Read at the head `githead.locate` read, as it
+        was off POSIX and in another account's repository, a commit landing
+        before the rev-parse put the earlier head's dates under the later
+        head's key, and a row counted on them read caught up there on every
+        search after (ENG-220's review, round E)."""
         if self._timestamps is None:
-            self._timestamps = commit_author_timestamps(self.cwd, located=self.settled)
+            pair = self.located()
+            self._history_read = True
+            self._history_head = None if pair is None else pair[1]
+            self._timestamps = commit_author_timestamps(self.cwd, located=pair)
         return self._timestamps
+
+    def _history_at(self, head: str) -> bool:
+        """Whether the whole history this pass read, if it read one, was
+        read at `head`: a row keyed under another head than the history's is
+        neither keyed nor kept (`_keyed_pair`, `lookup`)."""
+        return not self._history_read or self._history_head == head
 
     def located(self) -> tuple[Path, str] | None:
         """The repo root and the head: the files' where they settled them,
@@ -438,6 +463,8 @@ class _DriftPass:
                 and located_head(located[0]) == located[1]
             ):
                 self._keyed = located
+        if self._keyed is not None and not self._history_at(self._keyed[1]):
+            return None
         return self._keyed
 
     def lookup(
@@ -513,7 +540,7 @@ class _DriftPass:
             verified_head=record.verified_head,
             walked=self._walked,
         )
-        if key is not None:
+        if key is not None and self._history_at(key[1]):
             moved = failed_git_calls() - failed
             if not moved:
                 self._resolved[key] = resolved
@@ -1788,16 +1815,14 @@ def _open_drift_pass(
     # below does, where `githead.locate` reads the same (`_keyed_pair`).
     admission.prime(h.id for h in hits)
     drift = _DriftPass(Path(caller_origin.cwd), caller_origin.repo, admission)
+    # The history is read at the repo root and the head resolved ONCE for
+    # the whole search (`located`: the per-hit anchor resolution would
+    # otherwise pay a `git rev-parse` fork+exec per hit), from git where
+    # the files did not settle them; the reachable walks are keyed on the
+    # same head. A None pair is tolerated (the resolver re-derives; a hit
+    # with an anchor then counts in author-date space).
     if drift.timestamps() is None:
         return None
-    # Resolve the repo root ONCE for the whole search (the per-hit
-    # anchor resolution would otherwise pay a `git rev-parse` fork+exec
-    # per hit) and the head with it: the reachable walks are keyed on
-    # it. From git where the files did not settle them. None is
-    # tolerated (the resolver re-derives; a hit with an anchor then
-    # counts in author-date space), but with `commit_author_timestamps`
-    # having just answered, git is demonstrably reachable here.
-    drift.located()
     return drift
 
 
