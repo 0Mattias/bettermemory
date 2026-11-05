@@ -224,6 +224,77 @@ What to know before rolling it out:
 - `service install` run under `sudo` writes root-owned files into the
   user's home and targets the wrong launchd domain. Run it as the user.
 
+## Supported git
+
+bettermemory reads repositories through the `git` first on `PATH`, and
+reads some of their files itself as that git would. It supports git
+**2.34** and later; Ubuntu 22.04 LTS ships 2.34.1. `bettermemory doctor`
+fails its `git` check on an older git, naming both versions, and warns
+where there is none on `PATH` or its version cannot be read. The check
+runs `git version` once and reads no repository.
+
+2.34 was chosen by running the git-reading suites against git built
+from each release's source, not by reading git's source: 2.30.9, 2.32.7,
+2.33.8, 2.34.8, every minor release from 2.35 to 2.46, 2.48.2, 2.50.1,
+2.52.0, 2.56.0, and `next` built with its breaking changes. On 2.34 and
+later every read gives git's answer or declines. Each test that fails on
+an older supported git fails on its own premise (it sets up what only a
+newer git does), and is gated on that release or on what the git on
+`PATH` does.
+
+2.30 to 2.33 are not supported. Before 2.32 git reads neither
+`GIT_CONFIG_GLOBAL` nor `GIT_CONFIG_SYSTEM`, where bettermemory reads the
+files they name; Debian 11 ships 2.30.2. No maintained distribution
+ships 2.32 or 2.33, and CI pins neither, so nothing would keep a claim of
+them true; both also die by SIGSEGV in `git log -p` under
+`diff.submodule=diff`. What CI runs is what is supported: 2.34, the
+release Ubuntu 22.04 LTS ships, and the newest.
+
+Where a read turns on the release, the git on `PATH` is asked its version
+and whether it takes a hasconfig include, with the other questions about
+it. The answer is kept per `PATH` in the state directory: six `git`
+processes, seven before 2.42, within 0.3 s, once an hour. A read whose
+rule changed declines where the git is older, or has not said:
+
+| What | Read from | On an older git |
+| --- | --- | --- |
+| `includeIf "hasconfig:remote.*.url:..."` | 2.36 | Git ignores the include, and so does the read |
+| `branch.autoSetupMerge = inherit`, `simple` | 2.35, 2.37 | Git dies; the origin asks git |
+| `branch.autoSetupMerge = ALWAYS` (`always` in another case) | to 2.34 | Git dies from 2.35; the origin asks git |
+| `extensions.refStorage`, `relativeWorktrees`, `submodulePathConfig` under format 1 | 2.44, 2.48, 2.54 | Git dies; both readers refuse the repository |
+| `config.worktree` under a format version below -1 | 2.42 | Git reads none, and neither does the capture |
+| A tab or a CR inside a value, outside quotes | 2.45 | Git reads it as a space: a remote URL, an insteadOf prefix or a `core.worktree` holding one declines |
+| The system config file | 2.42 (`git var GIT_CONFIG_SYSTEM`) | The file git's own system listing names first |
+
+The readers decline on every git for a few values that only an older
+git dies on: `core.notesRef`, `core.hooksPath` and `mailmap.file` with
+no value, `core.preloadIndex` that is no boolean, and
+`core.bigFileThreshold` that is no size. Git reads them from 2.48, 2.50,
+2.52 and 2.54, and the origin then asks git. An include path holding a
+tab or a CR declines on every git.
+
+Three costs remain on a supported git, and none gives a wrong answer:
+
+- Git before 2.41 takes time exponential in its repetitions to match
+  `**/` repeated in an `onbranch:` include, so every git command in such a
+  repository runs on. The capture's own match gives up within its bound
+  and starts no git. The origin's `git rev-parse` there is stopped at its
+  1 s bound and records no repository, each time it is asked.
+- Git 2.34 takes seconds to list the remotes of a config holding tens of
+  thousands of `branch.*` sections (2.35 takes milliseconds). The origin's
+  `git remote` runs out of its second there, and records no repository.
+- In a partial clone, git 2.39 to 2.44 ends `git cat-file --batch-check`
+  at the first object the clone lacks, where an older git and 2.45 name
+  it missing and go on; 2.44 ends it so even though it fetches nothing
+  under `GIT_NO_LAZY_FETCH`. A window whose blobs are not all local keeps
+  the claimed files' per-file count there, and the anchor's tree check
+  has no answer, so a claimed path is read under every spelling of its
+  name. Ubuntu 24.04 LTS ships 2.43.
+
+CI runs the git-reading suites on 2.34.8 and on the newest release, both
+built from source and cached. It also runs them on git's `next` built with
+its breaking changes. That job may fail, and its failures are reported.
+
 ## Monitoring
 
 Each of these is read-only and answers through its exit code, so a cron
@@ -492,8 +563,9 @@ sizes of the blobs it would read are summed (one `git log --raw` and one
 `git cat-file --batch-check`, about 20–30 ms cold, kept with the
 repository's packs); past **32 MiB** the patch is not read and the hit
 keeps the claimed files' per-file count, which is never lower. Measured
-on the author's machine (git 2.54, packed objects), through the read and
-the parse:
+on the author's machine, with packed objects, through the read and the
+parse; the git there was 2.54, the one the numbers were taken with, not
+one the read needs ([Supported git](#supported-git)):
 
 | Window | Blobs read | Read and parsed in |
 | --- | --- | --- |

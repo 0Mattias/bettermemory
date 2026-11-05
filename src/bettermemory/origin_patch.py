@@ -44,10 +44,13 @@ took 101 ms (the listing 52, the check 34, the stream over the 500 local
 commits 32) and a stream per commit 15.3 s, so the split it is. The check
 looks for each blob the clone lacks in every pack: with the 503 packs that
 fetching those blobs one at a time had left, it took 1.26 s until a repack.
-Where git ignores ``GIT_NO_LAZY_FETCH`` (before 2.44), the empty
-``GIT_ALLOW_PROTOCOL`` alone keeps the check from fetching, and git ends
-it at the first blob the clone lacks: the split declines, and the window
-keeps the per-file count.
+Git from 2.39 to 2.44 ends the check at the first blob the clone lacks:
+one before 2.44 ignores ``GIT_NO_LAZY_FETCH``, tries the fetch and is
+refused it by the empty ``GIT_ALLOW_PROTOCOL``, and 2.44 reads the pin,
+fetches nothing and ends the check there all the same. The split declines,
+and the window keeps the per-file count. An older git tries no fetch and
+names each blob missing, as one from 2.45 does (ENG-227: 2.38.5 and 2.45.4
+do, 2.39.5 and 2.44.4 do not).
 
 A treeless clone (``--filter=tree:0``) is left to the unfiltered count: the
 pathspec readers need the trees on each spec's path for every commit and
