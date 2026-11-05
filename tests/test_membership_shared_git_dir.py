@@ -1112,6 +1112,70 @@ def test_a_retired_record_is_not_re_keyed_at_its_old_path(
     assert (after.checkout, admitted) == (hid, ["h1", "h2"])
 
 
+def _settled(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, how: str
+) -> tuple[Path, Shared, str, str, str]:
+    """Two records of the host's git directory settled into one, h1
+    written at the first and h2 at the second: by the heal (the second in
+    the first one's project) or by joining the first record's project at
+    the second one's question (``join_first``). The repository, the
+    container, the container's checkout, the record kept and the one
+    retired."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    first = lab.model().checkout(hid).project
+    _the_containers_re_mint(lab, box, kid, "missed" if how == "heal" else "recorded")
+    if how == "heal":
+        assert box.post(lab).checkout == kid
+    dup, _found = _rc18_registered(lab, line)
+    _written_at(lab, "h2", line, monkeypatch)
+    res, _admitted = lab.view(line)
+    if how == "join_first":
+        assert res.proposal is not None
+        lab._declaring().declare(
+            Declaration(
+                "join", "os:tester", checkout=dup, proposal=res.proposal, target=first
+            )
+        )
+    location.forget()
+    kept, idle = (hid, dup) if how == "heal" else (dup, hid)
+    assert lab.model().checkout(idle).retired
+    return line, box, kid, kept, idle
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("settled", ["heal", "join_first"])
+def test_the_record_kept_takes_the_next_re_mint_by_the_container(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, settled: str
+) -> None:
+    """After the two records were settled into one, the container
+    re-mints the token again, the store told at its next sighting. The
+    host's next sighting continues the record kept on that re-mint, h1
+    and h2 delivered, silent; the retired record stays retired; and a
+    `project new` there then takes h1 and h2 with it. Before, after the
+    answer joining the first record's project, the retired first record,
+    first in order and continued by the re-mint as well, was read and
+    brought back holding nothing: `project new` moved it and the path
+    delivered nothing."""
+    line, box, kid, kept, idle = _settled(tmp_path, lab, monkeypatch, settled)
+    _the_containers_re_mint(lab, box, kid, "missed")
+    assert box.post(lab).checkout == kid
+    reminted = _file_token(line)
+    location.forget()
+
+    res, admitted = lab.view(line)
+
+    assert (res.checkout, res.outcome, res.rule) == (kept, SILENT, "object+remint")
+    assert admitted == ["h1", "h2"] and lab.model().checkout(kept).token == reminted
+    assert lab.model().checkout(idle).retired
+    location.forget()
+    steady, _admitted = lab.view(line)
+    assert (steady.checkout, steady.rule) == (kept, "object+token")
+    lab._declaring().declare(Declaration("new", "os:tester", checkout=kept, name="m"))
+    location.forget()
+    after, admitted = lab.view(line)
+    assert (after.checkout, admitted) == (kept, ["h1", "h2"])
+
+
 @pytest.mark.usefixtures("no_birth")
 def test_a_second_checkout_a_project_was_absorbed_at_is_kept(
     tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch

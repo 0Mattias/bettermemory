@@ -1259,7 +1259,15 @@ it. So a later move of the checkout at the path (`project new`,
 `project join`) carries every record written there, where the one left
 behind kept its own in the old project, and a sighting of another
 object at the path (a restore) finds one checkout there for B to
-re-key. The rows are of kinds 9.0.0rc18 reads: a home's and a
+re-key. Rung 2 passes over a checkout retired into another
+(`retired_into`, the `into` of its `checkout_retired` rows, one indexed
+read for each retired checkout at the object): the next re-mint of the
+git directory through the other machine's view continues the record
+read, which holds the records, where the retired one, first in order
+after an answer joining its project, was continued by it as well and
+brought back holding none. The retired flag alone is no such marker, as
+a checkout retired as quiet is brought back by its next sighting. The
+rows are of kinds 9.0.0rc18 reads: a home's and a
 checkout's put, a view's deletion, and `checkout_retired`, whose extra
 fields it passes over. Joining its own project or the separate answer
 leaves both records: the two are in other projects by the user's
@@ -1570,7 +1578,9 @@ unaccounted.
 
 `checkouts.unresolved_json` is the one column added to an existing
 membership table, by `ALTER TABLE` at open where it is missing. A checkout
-unseen for 180 days is retired from health; no rule reads the flag. Homes
+unseen for 180 days is retired from health; no rule reads the flag (rung
+2 passes over one retired into another record of its git directory, read
+from its `checkout_retired` rows, ENG-215). Homes
 are indexed by project, so a session's selection is one indexed join and
 a merge is one project row.
 
@@ -1601,7 +1611,9 @@ Each is a control row of its own, written whatever the telemetry setting
   inode number with another birth time (a restore that got the number
   back, decision B20): the stored key takes the birth time read now, so
   the view is live by it afterwards.
-- `checkout_retired`: a checkout unseen for 180 days, out of health.
+- `checkout_retired`: a checkout unseen for 180 days, out of health; or
+  one retired into another record of its git directory (`into`, the
+  record kept, and `evidence`, the heal or the declaration: ENG-215).
 - `token_superseded`: a token history disagrees with, left out of the
   tally.
 - `token_reminted`: a checkout's token replaced, with the write's status.

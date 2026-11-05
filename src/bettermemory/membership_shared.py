@@ -461,7 +461,8 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
     answer that decides nothing, `_decides`), as no sighting shows it
     now and an answer there would move a record no sighting reads; and
     `idle` is retired, its row kept, with a ``checkout_retired`` row
-    naming `kept` and `by`. A question is closed rather than moved onto
+    naming `kept` and `by`, which rung 2 reads to pass over it from then
+    on (`retired_into`). A question is closed rather than moved onto
     `kept`: it was asked of `idle`'s project and evidence (a changed
     remote against the project `idle` is in, which `kept` need not be
     in), and `kept`'s own sightings open the questions that hold for it.
@@ -482,3 +483,20 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
         self._close(pr, f"{SETTLED}{kept.id}", by)
     self._put_checkout(dataclasses.replace(idle, retired=True))
     self._event("checkout_retired", checkout=idle.id, into=kept.id, evidence=by)
+
+
+def retired_into(self: Membership, checkout: str) -> str | None:
+    """The record `checkout` was retired into (`_retire_into`), from the
+    ``into`` of its ``checkout_retired`` rows, the last one written; None
+    where none names one (a checkout retired as quiet only,
+    `membership_queries.retire_quiet`, which a sighting brings back). One
+    read of the log's kind index, filtered on `checkout` in SQL."""
+    into: str | None = None
+    for row in self._store.membership_log(["checkout_retired"], checkout=checkout):
+        try:
+            payload = json.loads(row.payload)
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and payload.get("into"):
+            into = str(payload["into"])
+    return into

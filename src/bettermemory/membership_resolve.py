@@ -117,6 +117,7 @@ from .membership_shared import (
     _restamped,
     _retire_into,
     _view_made,
+    retired_into,
 )
 
 if TYPE_CHECKING:
@@ -460,10 +461,16 @@ def _rung_two(
     one that records the token. Unless that later one is the second
     checkout a resolution that could not read another machine's re-mint
     of the git directory registered, which no one chose: it yields to the
-    earlier one in turn where it holds no records (returned fourth, to
-    be retired into it), and where it holds some it stays, the earlier
-    one returned third for the question naming both
-    (`membership_shared._healed`, ENG-215). Reads only."""
+    earlier one in turn where that hides none of its records (returned
+    fourth, to be retired into it), and else it stays, the earlier one
+    returned third for the question naming both
+    (`membership_shared._healed`, ENG-215). A record retired into another
+    (`membership_shared.retired_into`) is not read: the one it was
+    retired into holds its records and takes the git directory's next
+    re-mint, where the retired one, first in order, would be continued by
+    it and brought back holding none. One read of its ``checkout_retired``
+    rows for each retired checkout here, as a checkout retired as quiet
+    only is read as before (a sighting brings it back). Reads only."""
     key = loc.object_key
     if key is None:
         return None, "", None, None
@@ -475,7 +482,7 @@ def _rung_two(
             "object_inode": key.inode,
         }
     ):
-        if k.object_key is None:
+        if k.object_key is None or (k.retired and retired_into(self, k.id)):
             continue
         verdict = k.object_key.compare(key)
         if verdict == SAME:
