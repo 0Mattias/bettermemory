@@ -4,8 +4,9 @@ The schema version and page size, the provenance labels, the folded and
 membership tables with their mutation and event kinds and the specs the
 membership rows are checked against, the row types the reads return
 (`MemoryRow`, `TombstoneRow`, `TrustRow`, `EpisodeVolume`, `RecordHome`,
-`StandingAnswer`), the `SCHEMA`, `MEMBERSHIP_SCHEMA` and `ADDITIVE_SCHEMA`
-texts with the additive step that brings an older store up to them, the
+`StandingAnswer`), the `SCHEMA`, `MEMBERSHIP_SCHEMA`, `ADDITIVE_SCHEMA`
+and `PROPOSALS_INDEX_SCHEMA` texts with the additive steps that bring an
+older store up to them, the
 store's errors, the compatibility contract's versions and the check every
 open makes of them (`check_versions`, ENG-107, from `store_versions`, whose
 names it re-exports), the paths a store opens
@@ -86,7 +87,12 @@ SCHEMA_VERSION = 1
 # build would bring one back unmarked, so it opens the store for reading
 # only. Its kinds mutate a table revision 1 does not fold, which that
 # build's `log verify` folds as telemetry, so it still reads the store.
-SCHEMA_REVISION = 2
+#
+# Revision 3 (ENG-215) adds `PROPOSALS_INDEX_SCHEMA`, an index a revision 2
+# build neither reads nor has to keep up (SQLite keeps it up under that
+# build's writes) and admits as a plain index on columns, so the minimums
+# stay where revision 2 put them.
+SCHEMA_REVISION = 3
 MIN_READER_REVISION = 1
 MIN_WRITER_REVISION = 2
 
@@ -956,18 +962,26 @@ CREATE TABLE IF NOT EXISTS returned (
 # whether a session already corroborated a memory: without it the read
 # walked every ``memory_put`` row, measured at 1.4 ms over 10,000 rows and
 # 7.7 ms over 50,000 (scratch run on this tree), growing with the log.
-# `proposals_by_state` holds the questions by state and kind, which every
-# sighting reads, open ones of the kinds about another project
-# (`membership_shared._asked_here` and `_asked_plan`, ENG-215): without it
-# the read walked every question ever asked, answered ones included,
-# measured at 3.2 ms over 50,000 answered and 0.02 ms through the index
-# (scratch run on this tree, medians of 200). It is a plain index on
-# columns, so 9.0.0rc18's admission admits it as an index it never creates
-# (`store_admission._PLAIN_INDEX`) and that build still opens a store that
-# has it, where it refuses a partial one (``WHERE state = 'open'``).
 ADDITIVE_SCHEMA = """
 CREATE INDEX IF NOT EXISTS log_corroborations ON log(session)
     WHERE kind = 'memory_put';
+"""
+
+# Schema step 3 (ENG-215, `_add_proposals_index`). `proposals_by_state`
+# holds the questions by state and kind, which every sighting reads, open
+# ones of the kinds about another project (`membership_shared._asked_here`
+# and `_asked_plan`): without it the read walked every question ever
+# asked, answered ones included, measured at 3.2 ms over 50,000 answered
+# and 0.02 ms through the index (scratch run on this tree, medians of
+# 200). Only the step and `Store.create` add it, not every open as
+# `ADDITIVE_SCHEMA`'s are: a store without it (one no owner has opened
+# since an earlier build, or a read-only file) reads the questions by the
+# walk it replaces. It is a plain index on columns, so 9.0.0rc18's
+# admission admits it as an index it never creates
+# (`store_admission._PLAIN_INDEX`) and that build still opens and writes a
+# store that has it, where it refuses a partial one
+# (``WHERE state = 'open'``).
+PROPOSALS_INDEX_SCHEMA = """
 CREATE INDEX IF NOT EXISTS proposals_by_state ON proposals(state, kind);
 """
 
@@ -1276,6 +1290,48 @@ def _add_returned_marks(
         log.warning("store %s is read-only; no backfill marked", path)
         return
     meta[RETURNED_BACKFILL_KEY] = "pending"
+
+
+_PROPOSALS_INDEX_STATEMENTS = tuple(
+    statement.strip()
+    for statement in PROPOSALS_INDEX_SCHEMA.split(";")
+    if statement.strip()
+)
+_PROPOSALS_INDEX_OBJECTS = frozenset(
+    re.findall(r"IF NOT EXISTS (\w+)", PROPOSALS_INDEX_SCHEMA)
+)
+
+
+def _add_proposals_index(
+    conn: sqlite3.Connection, path: Path, meta: dict[str, str]
+) -> None:
+    """Step 3 (ENG-215): `PROPOSALS_INDEX_SCHEMA` where a store lacks it,
+    in a write transaction of its own, after the membership tables it
+    indexes (`_add_membership_tables`, as step 2 does). A store that has it
+    is not written; a store file that cannot be written is left as it is,
+    and its sightings read the questions by a walk of the table."""
+    _add_membership_tables(conn, path, meta)
+    master = {
+        str(row[0]).lower()
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE name IS NOT NULL")
+    }
+    wanted = sorted(o for o in _PROPOSALS_INDEX_OBJECTS if o.lower() not in master)
+    if not wanted:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in _PROPOSALS_INDEX_STATEMENTS:
+                conn.execute(statement)
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+    except sqlite3.OperationalError as exc:
+        if "readonly" not in str(exc).replace(" ", "").lower():
+            raise
+        log.warning("store %s is read-only; not added: %s", path, ", ".join(wanted))
 
 
 # ---------------------------------------------------------------------------

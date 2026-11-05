@@ -163,6 +163,7 @@ from .store_schema import (
     MEMBERSHIP_TABLES,
     MUTATION_KINDS,
     PAGE_SIZE as PAGE_SIZE,
+    PROPOSALS_INDEX_SCHEMA,
     PROVENANCE_LABELS,
     SCHEMA,
     SCHEMA_VERSION,
@@ -593,6 +594,7 @@ class Store:
             conn.executescript(SCHEMA)
             conn.executescript(MEMBERSHIP_SCHEMA)
             conn.executescript(ADDITIVE_SCHEMA)
+            conn.executescript(PROPOSALS_INDEX_SCHEMA)
             store_id = secrets.token_hex(16)
             keyring = KeyRing(
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),

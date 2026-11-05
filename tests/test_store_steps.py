@@ -175,9 +175,11 @@ def test_the_registry_is_numbered_and_names_this_builds_revision() -> None:
     for step in steps:
         assert step.reader <= step.number
         assert step.writer <= step.number
-    first = steps[0]
-    assert first.additive is True
-    assert first.apply is store_schema._add_membership_tables
+    assert [(s.number, s.additive, s.reader, s.writer, s.apply) for s in steps] == [
+        (1, True, 1, 1, store_schema._add_membership_tables),
+        (2, True, 1, 2, store_schema._add_returned_marks),
+        (3, True, 1, 2, store_schema._add_proposals_index),
+    ]
     assert runner().SCHEMA_STEPS_KEY == SCHEMA_STEPS_KEY
 
 

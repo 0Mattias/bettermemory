@@ -742,43 +742,62 @@ def _rc3_fold(path: Path) -> dict[str, dict[Any, Any]]:
         live.close()
 
 
+def _open_questions_plan(s: Store) -> str:
+    """The query plan of a sighting's read of the open questions of the
+    kinds about another project (`membership_shared._asked_here`)."""
+    ran: list[str] = []
+    s.conn.set_trace_callback(ran.append)
+    s.membership_rows(
+        "proposals", where={"state": OPEN}, column_in=("kind", sorted(_SUBJECT))
+    )
+    s.conn.set_trace_callback(None)
+    (select,) = [x for x in ran if x.lstrip().upper().startswith("SELECT")]
+    return " ".join(str(r[-1]) for r in s.conn.execute("EXPLAIN QUERY PLAN " + select))
+
+
 def test_the_open_questions_are_read_through_their_index(tmp_path: Path) -> None:
-    """ENG-215, review R8 2: every sighting reads the open questions of the
-    kinds about another project (`membership_shared._asked_here`), which
-    walked every question ever asked. A new store holds
-    `proposals_by_state`, a plain index on their state and kind, and a
-    store an earlier build made gains it at its next open, its revision
-    and its log as they were; the read goes through it. A plain index on
-    columns, which an earlier build admits as one it never creates
+    """ENG-215, reviews R8 2 and R9 A: every sighting reads the open
+    questions of the kinds about another project, which walked every
+    question ever asked. A new store holds `proposals_by_state`, a plain
+    index on their state and kind, at revision 3. A store an earlier build
+    left at revision 2 without it is read by the walk at a reader's open,
+    which adds nothing, and gains it at the owner's next open as schema
+    step 3, recorded with no backup, its minimums and its log as they
+    were; the read then goes through it. A plain index on columns, which
+    an earlier build admits as one it never creates
     (`store_admission._PLAIN_INDEX`): 9.0.0rc18 refuses one with a WHERE."""
     path, keys = tmp_path / "memory.sqlite", tmp_path / "keys"
     text = "CREATE INDEX proposals_by_state ON proposals(state, kind)"
+    index = ("index", "proposals_by_state", text)
     with Store.create(path, keys_dir=keys) as s:
         s.put_memory(_memory())
-        revision = s.meta()["schema_revision"]
+        made = s.meta()
         rows = len(s.log_rows())
-    assert ("index", "proposals_by_state", text) in _master(path)
+        assert "USING INDEX proposals_by_state" in _open_questions_plan(s)
+    assert made["schema_revision"] == "3"
+    assert index in _master(path)
     assert store_admission._PLAIN_INDEX.fullmatch(text)
     conn = sqlite3.connect(str(path))
     conn.execute("DROP INDEX proposals_by_state")
+    conn.execute("UPDATE meta SET value = '2' WHERE key = 'schema_revision'")
     conn.commit()
     conn.close()
-    assert ("index", "proposals_by_state", text) not in _master(path)
+
     with Store.open(path, keys_dir=keys) as s:
-        assert (s.meta()["schema_revision"], len(s.log_rows())) == (revision, rows)
-        ran: list[str] = []
-        s.conn.set_trace_callback(ran.append)
-        s.membership_rows(
-            "proposals", where={"state": OPEN}, column_in=("kind", sorted(_SUBJECT))
-        )
-        s.conn.set_trace_callback(None)
-        (select,) = [x for x in ran if x.lstrip().upper().startswith("SELECT")]
-        plan = " ".join(
-            str(r[-1]) for r in s.conn.execute("EXPLAIN QUERY PLAN " + select)
-        )
-        assert "USING INDEX proposals_by_state" in plan, plan
+        assert "USING INDEX proposals_by_state" not in _open_questions_plan(s)
+        assert s.meta()["schema_revision"] == "2"
+    assert index not in _master(path)
+    with Store.open(path, keys_dir=keys, allow_rekey=True) as s:
+        meta = s.meta()
+        assert len(s.log_rows()) == rows
+        assert "USING INDEX proposals_by_state" in _open_questions_plan(s)
         assert s.log_verify()["status"] == "ok"
-    assert ("index", "proposals_by_state", text) in _master(path)
+    assert index in _master(path)
+    keys_of = ("schema_revision", "min_reader_revision", "min_writer_revision")
+    assert [meta[k] for k in keys_of] == [made[k] for k in keys_of]
+    assert [(e["step"], e["backup"]) for e in json.loads(meta["schema_steps"])] == [
+        (3, None)
+    ]
 
 
 def test_an_rc3_build_reads_the_migrated_store(tmp_path: Path) -> None:

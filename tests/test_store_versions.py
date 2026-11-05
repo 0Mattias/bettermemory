@@ -133,8 +133,10 @@ def test_a_new_store_carries_this_builds_revision_minimums_and_version(
     assert meta.get(SCHEMA_REVISION_KEY) == str(OURS)
     assert meta.get(MIN_READER_KEY) == str(_READER)
     assert meta.get(MIN_WRITER_KEY) == str(_WRITER)
-    # Step 2 (ENG-200) is additive, and every write keeps its marks up.
-    assert (OURS, _READER, _WRITER) == (2, 1, 2)
+    # Step 2 (ENG-200) is additive, and every write keeps its marks up;
+    # step 3 (ENG-215), an index a revision 2 writer need not keep up,
+    # leaves the minimums.
+    assert (OURS, _READER, _WRITER) == (3, 1, 2)
     assert meta[ENGINE_VERSION_KEY] == bettermemory.__version__
 
 
@@ -187,20 +189,20 @@ def test_engine_version_names_the_newest_build_that_opened_it_to_write(
 def test_a_writing_open_never_lowers_what_a_newer_build_recorded(
     path: Path,
 ) -> None:
-    """A newer build at revision 3 that older writers may still write (its
-    steps were additive): this build writes it, and leaves the revision,
-    the minimums and the newer build's version as they were."""
-    with build(revision=3, reader=1, writer=1, version="9.3.0"):
+    """A newer build at a later revision that older writers may still
+    write (its steps were additive): this build writes it, and leaves the
+    revision, the minimums and the newer build's version as they were."""
+    with build(revision=NEXT, reader=1, writer=1, version="9.3.0"):
         Store.create(path).close()
     with Store.open(path, allow_rekey=True) as older:
         older.put_memory(_memory("an older build's write"))
     meta = meta_of(path)
-    assert [meta.get(key) for key in _VERSION_KEYS] == ["3", "1", "1"]
+    assert [meta.get(key) for key in _VERSION_KEYS] == [str(NEXT), "1", "1"]
     assert meta[ENGINE_VERSION_KEY] == "9.3.0"
 
 
 def test_a_store_that_needs_a_newer_reader_is_refused(path: Path) -> None:
-    with build(revision=3, reader=3, writer=3, version="9.4.0"):
+    with build(revision=NEXT, reader=NEXT, writer=NEXT, version="9.4.0"):
         with Store.create(path) as newer:
             newer.put_memory(_memory("written by the newer build"))
     rows = log_rows(path)
@@ -215,7 +217,7 @@ def test_a_store_that_needs_a_newer_reader_is_refused(path: Path) -> None:
             opener()
         assert type(caught.value).__name__ == "StoreVersionError"
         text = str(caught.value)
-        assert "needs a reader at schema revision 3 or later" in text
+        assert f"needs a reader at schema revision {NEXT} or later" in text
         assert "its newest writer was bettermemory 9.4.0" in text
         assert f"this build, bettermemory {bettermemory.__version__}" in text
         assert f"reads revision {OURS}" in text

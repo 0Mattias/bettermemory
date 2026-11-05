@@ -26,6 +26,7 @@ from .store_schema import (
     _OPTIONAL_COLUMNS,
     ADDITIVE_SCHEMA,
     MEMBERSHIP_SCHEMA,
+    PROPOSALS_INDEX_SCHEMA,
     SCHEMA,
 )
 from .store_versions import (
@@ -166,16 +167,19 @@ class LaterStoreError(StoreRefusedError, StoreVersionError):
 
 _BUILT_OBJECTS: dict[tuple[str, str], tuple[str, str | None, bool]] = {}
 
+#: The texts a store this build creates is built from (`Store.create`).
+_SCHEMA_TEXTS = (SCHEMA, MEMBERSHIP_SCHEMA, ADDITIVE_SCHEMA, PROPOSALS_INDEX_SCHEMA)
+
 
 def _built_objects() -> dict[tuple[str, str], tuple[str, str | None, bool]]:
     """Every object this build's schema creates, by (type, name), names in
     lower case as SQLite compares them: the table it is on, its text, and
     whether that text must match. Read once from an in-memory database built
-    from the three schema texts, so the list is the schema itself and cannot
-    drift from it. Indexes, triggers and the full-text table must match their
-    text: each is the same text in every build since the store was one file
-    (checked over the history of `store.py` and this module). A plain table
-    is matched by name, since `_add_membership_tables` adds columns to an
+    from the schema texts (`_SCHEMA_TEXTS`), so the list is the schema
+    itself and cannot drift from it. Indexes, triggers and the full-text
+    table must match their text: each is the same text in every build since
+    the store was one file (checked over the history of `store.py` and this
+    module), or since the step that added it. A plain table is matched by name, since `_add_membership_tables` adds columns to an
     older store's tables and SQLite rewrites their text when it does, and is
     read on the file (`table_refusal`); its text here is the columns this
     build declares NOT NULL with no default. An index SQLite made for a
@@ -185,7 +189,7 @@ def _built_objects() -> dict[tuple[str, str], tuple[str, str | None, bool]]:
     if not _BUILT_OBJECTS:
         conn = sqlite3.connect(":memory:")
         try:
-            for script in (SCHEMA, MEMBERSHIP_SCHEMA, ADDITIVE_SCHEMA):
+            for script in _SCHEMA_TEXTS:
                 conn.executescript(script)
             master = "SELECT type, name, tbl_name, sql FROM sqlite_master"
             built: dict[tuple[str, str], tuple[str, str | None, bool]] = {}
@@ -415,14 +419,14 @@ _BUILT_SHAPES: dict[str, _TableShape] = {}
 def _built_shapes() -> dict[str, _TableShape]:
     """The shape (`_TableShape`) of each plain table this build creates, by
     name in lower case, read once from an in-memory database built from the
-    three schema texts, as `_built_objects` is. Left out are SQLite's own
+    schema texts, as `_built_objects` is. Left out are SQLite's own
     tables and the full-text table's shadow tables, whose shape is FTS5's
     and may differ between SQLite's versions; the admission holds those to
     their kind and their indexes."""
     if not _BUILT_SHAPES:
         conn = sqlite3.connect(":memory:")
         try:
-            for script in (SCHEMA, MEMBERSHIP_SCHEMA, ADDITIVE_SCHEMA):
+            for script in _SCHEMA_TEXTS:
                 conn.executescript(script)
             master = conn.execute(
                 "SELECT type, name, tbl_name, sql FROM sqlite_master"

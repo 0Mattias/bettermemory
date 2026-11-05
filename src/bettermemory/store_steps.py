@@ -68,6 +68,7 @@ from .store_schema import (
     SCHEMA_REVISION_KEY,
     StoreVersionError,
     _add_membership_tables,
+    _add_proposals_index,
     _add_returned_marks,
 )
 from .time_utils import isoformat_utc
@@ -109,6 +110,9 @@ class Step:
 #: ``returned`` table, which a write that brings a record back into force
 #: keeps up, so a revision 1 build opens the store for reading only, and
 #: leaves meta's backfill key for the owner's open (`_add_returned_marks`).
+#: Step 3 (ENG-215) adds the index of the questions by state and kind every
+#: sighting reads (`_add_proposals_index`), which a revision 2 build
+#: neither reads nor has to keep up, so the minimums stay at 1 and 2.
 STEPS: tuple[Step, ...] = (
     Step(
         number=1,
@@ -125,6 +129,14 @@ STEPS: tuple[Step, ...] = (
         reader=1,
         writer=2,
         apply=_add_returned_marks,
+    ),
+    Step(
+        number=3,
+        name="the index of the questions by state and kind",
+        additive=True,
+        reader=1,
+        writer=2,
+        apply=_add_proposals_index,
     ),
 )
 

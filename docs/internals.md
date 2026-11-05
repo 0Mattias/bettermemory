@@ -1317,8 +1317,9 @@ the checkout it is on (a first sight's, a changed remote's, the root
 file's, a duplicate's, a part's) stays on it, as it asks about that one.
 The rows are a question's put and `proposal_answered`; the cost, one
 read of the open questions of the two kinds at each sighting (through
-`proposals_by_state`, an index of the questions by state and kind of
-`store_schema.ADDITIVE_SCHEMA`), and for
+`proposals_by_state`, an index of the questions by state and kind that
+schema step 3 adds, or a walk of the table in a store no owner has
+opened since an earlier build), and for
 each one of the checkout's project open on another checkout, that
 checkout's row and, where it is this machine's and not retired, its
 liveness. That liveness is read before the sighting's transaction with
@@ -2403,7 +2404,14 @@ leaves the backfill to the owner's open, which holds the store's key
 CLI's open): it puts back the link index rows an earlier build's
 restore left out, marks each record an earlier build brought back, and
 deletes the key, in one transaction; one that fails is logged and the
-key stays for the next open. A step that is
+key stays for the next open. Step 3 (ENG-215, `_add_proposals_index`)
+is additive and adds `proposals_by_state`, the index of the questions by
+state and kind every sighting reads; a revision 2 build never reads it
+and SQLite keeps it up under that build's writes, so the minimums stay
+at 1 and 2, and that build's admission admits it as a plain index on
+columns. Only the step and `Store.create` add it, not every open, so a
+reader's open of a store at revision 2 reads the questions by a walk of
+the table. A step that is
 not additive runs under the write lock after `backup.create_backup` has
 written a bundle of the store as it stands (its snapshot reads through
 its own read-only connection, which sees the store before the step) and

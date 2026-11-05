@@ -161,6 +161,12 @@ logs `returned: N records an earlier build brought back into force
 marked for a standing roster read` when there were any; a backfill that
 fails logs a warning and runs again at the next owner's open.
 
+9.0.0rc19 runs schema step 3 (ENG-215) at the owner's first open: an
+index of the membership questions by state and kind, which every
+sighting reads, and the revision raised to 3 with the minimums left at
+1 and 2. Going back to 9.0.0rc15 through 9.0.0rc18 after that still
+reads and writes the store, which keeps the index and its revision.
+
 ### Running it as a service
 
 `bettermemory service install` writes a launchd LaunchAgent on macOS

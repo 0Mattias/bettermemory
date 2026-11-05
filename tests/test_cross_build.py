@@ -350,6 +350,112 @@ def test_a_revision_1_build_only_reads_a_store_step_2_marked(path: Path) -> None
     assert versions_of(path) == OURS_KEYS
 
 
+#: The index step 3 (ENG-215) adds, of the questions by state and kind.
+QUESTIONS_INDEX = "proposals_by_state"
+
+
+def indexes_of(path: Path) -> set[str]:
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        return {
+            str(name)
+            for (name,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+    finally:
+        conn.close()
+
+
+def integrity_of(path: Path) -> list[str]:
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        return [str(row[0]) for row in conn.execute("PRAGMA integrity_check")]
+    finally:
+        conn.close()
+
+
+@contextlib.contextmanager
+def at_revision_2() -> Iterator[None]:
+    """This build as 9.0.0rc18 was: steps 1 and 2, revision 2 and its
+    minimums, and no index of the questions, neither in a store it creates
+    nor among the objects its admission knows as its own, which then
+    admits the index as a plain one on columns (`_PLAIN_INDEX`)."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("bettermemory.store_steps.STEPS", runner().STEPS[:2])
+        patch.setattr("bettermemory.store_schema.SCHEMA_REVISION", 2)
+        patch.setattr("bettermemory.store_schema.MIN_READER_REVISION", 1)
+        patch.setattr("bettermemory.store_schema.MIN_WRITER_REVISION", 2)
+        patch.setattr("bettermemory.store.PROPOSALS_INDEX_SCHEMA", "")
+        patch.setattr(
+            "bettermemory.store_admission._SCHEMA_TEXTS",
+            (
+                store_schema.SCHEMA,
+                store_schema.MEMBERSHIP_SCHEMA,
+                store_schema.ADDITIVE_SCHEMA,
+            ),
+        )
+        patch.setattr("bettermemory.store_admission._BUILT_OBJECTS", {})
+        patch.setattr("bettermemory.store_admission._BUILT_SHAPES", {})
+        patch.setattr(bettermemory, "__version__", "9.0.0rc18")
+        yield
+
+
+def test_a_revision_2_build_reads_and_writes_a_store_step_3_indexed(
+    path: Path,
+) -> None:
+    """Step 3 (ENG-215) adds an index of the questions by state and kind,
+    which a build of revision 2 never reads and SQLite keeps up under its
+    writes: that build admits it as a plain index on columns, opens the
+    store to write, writes and verifies it and the bundle this build took,
+    and leaves the revision, the minimums and the index as they were. This
+    build's next writing open runs no step."""
+    first = _written_by_this_build(path)
+    assert versions_of(path) == OURS_KEYS
+    assert QUESTIONS_INDEX in indexes_of(path)
+    made = backup.create_backup(path)
+    with at_revision_2():
+        with Store.open(path, allow_rekey=True) as older:
+            assert older.get_memory(first.id).body == first.body
+            older.put_memory(_edited(first, "The revision 2 build edited this."))
+            older.put_memory(_memory("A record the revision 2 build wrote."))
+            assert older.log_verify()["status"] == "ok"
+        assert backup.verify_bundle(Path(made["bundle"]))["status"] == backup.OK
+    assert versions_of(path) == OURS_KEYS
+    assert QUESTIONS_INDEX in indexes_of(path)
+    assert integrity_of(path) == ["ok"]
+    with Store.open(path, allow_rekey=True) as store:
+        assert store.count_memories() == 2
+        assert store.log_verify()["status"] == "ok"
+    assert versions_of(path) == OURS_KEYS
+    assert SCHEMA_STEPS_KEY not in meta_of(path)
+
+
+def test_step_3_indexes_a_store_a_revision_2_build_made(path: Path) -> None:
+    """A store a build of revision 2 made has no index of the questions:
+    this build's reader's open reads it as it is and adds nothing, and the
+    owner's open runs step 3, which adds the index with no backup and
+    raises the revision alone."""
+    with at_revision_2(), Store.create(path) as older:
+        first = older.put_memory(_memory("A record the revision 2 build wrote."))
+    assert versions_of(path) == ["2", "1", "2"]
+    assert QUESTIONS_INDEX not in indexes_of(path)
+    with Store.open(path) as reader:
+        assert reader.get_memory(first.id).body == first.body
+    assert versions_of(path) == ["2", "1", "2"]
+    assert QUESTIONS_INDEX not in indexes_of(path)
+    with Store.open(path, allow_rekey=True) as owner:
+        assert owner.log_verify()["status"] == "ok"
+    assert versions_of(path) == OURS_KEYS
+    assert QUESTIONS_INDEX in indexes_of(path)
+    steps = json.loads(meta_of(path)[SCHEMA_STEPS_KEY])
+    assert [(e["step"], e["backup"]) for e in steps] == [(3, None)]
+    assert bundles(path) == []
+    with at_revision_2(), Store.open(path, allow_rekey=True) as older:
+        older.put_memory(_edited(first, "The revision 2 build still writes it."))
+        assert older.log_verify()["status"] == "ok"
+
+
 # --- an older store, a newer build -------------------------------------------
 
 
