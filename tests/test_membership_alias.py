@@ -1184,6 +1184,44 @@ def test_a_declaration_at_one_alias_clone_holds_the_pair_whichever_is_sighted(
     assert _alias_merges(world) == []
 
 
+@pytest.mark.parametrize("declared", ["join", "answer"])
+def test_a_declaration_at_the_full_url_clone_holds_the_pair(
+    world: World, declared: str
+) -> None:
+    """The user's word at the full-URL clone about its own project
+    (``project join`` of it to Q, or an answer there to a question about
+    its own project) says which project Q is, as one at an alias clone
+    says which P is: the alias clone's sightings leave the two apart. The
+    full-URL clones are read by checkout (`_declared`'s `at`), beside the
+    projects their rows name."""
+    full, alias, first, second = _split_pair(world)
+    k = str(first.checkout)
+    if declared == "join":
+        world.model.declare(
+            Declaration("join", "os:tester", checkout=k, target=str(first.project))
+        )
+    else:
+        pr = world.model.open_proposal(
+            checkout=k,
+            kind="remote_diverged",
+            candidates=[str(first.project)],
+            evidence={},
+            reason="remote_diverged",
+            line="a question about its own project",
+        )
+        world.model.declare(
+            Declaration(
+                "join", "os:tester", checkout=k, proposal=pr.id, target=first.project
+            )
+        )
+        assert world.model.proposal(pr.id).state == "answered"
+    q = world.see(full)
+    assert q.checkout == first.checkout and q.project != second.project
+    _caught_up(full, alias)
+
+    _stays_apart(world, alias, second)
+
+
 def test_a_declaration_holding_the_join_puts_it_on_no_question(world: World) -> None:
     """Review R9 3: the user's join of the alias clone to its own project
     holds the pair, and an import's question on its twin would hold it
