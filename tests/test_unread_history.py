@@ -511,6 +511,10 @@ def test_under_git_dir_a_refused_head_is_told_apart_by_plumbing(
             with config.open("a", encoding="utf-8") as handle:
                 handle.write("[include]\n\tpath\n")
         elif case == "objects unreadable":
+            if os.name != "posix":
+                # chmod sets no search bit off POSIX: the objects stay
+                # readable, and git reads the history (Windows CI).
+                pytest.skip("a directory's search bit is POSIX's")
             objects = repo / ".git" / "objects"
             objects.chmod(0)
             request.addfinalizer(lambda: objects.chmod(0o755))
@@ -705,6 +709,7 @@ def test_a_ref_git_cannot_read_reads_unread_on_every_surface(
     assert debt.to_dict().items() >= unread.items()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="a directory's search bit is POSIX's")
 @pytest.mark.usefixtures("keyed_by")
 def test_a_repository_nothing_reads_reads_unread_never_not_applicable(
     tmp_path: Path,

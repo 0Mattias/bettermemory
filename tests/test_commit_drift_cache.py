@@ -3137,12 +3137,16 @@ def test_a_diff_driver_an_included_file_sets_keeps_the_hit_out_of_the_memo(
     _git(repo, "config", "--unset", "diff.lever.algorithm")
     included = tmp_path / "included.cfg"
     included.write_text('[diff "lever"]\n\talgorithm = myers\n', encoding="utf-8")
+    # Spelled with forward slashes, as git reads a path on every platform: a
+    # backslash in a config value opens an escape, and git dies on the `\U`
+    # of a Windows path written as it is.
+    named = included.as_posix()
     header = "[include]" if section == "include" else '[includeIf "onbranch:main"]'
     if where == "config":
         with (repo / ".git" / "config").open("a", encoding="utf-8") as handle:
-            handle.write(f"{header}\n\tpath = {included}\n")
+            handle.write(f"{header}\n\tpath = {named}\n")
     else:
-        _worktree_config(repo, f"{header}\n\tpath = {included}\n")
+        _worktree_config(repo, f"{header}\n\tpath = {named}\n")
     assert _git(repo, "config", "--get", "diff.lever.algorithm") == "myers", (
         "premise: git reads the included file"
     )

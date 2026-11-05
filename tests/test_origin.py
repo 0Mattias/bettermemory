@@ -2255,26 +2255,35 @@ def test_the_walk_never_hands_git_anything_but_a_full_hash(
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+@pytest.mark.parametrize("discovery", ["posix", "off-posix"])
 def test_the_walk_is_memoised_per_head(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    discovery: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """One process per (root, anchor, head) and the stamps of the files
     the listing reads beside the history (`walk_files_signature`); a
     commit landing changes the head and so the key, so a long-lived server
     never reuses a walk the tree has moved past. A None is never memoised:
     each call for a dead anchor forks, unless the caller passes the
-    `walked` mapping it keeps for one pass, which forks once. Off POSIX
-    the files are not read and no memo keeps a walk past the call."""
+    `walked` mapping it keeps for one pass, which forks once. The files
+    are read on every platform: through `githead`'s discovery on POSIX,
+    and where it declines (off POSIX, here forced as `githead._POSIX`
+    reads it) through `githead.locate` at the root, so off POSIX too the
+    walk is kept past the call. A host that is not POSIX has only the
+    second leg."""
+    from bettermemory import githead
     from bettermemory import origin as origin_module
     from bettermemory.origin import commits_since_anchor, repo_toplevel_and_head
 
+    if discovery == "off-posix":
+        monkeypatch.setattr(githead, "_POSIX", False)
+    elif os.name != "posix":
+        pytest.skip("off POSIX the host's own leg is the off-posix one")
     shas = _merge_repo(tmp_path)
     located = repo_toplevel_and_head(tmp_path)
     assert located is not None
     root, head = located
     files = origin_module.walk_files_signature(root)
-    memoised = files is not None
-    assert memoised == (os.name == "posix")
+    assert files is not None, "the files beside the history are read"
     calls: list[tuple[str, ...]] = []
     real_git = origin_module._git
 
@@ -2287,17 +2296,15 @@ def test_the_walk_is_memoised_per_head(
     second = commits_since_anchor(tmp_path, shas["anchor"], toplevel=root, head=head)
     assert first is not None and second == first
     assert calls[0][2] == "log" and "--boundary" in calls[0]
-    assert len(calls) == (1 if memoised else 2)
-    assert (first is second) == memoised
+    assert len(calls) == 1
+    assert first is second
 
     walks = len(calls)
     assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
     assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
     # Its names, then its commits alone, both refused (round F).
     assert len(calls) == walks + 4, "a dead anchor forks on every call"
-    assert list(origin_module._WALK_MEMO) == (
-        [(str(root), shas["anchor"], head, files)] if memoised else []
-    )
+    assert list(origin_module._WALK_MEMO) == [(str(root), shas["anchor"], head, files)]
     walked: dict[tuple[str, str, str], Any] = {}
     for _ in range(2):
         walk = commits_since_anchor(

@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from bettermemory import githead
 from bettermemory.admission import CountedRecords
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
@@ -37,14 +38,43 @@ from bettermemory.store import Store
 _GIT_AVAILABLE = shutil.which("git") is not None
 _REMOTE = "git@github.com:example/foo.git"
 
-# The repo root and the head are read from the repository's files on
-# POSIX (`origin.toplevel_and_head_from_files`), and the per-hit
-# resolutions are memoised on them. Elsewhere the files decline, and
-# `git rev-parse` answers the root and the head on every search with
-# nothing memoised: the cost shape the pins below read there is the one
-# the search paid before the memos.
-_FILES_ANSWER_HEAD = os.name == "posix"
-_PER_SEARCH_FORKS = 1 if _FILES_ANSWER_HEAD else 2
+# The one process a search forks to key its rows where the repository's
+# files do not answer the root and the head (`_response._DriftPass.
+# _keyed_pair`), ahead of the history's log, which names that head.
+_KEYING = ("rev-parse", "--show-toplevel", "HEAD")
+
+
+@pytest.fixture(params=["files", "git"])
+def heads_by(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> bool:
+    """Who answers the root and the head a search keys its rows on: the
+    repository's files (`origin.toplevel_and_head_from_files`, POSIX), or,
+    where `githead`'s discovery declines (off POSIX, and here on POSIX with
+    the decline forced as `githead._POSIX` reads it), the pass's one ``git
+    rev-parse``, which runs before the history's log, so the log names the
+    head the rows are keyed on (ENG-220's review, round E). The per-hit
+    resolutions are memoised either way, and a warm search forks that
+    rev-parse alone. True for the files. A host that is not POSIX has only
+    the second."""
+    if request.param == "git":
+        monkeypatch.setattr(githead, "_POSIX", False)
+    elif os.name != "posix":
+        pytest.skip("off POSIX the host's own leg is git's")
+    return bool(request.param == "files")
+
+
+def _per_search(files: bool) -> list[tuple[str, ...]]:
+    """The processes every cold search forks before any hit's: the
+    keying rev-parse where the files do not answer (`heads_by`), then the
+    history's log, whose argv starts so."""
+    return ([] if files else [_KEYING]) + [("log", "--format=%at")]
+
+
+def _opens_as(calls: list[tuple[str, ...]], files: bool) -> None:
+    """`calls`, a cold search's, open with the per-search processes, and
+    the rev-parse runs only where the files do not answer."""
+    opening = _per_search(files)
+    assert [call[: len(want)] for call, want in zip(calls, opening)] == opening
+    assert (_KEYING in calls) is not files
 
 
 # ---------------------------------------------------------------------------
@@ -803,7 +833,7 @@ async def test_memory_search_hits_omit_commit_drift_count_when_never_verified(
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 def test_commit_drift_count_git_cost_shape(
-    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    heads_by: bool, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The COST paragraph on `attach_commit_drift_counts`, made checkable.
 
@@ -894,27 +924,27 @@ def test_commit_drift_count_git_cost_shape(
         _caches.clear_all()
         out, calls = attach()
         annotated = sum(1 for hit in out if "commit_drift_count" in hit)
-        # The one per-search call: the unfiltered author-date log. The repo
-        # root the per-hit narrowing reuses is read from the files.
-        assert calls[0][:2] == ("log", "--format=%at")
-        rev_parse = any(call[0] == "rev-parse" for call in calls)
-        assert rev_parse is not _FILES_ANSWER_HEAD
-        # Warm: the same search again forks nothing and reads the same hits.
+        # The per-search calls: the unfiltered author-date log, after the
+        # rev-parse that keys the rows where the files do not answer. The
+        # repo root the per-hit narrowing reuses is the pair they keyed on.
+        _opens_as(calls, heads_by)
+        # Warm: the same search again forks nothing but the keying and
+        # reads the same hits.
         warm, warm_calls = attach()
         assert warm == out
-        if _FILES_ANSWER_HEAD:
-            assert warm_calls == []
+        assert warm_calls == ([] if heads_by else [_KEYING])
         return len(calls), annotated
 
+    per_search = len(_per_search(heads_by))
     forks, annotated = count_git_calls(bodies_cite_paths=True)
     assert annotated == 3, "fixture must produce three drifting anchored hits"
-    assert forks == _PER_SEARCH_FORKS + annotated
+    assert forks == per_search + annotated
 
     # Same three hits, no claim anchors: the gate keeps the per-hit path
-    # closed, so the cost falls back to the one per-search call.
+    # closed, so the cost falls back to the per-search calls.
     forks, annotated = count_git_calls(bodies_cite_paths=False)
     assert annotated == 0
-    assert forks == _PER_SEARCH_FORKS
+    assert forks == per_search
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -982,7 +1012,7 @@ def test_commit_drift_count_omitted_when_anchors_escape_and_repo_quiescent(
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
-    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    heads_by: bool, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The quiescent half of the cost contract: a caught-up hit with an
     in-repo anchor forks exactly one path-filtered log (the phantom
@@ -1041,13 +1071,11 @@ def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
     out, calls = attach()
     counts = [hit["commit_drift_count"] for hit in out if "commit_drift_count" in hit]
     assert counts == [0, 0, 0]
-    assert calls[0][:2] == ("log", "--format=%at")
-    assert any(call[0] == "rev-parse" for call in calls) is not _FILES_ANSWER_HEAD
-    assert len(calls) == _PER_SEARCH_FORKS + 3
+    _opens_as(calls, heads_by)
+    assert len(calls) == len(_per_search(heads_by)) + 3
     warm, warm_calls = attach()
     assert warm == out
-    if _FILES_ANSWER_HEAD:
-        assert warm_calls == []
+    assert warm_calls == ([] if heads_by else [_KEYING])
 
 
 # ---------------------------------------------------------------------------
@@ -2128,7 +2156,7 @@ async def test_claim_governed_narrowing_runs_over_the_reachable_range(
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 def test_commit_drift_count_git_cost_shape_for_reachability_hits(
-    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    heads_by: bool, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The reachability sibling of the cost pin: the per-hit fork is the
     walk from the hit's anchor, paid once per DISTINCT anchor, plus the
@@ -2136,8 +2164,9 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     anchors. Three hits at one anchor, all touched: ``1 + 1``. The same
     three hits stamped at three anchors: ``1 + 3``. One of them citing a
     real file the range never touched: one classification log more. The
-    walks are keyed on the head the repository's files name; warm, the
-    same search forks nothing.
+    walks are keyed on the head the repository's files name, or where they
+    do not, the head the keying rev-parse read (`heads_by`); warm, the same
+    search forks nothing but that rev-parse.
     """
     from bettermemory import _caches
     from bettermemory import origin as origin_module
@@ -2193,11 +2222,9 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
             return out, calls
 
         out, calls = attach()
-        # The one per-search call: the unfiltered author-date log. The repo
-        # root and the head the walks are keyed on are read from the files.
-        assert calls[0][:2] == ("log", "--format=%at")
-        rev_parse = any(call[0] == "rev-parse" for call in calls)
-        assert rev_parse is not _FILES_ANSWER_HEAD
+        # The per-search calls: the unfiltered author-date log, after the
+        # rev-parse that keys the rows where the files do not answer.
+        _opens_as(calls, heads_by)
         annotated = {
             hit["id"]: (hit["commit_drift_count"], hit["commit_drift_basis"])
             for hit in out
@@ -2205,10 +2232,10 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
         }
         warm, warm_calls = attach()
         assert warm == out
-        if _FILES_ANSWER_HEAD:
-            assert warm_calls == []
+        assert warm_calls == ([] if heads_by else [_KEYING])
         return len(calls), annotated
 
+    per_search = len(_per_search(heads_by))
     # One anchor for all three, every cited file touched afterwards.
     ids = []
     for i, path in enumerate(anchors):
@@ -2230,7 +2257,7 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     )
     forks, annotated = count_git_calls("widget rule")
     assert {annotated[i] for i in ids} == {(1, "reachability")}
-    assert forks == _PER_SEARCH_FORKS + 1, "three hits at one anchor: one walk"
+    assert forks == per_search + 1, "three hits at one anchor: one walk"
 
     # Three distinct anchors: a stamp, then a commit, three times over.
     for i, memory_id in enumerate(ids):
@@ -2245,7 +2272,7 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     # Each range holds the later commits too, but only the one touching
     # the hit's own file escalates: three ranges, one anchored commit each.
     assert {annotated[i] for i in ids} == {(1, "reachability")}
-    assert forks == _PER_SEARCH_FORKS + 3, "three anchors: three walks"
+    assert forks == per_search + 3, "three anchors: three walks"
 
     # A hit citing a real file the range never touched pays the phantom
     # classification on top of its walk.
@@ -2263,6 +2290,4 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     )
     forks, annotated = count_git_calls("widget rule")
     assert annotated[quiet.id] == (0, "reachability")
-    assert forks == _PER_SEARCH_FORKS + 4 + 1, (
-        "four anchors walked, one classification log"
-    )
+    assert forks == per_search + 4 + 1, "four anchors walked, one classification log"
