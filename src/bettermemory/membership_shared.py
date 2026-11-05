@@ -498,9 +498,10 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
     about another project (`_SUBJECT`: an import's, which only the import
     opens; the records of a folder that could not be read) is moved,
     its checkout re-pointed and its candidates, evidence and line kept,
-    to a checkout of the project it offers to join that project to: so
-    its line, the answer it offers and a bare join (whose target is its
-    checkout's project) name one project, and the answer acts there.
+    to a live checkout of the project it offers to join that project to
+    (`_asked_at`): so its line, the answer it offers and a bare join
+    (whose target is its checkout's project) name one project, and the
+    answer acts there.
     Where the same is asked there already, it is closed as settled. The
     rows are of kinds 9.0.0rc18 reads (a home's, a checkout's and a
     question's put, a view's deletion, ``proposal_answered``,
@@ -547,24 +548,37 @@ def _asked_at(
     `_SUBJECT`); else `kept` where `kept` is in the project it offers to
     join that one to (its candidate: the same project after a heal of a
     record in the first one's, and after an answer joining it); else a
-    live checkout of that project, this machine's first (the container's
-    after a heal of a second record in its project, holding nothing);
-    and with none, `idle`, where it stays open, its project's, answered
-    by id (`project pending`). One read of the candidate's checkouts
-    where `kept` is in another project."""
+    live checkout of that project (`_unseen`: not retired, and one of
+    this machine's only where one of its views holds it now), this
+    machine's first, then by id (the container's after a heal of a
+    second record in its project, holding nothing); and with none,
+    `idle`, where it stays open, its project's, answered by id (`project
+    pending`). One read of the candidate's checkouts where `kept` is in
+    another project, and of the liveness of this machine's ones, in that
+    order, until one holds."""
     if pr.kind not in _SUBJECT:
         return None
     named = {self._canon(c) for c in pr.candidates}
     if self._canon(kept.project) in named:
         return kept.id
-    live = [
-        k
-        for q in sorted(named)
-        for k in self._checkouts_of(q)
-        if k.id != idle.id and not k.retired
-    ]
-    live.sort(key=lambda k: (k.machine != self.machine, k.id))
-    return live[0].id if live else idle.id
+    ranked = sorted(
+        (k for q in sorted(named) for k in self._checkouts_of(q) if k.id != idle.id),
+        key=lambda k: (k.machine != self.machine, k.id),
+    )
+    return next((k.id for k in ranked if not _unseen(self, k)), idle.id)
+
+
+def _unseen(self: Membership, k: Checkout) -> bool:
+    """Whether no sighting shows the questions open on `k`, which a
+    sighting names at the checkout it resolves (`_caller`): `k` is
+    retired (rung 2 and B pass over one retired into another), or it is
+    this machine's and none of its views here holds it now
+    (`Membership.live_view`: its folder gone or replaced, or a share
+    that does not answer). Another machine's checkout is read as seen,
+    as its views are read on its own machine alone. A bounded read of
+    the liveness of `k`'s views where it is this machine's and not
+    retired."""
+    return k.retired or (k.machine == self.machine and self.live_view(k) is None)
 
 
 def _asks(pr: Proposal) -> tuple[str, str]:

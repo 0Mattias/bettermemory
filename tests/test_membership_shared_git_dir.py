@@ -65,6 +65,7 @@ from bettermemory import (
 )
 from bettermemory.declare import declaring_model
 from bettermemory.location import capture, remint_answer
+from bettermemory.machine import MachineIdentity
 from bettermemory.membership import ASK, SILENT, Declaration, Membership
 from bettermemory.membership_records import (
     DUPLICATE_CHECKOUT,
@@ -1393,6 +1394,68 @@ def test_a_moved_questions_answer_joins_the_project_its_line_names(
     assert model.proposal(qid).state == "answered"
     assert model.canonical(x) == model.canonical(named)
     assert model.canonical(x) == model.canonical(model.checkout(at.id).project)
+
+
+def _joined_to(
+    lab: Lab,
+    repo: Path,
+    label: str,
+    project: str,
+    identity: MachineIdentity | None = None,
+) -> str:
+    """A checkout of `repo`, registered by a write there (by `identity`'s
+    machine), then joined to `project` by a declaration: its id."""
+    k = lab.write(label, repo, identity=identity).checkout
+    assert k is not None
+    lab._declaring(identity).declare(
+        Declaration("join", "os:tester", checkout=k, target=project)
+    )
+    location.forget()
+    return k
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("live", ["container", "third_machine"])
+def test_a_moved_question_passes_over_a_checkout_whose_folder_is_gone(
+    tmp_path: Path, lab: Lab, live: str
+) -> None:
+    """The second record, in the container's project, holds an import's
+    question about that project when the heal retires it into the host's
+    first record. The container's project has three checkouts besides:
+    the container's own, one on this host whose folder is gone, and a
+    third machine's; with the container's retired as quiet in
+    ``third_machine``. The question is moved to the container's checkout,
+    or the third machine's, and that machine's next sighting asks it.
+    Before, this host's checkout came first among the project's live
+    ones, as it was not retired, and the question was moved there, where
+    no sighting shows it."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    dup, _found = _rc18_registered(lab, line)
+    theirs = str(lab.model().checkout(dup).project)
+    gone = make_repo(tmp_path / "host" / "theirs-old", commits=1)
+    old = _joined_to(lab, gone, "theirs-old", theirs)
+    third = _container_machine(lab, "third")
+    far_repo = make_repo(tmp_path / "third" / "theirs", commits=1)
+    far = _joined_to(lab, far_repo, "theirs-third", theirs, third)
+    shutil.rmtree(gone)
+    if live == "third_machine":
+        _quiet(lab, kid)
+    qid = _asked_about_else(lab, line, dup, IMPORT)
+    location.forget()
+
+    res, _admitted = lab.view(line)
+
+    at = kid if live == "container" else far
+    model = lab.model()
+    moved = model.proposal(qid)
+    assert (res.checkout, moved.state, moved.checkout) == (hid, "open", at)
+    assert model.live_view(model.checkout(old)) is None
+    if live == "container":
+        seen = box.post(lab)
+    else:
+        seen, _admitted = lab.view(far_repo, identity=third)
+    assert seen.checkout == at and any(qid in x for x in seen.lines)
 
 
 @pytest.mark.usefixtures("no_birth")

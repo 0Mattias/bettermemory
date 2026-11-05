@@ -1268,9 +1268,12 @@ It is moved, its checkout re-pointed and its candidates, evidence and
 line kept, to a checkout of the project it names (`_asked_at`): the
 record read where that is its project (a heal in the first record's
 project, an answer joining it); else a live checkout of that project,
-this machine's first (the container's, after the heal of a second
-record in the container's project that held nothing); and with none
-it stays open on the idle record, answered by its id. Where the
+this machine's first, then by id (the container's, after the heal of a
+second record in the container's project that held nothing), where a
+live one is not retired and, if it is this machine's, holds one of its
+views now (`_unseen`), so a checkout here whose folder is gone, which
+no sighting shows, is passed over; and with none it stays open on the
+idle record, answered by its id. Where the
 checkout it goes to already asks the same (the same imported or
 unresolved project), the idle one's is closed as settled. So a later
 move of the checkout at the path (`project new`, `project join`)
