@@ -806,6 +806,26 @@ eighteenth was built.
   `src/bettermemory/verify_basis.py`, `src/bettermemory/health_stats.py`,
   `src/bettermemory/health_model.py`, `tests/test_origin_as_stored.py`)
 
+- **A repository nothing reads is one git's walk would stop at
+  (ENG-220).** The read of a folder no reader reads a repository for
+  answered `error`, unread, where any `.git` or `HEAD` entry stood in it
+  or above it, up to the filesystem's root (`githead.entry_above`): a
+  `HEAD` file or directory in a parent, a lowercase `head` on a
+  filesystem that ignores case, an empty `.git` or `.GIT` directory, past
+  every `GIT_CEILING_DIRECTORIES` entry and filesystem boundary, turned
+  an ordinary folder's not applicable into unread (the review's round
+  G). The walk is now git's discovery's, shared with `githead.locate`:
+  it stops below a ceiling, each entry read as git reads it, and at a
+  filesystem boundary unless `GIT_DISCOVERY_ACROSS_FILESYSTEM` reads
+  true, and it counts a directory only where git would have stopped at
+  it as a repository but for what it may not read (a `HEAD` git accepts
+  or may not open, and `objects` and `refs` in its common directory,
+  whether git may search them or not), or at a `.git` file, which git
+  follows or dies on. It asks the filesystem for the names git asks for,
+  so a name matches as it matches for git there.
+  (`src/bettermemory/githead.py`, `src/bettermemory/origin_dates.py`,
+  `tests/test_unread_history.py`)
+
 - **A config that includes another file keys no attribute files
   (ENG-220).** The attribute files a governed hit keys on declined on a
   config naming an attributes file or an `[attr` section, but not on an

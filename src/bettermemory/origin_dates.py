@@ -44,21 +44,20 @@ def commit_author_timestamps(
 
     Returns a list of timezone-aware datetimes; None where no history
     applies (cwd is None, git not on PATH, a directory that is not there,
-    no repository the files name and no ``.git`` or ``HEAD`` entry at or
-    above `cwd` but one membership refuses (`_unread_entry`: the folder is
-    then one outside any repository, ENG-158), and, from ``HEAD`` where no
-    pair names the head, a folder
-    git finds no repository for under no such entry or a branch with no
-    commit, which `_refused_head` tells by the exit of plumbing); and
+    no repository the files name and none git's walk from `cwd` passes
+    unread but one membership refuses (`_unread_entry`: the folder is then
+    one outside any repository, ENG-158), and, from ``HEAD`` where no pair
+    names the head, a folder git finds no repository for and passes none
+    unread or a branch with no commit, which `_refused_head` tells by the
+    exit of plumbing); and
     where a history applies and was not read, why
     (`origin_history.HistoryUnread`): git met its timeout, failed on the
     head (named by its hash, or HEAD where the plumbing finds both the
     repository and its head, or a ref of HEAD's that exists and that git
     cannot read, which the files tell from an unborn branch), refused a
-    repository whose ``.git`` or
-    ``HEAD`` entry stands at or above `cwd`, or one no reader reads there
+    repository its walk from `cwd` stops at, or passed one no reader reads
     (an ``objects`` directory no one may search: ``ERROR``, ENG-220's
-    review, round F), or printed
+    review, rounds F and G; `githead.entry_above`), or printed
     a line its format does not print (one such line declines the whole
     read), the history is longer than the memo's budget, or the clone is
     shallow. A caller reads the third outcome as neither a count nor a
@@ -238,9 +237,9 @@ def _refused_head(cwd: Path) -> HistoryUnread | None:
     plumbing run from the same directory under the same environment, so
     the variables that move git's discovery apply to it as they did to the
     log: None where ``git rev-parse --git-dir`` fails (no repository) and
-    no ``.git`` or ``HEAD`` entry stands at or above `cwd`, or git's walk
-    stops at one membership refuses (`_unread_entry`), ``ERROR`` where an
-    entry stands otherwise, since git then
+    git's walk from `cwd` passes no repository it may not read, or stops
+    at an entry membership refuses (`_unread_entry`), ``ERROR`` where it
+    passes one or stops at a ``.git`` file otherwise, since git then
     refused a repository there, as the keyed read names its refusal
     (ENG-220's review, round F); where ``git rev-parse --verify -q HEAD``
     fails, None on a branch with no commit, no history that applies, and
@@ -290,10 +289,12 @@ def _unborn_or_broken(cwd: Path) -> HistoryUnread | None:
 
 def _unread_entry(cwd: Path) -> HistoryUnread | None:
     """Why no history was read at `cwd`, where no reader reads a repository
-    there: ``ERROR`` where a ``.git`` or ``HEAD`` entry stands at or above
-    `cwd` (`githead.entry_above`), which may hold one nothing reads, as
-    behind an ``objects`` directory no one may search, which git's walk
-    passes over (ENG-220's review, round F); None where none stands, and
+    there: ``ERROR`` where git's walk from `cwd` passes a directory it
+    would have stopped at but for what it may not read, or stops at a
+    ``.git`` file (`githead.entry_above`), which may hold a repository
+    nothing reads, as behind an ``objects`` directory no one may search
+    (ENG-220's review, rounds F and G); None where it passes none, a
+    ``HEAD`` alone or an empty ``.git`` directory among them, and
     where git's walk from `cwd` stops at an entry membership refuses
     (`gitfile_rule.discovery_refusal`, ENG-158), which leaves the folder
     one outside any repository along every path the origin family reads."""

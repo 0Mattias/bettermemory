@@ -29,6 +29,7 @@ import pytest
 from bettermemory import (
     _caches,
     _response,
+    gitfile_rule,
     githead,
     health,
     health_render,
@@ -771,6 +772,249 @@ def test_an_entry_no_stat_reads_counts_as_one(
     assert githead.entry_above(inner)
     locked.chmod(0o755)
     assert not githead.entry_above(inner)
+
+
+def _locked(path: Path, request: pytest.FixtureRequest) -> None:
+    """`path` made a directory no one may read or search, for the test."""
+    path.chmod(0)
+    request.addfinalizer(lambda: path.chmod(0o755))
+
+
+def _would_be(at: Path, request: pytest.FixtureRequest, *, head: str = "HEAD") -> None:
+    """A git directory at `at` whose ``objects`` no one may search: git's
+    discovery passes over it, and would have stopped at it otherwise."""
+    (at / "objects").mkdir(parents=True)
+    (at / "refs").mkdir()
+    (at / head).write_text("ref: refs/heads/main\n", encoding="utf-8")
+    _locked(at / "objects", request)
+
+
+def _shape(above: Path, shape: str, request: pytest.FixtureRequest) -> None:
+    """`shape` laid in `above`, the folder two levels over the start."""
+    if shape == "a HEAD file":
+        (above / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    elif shape == "a HEAD directory":
+        (above / "HEAD").mkdir()
+    elif shape == "a lowercase head":
+        (above / "head").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    elif shape == "an empty .git directory":
+        (above / ".git").mkdir()
+    elif shape == "an empty .GIT directory":
+        (above / ".GIT").mkdir()
+    elif shape == "a .git file":
+        (above / ".git").write_text("gitdir: /nowhere/at/all\n", encoding="utf-8")
+    elif shape == "a .git whose objects no one may search":
+        _would_be(above / ".git", request)
+    elif shape == "a .GIT whose objects no one may search":
+        _would_be(above / ".GIT", request)
+    elif shape == "a bare repository whose objects no one may search":
+        _would_be(above, request)
+    elif shape == "a .git whose HEAD git rejects":
+        _would_be(above / ".git", request)
+        (above / ".git" / "HEAD").write_text("not a ref\n", encoding="utf-8")
+    elif shape == "a .git whose HEAD no one may read":
+        _would_be(above / ".git", request)
+        (above / ".git" / "HEAD").chmod(0)
+    elif shape == "a .git with a lowercase head":
+        _would_be(above / ".git", request, head="head")
+    elif shape == "a .git with no refs":
+        _would_be(above / ".git", request)
+        (above / ".git" / "refs").rmdir()
+    elif shape == "a .git whose HEAD is a directory":
+        _would_be(above / ".git", request)
+        (above / ".git" / "HEAD").unlink()
+        (above / ".git" / "HEAD").mkdir()
+    elif shape == "a .git whose commondir git dies on":
+        _would_be(above / ".git", request)
+        (above / ".git" / "commondir").write_bytes(b"")
+    elif shape == "a .git whose common directory no one may search":
+        (above / ".git").mkdir()
+        (above / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        (above / ".git" / "commondir").write_text("../common\n", encoding="utf-8")
+        (above / "common" / "objects").mkdir(parents=True)
+        (above / "common" / "refs").mkdir()
+        _locked(above / "common", request)
+    else:
+        raise AssertionError(shape)
+
+
+#: Each shape laid two levels above a folder, and whether git's discovery
+#: from the folder passes a repository there it may not read, or stops at
+#: a ``.git`` file: None where that rests on how the filesystem matches a
+#: name, read off it, as git reads it.
+_SHAPES: dict[str, bool | None] = {
+    "a HEAD file": False,
+    "a HEAD directory": False,
+    "a lowercase head": False,
+    "an empty .git directory": False,
+    "an empty .GIT directory": False,
+    "a .git file": True,
+    "a .git whose objects no one may search": True,
+    "a .GIT whose objects no one may search": None,
+    "a bare repository whose objects no one may search": True,
+    "a .git whose HEAD git rejects": False,
+    "a .git whose HEAD no one may read": True,
+    "a .git with a lowercase head": None,
+    "a .git with no refs": False,
+    "a .git whose HEAD is a directory": False,
+    "a .git whose commondir git dies on": True,
+    "a .git whose common directory no one may search": True,
+}
+#: The shapes git dies on, which membership refuses (ENG-158).
+_DIES = {"a .git file", "a .git whose commondir git dies on"}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="a directory's search bit is POSIX's")
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_entry_above_counts_only_what_git_would_have_stopped_at(
+    shape: str, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """`githead.entry_above` counts a directory git's discovery would have
+    stopped at as a repository but for what it may not read, and a
+    ``.git`` file, which git follows or dies on; not every ``HEAD`` or
+    ``.git`` name (ENG-220's review, round G). A ``HEAD`` alone, a
+    ``HEAD`` directory, a lowercase ``head``, an empty ``.git`` or
+    ``.GIT`` directory, a HEAD git rejects and a git directory with no
+    ``refs`` are passed over by git, and count for nothing. A name the
+    filesystem matches regardless of case (``.GIT``, ``head`` in a git
+    directory) counts as it does for git there. The read of a folder there
+    follows: `error` where one counts, no history applies where none
+    does, nor where git dies on the entry, which membership refuses
+    (`gitfile_rule.discovery_refusal`, ENG-158)."""
+    above = tmp_path / "above"
+    start = above / "work" / "deep"
+    start.mkdir(parents=True)
+    assert not githead.entry_above(start), "premise: nothing above"
+    _shape(above, shape, request)
+    want = _SHAPES[shape]
+    if want is None:
+        # The filesystem's answer for the name git asks for.
+        target = ".git" if ".GIT" in shape else ".git/HEAD"
+        want = os.path.lexists(above / target)
+    assert githead.entry_above(start) is want
+    refused = gitfile_rule.discovery_refusal(str(start)) is not None
+    assert refused is (shape in _DIES)
+    _caches.clear_all()
+    read = origin_dates.commit_author_timestamps(start)
+    assert read is (CommitDriftUnread.ERROR if want and not refused else None)
+
+
+#: Where a ceiling stands, as git reads ``GIT_CEILING_DIRECTORIES``, and
+#: whether git's walk from ``above/work/deep`` still reaches ``above``.
+_CEILINGS = {
+    "none": True,
+    "above/work": False,
+    "above": False,
+    "the folder over above": True,
+    "a path that is not there": True,
+    "above/work through a link": False,
+    "above/work through a link, after an empty entry": True,
+    "the start itself": True,
+}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="a directory's search bit is POSIX's")
+@pytest.mark.parametrize("ceiling", list(_CEILINGS))
+def test_entry_above_stops_where_a_ceiling_stops_git(
+    ceiling: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """Git probes no directory at or above a ``GIT_CEILING_DIRECTORIES``
+    entry that is a strict ancestor of where it starts, each entry
+    resolved through its links unless it follows an empty entry, and one
+    that does not resolve dropped: a repository there that git may not
+    read counts only where the walk reaches it, and git's own walk, from
+    the same folder with the objects searchable, finds it exactly then."""
+    above = tmp_path / "above"
+    start = above / "work" / "deep"
+    start.mkdir(parents=True)
+    (tmp_path / "link").symlink_to(above / "work")
+    entries = {
+        "none": None,
+        "above/work": str(above / "work"),
+        "above": str(above),
+        "the folder over above": str(tmp_path),
+        "a path that is not there": str(tmp_path / "gone" / "away"),
+        "above/work through a link": str(tmp_path / "link"),
+        "above/work through a link, after an empty entry": f":{tmp_path / 'link'}",
+        "the start itself": str(start),
+    }
+    value = entries[ceiling]
+    if value is None:
+        monkeypatch.delenv("GIT_CEILING_DIRECTORIES", raising=False)
+    else:
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", value)
+    _would_be(above / ".git", request)
+    assert githead.entry_above(start) is _CEILINGS[ceiling]
+    (above / ".git" / "objects").chmod(0o755)
+    found = subprocess.run(
+        ["git", "rev-parse", "--git-dir"], cwd=start, capture_output=True, check=False
+    )
+    assert (found.returncode == 0) is _CEILINGS[ceiling], "as git's own walk"
+
+
+#: ``GIT_DISCOVERY_ACROSS_FILESYSTEM`` as set, and whether git's walk then
+#: crosses into the filesystem ``above`` is on.
+_ACROSS = {
+    None: False,
+    "1": True,
+    "true": True,
+    "Yes": True,
+    "0": False,
+    "false": False,
+    "": False,
+    "garbage": True,
+}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="a directory's search bit is POSIX's")
+def test_entry_above_reads_nothing_where_git_runs_nothing(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """A start that is not there, or is a file, is no folder git runs
+    from, so no repository above it counts, though one git may not read
+    stands there."""
+    _would_be(tmp_path / ".git", request)
+    (tmp_path / "file").write_text("x\n", encoding="utf-8")
+    assert githead.entry_above(tmp_path)
+    assert not githead.entry_above(tmp_path / "gone" / "away")
+    assert not githead.entry_above(tmp_path / "file")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="a directory's search bit is POSIX's")
+@pytest.mark.parametrize("across", list(_ACROSS))
+def test_entry_above_stops_at_a_filesystem_boundary_as_git_does(
+    across: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """``above`` sits on another filesystem than the folder (its device
+    read so here): git's walk stops at the boundary unless
+    ``GIT_DISCOVERY_ACROSS_FILESYSTEM`` reads true as a config boolean,
+    so a repository there that git may not read counts only then; a value
+    git dies on is read as crossing, as far as any git could reach."""
+    above = tmp_path / "above"
+    start = above / "work" / "deep"
+    start.mkdir(parents=True)
+    _would_be(above / ".git", request)
+    real_device = githead._device
+    other = str(above.resolve())
+
+    def device(path: str) -> int:
+        return real_device(path) + (1 if path == other else 0)
+
+    monkeypatch.setattr(githead, "_device", device)
+    if across is None:
+        monkeypatch.delenv("GIT_DISCOVERY_ACROSS_FILESYSTEM", raising=False)
+    else:
+        monkeypatch.setenv("GIT_DISCOVERY_ACROSS_FILESYSTEM", across)
+    assert githead.entry_above(start) is _ACROSS[across]
+    monkeypatch.setattr(githead, "_device", real_device)
+    monkeypatch.delenv("GIT_DISCOVERY_ACROSS_FILESYSTEM", raising=False)
+    assert githead.entry_above(start), "on one filesystem it is reached"
 
 
 def test_a_walk_given_up_reads_unread_only_where_the_leg_applies(

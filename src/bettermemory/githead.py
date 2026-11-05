@@ -88,18 +88,23 @@ import os
 import re
 import stat
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import gitfile_rule
+from . import gitconfig, gitfile_rule
 from ._location_probe import path_missing
 from .gitfile_rule import (
+    _HEADREF_READ,
     _REF_LIMIT,
     _SPACE,
+    _git_common,
     _git_directory,
+    _headref_content,
     _read,
     _real,
     _Unsettled,
+    _valid_headref,
 )
 
 __all__ = [
@@ -484,19 +489,49 @@ def _locate(start: Path, *, walk: bool, as_git: bool, stable: bool) -> GitDir | 
         status = os.stat(here)
         if not stat.S_ISDIR(status.st_mode):
             return None
-        ceilings = _ceilings(here)
-        while True:
-            found = _probe(here, owner=False, as_git=as_git, stable=stable)
+        for directory in _probed(here, status.st_dev):
+            found = _probe(directory, owner=False, as_git=as_git, stable=stable)
             if found is not None or not walk:
                 return found
-            parent = os.path.dirname(here)
-            if parent == here or any(not _below(parent, c) for c in ceilings):
-                return None
-            if os.stat(parent).st_dev != status.st_dev:
-                return None
-            here = parent
+        return None
     except (_Unsettled, OSError, ValueError):
         return None
+
+
+def _probed(here: str, device: int | None) -> Iterator[str]:
+    """The directories git's discovery probes from `here`, a resolved
+    directory, in order (``setup_git_directory_gently_1``): `here`, then
+    each parent up to the filesystem's root, stopping below a
+    ``GIT_CEILING_DIRECTORIES`` entry that is a strict ancestor of `here`
+    (`_ceilings`, compared in this platform's case, `_below`) and, where
+    `device` is given, at a directory on another (a filesystem boundary).
+    A stat that fails raises OSError."""
+    ceilings = _ceilings(here)
+    while True:
+        yield here
+        parent = os.path.dirname(here)
+        if parent == here or any(not _below(parent, c) for c in ceilings):
+            return
+        if device is not None and _device(parent) != device:
+            return
+        here = parent
+
+
+def _device(path: str) -> int:
+    """The device `path` is on, as git's ``get_device_or_die`` reads it."""
+    return os.stat(path).st_dev
+
+
+def _across_filesystems() -> bool:
+    """git's ``git_env_bool("GIT_DISCOVERY_ACROSS_FILESYSTEM", 0)``: False
+    where it is unset, else its value read as a config boolean
+    (`gitconfig.git_bool`); True where git dies on the value, so the walk
+    reaches as far as any git could."""
+    raw = os.environ.get("GIT_DISCOVERY_ACROSS_FILESYSTEM")
+    if raw is None:
+        return False
+    value = gitconfig.git_bool(os.fsencode(raw))
+    return True if value is None else value
 
 
 def discovery_moved() -> bool:
@@ -527,16 +562,96 @@ def _entry_above(start: Path) -> bool:
 
 
 def entry_above(start: Path) -> bool:
-    """Whether a ``.git`` or a ``HEAD`` entry sits in `start` or above it
-    (`_entry_above`), and True where a stat fails for any reason but
-    absence: a repository may stand there that neither these readers nor
-    git reads, as behind an ``objects`` directory no one may search, so a
-    history read there is unread, never not applicable (ENG-220's review,
-    round F)."""
+    """Whether git's discovery from `start` passes a directory it would
+    have stopped at as a repository but for what it may not read
+    (`_stops_at`): a repository may stand there that neither these readers
+    nor git reads, as behind an ``objects`` directory no one may search,
+    so a history read there is unread, never not applicable (ENG-220's
+    review, round F). The walk is git's (`_probed`): from ``realpath
+    (start)``, it stops below a ``GIT_CEILING_DIRECTORIES`` entry and at a
+    filesystem boundary unless ``GIT_DISCOVERY_ACROSS_FILESYSTEM`` says to
+    cross it (`_across_filesystems`), and it asks the filesystem for the
+    names git asks for, so a name matches as it matches for git there: a
+    ``HEAD`` alone, a ``HEAD`` directory, an empty ``.git`` directory
+    count for nothing, nor does a lowercase ``head`` that is no ``HEAD``
+    to git (round G). False where `start` is no directory, from which git
+    runs nothing; True where a stat fails for any reason but absence."""
     try:
-        return _entry_above(start)
-    except OSError:
+        here = os.path.realpath(start)
+        try:
+            status = os.stat(here)
+        except OSError as exc:
+            if path_missing(exc):
+                return False
+            raise
+        if not stat.S_ISDIR(status.st_mode):
+            return False
+        device = None if _across_filesystems() else status.st_dev
+        return any(_stops_at(directory) for directory in _probed(here, device))
+    except (OSError, ValueError):
         return True
+
+
+def _stops_at(directory: str) -> bool:
+    """Whether git's walk stops at `directory`, or would but for what it
+    may not read (``setup_git_directory_gently_1``): at a ``.git`` that is
+    a file, which git follows or dies on (a membership refusal is told
+    apart by the caller, `gitfile_rule.discovery_refusal`); at a ``.git``
+    that is a directory, or the directory itself, that is a git directory
+    (`_would_be_git_directory`). Git's ``stat`` of ``.git`` follows a
+    symbolic link. A stat that fails for any reason but absence raises."""
+    dotgit = os.path.join(directory, ".git")
+    try:
+        found = os.stat(dotgit)
+    except OSError as exc:
+        if not path_missing(exc):
+            raise
+    else:
+        if stat.S_ISREG(found.st_mode) or _would_be_git_directory(dotgit):
+            return True
+    return _would_be_git_directory(directory)
+
+
+def _would_be_git_directory(candidate: str) -> bool:
+    """git's ``is_git_directory`` of `candidate`, read past what git may
+    not read: a ``HEAD`` git accepts (`_valid_headref`), or a regular one
+    no one may read, and ``objects`` and ``refs`` in the common directory
+    (`_git_common`), whether git may search them or not. Git passes over a
+    candidate where it may not read one of them, and nothing reads the
+    repository there. False where one of the three is absent or the HEAD
+    is one git rejects, as git passes over that too; True where git would
+    die or block reading it. A stat that fails for any reason but absence
+    raises."""
+    head = os.path.join(candidate, "HEAD")
+    try:
+        found = os.lstat(head)
+    except OSError as exc:
+        if path_missing(exc):
+            return False
+        raise
+    try:
+        if stat.S_ISREG(found.st_mode):
+            try:
+                content = _read(head, _HEADREF_READ)
+            except OSError as exc:
+                if path_missing(exc):
+                    return False
+                content = None
+            if content is not None and not _headref_content(content):
+                return False
+        elif not _valid_headref(head):
+            return False
+        common, _ = _git_common(candidate)
+    except _Unsettled:
+        return True
+    for name in ("objects", "refs"):
+        try:
+            os.stat(os.path.join(common, name))
+        except OSError as exc:
+            if path_missing(exc):
+                return False
+            raise
+    return True
 
 
 def _located(start: Path) -> GitDir | None:
