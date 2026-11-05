@@ -44,6 +44,8 @@ times and sizes, and no birth time, as the probe measured.
 from __future__ import annotations
 
 import dataclasses
+import errno
+import functools
 import json
 import os
 import shutil
@@ -102,9 +104,35 @@ from .test_membership_resolution import (
     no_birth,
     posing,
     pytestmark,
+    remove,
 )
 
 __all__ = ["lab", "lab_of", "neutral_git", "no_birth", "pytestmark"]
+
+
+@pytest.fixture(autouse=True)
+def windows_unlink(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every removal here as Windows makes it, on every platform: it
+    refuses to unlink a read-only file (WinError 5, a PermissionError),
+    and git writes its objects read-only, so a test that removes a
+    repository makes its files writable first (`remove`)."""
+
+    def refusing(
+        path: Any, *, dir_fd: int | None = None, _real: Callable[..., None]
+    ) -> None:
+        try:
+            st = os.lstat(path, dir_fd=dir_fd)
+        except OSError:
+            st = None
+        if st is not None and not stat.S_ISLNK(st.st_mode):
+            if not st.st_mode & stat.S_IWUSR:
+                raise PermissionError(errno.EACCES, "read-only, as on Windows", path)
+        _real(path, dir_fd=dir_fd)
+
+    for name in ("unlink", "remove"):
+        monkeypatch.setattr(
+            os, name, functools.partial(refusing, _real=getattr(os, name))
+        )
 
 
 @dataclass
@@ -369,7 +397,7 @@ def test_a_copy_on_reused_numbers_passes_only_where_the_other_side_read_it(
     os.rename(line, tmp_path / "host" / "line-old")
     time.sleep(0.01)
     copy(tmp_path / "host" / "line-old", line)
-    shutil.rmtree(tmp_path / "host" / "line-old")
+    remove(tmp_path / "host" / "line-old")
     target = os.path.realpath(line / ".git")
     real = location_stamps._init_stamps
 
@@ -675,7 +703,7 @@ def test_b_reads_the_other_sides_re_mint_as_over_a_bind_mount(
     found = _file_token(line)
     moved = tmp_path / "host" / "line-moved"
     shutil.copytree(line, moved, symlinks=True)
-    shutil.rmtree(line)
+    remove(line)
     os.rename(moved, line)
     assert _file_token(line) == found
     location.forget()
@@ -1442,7 +1470,7 @@ def test_a_moved_question_passes_over_a_checkout_whose_folder_is_gone(
     third = _container_machine(lab, "third")
     far_repo = make_repo(tmp_path / "third" / "theirs", commits=1)
     far = _joined_to(lab, far_repo, "theirs-third", theirs, third)
-    shutil.rmtree(gone)
+    remove(gone)
     if live == "third_machine":
         _quiet(lab, kid)
     qid = _asked_about_else(lab, line, dup, IMPORT)
@@ -1618,7 +1646,7 @@ def test_a_question_no_sighting_shows_is_asked_where_one_does(
                 distinct="imported_project",
             ).id
     if holder in ("gone", "asked_here_too", "its_own"):
-        shutil.rmtree(there)
+        remove(there)
     elif holder == "retired":
         _quiet(lab, on)
     elif holder == "other_machine_quiet":
@@ -2440,7 +2468,7 @@ def test_a_heal_reads_the_views_it_places_a_question_by_before_its_transaction(
         made["sib"] = _joined_to(lab, sib, "sib", theirs)
         made["q"] = _asked_about_else(lab, line, idle, IMPORT)
         if sibling == "gone":
-            shutil.rmtree(sib)
+            remove(sib)
         location.forget()
         made["stats"] = _stats_in_the_transaction(lab, monkeypatch)
 
@@ -2592,7 +2620,7 @@ def test_a_new_checkout_reads_the_views_it_places_a_question_by_before_its_trans
     there = make_repo(tmp_path / "host" / "there", commits=1)
     on = _joined_to(lab, there, "there", wrote.project)
     qid = _asked_about_else(lab, there, on, IMPORT)
-    shutil.rmtree(there)
+    remove(there)
     wt = tmp_path / "host" / "here-wt"
     git(here, "worktree", "add", "-q", "-b", "feat", str(wt))
     location.forget()
