@@ -446,7 +446,7 @@ def checkout_line(model: Membership, k: Checkout) -> str:
         state = (
             f"live at {quoted(live)}" if live else f"no live view, last seen at {where}"
         )
-    into = model.retired_into(k.id) if k.retired else None
+    into = model.retired_into(k)
     retired = f", retired into {into}" if into else ", retired" if k.retired else ""
     return f"{k.id} {k.kind}{retired}, {state}"
 

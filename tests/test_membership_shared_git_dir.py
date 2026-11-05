@@ -1508,6 +1508,109 @@ def test_a_record_retired_into_another_is_retired_once(
 
 
 @pytest.mark.usefixtures("no_birth")
+def test_b_passes_over_a_record_retired_into_another(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second record, as 9.0.0rc18 resolved it, was seen at another
+    path too (the repository renamed there and back), a path the first
+    record never had: the heal retires it into the first and deletes its
+    view at the path they share, but not that one. A copy of the
+    repository then stands at that other path, carrying the token. B
+    passes over the retired record there, as rung 2 does, so it stays
+    retired and the copy is not read as it: the sighting is another
+    checkout of the first one's project, h1 and h2 delivered. Before, B
+    re-keyed the retired record at that path and brought it back,
+    holding nothing."""
+    away: dict[str, Path] = {}
+
+    def ask(line: Path, _kept: str, idle: str) -> None:
+        away["at"] = line.parent / "line-b"
+        with monkeypatch.context() as mp:
+            mp.setattr(Membership, "_shared_remint", lambda *_a, **_k: False)
+            os.rename(line, away["at"])
+            location.forget()
+            there, _admitted = lab.view(away["at"])
+            os.rename(away["at"], line)
+            location.forget()
+            back, _admitted = lab.view(line)
+        location.forget()
+        assert there.checkout == back.checkout == idle
+
+    line, _box, _kid, kept, idle = _settled(tmp_path, lab, monkeypatch, "heal", ask)
+    other = away["at"]
+    views = lab.model().checkout(idle).views_on(lab.identity.id)
+    assert [Path(v.path).name for v in views] == ["line-b"]
+    copy(line, other)
+    location.forget()
+
+    res, admitted = lab.view(other)
+
+    assert res.checkout not in (idle, None) and {"h1", "h2"} <= set(admitted)
+    model = lab.model()
+    assert (
+        model.checkout(idle).retired
+        and model.retired_into(model.checkout(idle)) == kept
+    )
+    assert model.canonical(res.project) == model.canonical(model.checkout(kept).project)
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("then", ["revived", "revived_quiet", "retired_again"])
+def test_a_later_revival_or_quiet_retirement_supersedes_retired_into(
+    tmp_path: Path,
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    then: str,
+) -> None:
+    """After the heal retired the second record into the first, a
+    sighting another rung made brings it back (``revived``), and the
+    sweep may retire it as quiet after that (``revived_quiet``): its
+    latest state supersedes the ``into`` of its earlier retirement, so it
+    is read as retired into nothing (rung 2 and B read it as any other,
+    `project list` says ``retired`` alone) and a heal may retire it again
+    (``retired_again``, naming the record kept). Before, the last
+    ``into`` of any of its rows kept it read as retired into the first,
+    so rung 2 passed over it after it was retired as quiet."""
+    line, _box, _kid, kept, idle = _settled(tmp_path, lab, monkeypatch, "heal")
+    model = lab._declaring()
+    with model._call():
+        model._put_checkout(dataclasses.replace(model.checkout(idle), retired=False))
+    if then == "revived_quiet":
+        _quiet(lab, idle)
+    if then == "retired_again":
+        with model._call():
+            model._retire_into(model.checkout(idle), model.checkout(kept), "again")
+
+    model = lab.model()
+    k = model.checkout(idle)
+    into = model.retired_into(k)
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(lab.root / "store"))
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "argv", ["bettermemory", "project", "list"])
+    cli_main()
+    listed = [x for x in capsys.readouterr().out.splitlines() if f" {idle} " in x]
+
+    if then == "retired_again":
+        assert k.retired and into == kept
+        assert listed[0].startswith(f"  {idle} primary, retired into {kept}, ")
+    else:
+        assert k.retired == (then == "revived_quiet") and into is None
+        shown = ", retired," if k.retired else ","
+        assert listed[0].startswith(f"  {idle} primary{shown} ")
+    assert line.exists()
+
+
+def _quiet(lab: Lab, checkout: str) -> None:
+    """`checkout` retired as quiet, as the sweep retires one
+    (`retire_quiet`)."""
+    model = lab.model()
+    with model._call():
+        model._put_checkout(dataclasses.replace(model.checkout(checkout), retired=True))
+        model._event("checkout_retired", checkout=checkout)
+
+
+@pytest.mark.usefixtures("no_birth")
 @pytest.mark.parametrize("settled", ["heal", "join_first"])
 def test_why_and_list_name_the_record_a_moved_one_was_written_in(
     tmp_path: Path,

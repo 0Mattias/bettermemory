@@ -482,7 +482,7 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
     alone (B reads no other checkout there); the questions still open on
     `idle` are settled, as no sighting shows them there now; and `idle`
     is retired, its row kept, with a ``checkout_retired`` row naming
-    `kept` and `by`, which rung 2 reads to pass over it from then on
+    `kept` and `by`, which rung 2 and B read to pass over it from then on
     (`retired_into`).
 
     Each question is placed where it is asked from then on (`_asked_at`).
@@ -509,9 +509,9 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
     questions.
 
     A record already retired into another (`retired_into`) is left as it
-    is, nothing written: rung 2 passes over it, so no flow retires it
+    is, nothing written: rung 2 and B pass over it, so no flow retires it
     twice, and a second call would only repeat its retirement rows."""
-    if idle.retired and retired_into(self, idle.id) is not None:
+    if retired_into(self, idle) is not None:
         return
     for row in self._store.membership_rows("homes", where={"checkout": idle.id}):
         self._put("home", {**row, "checkout": kept.id, "rule": f"{row['rule']}|{by}"})
@@ -572,20 +572,26 @@ def _asks(pr: Proposal) -> tuple[str, str]:
     return pr.kind, str(pr.evidence.get(_SUBJECT.get(pr.kind, "")) or "")
 
 
-def retired_into(self: Membership, checkout: str) -> str | None:
-    """The record `checkout` was retired into (`_retire_into`), from the
-    ``into`` of its ``checkout_retired`` rows, the last one written; None
-    where none names one (a checkout retired as quiet only,
-    `membership_queries.retire_quiet`, which a sighting brings back). One
-    read of the log's kind index, filtered on `checkout` in SQL."""
+def retired_into(self: Membership, k: Checkout) -> str | None:
+    """The record `k` is retired into (`_retire_into`): the ``into`` of
+    its latest ``checkout_retired`` row, where `k` is retired. None where
+    it is not retired (a sighting brought it back since, `_touch_view`),
+    or where its latest retirement names none (retired as quiet since,
+    `membership_queries.retire_quiet`): a later revival or a quiet
+    retirement supersedes an earlier ``into``, and rung 2 and B then read
+    `k` as any other. No read for a checkout that is not retired; for
+    one that is, one read of the log's kind index filtered on `k` in
+    SQL."""
+    if not k.retired:
+        return None
     into: str | None = None
-    for row in self._store.membership_log(["checkout_retired"], checkout=checkout):
+    for row in self._store.membership_log(["checkout_retired"], checkout=k.id):
         try:
             payload = json.loads(row.payload)
         except ValueError:
             continue
-        if isinstance(payload, dict) and payload.get("into"):
-            into = str(payload["into"])
+        if isinstance(payload, dict):
+            into = str(payload.get("into") or "") or None
     return into
 
 

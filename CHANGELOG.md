@@ -1469,10 +1469,12 @@ eighteenth was built.
   records are homed there, so a later `project new` or `project join`
   at the path carries every record written there, where the one left
   behind kept its own in the old project; its view at the path is
-  deleted, so a restore there re-keys the one read; rung 2 passes over
-  it, so the container's next re-mint continues the one read, where
-  after an answer joining the first checkout's project the first, first
-  in order, was brought back holding nothing; a question about its
+  deleted, so a restore there re-keys the one read; rung 2 and B pass
+  over it (a later revival or quiet retirement superseding that), so
+  the container's next re-mint continues the one read, where after an
+  answer joining the first checkout's project the first, first in
+  order, was brought back holding nothing, and B does not re-key it at
+  a path of its own the one read never had; a question about its
   project or a part below the root still open on it is closed as
   settled (`settled:<checkout>`), where it stayed pending, shown
   nowhere, and answering it moved the record no sighting reads, the one

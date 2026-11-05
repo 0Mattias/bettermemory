@@ -1272,25 +1272,30 @@ this machine's first (the container's, after the heal of a second
 record in the container's project that held nothing); and with none
 it stays open on the idle record, answered by its id. Where the
 checkout it goes to already asks the same (the same imported or
-unresolved project), the idle one's is closed as settled. So a later move of the checkout at the path (`project new`,
-`project join`) carries every record written there, where the one left
-behind kept its own in the old project, and a sighting of another
-object at the path (a restore) finds one checkout there for B to
-re-key. Rung 2 passes over a checkout retired into another
-(`retired_into`, the `into` of its `checkout_retired` rows, one indexed
-read for each retired checkout at the object): the next re-mint of the
-git directory through the other machine's view continues the record
-read, which holds the records, where the retired one, first in order
-after an answer joining its project, was continued by it as well and
-brought back holding none. The retired flag alone is no such marker, as
-a checkout retired as quiet is brought back by its next sighting. A
-checkout already retired into another is not retired again: no flow
-reaches it twice, and a second call writes nothing. The
-rows are of kinds 9.0.0rc18 reads: a home's, a checkout's and a
-question's put, a view's deletion, `proposal_answered`, and
-`checkout_retired`, whose extra fields it passes over. Joining its own project or the separate answer
-leaves both records: the two are in other projects by the user's
-answer, and the first one's records stay in the first project.
+unresolved project), the idle one's is closed as settled. So a later
+move of the checkout at the path (`project new`, `project join`)
+carries every record written there, where the one left behind kept its
+own in the old project, and a sighting of another object at the path (a
+restore) finds one checkout there for B to re-key. Rung 2 and B pass
+over a checkout retired into another (`retired_into`: the `into` of
+its latest `checkout_retired` row while it is retired, one indexed read
+for each retired checkout they meet). So the next re-mint of the git
+directory through the other machine's view continues the record read,
+which holds the records, where the retired one, first in order after an
+answer joining its project, was continued by it as well and brought
+back holding none; and B does not re-key the retired one at a path of
+its own that the record read never had (its view there is kept), where
+it would come back holding none. A later revival (a sighting by
+another rung) or a quiet retirement supersedes the `into`: the retired
+flag alone is no such marker, as a checkout retired as quiet is brought
+back by its next sighting. A checkout retired into another is not
+retired again: no flow reaches it twice, and a second call writes
+nothing. The rows are of kinds 9.0.0rc18 reads: a home's, a checkout's
+and a question's put, a view's deletion, `proposal_answered`, and
+`checkout_retired`, whose extra fields it passes over. Joining its own
+project or the separate answer leaves both records: the two are in
+other projects by the user's answer, and the first one's records stay
+in the first project.
 
 Cost: one read of the checkouts' token index, with no views, at each
 reading of rung 2 where the token found is neither recorded nor the

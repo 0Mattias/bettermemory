@@ -274,13 +274,19 @@ def _at_the_path(
     recorded one, which rung 2 did not continue (an inode number can be
     reused, E15; B20 joins it as the same object where it stands alone).
     A token of another lineage refutes it (a re-clone), unless a view of
-    its files on another machine made or recorded that token (ENG-215)."""
+    its files on another machine made or recorded that token (ENG-215).
+    A checkout retired into another record of its git directory is none
+    (`membership_shared.retired_into`, as rung 2 reads it): its records
+    are homed at that one, so re-keying it at a path of its own that the
+    other never had would bring it back holding none."""
     for v in self._store.membership_rows(
         "checkout_views",
         where={"machine": loc.machine, "path": _norm(loc.root or loc.cwd)},
     ):
         k = self.checkout(str(v["checkout"]))
         if k.kind != PRIMARY or k.machine != loc.machine:
+            continue
+        if retired_into(self, k):
             continue
         key = k.object_key
         if key == loc.object_key and (
@@ -482,7 +488,7 @@ def _rung_two(
             "object_inode": key.inode,
         }
     ):
-        if k.object_key is None or (k.retired and retired_into(self, k.id)):
+        if k.object_key is None or retired_into(self, k):
             continue
         verdict = k.object_key.compare(key)
         if verdict == SAME:
