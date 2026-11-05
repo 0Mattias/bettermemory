@@ -573,11 +573,59 @@ def run_measured(
     }
 
 
-def self_peak_rss_mb() -> float:
+def self_peak_rss_mb() -> float | None:
+    """This process's peak resident set in MB: `getrusage`'s ``ru_maxrss``
+    on POSIX, the peak working set (`GetProcessMemoryInfo`) on Windows,
+    which has no `resource` module; None where neither can be read."""
+    if sys.platform == "win32":
+        return _windows_peak_working_set_mb()
     import resource  # POSIX only: imported here so the build runs on Windows
 
     unit = 1 if sys.platform == "darwin" else 1024
     return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit / 1e6, 1)
+
+
+def _windows_peak_working_set_mb() -> float | None:
+    """The peak working set of this process, from psapi's
+    PROCESS_MEMORY_COUNTERS, the counterpart of POSIX's ``ru_maxrss``."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _Counters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    counters = _Counters()
+    counters.cb = ctypes.sizeof(_Counters)
+    try:
+        windll = ctypes.WinDLL  # type: ignore[attr-defined, unused-ignore]
+        kernel32 = windll("kernel32", use_last_error=True)
+        psapi = windll("psapi", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_Counters),
+            wintypes.DWORD,
+        ]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+        ok = psapi.GetProcessMemoryInfo(
+            kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
+        )
+    except (AttributeError, OSError):
+        return None
+    if not ok:
+        return None
+    return round(float(counters.PeakWorkingSetSize) / 1e6, 1)
 
 
 def machine() -> dict[str, Any]:

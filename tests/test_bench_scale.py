@@ -121,3 +121,21 @@ def test_an_event_loop_runs_where_the_socketpair_is_tcp(
             probe.close()
     assert len(attempts) == 2
     assert socket.socketpair is fallback
+
+
+def test_the_build_reads_its_peak_memory_on_every_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`self_peak_rss_mb`, which the build's result carries, imports no
+    POSIX-only module off POSIX: on Windows it reads the peak working set
+    (the Windows leg of CI run 41965490499 failed `generate` on
+    ``import resource``). Off Windows the read is a positive size."""
+    world = _load("world")
+    if sys.platform == "win32":
+        peak = world.self_peak_rss_mb()
+        assert peak is None or peak > 0
+        return
+    assert world.self_peak_rss_mb() > 0
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(world, "_windows_peak_working_set_mb", lambda: 12.5)
+    assert world.self_peak_rss_mb() == 12.5
