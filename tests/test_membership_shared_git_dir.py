@@ -2534,6 +2534,48 @@ def test_a_container_prompt_asks_the_views_it_places_questions_by_in_one_round(
 
 
 @pytest.mark.usefixtures("no_birth")
+def test_a_container_prompt_held_by_a_question_takes_the_posts_of_any(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review R9 4: a container's clone of a repository through a remote
+    alias (``gh:acme/lib``), kept apart from the host's full-URL clone as
+    before rc14, then named by a global rule and fetched, so its sighting
+    would join the two (ENG-207); an import's question on the host's
+    clone holds the join. Each prompt at the container shows the
+    question, and after the first, which asks the container for the
+    witness commits it holds (H), a steady prompt takes the two posts of
+    a prompt with nothing to ask. Before, each held prompt asked for H
+    again: three posts."""
+    url = "https://example.invalid/acme/lib.git"
+    full = make_repo(tmp_path / "host" / "full", commits=2, remote=url)
+    alias = tmp_path / "box" / "alias"
+    git(tmp_path, "clone", "-q", str(full), str(alias))
+    git(alias, "remote", "set-url", "origin", "gh:acme/lib")
+    git(full, "commit", "-q", "--allow-empty", "-m", "ahead")
+    q = lab.write("full", full)
+    assert q.checkout is not None and q.project is not None
+    box = Client(alias, "/workspaces/alias", _container_machine(lab, "box"))
+    first = box.post(lab)
+    assert first.project is not None and first.project != q.project
+    with open(os.environ["GIT_CONFIG_GLOBAL"], "a", encoding="utf-8") as fh:
+        fh.write('[url "https://example.invalid/"]\n\tinsteadOf = gh:\n')
+    git(alias, "fetch", "-q", str(full), "main")
+    git(alias, "merge", "-q", "--ff-only", "FETCH_HEAD")
+    qid = _asked_about_else(lab, full, q.checkout, IMPORT)
+    location.forget()
+
+    held = box.post(lab)
+    steady = _posts(lab, box, monkeypatch)
+    again = box.post(lab)
+
+    for res in (held, again):
+        assert res.project == first.project
+        assert any(qid in line and "stays apart" in line for line in res.lines)
+    assert steady == 2
+    assert lab.model().canonical(first.project) == first.project
+
+
+@pytest.mark.usefixtures("no_birth")
 def test_a_new_checkout_reads_the_views_it_places_a_question_by_before_its_transaction(
     tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
 ) -> None:

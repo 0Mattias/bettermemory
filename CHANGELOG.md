@@ -1355,19 +1355,29 @@ eighteenth was built.
   sighting shows it (not one retired, nor one of this machine's whose
   folder is gone, nor another machine's last sighted 180 days ago or
   more: ENG-215; each sighting of the alias clone shows such a
-  question, wherever it sits, naming its checkout, where that is and
-  the calls that answer it, and leaves it there: one on a removed
+  question, wherever it sits, naming its checkout and where that is,
+  restated for that folder with the calls that answer it from anywhere
+  and each command named with the folder it runs in (a file
+  contradiction's `project init --rebind` run at the alias clone would
+  bind a file there and hold the join for good), and leaves it there,
+  but where a declaration holds the join too: one on a removed
   container's checkout, not yet 180 days quiet, held the join shown at
   no sighting), a project
   file is bound to either, or a declaration says which project either
-  is (a join, move or separation of the alias clone or of a full-URL
-  clone, a record written at one moved, an answer at one about its own
-  project or one naming both projects, an unjoin of either): evidence
-  never overrides what the user said. One that places another project
-  in either (the answer to an import's question or to one about a
-  folder that could not be read, an absorb, another checkout's join)
-  holds nothing, as the merge keeps that project's records with the
-  alias clone's (ENG-215: it held the join for good). The project
+  is (a join, move or separation of any alias clone of the alias
+  clone's project or of a full-URL clone, an answer at one about its
+  own project or one naming both projects, an unjoin of either, or a
+  record written at a full-URL clone moved into the alias clone's
+  project, the one move the merge would undo): evidence never overrides
+  what the user said. A declaration at one of twin alias clones holds
+  the pair whichever is sighted first (ENG-215: the twin sighted alone in
+  a fresh process merged them). One that places another project in
+  either (the answer to an import's question or to one about a folder
+  that could not be read, an absorb, another checkout's join), and a
+  record moved anywhere else, holds nothing, as the merge keeps that
+  project's records with the alias clone's and leaves a record moved
+  elsewhere where it is (ENG-215: each held the join for good, as did a
+  heal's re-home of a record moved earlier). The project
   that fetches from the URL stands; the line names the project merged
   and its undo (`unjoin_project`), after which what was written at
   either clone meanwhile stays with the project that stood. A
@@ -1380,14 +1390,22 @@ eighteenth was built.
   as it does re-pointed at the URL: a remote's spelling decides no
   merge. A sighting that merges nothing is kept for the checkout's
   evidence, so a steady prompt at an alias clone costs what any
-  checkout's does, except while a question holds the join, so the
-  sighting after its answer joins. `docs/internals.md` states the rule.
+  checkout's does; while a question holds the join, so the sighting
+  after its answer joins, the witness commits are read once and the
+  declarations only past those read, so a steady prompt costs what one
+  costs once the two are one, the question's view aside, reads no file
+  in the write transaction and asks a container in no round more (it
+  read the witness commits and the question's project file each
+  prompt: 22 stat and 28 lstat where 13 and 14, three rounds where two).
+  `docs/internals.md` states the rule.
   (`src/bettermemory/membership_alias.py`,
   `src/bettermemory/membership_resolve.py`,
   `src/bettermemory/membership_records.py`,
   `src/bettermemory/membership_lines.py`,
+  `src/bettermemory/membership_queries.py`,
   `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
-  `tests/test_membership_alias.py`, `tests/test_membership_lines.py`)
+  `tests/test_membership_alias.py`, `tests/test_membership_lines.py`,
+  `tests/test_membership_shared_git_dir.py`)
 
 - **A git directory a host and a VM-backed container share stays one
   checkout per machine when either side re-mints its token (ENG-215).**

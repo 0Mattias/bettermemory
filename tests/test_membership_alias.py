@@ -27,11 +27,19 @@ from typing import Any
 
 import pytest
 
-from bettermemory import location, membership_alias
+from bettermemory import location, membership_alias, membership_shared
 from bettermemory.config import Config
 from bettermemory.location import resolve_here
 from bettermemory.machine import MachineIdentity
-from bettermemory.membership import ASK, GLOBAL, NEW, SILENT, Declaration, Resolution
+from bettermemory.membership import (
+    ASK,
+    GLOBAL,
+    NEW,
+    SILENT,
+    Declaration,
+    Membership,
+    Resolution,
+)
 from bettermemory.membership_records import (
     FIRST_SIGHT,
     IMPORT,
@@ -804,6 +812,69 @@ def test_a_question_holding_the_join_is_shown_at_the_alias_clone(
     assert not any(qid in line for line in joined.lines)
 
 
+#: Every kind of question a sighting opens, as a row holds it: its
+#: evidence and reason, on the alias clone's twin (`_split_pair`'s P).
+_KINDS: dict[str, tuple[str, dict[str, object]]] = {
+    "first_sight": ("several_projects", {}),
+    "file_contradiction": ("file_contradiction", {}),
+    "remote_diverged": ("remote_diverged", {}),
+    "subproject_contradiction": (
+        "subproject_contradiction",
+        {"dir": "/w/alias-twin/part"},
+    ),
+    "duplicate_checkout": ("duplicate_checkout", {}),
+    "legacy": ("legacy", {}),
+    "import": ("import", {}),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_KINDS))
+def test_a_held_line_runs_no_command_in_the_alias_clone(
+    world: World, kind: str
+) -> None:
+    """Review R9 5: a question of each kind on the alias clone's twin
+    holds the join, and the alias clone's sighting shows it restated for
+    the twin's folder, never its stored line: each command it offers
+    (``project init --rebind`` to keep a file's binding, ``init --new``
+    for a part or a fresh project file) names the folder it must run in,
+    as a value, so none is run at the alias clone, where ``--rebind``
+    would bind a file there and hold the join for good; its
+    ``answer_question`` calls name the question, which answers it from
+    any checkout; and its "here" is the twin's folder."""
+    full, alias, first, second = _split_pair(world)
+    twin = world.clone(alias, "/w/alias-twin", remote=ALIAS)
+    other = world.see(twin)
+    assert other.checkout is not None
+    reason, evidence = _KINDS[kind]
+    stored = "bettermemory: here: bettermemory project init --rebind"
+    qid = world.model.open_proposal(
+        checkout=other.checkout,
+        kind=kind,
+        candidates=[str(second.project), str(first.project)],
+        evidence=evidence,
+        reason=reason,
+        line=stored,
+    ).id
+    _caught_up(full, alias)
+
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    (held,) = [line for line in seen.lines if qid in line]
+    assert stored not in held and "restated from what it stores" in held
+    shown = held[held.index("it is closed: ") :]
+    commands = shown.split("bettermemory project ")[1:]
+    for command in commands:
+        clause = command.split(";")[0]
+        assert ', run in "/w/alias-twin"' in clause or '(in "/w/alias-twin' in clause
+    assert len(commands) == {
+        "file_contradiction": 1,
+        "subproject_contradiction": 1,
+        "first_sight": 1,
+    }.get(kind, 0)
+    assert f'action="answer_question", id="{qid}"' in shown
+    assert " here " not in shown and " here." not in shown
+
+
 def test_a_question_the_join_asks_is_placed_by_views_read_before_it(
     world: World,
 ) -> None:
@@ -943,19 +1014,6 @@ def test_a_project_split_off_by_project_new_is_kept(world: World) -> None:
     _stays_apart(world, alias, split)
 
 
-def test_a_record_the_user_moved_from_the_alias_clone_keeps_the_two_apart(
-    world: World,
-) -> None:
-    """``memory move`` of a record written at the alias clone is the
-    user's word about what was written in that checkout, which names no
-    project of the two: evidence does not merge its project after it."""
-    full, alias, first, second = _split_pair(world)
-    written = world.write(second)
-    world.model.declare(Declaration("move", "os:tester", record=written, target=GLOBAL))
-    _caught_up(full, alias)
-    _stays_apart(world, alias, second)
-
-
 def test_an_undone_join_is_kept_undone(world: World) -> None:
     """A join the user undid (``unjoin``) is not made again by the alias
     clone's next sighting; what was written at the alias clone while it
@@ -974,19 +1032,223 @@ def test_an_undone_join_is_kept_undone(world: World) -> None:
     assert home is not None and home.project == first.project
 
 
-def test_a_record_the_user_moved_from_the_full_url_clone_keeps_the_two_apart(
+@pytest.mark.parametrize("written_at", ["the_alias_clone", "the_full_url_clone"])
+@pytest.mark.parametrize("to", ["global", "a_third_project"])
+def test_a_record_the_user_moved_out_of_either_clone_leaves_the_two_to_join(
+    world: World, written_at: str, to: str
+) -> None:
+    """Review R9 2: ``memory move`` of a record written at the alias clone
+    or at the full-URL clone, to no project or to a third one, says where
+    that record goes, which the merge leaves as it is: the alias clone's
+    next sighting merges its project into the full-URL clone's, and the
+    record stays where the user moved it. Before, any record moved at
+    either held the join for good."""
+    full, alias, first, second = _split_pair(world)
+    third = world.see(world.repo("/w/third", remote="example.invalid/third"))
+    written = world.write(second if written_at == "the_alias_clone" else first)
+    target = GLOBAL if to == "global" else str(third.project)
+    world.model.declare(Declaration("move", "os:tester", record=written, target=target))
+    _caught_up(full, alias)
+
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    assert seen.project == first.project and len(_alias_merges(world)) == 1
+    home = world.model.home(written)
+    assert home is not None and world.model.canonical(home.project) == target
+
+
+def test_a_record_the_user_moved_from_the_full_url_clone_into_the_alias_project_keeps_the_two_apart(
     world: World,
 ) -> None:
-    """``memory move`` of a record written at the full-URL clone, which
-    fetches from the alias clone's keys, is the user's word about Q's
-    checkout as one written at the alias clone is about P's: the two stay
-    apart (review R8 3: the full-URL clones are read with the alias
-    clone, `_declared`)."""
+    """``memory move`` of a record written at the full-URL clone into the
+    alias clone's project P is the one move the merge would undo, as it
+    carries P's records into Q: the user said that record is not Q's, so
+    the two stay apart (review R9 2; a move to Q, or out of either, holds
+    nothing)."""
     full, alias, first, second = _split_pair(world)
     written = world.write(first)
-    world.model.declare(Declaration("move", "os:tester", record=written, target=GLOBAL))
+    world.model.declare(
+        Declaration("move", "os:tester", record=written, target=str(second.project))
+    )
     _caught_up(full, alias)
     _stays_apart(world, alias, second)
+
+
+def test_a_record_moved_into_the_alias_project_from_another_project_leaves_the_two_to_join(
+    world: World,
+) -> None:
+    """A record written at a third project's checkout moved into P says
+    it goes with P's records, which the merge keeps together: it holds
+    nothing, as a move into P counts only from a full-URL clone of Q."""
+    full, alias, first, second = _split_pair(world)
+    third = world.see(world.repo("/w/third", remote="example.invalid/third"))
+    written = world.write(third)
+    world.model.declare(
+        Declaration("move", "os:tester", record=written, target=str(second.project))
+    )
+    _caught_up(full, alias)
+
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    assert seen.project == first.project and len(_alias_merges(world)) == 1
+
+
+@pytest.mark.parametrize("onto", ["the_alias_clone", "the_full_url_clone"])
+def test_a_heal_of_a_moved_record_leaves_the_two_to_join(
+    world: World, onto: str
+) -> None:
+    """Review R9 2: a record the user moved keeps the move in its rule
+    (``...|declaration:<who>:move``), and a heal that retires the record
+    it was written at into another re-homes it there, its rule
+    ``...:move|heal``. The heal's row is the heal's word, not the user's:
+    the rule's last segment is read, and the next sighting joins. Onto
+    the alias clone: a record of a second record of its checkout, moved
+    to no project, where the carried move read as the user's word at the
+    alias clone and held the join for good. Onto the full-URL clone: a
+    record of a third project's checkout moved into P, which holds
+    nothing (a move into P counts from a full-URL clone alone), carried
+    onto the full-URL clone's record, where it would read as one."""
+    full, alias, first, second = _split_pair(world)
+    if onto == "the_alias_clone":
+        idle = world.see(world.clone(alias, "/w/alias-idle", remote=ALIAS))
+        assert idle.project == second.project and idle.checkout != second.checkout
+        kept, target = second, GLOBAL
+    else:
+        idle = world.see(world.repo("/w/third", remote="example.invalid/third"))
+        kept, target = first, str(second.project)
+    written = world.write(idle)
+    world.model.declare(Declaration("move", "os:tester", record=written, target=target))
+    with world.model._call():
+        membership_shared._retire_into(
+            world.model,
+            world.model.checkout(str(idle.checkout)),
+            world.model.checkout(str(kept.checkout)),
+            membership_shared.HEAL,
+        )
+    home = world.model.home(written)
+    assert home is not None and home.checkout == kept.checkout
+    assert home.rule.endswith(":move|heal")
+    _caught_up(full, alias)
+
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    assert seen.project == first.project and len(_alias_merges(world)) == 1
+
+
+@pytest.mark.parametrize("declared", ["join", "answer"])
+@pytest.mark.parametrize("order", ["the_twin_alone", "the_declared_one_first"])
+@pytest.mark.parametrize("process", ["one", "fresh"])
+def test_a_declaration_at_one_alias_clone_holds_the_pair_whichever_is_sighted(
+    world: World, declared: str, order: str, process: str
+) -> None:
+    """Review R9 1: twin alias clones of P, the user's word at the first
+    (``project join`` of it to P, or an answer there to a question about
+    its own project). The pair stays apart whichever twin is sighted
+    first, in one process or each sighting in a fresh one: `_declared`
+    reads every alias clone of P, as `_DECLARED` keeps the pair. Before,
+    the twin sighted alone in a fresh process merged P into Q, while the
+    declared one sighted first in the same process held both."""
+    full, alias, first, second = _split_pair(world)
+    twin = world.clone(alias, "/w/alias-twin", remote=ALIAS)
+    other = world.see(twin)
+    assert other.project == second.project and other.checkout != second.checkout
+    k1 = str(second.checkout)
+    if declared == "join":
+        world.model.declare(
+            Declaration("join", "os:tester", checkout=k1, target=str(second.project))
+        )
+    else:
+        pr = world.model.open_proposal(
+            checkout=k1,
+            kind="remote_diverged",
+            candidates=[str(second.project)],
+            evidence={},
+            reason="remote_diverged",
+            line="a question about its own project",
+        )
+        world.model.declare(
+            Declaration(
+                "join", "os:tester", checkout=k1, proposal=pr.id, target=second.project
+            )
+        )
+        assert world.model.proposal(pr.id).state == "answered"
+    _caught_up(full, alias)
+    _caught_up(full, twin)
+    order_of = [twin] if order == "the_twin_alone" else [alias, twin]
+
+    for repo in [*order_of, *order_of]:
+        if process == "fresh":
+            membership_alias._clear()
+        assert _alias_sighting(world, repo, {ALIAS: FULL}).project == second.project
+
+    assert _alias_merges(world) == []
+
+
+def test_a_declaration_holding_the_join_puts_it_on_no_question(world: World) -> None:
+    """Review R9 3: the user's join of the alias clone to its own project
+    holds the pair, and an import's question on its twin would hold it
+    too. The declaration is read first, so no line says the question
+    keeps the two apart, as answering it would merge nothing; the
+    question is asked at its own checkout as before."""
+    full, alias, first, second = _split_pair(world)
+    twin = world.clone(alias, "/w/alias-twin", remote=ALIAS)
+    other = world.see(twin)
+    assert other.checkout is not None
+    world.model.declare(
+        Declaration(
+            "join", "os:tester", checkout=str(second.checkout), target=second.project
+        )
+    )
+    qid = _about_another(world, other.checkout, str(second.project), IMPORT)
+    _caught_up(full, alias)
+
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    assert seen.project == second.project and _alias_merges(world) == []
+    assert not any(qid in line or "stays apart" in line for line in seen.lines)
+    assert any(qid in line for line in world.see(twin).lines)
+
+
+def test_a_held_join_reads_its_witness_commits_once(world: World) -> None:
+    """Review R9 4: a held join's sighting reads whether the alias clone
+    holds one of Q's witness commits (H) once: the sightings after it,
+    the question still holding the join, read neither H nor any
+    declaration's row again, and show the question each time."""
+    full, alias, first, second = _split_pair(world)
+    twin = world.clone(alias, "/w/alias-twin", remote=ALIAS)
+    other = world.see(twin)
+    assert other.checkout is not None
+    qid = _about_another(world, other.checkout, str(second.project), IMPORT)
+    _caught_up(full, alias)
+    reads = {"H": 0, "log": 0}
+    real_holds = world.model._holds
+    real_log = world.store.membership_log
+
+    def holds(*a: Any, **kw: Any) -> Any:
+        reads["H"] += 1
+        return real_holds(*a, **kw)
+
+    def log(kinds: Any = None, **kw: Any) -> Any:
+        if kinds is not None and "home_put" in kinds:
+            found = list(real_log(kinds, **kw))
+            reads["log"] += len(found)
+            return iter(found)
+        return real_log(kinds, **kw)
+
+    world.model._holds = holds  # type: ignore[method-assign]
+    world.store.membership_log = log  # type: ignore[method-assign]
+    first_seen = _alias_sighting(world, alias, {ALIAS: FULL})
+    after_first = dict(reads)
+    steady = [_alias_sighting(world, alias, {ALIAS: FULL}) for _ in range(3)]
+
+    assert after_first["H"] == 1
+    assert reads == after_first
+    for s in (first_seen, *steady):
+        assert s.project == second.project
+        assert [line for line in s.lines if qid in line] == [
+            line for line in first_seen.lines if qid in line
+        ]
+    assert _alias_merges(world) == []
 
 
 def test_a_choice_between_the_two_keeps_them_apart(world: World) -> None:
@@ -1297,3 +1559,85 @@ def test_e16_an_alias_clone_that_never_joins_costs_what_any_checkout_does(
     assert warm.spawns == 0
     assert warm.stats <= _BASE_STATS + len(files) and warm.lstats <= 2
     assert warm.readlinks == 0  # GIT_CONFIG_NOSYSTEM: no system answer read
+
+
+@_ON_GIT
+def test_a_held_alias_clones_steady_prompt_reads_nothing_in_its_transaction(
+    tmp_path: Path,
+    lab: _Lab,
+    counted: Callable[[Callable[[], object]], _Counts],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review R9 4: the issue's pair on git, fetched and named by a rule,
+    and an import's question on the full-URL clone, which holds the join.
+    Each prompt at the alias clone shows the question; after the first,
+    which reads H, a steady prompt spawns no git and makes no stat call
+    with the store's write transaction open, and costs what a steady
+    prompt there costs once the question is answered and the two are
+    one, but the read of the full-URL clone's view, which the question
+    on it is placed by, before the transaction. Before, each held prompt
+    read Q's witness commits and the question's project file in the
+    transaction (22 stat and 28 lstat, where 13 and 14)."""
+    store, identity, config = lab
+    full, alias, q, p = _pair_on_git(tmp_path, lab)
+    _global_rule(_RULE)
+    _fetch(alias, full)
+    model = Membership(store, identity.id)
+    holder = resolve_here(store, config, str(full), identity=identity)
+    imported = resolve_here(
+        store,
+        config,
+        str(make_repo(tmp_path / "imported", commits=1)),
+        identity=identity,
+    )
+    assert holder.checkout is not None and imported.project is not None
+    qid = model.open_proposal(
+        checkout=holder.checkout,
+        kind=IMPORT,
+        candidates=[q],
+        evidence={
+            "imported_project": str(imported.project),
+            "source": "export.json",
+            "codes": {q: ["H"]},
+        },
+        reason=IMPORT,
+        line="an import's question",
+        distinct="imported_project",
+    ).id
+    for _ in range(2):
+        res = resolve_here(store, config, str(alias), identity=identity)
+        assert str(res.project) == p and any(qid in line for line in res.lines)
+    files = location.capture(str(alias), write_token=False).config_files
+    held = counted(lambda: resolve_here(store, config, str(alias), identity=identity))
+    inside: list[str] = []
+    with monkeypatch.context() as m:
+        for name in ("stat", "lstat"):
+
+            def spy(*a: Any, _real: Any = getattr(os, name), **kw: Any) -> Any:
+                if store.in_batch:
+                    inside.append(str(a[0]) if a else "")
+                return _real(*a, **kw)
+
+            m.setattr(os, name, spy)
+        again = resolve_here(store, config, str(alias), identity=identity)
+    assert any(qid in line for line in again.lines)
+    held_at: str = holder.checkout
+    view = counted(lambda: model.live_view(model.checkout(held_at)))
+
+    model.declare(
+        Declaration("join", "os:tester", checkout=holder.checkout, proposal=qid)
+    )
+    joined = resolve_here(store, config, str(alias), identity=identity)
+    assert str(joined.project) == q
+    resolve_here(store, config, str(alias), identity=identity)
+    one = counted(lambda: resolve_here(store, config, str(alias), identity=identity))
+    print(
+        f"held: stat={held.stats} lstat={held.lstats}; one project: "
+        f"stat={one.stats} lstat={one.lstats}; the view: stat={view.stats} "
+        f"lstat={view.lstats}; config files {len(files)}"
+    )
+
+    assert inside == []
+    assert held.spawns == 0 and one.spawns == 0
+    assert held.stats <= one.stats + view.stats
+    assert held.lstats <= one.lstats + view.lstats

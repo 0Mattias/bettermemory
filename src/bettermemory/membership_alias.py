@@ -39,10 +39,13 @@ nothing a user said or a file binds stands against it:
   join another project to P's or Q's: `membership_shared._asked_here`,
   ENG-215), and no project file is bound to either. A question that
   holds the join the alias clone's sighting shows, wherever it sits,
-  naming its checkout, and its calls answer it from there as from its
-  own (`_held`, ENG-215): one on a container's checkout whose folder is
-  gone there holds it until `RETIRE_AFTER` has passed since its last
-  sighting, shown at no sighting of its own;
+  naming its checkout and restated for its folder, so its calls answer
+  it from there as from its own and its commands name the folder they
+  run in (`_held`, ENG-215): one on a container's checkout whose folder
+  is gone there holds it until `RETIRE_AFTER` has passed since its last
+  sighting, shown at no sighting of its own. A question is said to hold
+  the join only where no declaration does (the next condition, read
+  before the questions);
 * Q is the one settled project besides P that holds every remote the
   checkout fetches from (its keys less its alias keys; a provisional
   project, such as a third clone's that was asked, is not counted), and
@@ -51,16 +54,21 @@ nothing a user said or a file binds stands against it:
   R, read on the URL git fetches on both sides, so repositories whose
   aliases share a prefix or a spelling stay apart;
 * no declaration of the user's says which project P or Q is
-  (`_declared`): a join, a move or a separation of the alias clone or of
-  a full-URL clone of Q, a record written at one moved, a part declared
-  below one, an answer at one to a question about its own project, an
-  answer to a question naming both P and Q, or a merge or an unjoin of
-  the project one of them is recorded in; evidence never overrides what
-  a user said. A declaration that places another project in P or Q (an
-  answer to an import's question or to one about a folder that could
-  not be read, an absorb, a join of another project's checkout) is the
-  user's word about that project, whose records the merge keeps with
-  P's: it holds nothing (ENG-215); and
+  (`_declared`): a join, a move or a separation of an alias clone of P
+  (any of them, not the one sighted alone: `_alias_clones`) or of a
+  full-URL clone of Q, a part declared below one, an answer at one to a
+  question about its own project, an answer to a question naming both P
+  and Q, a merge or an unjoin of the project one of them is recorded
+  in, or a record written at a full-URL clone moved into P, the one move
+  the merge would undo (`_moved_into`; a home row's writer is the last
+  segment of its rule, so a heal's re-home of a record moved earlier is
+  not the user's word); evidence never overrides what a user said. A
+  declaration that places another project in P or Q (an answer to an
+  import's question or to one about a folder that could not be read, an
+  absorb, a join of another project's checkout), and a record moved
+  anywhere else, is the user's word about that project or that record,
+  which the merge keeps or leaves where it is: it holds nothing
+  (ENG-215); and
 * the checkout holds one of Q's witness commits (H), read last.
 
 P then merges into Q (`project_merged`, its evidence naming the alias),
@@ -70,11 +78,13 @@ its next sighting (`membership_resolve._observe`), so a third clone asked
 between the two joins Q. A sighting the rule leaves as it is, is kept for
 the checkout's evidence (its project, tenant, HEAD, remotes and alias
 keys) in this process (`_PASSED`), so a prompt at an alias clone that
-never joins reads nothing more after its first, unless a question holds
-the join, which the sighting after its answer reads again; a
-declaration found against a pair is kept for the pair (`_DECLARED`), and
-a project's first checkout row for the open store (`_FIRST`), since the
-log only grows once committed.
+never joins reads nothing more after its first; while a question holds
+the join, which the sighting after its answer reads again, H is read
+once (`_HOLDS`) and the log's declarations only as far as they were not
+read (`_SCANNED`), so a steady prompt there reads no file and asks a
+container nothing more. A declaration found against a pair is kept for
+the pair (`_DECLARED`), and a project's first checkout row for the open
+store (`_FIRST`), since the log only grows once committed.
 """
 
 from __future__ import annotations
@@ -88,6 +98,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import _caches
 from .membership_lines import line_alias_held, line_alias_joined
+from .membership_queries import _restatement
 from .membership_records import OPEN, H, R, Checkout, Location, Proposal
 from .membership_shared import _SUBJECT, _unseen
 
@@ -116,6 +127,16 @@ _DECLARING = (
 _LOCK = threading.Lock()
 _PASSED: OrderedDict[tuple[Any, ...], None] = OrderedDict()
 _DECLARED: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+#: A held join's sighting whose checkout holds one of Q's witness commits
+#: (H), by the sighting's evidence and Q, so the steady prompt of an alias
+#: clone a question holds reads H once (review R9 4).
+_HOLDS: OrderedDict[tuple[Any, ...], None] = OrderedDict()
+#: How far `_declared` read the log for a pair and its anchors finding no
+#: declaration, for each open store, as `_FIRST` keeps a read: the next
+#: judgment of the pair reads only the rows written since.
+_SCANNED: weakref.WeakKeyDictionary[
+    Any, OrderedDict[tuple[str, str, frozenset[str]], int]
+] = weakref.WeakKeyDictionary()
 #: Each project's first checkout row as `_first_remotes` read it, for each
 #: open store (a reopened or restored store is another object, and starts
 #: empty), keyed by the store's id and the project: the ``project_minted``
@@ -131,7 +152,9 @@ def _clear() -> None:
     with _LOCK:
         _PASSED.clear()
         _DECLARED.clear()
+        _HOLDS.clear()
         _FIRST.clear()
+        _SCANNED.clear()
 
 
 def _kept(memo: OrderedDict[Any, None], key: Any) -> bool:
@@ -167,18 +190,21 @@ def rejoin(
     )
     if _kept(_PASSED, seen):
         return []
-    q, holding = _target(self, k, pid, frozenset(fetched), aliases, tenant)
-    witnesses = (
-        []
-        if q is None
-        else [str(r["commit_id"]).lower() for r in self._witness_rows(q)]
-    )
-    if q is None or not self._holds(loc, witnesses):
+    found = _target(self, k, pid, frozenset(fetched), aliases, tenant)
+    if found is None:
         _keep(_PASSED, seen)
         return []
+    q, holding = found
+    if not _kept(_HOLDS, (*seen, q)):
+        witnesses = [str(r["commit_id"]).lower() for r in self._witness_rows(q)]
+        if not self._holds(loc, witnesses):
+            _keep(_PASSED, seen)
+            return []
+        if holding:
+            _keep(_HOLDS, (*seen, q))
     p = self.project(pid)
     if holding:
-        # Not kept: the sighting after an answer reads the rule again.
+        # Not kept as passed: the sighting after an answer joins.
         return _held(self, k, loc, p.name, pid, q, holding)
     self._merge(
         pid,
@@ -209,21 +235,22 @@ def _held(
     """The lines of the questions holding the join of `k`'s project
     `pid` into `q` (`_target`), each open on another checkout of either
     where a sighting shows it, here or on another machine: its id, its
-    checkout and where that was last seen, and its own line, whose calls
-    answer it from here as from there. It stays where it is, asked there
-    too. One open on `k` is named by the sighting already
-    (`membership_resolve._caller`). Reads each question's line as shown
-    (`restated`); no view."""
+    checkout and where that was last seen, and the question restated for
+    that folder from its row (`membership_queries._restatement` with
+    `at`): its ``answer_question`` calls answer it from here as from
+    there, and each command it offers names the folder it runs in, where
+    the question's own line would run it here (review R9 5). It stays
+    where it is, asked there too. One open on `k` is named by the
+    sighting already (`membership_resolve._caller`). Reads the rows of
+    the questions' candidates; no view and no file."""
     target = self.project(q).name
     lines = []
     for pr, c in holding:
         if c.id == k.id:
             continue
         newest = c.newest_view
-        where = (
-            c.machine if c.machine != self.machine else None,
-            newest.path if newest is not None else None,
-        )
+        path = newest.path if newest is not None else None
+        where = (c.machine if c.machine != self.machine else None, path)
         lines.append(
             line_alias_held(
                 loc.root or loc.cwd,
@@ -234,7 +261,7 @@ def _held(
                 pr.id,
                 c.id,
                 where,
-                self.restated(pr).line,
+                _restatement(self, pr, at=path or c.id),
             )
         )
     return lines
@@ -300,15 +327,16 @@ def _target(
     fetched: frozenset[str],
     aliases: frozenset[str],
     tenant: str | None,
-) -> tuple[str | None, list[tuple[Proposal, Checkout]]]:
+) -> tuple[str, list[tuple[Proposal, Checkout]]] | None:
     """The project Q the rule merges P, the checkout `k`'s project
-    `pid`, into, or None: every condition of the module but H, and the
-    questions holding the join, with their checkouts, where any is open
-    on a checkout of either that a sighting shows it at (`_held` shows
-    them; whether the user said which project P or Q is is then not
-    read, and nothing is merged while one is open)."""
+    `pid`, into, or None: every condition of the module but H, the
+    questions aside; with Q, the questions that hold the join, with their
+    checkouts, each open on a checkout of either where a sighting shows
+    it (`_held` shows them, and nothing is merged while one is open).
+    What the user declared is read before them, so a question is not
+    said to hold a join a declaration holds (review R9 3)."""
     if not _settled(self, pid, tenant):
-        return None, []
+        return None
     holders: dict[str, set[str]] = defaultdict(set)
     for row in self._store.membership_rows(
         "project_remotes", column_in=("remote_key", sorted(fetched))
@@ -318,18 +346,21 @@ def _target(
             holders[q].add(str(row["remote_key"]))
     named = [q for q, keys in holders.items() if keys >= fetched]
     if len(named) != 1 or not _settled(self, named[0], tenant):
-        return None, []
+        return None
     q = named[0]
     held = self._checkouts_by_project([pid, q])
-    if not any(set(c.remotes) == fetched for c in held.get(q, ())):
-        return None, []
+    full = [c for c in held.get(q, ()) if set(c.remotes) == fetched]
+    if not full:
+        return None
     if not _minted_on(self, pid, aliases, fetched):
-        return None, []
+        return None
     members = {*self._members(pid), *self._members(q)}
     if self._store.membership_rows(
         "project_files", column_in=("project", sorted(members))
     ):
-        return None, []
+        return None
+    if _declared(self, pid, q, _alias_clones(self, k, pid, held, aliases), full):
+        return None
     by_id = {c.id: c for cs in held.values() for c in cs}
     by_id[k.id] = k
     holding = [
@@ -339,12 +370,28 @@ def _target(
         and pr.checkout in by_id
         and (pr.checkout == k.id or not _unseen(self, by_id[pr.checkout]))
     ]
-    if holding:
-        return q, holding
-    anchors = [k, *(c for c in held.get(q, ()) if set(c.remotes) == fetched)]
-    if _declared(self, pid, q, anchors):
-        return None, []
-    return q, []
+    return q, holding
+
+
+def _alias_clones(
+    self: Membership,
+    k: Checkout,
+    pid: str,
+    held: dict[str, list[Checkout]],
+    aliases: frozenset[str],
+) -> list[Checkout]:
+    """Every alias clone of P (`pid`): the sighted checkout `k` and each
+    of P's checkouts, retired ones included, that names a key P was
+    minted on (`_first_remotes`) or one of the sighting's alias keys.
+    `_declared` reads what the user said at each of them, not at the
+    sighted one alone, so a declaration at one twin holds the pair
+    whichever twin is sighted first, as `_DECLARED` keeps it for the pair
+    (review R9 1)."""
+    keys = (_first_remotes(self, pid) or frozenset()) | aliases
+    return [
+        k,
+        *(c for c in held.get(pid, ()) if c.id != k.id and keys & set(c.remotes)),
+    ]
 
 
 def _settled(self: Membership, pid: str, tenant: str | None) -> bool:
@@ -459,29 +506,50 @@ def _loads(payload: str) -> dict[str, Any]:
 
 
 def _declared(
-    self: Membership, pid: str, q: str, anchors: Collection[Checkout]
+    self: Membership,
+    pid: str,
+    q: str,
+    clones: Collection[Checkout],
+    full: Collection[Checkout],
 ) -> bool:
     """Whether the user said which project P (`pid`) or Q (`q`) is: a row
     of the log a declaration wrote (`_MARKS`, `_DECLARING`) that is the
-    user's word about the alias clone sighted or a full-URL clone of Q
-    that fetches from its keys (`anchors`), about the project either
-    stands for as a whole, or about the two (`_says`). A declaration that
-    places another project, or a checkout of another, in P or Q (an
-    answer to an import's question or to a folder's that could not be
-    read, an absorb, a join of that checkout) says where that project's
-    records go, and the merge keeps them with P's: it does not count. A
-    pair found so is kept (`_DECLARED`)."""
+    user's word about an alias clone of P (`clones`, `_alias_clones`) or
+    a full-URL clone of Q that fetches from its keys (`full`), about the
+    project either stands for as a whole, or about the two (`_says`). A
+    declaration that places another project, or a checkout of another, in
+    P or Q (an answer to an import's question or to a folder's that could
+    not be read, an absorb, a join of that checkout) says where that
+    project's records go, and the merge keeps them with P's: it does not
+    count. A pair found so is kept (`_DECLARED`); where none is found,
+    how far the log was read is kept for the pair and its clones
+    (`_SCANNED`), up to the last row committed, so the next judgment
+    reads the rows written since."""
     pair = (self._store.store_id, pid, q)
     if _kept(_DECLARED, pair):
         return True
-    at = {c.id for c in anchors}
-    own = {c.project for c in anchors}
-    for row in self._store.membership_log(_DECLARING):
+    at = {c.id for c in (*clones, *full)}
+    own = {c.project for c in (*clones, *full)}
+    store = self._store
+    key = (pid, q, frozenset(at))
+    with _LOCK:
+        since = _SCANNED.get(store, OrderedDict()).get(key, 0)
+    read = since
+    for row in store.membership_log(_DECLARING, since_seq=since):
+        read = row.seq
         if not any(mark in row.payload for mark in _MARKS):
             continue
-        if _says(self, row.kind, _loads(row.payload), at, own, {pid, q}):
+        said = _says(self, row.kind, _loads(row.payload), at, own, (pid, q))
+        if said or _moved_into(self, row.kind, _loads(row.payload), pid, full):
             _keep(_DECLARED, pair)
             return True
+    base = store.committed_seq()
+    with _LOCK:
+        memo = _SCANNED.setdefault(store, OrderedDict())
+        memo.pop(key, None)
+        memo[key] = max(since, read if base is None else min(read, base))
+        while len(memo) > _KEPT:
+            memo.popitem(last=False)
     return False
 
 
@@ -495,23 +563,16 @@ def _says(
 ) -> bool:
     """Whether a row a declaration wrote is the user's word about P's or
     Q's own identity (`_declared`): a join or a separation (``project
-    new``) of a checkout of `at`, the alias clone or a full-URL clone; a
-    record written at one moved, or a part declared below its root; an
-    answer at one to a question about its own project, of any kind but
-    one about another project (`_SUBJECT`); an answer anywhere to a
-    question naming both P and Q (`both`), a choice between them; or a
-    merge or an unjoin of the project such a checkout's row names
-    (`own`, which a merge leaves and a move rewrites). Its rows of other
-    kinds, and those naming no declaration, say nothing here."""
+    new``) of a checkout of `at`, an alias clone or a full-URL clone; a
+    part declared below its root; an answer at one to a question about
+    its own project, of any kind but one about another project
+    (`_SUBJECT`); an answer anywhere to a question naming both P and Q
+    (`both`), a choice between them; or a merge or an unjoin of the
+    project such a checkout's row names (`own`, which a merge leaves and
+    a move rewrites). A record moved is read by `_moved_into`. Its rows
+    of other kinds, and those naming no declaration, say nothing here."""
     if kind in ("resolution_joined", "resolution_new"):
         return "principal" in payload and payload.get("checkout") in at
-    if kind == "home_put":
-        home = payload.get("home")
-        return (
-            isinstance(home, dict)
-            and "declaration" in str(home.get("rule") or "")
-            and home.get("checkout") in at
-        )
     if kind == "project_file_bound":
         return "declaration" in str(payload.get("evidence") or "") and (
             payload.get("checkout") in at
@@ -530,6 +591,37 @@ def _says(
         return False
     named = {self._canon(c) for c in pr.candidates}
     return payload.get("checkout") in at or set(both) <= named
+
+
+def _moved_into(
+    self: Membership,
+    kind: str,
+    payload: dict[str, Any],
+    pid: str,
+    full: Collection[Checkout],
+) -> bool:
+    """Whether a home row is the user's move of a record written at a
+    full-URL clone of Q (`full`) into P (`pid`) (``memory move``,
+    `membership_declare._move_record`): the one move the merge undoes, as
+    it carries P's records into Q, so the user said that record is not
+    Q's. A move anywhere else says where that record goes, which the
+    merge leaves as it is (to a third project or none) or agrees with
+    (into Q), and holds nothing (review R9 2). The row's own writer is the
+    last segment of its rule: a heal or a checkout's move that re-homes a
+    record moved earlier keeps that move in its rule, which is not the
+    word of the row that carries it."""
+    if kind != "home_put":
+        return False
+    home = payload.get("home")
+    if not isinstance(home, dict):
+        return False
+    writer = str(home.get("rule") or "").rsplit("|", 1)[-1]
+    return (
+        writer.startswith("declaration:")
+        and writer.endswith(":move")
+        and home.get("checkout") in {c.id for c in full}
+        and self._canon(str(home.get("project") or "")) == pid
+    )
 
 
 def _values(raw: Any) -> set[str]:

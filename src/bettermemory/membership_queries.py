@@ -207,12 +207,15 @@ def _written_afresh(self: Membership, pr: Proposal) -> str | None:
     return None
 
 
-def _restatement(self: Membership, pr: Proposal) -> str:
+def _restatement(self: Membership, pr: Proposal, at: str | None = None) -> str:
     """The question from what its row stores alone (`line_restated`): its
     id, its candidates (merges followed, a gone one by its id), its
     reason's sentence and the answers its kind takes, a first sight's
     separate answer read as ``answer_question`` reads it
-    (`filed_elsewhere`). It reads no stored line, and it does not fail."""
+    (`filed_elsewhere`). It reads no stored line, and it does not fail.
+    With `at`, the folder of the question's checkout, it is shown at
+    another checkout (`membership_alias._held`): its commands name that
+    folder, and no file is read (`line_restated`)."""
     named: list[tuple[str | None, str]] = []
     for c in pr.candidates:
         canon = self.canonical(c) or c
@@ -221,7 +224,7 @@ def _restatement(self: Membership, pr: Proposal) -> str:
         except KeyError:
             named.append((None, canon))
     try:
-        filed = pr.kind == FIRST_SIGHT and filed_elsewhere(self, pr)
+        filed = at is None and pr.kind == FIRST_SIGHT and filed_elsewhere(self, pr)
     except (KeyError, OSError, ValueError):
         filed = False
     folder = pr.evidence.get("dir") if pr.kind == SUBPROJECT_CONTRADICTION else None
@@ -232,6 +235,7 @@ def _restatement(self: Membership, pr: Proposal) -> str:
         named,
         filed=filed,
         folder=folder if isinstance(folder, str) and folder else None,
+        at=at,
     )
 
 

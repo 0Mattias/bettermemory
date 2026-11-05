@@ -950,14 +950,25 @@ project P into one other project Q where all of these hold:
   or Q, here or on another machine, each sighting of the alias clone
   shows (`membership_alias._held`, the L4 line held): its id, its
   checkout, that checkout's machine where it is another and the path it
-  was last seen at, then the question's own line, whose calls answer it
-  from the alias clone as from its checkout; it stays where it is,
-  asked there too. One on a container's checkout whose folder is gone
-  there holds the join until `RETIRE_AFTER` has passed since its last
-  sighting, shown at no sighting of its own. Its checkout's views are
-  among those `membership_alias.planned` reads before the transaction,
-  and such a sighting is not kept as passed, so the one after its
-  answer reads the rule again.
+  was last seen at, then the question restated from its row for that
+  folder (`line_restated` with `at`), never its stored line: its
+  `answer_question` calls name the question and answer it from the
+  alias clone as from its checkout, each command it offers (`project
+  init --rebind`, `init --new`) names the folder it must run in, as a
+  value rather than a shell command a folder's name could extend, and
+  its "here" is that folder. It stays where it is, asked there too. One
+  on a container's checkout whose folder is gone there holds the join
+  until `RETIRE_AFTER` has passed since its last sighting, shown at no
+  sighting of its own. A question is said to hold the join only where
+  no declaration does (the declarations are read first). Its
+  checkout's views are among those `membership_alias.planned` reads
+  before the transaction; such a sighting is not kept as passed, so the
+  one after its answer reads the rule again, but it reads H once for
+  the sighting's evidence (`_HOLDS`) and the declarations' rows only
+  past those it read (`_SCANNED`, kept up to the last row committed), so
+  a steady prompt there costs what one costs once the two are one, the
+  holder's view aside, reads no file in the transaction, and asks a
+  container in no round more.
 - Q is the one settled project besides P that holds every remote the
   checkout fetches from (its keys less its alias keys; a provisional
   project, such as a third clone's that was asked, is not counted), and
@@ -968,15 +979,26 @@ project P into one other project Q where all of these hold:
   machines' rules (`gh:lib`) are not joined by it, nor a fork whose own
   remote Q does not hold.
 - No declaration says which project P or Q is: no join, move or
-  separation of the alias clone or of a full-URL clone, record written
-  at one moved, part declared below one, answer at one to a question
-  about its own project, answer to a question naming both P and Q, or
-  merge or unjoin of the project one of them is recorded in. Evidence
-  never overrides what a user said. A declaration that places another
-  project in P or Q (the answer to an import's question or to one about
-  a folder that could not be read, an absorb, a join of another
-  project's checkout) says where that project's records go, and the
-  merge keeps them with P's, so it holds nothing (ENG-215).
+  separation of an alias clone of P or of a full-URL clone, part
+  declared below one, answer at one to a question about its own
+  project, answer to a question naming both P and Q, or merge or unjoin
+  of the project one of them is recorded in. The alias clones are every
+  checkout of P, retired ones included, that names a key P was minted on
+  or one of the sighting's alias keys, so a declaration at one twin
+  holds the pair whichever twin is sighted first, as the pair found is
+  kept. Evidence never overrides what a user said. A declaration that
+  places another project in P or Q (the answer to an import's question
+  or to one about a folder that could not be read, an absorb, a join of
+  another project's checkout) says where that project's records go, and
+  the merge keeps them with P's, so it holds nothing (ENG-215). A record
+  moved (`memory move`) counts only where it was written at a full-URL
+  clone and moved into P: the merge carries P's records into Q and would
+  undo that move. A move to no project or a third one says where that
+  record goes, which the merge leaves where it is, and one into Q agrees
+  with the merge, so neither holds anything. A home row is the word of
+  the last segment of its rule alone: a heal's or a checkout move's row
+  that re-homes a record moved earlier carries that move in its rule,
+  and the move's own row is read instead.
 - The checkout holds one of Q's witness commits (H), read last: one
   repository by two independent witnesses, rung 4's bar.
 

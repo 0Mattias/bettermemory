@@ -224,7 +224,15 @@ _WRITERS: dict[str, Callable[[str], str]] = {
         h, h, h, h, h, ["H", "R"]
     ),
     "alias_held": lambda h: membership_lines.line_alias_held(
-        h, h, h, h, h, h, h, (h, h), membership_lines.line_import(h, h, [(h, h, [h])])
+        h,
+        h,
+        h,
+        h,
+        h,
+        h,
+        h,
+        (h, h),
+        membership_lines.line_restated(h, "file_contradiction", h, [(h, h)], at=h),
     ),
     "remote_diverged": lambda h: membership_lines.line_remote_diverged(
         h, h, h, h, h, question=h
@@ -292,7 +300,9 @@ _VALUED: dict[str, Callable[[str], str]] = {
         "Q001",
         "K001",
         (v, v),
-        membership_lines.line_import(v, v, [(v, "P002", ["H"])], question="Q001"),
+        membership_lines.line_restated(
+            "Q001", "first_sight", "several_projects", [(v, "P002")], at=v
+        ),
     ),
     "remote_diverged": lambda v: membership_lines.line_remote_diverged(
         v, v, v, "P002", v, question="Q001"

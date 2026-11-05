@@ -218,8 +218,10 @@ def line_alias_held(
     checkout of either where a sighting shows it (`membership_alias`,
     ENG-207). The alias clone's sighting shows it wherever it sits
     (ENG-215): its id, its checkout, `where` (the machine, when another,
-    and the path it was last seen at), and `shown`, the question's own
-    line, whose calls answer it from here as from there."""
+    and the path it was last seen at), and `shown`, the question restated
+    for that folder (`line_restated` with `at`), whose ``answer_question``
+    calls answer it from here as from there and whose commands name the
+    folder they run in."""
     machine, path = where
     on = f" on machine {quoted(machine)}" if machine is not None else ""
     at = f", last seen at {quoted(path)}" if path is not None else ""
@@ -448,6 +450,7 @@ def line_restated(
     *,
     filed: bool = False,
     folder: str | None = None,
+    at: str | None = None,
 ) -> str:
     """A question shown again from what its row stores, not from its stored
     line (`Membership.restated`): its id, its candidates as (name, id) (a
@@ -456,7 +459,15 @@ def line_restated(
     checkout's root project file is bound to another project, which makes a
     first sight's separate answer ``project init --new``, as
     ``answer_question`` refuses ``separate`` then (`Membership.filed_elsewhere`);
-    `folder` the folder a part's question (L7) is about."""
+    `folder` the folder a part's question (L7) is about. `at`, the folder
+    of the question's checkout, where the question is shown at another
+    checkout (the held L4 line, `line_alias_held`): each command it offers
+    names the folder it must run in, as a value and not as a shell
+    command, a first sight's separate answer is its call with the command
+    it takes where that folder's project file is bound elsewhere (`filed`
+    is not read then), and what it says of "here" it says of that folder.
+    Its ``answer_question`` calls name the question, so they answer it
+    from any checkout."""
     names = (
         " or ".join(
             _named(n, p) if n is not None else printable(p) for n, p in candidates
@@ -469,13 +480,30 @@ def line_restated(
         or "(no project to join)"
     )
     separate = _answer(question, "separate")
+    here = f"in {quoted(at)}" if at is not None else "here"
+    there = f", run in {quoted(at)}" if at is not None else ""
+    this = "that" if at is not None else "this"
+    if at is not None:
+        # The sentences are this module's own: each "here" and "this" is
+        # the question's checkout.
+        said = (
+            said.replace(" here", f" {here}")
+            .replace("this checkout", "that checkout")
+            .replace("this repository", "that repository")
+        )
     if kind == FILE_CONTRADICTION:
         options = (
-            "Keep: bettermemory project init --rebind; move this checkout, when "
-            f"the user says so: {joins}"
+            f"Keep: bettermemory project init --rebind{there}; move {this} "
+            f"checkout, when the user says so: {joins}"
         )
     elif kind == SUBPROJECT_CONTRADICTION:
-        where = quoted(folder) if folder else "that folder"
+        where = (
+            quoted(folder)
+            if folder
+            else f"its folder below {quoted(at)}"
+            if at is not None
+            else "that folder"
+        )
         options = (
             f"That folder is that project, when the user says so: {joins}; a part "
             "with an id of its own: bettermemory project init --new (in "
@@ -497,10 +525,10 @@ def line_restated(
             for i in (0, 1)
         )
         options = (
-            "The first record's project, this checkout and what was written "
-            f"here moving there, when the user says so: {first}; this "
+            f"The first record's project, {this} checkout and what was written "
+            f"{here} moving there, when the user says so: {first}; {this} "
             f"checkout's own, where it is, when the user says so: {own}; a new "
-            f"project of its own, with what was written here: {separate}"
+            f"project of its own, with what was written {here}: {separate}"
         )
     elif kind == IMPORT:
         options = (
@@ -508,11 +536,20 @@ def line_restated(
             f"keep apart: {separate}"
         )
     else:
-        if kind == FIRST_SIGHT and filed:
+        if kind == FIRST_SIGHT and at is not None:
+            separate = (
+                f"{separate} (refused where the project file {here} is bound "
+                "to another project: then bettermemory project init --new"
+                f"{there}, a fresh project file)"
+            )
+        elif kind == FIRST_SIGHT and filed:
             separate = "bettermemory project init --new (a fresh project file)"
         options = f"Same project, when the user says so: {joins}; separate: {separate}"
     held = (
-        " Until answered, nothing from other projects is shown here and what is "
+        f" Until answered, nothing from other projects is shown {here} and what "
+        f"is written {here} stays with that folder."
+        if kind == FIRST_SIGHT and at is not None
+        else " Until answered, nothing from other projects is shown here and what is "
         "written here stays with this folder."
         if kind == FIRST_SIGHT
         else ""
