@@ -1108,7 +1108,11 @@ eighteenth was built.
   after git answers, the answer kept only where nothing changed (another
   writer rewriting it made one ask in three answer wrong, kept an hour),
   and rebuilt where it holds an entry it is not built with, which left
-  the answer unknown and asked again every minute. An insteadOf rule is chosen as
+  the answer unknown and asked again every minute; another content's
+  probe beside it, and the one folder named before probes were named
+  by their content, is removed at an ask once an hour old (a link
+  unlinked, never followed), where one stayed per change of the
+  probe's content. An insteadOf rule is chosen as
   git chooses it (an empty prefix matches every URL; of equal prefixes
   the first under the base git met first). A pattern's character classes
   and backslash escapes are read as git's wildmatch reads them, and the

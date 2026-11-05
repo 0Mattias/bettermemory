@@ -513,7 +513,11 @@ a minute. The probe is stamped before its content is checked and again
 after git answers, and the answer is kept only where nothing changed,
 so another writer there while git reads it leaves the answer unknown
 rather than wrong; an entry it is not built with is removed (a link
-unlinked, never followed) and the probe built again. A fourth question
+unlinked, never followed) and the probe built again. Each ask removes
+another content's probe, and the `git-probe` folder named before
+probes were named by content, once it is an hour old by its own time
+(`gitsystem._sweep_probes`; a link unlinked, never followed); a build
+still asking in it builds it again at its next ask. A fourth question
 asks there the directory that git expands `%(prefix)` to in a path
 (`git config --type=path` of the probe config's `%(prefix)/z`), which a
 RUNTIME_PREFIX build such as Apple's takes from where its binary runs;

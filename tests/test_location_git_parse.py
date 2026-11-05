@@ -1173,6 +1173,62 @@ def test_a_probe_holding_another_entry_is_rebuilt(tmp_path: Path, stray: str) ->
     )
 
 
+def test_another_content_s_probe_is_swept_once_it_is_an_hour_old(
+    tmp_path: Path,
+) -> None:
+    """ENG-207's round 8: a probe folder stayed per change of the probe's
+    content (``git-probe-<digest>``), and so did the one before probes
+    were named so (``git-probe``). An ask sweeps each last changed an
+    hour or more before (`gitsystem.REASK_SECONDS`, its own time, a link
+    not followed: unlinked, and one inside a folder too), and keeps a
+    younger one, the probe it asks in and any other name."""
+    truth = _this_git()
+    where = gitsystem._where()
+    assert where is not None
+    state = Path(where[0]).parent
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_bytes(b"x")
+    old = time.time() - gitsystem.REASK_SECONDS - 60
+
+    def aged(path: Path) -> Path:
+        os.utime(path, (old, old), follow_symlinks=False)
+        return path
+
+    def probe(name: str) -> Path:
+        path = state / name
+        (path / "remotes").mkdir(parents=True)
+        (path / "remotes" / "p").write_bytes(b"URL: gh:old\n")
+        (path / "config").write_bytes(b"[core]\n\tbare = true\n")
+        return path
+
+    legacy = aged(probe("git-probe"))
+    stale = aged(probe("git-probe-0123456789abcdef"))
+    young = probe("git-probe-fedcba9876543210")
+    named_otherwise = aged(probe("git-probe-notes"))
+    stale_file = state / "git-probe-00000000000000ff"
+    stale_file.write_bytes(b"")
+    aged(stale_file)
+    aged(state / gitsystem.PROBE_FOLDER)
+    links = sys.platform != "win32"
+    link = state / "git-probe-aaaaaaaaaaaaaaaa"
+    holding = state / "git-probe-bbbbbbbbbbbbbbbb"
+    if links:
+        link.symlink_to(outside, target_is_directory=True)
+        aged(link)
+        probe(holding.name)
+        (holding / "out").symlink_to(outside, target_is_directory=True)
+        aged(holding)
+
+    assert _ask_probe() == truth
+    assert not legacy.exists() and not stale.exists() and not stale_file.exists()
+    assert young.is_dir() and named_otherwise.is_dir()
+    assert gitsystem._probe_holds(str(state / gitsystem.PROBE_FOLDER))
+    if links:
+        assert not os.path.lexists(link) and not holding.exists()
+        assert (outside / "keep").read_bytes() == b"x"
+
+
 @pytest.mark.parametrize(
     ("said", "legacy", "resets"),
     [

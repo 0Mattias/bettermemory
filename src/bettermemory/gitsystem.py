@@ -63,6 +63,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -171,6 +172,9 @@ def _probe_name(files: dict[str, bytes], folders: tuple[str, ...]) -> str:
 
 
 PROBE_FOLDER = _probe_name(_PROBE_FILES, _PROBE_FOLDERS)
+#: The names the probe has had: `_probe_name`'s, of any content, and the
+#: one folder before it was named by its content (`_sweep_probes`).
+_PROBE_NAMES = re.compile(r"git-probe(?:-[0-9a-f]{16})?")
 #: What of the probe is stamped around git's answer: the folder, its
 #: folders and its files (`_probe_stamps`).
 _PROBE_STAMPED = ("", *_PROBE_FOLDERS, *_PROBE_FILES)
@@ -531,11 +535,13 @@ def _probe_repository() -> tuple[str, list[Stamp | None]] | None:
     none is read). Where it does not hold so (`_probe_holds`), what does
     not belong is removed and it is built again, once, rather than left
     unknown and asked again each `RETRY_SECONDS`; None where it still
-    does not, the folder is a link, or it cannot be made so."""
+    does not, the folder is a link, or it cannot be made so. Another
+    content's probe beside it is swept first (`_sweep_probes`)."""
     from . import _daemon_client
 
     try:
         root = _daemon_client.resolve_state_dir() / PROBE_FOLDER
+        _sweep_probes(root.parent)
         for _attempt in range(2):
             ensure_owner_only_dir(root, parents=True)
             if root.is_symlink():
@@ -558,6 +564,34 @@ def _probe_repository() -> tuple[str, list[Stamp | None]] | None:
     except (OSError, ValueError):
         pass
     return None
+
+
+def _sweep_probes(state: Path) -> None:
+    """Remove from the state directory `state` each probe of another
+    name (`_PROBE_NAMES`: of other content, or the one folder before
+    probes were named by it) last changed `REASK_SECONDS` or more before
+    now (its own modification time, read without following a link): one
+    would stay per change of the probe's content (ENG-207's round 8). A
+    link is unlinked, never followed, and a folder removed with what it
+    holds, a link in it unlinked. A build that still asks in its probe finds it gone, says
+    nothing for that ask (its stamps move) and builds it again; one asking
+    within the hour keeps it, younger."""
+    if not state.is_dir():
+        return
+    now = time.time()
+    for entry in list(os.scandir(state)):
+        if entry.name == PROBE_FOLDER or not _PROBE_NAMES.fullmatch(entry.name):
+            continue
+        try:
+            st = entry.stat(follow_symlinks=False)
+            if now - st.st_mtime < REASK_SECONDS:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                shutil.rmtree(entry.path)
+            else:
+                os.unlink(entry.path)
+        except OSError:
+            continue
 
 
 def _probe_stamps(root: str) -> list[Stamp | None]:
