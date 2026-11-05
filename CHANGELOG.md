@@ -1555,16 +1555,24 @@ eighteenth was built.
   on the Windows runner such a copy's re-mint was read as the host's.
   Rung 2 reads no re-mint from stamps kept in FILETIME's 100 ns ticks
   (every mtime and ctime a whole tick, not every one a whole second: NTFS
-  as Windows reads it, and SMB, whose Linux client reads ChangeTime as
-  the ctime), the checkout's, the sighting's or the other machine's,
-  and the sighting is read as without the rule (fail closed). A Windows
-  host reads birth time, so its own sightings are as before; a container
-  without birth time reading a Windows host's files over a share
-  registers a second checkout as in 9.0.0rc18. B still reads them, as a
-  view's token keeps B standing, which asks. A file system keeping
-  microseconds reads as ticks, and one keeping nanoseconds does by
-  chance (a linked worktree's one stamp once in 100, a checkout's two
-  once in 10,000). A snapshot, an overlay's
+  as Windows reads it, and a view of it without birth time, WSL2's 9p
+  (drvfs), which Docker Desktop's WSL2 bind mounts go through), the
+  checkout's, the sighting's or the other machine's, and the sighting
+  is read as without the rule (fail closed). A Windows host reads birth
+  time, so its own sightings are as before, and so does an SMB view (the
+  Linux client reads the server's CreationTime as the birth time), which
+  never reaches the rule; a container without birth time reading a
+  Windows host's files over drvfs registers a second checkout as in
+  9.0.0rc18. Whether drvfs reads ChangeTime as the ctime is not
+  measured. B still reads them, as a view's token keeps B standing,
+  which asks. A file system keeping microseconds reads as ticks, and
+  one keeping nanoseconds does by chance: a linked worktree's one stamp
+  about once in 100; a checkout's two on APFS (Apple Silicon) about once
+  in 2,400 (3 in 5,000 measured), as `git init` writes them a short gap
+  apart that is a whole tick 4.2% of the time on the 24 MHz clock; on a
+  coarse-clock Linux file system such as ext4 about once in 100, its two
+  files given one time (inferred). Each fails closed (ENG-235). A
+  snapshot, an overlay's
   lower layer or a block-level clone keeps the ctimes, but the rule
   reads only a token found in the checkout's own git directory, which
   with birth time the checkout takes anyway, so it takes no token a

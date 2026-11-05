@@ -186,9 +186,12 @@ def _ticked(stamps: Collection[Sequence[object]]) -> bool:
     """Whether `stamps` hold times kept in FILETIME's 100 ns ticks: every
     mtime and ctime a whole tick, not every one a whole second (a share
     that rounds them, which `_same_file` reads within the second). NTFS
-    and ReFS keep a file's times so, and SMB carries them so (the Linux
-    client's ctime is the server's ChangeTime). There a change time is no
-    ctime: any caller that may write a file's attributes sets it (MS-FSA
+    and ReFS keep a file's times so, and a view of them without birth
+    time carries them so: WSL2's 9p (drvfs), which Docker Desktop's WSL2
+    bind mounts go through (whether it reads ChangeTime as the ctime is
+    not measured). An SMB view reaches no rung 2: the Linux client reads
+    the server's CreationTime as the birth time. There a change time is
+    no ctime: any caller that may write a file's attributes sets it (MS-FSA
     2.1.5.15.2, FileBasicInformation; CPython's `os.chmod` on Windows
     writes back the one it read), and a CopyFile2 copy (Explorer, `copy`,
     `shutil.copy2`) keeps the source's. Such stamps cannot tell a view of
@@ -196,10 +199,14 @@ def _ticked(stamps: Collection[Sequence[object]]) -> bool:
     closed: the sighting is read as without the rule. B still reads them
     (`_view_made`), as there a view's token keeps B standing, which asks
     where T names another project. A file system keeping microseconds
-    gives such stamps too, and one keeping nanoseconds by chance: one
-    time in 100 is a whole tick, and a file written once has one time for
-    both, so a linked worktree's one stamp reads so once in 100 and a
-    checkout's two once in 10,000. Each fails closed."""
+    gives such stamps too, and one keeping nanoseconds by chance, as a
+    file written once has one time for both: a linked worktree's one
+    stamp about once in 100; a checkout's two on APFS (Apple Silicon)
+    about once in 2,400 (3 in 5,000 measured), as `git init` writes them
+    a short gap apart that is a whole tick 4.2% of the time on the 24 MHz
+    clock; and on a coarse-clock Linux file system such as ext4 about
+    once in 100, its two files given one time (inferred). Each fails
+    closed (ENG-235)."""
     times: list[int] = []
     for s in stamps:
         for t in (s[2], s[3]) if len(s) == 5 else ():

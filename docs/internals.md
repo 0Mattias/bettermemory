@@ -1194,23 +1194,30 @@ CPython's `os.chmod` on Windows writes back the change time it read, so
 it moves none), and a CopyFile2 copy (`shutil.copy2` on Windows,
 Explorer, `copy`) keeps the source's: on the Windows runner a copy made
 so read as the host's files, and its re-mint carried into the host's git
-directory was read as the host's (`object+remint`). The Linux SMB client
-reads the server's ChangeTime as a file's ctime (`cifs_NTtimeToUnix(...
-ChangeTime)` in fs/smb/client/inode.c), so a share's view of such files
-carries the same. Rung 2 therefore reads no re-mint from stamps kept in
-FILETIME's 100 ns ticks (`_ticked`: every mtime and ctime a whole tick,
-not every one a whole second), the checkout's, the sighting's or the
-other machine's record's, and the sighting is read as without the rule:
+directory was read as the host's (`object+remint`). A view of such files
+without birth time carries the same grain: WSL2's 9p (drvfs), which
+Docker Desktop's WSL2 bind mounts go through, keeps times to the 100 ns
+(whether it reads ChangeTime as the ctime is not measured). An SMB view
+reaches no rung 2: the Linux client reads the server's CreationTime as
+the birth time (`cifs_getattr` sets `STATX_BTIME`, fs/smb/client/inode.c),
+though it reads ChangeTime as the ctime. Rung 2 therefore reads no
+re-mint from stamps kept in FILETIME's 100 ns ticks (`_ticked`: every
+mtime and ctime a whole tick, not every one a whole second), the
+checkout's, the sighting's or the other machine's record's, and the
+sighting is read as without the rule:
 a second checkout is registered as in 9.0.0rc18 (fail closed). A Windows
 host reads birth time, so its own sightings take any token found at its
 object anyway; what this closes is a container without birth time
-reading a Windows host's files over a share. B still reads such stamps
+reading a Windows host's files over drvfs. B still reads such stamps
 (`_view_made`), as there a view's token keeps B standing, which asks
 where T names another project. A file system keeping microseconds reads
-as ticks, and one keeping nanoseconds does by chance: one time in 100 is
-a whole tick, and a file written once has one time for both, so a linked
-worktree's one stamp reads so once in 100 and a checkout's two once in
-10,000. Each fails closed.
+as ticks, and one keeping nanoseconds does by chance, as a file written
+once has one time for mtime and ctime: a linked worktree's one stamp
+about once in 100; a checkout's two on APFS (Apple Silicon) about once
+in 2,400 (3 in 5,000 measured), as `git init` writes them a short gap
+apart that is a whole tick 4.2% of the time on the 24 MHz clock; and on
+a coarse-clock Linux file system such as ext4 about once in 100, its two
+files given one time (inferred). Each fails closed (ENG-235).
 
 A copy landed on the checkout's freed inode number is the one object
 the rule's reading of the stamps cannot tell from the checkout's own,
@@ -1447,12 +1454,11 @@ their ctimes, so the second checkout is registered as before. A chain of
 re-mints
 whose last step the store missed, after steps the checkout never saw,
 ends in a token no record holds: finding the record that held it two
-writes back would need an index of every token a record held. Over SMB
-a Linux view reads ChangeTime as the ctime (from the client's source);
-whether Docker Desktop's share of a Windows folder does is not measured.
-Stamps kept to the whole second on both sides are not read as ticks
-either, so two machines viewing NTFS files over shares that round to
-the second can take a CopyFile2 copy for a view. On a share that keeps
+writes back would need an index of every token a record held. Whether
+WSL2's drvfs reads ChangeTime as the ctime is not measured. Stamps kept
+to the whole second on both sides are not read as ticks either, so two
+machines viewing NTFS files over shares that round to the second can
+take a CopyFile2 copy for a view. On a share that keeps
 times to the second, a copy made
 within the second of the stamped files' last change matches them. A
 view's liveness (the daemon's read and the client's answer) still reads
