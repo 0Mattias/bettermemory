@@ -342,8 +342,9 @@ class _DriftPass:
     path and the home directory ``~`` expands to
     (`origin.resolve_repo_pathspecs` reads both); git's configuration
     outside the repository's ``config`` and ``config.worktree`` (the
-    global and system files, a file an include names, the environment, and
-    what they set: a ``core.attributesFile`` naming a file other than
+    global and system files, a file an include there names, the
+    environment, and what they set: a ``core.attributesFile`` naming a
+    file other than
     the default, a diff driver, the program a textconv runs); the system
     attributes file; a shallow clone deepened under an unchanged head
     (replace refs and grafts move no answer:

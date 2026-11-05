@@ -3094,6 +3094,78 @@ def test_core_attributesfile_in_config_worktree_keeps_the_hit_out_of_the_memo(
     assert cached == uncached
 
 
+@needs_driver_algorithm
+@pytest.mark.usefixtures("keyed_by")
+@pytest.mark.parametrize("where", ["config", "config.worktree"])
+@pytest.mark.parametrize("section", ["include", "includeIf"])
+def test_a_diff_driver_an_included_file_sets_keeps_the_hit_out_of_the_memo(
+    section: str,
+    where: str,
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repository config that includes another file (``include.path``,
+    or ``includeIf.<condition>.path`` where the condition holds) has git
+    read that file as its own, and a diff driver set there moves the patch
+    stream while no stat of the attribute files sees it. The attribute
+    files decline on any variable of either section, in config or
+    config.worktree, as on an ``[attr`` section, so the hits with governed
+    claims stay out of the memo and an edit of the included file is read
+    by the next attach, whether the files or git's answer key the rows
+    (ENG-220's review, round F)."""
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    (repo / ".gitattributes").write_text(_LEVER, encoding="utf-8")
+    _git(repo, "config", "--unset", "diff.lever.algorithm")
+    included = tmp_path / "included.cfg"
+    included.write_text('[diff "lever"]\n\talgorithm = myers\n', encoding="utf-8")
+    header = "[include]" if section == "include" else '[includeIf "onbranch:main"]'
+    if where == "config":
+        with (repo / ".git" / "config").open("a", encoding="utf-8") as handle:
+            handle.write(f"{header}\n\tpath = {included}\n")
+    else:
+        _worktree_config(repo, f"{header}\n\tpath = {included}\n")
+    assert _git(repo, "config", "--get", "diff.lever.algorithm") == "myers", (
+        "premise: git reads the included file"
+    )
+    assert origin.attribute_files_signature(repo, repo) is None
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _counts(before, ids) == [0, 0]
+
+    included.write_text('[diff "lever"]\n\talgorithm = patience\n', encoding="utf-8")
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [2, 2], "premise: the included file moved git"
+    assert cached == uncached
+
+
+@pytest.mark.parametrize(
+    ("text", "includes"),
+    [
+        (b"[include]\n\tpath = x.cfg\n", True),
+        (b'[includeIf "gitdir:~/src/"]\n\tpath = x.cfg\n', True),
+        (b"[InClUdE]\n\tPath = x.cfg\n", True),
+        (b'[branch "include"]\n\tmerge = refs/heads/include\n', False),
+        (b"[core]\n\tinclude = x\n", False),
+        (b"# [include] path = x.cfg\n[core]\n\tbare = false\n", False),
+    ],
+    ids=["include", "includeIf", "any case", "a branch", "a key", "a comment"],
+)
+def test_an_include_is_read_as_git_reads_the_section(
+    text: bytes, includes: bool
+) -> None:
+    """Whether a config sets a variable of an include section is read off
+    the names git reads (`origin_gitfiles._config_entries`): the
+    section in any case, never a branch, a key or a comment that holds the
+    word."""
+    from bettermemory import origin_gitfiles
+
+    assert origin_gitfiles._facts_of(text).includes is includes
+
+
 @files_only
 def test_config_worktree_is_read_only_where_the_extension_is_on(
     git_config_home: Path, tmp_path: Path

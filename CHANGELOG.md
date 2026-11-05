@@ -772,6 +772,19 @@ eighteenth was built.
   `src/bettermemory/origin_history.py`, `tests/test_unread_history.py`,
   `tests/test_commit_drift_cache.py`)
 
+- **A config that includes another file keys no attribute files
+  (ENG-220).** The attribute files a governed hit keys on declined on a
+  config naming an attributes file or an `[attr` section, but not on an
+  include: a diff driver set in a file that `include.path` or
+  `includeIf.<condition>.path` names moves the patch stream while no stat
+  of the attribute files sees it, so the per-hit memo kept the count the
+  driver's old algorithm gave (the review's round F). The attribute files
+  now decline where `config` or `config.worktree` sets any variable of an
+  `include` or `includeIf` section, read off the names git reads, so such
+  hits stay out of the memo and an edit of the included file is read on
+  the next search. (`src/bettermemory/origin_gitfiles.py`,
+  `src/bettermemory/_response.py`, `tests/test_commit_drift_cache.py`)
+
 - **No window passes a command line's bound (ENG-220).** The patch
   stream and the split's listing named up to 256 commits on git's
   command line (10,496 characters), and they and the two path-filtered

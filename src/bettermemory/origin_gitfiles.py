@@ -52,19 +52,26 @@ class _ConfigFacts:
     sets as git reads them (`_config_variable_names`; None where git
     refuses the file or it holds a NUL byte), whether it names an
     attributes file or an attribute tree (``attributesfile`` or ``[attr``
-    anywhere in it, in any case), whether a line names ``bare`` with
-    anything but a plain false, and whether ``git rev-parse`` may die
+    anywhere in it, in any case), whether it sets a variable of an
+    ``include`` or ``includeIf`` section (whose file may set a diff driver
+    or anything else no stat here covers), whether a line names ``bare``
+    with anything but a plain false, and whether ``git rev-parse`` may die
     reading it (`_rev_parse_dies`; ENG-207's round 7)."""
 
     names: frozenset[bytes] | None
     attributes_elsewhere: bool
     bare_moves: bool
     git_dies: bool = False
+    includes: bool = False
 
 
 _NO_CONFIG = _ConfigFacts(
     names=frozenset(), attributes_elsewhere=False, bare_moves=False
 )
+
+#: The sections whose ``path`` names another file git reads as config,
+#: as `gitconfig.git_entries` names them (lower case).
+_INCLUDE_SECTIONS = (b"include.", b"includeif.")
 
 
 def _facts_of(data: bytes) -> _ConfigFacts:
@@ -82,6 +89,8 @@ def _facts_of(data: bytes) -> _ConfigFacts:
             _rev_parse_dies(n, None if v is None else v.split(b"\0", 1)[0])
             for n, v in entries
         ),
+        includes=entries is not None
+        and any(n.startswith(_INCLUDE_SECTIONS) for n, _v in entries),
     )
 
 
@@ -872,6 +881,9 @@ def attribute_files_signature(
     that cannot be read, one that mentions ``attributesfile`` or an
     ``[attr`` section (a ``core.attributesFile`` or ``attr.tree`` there
     sends git to a file or a tree these stats do not cover), one that sets
+    a variable of an ``include`` or ``includeIf`` section (the file it
+    names may set a diff driver, an attributes file or anything else, and
+    no stat here covers it: ENG-220's review, round F), one that sets
     ``log.follow`` (it made the single-pathspec patch stream follow a
     claimed file across a rename and diff the renaming commit with the
     attributes of the rename source's path, which no chain of the claimed
@@ -917,6 +929,7 @@ def attribute_files_signature(
         if (
             each.names is None
             or each.attributes_elsewhere
+            or each.includes
             or b"log.follow" in each.names
         ):
             return None
