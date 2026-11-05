@@ -16,6 +16,10 @@ only a toplevel that is the folder membership roots the checkout at
 (`gitfile_rule.toplevel_agrees`), so the two never name two roots whatever
 that reading misses. Every expectation is git's own answer first, read from
 a real git: its toplevel, and the variables ``git config --list`` lists.
+The one exception is a compatibility object format the same as the object
+format, which a git built with Rust aborts on: git's source is the premise
+there, and the git on PATH is asked only under
+``BETTERMEMORY_TEST_GIT_ABORTS=1``.
 """
 
 from __future__ import annotations
@@ -458,41 +462,56 @@ def test_an_extension_git_reads_keeps_the_root(tmp_path: Path, case: str) -> Non
 
 _BELOW_0 = b"[core]\n\trepositoryformatversion = -2\n"
 
-#: A compatibility object format under a version git keeps it at (1, and
-#: below -1): one other than the object format git reads as it was built
-#: (ENG-207's round 8; git 2.54 built without Rust dies on it,
+#: A compatibility object format other than the object format under a
+#: version git keeps it at (1, and below -1), which git reads as it was
+#: built (ENG-207's round 8; git 2.54 built without Rust dies on it,
 #: "compatibility hash algorithm support requires Rust", git 2.56 built
-#: with it reads it), and one the same, a "_same" case, no git reads.
+#: with it reads it).
 EXTENSION_BUILT = {
     "v1_differ": _V1 + b"[extensions]\n\tcompatObjectFormat = sha256\n",
-    "v1_same": _V1 + b"[extensions]\n\tcompatObjectFormat = sha1\n",
     "below_0_differ": _BELOW_0 + b"[extensions]\n\tcompatObjectFormat = sha256\n",
+}
+
+#: A compatibility object format the same as the object format under those
+#: versions, which no git reads (ENG-207's review of round 8). git 2.44
+#: knows no such extension, and dies on it under format 1 as on any it
+#: does not know (setup.c in v2.44.0). From git 2.45 to 2.53
+#: repository.c's ``repo_set_compat_hash_algo`` stops at
+#: ``BUG("hash_algo and compat_hash_algo match")``. From 2.54 (repository.c
+#: in v2.54.0 and on master) a build with Rust stops at the same ``BUG()``,
+#: and one without it dies on any compatibility object format
+#: ("compatibility hash algorithm support requires Rust"). usage.c's
+#: ``BUG_vfl`` ends in ``abort()``: a crash report or a core for each git
+#: run on such a repository.
+EXTENSION_SAME = {
+    "v1_same": _V1 + b"[extensions]\n\tcompatObjectFormat = sha1\n",
     "below_0_same": _BELOW_0 + b"[extensions]\n\tcompatObjectFormat = sha1\n",
 }
+
+#: The opt-in to tests that run the git on PATH where it may abort.
+_GIT_ABORTS = pytest.mark.skipif(
+    os.environ.get("BETTERMEMORY_TEST_GIT_ABORTS") != "1",
+    reason="runs git where a build with Rust aborts; set BETTERMEMORY_TEST_GIT_ABORTS=1",
+)
 
 
 @pytest.mark.parametrize("case", sorted(EXTENSION_BUILT))
 def test_a_compatibility_object_format_is_read_as_this_git_reads_it(
     tmp_path: Path, runs: list[Path | None], case: str
 ) -> None:
-    """A ``compatObjectFormat`` under a version git keeps it at is read as
-    the git on PATH reads it: one other than the object format as its
+    """A ``compatObjectFormat`` other than the object format, under a
+    version git keeps it at, is read as the git on PATH reads it, as its
     build decides, asked of that git in the probe (`gitsystem.reads_compat`,
-    under format 1), and one the same as dying, which no git reads (the
-    premise, here of the git on PATH; ENG-207's review of round 8). Where
-    git reads it and names the folder its toplevel, both readers root the
-    checkout there; where it dies, neither names a root, and no git runs
-    in the folder. The readers refused each, and the test took git 2.54's
-    answer, dying, for its premise, which git 2.56 built with Rust does
-    not give (ENG-207's round 8, CI)."""
+    under format 1). Where git reads it and names the folder its toplevel,
+    both readers root the checkout there; where it dies, neither names a
+    root, and no git runs in the folder. The readers refused each, and the
+    test took git 2.54's answer, dying, for its premise, which git 2.56
+    built with Rust does not give (ENG-207's round 8, CI)."""
     app, _other = _apps(tmp_path)
     _extend(app, case, EXTENSION_BUILT[case])
     git_reads = _toplevel(app).returncode == 0
-    if case.endswith("_same"):
-        assert not git_reads, "premise: no git reads the pairing"
-    else:
-        said = gitsystem.reads_compat()
-        assert said is git_reads, "the probe answers as git reads the repository"
+    said = gitsystem.reads_compat()
+    assert said is git_reads, "the probe answers as git reads the repository"
     runs.clear()
 
     cap = _membership(app)
@@ -505,6 +524,54 @@ def test_a_compatibility_object_format_is_read_as_this_git_reads_it(
     assert cap.detail.startswith("repository format: "), cap.detail
     _no_origin(app)
     assert [cwd for cwd in runs if _inside(cwd, app)] == []
+
+
+@pytest.mark.parametrize("case", sorted(EXTENSION_SAME))
+def test_a_compatibility_object_format_the_same_is_refused_by_both_readers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runs: list[Path | None],
+    case: str,
+) -> None:
+    """A ``compatObjectFormat`` the same as the object format, under a
+    version git keeps it at, is read as git dying, which git's source
+    decides (`EXTENSION_SAME`; ENG-207's review of round 8): neither reader
+    names a root, the git on PATH is not asked how it reads the pairing,
+    and no git runs in the folder. No git runs on the repository here at
+    all, since a build with Rust aborts there; the git on PATH is asked of
+    it only under ``BETTERMEMORY_TEST_GIT_ABORTS=1``
+    (`test_git_dies_on_a_compatibility_object_format_the_same`)."""
+    app, _other = _apps(tmp_path)
+    _extend(app, case, EXTENSION_SAME[case])
+    asked: list[bool] = []
+
+    def reads() -> bool | None:
+        asked.append(True)
+        return True
+
+    monkeypatch.setattr(gitsystem, "reads_compat", reads)
+    runs.clear()
+
+    cap = _membership(app)
+    assert cap.state == location.INDETERMINATE
+    assert cap.detail.startswith("repository format: "), cap.detail
+    _no_origin(app)
+    assert [cwd for cwd in runs if _inside(cwd, app)] == []
+    assert asked == []
+
+
+@_GIT_ABORTS
+@pytest.mark.parametrize("case", sorted(EXTENSION_SAME))
+def test_git_dies_on_a_compatibility_object_format_the_same(
+    tmp_path: Path, case: str
+) -> None:
+    """The premise of `EXTENSION_SAME`, of the git on PATH: it names no
+    toplevel of a checkout whose ``compatObjectFormat`` is its object
+    format. A git built with Rust aborts here, so the test runs only under
+    ``BETTERMEMORY_TEST_GIT_ABORTS=1``."""
+    app, _other = _apps(tmp_path)
+    _extend(app, case, EXTENSION_SAME[case])
+    assert _toplevel(app).returncode != 0, "premise: no git reads the pairing"
 
 
 #: How a git may read a compatibility object format other than the object

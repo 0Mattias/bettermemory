@@ -1116,17 +1116,29 @@ def test_whether_git_reads_a_compatibility_object_format_is_git_s_answer(
     assert entry["compat_differ"] is git_reads
 
 
+#: The opt-in to tests that run the git on PATH where it may abort.
+_GIT_ABORTS = pytest.mark.skipif(
+    os.environ.get("BETTERMEMORY_TEST_GIT_ABORTS") != "1",
+    reason="runs git where a build with Rust aborts; set BETTERMEMORY_TEST_GIT_ABORTS=1",
+)
+
+
 def test_a_compatibility_object_format_the_same_is_read_as_git_dying_unasked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ENG-207's review of round 8: no git reads a repository whose
-    ``compatObjectFormat`` is its object format (git 2.44 and earlier know
-    no such extension, a build without Rust dies on any, and every other
-    stops at repository.c's ``BUG()``, which aborts), so the format is
-    read as one git dies on, and git is not asked: asking it aborted a git
-    at each ask, a crash report or a core each time. The premise is the
-    git on PATH, which dies on such a repository of its own making."""
-    assert not _compat_repository(tmp_path / "bare.git", "sha1")
+    ``compatObjectFormat`` is its object format, so the format is read as
+    one git dies on, and git is not asked: asking it aborted a git at each
+    ask, a crash report or a core each time. The premise is git's source.
+    git 2.44 knows no such extension, and dies on it under format 1 as on
+    any it does not know (setup.c in v2.44.0). From git 2.45 to 2.53
+    repository.c's ``repo_set_compat_hash_algo`` stops at
+    ``BUG("hash_algo and compat_hash_algo match")``. From 2.54 (repository.c
+    in v2.54.0 and on master) a build with Rust stops at the same
+    ``BUG()``, and one without it dies on any compatibility object format.
+    usage.c's ``BUG_vfl`` ends in ``abort()``, so the git on PATH is asked
+    only under ``BETTERMEMORY_TEST_GIT_ABORTS=1``
+    (`test_git_dies_on_a_repository_whose_compat_format_is_its_own`)."""
 
     def asked() -> bool | None:
         raise AssertionError("git asked of a pairing no git reads")
@@ -1143,6 +1155,17 @@ def test_a_compatibility_object_format_the_same_is_read_as_git_dying_unasked(
     implied = b"[core]\n\trepositoryformatversion = 1\n"
     implied += b"[extensions]\n\tcompatObjectFormat = sha1\n"
     assert gitfile_rule.object_format(implied) is None
+
+
+@_GIT_ABORTS
+def test_git_dies_on_a_repository_whose_compat_format_is_its_own(
+    tmp_path: Path,
+) -> None:
+    """The premise of the reading above, of the git on PATH: it dies on a
+    repository of its own making whose ``compatObjectFormat`` is its
+    object format. A git built with Rust aborts here, so the test runs
+    only under ``BETTERMEMORY_TEST_GIT_ABORTS=1``."""
+    assert not _compat_repository(tmp_path / "bare.git", "sha1")
 
 
 def _pairing(config: bytes) -> tuple[bytes, bytes | None]:
