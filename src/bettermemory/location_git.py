@@ -531,10 +531,12 @@ def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
       longest matching prefix wins, an empty one matching every URL, and
       of equal ones the first under the base git met first.
 
-    `declined` says why the files do not settle what git reads: git dies
-    reading the config (a line its parser refuses, an include it cannot
-    read or follow, a remote variable its reader of remotes refuses,
-    `gitconfig.ConfigValues.dies`), or reads more than is read here; git
+    `declined` says why the files do not settle what git reads: git's
+    reader of remotes dies reading the config (a line its parser refuses,
+    an include it cannot read or follow, a remote variable it refuses,
+    `gitconfig.ConfigValues.dies`; a value only another reader refuses,
+    as ``git rev-parse`` a ``core.excludesFile`` with no value, is read
+    past, as ``git remote`` reads past it), or reads more than is read here; git
     refuses the configuration (a remote URL in a file a hasconfig
     collection forbids); the remote URLs a ``hasconfig:`` condition is
     matched against are not settled; an include under a condition not

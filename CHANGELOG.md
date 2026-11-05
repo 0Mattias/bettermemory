@@ -1023,11 +1023,15 @@ eighteenth was built.
   2.54's parser parses it, with its includes, under the reader's size (2
   MiB), depth and file bounds, so a remote alias set there keys the
   remote as git fetches it, an equal prefix read first winning as in
-  git. Where git dies reading the config (a line its parser refuses, a
+  git. Where git's reader of remotes (`git remote`, `git remote
+  get-url`) dies reading the config (a line its parser refuses, a
   `url`, `insteadOf` or `include.path` with no value, an include it
-  cannot read or past its depth, a remote or branch variable git's
-  reader of remotes refuses), the capture declines (indeterminate, not
-  kept) and the origin records no repository; so it does where git's
+  cannot read or past its depth, a remote or branch variable it
+  refuses), the capture declines (indeterminate, not kept) and the
+  origin records no repository; where only another reader dies (`git
+  rev-parse` on a value git's default config refuses, a `core.excludesFile`
+  with no value), that reader reads on, and the capture reads the
+  repository and keys the remotes `git remote` lists. So it declines where git's
   reader of promisor remotes, which `git status` and `git fetch` run,
   dies (a `remote.<name>.partialCloneFilter` with no value, a
   `remote.<name>.promisor` that is no boolean), though the origin, whose

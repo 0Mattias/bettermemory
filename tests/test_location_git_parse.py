@@ -181,6 +181,52 @@ def test_where_git_s_reader_of_promisor_remotes_dies_the_capture_declines(
         assert _keys(repo) == {_key(repo, "gh:acme/lib")}
 
 
+#: Values of the repository's config only ``git rev-parse`` dies on, of
+#: git's default config, which git's reader of remotes reads past, in the
+#: config, in the global one and in an include (ENG-207's round 8), and
+#: one only the reader of remotes dies on.
+REV_PARSE_ONLY = {
+    "excludesfile": ("local", "[core]\n\texcludesfile\n"),
+    "quotepath": ("local", "[core]\n\tquotepath = maybe\n"),
+    "user_name": ("global", "[user]\n\tname\n"),
+    "push_default": ("include", "[push]\n\tdefault = bogus\n"),
+}
+
+
+@pytest.mark.parametrize("case", list(REV_PARSE_ONLY))
+def test_where_only_rev_parse_dies_the_capture_keys_what_git_remote_lists(
+    tmp_path: Path, case: str
+) -> None:
+    """The capture declines where git's reader of remotes dies, not
+    wherever git does: at each of `REV_PARSE_ONLY` ``git rev-parse`` dies
+    while ``git remote`` and ``git remote get-url`` read on, and the
+    capture reads the repository and keys the URL they print, which the
+    docs said it declined at ("where git dies")."""
+    repo = _repo(tmp_path / "repo")
+    where, text = REV_PARSE_ONLY[case]
+    _write(repo, where, text)
+    done = _git(repo, "rev-parse", "--show-toplevel", "HEAD", check=False)
+    assert done.returncode != 0, "premise: rev-parse dies"
+    assert _listed_urls(repo) == {"origin": ["gh:acme/lib"]}, (
+        "premise: git remote reads"
+    )
+    assert _keys(repo) == {_key(repo, "gh:acme/lib")}
+
+
+def test_where_only_git_s_reader_of_remotes_dies_the_capture_declines(
+    tmp_path: Path,
+) -> None:
+    """A ``url`` with no value: ``git rev-parse`` reads on, ``git remote``
+    dies, and the capture declines (INDETERMINATE), with no key."""
+    repo = _repo(tmp_path / "repo")
+    _write(repo, "local", '[remote "origin"]\n\turl\n')
+    assert (
+        _git(repo, "rev-parse", "--show-toplevel", "HEAD", check=False).returncode == 0
+    )
+    assert _git(repo, "remote", check=False).returncode != 0, "premise: git remote dies"
+    _declines(repo, git_dies=False)
+
+
 @pytest.mark.parametrize("case", list(DIES))
 def test_where_git_dies_the_capture_declines(tmp_path: Path, case: str) -> None:
     """git dies at each of `DIES` (``git ls-remote --get-url`` exits

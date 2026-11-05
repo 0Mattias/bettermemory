@@ -475,7 +475,8 @@ name, and `url.<base>.insteadOf` from the system, the global and the
 repository's config; ENG-160, ENG-207) is read as bytes and parsed as
 git 2.54's parser parses it (`gitconfig.git_entries`, through
 `gitconfig.config_tree`), never through git, so git's `safe.directory`
-refusal never applies. Where git dies reading it (a line its parser
+refusal never applies. Where git's reader of remotes (`git remote`,
+`git remote get-url`) dies reading it (a line its parser
 refuses, a `url`, `insteadOf` or `include.path` with no value, an
 include it cannot read, a directory, `~user` naming no user, which is
 any user under Git for Windows, whose `getpwnam` names none (a
@@ -485,7 +486,11 @@ refuses: a string with no value, a boolean that is none, a refspec it
 cannot parse, and a promisor variable promisor-remote.c refuses), the
 capture declines (indeterminate, not kept) and the
 origin, which asks git, records no repository; never a folder outside
-one (ENG-207's round 6). A global config git may not read is skipped,
+one (ENG-207's round 6). Where only another of git's readers dies (`git
+rev-parse` on a value its default config refuses, a `core.excludesFile`
+or `user.name` with no value, which the reader of remotes reads past),
+the capture reads the repository and keys the remotes `git remote`
+lists, as git lists them (ENG-207's round 8). A global config git may not read is skipped,
 as git skips it; a system config or an include it may not read is one
 git dies at. The system config files are found as git finds
 them (`gitsystem.py`): none under `GIT_CONFIG_NOSYSTEM` set true; else
