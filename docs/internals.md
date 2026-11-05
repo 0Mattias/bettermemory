@@ -1175,7 +1175,7 @@ read afresh. A linked worktree's git directory holds neither
 instead (one stat, where the two missing files took two), and a
 worktree's record without stamps takes them at its next proven
 sighting. On Windows a stamp's ctime is NTFS's ChangeTime, read through
-`GetFileInformationByHandleEx` (`location_git.basic_info_ns`), as
+`GetFileInformationByHandleEx` (`location_stamps.basic_info_ns`), as
 `os.stat`'s ctime there is the creation time; a file whose ChangeTime
 cannot be read is not stamped, so the field holds a change time or
 nothing (every reader of a stamp, an older release's among them, takes
@@ -2199,9 +2199,11 @@ health, and `membership_portable.py` export and import. `location.py`
 captures where a caller stands, from files, and resolves it under a
 per-location lock, and `location_git.py` holds its readers: git's
 discovery and remotes, the `Capture` model and its token codec, the
-HEAD, ref, stamp and manifest readers and the history reader,
+HEAD, ref and manifest readers and the history reader,
 `location_reads.py` the bounded reads of recorded paths (a view's
-liveness, a root's probe; ENG-156), and `location_witness.py` the
+liveness, a root's probe; ENG-156), `location_stamps.py` a git
+directory's init stamps (amendment A2, ENG-215), and
+`location_witness.py` the
 witness exchange's messages (design 8.7); `gitfile_rule.py` is the rule
 a `.git` entry is followed by (ENG-158, ENG-206), which discovery,
 `githead.py` and the origin family read alike (ENG-193), and

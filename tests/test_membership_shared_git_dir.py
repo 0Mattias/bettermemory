@@ -57,7 +57,12 @@ from typing import Any
 
 import pytest
 
-from bettermemory import checkout_token, location, location_git, membership_shared
+from bettermemory import (
+    checkout_token,
+    location,
+    location_stamps,
+    membership_shared,
+)
 from bettermemory.declare import declaring_model
 from bettermemory.location import capture, remint_answer
 from bettermemory.membership import ASK, SILENT, Declaration, Membership
@@ -361,7 +366,7 @@ def test_a_copy_on_reused_numbers_passes_only_where_the_other_side_read_it(
     copy(tmp_path / "host" / "line-old", line)
     shutil.rmtree(tmp_path / "host" / "line-old")
     target = os.path.realpath(line / ".git")
-    real = location_git._init_stamps
+    real = location_stamps._init_stamps
 
     def reused(
         git_dir: str, *, linked: bool = False
@@ -2066,10 +2071,10 @@ def test_one_file_matches_to_the_nanosecond_or_within_a_whole_second() -> None:
 def test_a_filetime_reads_as_unix_nanoseconds() -> None:
     """FILETIME counts 100 ns ticks from 1601-01-01 UTC."""
     epoch = 116_444_736_000_000_000
-    assert location_git.filetime_ns(epoch) == 0
-    assert location_git.filetime_ns(epoch + 1) == 100
-    assert location_git.filetime_ns(epoch + 10_000_000) == 1_000_000_000
-    assert location_git.filetime_ns(0) == -epoch * 100
+    assert location_stamps.filetime_ns(epoch) == 0
+    assert location_stamps.filetime_ns(epoch + 1) == 100
+    assert location_stamps.filetime_ns(epoch + 10_000_000) == 1_000_000_000
+    assert location_stamps.filetime_ns(0) == -epoch * 100
 
 
 def test_the_change_time_is_ntfs_change_time_on_windows(tmp_path: Path) -> None:
@@ -2082,12 +2087,12 @@ def test_the_change_time_is_ntfs_change_time_on_windows(tmp_path: Path) -> None:
     path = tmp_path / "description"
     path.write_text("x\n")
     if sys.platform != "win32":
-        assert location_git.basic_info_ns(str(path)) is None
-        stamp = location_git._init_stamps(str(tmp_path))[0]
+        assert location_stamps.basic_info_ns(str(path)) is None
+        stamp = location_stamps._init_stamps(str(tmp_path))[0]
         assert stamp[3] == os.stat(path).st_ctime_ns
         return
     st = os.stat(path)
-    info = location_git.basic_info_ns(str(path))
+    info = location_stamps.basic_info_ns(str(path))
     assert info is not None
     created, _accessed, written, changed = info
     assert written == st.st_mtime_ns and changed >= written
@@ -2095,9 +2100,9 @@ def test_the_change_time_is_ntfs_change_time_on_windows(tmp_path: Path) -> None:
     assert birth is None or created == birth
     os.chmod(path, stat.S_IREAD)
     try:
-        after = location_git.basic_info_ns(str(path))
+        after = location_stamps.basic_info_ns(str(path))
         assert after is not None and after[2] == written and after[3] >= changed
-        assert location_git._init_stamps(str(tmp_path))[0][3] == after[3]
+        assert location_stamps._init_stamps(str(tmp_path))[0][3] == after[3]
     finally:
         os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
 
@@ -2120,10 +2125,10 @@ def test_a_windows_stamp_holds_the_change_time_or_is_not_made(
             return None
         return (1, 2, 3, changed)
 
-    monkeypatch.setattr(location_git, "_WINDOWS", True)
-    monkeypatch.setattr(location_git, "basic_info_ns", basic)
+    monkeypatch.setattr(location_stamps, "_WINDOWS", True)
+    monkeypatch.setattr(location_stamps, "basic_info_ns", basic)
 
-    stamps = location_git._init_stamps(str(tmp_path))
+    stamps = location_stamps._init_stamps(str(tmp_path))
 
     names = ["info/exclude"] if read == "unread" else ["description", "info/exclude"]
     assert [s[0] for s in stamps] == names

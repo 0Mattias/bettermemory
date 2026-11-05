@@ -1507,7 +1507,8 @@ eighteenth was built.
   `src/bettermemory/membership_declare.py`,
   `src/bettermemory/membership_lines.py`,
   `src/bettermemory/store_membership.py`,
-  `src/bettermemory/location_git.py`, `docs/internals.md`,
+  `src/bettermemory/location_git.py`,
+  `src/bettermemory/location_stamps.py`, `docs/internals.md`,
   `tests/test_membership_shared_git_dir.py`,
   `tests/test_membership_restated.py`)
 

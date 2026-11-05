@@ -73,6 +73,7 @@ SPLIT_PARENTS: tuple[tuple[str, str], ...] = (
     ("bettermemory.origin_model", "bettermemory.origin"),
     ("bettermemory.location_witness", "bettermemory.location"),
     ("bettermemory.location_reads", "bettermemory.location_git"),
+    ("bettermemory.location_stamps", "bettermemory.location_git"),
     # The `.git` entry rule and its config reader left `location_git` so
     # `githead`, which `location_git` imports, reads the same rule (ENG-193).
     ("bettermemory.gitfile_rule", "bettermemory.location_git"),

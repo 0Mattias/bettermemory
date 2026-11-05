@@ -29,7 +29,7 @@ from the records of the other machines that see the same files:
 
 The init stamps are what tells a view from a copy: the name, mtime, ctime
 and size of `description`, `info/exclude` and a linked worktree's
-`commondir` (`location_git._init_stamps`), each namespace numbering the
+`commondir` (`location_stamps._init_stamps`), each namespace numbering the
 inode its own way. No call sets a file's ctime, so a file-level copy has
 ctimes of its own; a filesystem snapshot, an overlay's lower layer or a
 block-level clone of a VM's disk keeps them. None of the rules reads a
