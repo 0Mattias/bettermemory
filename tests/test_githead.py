@@ -238,9 +238,12 @@ def test_a_packed_refs_file_git_does_not_read_whole_declines_every_ref(
     branch unborn: the commit drift leg read not applicable where git
     fails on the history. Every such file now declines, for any ref, and
     so does one whose names git reads with a CR or as broken, or whose
-    records stand out of the order its header claims: the plumbing
-    settles (`head_unborn` None). On every platform: `locate` reads the
-    repository there too."""
+    records stand out of the order its header claims: the files read no
+    head (`head_sha` None). The branch's line stands in each, so the
+    branch is no unborn one (`head_unborn` False), whether git's search
+    finds that line, steps past it or dies (ENG-220's final review,
+    finding 1). On every platform: `locate` reads the repository there
+    too."""
     line_of, replaced, ending = _PACKED_DECLINED[case]
     repo = _init_repo(tmp_path / "repo")
     _commit(repo, "one")
@@ -266,7 +269,33 @@ def test_a_packed_refs_file_git_does_not_read_whole_declines_every_ref(
     gd = githead.locate(repo)
     assert gd is not None
     assert githead.head_sha(gd) is None
-    assert githead.head_unborn(gd) is None
+    assert githead.head_unborn(gd) is False
+    assert githead.packed_names(gd, "refs/heads/main")
+
+
+@pytest.mark.parametrize(
+    ("content", "names"),
+    [
+        (b"# pack-refs with: sorted \n%s refs/heads/main\n" % (b"a" * 40), True),
+        (b"zzzz refs/heads/main\n", True),
+        (b"zzzz refs/heads/main\r\n", True),
+        (b"%s refs/heads/main\r" % (b"a" * 40), True),
+        (b"%s refs/heads/main2\n%s refs/heads/xmain\n" % (b"a" * 40, b"b" * 40), False),
+        (b"%s refs/heads/main/x\n^%s\n" % (b"a" * 40, b"b" * 40), False),
+    ],
+)
+def test_a_packed_refs_line_names_the_ref_whatever_its_hash(
+    content: bytes, names: bool, tmp_path: Path
+) -> None:
+    """`packed_names`: a line ending in a space and the ref's name, a CR
+    allowed before its newline, names the ref whatever stands before that
+    space; a longer name, one that ends in it, and a peeled line do not."""
+    common = tmp_path / "common"
+    common.mkdir()
+    (common / "packed-refs").write_bytes(content)
+    gd = githead.GitDir(common, common, tmp_path)
+    assert githead.packed_names(gd, "refs/heads/main") is names
+    assert githead.packed_names(gd, b"refs/heads/main") is names
 
 
 def test_a_packed_refs_file_read_again_unstamped_is_digested_again(
@@ -314,7 +343,8 @@ def test_a_packed_refs_file_read_again_unstamped_is_digested_again(
     lines[at] = "zzzz refs/heads/other"
     rewrite(("\n".join(lines) + "\n").encode())
     assert githead.head_sha(gd) is None
-    assert githead.head_unborn(gd) is None
+    # The branch's own line stands: a ref that exists, not an unborn one.
+    assert githead.head_unborn(gd) is False
     assert len(judged) == 3
 
 

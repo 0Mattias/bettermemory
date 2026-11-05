@@ -565,8 +565,8 @@ _HEADS = {
     "garbage ref": (CommitDriftUnread.ERROR, 0),
     "NUL-filled ref": (CommitDriftUnread.ERROR, 0),
     "empty ref": (CommitDriftUnread.ERROR, 0),
-    "packed-refs git dies on": (CommitDriftUnread.ERROR, 1),
-    "packed-refs git dies on, a directory at the ref": (CommitDriftUnread.ERROR, 1),
+    "packed-refs git dies on": (CommitDriftUnread.ERROR, 0),
+    "packed-refs git dies on, a directory at the ref": (CommitDriftUnread.ERROR, 0),
     "chained to a missing ref": (None, 0),
     "chained to a garbage ref": (CommitDriftUnread.ERROR, 0),
     "unborn, files unsettled": (None, 2),
@@ -622,9 +622,11 @@ def test_a_ref_git_cannot_read_is_told_from_an_unborn_branch(
     neither a loose file nor a ``packed-refs`` line and reads None, as no
     history applies; a loose file of garbage, NULs or nothing is a ref that
     exists, and reads `error`, unread, never not applicable (ENG-220's
-    review, round F); a chain of symbolic refs is read to its end. Where
-    the files do not settle it (a ``packed-refs`` they decline, a reftable
-    repository, here also the files read as unsettled) the plumbing does:
+    review, round F); a chain of symbolic refs is read to its end; a
+    ``packed-refs`` they decline that holds a line naming the branch is
+    one too (ENG-220's final review, finding 1). Where the files do not
+    settle it (a reftable repository, here also the files read as
+    unsettled) the plumbing does:
     ``git symbolic-ref -q HEAD`` names the branch at the chain's end, which
     ``git show-ref --exists`` finds missing (exit 2: unborn) or not; a
     symbolic-ref that fails, and a git that knows no ``--exists``, read
@@ -680,6 +682,150 @@ def test_a_ref_git_cannot_read_reads_unread_on_every_surface(
     assert _by_id(before)[cited]["commit_drift_count"] == 1, "premise: it applies"
     ref = repo / ".git" / "refs" / "heads" / "main"
     ref.write_bytes(b"not a hash\n" if case == "garbage ref" else b"\0" * 41)
+    why = CommitDriftUnread.ERROR
+    _caches.clear_all()
+    out, _ = _attach(memories, caller, monkeypatch)
+    hit = _by_id(out)[cited]
+    assert hit["commit_drift_unread"] is True and "commit_drift_count" not in hit
+    assert hit["staleness_verdict"] == "spot_check_required"
+    assert hit["verification"]["recommendation"] == unread_recommendation(why)
+    _caches.clear_all()
+    shown = compute_commit_drift(
+        _V1,
+        _URL,
+        caller_origin=None,
+        body=f"widget rule lives in {repo / 'notes0.md'}",
+        anchor=ClaimAnchor(root=str(repo), rule="home_checkout"),
+    )
+    assert shown is why
+    _caches.clear_all()
+    debt = health._compute_commit_drift_debt(
+        by_id={"m": _stats("m")},
+        origin_repo_by_id={"m": _URL},
+        caller_origin=Origin(cwd=str(repo), repo=_URL, branch=None),
+        anchor_paths_by_id={"m": (str(repo / "notes0.md"),)},
+        claims_by_id=None,
+        verified_head_by_id=None,
+    )
+    assert debt is not None and debt.rows == []
+    unread = {"unread": 1, "unread_causes": {why.value: 1}, "unread_ids": ["m"]}
+    assert debt.to_dict().items() >= unread.items()
+
+
+#: Damage to a ``packed-refs`` file that holds the branch alone, each of
+#: which leaves a line naming ``refs/heads/main`` that git's search for
+#: the branch steps past (``unknown revision HEAD``, ``git show-ref
+#: --exists`` exiting 2) or dies on, by the file's layout (ENG-220's final
+#: review, finding 1).
+_PACKED_DAMAGE = [
+    "a garbage line for main",
+    "a garbage line for main, CRLF",
+    "CRLF on main's line",
+    "CRLF on the whole file",
+    "main out of order",
+]
+#: How many branches stand beside the branch, with an annotated tag: a
+#: small file, and the review's 24 branches.
+_PACKED_SIZES = {"1 branch": 1, "24 branches": 24}
+
+
+def _pack_and_damage(repo: Path, damage: str, branches: int) -> None:
+    """Add `branches` branches and an annotated tag at `repo`'s head, pack
+    every ref, and damage the file as `damage` names: the branch's line
+    replaced by one of no hash, with LF or CRLF line ends; a CR at the end
+    of the branch's line, or of every line; or the branch's record moved
+    to the head of a file whose header claims it sorted. Written as
+    bytes, so the line ends are the case's own on every platform."""
+    for i in range(branches):
+        _git(repo, "branch", f"b{i:02d}")
+    _git(repo, "tag", "--annotate", "v1", "--message", "release")
+    _git(repo, "pack-refs", "--all")
+    assert not (repo / ".git" / "refs" / "heads" / "main").exists(), "premise"
+    packed = repo / ".git" / "packed-refs"
+    lines = packed.read_bytes().decode("ascii").splitlines()
+    assert lines[0].startswith("# pack-refs with:") and " sorted" in lines[0]
+    at = next(i for i, line in enumerate(lines) if line.endswith(" refs/heads/main"))
+    crlf = damage.endswith("CRLF") or damage == "CRLF on the whole file"
+    if damage.startswith("a garbage line"):
+        lines[at] = "zzzz refs/heads/main"
+    elif damage == "CRLF on main's line":
+        lines[at] += "\r"
+    elif damage == "main out of order":
+        # Before every other branch, which sort before it: the search,
+        # which starts in the middle, steps right of it.
+        lines.insert(1, lines.pop(at))
+    ending = "\r\n" if crlf else "\n"
+    packed.write_bytes((ending.join(lines) + ending).encode("ascii"))
+    head = subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=repo, capture_output=True
+    )
+    assert head.returncode != 0, "premise: git resolves no HEAD there"
+
+
+@pytest.mark.parametrize("unsettled", [False, True], ids=["files", "plumbing"])
+@pytest.mark.parametrize("moved", [False, True], ids=["cwd", "GIT_DIR"])
+@pytest.mark.parametrize(
+    "branches", list(_PACKED_SIZES.values()), ids=list(_PACKED_SIZES)
+)
+@pytest.mark.parametrize("damage", _PACKED_DAMAGE)
+def test_a_packed_branch_git_cannot_find_is_no_unborn_one(
+    damage: str,
+    branches: int,
+    moved: bool,
+    unsettled: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The branch is packed alone, and its line in ``packed-refs`` is one
+    git's search steps past or dies on. git reads the branch as missing
+    (``show-ref --exists`` exits 2) or fails, and the plumbing read an
+    unborn branch: no history applies, and every surface read the memory
+    fresh. The line stands for the branch, so the files read a ref that
+    exists (`githead.head_unborn` False, `githead.packed_names`) and the
+    history reads `error`, unread, as a loose ref of garbage does (ENG-220's
+    review, round F). Where the files are taken as unsettled, the plumbing's
+    exit 2 is not read as unborn while the files show the line. Alike
+    under GIT_DIR, which every git the package runs drops."""
+    repo = _repo(tmp_path)
+    _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
+    _commit(repo, "post", when=_T1, files={"notes0.md": "a1\n"})
+    _pack_and_damage(repo, damage, branches)
+    gd = githead.locate(repo)
+    assert gd is not None and githead.head_sha(gd) is None
+    assert githead.head_unborn(gd) is False
+    if unsettled:
+        monkeypatch.setattr(githead, "head_unborn", lambda gd: None)
+    if moved:
+        elsewhere = _repo(tmp_path, "elsewhere")
+        _commit(elsewhere, "other", when=_T0, files={"other.md": "o\n"})
+        monkeypatch.setenv("GIT_DIR", str(elsewhere / ".git"))
+    _caches.clear_all()
+    assert origin_history.located_key(repo) is None, "premise: nothing keys it"
+    assert origin_dates.commit_author_timestamps(repo) is CommitDriftUnread.ERROR
+
+
+@pytest.mark.usefixtures("keyed_by")
+@pytest.mark.parametrize(
+    "branches", list(_PACKED_SIZES.values()), ids=list(_PACKED_SIZES)
+)
+@pytest.mark.parametrize("damage", _PACKED_DAMAGE)
+def test_a_packed_branch_git_cannot_find_reads_unread_on_every_surface(
+    damage: str,
+    branches: int,
+    tmp_path: Path,
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The branch's packed line is one git's search steps past or dies on
+    (`_pack_and_damage`). Its history applies and was not read: the search
+    hit is flagged and reads spot_check_required, memory_show's count and
+    the health rollup read `error`, whether the files or git's answer
+    would key the rows; none reads the memory fresh (ENG-220's final
+    review, finding 1)."""
+    repo, caller, cited, _, memories = _scenario(tmp_path, memory_dir, monkeypatch)
+    before, _ = _attach(memories, caller, monkeypatch)
+    assert _by_id(before)[cited]["commit_drift_count"] == 1, "premise: it applies"
+    _pack_and_damage(repo, damage, branches)
     why = CommitDriftUnread.ERROR
     _caches.clear_all()
     out, _ = _attach(memories, caller, monkeypatch)

@@ -951,7 +951,14 @@ def head_unborn(gd: GitDir) -> bool | None:
     settle it: a HEAD `head_bytes` does not read or `_parse` refuses (a
     reftable repository's ``ref: refs/heads/.invalid`` among them), a chain
     past git's depth, a per-worktree ref with no loose file, a
-    ``packed-refs`` `_packed` refuses, and any OSError."""
+    ``packed-refs`` `_packed` refuses that holds no line naming the ref
+    (`packed_names`), and any OSError. A refused file that does hold one
+    reads the ref as existing, as a loose file of garbage does: git's
+    search for the ref in such a file can step past its line, and git
+    then reads the branch as missing (``unknown revision HEAD``, ``git
+    show-ref --exists`` exiting 2) where the line stands for it, so the
+    plumbing read an unborn branch, a history that does not apply and a
+    memory ``fresh`` (ENG-220's final review, finding 1)."""
     head = head_bytes(gd)
     if head is None:
         return None
@@ -965,13 +972,32 @@ def head_unborn(gd: GitDir) -> bool | None:
             try:
                 target, sha = _lookup(gd, name)
             except _Unsettled:
-                return False if _loose_ref(gd, name) else None
+                if _loose_ref(gd, name) or packed_names(gd, name):
+                    return False
+                return None
             if target is None:
                 return sha is None
             name = target
         return False
     except (_Unsettled, OSError, ValueError):
         return None
+
+
+def packed_names(gd: GitDir, name: str | bytes) -> bool:
+    """Whether the common directory's ``packed-refs`` holds a line naming
+    the ref `name`: the name after a space at the line's end, whatever
+    the text before that space, a CR allowed before the newline. Such a
+    line stands for the ref whether or not git reads it, so a branch it
+    names is no unborn one (`head_unborn`, `origin_dates`). False where
+    the file is missing or cannot be read; past `_PACKED_LIMIT` the bytes
+    read are searched."""
+    raw = os.fsencode(name) if isinstance(name, str) else name
+    try:
+        data = _read(os.path.join(gd.commondir, "packed-refs"), _PACKED_LIMIT)
+    except (OSError, ValueError):
+        return False
+    line = re.compile(rb"^[^\n]* %s\r?$" % re.escape(raw), re.MULTILINE)
+    return line.search(data) is not None
 
 
 def _loose_ref(gd: GitDir, name: bytes) -> bool:

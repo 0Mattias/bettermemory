@@ -265,14 +265,18 @@ def _unborn_or_broken(cwd: Path) -> HistoryUnread | None:
     """Why ``git rev-parse --verify -q HEAD`` failed in a repository git
     reads: None where HEAD names a branch with no commit; ``ERROR`` where
     the ref HEAD names exists and git cannot resolve it (a loose file of
-    garbage or NULs, a ``packed-refs`` git dies on: ENG-220's review, round
-    F), or HEAD is detached at no hash git reads. The files settle it where
-    they read the ref (`githead.head_unborn`); where they do not (a
-    reftable repository, a ``packed-refs`` they decline) plumbing does:
-    ``git symbolic-ref -q HEAD`` names the branch and ``git show-ref
-    --exists`` exits 2 where it does not exist. Any other answer is
-    ``ERROR``, a call that met its timeout ``TIMEOUT`` and one that found
-    no binary None (`origin_history.unanswered`)."""
+    garbage or NULs, a ``packed-refs`` line git dies on or its search
+    steps past: ENG-220's review, round F, and final review, finding 1),
+    or HEAD is detached at no hash git reads. The files settle it where
+    they read the ref or find its line in a ``packed-refs`` they decline
+    (`githead.head_unborn`); where they do not (a reftable repository, a
+    declined ``packed-refs`` with no line for it) plumbing does: ``git
+    symbolic-ref -q HEAD`` names the branch and ``git show-ref --exists``
+    exits 2 where it does not exist, save where the files hold a
+    ``packed-refs`` line naming it (`githead.packed_names`), for which
+    git's search answers exit 2 as well. Any other answer is ``ERROR``, a
+    call that met its timeout ``TIMEOUT`` and one that found no binary
+    None (`origin_history.unanswered`)."""
     gd = githead.gitdir_at(cwd) or githead.locate(cwd)
     unborn = None if gd is None else githead.head_unborn(gd)
     if unborn is not None:
@@ -284,7 +288,12 @@ def _unborn_or_broken(cwd: Path) -> HistoryUnread | None:
     shown = origin._git_result(cwd, "show-ref", "--exists", name, timeout=5.0)
     if shown is None:
         return origin_history.unanswered(before, named=True)
-    return None if shown.returncode == 2 else HistoryUnread.ERROR
+    if shown.returncode != 2:
+        return HistoryUnread.ERROR
+    # git's search can step past the ref's own line in a ``packed-refs``
+    # it reads otherwise, and exits 2 where the line stands for the ref.
+    named = gd is not None and githead.packed_names(gd, name)
+    return HistoryUnread.ERROR if named else None
 
 
 def _unread_entry(cwd: Path) -> HistoryUnread | None:

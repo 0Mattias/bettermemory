@@ -784,6 +784,26 @@ eighteenth was built.
   (`src/bettermemory/githead.py`, `tests/test_githead.py`,
   `tests/test_unread_history.py`)
 
+- **A packed branch git cannot find is no unborn branch (ENG-220).** A
+  branch held in `packed-refs` alone whose line git's search steps past
+  (a line of no hash for it, with LF or CRLF line ends; a CR at the end
+  of its line or of every line; its record out of the order a `sorted`
+  header claims) reads as missing to git: `unknown revision HEAD`, and
+  `git show-ref --exists` exits 2. The plumbing read that as an unborn
+  branch, so the history did not apply and search, show and health read
+  the memory `fresh` (the final review's finding 1). Which file git's
+  search steps past and which it dies on depends on its layout; the
+  record out of order was counted before the files declined such a file
+  in this release. The line stands for the branch, as a loose ref of
+  garbage does (round F): where the files decline a `packed-refs` that
+  holds a line ending in the branch's name, whatever its hash text and
+  with a CR allowed, they read the branch as existing
+  (`githead.packed_names`), and the history reads `error`, unread; the
+  plumbing's exit 2 is not read as unborn while the files show such a
+  line. (`src/bettermemory/githead.py`,
+  `src/bettermemory/origin_dates.py`, `tests/test_githead.py`,
+  `tests/test_unread_history.py`)
+
 - **A shallow file's cut reads shallow only where the history reaches it
   (ENG-220).** Any commit a `shallow` file listed read the whole history
   `shallow`, so a full clone that fetched another branch, or origin's
