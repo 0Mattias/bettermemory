@@ -641,8 +641,23 @@ def _remote_rule(name: _Name, value: bytes | None) -> str | None:
     ``remote.pushDefault``; a ``remote.<name>`` boolean that is none
     (`_REMOTE_BOOLS`, `git_bool`); a ``fetch`` or ``push`` refspec git
     refuses (`refspec_valid`). git reads no ``remote.<name>`` whose name
-    starts with ``/``."""
+    starts with ``/``.
+
+    It also dies where git's reader of promisor remotes dies
+    (promisor-remote.c's ``promisor_remote_config``), which ``git fetch``,
+    ``git status`` and ``git remote`` run though ``git ls-remote
+    --get-url`` does not: a ``remote.<name>.promisor`` that is no boolean,
+    for any name, and a ``remote.<name>.partialCloneFilter`` with no
+    value, for a name that does not start with ``/`` or for none (git
+    reads ``remote.partialCloneFilter`` as the filter of a remote named
+    nothing). The capture declines there, as the user's own git commands
+    die in that repository (ENG-207's round 7)."""
     section, sub, key = name
+    if section == "remote" and key == "promisor":
+        return "no boolean" if git_bool(value) is None else None
+    if section == "remote" and key == "partialclonefilter":
+        named_slash = sub is not None and sub.startswith("/")
+        return "no value" if value is None and not named_slash else None
     if section == "branch":
         if sub == "":
             return "an empty branch name"

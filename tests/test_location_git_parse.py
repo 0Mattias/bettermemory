@@ -128,6 +128,50 @@ READS_ON = {
 }
 
 
+#: Configs git's reader of promisor remotes (promisor-remote.c) dies on,
+#: which ``git status``, ``git fetch`` and ``git remote`` read and ``git
+#: ls-remote --get-url`` does not (ENG-207's round 7), and configs it reads
+#: on past.
+PROMISOR_DIES = {
+    "filter": ("local", '[remote "origin"]\n\tpartialCloneFilter\n'),
+    "filter_other": ("global", '[remote "x"]\n\tpartialCloneFilter\n'),
+    "filter_unnamed": ("local", "[remote]\n\tpartialCloneFilter\n"),
+    "filter_empty_name": ("include", '[remote ""]\n\tpartialCloneFilter\n'),
+    "promisor": ("local", '[remote "origin"]\n\tpromisor = maybe\n'),
+    "promisor_slash": ("include", '[remote "/x"]\n\tpromisor = maybe\n'),
+    "promisor_unnamed": ("global", "[remote]\n\tpromisor = maybe\n"),
+}
+PROMISOR_READS_ON = {
+    "filter_slash": ("local", '[remote "/x"]\n\tpartialCloneFilter\n'),
+    "filter_empty": ("local", '[remote "origin"]\n\tpartialCloneFilter =\n'),
+    "promisor_bare": ("local", '[remote "origin"]\n\tpromisor\n'),
+    "promisor_false": ("global", '[remote "origin"]\n\tpromisor = off\n'),
+}
+
+
+@pytest.mark.parametrize("case", [*PROMISOR_DIES, *PROMISOR_READS_ON])
+def test_where_git_s_reader_of_promisor_remotes_dies_the_capture_declines(
+    tmp_path: Path, case: str
+) -> None:
+    """``git status`` dies at each of `PROMISOR_DIES` though ``git
+    ls-remote --get-url`` reads on, and the capture declines there, as the
+    user's own git commands die in that repository; at each of
+    `PROMISOR_READS_ON` both read on and the capture keys the URL git
+    fetches from. The origin, which asks ``git rev-parse``, still records
+    the repository."""
+    repo = _repo(tmp_path / "repo")
+    dies = case in PROMISOR_DIES
+    where, text = (PROMISOR_DIES if dies else PROMISOR_READS_ON)[case]
+    _write(repo, where, text)
+    assert _fetched(repo) == "gh:acme/lib", "premise: get-url reads on"
+    done = _git(repo, "status", "--porcelain", check=False)
+    assert (done.returncode != 0) is dies, f"premise: git status ({done.stderr!r})"
+    if dies:
+        _declines(repo, git_dies=False)
+    else:
+        assert _keys(repo) == {_key(repo, "gh:acme/lib")}
+
+
 @pytest.mark.parametrize("case", list(DIES))
 def test_where_git_dies_the_capture_declines(tmp_path: Path, case: str) -> None:
     """git dies at each of `DIES` (``git ls-remote --get-url`` exits

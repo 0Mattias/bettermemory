@@ -658,7 +658,11 @@ eighteenth was built.
   `url`, `insteadOf` or `include.path` with no value, an include it
   cannot read or past its depth, a remote or branch variable git's
   reader of remotes refuses), the capture declines (indeterminate, not
-  kept) and the origin records no repository; the line reader this
+  kept) and the origin records no repository; so it does where git's
+  reader of promisor remotes, which `git status` and `git fetch` run,
+  dies (a `remote.<name>.partialCloneFilter` with no value, a
+  `remote.<name>.promisor` that is no boolean), though the origin, whose
+  `git rev-parse` reads on, records the repository; the line reader this
   replaces keyed a valueless `url` as `local:<repo>/true`, read on past
   the others, and read a folder whose repository's config holds a bad
   line as outside any repository. An empty `GIT_CONFIG_GLOBAL` now names
