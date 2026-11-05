@@ -109,6 +109,9 @@ from .test_membership_resolution import (
 
 __all__ = ["lab", "lab_of", "neutral_git", "no_birth", "pytestmark"]
 
+#: An init stamp as `location._init_stamps` reads one.
+_Stamp = tuple[str, int, int, int, int]
+
 
 @pytest.fixture(autouse=True)
 def windows_unlink(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,6 +136,105 @@ def windows_unlink(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             os, name, functools.partial(refusing, _real=getattr(os, name))
         )
+
+
+@pytest.fixture(autouse=True)
+def windows_chmod(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`os.chmod` as CPython makes it on Windows, on every platform: there
+    it writes back the FILE_BASIC_INFO it read, change time included, so
+    it moves no change time (MS-FSA 2.1.5.15.2), where a POSIX chmod moves
+    the ctime. Off Windows a stamped file's ctime that a chmod here moved
+    reads as it was before, until another change moves it: a test that
+    moves a ctime by `os.chmod` fails on every platform, as on Windows."""
+    if sys.platform == "win32":
+        return
+    undone: dict[int, tuple[int, int]] = {}
+    chmod, real = os.chmod, location._init_stamps
+
+    def writing_back(path: Any, mode: int, **kw: Any) -> None:
+        follow = {
+            "dir_fd": kw.get("dir_fd"),
+            "follow_symlinks": kw.get("follow_symlinks", True),
+        }
+        try:
+            before = os.stat(path, **follow).st_ctime_ns
+        except OSError:
+            before = None
+        chmod(path, mode, **kw)
+        if before is not None:
+            after = os.stat(path, **follow)
+            undone[after.st_ino] = (after.st_ctime_ns, before)
+
+    def read(git_dir: str, *, linked: bool = False) -> tuple[_Stamp, ...]:
+        return tuple(
+            (n, i, m, undone[i][1] if undone.get(i, (None,))[0] == c else c, z)
+            for n, i, m, c, z in real(git_dir, linked=linked)
+        )
+
+    monkeypatch.setattr(os, "chmod", writing_back)
+    monkeypatch.setattr(location, "_init_stamps", read)
+
+
+@pytest.fixture(autouse=True)
+def posix_times(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The init stamps as a POSIX file system keeps them, as `no_birth`
+    plays a platform without birth time. Rung 2 reads no re-mint from
+    stamps kept in FILETIME's 100 ns ticks (`membership_shared._ticked`),
+    as NTFS keeps a file's times on Windows and SMB carries them; the
+    tests here are of files whose ctime no call sets. So where this
+    host's file system keeps ticks, each stamp's ctime is read off the
+    tick by its file's own number: it moves with the change time, and a
+    copy, which Windows' CopyFile2 leaves the source's change time, reads
+    one of its own, as a POSIX copy does. A test that takes `ticks` reads
+    them as they are."""
+    if "ticks" in request.fixturenames:
+        return
+    real = location._init_stamps
+    own: dict[int, int] = {}
+
+    def read(git_dir: str, *, linked: bool = False) -> tuple[_Stamp, ...]:
+        got = real(git_dir, linked=linked)
+        if not membership_shared._ticked(got):
+            return got
+        return tuple(
+            (n, i, m, c + own.setdefault(i, len(own) % 99 + 1), z)
+            for n, i, m, c, z in got
+        )
+
+    monkeypatch.setattr(location, "_init_stamps", read)
+
+
+@pytest.fixture
+def ticks(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path, Path], Path]:
+    """The init stamps as NTFS keeps them: on Windows as read; elsewhere
+    each stamp's mtime and ctime cut to FILETIME's 100 ns tick, and a copy
+    made by the call returned reading its source's stamped times as they
+    were, as a CopyFile2 copy (`shutil.copy2` on Windows, Explorer,
+    `copy`) keeps the source's write and change times. Returns that
+    call: `copy` on Windows, where `shutil.copy2` is CopyFile2."""
+    if sys.platform == "win32":
+        return copy
+    real = location._init_stamps
+    carried: dict[str, dict[str, tuple[int, int]]] = {}
+
+    def read(git_dir: str, *, linked: bool = False) -> tuple[_Stamp, ...]:
+        kept = carried.get(os.path.realpath(git_dir), {})
+        out = []
+        for n, i, m, c, z in real(git_dir, linked=linked):
+            m, c = kept.get(n, (m, c))
+            out.append((n, i, m - m % 100, c - c % 100, z))
+        return tuple(out)
+
+    def copied(src: Path, dst: Path) -> Path:
+        copy(src, dst)
+        times = {n: (m, c) for n, _i, m, c, _z in real(str(src / ".git"))}
+        carried[os.path.realpath(dst / ".git")] = times
+        return dst
+
+    monkeypatch.setattr(location, "_init_stamps", read)
+    return copied
 
 
 @dataclass
@@ -274,7 +376,9 @@ def test_a_re_mint_in_a_copy_carried_into_the_checkout_is_not_the_hosts(
     re-minted there, and the re-mint's token is carried into the host's
     git directory (a sync of `.git/info`). The copy's init stamps have
     ctimes of their own, so its record saw other files than the host's:
-    the host does not read the token as its re-mint."""
+    the host does not read the token as its re-mint. A CopyFile2 copy
+    keeps the source's change time, which the stamps then cannot tell
+    from a view: `test_stamps_in_ticks_read_no_re_mint_of_another_machine`."""
     line = make_repo(tmp_path / "host" / "line", commits=2)
     host = lab.write("h1", line)
     hid = host.checkout
@@ -399,7 +503,7 @@ def test_a_copy_on_reused_numbers_passes_only_where_the_other_side_read_it(
     copy(tmp_path / "host" / "line-old", line)
     remove(tmp_path / "host" / "line-old")
     target = os.path.realpath(line / ".git")
-    real = location_stamps._init_stamps
+    real = location._init_stamps
 
     def reused(
         git_dir: str, *, linked: bool = False
@@ -588,12 +692,19 @@ def test_a_chain_of_re_mints_on_the_other_side_is_the_hosts(
 
 
 def _ctime_moved(repo: Path) -> None:
-    """Each stamped file's mode set to the mode it has: its ctime moves,
-    as a `chmod -R` or `chown -R` in a container's set-up, an extended
-    attribute or a backup's hard link moves it."""
+    """Each stamped file's times set to the ones it has (`os.utime`): its
+    ctime moves and its mtime does not, as a `chmod -R` or `chown -R` in a
+    container's set-up, an extended attribute or a backup's hard link
+    moves it. On Windows the call moves NTFS's change time (MS-FSA
+    2.1.5.15.2: a write time set with no change time given sets it to
+    the current time), where `os.chmod` moves none: CPython writes back
+    the FILE_BASIC_INFO it read, change time included. The pause outlasts
+    a clock tick (up to 15.6 ms on Windows), so the time set is another."""
+    time.sleep(0.05)
     for name in ("description", "info/exclude"):
         path = repo / ".git" / name
-        os.chmod(path, stat.S_IMODE(os.stat(path).st_mode))
+        st = os.stat(path)
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
 
 
 @pytest.mark.usefixtures("no_birth")
@@ -711,6 +822,126 @@ def test_b_reads_the_other_sides_re_mint_as_over_a_bind_mount(
     res, _admitted = lab.view(line)
 
     assert (res.outcome, res.rule) == (ASK, "ask:several_projects")
+
+
+# ---------------------------------------------------------------------------
+# Stamps kept in FILETIME's ticks
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Rounding(Shared):
+    """A container over a share that keeps its files' times to the whole
+    second, of files whose host keeps them in ticks."""
+
+    def posted(self, raw: dict[str, Any]) -> dict[str, Any]:
+        raw = super().posted(raw)
+        sec = 1_000_000_000
+        raw["stamps"] = [
+            [s[0], s[1], s[2] - s[2] % sec, s[3] - s[3] % sec, s[4]]
+            for s in raw["stamps"]
+        ]
+        return raw
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize(
+    "reader",
+    [
+        "host_over_the_share",
+        "host_over_a_rounding_share",
+        "host_from_a_copy",
+        "container",
+        "container_over_a_rounding_share",
+    ],
+)
+def test_stamps_in_ticks_read_no_re_mint_of_another_machine(
+    tmp_path: Path, lab: Lab, ticks: Callable[[Path, Path], Path], reader: str
+) -> None:
+    """Where the stamped files' times are kept in FILETIME's ticks (NTFS,
+    or SMB), rung 2 reads no token as the checkout's re-mint by another
+    machine: any caller sets a file's change time there, and a CopyFile2
+    copy keeps the source's, so the stamps cannot tell a view from a
+    copy. The host reading the container's re-mint over a share
+    (``host_over_the_share``, or one keeping whole seconds), or from a
+    copy (``host_from_a_copy``, the copy's token carried into the host's
+    git directory), and the container reading the host's
+    (``container``, or over a share keeping whole seconds): none is read
+    as that machine's own checkout, failing closed. Before, each was
+    (``object+remint``), the copy's re-mint taken as the host's on
+    Windows."""
+    line = make_repo(tmp_path / "host" / "line", commits=2)
+    hid = lab.write("h1", line).checkout
+    assert hid is not None
+    kind = Rounding if reader.endswith("rounding_share") else Shared
+    if reader == "host_from_a_copy":
+        seen = ticks(line, tmp_path / "box" / "copy")
+        box: Shared = Shared(seen, "/workspaces/copy", _container_machine(lab, "copy"))
+    else:
+        box = kind(line, "/workspaces/line", _container_machine(lab, "line"))
+    joined = box.post(lab)
+    kid = joined.checkout
+    assert kid is not None and joined.project == lab.project_of("h1")
+    if reader.startswith("host"):
+        _the_containers_re_mint(lab, box, kid, "recorded")
+        if reader == "host_from_a_copy":
+            _carried_in(box.real, line)
+    else:
+        lab._declaring().declare(
+            Declaration("new", "os:tester", checkout=hid, name="host line")
+        )
+    found = _file_token(line)
+    assert found is not None
+    location.forget()
+
+    if reader.startswith("container"):
+        again = box.post(lab)
+        assert again.rule != "object+remint"
+        assert lab.model().checkout(kid).token != found
+        return
+    res, _admitted = lab.view(line)
+
+    assert res.rule != "object+remint" and res.checkout != hid
+    assert lab.model().checkout(hid).token != found
+
+
+@pytest.mark.usefixtures("no_birth", "ticks")
+def test_b_reads_stamps_in_ticks_as_before(tmp_path: Path, lab: Lab) -> None:
+    """B still reads stamps kept in ticks (`_view_made`): there a view's
+    token keeps B standing, which asks where T names another project, as
+    `test_b_reads_the_other_sides_re_mint_as_over_a_bind_mount` does."""
+    line = make_repo(tmp_path / "host" / "line", commits=2)
+    lab.write("h1", line)
+    box = Shared(line, "/workspaces/line", _container_machine(lab, "line"))
+    kid = box.post(lab).checkout
+    assert kid is not None
+    _the_containers_re_mint(lab, box, kid, "recorded")
+    moved = tmp_path / "host" / "line-moved"
+    shutil.copytree(line, moved, symlinks=True)
+    remove(line)
+    os.rename(moved, line)
+    assert membership_shared._ticked(location._init_stamps(str(line / ".git")))
+    location.forget()
+
+    res, _admitted = lab.view(line)
+
+    assert (res.outcome, res.rule) == (ASK, "ask:several_projects")
+
+
+def test_ticks_are_whole_100_ns_and_not_all_whole_seconds() -> None:
+    """`_ticked`: every mtime and ctime a whole 100 ns tick, and not every
+    one a whole second; no stamps, or a stamp of another shape, are not."""
+    t = 1_793_810_133_992_271_400
+    sec = t - t % 1_000_000_000
+    ticked = ("description", 7, t, t + 300, 73)
+    assert membership_shared._ticked([ticked, ("info/exclude", 8, t, t, 240)])
+    assert not membership_shared._ticked([ticked, ("info/exclude", 8, t, t + 1, 240)])
+    assert not membership_shared._ticked([("description", 7, t + 50, t, 73)])
+    assert not membership_shared._ticked([("description", 7, sec, sec, 73)])
+    assert membership_shared._ticked([("description", 7, sec, t, 73)])
+    assert not membership_shared._ticked([])
+    assert not membership_shared._ticked([("description", 7, t, t)])
+    assert not membership_shared._ticked([("description", 7, t, True, 73)])
 
 
 # ---------------------------------------------------------------------------
@@ -2373,9 +2604,12 @@ def test_the_change_time_is_ntfs_change_time_on_windows(tmp_path: Path) -> None:
     """Off Windows the stamps' ctime is the inode's and no FILE_BASIC_INFO
     is read. On Windows, where `os.stat`'s ctime is the creation time, it
     is NTFS's ChangeTime: the basic information's write time is the one
-    `os.stat` reports, its creation time the birth time, and a metadata
-    change (the read-only attribute) moves its change time and not its
-    write time."""
+    `os.stat` reports, its creation time the birth time, and setting the
+    file's times to the ones it has (`os.utime`, as `_ctime_moved` does)
+    moves its change time and not its write time (MS-FSA 2.1.5.15.2).
+    `os.chmod` would move none: CPython writes back the basic information
+    it read, change time included. Stamps kept so are in FILETIME's
+    ticks (`membership_shared._ticked`)."""
     path = tmp_path / "description"
     path.write_text("x\n")
     if sys.platform != "win32":
@@ -2390,13 +2624,12 @@ def test_the_change_time_is_ntfs_change_time_on_windows(tmp_path: Path) -> None:
     assert written == st.st_mtime_ns and changed >= written
     birth = getattr(st, "st_birthtime_ns", None)
     assert birth is None or created == birth
-    os.chmod(path, stat.S_IREAD)
-    try:
-        after = location_stamps.basic_info_ns(str(path))
-        assert after is not None and after[2] == written and after[3] >= changed
-        assert location_stamps._init_stamps(str(tmp_path))[0][3] == after[3]
-    finally:
-        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+    time.sleep(0.05)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    after = location_stamps.basic_info_ns(str(path))
+    assert after is not None and after[2] == written and after[3] > changed
+    stamps = location_stamps._init_stamps(str(tmp_path))
+    assert stamps[0][3] == after[3] and membership_shared._ticked(stamps)
 
 
 @pytest.mark.parametrize("read", ["read", "unread"])

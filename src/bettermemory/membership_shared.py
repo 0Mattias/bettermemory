@@ -34,9 +34,11 @@ from the records of the other machines that see the same files:
 The init stamps are what tells a view from a copy: the name, mtime, ctime
 and size of `description`, `info/exclude` and a linked worktree's
 `commondir` (`location_stamps._init_stamps`), each namespace numbering the
-inode its own way. No call sets a file's ctime, so a file-level copy has
-ctimes of its own; a filesystem snapshot, an overlay's lower layer or a
-block-level clone of a VM's disk keeps them. None of the rules reads a
+inode its own way. No call sets a POSIX file's ctime, so a file-level copy
+has ctimes of its own; a filesystem snapshot, an overlay's lower layer or a
+block-level clone of a VM's disk keeps them. NTFS's change time is set by
+any caller and kept by a CopyFile2 copy, so rung 2 reads no re-mint from
+stamps kept in FILETIME's ticks (`_ticked`). None of the rules reads a
 token that is not in the checkout's own git directory: whatever writes
 there can already make a token the checkout takes
 (`checkout_token.succeeds`), and with birth time the checkout takes any
@@ -88,6 +90,9 @@ RESTAMPED_BY = frozenset({"birth", "token", "remint"})
 #: Nanoseconds in a second: a share that keeps times to the second
 #: (`_same_file`).
 _SECOND_NS = 1_000_000_000
+#: FILETIME's tick, 100 ns: the grain NTFS and ReFS keep a file's times
+#: in, and SMB carries them in (`_ticked`).
+_TICK_NS = 100
 #: What `_healed` reads of two records of one git directory: the earlier
 #: one, silently (``HEAL``); the later one, with a question naming both
 #: projects (``ASK_WHICH``); or the later one as ENG-205's order has it
@@ -159,17 +164,51 @@ def _continues(
     k: Checkout, loc: Location, found: str, carriers: Collection[Checkout]
 ) -> bool:
     """The rule over `carriers`, the checkouts recording `k`'s token or
-    `found`. Either one of `k`'s init stamps is read here, inode number
-    included (A2: the object is the recorded git directory), and another
-    machine's view of the same files made or recorded `found`
-    (`_made_by`); or every one of `k`'s stamps is read here but for its
-    ctime (`_moved_under`: a mode, an owner or an extended attribute set
-    on the files since `k` last took them) and a record of another
-    machine holding `found` read every stamp here exactly, ctime included
-    (`_read_as_now`)."""
+    `found`. Never where `k`'s stamps or the sighting's are kept in
+    FILETIME's ticks, and over the carriers whose stamps are not
+    (`_ticked`: there the stamps cannot tell a view from a copy). Either
+    one of `k`'s init stamps is read here, inode number included (A2: the
+    object is the recorded git directory), and another machine's view of
+    the same files made or recorded `found` (`_made_by`); or every one of
+    `k`'s stamps is read here but for its ctime (`_moved_under`: a mode,
+    an owner or an extended attribute set on the files since `k` last
+    took them) and a record of another machine holding `found` read
+    every stamp here exactly, ctime included (`_read_as_now`)."""
+    if _ticked(k.stamps) or _ticked(loc.stamps):
+        return False
+    carriers = [c for c in carriers if not _ticked(c.stamps)]
     if _read_here(k, loc):
         return _made_by(k, found, carriers)
     return _moved_under(k, loc) and _read_as_now(k, loc, found, carriers)
+
+
+def _ticked(stamps: Collection[Sequence[object]]) -> bool:
+    """Whether `stamps` hold times kept in FILETIME's 100 ns ticks: every
+    mtime and ctime a whole tick, not every one a whole second (a share
+    that rounds them, which `_same_file` reads within the second). NTFS
+    and ReFS keep a file's times so, and SMB carries them so (the Linux
+    client's ctime is the server's ChangeTime). There a change time is no
+    ctime: any caller that may write a file's attributes sets it (MS-FSA
+    2.1.5.15.2, FileBasicInformation; CPython's `os.chmod` on Windows
+    writes back the one it read), and a CopyFile2 copy (Explorer, `copy`,
+    `shutil.copy2`) keeps the source's. Such stamps cannot tell a view of
+    the files from a copy, so rung 2 reads no re-mint from them, failing
+    closed: the sighting is read as without the rule. B still reads them
+    (`_view_made`), as there a view's token keeps B standing, which asks
+    where T names another project. A file system keeping microseconds
+    gives such stamps too, and one keeping nanoseconds by chance: one
+    time in 100 is a whole tick, and a file written once has one time for
+    both, so a linked worktree's one stamp reads so once in 100 and a
+    checkout's two once in 10,000. Each fails closed."""
+    times: list[int] = []
+    for s in stamps:
+        for t in (s[2], s[3]) if len(s) == 5 else ():
+            if not isinstance(t, int) or isinstance(t, bool):
+                return False
+            times.append(t)
+    if not times or any(t % _TICK_NS for t in times):
+        return False
+    return any(t % _SECOND_NS for t in times)
 
 
 def _read_here(k: Checkout, loc: Location) -> bool:

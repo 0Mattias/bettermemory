@@ -1490,7 +1490,23 @@ eighteenth was built.
   checkout, where it registered a second checkout for good. A re-mint
   made in a file-level copy (an image built with `.git`) is not the
   host's, even with its token synced into the host's git directory, as
-  the copy's files have ctimes of their own. A snapshot, an overlay's
+  the copy's files have ctimes of their own on a POSIX file system.
+  NTFS's change time is no such time: any caller that may write a
+  file's attributes sets it (MS-FSA 2.1.5.15.2), and a CopyFile2 copy
+  (`shutil.copy2` on Windows, Explorer, `copy`) keeps the source's, so
+  on the Windows runner such a copy's re-mint was read as the host's.
+  Rung 2 reads no re-mint from stamps kept in FILETIME's 100 ns ticks
+  (every mtime and ctime a whole tick, not every one a whole second: NTFS
+  as Windows reads it, and SMB, whose Linux client reads ChangeTime as
+  the ctime), the checkout's, the sighting's or the other machine's,
+  and the sighting is read as without the rule (fail closed). A Windows
+  host reads birth time, so its own sightings are as before; a container
+  without birth time reading a Windows host's files over a share
+  registers a second checkout as in 9.0.0rc18. B still reads them, as a
+  view's token keeps B standing, which asks. A file system keeping
+  microseconds reads as ticks, and one keeping nanoseconds does by
+  chance (a linked worktree's one stamp once in 100, a checkout's two
+  once in 10,000). A snapshot, an overlay's
   lower layer or a block-level clone keeps the ctimes, but the rule
   reads only a token found in the checkout's own git directory, which
   with birth time the checkout takes anyway, so it takes no token a
