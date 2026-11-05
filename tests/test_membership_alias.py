@@ -31,7 +31,15 @@ from bettermemory.config import Config
 from bettermemory.location import resolve_here
 from bettermemory.machine import MachineIdentity
 from bettermemory.membership import ASK, GLOBAL, NEW, SILENT, Declaration, Resolution
-from bettermemory.membership_records import IMPORT, ProjectFileRef
+from bettermemory.membership_records import (
+    FIRST_SIGHT,
+    IMPORT,
+    LEGACY,
+    UNREADABLE,
+    Location,
+    ProjectFileRef,
+)
+from bettermemory.membership_shared import _SUBJECT
 from bettermemory.store import Store
 
 from .test_membership_cost import (
@@ -875,6 +883,159 @@ def test_an_undone_join_is_kept_undone(world: World) -> None:
     assert len(_merges(world)) == 1
     home = world.model.home(during)
     assert home is not None and home.project == first.project
+
+
+def test_a_record_the_user_moved_from_the_full_url_clone_keeps_the_two_apart(
+    world: World,
+) -> None:
+    """``memory move`` of a record written at the full-URL clone, which
+    fetches from the alias clone's keys, is the user's word about Q's
+    checkout as one written at the alias clone is about P's: the two stay
+    apart (review R8 3: the full-URL clones are read with the alias
+    clone, `_declared`)."""
+    full, alias, first, second = _split_pair(world)
+    written = world.write(first)
+    world.model.declare(Declaration("move", "os:tester", record=written, target=GLOBAL))
+    _caught_up(full, alias)
+    _stays_apart(world, alias, second)
+
+
+def test_a_choice_between_the_two_keeps_them_apart(world: World) -> None:
+    """A question on a third checkout naming both projects, answered by
+    the user with one of them: the user weighed the two, and the alias
+    clone's sighting does not merge them (review R8 3: an answer to a
+    question naming both counts wherever it was asked)."""
+    full, alias, first, second = _split_pair(world)
+    third = world.see(world.repo("/w/third", remote="example.invalid/third"))
+    pr = world.model.open_proposal(
+        checkout=str(third.checkout),
+        kind=FIRST_SIGHT,
+        candidates=[str(second.project), str(first.project)],
+        evidence={},
+        reason=FIRST_SIGHT,
+        line="which project",
+    )
+    world.model.declare(
+        Declaration(
+            "join",
+            "os:tester",
+            checkout=third.checkout,
+            proposal=pr.id,
+            target=second.project,
+        )
+    )
+    _caught_up(full, alias)
+    for _ in range(2):
+        assert _alias_sighting(world, alias, {ALIAS: FULL}).project == second.project
+    assert _alias_merges(world) == []
+
+
+def _alias_merges(world: World) -> list[str]:
+    """The merges the rule of this module wrote, its evidence naming the
+    alias."""
+    return [x for x in _merges(world) if "the alias" in x]
+
+
+def _about_another(world: World, checkout: str, project: str, kind: str) -> str:
+    """A question about another project U offering to join U to `project`,
+    opened on `checkout` as its writer opens one: an import's, U an
+    imported repository's project, or a folder's that could not be read,
+    U the project of the records written there (decision B6). Its id."""
+    evidence: dict[str, object]
+    if kind == IMPORT:
+        u = world.see(world.repo("/w/imported", remote="example.invalid/i")).project
+        evidence = {
+            "imported_project": str(u),
+            "source": "export.json",
+            "codes": {project: ["H"]},
+        }
+    else:
+        unread = Location(
+            machine=world.machine, cwd="/w/unread", state=UNREADABLE, detail="EACCES"
+        )
+        home = world.model.home(world.write_unresolved(unread))
+        assert home is not None and home.checkout is not None
+        evidence = {
+            "unresolved_project": home.project,
+            "unresolved_checkout": home.checkout,
+            "path": "/w/unread",
+            "memories": 1,
+            "episodes": 0,
+            "sessions": [],
+        }
+    return world.model.open_proposal(
+        checkout=checkout,
+        kind=kind,
+        candidates=[project],
+        evidence=evidence,
+        reason=kind,
+        line="a question about another project",
+        distinct=_SUBJECT[kind],
+    ).id
+
+
+@pytest.mark.parametrize("answer", ["join", "new"])
+@pytest.mark.parametrize("kind", [IMPORT, LEGACY])
+@pytest.mark.parametrize("on", ["the_alias_clone", "another_checkout"])
+def test_an_answer_about_another_project_leaves_the_two_to_join(
+    world: World, on: str, kind: str, answer: str
+) -> None:
+    """Review R8 3: an import's question, or one about the records of a
+    folder that could not be read, about another project U, offering to
+    join U to the alias clone's project P, open on the alias clone or on
+    another checkout of P, answered by the user: joined (U merged into P)
+    or kept apart. The answer says where U's records go, not that P is
+    apart from Q: the alias clone's next sighting merges P into Q, a
+    joined U's records with P's. Before, the answer's rows named P's
+    checkout and P, and held the join for good (`_declared`)."""
+    full, alias, first, second = _split_pair(world)
+    holder = second.checkout
+    if on == "another_checkout":
+        holder = world.see(world.clone(alias, "/w/alias-twin", remote=ALIAS)).checkout
+    assert holder is not None
+    qid = _about_another(world, holder, str(second.project), kind)
+    u = str(world.model.proposal(qid).evidence[_SUBJECT[kind]])
+    world.model.declare(Declaration(answer, "os:tester", checkout=holder, proposal=qid))
+    assert world.model.proposal(qid).state == "answered"
+    _caught_up(full, alias)
+
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    assert seen.project == first.project and len(_alias_merges(world)) == 1
+    joined = world.model.canonical(u) == first.project
+    assert joined == (answer == "join")
+
+
+@pytest.mark.parametrize("how", ["absorb", "join_its_checkout"])
+def test_another_project_joined_to_the_alias_clones_leaves_the_two_to_join(
+    world: World, how: str
+) -> None:
+    """Review R8 3, a join of another project U into P, which does not
+    count: ``join_project`` (an absorb) at the alias clone naming U, or
+    ``project join`` at U's own checkout naming P. Either is the user's
+    word about U, where its records go, and the merge keeps them with
+    P's, so the alias clone's next sighting merges P into Q, U with it. A
+    declaration about the alias clone itself holds the two apart still
+    (the tests above)."""
+    full, alias, first, second = _split_pair(world)
+    other = world.repo("/w/other", remote="example.invalid/other")
+    u = world.see(other)
+    if how == "absorb":
+        decl = Declaration(
+            "absorb", "os:tester", checkout=second.checkout, target=u.project
+        )
+    else:
+        decl = Declaration(
+            "join", "os:tester", checkout=u.checkout, target=second.project
+        )
+    world.model.declare(decl)
+    assert world.model.canonical(u.project) == second.project
+    _caught_up(full, alias)
+
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    assert seen.project == first.project and len(_alias_merges(world)) == 1
+    assert world.see(other).project == first.project
 
 
 # ---------------------------------------------------------------------------

@@ -44,10 +44,17 @@ nothing a user said or a file binds stands against it:
   and does not hold them only as an alias of its own: the remote witness
   R, read on the URL git fetches on both sides, so repositories whose
   aliases share a prefix or a spelling stay apart;
-* no declaration names P, Q, a project merged into either, or a checkout
-  of either (`_declared`): a join, a move, an init, a new or separate
-  project, an unjoin, an absorb, a declared remote or a record moved
-  there; evidence never overrides what a user said; and
+* no declaration of the user's says which project P or Q is
+  (`_declared`): a join, a move or a separation of the alias clone or of
+  a full-URL clone of Q, a record written at one moved, a part declared
+  below one, an answer at one to a question about its own project, an
+  answer to a question naming both P and Q, or a merge or an unjoin of
+  the project one of them is recorded in; evidence never overrides what
+  a user said. A declaration that places another project in P or Q (an
+  answer to an import's question or to one about a folder that could
+  not be read, an absorb, a join of another project's checkout) is the
+  user's word about that project, whose records the merge keeps with
+  P's: it holds nothing (ENG-215); and
 * the checkout holds one of Q's witness commits (H), read last.
 
 P then merges into Q (`project_merged`, its evidence naming the alias),
@@ -75,7 +82,7 @@ from typing import TYPE_CHECKING, Any
 from . import _caches
 from .membership_lines import line_alias_joined
 from .membership_records import OPEN, H, R, Checkout, Location
-from .membership_shared import _unseen
+from .membership_shared import _SUBJECT, _unseen
 
 if TYPE_CHECKING:
     from .membership import Membership
@@ -86,6 +93,19 @@ _KEPT = 1024
 #: ``declaration:<principal>`` in its evidence or answer, the ``declaration``
 #: witness of a declared join, a ``principal``, or a ``declared_`` reason.
 _MARKS = ("declaration", "declared", '"principal"')
+#: The log rows `_declared` reads, each kind through the log's kind index:
+#: a join or a separation that answered no question, a question's answer,
+#: a merge and an unjoin, a part's file bound, and a record's home put
+#: (a record moved, or the records of a checkout moved with it).
+_DECLARING = (
+    "home_put",
+    "project_file_bound",
+    "project_merged",
+    "project_unmerged",
+    "proposal_answered",
+    "resolution_joined",
+    "resolution_new",
+)
 _LOCK = threading.Lock()
 _PASSED: OrderedDict[tuple[Any, ...], None] = OrderedDict()
 _DECLARED: OrderedDict[tuple[str, str, str], None] = OrderedDict()
@@ -249,7 +269,6 @@ def _target(
     if not _minted_on(self, pid, aliases, fetched):
         return None
     by_id = {c.id: c for cs in held.values() for c in cs}
-    checkouts = set(by_id) | {k.id}
     if any(
         pr.checkout == k.id
         or (pr.checkout in by_id and not _unseen(self, by_id[pr.checkout]))
@@ -261,7 +280,8 @@ def _target(
         "project_files", column_in=("project", sorted(members))
     ):
         return None
-    if _declared(self, pid, q, members | checkouts):
+    anchors = [k, *(c for c in held.get(q, ()) if set(c.remotes) == fetched)]
+    if _declared(self, pid, q, anchors):
         return None
     return q
 
@@ -377,26 +397,78 @@ def _loads(payload: str) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
-def _declared(self: Membership, pid: str, q: str, ids: Collection[str]) -> bool:
-    """Whether a user's declaration names one of `ids` (the projects that
-    stand for `pid` and `q`, and their checkouts): a row of the log a
-    declaration wrote (`_MARKS`) with one of them among its values. A
+def _declared(
+    self: Membership, pid: str, q: str, anchors: Collection[Checkout]
+) -> bool:
+    """Whether the user said which project P (`pid`) or Q (`q`) is: a row
+    of the log a declaration wrote (`_MARKS`, `_DECLARING`) that is the
+    user's word about the alias clone sighted or a full-URL clone of Q
+    that fetches from its keys (`anchors`), about the project either
+    stands for as a whole, or about the two (`_says`). A declaration that
+    places another project, or a checkout of another, in P or Q (an
+    answer to an import's question or to a folder's that could not be
+    read, an absorb, a join of that checkout) says where that project's
+    records go, and the merge keeps them with P's: it does not count. A
     pair found so is kept (`_DECLARED`)."""
     pair = (self._store.store_id, pid, q)
     if _kept(_DECLARED, pair):
         return True
-    wanted = set(ids)
-    for row in self._store.membership_log():
+    at = {c.id for c in anchors}
+    own = {c.project for c in anchors}
+    for row in self._store.membership_log(_DECLARING):
         if not any(mark in row.payload for mark in _MARKS):
             continue
-        try:
-            payload = json.loads(row.payload)
-        except ValueError:
-            continue
-        if _values(payload) & wanted:
+        if _says(self, row.kind, _loads(row.payload), at, own, {pid, q}):
             _keep(_DECLARED, pair)
             return True
     return False
+
+
+def _says(
+    self: Membership,
+    kind: str,
+    payload: dict[str, Any],
+    at: Collection[str],
+    own: Collection[str],
+    both: Collection[str],
+) -> bool:
+    """Whether a row a declaration wrote is the user's word about P's or
+    Q's own identity (`_declared`): a join or a separation (``project
+    new``) of a checkout of `at`, the alias clone or a full-URL clone; a
+    record written at one moved, or a part declared below its root; an
+    answer at one to a question about its own project, of any kind but
+    one about another project (`_SUBJECT`); an answer anywhere to a
+    question naming both P and Q (`both`), a choice between them; or a
+    merge or an unjoin of the project such a checkout's row names
+    (`own`, which a merge leaves and a move rewrites). Its rows of other
+    kinds, and those naming no declaration, say nothing here."""
+    if kind in ("resolution_joined", "resolution_new"):
+        return "principal" in payload and payload.get("checkout") in at
+    if kind == "home_put":
+        home = payload.get("home")
+        return (
+            isinstance(home, dict)
+            and "declaration" in str(home.get("rule") or "")
+            and home.get("checkout") in at
+        )
+    if kind == "project_file_bound":
+        return "declaration" in str(payload.get("evidence") or "") and (
+            payload.get("checkout") in at
+        )
+    if kind in ("project_merged", "project_unmerged"):
+        return "declaration" in str(payload.get("evidence") or "") and (
+            payload.get("project") in own
+        )
+    if kind != "proposal_answered" or "declaration" not in str(payload.get("by") or ""):
+        return False
+    try:
+        pr = self.proposal(str(payload.get("proposal") or ""))
+    except KeyError:
+        return False
+    if pr.kind in _SUBJECT:
+        return False
+    named = {self._canon(c) for c in pr.candidates}
+    return payload.get("checkout") in at or set(both) <= named
 
 
 def _values(raw: Any) -> set[str]:

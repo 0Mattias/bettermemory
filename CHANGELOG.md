@@ -1354,10 +1354,15 @@ eighteenth was built.
   merged where a question is open on a checkout of either where a
   sighting shows it (not one retired, nor one of this machine's whose
   folder is gone: ENG-215), a project
-  file is bound to either, or a declaration names either, a project
-  merged into either or a checkout of either (a join, move, init, new
-  or separate project, unjoin, absorb, declared remote or moved
-  record): evidence never overrides what the user said. The project
+  file is bound to either, or a declaration says which project either
+  is (a join, move or separation of the alias clone or of a full-URL
+  clone, a record written at one moved, an answer at one about its own
+  project or one naming both projects, an unjoin of either): evidence
+  never overrides what the user said. One that places another project
+  in either (the answer to an import's question or to one about a
+  folder that could not be read, an absorb, another checkout's join)
+  holds nothing, as the merge keeps that project's records with the
+  alias clone's (ENG-215: it held the join for good). The project
   that fetches from the URL stands; the line names the project merged
   and its undo (`unjoin_project`), after which what was written at
   either clone meanwhile stays with the project that stood. A

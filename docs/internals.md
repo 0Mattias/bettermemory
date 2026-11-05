@@ -955,10 +955,16 @@ project P into one other project Q where all of these hold:
   a prefix (`gh:acme/lib`, `gh:acme/app`) or one spelling under two
   machines' rules (`gh:lib`) are not joined by it, nor a fork whose own
   remote Q does not hold.
-- No declaration names P, Q, a project merged into either or a checkout
-  of either: no join, move, init, new or separate project, unjoin,
-  absorb, declared remote or record moved there. Evidence never
-  overrides what a user said.
+- No declaration says which project P or Q is: no join, move or
+  separation of the alias clone or of a full-URL clone, record written
+  at one moved, part declared below one, answer at one to a question
+  about its own project, answer to a question naming both P and Q, or
+  merge or unjoin of the project one of them is recorded in. Evidence
+  never overrides what a user said. A declaration that places another
+  project in P or Q (the answer to an import's question or to one about
+  a folder that could not be read, an absorb, a join of another
+  project's checkout) says where that project's records go, and the
+  merge keeps them with P's, so it holds nothing (ENG-215).
 - The checkout holds one of Q's witness commits (H), read last: one
   repository by two independent witnesses, rung 4's bar.
 
