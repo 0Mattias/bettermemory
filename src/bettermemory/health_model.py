@@ -927,7 +927,8 @@ class CommitDriftDebt:
     has no live view here, nor the caller's, which does not hold it), so
     their commits were not counted; present in the payload when non-zero.
     `unread` counts the candidates whose history was not read (the walk
-    from the stamp's head and its listing met their timeout, or the dates
+    from the stamp's head and its listing met their timeout, or git failed
+    on both from an anchor the repository holds, or the dates
     were not read: a timeout, an error, a history past the memo's budget, a
     shallow clone), so they have no row and are not caught up either;
     present when non-zero, with `unread_causes`, how many were not read

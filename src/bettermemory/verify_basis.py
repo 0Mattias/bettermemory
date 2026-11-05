@@ -32,7 +32,7 @@ from .origin import (
     repo_toplevel_and_head,
 )
 from .origin_dates import commit_author_timestamps
-from .origin_history import HistoryUnread, unwalked
+from .origin_history import HistoryUnread, given_up_since, unwalked
 
 # The axis a commit-drift count was measured on, carried as `basis` on
 # every block the four surfaces emit, so they cannot disagree about which
@@ -45,7 +45,8 @@ BASIS_AUTHOR_DATE = "author-date"
 
 #: A commit leg whose history was not read, and why
 #: (`origin_history.HistoryUnread`): the walk from the stamp's head and the
-#: listing of its commits both met their timeout (`origin_history.unwalked`),
+#: listing of its commits both met their timeout, or git failed on both
+#: from an anchor the repository holds (`origin_history.unwalked`),
 #: whose dates are not read in their place since a rebased or back-dated
 #: commit moves them, or the dates themselves were not read. Not None,
 #: which says the leg does not apply: the per-memory surfaces omit the
@@ -128,11 +129,13 @@ def _count_since_verify(
             walk = commits_since_anchor(
                 cwd_path, verified_head, toplevel=toplevel, head=head
             )
-            if walk is None and unwalked() != given_up:
-                # The walk and its listing met their timeout: the count is
+            why = None if walk is not None else given_up_since(given_up)
+            if why is not None:
+                # The walk and its listing met their timeout, or git failed
+                # on both from an anchor the repository holds: the count is
                 # omitted, never read off the author dates
                 # (`origin_history.unwalked`), and the row is unread.
-                return HistoryUnread.TIMEOUT
+                return why
     if walk is not None:
         count = len(walk.commits)
         basis = BASIS_REACHABILITY

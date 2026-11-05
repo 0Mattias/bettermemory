@@ -1396,7 +1396,7 @@ def test_a_walk_whose_names_time_out_keeps_the_conservative_count(
     assert len(met) == 1, "kept a minute"
     assert (_git.failed_calls(), _git.timed_out_calls()) == (failed + 1, timed_out + 1)
     monkeypatch.setattr(origin, "walk_files_signature", lambda *a, **k: None)
-    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
+    walked: origin.Walked = {}
     first = origin.commits_since_anchor(
         repo, anchor, toplevel=repo, head=head, walked=walked
     )
@@ -1421,7 +1421,7 @@ def test_a_walk_no_memo_keys_is_served_again_as_it_answered(
     head = _plain(repo, "rev-parse", "HEAD")
     monkeypatch.setattr(origin, "walk_files_signature", lambda *a, **k: None)
     _caches.clear_all()
-    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
+    walked: origin.Walked = {}
     first = origin.commits_since_anchor(
         repo, anchor, toplevel=repo, head=head, walked=walked
     )
@@ -1481,7 +1481,7 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
     # Where no memo keys the walk (the files unreadable), the pass keeps it.
     monkeypatch.setattr(origin, "walk_files_signature", lambda *a, **k: None)
     _caches.clear_all()
-    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
+    walked: origin.Walked = {}
     for _ in range(2):
         timed_out = _git.timed_out_calls()
         unwalked = origin_history.unwalked()
@@ -1585,7 +1585,7 @@ def test_a_walk_listed_alone_after_git_failed_is_served_as_a_failure(
     repo, anchor = _unread_trees(tmp_path, "treeless clone")
     head = _plain(repo, "rev-parse", "HEAD")
     _caches.clear_all()
-    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
+    walked: origin.Walked = {}
     first = origin.commits_since_anchor(
         repo, anchor, toplevel=repo, head=head, walked=walked
     )
@@ -1597,6 +1597,185 @@ def test_a_walk_listed_alone_after_git_failed_is_served_as_a_failure(
     assert again is first
     assert (_git.failed_calls(), _git.timed_out_calls()) == (failed + 1, timed_out)
     assert not origin._WALK_MEMO and not origin._WALK_TIMED_OUT
+
+
+def _failing(
+    monkeypatch: pytest.MonkeyPatch, names: str, listing: str, held: str = "read"
+) -> list[str]:
+    """The walk's names, the listing of its commits alone and the check
+    that the repository holds the anchor (``cat-file -e``) answer as
+    named: ``read`` as git does, ``exit 128``, ``killed`` (exit -9) or
+    ``timeout``. What each of the three met, in order."""
+    real = subprocess.run
+    met: list[str] = []
+    marked = f"--format={origin._WALK_MARK}%m%H"
+
+    def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if marked in argv:
+            step = "names" if "--name-only" in argv else "listing"
+            how = names if step == "names" else listing
+        elif "cat-file" in argv and "-e" in argv:
+            step, how = "held", held
+        else:
+            return real(argv, *args, **kwargs)
+        met.append(step)
+        if how == "timeout":
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
+        if how == "exit 128":
+            return subprocess.CompletedProcess(argv, 128, b"", b"fatal: bad object\n")
+        if how == "killed":
+            return subprocess.CompletedProcess(argv, -9, b"", b"")
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    return met
+
+
+#: How the walk's names and the listing of its commits alone fail, with
+#: the anchor held: neither met a timeout in the first two, the names did
+#: in the third (ENG-220's review, round G).
+_LISTING_FAILS = [
+    ("exit 128", "exit 128"),
+    ("exit 128", "killed"),
+    ("timeout", "killed"),
+]
+
+
+@pytest.mark.parametrize(("names", "listing"), _LISTING_FAILS)
+def test_a_listing_that_fails_from_a_held_anchor_reads_unread(
+    names: str, listing: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """foo's def line changes on top of the verified head under a commit
+    authored before the verify: the walk reads 1, the author dates 0.
+    Where git fails on the walk's names and on the listing of its commits
+    alone, the hit read those dates, 0, as for an anchor the repository
+    does not hold; it holds this one (``git cat-file -e``), so the search
+    hit, memory_show's count and the health rollup read `error`, unread,
+    and none reads the dates (ENG-220's review, round G). A later hit at
+    the anchor in the same pass runs no walk and is unread too, counted
+    as a failure; one whose names met their timeout is kept a minute."""
+    from bettermemory import health_stats, verify_basis
+
+    repo = _repository(tmp_path)
+    anchor = _rebased(repo)
+    head = _plain(repo, "rev-parse", "HEAD")
+    assert _seen(_hit(repo, [_FOO], anchor)) == (1, (_FOO,), verify.BASIS_REACHABILITY)
+    met = _failing(monkeypatch, names, listing)
+    error = CommitDriftUnread.ERROR
+    assert _unread_or_hit(repo, [_FOO], anchor) is error
+    assert met == ["names", "listing", "held"]
+    _caches.clear_all()
+    assert verify_basis._count_since_verify(repo, _VERIFIED, anchor) is error
+    _caches.clear_all()
+    history = origin_dates.commit_author_timestamps(repo)
+    assert isinstance(history, list)
+    rows, unread = health_stats._drift_rows_for_candidates(
+        [_stats("m")],
+        root=repo,
+        timestamps=history,
+        toplevel=repo,
+        anchor_paths_by_id={"m": (_MOD,)},
+        claims_by_id=None,
+        verified_head_by_id={"m": anchor},
+        head=head,
+    )
+    assert (rows, unread) == ([], {"m": error})
+    assert bool(origin._WALK_TIMED_OUT) == (names == "timeout")
+    if names == "timeout":
+        met.clear()
+        unwalked = origin_history.unwalked()
+        assert (
+            origin.commits_since_anchor(repo, anchor, toplevel=repo, head=head) is None
+        )
+        assert origin_history.given_up_since(unwalked) is error and met == []
+    monkeypatch.setattr(origin, "walk_files_signature", lambda *a, **k: None)
+    _caches.clear_all()
+    met.clear()
+    walked: origin.Walked = {}
+    for served in (False, True):
+        failed, unwalked = _git.failed_calls(), origin_history.unwalked()
+        timed_out = _git.timed_out_calls()
+        got = verify.resolve_hit_drift(
+            cwd=repo,
+            toplevel=repo,
+            head=head,
+            timestamps=lambda: origin_dates.commit_author_timestamps(repo),
+            anchors=(),
+            claims=load_claims([_FOO]),
+            since=_VERIFIED,
+            verified_head=anchor,
+            walked=walked,
+        )
+        assert got is error
+        assert origin_history.unwalked() == unwalked + 1
+        assert origin_history.given_up_since(unwalked) is error
+        assert _git.failed_calls() > failed
+        if served:
+            assert _git.timed_out_calls() == timed_out, "a failure, not a timeout"
+    assert met == ["names", "listing", "held"], "the second hit ran no walk"
+
+
+def test_a_listing_that_answers_after_the_names_failed_reads_the_dates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Git fails on the walk's names and the listing answers with no walk,
+    here an empty one, the head moved back behind the anchor: the dates
+    are the basis, as for a walk whose names were read, and the anchor's
+    presence is not asked."""
+    repo = _repository(tmp_path)
+    _rebased(repo)
+    anchor = _plain(repo, "rev-parse", "HEAD")
+    _plain(repo, "reset", "-q", "--hard", "HEAD~1")
+    met = _failing(monkeypatch, "exit 128", "read")
+    got = _unread_or_hit(repo, [_FOO], anchor)
+    assert not isinstance(got, CommitDriftUnread) and got is not None
+    assert got.basis == verify.BASIS_AUTHOR_DATE
+    assert met == ["names", "listing"]
+
+
+@pytest.mark.parametrize(("names", "listing"), _LISTING_FAILS)
+def test_a_listing_that_fails_from_an_anchor_not_held_reads_the_dates(
+    names: str, listing: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same failures from an anchor the repository does not hold
+    (``git cat-file -e`` exits 1) give no walk, and the count reads the
+    author dates, as git's own refusal of such an anchor does, with real
+    git and no failure simulated."""
+    repo = _repository(tmp_path)
+    _rebased(repo)
+    gone = "f" * 40
+    dated = (0, (), verify.BASIS_AUTHOR_DATE)
+    assert _seen(_hit(repo, [_FOO], gone)) == dated, "git refuses it"
+    met = _failing(monkeypatch, names, listing)
+    assert _seen(_hit(repo, [_FOO], gone)) == dated
+    assert met == ["names", "listing", "held"]
+    assert not origin._WALK_TIMED_OUT
+
+
+@pytest.mark.parametrize(
+    ("held", "why"),
+    [("timeout", "timeout"), ("killed", "error"), ("exit 128", None)],
+)
+def test_a_held_check_that_does_not_answer_is_no_evidence_the_anchor_is_gone(
+    held: str, why: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check that the repository holds the anchor meets its timeout:
+    the walk is given up on as a timeout, unread, and kept a minute; one
+    killed by a signal answers nothing either, and reads `error`, unread,
+    for the pass alone. Only an exit git gives for an object it does not
+    hold, or one that is no commit (128 with the ``^{commit}`` peel),
+    reads as an anchor not held, and the dates."""
+    repo = _repository(tmp_path)
+    anchor = _rebased(repo)
+    met = _failing(monkeypatch, "exit 128", "exit 128", held)
+    got = _unread_or_hit(repo, [_FOO], anchor)
+    if why is None:
+        assert not isinstance(got, CommitDriftUnread)
+        assert _seen(got) == (0, (), verify.BASIS_AUTHOR_DATE)
+    else:
+        assert got is CommitDriftUnread(why)
+    assert len(origin._WALK_TIMED_OUT) == (why == "timeout")
+    assert met == ["names", "listing", "held"]
 
 
 @pytest.mark.parametrize("flag", ["--boundary", "--name-only"])

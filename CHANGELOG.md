@@ -788,6 +788,24 @@ eighteenth was built.
   `src/bettermemory/origin_history.py`, `tests/test_unread_history.py`,
   `tests/test_commit_drift_cache.py`)
 
+- **A walk git fails on from an anchor the repository holds reads unread
+  (ENG-220).** Where git failed on the walk from a stamp's head with its
+  names and again on the listing of its commits alone (a non-zero exit,
+  a process killed), the count fell back to the author dates, as for an
+  anchor the repository does not hold, and read 0 where a rebased commit
+  on top of the anchor changed a claim (the review's round G). The walk
+  now asks whether the repository holds the anchor (`git cat-file -e
+  <anchor>^{commit}`): where it does, the walk is given up on and the
+  row reads `error`, unread, on the search hit, memory_show's count and
+  the health rollups, kept for the pass, and for a minute where the
+  names met their timeout; where git answers that it holds no such
+  commit, the dates are the basis as before. A check that answers
+  nothing is no evidence the anchor is gone: one that met its timeout
+  reads `timeout`, one killed `error`. (`src/bettermemory/origin.py`,
+  `src/bettermemory/origin_history.py`, `src/bettermemory/verify.py`,
+  `src/bettermemory/verify_basis.py`, `src/bettermemory/health_stats.py`,
+  `src/bettermemory/health_model.py`, `tests/test_origin_as_stored.py`)
+
 - **A config that includes another file keys no attribute files
   (ENG-220).** The attribute files a governed hit keys on declined on a
   config naming an attributes file or an `[attr` section, but not on an

@@ -137,7 +137,7 @@ from .origin_dates import (
     commit_author_sha_pairs_touching_pathspecs,
     commit_author_timestamps_touching_pathspecs,
 )
-from .origin_history import HistoryUnread, Walked, unwalked
+from .origin_history import HistoryUnread, Walked, given_up_since, unwalked
 from .origin_patch import local_patch_window, too_large
 from .verify_basis import (
     BASIS_AUTHOR_DATE,
@@ -1410,13 +1410,13 @@ def resolve_hit_drift(
         walk = commits_since_anchor(
             cwd, verified_head, toplevel=toplevel, head=head, walked=walked
         )
-        if walk is None and unwalked() != given_up:
+        why = None if walk is not None else given_up_since(given_up)
+        if why is not None:
             # The walk and the listing of its commits both met their
-            # timeout: no count, never one off the author dates
+            # timeout, or git failed on both from an anchor the repository
+            # holds: no count, never one off the author dates
             # (`origin_history.unwalked`), and not read as fresh.
-            return applicable_unread(
-                HistoryUnread.TIMEOUT, cwd, anchors, claims, toplevel=toplevel
-            )
+            return applicable_unread(why, cwd, anchors, claims, toplevel=toplevel)
     if walk is not None:
         count = len(walk.commits)
         basis = BASIS_REACHABILITY

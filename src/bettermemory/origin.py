@@ -1188,8 +1188,9 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
 #
 # A walk that met its timeout is kept apart, under the same key, for
 # `_WALK_TIMED_OUT_SECONDS` (`_WALK_TIMED_OUT`): the commits listed alone
-# where its names met it, or None where the listing met it too (given up,
-# `origin_history.unwalked`). Each costs a 5 s bound or two, which every
+# where its names met it, or why it was given up where the listing met it
+# too or failed at an anchor the repository holds (`origin_history.
+# unwalked`: ``TIMEOUT``, ``ERROR``). Each costs a 5 s bound or two, which every
 # call in that minute would pay again: a health rollup walks each verified
 # head again on every call, with no per-row memo (ENG-220's review, round
 # E). It is served as the pass's `walked` serves it, counted as a timeout
@@ -1200,9 +1201,9 @@ _WALK_MEMO_CAP = 128
 _WALK_TIMED_OUT_SECONDS = 60.0
 _WalkKey: TypeAlias = tuple[str, str, str, tuple[object, ...]]
 _WALK_MEMO: OrderedDict[_WalkKey, ReachableWalk] = OrderedDict()
-_WALK_TIMED_OUT: OrderedDict[_WalkKey, tuple[float, ReachableWalk | None]] = (
-    OrderedDict()
-)
+_WALK_TIMED_OUT: OrderedDict[
+    _WalkKey, tuple[float, ReachableWalk | origin_history.HistoryUnread]
+] = OrderedDict()
 _WALK_MEMO_LOCK = threading.Lock()
 
 
@@ -1218,7 +1219,7 @@ def _timed_out_walk(key: _WalkKey) -> tuple[bool, ReachableWalk | None]:
     `_WALK_TIMED_OUT_SECONDS` ago, and its outcome: the commits listed
     alone, or None where it was given up. A kept one is counted on the
     calling thread as the walk that met it was: a timeout, and a walk
-    given up (`origin_history.note_unwalked`) where it was."""
+    given up, and why (`origin_history.note_unwalked`), where it was."""
     with _WALK_MEMO_LOCK:
         kept = _WALK_TIMED_OUT.get(key)
         if kept is None:
@@ -1228,14 +1229,15 @@ def _timed_out_walk(key: _WalkKey) -> tuple[bool, ReachableWalk | None]:
             return False, None
         _WALK_TIMED_OUT.move_to_end(key)
     _git_runner.note_timed_out()
-    if kept[1] is None:
-        origin_history.note_unwalked()
+    if isinstance(kept[1], origin_history.HistoryUnread):
+        origin_history.note_unwalked(kept[1])
+        return True, None
     return True, kept[1]
 
 
 def _keep_timed_out_walk(
     key: _WalkKey | None,
-    walk: ReachableWalk | None,
+    walk: ReachableWalk | origin_history.HistoryUnread,
     toplevel: Path,
     held: dict[str, tuple[int, int]],
 ) -> None:
@@ -1299,16 +1301,19 @@ def commits_since_anchor(
     (`ReachableWalk.listed` False), whose whole length claim drift keeps;
     one after a timeout (`ReachableWalk.timed_out`) is kept a minute,
     apart from the walks (`_WALK_TIMED_OUT`). Where that listing meets its
-    timeout too, the walk is given up on (`origin_history.unwalked`), kept
-    a minute as well, and the caller omits the count: it never reads the
+    timeout too, the walk is given up on (`origin_history.unwalked`,
+    ``TIMEOUT``), kept a minute as well; where git fails on it too and the
+    repository holds the anchor (`_held_anchor`), it is given up on as
+    ``ERROR``, kept a minute where the names met their timeout and for the
+    pass otherwise. The caller then omits the count: it never reads the
     author dates in its place, which a rebased or back-dated commit moves
-    (ENG-220's review, rounds C and F).
+    (ENG-220's review, rounds C, F and G).
 
     None, and the author-date fallback, when: `anchor` is not a full
-    hash (never handed to git as a revision), git cannot answer the
-    listing either (an anchor this repository does not hold), the anchor
-    is not an ancestor of HEAD (a rewritten history), or HEAD sits behind
-    it. `toplevel` and `head`
+    hash (never handed to git as a revision), git fails on the listing
+    too at an anchor this repository does not hold, the anchor is not an
+    ancestor of HEAD (a rewritten history), or HEAD sits behind it.
+    `toplevel` and `head`
     skip the root and head resolution (`repo_toplevel_and_head`) when
     the caller already has them, the way the batch surfaces thread a
     once-resolved root.
@@ -1343,9 +1348,12 @@ def commits_since_anchor(
                 # Git failed on its names: counted as that failure again.
                 _git_runner.note_failed()
             return seen
-        if seen is None:
-            _git_runner.note_timed_out()
-            origin_history.note_unwalked()
+        if isinstance(seen, origin_history.HistoryUnread):
+            if seen is origin_history.HistoryUnread.TIMEOUT:
+                _git_runner.note_timed_out()
+            else:
+                _git_runner.note_failed()
+            origin_history.note_unwalked(seen)
         elif seen:
             _git_runner.note_failed()
         return None
@@ -1356,17 +1364,25 @@ def commits_since_anchor(
         # The names were not read, for whatever reason: a timeout, or a
         # tree git could not read (a treeless clone, a corrupt object),
         # where the author dates miss a rebased commit (ENG-220's review,
-        # round F). The commits alone, no diff read; where their listing
-        # fails too, as at an anchor this repository does not hold, the
-        # dates are the basis, as they are for a walk git refused.
+        # round F). The commits alone, no diff read.
         names_timed_out = _git_runner.timed_out_calls() != timed_out
         timed_out = _git_runner.timed_out_calls()
+        listing = _git_runner.failed_calls()
         walk = _walk_reachable(toplevel, anchor, head, names=False)
+        why: origin_history.HistoryUnread | None = None
         if walk is None and _git_runner.timed_out_calls() != timed_out:
-            origin_history.note_unwalked()
-            _keep_timed_out_walk(key, None, toplevel, held)
+            why = origin_history.HistoryUnread.TIMEOUT
+        elif walk is None and _git_runner.failed_calls() != listing:
+            # The listing failed too: the dates are the basis only where
+            # the repository holds no such anchor, as for a walk git
+            # refused (ENG-220's review, round G).
+            why = _held_anchor(toplevel, anchor)
+        if why is not None:
+            origin_history.note_unwalked(why)
+            if names_timed_out or why is origin_history.HistoryUnread.TIMEOUT:
+                _keep_timed_out_walk(key, why, toplevel, held)
             if walked is not None:
-                walked[within] = None
+                walked[within] = why
             return None
         if walk is not None and names_timed_out:
             walk = dataclasses.replace(walk, timed_out=True)
@@ -1386,6 +1402,26 @@ def commits_since_anchor(
             while len(_WALK_MEMO) > _WALK_MEMO_CAP:
                 _WALK_MEMO.popitem(last=False)
     return walk
+
+
+def _held_anchor(toplevel: Path, anchor: str) -> origin_history.HistoryUnread | None:
+    """Why a walk from `anchor` whose names and listing git both failed on
+    is given up on: ``ERROR`` where the repository holds the commit
+    (``git cat-file -e <anchor>^{commit}`` exits 0), since git then failed
+    on a range it holds, where the author dates miss a rebased commit
+    (ENG-220's review, round G); None, and the dates, where it exits
+    non-zero (1 or 128: no such object, or one that is no commit), an
+    anchor this repository does not hold. A check that gives no answer is
+    no evidence the anchor is gone: one killed by a signal (a negative
+    exit) reads ``ERROR``, one that met its timeout ``TIMEOUT``, one that
+    found no binary or directory None and any other spawn failure
+    ``ERROR`` (`origin_history.unanswered`). Git fetches no missing object
+    for it (`_git.NO_FETCH`)."""
+    before = origin_history.git_counts()
+    held = _git_result(toplevel, "cat-file", "-e", f"{anchor}^{{commit}}", timeout=5.0)
+    if held is None:
+        return origin_history.unanswered(before, named=True)
+    return None if held.returncode > 0 else origin_history.HistoryUnread.ERROR
 
 
 def _walk_reachable(

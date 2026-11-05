@@ -28,7 +28,7 @@ from .control_tokens import named_tokens
 from .events import _event_id_list, is_audit_row
 from .models import Memory, first_summary_line
 from .origin import commits_since_anchor
-from .origin_history import Walked, unwalked
+from .origin_history import Walked, given_up_since, unwalked
 from .claims import load_claims
 from .verify import (
     BASIS_AUTHOR_DATE,
@@ -754,7 +754,8 @@ def _drift_rows_for_candidates(
     the two cannot compute different drift policies for the same
     memory. Returns drifting rows sorted heaviest-first, and, by memory id,
     why each candidate's history was not read (`unread`: the walk and its
-    listing met their timeout, `origin_history.unwalked`, or `timestamps`,
+    listing met their timeout or failed at an anchor the repository holds,
+    `origin_history.unwalked`, or `timestamps`,
     the root's dates, were not read and the candidate counts on them),
     which get no row and are not counted clean either, save where every
     anchor escapes the repository (`verify.applicable_unread`); the caller
@@ -793,13 +794,15 @@ def _drift_rows_for_candidates(
             walk = commits_since_anchor(
                 root, anchor, toplevel=toplevel, head=head, walked=walked
             )
-            if walk is None and unwalked() != given_up:
-                # The walk and its listing met their timeout: no row, as
+            given_up_why = None if walk is not None else given_up_since(given_up)
+            if given_up_why is not None:
+                # The walk and its listing met their timeout, or git failed
+                # on both from an anchor the repository holds: no row, as
                 # the per-memory surfaces omit the count, never one counted
                 # off the author dates (`origin_history.unwalked`), and
                 # counted apart, not read as caught up.
                 why = applicable_unread(
-                    CommitDriftUnread.TIMEOUT,
+                    given_up_why,
                     root,
                     anchors,
                     parsed_claims,

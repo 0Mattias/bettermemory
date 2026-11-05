@@ -169,7 +169,9 @@ class HistoryUnread(enum.Enum):
     - ``ERROR``: git ran and failed on a head named by its hash (a non-zero
       exit), printed a line its format does not print (`read_lines`), or
       could not be spawned for another reason than a binary or a directory
-      that is not there."""
+      that is not there; or it failed on the walk from a stamp's head and
+      the listing of its commits both, where the repository holds that
+      head (`origin.commits_since_anchor`, `unwalked`)."""
 
     TIMEOUT = "timeout"
     OVER_BUDGET = "over_budget"
@@ -569,35 +571,48 @@ class ReachableWalk:
 
 #: What one pass over many memories remembers of each walk no memo keeps,
 #: by (root, anchor, head) (`origin.commits_since_anchor`): the walk; for one
-#: that came back None, whether a git process failed for it; None for one
-#: whose names and listing both met their timeout.
-Walked: TypeAlias = dict[tuple[str, str, str], "ReachableWalk | bool | None"]
+#: that came back None, whether a git process failed for it; why, for one
+#: given up on (`unwalked`).
+Walked: TypeAlias = dict[tuple[str, str, str], "ReachableWalk | bool | HistoryUnread"]
 
 
 class _Unwalked(threading.local):
     """The walks on the current thread that `origin.commits_since_anchor`
-    gave up on. Read through `unwalked`."""
+    gave up on, and why the last was. Read through `unwalked` and
+    `given_up_since`."""
 
     count = 0
+    why = HistoryUnread.TIMEOUT
 
 
 _UNWALKED = _Unwalked()
 
 
 def unwalked() -> int:
-    """How many reachable walks on the current thread met their timeout
-    twice, with their names and as the listing of their commits alone
-    (`origin.commits_since_anchor`), served from a pass's `Walked` too. A
-    caller that reads this before and after a walk and finds it moved
-    omits the count and reads the row unread (`HistoryUnread.TIMEOUT`), and
-    never reads the author dates in its place: a rebased or back-dated
-    commit moves them (ENG-220's review, round C)."""
+    """How many reachable walks on the current thread were given up on
+    (`origin.commits_since_anchor`), served from a pass's `Walked` too:
+    their names and the listing of their commits alone met their timeout,
+    or git failed on both from an anchor the repository holds. A caller
+    that reads this before a walk and finds it moved after
+    (`given_up_since`) omits the count and reads the row unread, and never
+    reads the author dates in its place: a rebased or back-dated commit
+    moves them (ENG-220's review, rounds C and G)."""
     return _UNWALKED.count
 
 
-def note_unwalked() -> None:
-    """Count, on the calling thread, a walk given up on (`unwalked`)."""
+def given_up_since(before: int) -> HistoryUnread | None:
+    """Why the walk run since `before` (`unwalked`) was given up on:
+    ``TIMEOUT`` where its listing met its timeout, ``ERROR`` where git
+    failed on it from an anchor the repository holds; None where none
+    was."""
+    return _UNWALKED.why if _UNWALKED.count != before else None
+
+
+def note_unwalked(why: HistoryUnread) -> None:
+    """Count, on the calling thread, a walk given up on, and why
+    (`unwalked`)."""
     _UNWALKED.count += 1
+    _UNWALKED.why = why
 
 
 __all__ = [
@@ -614,6 +629,7 @@ __all__ = [
     "base_for",
     "cuts",
     "git_counts",
+    "given_up_since",
     "history_guard",
     "instant",
     "located_key",
