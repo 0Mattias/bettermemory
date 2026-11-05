@@ -885,3 +885,154 @@ def test_a_shallow_clone_reads_unread_until_it_is_unshallowed(
         hit = _by_id(out)[memory_id]
         assert "commit_drift_unread" not in hit
         assert hit["commit_drift_count"] == 1
+
+
+@pytest.mark.usefixtures("keyed_by")
+def test_a_cut_the_head_never_reaches_counts_on_every_surface(
+    tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The repository fetched an unrelated branch with ``--depth=1``: its
+    shallow file lists that branch's tip, which HEAD never reaches. The
+    search hit counts 1 and is not flagged, memory_show's count reads 1 and
+    the health rollup's row 1, whether the files or git's answer key the
+    rows (ENG-220's review, round F)."""
+    repo, caller, cited, _, memories = _scenario(tmp_path, memory_dir, monkeypatch)
+    other = _repo(tmp_path, "other")
+    _commit(other, "o0", when=_T0, files={"b.md": "0\n"})
+    _commit(other, "o1", when=_T1, files={"b.md": "1\n"})
+    _git(repo, "fetch", "-q", "--depth=1", other.as_uri(), "main:refs/heads/other")
+    assert (repo / ".git" / "shallow").exists(), "premise: a cut"
+    _caches.clear_all()
+    out, _ = _attach(memories, caller, monkeypatch)
+    hit = _by_id(out)[cited]
+    assert "commit_drift_unread" not in hit and hit["commit_drift_count"] == 1
+    _caches.clear_all()
+    shown = compute_commit_drift(
+        _V1,
+        _URL,
+        caller_origin=None,
+        body=f"widget rule lives in {repo / 'notes0.md'}",
+        anchor=ClaimAnchor(root=str(repo), rule="home_checkout"),
+    )
+    assert not isinstance(shown, CommitDriftUnread) and shown is not None
+    assert shown.commits_since_verify == 1
+    _caches.clear_all()
+    debt = health._compute_commit_drift_debt(
+        by_id={"m": _stats("m")},
+        origin_repo_by_id={"m": _URL},
+        caller_origin=Origin(cwd=str(repo), repo=_URL, branch=None),
+        anchor_paths_by_id={"m": (str(repo / "notes0.md"),)},
+        claims_by_id=None,
+        verified_head_by_id=None,
+    )
+    assert debt is not None and debt.unread == 0
+    assert [row.commits_since_verify for row in debt.rows] == [1]
+
+
+def test_a_line_the_named_log_does_not_print_declines_the_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where a cut has the log name each commit, a line of any other shape
+    (here a hash with no date) declines the whole read, `error`, as a
+    line the dates' own log does not print does: no commit drops out of
+    the count."""
+    repo = _repo(tmp_path)
+    _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
+    _commit(repo, "post", when=_T1, files={"notes0.md": "a1\n"})
+    (repo / ".git" / "shallow").write_text(f"{'f' * 40}\n", encoding="utf-8")
+    real_run = subprocess.run
+
+    def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        done = real_run(argv, *args, **kwargs)
+        if "--format=%H %at" in argv:
+            first, _, rest = done.stdout.partition(b"\n")
+            done.stdout = first.split(b" ")[0] + b"\n" + rest
+        return done
+
+    _caches.clear_all()
+    read = origin_dates.commit_author_timestamps(repo)
+    assert isinstance(read, list) and len(read) == 2, "premise: a cut not reached"
+    monkeypatch.setattr(subprocess, "run", run)
+    _caches.clear_all()
+    assert origin_dates.commit_author_timestamps(repo) is CommitDriftUnread.ERROR
+
+
+#: Each fetch into a full clone of five commits: whether the shallow file's
+#: cut is one HEAD's history reaches.
+_CUTS = {
+    "a depth-1 fetch of an unrelated branch": False,
+    "a depth-1 fetch of origin's main, not merged": False,
+    "a depth-1 fetch of origin's main, merged": True,
+    "the unrelated branch merged in": True,
+    "a clone two commits deep": True,
+    "a shallow file that is not read": True,
+}
+
+
+@pytest.mark.parametrize("moved", [False, True], ids=["keyed", "no key"])
+@pytest.mark.parametrize("shape", list(_CUTS))
+def test_a_cut_reads_shallow_only_where_the_history_reaches_it(
+    shape: str,
+    moved: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """A shallow file's cut stops git's log only where HEAD's history reaches
+    it. A full clone that fetched another branch, or origin's main, with
+    ``--depth=1`` and merged neither holds a cut its main branch never
+    reaches: its dates are read whole and count, where the cut alone read
+    them `shallow` (ENG-220's review, round F). The log then names each
+    commit, as the walk's does, and lists a cut wherever the history stops
+    at one: origin's main reset onto, the fetched branch merged in and a
+    clone two commits deep read `shallow`, and so does a shallow file that
+    is not read. The merge follows a count at the head before it, under the
+    same shallow file: a history a cut may stop is read whole, so no
+    extension of that count reads past the cut. Alike where no key is
+    read."""
+    source = _repo(tmp_path, "source")
+    for day in range(5):
+        _commit(
+            source,
+            f"c{day}",
+            when=_T0 + timedelta(days=day),
+            files={"a.md": f"{day}\n"},
+        )
+    other = _repo(tmp_path, "other")
+    for day in range(3):
+        _commit(
+            other, f"o{day}", when=_T1 + timedelta(days=day), files={"b.md": f"{day}\n"}
+        )
+    clone = tmp_path / "clone"
+    depth = ["--depth=2"] if shape == "a clone two commits deep" else []
+    _git(tmp_path, "clone", "-q", *depth, source.as_uri(), str(clone))
+    if moved:
+        monkeypatch.setenv("GIT_DISCOVERY_ACROSS_FILESYSTEM", "1")
+    if "unrelated branch" in shape:
+        _git(clone, "fetch", "-q", "--depth=1", other.as_uri(), "main:refs/heads/other")
+    _caches.clear_all()
+    first = origin_dates.commit_author_timestamps(clone)
+    if shape != "a clone two commits deep":
+        assert isinstance(first, list) and len(first) == 5, "premise: main whole"
+    if shape.endswith("merged in"):
+        _git(clone, "merge", "-q", "--allow-unrelated-histories", "-m", "m", "other")
+    else:
+        _caches.clear_all()
+    if "origin's main" in shape:
+        _commit(source, "c5", when=_T0 + timedelta(days=6), files={"a.md": "5\n"})
+        _git(clone, "fetch", "-q", "--depth=1", "origin", "main")
+        if shape.endswith(", merged"):
+            # The fetched tip is a cut with no parent here: reset onto it,
+            # as a pull that fetched it shallow leaves the branch.
+            _git(clone, "reset", "-q", "--hard", "origin/main")
+    elif shape == "a shallow file that is not read":
+        shallow = clone / ".git" / "shallow"
+        shallow.write_text(f"{_git(clone, 'rev-parse', 'HEAD~4')}\n", encoding="utf-8")
+        shallow.chmod(0)
+        request.addfinalizer(lambda: shallow.chmod(0o644))
+    assert (clone / ".git" / "shallow").exists(), "premise: a shallow file"
+    got = origin_dates.commit_author_timestamps(clone)
+    if _CUTS[shape]:
+        assert got is CommitDriftUnread.SHALLOW
+    else:
+        assert isinstance(got, list) and len(got) == 5, "the main branch whole"

@@ -157,7 +157,9 @@ class HistoryUnread(enum.Enum):
       (`_TIMESTAMPS_MEMO_SLOTS` dates), so it is not counted, the read that
       met it as much as the calls of the next minute (`remember`).
     - ``SHALLOW``: the clone is shallow, its ``shallow`` file listing a
-      commit (or unreadable, `cuts`), and git reads no commit behind one.
+      commit the head's history reaches (or unreadable, `cuts`), and git
+      reads no commit behind one; a cut the history never reaches, as a
+      branch fetched with ``--depth`` beside a full one, reads nothing.
       No window on the dates can be shown to stop short of the cut: a
       commit there authored before the stamp hides parents authored after
       it. A walk from a stamp's head whose range holds no cut is read in

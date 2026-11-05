@@ -757,6 +757,21 @@ eighteenth was built.
   `error`. (`src/bettermemory/githead.py`,
   `src/bettermemory/origin_dates.py`, `tests/test_unread_history.py`)
 
+- **A shallow file's cut reads shallow only where the history reaches it
+  (ENG-220).** Any commit a `shallow` file listed read the whole history
+  `shallow`, so a full clone that fetched another branch, or origin's
+  main, with `--depth=1` and merged neither read every memory on the
+  author dates unread, though its main branch's history is whole (the
+  review's round F). Where the file lists commits, the dates' log now
+  names each commit, as the walk's already did, and reads `shallow` only
+  where it lists a cut; a history that reaches none counts. Such a
+  history is read whole, never extended from an earlier head's dates, so
+  a merge that brings a cut in is seen. A `shallow` file that is not read
+  still reads `shallow`, with or without a key; an unshallowed clone and
+  an empty file read as before. (`src/bettermemory/origin_dates.py`,
+  `src/bettermemory/origin_history.py`, `tests/test_unread_history.py`,
+  `tests/test_commit_drift_cache.py`)
+
 - **No window passes a command line's bound (ENG-220).** The patch
   stream and the split's listing named up to 256 commits on git's
   command line (10,496 characters), and they and the two path-filtered

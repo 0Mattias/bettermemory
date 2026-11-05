@@ -4072,7 +4072,7 @@ def test_the_whole_history_memo_touches_a_hit_under_its_lock(
     shallow file's, since neither root is a repository."""
     monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_CAP", 1)
     monkeypatch.setattr(
-        origin_dates, "_read_author_timestamps", lambda cwd, revision: [_T0]
+        origin_dates, "_read_author_timestamps", lambda cwd, revision, cut: [_T0]
     )
     monkeypatch.setattr(origin_history, "cuts", lambda start, walk=False: frozenset())
     touched = (Path("/touched"), "a" * 40)
