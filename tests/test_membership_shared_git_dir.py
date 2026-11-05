@@ -2477,9 +2477,10 @@ class _AtItsFolders(Client):
 
 def _posts(lab: Lab, box: Client, monkeypatch: pytest.MonkeyPatch) -> int:
     """The posts of one prompt's exchange (`Container.post`, its probe
-    first), each a call of `location.resolve_hook`."""
+    first), each a call of `location.resolve_hook`, which
+    `test_membership_resolution` imports by name."""
     calls: list[object] = []
-    real = test_membership_resolution.resolve_hook
+    real = location.resolve_hook
 
     def counted(*a: Any, **kw: Any) -> Any:
         calls.append(a)
