@@ -296,7 +296,9 @@ def _config_bytes(
     try:
         fd = os.open(path, flags)
     except (OSError, ValueError) as exc:
-        if path_missing(exc) or (gentle and isinstance(exc, PermissionError)):
+        if (path_missing(exc) and not _accessible(path)) or (
+            gentle and isinstance(exc, PermissionError)
+        ):
             return None
         raise _Dies(f"git cannot read {path} ({type(exc).__name__})") from None
     chunks: list[bytes] = []
@@ -322,6 +324,21 @@ def _config_bytes(
     if size > _FORMAT_LIMIT:
         raise _Overflow(path)
     return b"".join(chunks)
+
+
+def _accessible(path: str) -> bool:
+    """Whether git's ``access(path, R_OK)`` finds `path`, which it asks
+    before it opens a config file (config.c's ``handle_path_include`` and
+    ``do_git_config_sequence``, through ``access_or_die``), skipping one
+    it answers is missing: a path the open answers is missing but the
+    access finds is one git goes on to open, and dies at. Windows answers
+    so for a folder named with a trailing separator, an empty
+    ``include.path``'s (ENG-207's round 8, Windows CI): the open finds
+    nothing there and ``_waccess`` the folder, and git dies."""
+    try:
+        return os.access(path, os.R_OK)
+    except ValueError:
+        return False
 
 
 def _read_config(

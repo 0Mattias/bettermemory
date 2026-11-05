@@ -24,6 +24,7 @@ how this git reads a legacy remote file and an empty URL is asked of it
 from __future__ import annotations
 
 import dataclasses
+import errno
 import getpass
 import inspect
 import os
@@ -237,6 +238,31 @@ def test_where_git_dies_the_capture_declines(tmp_path: Path, case: str) -> None:
     _write(repo, where, text.format(tmp=tmp_path.as_posix()))
     done = _git(repo, "ls-remote", "--get-url", "origin", check=False)
     assert done.returncode != 0, f"premise: git dies ({done.stdout!r})"
+    _declines(repo)
+
+
+def test_a_folder_the_open_finds_nothing_at_is_one_git_dies_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows CI (ENG-207's round 8): an empty ``include.path`` names the
+    including file's folder with a trailing separator, which Windows'
+    open answers as missing and its ``_waccess`` finds, so Git for Windows
+    goes on to open it and dies (``git ls-remote`` exits non-zero there,
+    `test_where_git_dies_the_capture_declines`), where the capture read
+    past it as a missing file and keyed the remote. git asks ``access``
+    before it opens a config file (``access_or_die``), and the read asks
+    it too where the open finds nothing (`gitconfig._accessible`):
+    Windows' answer is played here, and the capture declines."""
+    repo = _repo(tmp_path / "repo")
+    _write(repo, "local", DIES["include_empty"][1])
+    real = os.open
+
+    def windows_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if isinstance(path, str) and path.endswith(os.sep) and os.path.isdir(path):
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), path)
+        return real(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", windows_open)
     _declines(repo)
 
 

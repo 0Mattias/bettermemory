@@ -1038,7 +1038,13 @@ eighteenth was built.
   `git rev-parse` reads on, records the repository; the line reader this
   replaces keyed a valueless `url` as `local:<repo>/true`, read on past
   the others, and read a folder whose repository's config holds a bad
-  line as outside any repository. An empty `GIT_CONFIG_GLOBAL` now names
+  line as outside any repository. A config file the open finds nothing
+  at is missing only where git's `access`, which git asks first, finds
+  nothing either: Windows answers so for an empty `include.path`, the
+  including file's folder named with a trailing separator, which Git for
+  Windows' `_waccess` finds and its open cannot read, so git dies, where
+  the capture read past it as a missing file and keyed the remote. An
+  empty `GIT_CONFIG_GLOBAL` now names
   no file, as for git, where it read `~/.gitconfig`. A cached capture
   waited for the repository's own files to change before it saw a new
   rule in the global config; it is now kept against every config file
