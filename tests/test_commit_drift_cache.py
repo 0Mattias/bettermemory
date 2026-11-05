@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
@@ -255,7 +256,6 @@ def _attach(
 
     monkeypatch.setattr(subprocess, "run", spy)
     real_store = _response._DriftPass.store
-    _STORES.clear()
     monkeypatch.setattr(_response._DriftPass, "store", _recording(real_store))
     try:
         builder.attach_commit_drift_counts(
@@ -267,12 +267,25 @@ def _attach(
     return out, calls
 
 
-#: What each store of the last `_attach` met (`_recording`), for the
-#: message of a premise that the memo kept a row: on Windows CI a pass's
-#: memo was found empty where the macOS legs keep it, on five tests, one
-#: leg of four where the four run the same pass before the premise, and
-#: the log said no more (run 42027942574).
+#: What each store of the test's `_attach` calls met (`_recording`), for
+#: a premise that the memo kept a row: on Windows CI a pass's memo was
+#: found empty where the macOS legs keep it, on four tests in two runs
+#: and on one leg of four, or of two, in one run each, where the legs run
+#: the same pass before the premise, and the log said no more (runs
+#: 42027942574 and 42072666238). Emptied before each test and printed
+#: after it (`_print_stores`), which pytest shows for a failed test.
 _STORES: list[dict[str, object]] = []
+
+
+@pytest.fixture(autouse=True)
+def _print_stores() -> Iterator[None]:
+    """Empty `_STORES` for the test, and print what it holds after it:
+    pytest shows the output of a failed test only, so every memo premise
+    that fails names the check its pass's store failed on."""
+    _STORES.clear()
+    yield
+    if _STORES:
+        print("drift stores:", _STORES)
 
 
 def _recording(real: Any) -> Any:
@@ -302,6 +315,16 @@ def _recording(real: Any) -> Any:
             (now := origin.walk_files_signature(root)) != self._walk_files
         ):
             out["walk_files"] = (self._walk_files, now)
+        repository = self._repository_attributes
+        if repository is not _response._UNREAD and repository is not None:
+            now = origin_gitfiles.attribute_files_signature(self.cwd, root)
+            if now != repository:
+                out["attributes"] = (repository, now)
+        for specs, chain in self._attribute_chains.items():
+            if chain is not None and (
+                (now := origin_gitfiles.gitattributes_signature(root, specs)) != chain
+            ):
+                out[f"chain {specs}"] = (chain, now)
         for directory, recorded in self._held_directories.items():
             try:
                 status = os.stat(directory)
@@ -724,7 +747,6 @@ def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
     builder = ResponseBuilder(stale_after_days=30)
     out = [builder.hit_to_dict(hit, now=_NOW) for hit in hits]
     real_store = _response._DriftPass.store
-    _STORES.clear()
     monkeypatch.setattr(_response._DriftPass, "store", _recording(real_store))
     builder.attach_commit_drift_counts(
         out, hits, memories, caller_origin=caller, admission=_counted(memories)

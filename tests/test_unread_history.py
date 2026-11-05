@@ -71,6 +71,7 @@ from .test_commit_drift_cache import (
     _commit,
     _git,
     _history_calls,
+    _print_stores,  # noqa: F401
     _repo,
     _whole_history_logs,
     _write,
