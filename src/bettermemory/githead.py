@@ -771,18 +771,57 @@ def _packed_in_order(data: bytes) -> bool:
 
 
 # Whether each ``packed-refs`` content `_packed` met reads as git reads it
-# (`_packed_reads`), by the digest of its bytes, so a file read again
-# unchanged is not checked again and no clock decides that it is
-# unchanged. Measured (macOS, Python 3.11): the check reads every line,
+# (`_packed_verdict`), by the digest of its bytes, so a content met again
+# (the file rewritten as it was, another clone's) is not checked again
+# and no clock decides that it is unchanged. Measured (macOS, Python
+# 3.11): the check reads every line,
 # 110 to 150 ms for 100,000 refs (8 MB), where finding one name's line
 # takes 2 ms and the digest 6; 0.2 ms for 200 refs. Bounded at
 # `_PACKED_READS_CAP` contents, the least recently used dropped first.
 _PACKED_READS: OrderedDict[bytes, bool] = OrderedDict()
 _PACKED_READS_CAP = 64
 _PACKED_READS_LOCK = threading.Lock()
+# The verdict each ``packed-refs`` file `_packed` read was given, by its
+# path, beside the file's `stamp` taken before the read, so a file read
+# again with the same stamp and length is not digested again: the head
+# readers run on every capture, and a branch held in a large file then
+# costs its read and a stat, as before the check (the digest of 8 MB
+# takes 6 ms). git rewrites the file through a lock file and a rename,
+# which gives it a new inode and ctime; the stamp misses only a rewrite
+# in place within one tick of the filesystem's clock that keeps the size
+# and the inode number, as every `stamp` does. A file replaced between
+# the stat and the read is kept under the older stamp, which the next
+# stat does not match. Bounded at `_PACKED_READS_CAP` paths and locked
+# with `_PACKED_READS`.
+_PACKED_STAMPED: OrderedDict[str, tuple[Stamp, bool]] = OrderedDict()
 
 
-def _packed_reads(data: bytes) -> bool:
+def _packed_reads(
+    data: bytes, path: str | None = None, stamped: Stamp | None = None
+) -> bool:
+    """Whether git reads the ``packed-refs`` content `data` as `_packed`
+    does, line by line (`_packed_verdict`): from `_PACKED_STAMPED` where
+    the file at `path` still has the `stamp` taken before `data` was read
+    from it, `stamped`, and `data` its length; otherwise judged, and kept
+    there under that stamp."""
+    key = path if stamped is not None and len(data) == stamped[2] else None
+    if key is not None:
+        with _PACKED_READS_LOCK:
+            known = _PACKED_STAMPED.get(key)
+            if known is not None and known[0] == stamped:
+                _PACKED_STAMPED.move_to_end(key)
+                return known[1]
+    reads = _packed_verdict(data)
+    if key is not None and stamped is not None:
+        with _PACKED_READS_LOCK:
+            _PACKED_STAMPED[key] = (stamped, reads)
+            _PACKED_STAMPED.move_to_end(key)
+            while len(_PACKED_STAMPED) > _PACKED_READS_CAP:
+                _PACKED_STAMPED.popitem(last=False)
+    return reads
+
+
+def _packed_verdict(data: bytes) -> bool:
     """Whether git reads the ``packed-refs`` content `data` as `_packed`
     does, line by line: every line of it (`_PACKED_SHAPES`, `_BAD_NAME`)
     and every record where it stands (`_packed_in_order`). Remembered by
@@ -823,8 +862,12 @@ def _packed(commondir: Path, name: bytes) -> str | None:
     ``check_refname_format`` refuses, which git reads as a broken ref,
     declines too (`_BAD_NAME`), as do records out of the order the
     header claims and hashes of both lengths."""
+    path = os.path.join(commondir, "packed-refs")
     try:
-        data = _read(os.path.join(commondir, "packed-refs"), _PACKED_LIMIT)
+        # Stamped before the read, so a stamp kept beside a verdict is
+        # never newer than the bytes judged (`_PACKED_STAMPED`).
+        stamped = stamp(path)
+        data = _read(path, _PACKED_LIMIT)
     except FileNotFoundError as exc:
         if not path_missing(exc):
             raise
@@ -836,7 +879,7 @@ def _packed(commondir: Path, name: bytes) -> str | None:
         len(data) > _PACKED_LIMIT
         or not data.endswith(b"\n")
         or (header and not data.startswith(b"# pack-refs with:"))
-        or not _packed_reads(data)
+        or not _packed_reads(data, path, stamped)
     ):
         raise _Unsettled
     # A ref name holds no space and no newline, so the name between the

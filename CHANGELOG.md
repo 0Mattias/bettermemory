@@ -776,7 +776,11 @@ eighteenth was built.
   names git reads with a CR or as broken, and one whose records stand
   out of the order its header claims, which git's search can step past;
   the plumbing settles them. The check reads every line once per
-  content: 110 to 150 ms for 100,000 refs, 0.2 ms for 200.
+  content: 110 to 150 ms for 100,000 refs, 0.2 ms for 200. Its verdict
+  is kept by the content's digest and beside the file's stamp, so a
+  file read again unchanged, as the head readers read it on every
+  capture, costs its read and a stat as before (3 ms for 100,000 refs)
+  and is not digested again.
   (`src/bettermemory/githead.py`, `tests/test_githead.py`,
   `tests/test_unread_history.py`)
 

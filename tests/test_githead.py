@@ -269,6 +269,55 @@ def test_a_packed_refs_file_git_does_not_read_whole_declines_every_ref(
     assert githead.head_unborn(gd) is None
 
 
+def test_a_packed_refs_file_read_again_unstamped_is_digested_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The head readers run on every capture, so a branch held in
+    ``packed-refs`` alone has the file read each time: the verdict is
+    kept beside the file's stamp, and a file read again with that stamp
+    is not digested or checked again (`_PACKED_STAMPED`). A rewrite
+    through a rename, as git writes the file, is a new stamp: the same
+    bytes are digested and found in the digest memo, and a line git
+    dies on, elsewhere than the branch's, declines the head."""
+    repo = _init_repo(tmp_path / "repo")
+    sha = _commit(repo, "one")
+    _run(repo, "branch", "other")
+    _run(repo, "pack-refs", "--all")
+    packed = repo / ".git" / "packed-refs"
+    judged: list[bytes] = []
+    real = githead._packed_verdict
+
+    def counting(data: bytes) -> bool:
+        judged.append(data)
+        return real(data)
+
+    monkeypatch.setattr(githead, "_packed_verdict", counting)
+    gd = githead.locate(repo)
+    assert gd is not None
+    assert not (repo / ".git" / "refs" / "heads" / "main").exists(), "premise"
+    for _ in range(3):
+        assert githead.head_sha(gd) == sha
+        assert githead.head_unborn(gd) is False
+    assert len(judged) == 1, "one digest while the stamp holds"
+
+    def rewrite(content: bytes) -> None:
+        fresh = packed.with_name("packed-refs.new")
+        fresh.write_bytes(content)
+        os.replace(fresh, packed)
+
+    content = packed.read_bytes()
+    rewrite(content)
+    assert githead.head_sha(gd) == sha
+    assert len(judged) == 2, "a new stamp is digested again"
+    lines = content.decode().splitlines()
+    at = next(i for i, line in enumerate(lines) if line.endswith(" refs/heads/other"))
+    lines[at] = "zzzz refs/heads/other"
+    rewrite(("\n".join(lines) + "\n").encode())
+    assert githead.head_sha(gd) is None
+    assert githead.head_unborn(gd) is None
+    assert len(judged) == 3
+
+
 @pytest.mark.parametrize("hexsz", [40, 64])
 def test_a_packed_refs_file_git_reads_whole_is_read(hexsz: int) -> None:
     """The header, records of one hash length with their peeled lines, and
