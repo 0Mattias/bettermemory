@@ -518,9 +518,13 @@ def test_under_git_dir_a_refused_head_is_told_apart_by_plumbing(
     probes: list[Any] = []
 
     def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
-        if "rev-parse" in argv:
+        # A cold `gitsystem` ask runs its own `rev-parse` in the state
+        # directory's probe folder, not in the repository: it is neither
+        # counted nor timed out here.
+        ours = "rev-parse" in argv and not any("git-probe-" in str(a) for a in argv)
+        if ours:
             probes.append(argv)
-        if (case, "rev-parse" in argv, "--format=%at" in argv) in (
+        if (case, ours, "--format=%at" in argv) in (
             ("probe timeout", True, False),
             ("log timeout", False, True),
         ):
