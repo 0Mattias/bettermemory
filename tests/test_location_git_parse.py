@@ -914,7 +914,12 @@ def test_a_git_that_leaves_prefix_as_written_is_read_so(
     """A git that does not expand ``%(prefix)/`` prints the probe's path
     as written (`gitconfig.AS_WRITTEN`), and its include of
     ``%(prefix)/x`` is the file ``%(prefix)/x`` beside the including
-    config, an absolute rest too."""
+    config, an absolute rest too: no file on POSIX, which git reads on
+    past; on Windows a path holding a drive's colon past its start, a
+    name Windows refuses (ERROR_INVALID_NAME), which Git for Windows'
+    ``access`` (``_waccess``) answers EINVAL for and ``access_or_die``
+    dies at, as the read does (ENG-207's round 8, Windows CI: the test
+    took POSIX's answer there)."""
     real = gitsystem.sources
     monkeypatch.setattr(
         gitsystem,
@@ -933,7 +938,53 @@ def test_a_git_that_leaves_prefix_as_written_is_read_so(
     _append(
         repo / ".git" / "config", f"[include]\n\tpath = %(prefix)/{rules.as_posix()}\n"
     )
-    assert _key(repo, _MIRRORED) not in _keys(repo)
+    if os.name == "nt":
+        # The git on PATH expands %(prefix) and reads the file: the origin,
+        # which asks it, records the repository.
+        _declines(repo, git_dies=False)
+    else:
+        assert _key(repo, _MIRRORED) not in _keys(repo)
+
+
+def _windows_os(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`gitconfig` reading paths as on Windows: `ntpath`, its separators
+    and ``os.name``, the rest of `os` as it is."""
+    import ntpath
+    import types
+
+    shim = types.SimpleNamespace(**{**vars(os), "name": "nt", "path": ntpath})
+    shim.sep, shim.altsep = ntpath.sep, ntpath.altsep
+    monkeypatch.setattr(gitconfig, "os", shim)
+
+
+@pytest.mark.parametrize(
+    ("prefix", "target"),
+    [
+        ("C:/Program Files/Git", "C:\\x\\rules.inc"),
+        (gitconfig.AS_WRITTEN, "C:\\r\\.git\\%(prefix)\\C:\\x\\rules.inc"),
+        (None, None),
+    ],
+    ids=["expanded", "as_written", "unsaid"],
+)
+def test_a_prefix_include_of_a_drive_s_path_is_joined_as_git_for_windows_joins_it(
+    monkeypatch: pytest.MonkeyPatch, prefix: str | None, target: str | None
+) -> None:
+    """Git for Windows' ``%(prefix)/C:/x``, read as on Windows (`ntpath`):
+    expanded, it is ``system_path("C:/x")``, which takes a path with a
+    drive as it is (``is_absolute_path``; the git on CI's Windows leg
+    reads it so, `test_a_prefix_path_is_read_as_this_git_expands_it`'s
+    ``include_absolute``); left as written, by a git before 2.35, it is a
+    relative path, joined under the including file's folder as
+    ``handle_path_include`` joins one, a drive's colon inside it; where
+    git has not said, nothing is read. ENG-207's round 8."""
+    _windows_os(monkeypatch)
+    value = b"%(prefix)/C:/x/rules.inc"
+    if target is None:
+        with pytest.raises(gitconfig._Overflow):
+            gitconfig._include_target(value, "C:\\r\\.git\\config", lambda: prefix)
+        return
+    got = gitconfig._include_target(value, "C:\\r\\.git\\config", lambda: prefix)
+    assert got == target
 
 
 def _unsettled(monkeypatch: pytest.MonkeyPatch, *, holds: bool) -> str:

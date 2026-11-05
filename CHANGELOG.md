@@ -1138,7 +1138,12 @@ eighteenth was built.
   PATH expands `%(prefix)` to, asked of git in the probe with the rest
   (`git config --type=path`, the record's format 3; a RUNTIME_PREFIX
   build such as Apple's takes it from where its binary runs), and
-  `%(prefix)` with no `/` as written. Where git's reading is still not
+  `%(prefix)` with no `/` as written. An absolute rest is taken as it is
+  only where the git on PATH has said that it expands `%(prefix)`: a git
+  that leaves it as written joins it under the including file's folder,
+  as it joins any relative path (on Windows a drive's path, a name the
+  system refuses, which that git and the reader die at alike), and where
+  git has not said, the rest is not settled either. Where git's reading is still not
   settled (git does not answer for HEAD, or what it expands `%(prefix)`
   to, a pattern past the matcher's bounds, a legacy file that is no
   regular file or is over 64 KiB),

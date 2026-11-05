@@ -505,8 +505,10 @@ def _interpolate(
     ``system_path`` of the rest (ENG-207's round 7): the rest where it is
     absolute (`_git_absolute`), else the rest after the directory the git
     on PATH expands ``%(prefix)`` to (`prefix`, `IncludeContext.prefix`)
-    and a ``/``, the path as written for a git that does not expand it
-    (`AS_WRITTEN`), and `_Overflow` where `prefix` does not say; a
+    and a ``/``; the path as written for a git that does not expand it
+    (`AS_WRITTEN`), an absolute rest too, which it joins as any relative
+    path; and `_Overflow` where `prefix` does not say, an absolute rest
+    too, which the two kinds of git read apart (ENG-207's round 8). A
     ``%(prefix)`` with no ``/`` is a name like any other. A leading
     ``~/`` (or ``~``) is HOME, resolved with `real_home`, and a leading
     ``~user/`` that user's home directory; None where git cannot expand
@@ -516,10 +518,10 @@ def _interpolate(
         rest = path[len(_RUNTIME_PREFIX) :]
         if found == AS_WRITTEN:
             return path
-        if _git_absolute(rest):
-            return rest
         if found is None:
             raise _Overflow(path)
+        if _git_absolute(rest):
+            return rest
         return found + "/" + rest
     if not path.startswith("~"):
         return path
@@ -615,9 +617,10 @@ def unchanged(files: Sequence[tuple[str, Stamp | None]]) -> bool:
     return True
 
 
-def _native(path: str, flavour: ModuleType = os.path) -> str:
+def _native(path: str, flavour: ModuleType | None = None) -> str:
     """`path` with the platform's other separator written as its own
-    (`flavour` the path module: on Windows ``C:/x\\y`` is ``C:\\x\\y``;
+    (`flavour` the path module, `os.path` where it is None, read as the
+    call is made: on Windows ``C:/x\\y`` is ``C:\\x\\y``;
     POSIX has none, and a backslash there is part of a name). A config
     file's path is spelled so where it enters (an include's target, the
     machine's config files), so one file is named one way wherever it is
@@ -625,6 +628,8 @@ def _native(path: str, flavour: ModuleType = os.path) -> str:
     relative include under git's ``C:/Program Files/Git/etc`` mixed the
     two (ENG-207, Windows CI). Nothing else is rewritten: a ``..`` is left
     for the system to resolve, as git leaves it."""
+    if flavour is None:
+        flavour = os.path
     other = flavour.altsep
     return path.replace(other, flavour.sep) if other else path
 
