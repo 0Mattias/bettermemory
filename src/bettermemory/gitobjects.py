@@ -49,6 +49,8 @@ from collections.abc import Iterable, Iterator
 from io import FileIO
 from typing import NamedTuple
 
+from . import gitfile_rule
+
 __all__ = [
     "MIN_ABBREV",
     "Commit",
@@ -399,15 +401,18 @@ class ObjectReader:
             self._packs = self._list_new()
 
     def _object_format(self) -> int | None:
-        """The length of an object name in bytes: 32 where the config sets
-        ``extensions.objectFormat`` to sha256, 20 for sha1 or no setting or
-        no config file (git's default), None for any other value or a
-        config that was evicted."""
+        """The length of an object name in bytes, by the object format git
+        reads the repository in (`gitfile_rule.object_format`): 32 for
+        sha256, 20 for sha1, for none set, under no
+        ``core.repositoryformatversion`` (git clears the extension there)
+        and with no config file (git's default); None where git dies on
+        the format or the config was evicted."""
         path = os.path.join(self._git_dir, b"config")
         text = self._read_whole(path)
         if text is None:
             return None if path in self._evicted else 20
-        return {b"sha1": 20, b"sha256": 32}.get(_config_object_format(text))
+        name = gitfile_rule.object_format(text)
+        return None if name is None else _NAME_BYTES[name]
 
     def _object_dirs(self) -> tuple[bytes, ...]:
         main = os.path.join(self._git_dir, b"objects")
@@ -911,25 +916,8 @@ def _dir_key(path: bytes) -> bytes:
         return os.path.normcase(path)
 
 
-def _config_object_format(text: bytes) -> bytes:
-    """The value of ``extensions.objectFormat`` in a git config file,
-    lowercased, the last one set winning; b"sha1" when unset."""
-    section = b""
-    value = b"sha1"
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if line.startswith(b"["):
-            close = line.find(b"]")
-            if close < 0:
-                continue
-            section = line[1:close].strip().lower()
-            line = line[close + 1 :].strip()
-        if section != b"extensions" or not line or line[:1] in (b"#", b";"):
-            continue
-        key, equals, rest = line.partition(b"=")
-        if equals and key.strip().lower() == b"objectformat":
-            value = re.split(rb"[#;]", rest, maxsplit=1)[0].strip().strip(b'"').lower()
-    return value
+#: An object name's length in bytes by the object format.
+_NAME_BYTES = {b"sha1": 20, b"sha256": 32}
 
 
 def _alternate_entries(text: bytes) -> list[bytes]:

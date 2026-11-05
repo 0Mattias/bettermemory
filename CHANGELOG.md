@@ -1065,7 +1065,14 @@ eighteenth was built.
   format 1 under format 0 and one git does not know under format 1 make
   git die, and membership and the origin decline there (fail closed, and
   a `compatObjectFormat` wherever it is set), where membership rooted the
-  checkout at a folder git names no toplevel of. Where git
+  checkout at a folder git names no toplevel of. The object reader
+  (`gitobjects.ObjectReader`, and the index reader of claim drift) takes
+  its object format from that reading (`gitfile_rule.object_format`),
+  where a line reader of its own took an `objectFormat = sha256` that
+  git clears under no format version: it read 32-byte names in a sha1
+  repository and called itself complete, so a capture's history held no
+  HEAD, a false "does not hold" and a wrong membership witness; a format
+  git dies on leaves the reader incomplete, and git is asked. Where git
   does not read `config.worktree`, an origin hit no longer states it,
   one stat fewer. An include under `onbranch:` or
   `hasconfig:remote.*.url:` gave the capture none of its values, where

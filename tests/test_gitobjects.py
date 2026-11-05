@@ -26,8 +26,9 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory import gitobjects
+from bettermemory import gitfile_rule, gitobjects
 from bettermemory.gitobjects import Commit, ObjectReader, TreeEntry
+from bettermemory.location_git import RepositoryHistory
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
@@ -864,22 +865,101 @@ def test_unknown_object_format_leaves_the_reader_incomplete(tmp_path: Path) -> N
     assert not reader.complete
 
 
-@pytest.mark.parametrize(
-    ("text", "value"),
-    [
-        (b"", b"sha1"),
-        (b"[core]\n\tbare = false\n", b"sha1"),
-        (b"[extensions]\n\tobjectformat = sha256\n", b"sha256"),
-        (b'[Extensions]\n\tObjectFormat = "SHA256" ; comment\n', b"sha256"),
-        (b"[extensions] objectFormat = sha256\n", b"sha256"),
-        (b"[core]\n\tobjectformat = sha256\n", b"sha1"),
-        (b"[extensions]\n# objectformat = sha256\n", b"sha1"),
-        (b"[extensions\n\tobjectformat = sha256\n", b"sha1"),
-        (b"[extensions]\n\tobjectformat = sha256\n\tobjectformat = sha1\n", b"sha1"),
-    ],
+#: The format versions a config may set (None: no version line), and the
+#: tails that set an object format, each read by git and by
+#: `gitfile_rule.object_format` from the same bytes.
+_FORMAT_VERSIONS = (None, b"0", b"1", b"-1", b"-2")
+_FORMAT_TAILS = (
+    b"",
+    b"[core]\n\tbare = false\n",
+    b"[extensions]\n\tobjectformat = sha256\n",
+    b"[extensions]\n\tobjectFormat = sha1\n",
+    b'[Extensions]\n\tObjectFormat = "sha256" ; comment\n',
+    b"[extensions]\n\tobjectFormat = SHA256\n",
+    b"[extensions]\n\tobjectFormat\n",
+    b"[extensions]\n\tobjectFormat = sha3\n",
+    b"[extensions] objectFormat = sha256\n",
+    b"[core]\n\tobjectformat = sha256\n",
+    b"[extensions]\n# objectformat = sha256\n",
+    b"[extensions\n\tobjectformat = sha256\n",
+    b"[extensions]\n\tobjectformat = sha256\n\tobjectformat = sha1\n",
+    b"[extensions]\n\tobjectformat = sha1\n\tobjectformat = sha256\n",
 )
-def test_object_format_read_from_config(text: bytes, value: bytes) -> None:
-    assert gitobjects._config_object_format(text) == value
+
+
+def _git_object_format(repo: Path) -> bytes | None:
+    """The object format git reads `repo` in, None where it dies."""
+    done = subprocess.run(
+        ["git", "rev-parse", "--show-object-format"],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def test_the_object_format_is_read_as_git_reads_it(tmp_path: Path) -> None:
+    """ENG-207: the object format is git's, read from the config's bytes
+    as setup.c reads a repository's format (`gitfile_rule.object_format`).
+    A line reader of gitobjects' own took ``objectFormat`` where no
+    ``core.repositoryformatversion`` is set, which git clears (sha1), and
+    under format 0, where git dies; and lowercased a value git refuses."""
+    repo = _init(tmp_path / "repo")
+    config = repo / ".git" / "config"
+    body = config.read_bytes()
+    assert b"\trepositoryformatversion = 0\n" in body
+    bare = body.replace(b"\trepositoryformatversion = 0\n", b"")
+    differ = []
+    for version in _FORMAT_VERSIONS:
+        head = bare
+        if version is not None:
+            head = bare.replace(
+                b"[core]\n",
+                b"[core]\n\trepositoryformatversion = " + version + b"\n",
+                1,
+            )
+        for tail in _FORMAT_TAILS:
+            config.write_bytes(head + tail)
+            git_says = _git_object_format(repo)
+            ours = gitfile_rule.object_format(head + tail)
+            if ours != git_says:
+                differ.append((version, tail, git_says, ours))
+    assert differ == []
+
+
+def test_a_repository_with_no_format_version_is_read_in_sha1(tmp_path: Path) -> None:
+    """The reviewer's case: no ``core.repositoryformatversion`` and an
+    ``objectFormat = sha256`` git clears. git reads the sha1 history; the
+    reader took 32-byte names and called itself complete, so a capture's
+    history held no HEAD (a false "does not hold" and a wrong witness)."""
+    repo = _history(tmp_path / "repo")
+    head = _sha(repo, "rev-parse", "HEAD")
+    config = repo / ".git" / "config"
+    body = config.read_bytes()
+    assert b"\trepositoryformatversion = 0\n" in body
+    config.write_bytes(
+        body.replace(b"\trepositoryformatversion = 0\n", b"")
+        + b"[extensions]\n\tobjectFormat = sha256\n"
+    )
+    assert _sha(repo, "rev-parse", "--show-object-format") == "sha1"
+    assert _sha(repo, "rev-parse", "HEAD") == head
+    reader = ObjectReader(repo / ".git")
+    assert reader.name_length == 40 and reader.complete
+    assert reader.has(head)
+    assert RepositoryHistory(str(repo / ".git")).holds([head]) == {head}
+
+
+def test_a_format_git_dies_on_leaves_the_reader_incomplete(tmp_path: Path) -> None:
+    """``objectFormat`` under format 0 makes git die: the reader names no
+    length and is incomplete, so its caller asks git."""
+    repo = _history(tmp_path / "repo")
+    head = _sha(repo, "rev-parse", "HEAD")
+    config = repo / ".git" / "config"
+    config.write_bytes(config.read_bytes() + b"[extensions]\n\tobjectFormat = sha1\n")
+    assert _git_object_format(repo) is None
+    reader = ObjectReader(repo / ".git")
+    assert not reader.has(head)
+    assert not reader.complete
 
 
 def test_directory_without_objects_is_incomplete(tmp_path: Path) -> None:

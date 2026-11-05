@@ -26,10 +26,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import _caches
+from . import _caches, gitfile_rule
 from ._paths import inside
 from .githead import GitDir, Stamp, locate, stamp
-from .gitobjects import ObjectReader, _config_object_format
+from .gitobjects import ObjectReader
 from .path_drift_steps import _check_body_candidates
 from .verify_candidates import (
     _CHECKABLE_CITATION_EXTENSIONS,
@@ -755,7 +755,8 @@ def _skip_index(found: GitDir) -> _SkipIndex | None:
         settled = (stamp(path), stamp(config)) == current
     except (OSError, ValueError):
         return None
-    hash_len = _INDEX_HASH_LEN.get(_config_object_format(text))
+    name = gitfile_rule.object_format(text)
+    hash_len = None if name is None else _INDEX_HASH_LEN.get(name)
     try:
         index = None if hash_len is None else _parse_skip_index(data, hash_len)
     except _IndexDeclined:

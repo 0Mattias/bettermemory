@@ -718,13 +718,18 @@ its reader refuses), an extension of format 1 under format 0 and one git
 does not know under format 1 (`gitfile_rule._EXTENSIONS_V0`,
 `_EXTENSIONS_V1`; a `compatObjectFormat` is refused wherever it is set),
 a file that cannot be read and one over 2 MiB give no reading, and the
-git directory is refused (fail closed). The reading of those four names
-and the extensions is kept with a digest of the bytes it was parsed from
-(`gitconfig._FORMAT_MEMO`, 256 files), so a judgment of a git directory
-whose config is unchanged reads it whole and parses nothing. No clock
-decides it: a rewrite that leaves the file's inode, size and times as
-they were (a server whose clock runs behind, whole-second times) changes
-its bytes, and is parsed again. A folder's own `.git` directory is followed
+git directory is refused (fail closed). The object format the object
+reader sizes names by is read the same way (`gitfile_rule.object_format`,
+from the bytes `gitobjects` reads, so an evicted config is still not
+opened): sha1 where no version is set, whatever `objectFormat` says, and
+none where git dies on the format, which leaves the reader incomplete.
+The reading of those four names and the extensions is kept with a digest
+of the bytes it was parsed from (`gitconfig._FORMAT_MEMO`, 256 files), so
+a judgment of a git directory whose config is unchanged reads it whole
+and parses nothing. No clock decides it: a rewrite that leaves the file's
+inode, size and times as they were (a server whose clock runs behind,
+whole-second times) changes its bytes, and is parsed again. A folder's
+own `.git` directory is followed
 only where git puts its working tree at that folder or puts none
 (`gitfile_rule.own_refusal`): a `core.worktree` naming another folder,
 absolute or relative to the git directory as git takes it, makes git

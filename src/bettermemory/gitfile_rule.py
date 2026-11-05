@@ -48,7 +48,7 @@ import re
 import stat
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from . import gitconfig, gitdir_pin
 from ._location_probe import path_gone, path_missing
@@ -237,6 +237,7 @@ class TreeFormat:
 # spells a name.
 _VERSION = b"core.repositoryformatversion"
 _WORKTREE_CONFIG = b"extensions.worktreeconfig"
+_OBJECT_FORMAT = b"extensions.objectformat"
 _BARE = b"core.bare"
 _WORKTREE = b"core.worktree"
 _EXTENSIONS = b"extensions."
@@ -300,7 +301,7 @@ def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFor
     read = _common_format(where)
     if isinstance(read, str):
         return TreeFormat(read)
-    version, worktree_config, taken = read
+    version, worktree_config, taken = read.version, read.worktree_config, read.taken
     if version < 0:
         return TreeFormat()
     if version > 1:
@@ -323,26 +324,67 @@ def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFor
     )
 
 
-def _common_format(
-    common_dir: str,
-) -> tuple[int, bool, dict[bytes, bytes | None]] | str:
+class _Format(NamedTuple):
+    """A repository's format as `_judge_format` reads it."""
+
+    #: ``core.repositoryformatversion``, -1 where it is not set.
+    version: int
+    #: ``extensions.worktreeConfig``.
+    worktree_config: bool
+    #: The ``core.bare`` and ``core.worktree`` set (`_take`).
+    taken: dict[bytes, bytes | None]
+    #: ``extensions.objectFormat``, b"sha1" where it is not set; git
+    #: reads sha1 where no version is set, whatever it says (`object_format`).
+    object_format: bytes
+
+
+def _common_format(common_dir: str) -> _Format | str:
     """The format the config in `common_dir` gives a git directory, as
-    setup.c's ``read_repository_format`` reads it (`tree_format`): its
-    ``core.repositoryformatversion`` (-1 where it is not set), its
-    ``extensions.worktreeConfig`` and the ``core.bare`` and
-    ``core.worktree`` it sets (`_take`), the last of each standing; or why
-    it is not known: a value git dies on (an extension's among them,
-    `_EXTENSIONS_V0`, `_EXTENSIONS_V1`), an extension the version set
-    refuses, a file git cannot parse, one larger than
-    `gitconfig._FORMAT_LIMIT` and one that cannot be read."""
+    setup.c's ``read_repository_format`` reads it (`tree_format`,
+    `_judge_format`); or why it is not known: a value git dies on, an
+    extension the version set refuses, a file git cannot parse, one larger
+    than `gitconfig._FORMAT_LIMIT` and one that cannot be read."""
     path = os.path.join(common_dir, "config")
     read = gitconfig.read_git_config(path, _FORMAT_NAMES)
     if read.why is not None:
         return read.why
-    version, worktree_config = -1, False
+    return _judge_format(path, read.entries)
+
+
+def object_format(data: bytes) -> bytes | None:
+    """The object format git 2.54 reads a repository in, from the bytes
+    `data` of its common directory's ``config`` (setup.c's
+    ``read_repository_format``, parsed as git parses the file, no include
+    followed): b"sha1" or b"sha256", b"sha1" where no
+    ``core.repositoryformatversion`` is set (git clears every extension
+    there, ``objectFormat`` with them) or the file sets none; None where
+    git dies on the format (`_judge_format`, a version above 1), cannot
+    parse the file, or the file is larger than `gitconfig._FORMAT_LIMIT`.
+    `gitobjects.ObjectReader` sizes object names by it (ENG-207), where a
+    line reader of its own took ``objectFormat`` under no version."""
+    if len(data) > gitconfig._FORMAT_LIMIT:
+        return None
+    entries = gitconfig.git_entries(data)
+    if entries is None:
+        return None
+    read = _judge_format("config", entries)
+    if isinstance(read, str) or read.version > 1:
+        return None
+    return b"sha1" if read.version == -1 else read.object_format
+
+
+def _judge_format(
+    path: str, entries: Sequence[tuple[bytes, bytes | None]]
+) -> _Format | str:
+    """The format the config file `path`, whose entries are `entries`,
+    gives a git directory (`_Format`), the last of each name standing; or
+    why git dies reading it: a value git dies on (an extension's among
+    them, `_EXTENSIONS_V0`, `_EXTENSIONS_V1`) or an extension the version
+    set refuses."""
+    version, worktree_config, hash_name = -1, False, b"sha1"
     taken: dict[bytes, bytes | None] = {}
     v1_only = unknown = False
-    for name, value in read.entries:
+    for name, value in entries:
         if name == _VERSION:
             number = gitconfig.git_int(value)
             if number is None:
@@ -357,6 +399,8 @@ def _common_format(
             unknown = unknown or rule is None
             if name == _WORKTREE_CONFIG:
                 worktree_config = gitconfig.git_bool(value) is True
+            elif name == _OBJECT_FORMAT and value is not None:
+                hash_name = value.split(b"\0", 1)[0]
         elif not _take(name, value, taken):
             return _dies(path, name)
     # setup.c's ``verify_repository_format``, on a version that is set: a
@@ -366,7 +410,7 @@ def _common_format(
         return f"{path} sets an extension of format 1 in a repository of format 0"
     if version >= 1 and unknown:
         return f"{path} sets a repository extension git does not know"
-    return version, worktree_config, taken
+    return _Format(version, worktree_config, taken, hash_name)
 
 
 def _extension_reads(rule: str | frozenset[bytes], value: bytes | None) -> bool:
@@ -395,10 +439,9 @@ def reads_worktree_config(common_dir: str) -> bool | None:
     read = _common_format(common_dir)
     if isinstance(read, str):
         return None
-    version, worktree_config, _taken = read
-    if version > 1:
+    if read.version > 1:
         return None
-    return worktree_config and version != -1
+    return read.worktree_config and read.version != -1
 
 
 def _take(name: bytes, value: bytes | None, taken: dict[bytes, bytes | None]) -> bool:
