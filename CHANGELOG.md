@@ -702,6 +702,23 @@ eighteenth was built.
   10.03 s, 10.02 s and 10.02 s before, and 10.06 s, 0.01 s and 0.00 s
   after. (`src/bettermemory/origin.py`, `tests/test_origin_as_stored.py`)
 
+- **A walk git fails on lists its commits alone, whatever the failure
+  (ENG-220).** Only a walk whose names met their timeout listed its
+  commits alone; one git failed on otherwise (a tree it cannot read: a
+  corrupt object, a treeless clone, whose trees no git the package runs
+  fetches) came back as no walk, and the memory was counted on the author
+  dates, which miss a commit authored before the verify and landed on top
+  of it: `memory_show` read such a memory 0 and fresh where the walk
+  reads 1 (the review's round F). The commits are now listed alone after
+  any failed walk, and every one counts on the reachable basis; where the
+  listing fails too, as at an anchor the repository does not hold, the
+  dates stay the basis, as designed. A walk listed alone after a failure
+  other than a timeout is kept for the pass alone and served again as a
+  failure (`ReachableWalk.timed_out` tells the two apart), so no memo
+  keeps it. (`src/bettermemory/origin.py`,
+  `src/bettermemory/origin_history.py`, `tests/test_origin_as_stored.py`,
+  `tests/test_commit_drift_cache.py`, `tests/test_origin.py`)
+
 - **No window passes a command line's bound (ENG-220).** The patch
   stream and the split's listing named up to 256 commits on git's
   command line (10,496 characters), and they and the two path-filtered

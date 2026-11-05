@@ -511,11 +511,13 @@ class ReachableWalk:
     there, as `git log --name-only` shows no diff for one, so its
     branch's own commits carry the paths.
 
-    `listed` is False for a walk whose names met their timeout and whose
+    `listed` is False for a walk whose names were not read and whose
     commits were listed alone: it names no path (`touched` is empty), every
     commit reads as touching each (`shas_touching`), and claim drift keeps
     its whole length, never the author-date count (ENG-220's review, round
-    C).
+    C; round F for a names read git failed on, a tree it could not read).
+    `timed_out` is True where the names met their timeout, False where git
+    failed on them.
     """
 
     anchor: str
@@ -523,6 +525,7 @@ class ReachableWalk:
     commits: tuple[str, ...]
     touched: Mapping[str, frozenset[str]]
     listed: bool = True
+    timed_out: bool = False
 
     def shas_touching(self, pathspecs: Sequence[str]) -> set[str]:
         """The commits in the range that changed a file matching any of

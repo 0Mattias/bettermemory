@@ -2293,7 +2293,8 @@ def test_the_walk_is_memoised_per_head(
     walks = len(calls)
     assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
     assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
-    assert len(calls) == walks + 2, "a dead anchor forks on every call"
+    # Its names, then its commits alone, both refused (round F).
+    assert len(calls) == walks + 4, "a dead anchor forks on every call"
     assert list(origin_module._WALK_MEMO) == (
         [(str(root), shas["anchor"], head, files)] if memoised else []
     )
@@ -2303,7 +2304,7 @@ def test_the_walk_is_memoised_per_head(
             tmp_path, "b" * 40, toplevel=root, head=head, walked=walked
         )
         assert walk is None
-    assert len(calls) == walks + 3, "within one pass the dead anchor forks once"
+    assert len(calls) == walks + 6, "within one pass the dead anchor forks once"
     assert walked == {(str(root), "b" * 40, head): True}, "git failed on it"
 
     _commit_file(

@@ -1062,7 +1062,8 @@ def test_a_head_that_leaves_and_returns_during_the_attach_stores_nothing(
         "premise: the log read the other head's history"
     )
     if dead:
-        assert len(_walks(calls)) == 1, "premise: one dead walk, remembered"
+        # Its names, then its commits alone, both refused (round F).
+        assert len(_walks(calls)) == 2, "premise: one dead walk, remembered"
 
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
     assert _drift(uncached, author) == (1, "author-date")
@@ -2012,13 +2013,17 @@ def test_a_git_process_that_exited_non_zero_is_not_memoised(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A process that ran and failed folds into the same fallback as one
-    that could not run: the unfiltered count, the author-date basis. The
-    uncached code takes that fallback on the call that met the failure and
-    not on the next, so no memo keeps a value computed across one. The
-    failure is read permission withheld from one loose tree object for the
-    first attach, a stand-in for an object briefly unreadable: the walk and
-    the path-filtered logs read trees and exit 128, while the whole-history
-    log reads only commits and answers."""
+    that could not run: the unfiltered count, on the author-date basis
+    where the stamp has no head, and on the reachable one where it has,
+    whose walk lists its commits alone where git failed on its names
+    (ENG-220's review, round F), never the author dates. The uncached code
+    takes that fallback on the call that met the failure and not on the
+    next, so no memo keeps a value computed across one. The failure is
+    read permission withheld from one loose tree object for the first
+    attach, a stand-in for an object briefly unreadable: the walk's names
+    and the path-filtered logs read trees and exit 128, while the
+    whole-history log and the walk's listing read only commits and
+    answer."""
     repo = _repo(tmp_path)
     anchor = _commit(
         repo, "c1", when=_day(0), files={"src/app.py": _MODULE, "README.md": "r\n"}
@@ -2060,7 +2065,7 @@ def test_a_git_process_that_exited_non_zero_is_not_memoised(
         victim.chmod(mode)
     assert [_drift(during, i) for i in order] == [
         (5, "author-date"),
-        (5, "author-date"),
+        (5, "reachability"),
         (2, "author-date"),
     ], "premise: the failure took the fallbacks"
     assert len(_response._DRIFT_MEMO) == 0
@@ -2085,7 +2090,9 @@ def test_a_dead_anchor_forks_once_per_attach_and_is_not_memoised(
     for it: a missing anchor fails the process, and a failure may clear;
     an anchor HEAD no longer descends from answers None without failing,
     and is not kept either. Within one attach it is remembered, so three
-    hits at one dead anchor fork one walk. A hit resolved around a walk git
+    hits at one dead anchor fork one walk: a missing one its names and then
+    its commits alone, both refused (ENG-220's review, round F), a rewritten
+    one its names, which git answers. A hit resolved around a walk git
     answered is kept per hit; one resolved around a failed walk is not,
     and the next attach walks once again."""
     repo = _repo(tmp_path)
@@ -2113,7 +2120,8 @@ def test_a_dead_anchor_forks_once_per_attach_and_is_not_memoised(
 
     cold, cold_calls = _attach(memories, caller, monkeypatch)
     assert {_drift(cold, i) for i in ids} == {(1, "author-date")}
-    assert len(_walks(cold_calls)) == 1, "three hits at one dead anchor: one walk"
+    forks = 2 if kind == "missing" else 1
+    assert len(_walks(cold_calls)) == forks, "three hits at one dead anchor: one walk"
     assert [key for key in origin._WALK_MEMO if key[1] == dead] == []
 
     warm, warm_calls = _attach(memories, caller, monkeypatch)
@@ -2121,7 +2129,7 @@ def test_a_dead_anchor_forks_once_per_attach_and_is_not_memoised(
     if _FILES:
         if kind == "missing":
             assert len(_response._DRIFT_MEMO) == 0, "resolved around a failure"
-            assert len(_walks(warm_calls)) == 1, "the failed walk runs again"
+            assert len(_walks(warm_calls)) == forks, "the failed walk runs again"
         else:
             assert len(_response._DRIFT_MEMO) == 3
             assert warm_calls == []
@@ -2132,8 +2140,9 @@ def test_a_health_pass_walks_a_dead_anchor_once(
 ) -> None:
     """The health rollup resolves every memory in one pass and remembers
     that pass's dead anchors, as a search does: three memories verified at
-    one missing anchor fork one walk, and nothing of it outlives the
-    pass."""
+    one missing anchor fork one walk, its names and then its commits alone,
+    both refused (ENG-220's review, round F), and nothing of it outlives
+    the pass."""
     from bettermemory import health
 
     repo = _repo(tmp_path)
@@ -2166,7 +2175,7 @@ def test_a_health_pass_walks_a_dead_anchor_once(
             assert report.commit_drift_debt is not None
             drifted = report.commit_drift_debt.total_drifted
         assert drifted == 3
-        assert len(_walks(calls)) == 1
+        assert len(_walks(calls)) == 2
     assert len(origin._WALK_MEMO) == 0
 
 

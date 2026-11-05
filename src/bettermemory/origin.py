@@ -47,6 +47,7 @@ import subprocess
 import threading
 import time
 from collections import OrderedDict
+import dataclasses
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -1288,22 +1289,26 @@ def commits_since_anchor(
     list its names. A later call for the same key in that pass returns the
     remembered walk, or None without a process, counting the failure again
     on the calling thread (`failed_git_calls`), a timeout for a walk listed
-    alone, so a caller that keeps a value only when no git call failed
-    judges every hit at that anchor as it judged the first.
+    alone after its names met theirs, so a caller that keeps a value only
+    when no git call failed judges every hit at that anchor as it judged
+    the first.
 
-    A walk whose names meet their timeout falls back to its commits listed
-    alone, with no diff (`ReachableWalk.listed` False), whose whole length
-    claim drift keeps; it is kept a minute, apart from the walks
-    (`_WALK_TIMED_OUT`). Where that listing meets its timeout too, the walk
-    is given up on (`origin_history.unwalked`), kept a minute as well, and
-    the caller omits the count: it never reads the author dates in its
-    place, which a rebased or back-dated commit moves (ENG-220's review,
-    round C).
+    A walk whose names git did not read, whether they met their timeout or
+    git failed on them (a tree it cannot read: a treeless clone, a corrupt
+    object), falls back to its commits listed alone, with no diff
+    (`ReachableWalk.listed` False), whose whole length claim drift keeps;
+    one after a timeout (`ReachableWalk.timed_out`) is kept a minute,
+    apart from the walks (`_WALK_TIMED_OUT`). Where that listing meets its
+    timeout too, the walk is given up on (`origin_history.unwalked`), kept
+    a minute as well, and the caller omits the count: it never reads the
+    author dates in its place, which a rebased or back-dated commit moves
+    (ENG-220's review, rounds C and F).
 
     None, and the author-date fallback, when: `anchor` is not a full
-    hash (never handed to git as a revision), git cannot answer, the
-    anchor does not resolve here, it is not an ancestor of HEAD (a
-    rewritten history), or HEAD sits behind it. `toplevel` and `head`
+    hash (never handed to git as a revision), git cannot answer the
+    listing either (an anchor this repository does not hold), the anchor
+    is not an ancestor of HEAD (a rewritten history), or HEAD sits behind
+    it. `toplevel` and `head`
     skip the root and head resolution (`repo_toplevel_and_head`) when
     the caller already has them, the way the batch surfaces thread a
     once-resolved root.
@@ -1331,9 +1336,12 @@ def commits_since_anchor(
     if walked is not None and within in walked:
         seen = walked[within]
         if isinstance(seen, ReachableWalk):
-            if not seen.listed:
+            if seen.timed_out:
                 # Its names met their timeout: the same one, served again.
                 _git_runner.note_timed_out()
+            elif not seen.listed:
+                # Git failed on its names: counted as that failure again.
+                _git_runner.note_failed()
             return seen
         if seen is None:
             _git_runner.note_timed_out()
@@ -1344,8 +1352,14 @@ def commits_since_anchor(
     failed = _git_runner.failed_calls()
     timed_out = _git_runner.timed_out_calls()
     walk = _walk_reachable(toplevel, anchor, head)
-    if walk is None and _git_runner.timed_out_calls() != timed_out:
-        # The names met their timeout: the commits alone, no diff read.
+    if walk is None and _git_runner.failed_calls() != failed:
+        # The names were not read, for whatever reason: a timeout, or a
+        # tree git could not read (a treeless clone, a corrupt object),
+        # where the author dates miss a rebased commit (ENG-220's review,
+        # round F). The commits alone, no diff read; where their listing
+        # fails too, as at an anchor this repository does not hold, the
+        # dates are the basis, as they are for a walk git refused.
+        names_timed_out = _git_runner.timed_out_calls() != timed_out
         timed_out = _git_runner.timed_out_calls()
         walk = _walk_reachable(toplevel, anchor, head, names=False)
         if walk is None and _git_runner.timed_out_calls() != timed_out:
@@ -1354,12 +1368,14 @@ def commits_since_anchor(
             if walked is not None:
                 walked[within] = None
             return None
+        if walk is not None and names_timed_out:
+            walk = dataclasses.replace(walk, timed_out=True)
     if walk is None:
         if walked is not None:
             walked[within] = _git_runner.failed_calls() != failed
         return None
     if key is None or not walk.listed:
-        if not walk.listed:
+        if walk.timed_out:
             _keep_timed_out_walk(key, walk, toplevel, held)
         if walked is not None:
             walked[within] = walk

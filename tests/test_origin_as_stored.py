@@ -1497,6 +1497,103 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
     assert len(met) == 2 * 3 + 2, "the second hit ran no walk"
 
 
+def _unread_trees(tmp_path: Path, shape: str) -> tuple[Path, str]:
+    """A repository holding `_rebased`'s history, and its anchor, with the
+    trees the walk's names read unreadable to git by `shape`: none, the
+    anchor's tree object corrupt, or a treeless clone's trees not fetched
+    (git fetches none: `_git` sets GIT_NO_LAZY_FETCH)."""
+    source = _repository(tmp_path)
+    anchor = _rebased(source)
+    if shape == "treeless clone":
+        _plain(source, "config", "uploadpack.allowFilter", "true")
+        clone = tmp_path / "clone"
+        _plain(tmp_path, "clone", "-q", "--filter=tree:0", source.as_uri(), str(clone))
+        return clone, anchor
+    if shape == "corrupt tree":
+        tree = _plain(source, "rev-parse", f"{anchor}^{{tree}}")
+        loose = source / ".git" / "objects" / tree[:2] / tree[2:]
+        loose.chmod(0o644)
+        loose.write_bytes(b"not a zlib stream")
+    return source, anchor
+
+
+@pytest.mark.parametrize("shape", ["read", "corrupt tree", "treeless clone"])
+def test_a_walk_whose_trees_git_cannot_read_lists_its_commits_alone(
+    tmp_path: Path, shape: str
+) -> None:
+    """foo's def line changes on top of the verified head under a commit
+    authored before the verify, which the walk reads, 1 with foo named, and
+    the author dates miss. Where git cannot read the trees the walk's names
+    diff (the anchor's tree corrupt, a treeless clone), the walk lists its
+    commits alone and every one counts, 2, on the search hit, memory_show's
+    count and the health rollup, where the hit read those dates, 0
+    (ENG-220's review, round F). A memory stamped with no head counts on
+    the dates on either basis, the claim's narrowing kept where its patch
+    cannot be read either: 1, never below the 0 it reads with the trees."""
+    from bettermemory import health_stats, verify_basis
+
+    repo, anchor = _unread_trees(tmp_path, shape)
+    head = _plain(repo, "rev-parse", "HEAD")
+    read = shape == "read"
+    walked = (1, (_FOO,)) if read else (2, ())
+    assert _seen(_hit(repo, [_FOO], anchor)) == (*walked, verify.BASIS_REACHABILITY)
+    dated = (0 if read else 1, (), verify.BASIS_AUTHOR_DATE)
+    assert _seen(_hit(repo, [_FOO], None)) == dated
+    _caches.clear_all()
+    counted = verify_basis._count_since_verify(repo, _VERIFIED, anchor)
+    assert not isinstance(counted, CommitDriftUnread) and counted is not None
+    count, basis, walk, _ = counted
+    assert (count, basis) == (2, verify.BASIS_REACHABILITY)
+    assert walk is not None and walk.listed == read and not walk.timed_out
+    _caches.clear_all()
+    counted = verify_basis._count_since_verify(repo, _VERIFIED, None)
+    assert counted == (1, verify.BASIS_AUTHOR_DATE, None, None)
+    history = origin_dates.commit_author_timestamps(repo)
+    assert isinstance(history, list)
+    for verified_head, want in (
+        (anchor, (2, verify.BASIS_REACHABILITY)),
+        (None, (1, verify.BASIS_AUTHOR_DATE)),
+    ):
+        _caches.clear_all()
+        rows, unread = health_stats._drift_rows_for_candidates(
+            [_stats("m")],
+            root=repo,
+            timestamps=history,
+            toplevel=repo,
+            anchor_paths_by_id={"m": (_MOD,)},
+            claims_by_id=None,
+            verified_head_by_id={"m": verified_head} if verified_head else None,
+            head=head,
+        )
+        assert [(row.commits_since_verify, row.basis) for row in rows] == [want]
+        assert unread == {}
+    assert not origin._WALK_MEMO or read, "a walk listed alone is not kept"
+    assert not origin._WALK_TIMED_OUT, "nor kept as a timeout's"
+
+
+def test_a_walk_listed_alone_after_git_failed_is_served_as_a_failure(
+    tmp_path: Path,
+) -> None:
+    """Where git failed on the walk's names, the commits listed alone are
+    kept for the pass and served again counting a failure, not a timeout,
+    so a caller keeps nothing from it, and nothing past the pass."""
+    repo, anchor = _unread_trees(tmp_path, "treeless clone")
+    head = _plain(repo, "rev-parse", "HEAD")
+    _caches.clear_all()
+    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
+    first = origin.commits_since_anchor(
+        repo, anchor, toplevel=repo, head=head, walked=walked
+    )
+    assert first is not None and not first.listed and not first.timed_out
+    failed, timed_out = _git.failed_calls(), _git.timed_out_calls()
+    again = origin.commits_since_anchor(
+        repo, anchor, toplevel=repo, head=head, walked=walked
+    )
+    assert again is first
+    assert (_git.failed_calls(), _git.timed_out_calls()) == (failed + 1, timed_out)
+    assert not origin._WALK_MEMO and not origin._WALK_TIMED_OUT
+
+
 @pytest.mark.parametrize("flag", ["--boundary", "--name-only"])
 def test_a_walk_that_met_its_timeout_is_walked_once_a_minute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
