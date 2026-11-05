@@ -804,6 +804,16 @@ eighteenth was built.
   `src/bettermemory/origin_dates.py`, `tests/test_githead.py`,
   `tests/test_unread_history.py`)
 
+- **A directory at a branch's ref is no loose file on Windows either.**
+  Windows refuses to open a directory, with `PermissionError` where
+  POSIX opens it and its stat tells it, so a directory where a branch's
+  loose ref would be was not read as no file there: the head went to
+  git's plumbing, one `git symbolic-ref`, where POSIX settles it from
+  the files. The verdict was the same, `error`, unread. The files' read
+  now raises `IsADirectoryError` where the open is refused and the path
+  is a directory. (`src/bettermemory/gitfile_rule.py`,
+  `tests/test_unread_history.py`)
+
 - **A shallow file's cut reads shallow only where the history reaches it
   (ENG-220).** Any commit a `shallow` file listed read the whole history
   `shallow`, so a full clone that fetched another branch, or origin's

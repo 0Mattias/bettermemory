@@ -669,6 +669,65 @@ def test_a_ref_git_cannot_read_is_told_from_an_unborn_branch(
     assert len(plumbed) == calls
 
 
+def _refusing_directories(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Make `os.open` refuse a directory as Windows does, with
+    PermissionError where POSIX opens it; returns the paths it refused."""
+    real_open = os.open
+    refused: list[str] = []
+
+    def open_as_windows(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if os.path.isdir(path):
+            refused.append(os.fsdecode(path))
+            raise PermissionError(13, "Permission denied", os.fsdecode(path))
+        return int(real_open(path, flags, *args, **kwargs))
+
+    monkeypatch.setattr(os, "open", open_as_windows)
+    return refused
+
+
+def test_a_directory_at_the_ref_is_no_loose_file_where_its_open_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows refuses to open a directory, with PermissionError where
+    POSIX opens it and its stat tells it. A directory where the branch's
+    ref file would be is no loose file there either, as git reads it: the
+    files read the packed line git dies on and settle the head as one git
+    cannot read, `error`, with no plumbing, as on POSIX (the Windows run of
+    `test_a_ref_git_cannot_read_is_told_from_an_unborn_branch` forked
+    ``git symbolic-ref`` for it). A file whose open is refused stays
+    unread."""
+    repo = _repo(tmp_path)
+    _break_head(repo, "packed-refs git dies on, a directory at the ref")
+    gd = githead.locate(repo)
+    assert gd is not None
+    ref = repo / ".git" / "refs" / "heads" / "main"
+    real_run = subprocess.run
+    plumbed: list[Any] = []
+
+    def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if "symbolic-ref" in argv or "show-ref" in argv:
+            plumbed.append(argv)
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    _caches.clear_all()
+    refused = _refusing_directories(monkeypatch)
+    with pytest.raises(IsADirectoryError):
+        gitfile_rule._read(os.fsencode(ref), 64, follow=False)
+    assert refused, "premise: the directory's open was refused"
+    assert githead.head_unborn(gd) is False
+    assert origin_dates.commit_author_timestamps(repo) is CommitDriftUnread.ERROR
+    assert plumbed == []
+
+    def refused_file(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        raise PermissionError(13, "Permission denied", os.fsdecode(path))
+
+    monkeypatch.setattr(os, "open", refused_file)
+    with pytest.raises(PermissionError) as raised:
+        gitfile_rule._read(os.fsencode(repo / ".git" / "HEAD"), 64)
+    assert not isinstance(raised.value, IsADirectoryError)
+
+
 @pytest.mark.usefixtures("keyed_by")
 @pytest.mark.parametrize("case", ["garbage ref", "NUL-filled ref"])
 def test_a_ref_git_cannot_read_reads_unread_on_every_surface(

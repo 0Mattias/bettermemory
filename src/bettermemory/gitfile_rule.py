@@ -1009,7 +1009,11 @@ def _read(path: str | bytes, limit: int, *, follow: bool = True) -> bytes:
     symbolic link fails with ELOOP instead of being read through. A
     directory raises IsADirectoryError and any other kind of file an
     OSError; the open does not block, so a FIFO fails instead of waiting
-    for a writer."""
+    for a writer. Windows refuses to open a directory at all, with
+    PermissionError where POSIX opens it and the stat below tells it: a
+    directory there raises IsADirectoryError too, so a caller reads a
+    directory where a ref's file would be as git reads it on every
+    platform (`githead._lookup`: no loose file)."""
     flags = (
         os.O_RDONLY
         | getattr(os, "O_CLOEXEC", 0)
@@ -1018,7 +1022,12 @@ def _read(path: str | bytes, limit: int, *, follow: bool = True) -> bytes:
     )
     if not follow:
         flags |= getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
+    try:
+        fd = os.open(path, flags)
+    except PermissionError:
+        if _is_directory(path, follow=follow):
+            raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR)) from None
+        raise
     try:
         mode = os.fstat(fd).st_mode
         if stat.S_ISDIR(mode):
@@ -1036,6 +1045,16 @@ def _read(path: str | bytes, limit: int, *, follow: bool = True) -> bytes:
     finally:
         os.close(fd)
     return b"".join(chunks)
+
+
+def _is_directory(path: str | bytes, *, follow: bool) -> bool:
+    """Whether `path` is a directory, through a symbolic link only with
+    `follow`; False where it cannot be stated."""
+    try:
+        status = os.stat(path) if follow else os.lstat(path)
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISDIR(status.st_mode)
 
 
 def _real(path: str) -> str:
