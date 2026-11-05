@@ -17,6 +17,11 @@ Each case is git's own answer first: a corpus of variables and values
 against ``git rev-parse``, includes, ``config.worktree``, and the
 settings checkouts commonly carry, which keep their answer from the
 files.
+
+Off POSIX the files answer for no repository (githead's discovery
+declines there), and git answers each that it reads: every case runs
+both ways on POSIX (`leg`), the way Windows runs it, where the cases
+that took the files' answer for granted failed (ENG-207, Windows CI).
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ import pytest
 from bettermemory import _caches, gitconfig, githead, location_git, origin
 
 from .test_location_git_include_conditions import _git, _repo
+from .test_location_git_include_conditions import leg as leg
 from .test_membership_security import neutral_git
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
@@ -94,11 +100,14 @@ def _answers(repo: Path) -> tuple[bool, bool]:
     return done.returncode == 0, origin.toplevel_and_head_from_files(repo) is not None
 
 
-def test_the_files_answer_only_where_git_rev_parse_does(tmp_path: Path) -> None:
+def test_the_files_answer_only_where_git_rev_parse_does(
+    tmp_path: Path, leg: str
+) -> None:
     """Each of `KEYS` with each of `VALUES` in the repository's config:
     where ``git rev-parse --show-toplevel HEAD`` dies the files decline,
-    and they answer for most of what git reads on past. The files
-    answered on every one of them that does not move the working tree."""
+    and they answer for most of what git reads on past (none off POSIX).
+    The files answered on every one of them that does not move the
+    working tree."""
     repo = _repo(tmp_path / "repo")
     config = repo / ".git" / "config"
     base = config.read_text(encoding="utf-8")
@@ -115,7 +124,18 @@ def test_the_files_answer_only_where_git_rev_parse_does(tmp_path: Path) -> None:
     config.write_text(base, encoding="utf-8")
     assert wrong == []
     assert died > 100, "premise: git dies on many"
-    assert answered > len(KEYS) * len(VALUES) // 2, "the files answer most of the rest"
+    _answered_most(answered, leg)
+
+
+def _answered_most(answered: int, leg: str) -> None:
+    """The files answered for most of the corpus on POSIX, and for none of
+    it off POSIX, where git answers each case it reads."""
+    if leg == "posix":
+        assert answered > len(KEYS) * len(VALUES) // 2, (
+            "the files answer most of the rest"
+        )
+    else:
+        assert answered == 0, "off POSIX the files answer none"
 
 
 #: Includes a repository's config may hold, and what git does: dies on
@@ -127,7 +147,9 @@ INCLUDES = {
     "folder": "[include]\n\tpath = .\n",
     "dying_file": "[include]\n\tpath = dying.inc\n",
     "missing": "[include]\n\tpath = missing.inc\n",
-    "includeif_dying": '[includeIf "gitdir:/"]\n\tpath = dying.inc\n',
+    # A condition that holds on Windows too, where the git directory
+    # starts at a drive, which "gitdir:/" (git's "/**") does not match.
+    "includeif_dying": '[includeIf "gitdir:**/repo/"]\n\tpath = dying.inc\n',
 }
 
 
@@ -147,7 +169,7 @@ def test_an_include_declines_where_git_may_die_on_it(tmp_path: Path, case: str) 
     assert not files_answer
 
 
-def test_a_worktree_config_git_dies_on_declines(tmp_path: Path) -> None:
+def test_a_worktree_config_git_dies_on_declines(tmp_path: Path, leg: str) -> None:
     """``config.worktree``, which git reads after the common config under
     ``extensions.worktreeConfig``, is read so too: a ``user.name`` with no
     value there makes git die, and the files decline."""
@@ -158,7 +180,7 @@ def test_a_worktree_config_git_dies_on_declines(tmp_path: Path) -> None:
     (repo / ".git" / "config.worktree").write_text(
         "[user]\n\tname = x\n", encoding="utf-8"
     )
-    assert _answers(repo) == (True, True)
+    assert _answers(repo) == (True, leg == "posix")
 
 
 #: Settings checkouts commonly carry in their own config, which git reads
@@ -179,15 +201,15 @@ COMMON = [
 
 @pytest.mark.parametrize("text", COMMON)
 def test_a_checkout_s_common_settings_keep_the_files_answer(
-    tmp_path: Path, text: str
+    tmp_path: Path, text: str, leg: str
 ) -> None:
     """What checkouts commonly set in their own config (an identity, line
     ends, hooks, a sparse or blobless clone, a branch, LFS) is read by git
-    without dying, and the files answer for it with no process."""
+    without dying, and the files answer for it with no process (on POSIX)."""
     repo = _repo(tmp_path / "repo")
     with (repo / ".git" / "config").open("a", encoding="utf-8") as fh:
         fh.write(text)
-    assert _answers(repo) == (True, True)
+    assert _answers(repo) == (True, leg == "posix")
 
 
 def _machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -201,7 +223,7 @@ def _machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_the_files_answer_only_where_git_does_on_the_machine_s_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leg: str
 ) -> None:
     """ENG-207's round 8: git dies on the machine's config as on the
     repository's (``git_default_config`` reads every scope), and the files
@@ -223,7 +245,7 @@ def test_the_files_answer_only_where_git_does_on_the_machine_s_config(
                 wrong.append((name, value))
     assert wrong == []
     assert died > 100, "premise: git dies on many"
-    assert answered > len(KEYS) * len(VALUES) // 2, "the files answer most of the rest"
+    _answered_most(answered, leg)
 
 
 #: Includes the machine's config may hold, with git's answer: it dies on
@@ -243,7 +265,7 @@ MACHINE_INCLUDES = {
 
 @pytest.mark.parametrize("case", list(MACHINE_INCLUDES))
 def test_a_machine_s_include_git_dies_on_declines(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, leg: str
 ) -> None:
     """The machine's includes are read where they stand (the origin's
     capture reads them): one git dies reading, or whose file holds a value
@@ -254,7 +276,7 @@ def test_a_machine_s_include_git_dies_on_declines(
     (tmp_path / "dying.inc").write_text("[core]\n\texcludesfile\n", encoding="utf-8")
     text, git_reads = MACHINE_INCLUDES[case]
     machine.write_text(text.format(dir=tmp_path.as_posix()), encoding="utf-8")
-    assert _answers(repo) == (git_reads, git_reads)
+    assert _answers(repo) == (git_reads, git_reads and leg == "posix")
 
 
 #: What a machine's config commonly holds: an identity, an editor, line
@@ -298,17 +320,18 @@ MACHINE_COMMON = """[user]
 
 
 def test_a_machine_s_common_settings_keep_the_files_answer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leg: str
 ) -> None:
     """What a machine's config commonly sets is read by git without
-    dying, and the files answer for it with no process: ``push.default``
-    and the ``branch.autoSetup*`` words are read as git reads them, where
-    any value of them declined, and Git for Windows' own booleans too."""
+    dying, and the files answer for it with no process (on POSIX):
+    ``push.default`` and the ``branch.autoSetup*`` words are read as git
+    reads them, where any value of them declined, and Git for Windows' own
+    booleans too."""
     machine = _machine(tmp_path, monkeypatch)
     (tmp_path / "work.inc").write_text("[user]\n\temail = w@example.invalid\n")
     machine.write_text(MACHINE_COMMON.format(dir=tmp_path.as_posix()), encoding="utf-8")
     repo = _repo(tmp_path / "repo")
-    assert _answers(repo) == (True, True)
+    assert _answers(repo) == (True, leg == "posix")
 
 
 #: The words ``push.default`` and the ``branch.autoSetup*`` settings take,
@@ -325,23 +348,25 @@ WORDS = [
 
 @pytest.mark.parametrize(("name", "value"), WORDS)
 def test_a_word_is_read_as_git_reads_it(
-    tmp_path: Path, name: str, value: str | None
+    tmp_path: Path, name: str, value: str | None, leg: str
 ) -> None:
     """Each word git takes, and each spelling it dies on, in the
-    repository's config: the files answer exactly where git does."""
+    repository's config: the files answer exactly where git does (on
+    POSIX; off it, nowhere)."""
     repo = _repo(tmp_path / "repo")
     with (repo / ".git" / "config").open("a", encoding="utf-8") as fh:
         fh.write(_text(name, value))
     git_answers, files_answer = _answers(repo)
-    assert files_answer == git_answers
+    assert files_answer == (git_answers and leg == "posix")
 
 
 def test_the_machine_s_config_costs_the_files_no_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leg: str
 ) -> None:
     """The machine's config is judged from the reads the origin's capture
     keeps against its stamps (`location_git.machine_config_reads`): after
-    a capture, the files' answer opens and states no file of it."""
+    a capture, the files' answer opens and states no file of it (off
+    POSIX it answers none, before any read)."""
     machine = _machine(tmp_path, monkeypatch)
     machine.write_text("[user]\n\tname = A Person\n", encoding="utf-8")
     repo = _repo(tmp_path / "repo")
@@ -360,12 +385,13 @@ def test_the_machine_s_config_costs_the_files_no_read(
     with monkeypatch.context() as patch:
         for name in ("stat", "lstat", "open"):
             patch.setattr(os, name, spy(getattr(os, name)))
-        assert origin.toplevel_and_head_from_files(repo) is not None
+        found = origin.toplevel_and_head_from_files(repo)
+    assert (found is not None) is (leg == "posix")
     assert touched == []
 
 
 def test_a_cold_process_states_the_machine_s_config_once_for_both(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leg: str
 ) -> None:
     """ENG-207's review of round 8: in a process that has captured no
     origin, the files' answer reads the machine's config, each file opened
@@ -373,7 +399,9 @@ def test_a_cold_process_states_the_machine_s_config_once_for_both(
     stats became 14). The signature that follows within
     `location_git.FRESH_SECONDS` takes that read's stamps, so the two
     state each file once; the signature after it, and one past the
-    window, state the files as before."""
+    window, state the files as before. Off POSIX the files read no
+    repository, so there is no read to reuse: they state no file, and
+    each signature states each."""
     machine = _machine(tmp_path, monkeypatch)
     extra = tmp_path / "machine-extra.gitconfig"
     extra.write_text("[core]\n\tautocrlf = input\n", encoding="utf-8")
@@ -382,9 +410,9 @@ def test_a_cold_process_states_the_machine_s_config_once_for_both(
         encoding="utf-8",
     )
     repo = _repo(tmp_path / "repo")
+    git_dir = os.path.realpath(repo / ".git")
     found = githead.find_gitdir(repo)
-    assert found is not None
-    git_dir = str(found.gitdir)
+    assert (found is not None and str(found.gitdir) == git_dir) is (leg == "posix")
     names = {machine.name, extra.name}
     touched: list[str] = []
 
@@ -408,8 +436,18 @@ def test_a_cold_process_states_the_machine_s_config_once_for_both(
 
     _caches.clear_all()
     files = stated(lambda: origin.toplevel_and_head_from_files(repo))
-    assert set(files) == names, "premise: the files read the machine's config"
     stamps = location_git.machine_config_stamps
+    if leg != "posix":
+        assert files == [], "off POSIX the files read nothing"
+        once = stated(lambda: stamps(git_dir, reuse=True))
+        assert set(once) == names
+        assert stated(lambda: stamps(git_dir, reuse=True)) == once
+        # A cold capture's first signature and its keep-check: twice each.
+        _caches.clear_all()
+        stated(lambda: origin.toplevel_and_head_from_files(repo))
+        assert stated(lambda: origin.capture(repo)) == sorted(once + once)
+        return
+    assert set(files) == names, "premise: the files read the machine's config"
     assert stated(lambda: stamps(git_dir, reuse=True)) == []
     later = stated(lambda: stamps(git_dir, reuse=True))
     assert set(later) == names
@@ -438,7 +476,7 @@ _REWRITE = (
 
 
 def test_a_change_inside_the_window_reaches_a_kept_capture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leg: str
 ) -> None:
     """ENG-207's review of round 10: a kept capture's machine-config read
     evicted (the bound scaled down to 1, which another repository's
@@ -447,42 +485,44 @@ def test_a_change_inside_the_window_reaches_a_kept_capture(
     `location_git.FRESH_SECONDS` after it reaches the next capture. Its
     signature, compared with the kept entry, states the machine's config,
     never reusing the read's stamps, which predate the rule: reused, they
-    equalled the entry's and the capture answered the old URL."""
+    equalled the entry's and the capture answered the old URL. Off POSIX
+    the files read nothing, mark nothing, and the rule reaches it too."""
     machine = _machine(tmp_path, monkeypatch)
     repo = _repo(tmp_path / "repo")
     _git(repo, "remote", "set-url", "origin", "https://old.example/x.git")
     other = _repo(tmp_path / "other")
-    found = githead.find_gitdir(repo)
-    assert found is not None
-    key = (str(machine), str(found.gitdir), gitconfig._home())
+    key = (str(machine), os.path.realpath(repo / ".git"), gitconfig._home())
     _caches.clear_all()
     assert origin.capture(repo).repo == "https://old.example/x.git"
     assert str(Path(os.path.realpath(repo))) in origin._ORIGIN_CACHE, "premise: kept"
     monkeypatch.setattr(location_git, "_STAMPED_KEPT", 1)
     origin.capture(other)
     assert key not in location_git._STAMPED_READS, "premise: evicted"
-    assert origin.toplevel_and_head_from_files(repo) is not None
-    assert key in location_git._FRESH_READS, "premise: read cold, fresh"
+    posix = leg == "posix"
+    assert (origin.toplevel_and_head_from_files(repo) is not None) is posix
+    assert (key in location_git._FRESH_READS) is posix, "premise: read cold, fresh"
     machine.write_text(_REWRITE, encoding="utf-8")
     assert origin.capture(repo).repo == "https://new.example/x.git"
     assert origin.capture(repo).repo == "https://new.example/x.git"
 
 
 def test_a_change_inside_the_window_is_never_kept_unseen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leg: str
 ) -> None:
     """A capture with no kept entry reuses the files' read for its first
     signature (the cold-process saving); a rule written inside the window
     after the read is what git's probes read, and the keep-check, which
     states the files, sees it: the capture answers the new URL, and the
     entry kept, by it or the next, holds the stamps of the config as it
-    is, never those from before the rule."""
+    is, never those from before the rule. Off POSIX the files read
+    nothing to reuse, and the same holds."""
     machine = _machine(tmp_path, monkeypatch)
     repo = _repo(tmp_path / "repo")
     _git(repo, "remote", "set-url", "origin", "https://old.example/x.git")
     resolved = Path(os.path.realpath(repo))
     _caches.clear_all()
-    assert origin.toplevel_and_head_from_files(repo) is not None
+    found = origin.toplevel_and_head_from_files(repo)
+    assert (found is not None) is (leg == "posix")
     machine.write_text(_REWRITE, encoding="utf-8")
     for _ in range(2):
         assert origin.capture(repo).repo == "https://new.example/x.git"
