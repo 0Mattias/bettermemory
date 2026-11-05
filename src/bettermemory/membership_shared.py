@@ -529,3 +529,24 @@ def retired_into(self: Membership, checkout: str) -> str | None:
         if isinstance(payload, dict) and payload.get("into"):
             into = str(payload["into"])
     return into
+
+
+def _folded(self: Membership, checkout: str) -> set[str]:
+    """The checkouts retired into `checkout`, and into those, and so on
+    (`_retire_into`): those whose records `project why` reads as homed at
+    it. One read of the log's kind index for ``checkout_retired``."""
+    into: dict[str, set[str]] = {}
+    for row in self._store.membership_log(["checkout_retired"]):
+        try:
+            payload = json.loads(row.payload)
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and payload.get("into"):
+            into.setdefault(str(payload["into"]), set()).add(str(payload["checkout"]))
+    out: set[str] = set()
+    todo = [checkout]
+    while todo:
+        for c in into.get(todo.pop(), set()) - out - {checkout}:
+            out.add(c)
+            todo.append(c)
+    return out

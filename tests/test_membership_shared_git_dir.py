@@ -72,6 +72,7 @@ from bettermemory.membership_records import (
     UNRESOLVED_LOCATION,
 )
 from bettermemory.membership_shared import _same_file
+from bettermemory.server import main as cli_main
 from bettermemory.store import Store
 
 from .test_membership_remint import (
@@ -1317,6 +1318,48 @@ def test_a_question_the_record_kept_asks_too_is_closed_on_the_one_retired(
     assert (idle_q.state, idle_q.answer) == ("answered", f"settled:{kept}")
     assert (kept_q.state, kept_q.checkout) == ("open", kept)
     assert [p.id for p in model.pending() if p.kind == IMPORT] == [kept_q.id]
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("settled", ["heal", "join_first"])
+def test_why_and_list_name_the_record_a_moved_one_was_written_in(
+    tmp_path: Path,
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    settled: str,
+) -> None:
+    """After two records were settled into one, `project why` of a record
+    written at the one retired (h2 after the heal, h1 after the answer)
+    names the checkout it was written in and the one it was retired into,
+    and lists that one's rows, its registration and ``checkout_retired``
+    among them; `project list` says the retired checkout was retired into
+    the one kept. Before, `why` named the kept checkout as the one it was
+    written in, with none of the retired one's rows, and `list` said
+    ``retired`` alone, as of a checkout retired as quiet."""
+    _line, _box, _kid, kept, idle = _settled(tmp_path, lab, monkeypatch, settled)
+    rid = lab.records["h2" if settled == "heal" else "h1"].id
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(lab.root / "store"))
+    capsys.readouterr()
+
+    monkeypatch.setattr(sys, "argv", ["bettermemory", "project", "why", rid])
+    cli_main()
+    why = capsys.readouterr().out.splitlines()
+    monkeypatch.setattr(sys, "argv", ["bettermemory", "project", "list"])
+    cli_main()
+    listed = capsys.readouterr().out.splitlines()
+
+    assert f"written in checkout {idle} (retired into {kept}); rule " in why[0]
+    assert "checkout_retired" in [x.split()[3] for x in why[1:]]
+    rows = [
+        (r.kind, json.loads(r.payload).get("checkout"))
+        for r in lab.model().why(rid).rows
+    ]
+    for kind in ("checkout_registered", "checkout_retired"):
+        assert (kind, idle) in rows
+    assert ("checkout_registered", kept) in rows
+    assert any(x.startswith(f"  {idle} primary, retired into {kept}, ") for x in listed)
+    assert not any(x.startswith(f"  {kept} primary, retired") for x in listed)
 
 
 @pytest.mark.usefixtures("no_birth")

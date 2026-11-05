@@ -430,7 +430,10 @@ def _markers(model: Membership, p: Project) -> str:
 
 
 def checkout_line(model: Membership, k: Checkout) -> str:
-    """One checkout: its id, kind and where it is now."""
+    """One checkout: its id, kind and where it is now; a retired one says
+    so, and names the record it was retired into where it was (a second
+    record of a shared git directory, ENG-215; one retired as quiet is
+    brought back by its next sighting)."""
     from ..membership import UNRESOLVED
 
     where = _where(k)
@@ -443,7 +446,8 @@ def checkout_line(model: Membership, k: Checkout) -> str:
         state = (
             f"live at {quoted(live)}" if live else f"no live view, last seen at {where}"
         )
-    retired = ", retired" if k.retired else ""
+    into = model.retired_into(k.id) if k.retired else None
+    retired = f", retired into {into}" if into else ", retired" if k.retired else ""
     return f"{k.id} {k.kind}{retired}, {state}"
 
 

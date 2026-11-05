@@ -1325,6 +1325,7 @@ class Membership:
     _by_object = membership_resolve._by_object
     _shared_remint = membership_shared._shared_remint
     _retire_into = membership_shared._retire_into
+    retired_into = membership_shared.retired_into
     prefetch_liveness = membership_resolve.prefetch_liveness
     prefetch_declared = membership_resolve.prefetch_declared
 
@@ -1722,7 +1723,9 @@ class Membership:
         record's home and every row that decided it, oldest first: its
         home rows, its checkout's registration, views, re-keys and token
         rows, the proposals there and their answers, and the mints, merges
-        and file bindings of the projects on its chain."""
+        and file bindings of the projects on its chain; and the rows of the
+        checkouts retired into its checkout (ENG-215), the one it was
+        written in among them."""
         self._projects = None
         home = self.home(record_id)
         if home is None:
@@ -1732,16 +1735,14 @@ class Membership:
         cid = home.checkout
         projects = set(home.chain) | {home.recorded_project, home.project}
         projects |= {p for p in self._all_projects() if self.canonical(p) in projects}
-        proposals = (
-            {
-                str(r["id"])
-                for r in self._store.membership_rows(
-                    "proposals", where={"checkout": cid}
-                )
-            }
-            if cid is not None
-            else set()
-        )
+        folded = membership_shared._folded(self, cid) if cid is not None else set()
+        checkouts = sorted(folded | {cid}) if cid is not None else []
+        proposals = {
+            str(r["id"])
+            for r in self._store.membership_rows(
+                "proposals", column_in=("checkout", checkouts)
+            )
+        }
         # The import questions about the record's project (design 8.7).
         proposals |= {
             str(r["id"])
@@ -1757,7 +1758,7 @@ class Membership:
                 continue
             if not isinstance(payload, dict):
                 continue
-            if _decides(row.kind, payload, record_id, cid, proposals, projects):
+            if _decides(row.kind, payload, record_id, checkouts, proposals, projects):
                 rows.append(row)
         if home.project == GLOBAL:
             text = (
@@ -1765,17 +1766,24 @@ class Membership:
                 f"file); rule {home.rule}"
             )
         else:
+            said = [(r.kind, json.loads(r.payload)) for r in rows]
             registered = next(
                 (
-                    json.loads(r.payload).get("rule")
-                    for r in rows
-                    if r.kind == "checkout_registered"
+                    p.get("rule")
+                    for kind, p in said
+                    if kind == "checkout_registered" and p.get("checkout") == cid
                 ),
                 None,
             )
+            # The checkout of its first home: where it was written.
+            homes = [p["home"].get("checkout") for k, p in said if k == "home_put"]
+            at = (homes[0] if homes else None) or cid
+            if at != cid:
+                how = "retired into" if at in folded else "homed now at"
+                at = f"{at} ({how} {cid})"
             spelled = _named(self.project(home.project).name, home.project)
             text = (
-                f"{record_id}: project {spelled}, written in checkout {cid}; rule "
+                f"{record_id}: project {spelled}, written in checkout {at}; rule "
                 f"{home.rule}"
                 + (f"; the checkout joined by {registered}" if registered else "")
                 + f"; {len(rows)} rows"
@@ -1816,7 +1824,7 @@ def _decides(
     kind: str,
     payload: Mapping[str, Any],
     record_id: str,
-    checkout: str | None,
+    checkouts: Collection[str],
     proposals: Collection[str],
     projects: Collection[str],
 ) -> bool:
@@ -1826,9 +1834,9 @@ def _decides(
         if kind == "home_put":
             return body.get("record_id") == record_id
         if kind in ("checkout_put", "proposal_put"):
-            return body.get("id") == checkout or body.get("id") in proposals
+            return body.get("id") in checkouts or body.get("id") in proposals
         if kind == "checkout_view_put":
-            return body.get("checkout") == checkout
+            return body.get("checkout") in checkouts
         if kind == "project_put":
             return body.get("id") in projects
         if kind == "project_file_put":
@@ -1845,7 +1853,7 @@ def _decides(
         "project_reparented",
     ):
         return payload.get("project") in projects or payload.get("into") in projects
-    if checkout is not None and payload.get("checkout") == checkout:
+    if payload.get("checkout") in checkouts:
         return True
     if payload.get("proposal") in proposals:
         return True

@@ -1477,7 +1477,11 @@ eighteenth was built.
   which only the import opens, records written where the folder could
   not be read, a part below the root) is moved onto the one read and
   asked there, unless that one asks the same (rows of kinds 9.0.0rc18
-  reads: it verifies, opens, reads and writes such a store).
+  reads: it verifies, opens, reads and writes such a store). `project
+  why` of a record moved so names the checkout it was written in and
+  the one it went into, with the retired one's rows, where it named the
+  one read as the one written in; `project list` says `retired into
+  <checkout>`, where `retired` read as a checkout retired as quiet.
   The rule costs one read of the
   checkouts' token index, with no views, at each reading of rung 2 where
   the token found is neither recorded nor the checkout's own re-mint
