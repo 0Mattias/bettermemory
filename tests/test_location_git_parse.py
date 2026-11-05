@@ -23,9 +23,11 @@ how this git reads a legacy remote file and an empty URL is asked of it
 
 from __future__ import annotations
 
+import inspect
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -514,6 +516,107 @@ def test_wildmatch_matches_as_git_matches(tmp_path: Path) -> None:
                 wrong.append((pattern, url, git_says))
     assert wrong == []
     assert 0 < matched < len(PATTERNS) * len(URLS), "premise: git matches some"
+
+
+def test_wildmatch_is_bounded_where_git_s_is_not() -> None:
+    """ENG-207's round 7: the port recursed two Python frames a star and
+    walked unbounded, so a pattern of 650 ``*a`` raised RecursionError
+    and ``**/`` repeated 20 times took 3.2 s where git takes 61 ms. Past
+    `gitconfig._WM_DEPTH` nested stars, past Python's own stack, or past
+    the steps a read has left (shared by every match of one read), it now
+    says it is spent (`gitconfig.WildmatchSpent`), and a real pattern
+    takes a few dozen steps."""
+    with pytest.raises(gitconfig.WildmatchSpent):
+        gitconfig.wildmatch(b"*a" * 650, b"a" * 700)
+    assert gitconfig.wildmatch(b"*a" * 140, b"a" * 700)
+    started = time.perf_counter()
+    with pytest.raises(gitconfig.WildmatchSpent):
+        gitconfig.wildmatch(b"**/" * 24 + b"z", b"a/" * 24 + b"y")
+    assert time.perf_counter() - started < 1.0
+    steps = gitconfig.Steps()
+    assert gitconfig.wildmatch(
+        b"https://**/*.git", b"https://x.invalid/a/b.git", steps=steps
+    )
+    assert gitconfig._WM_STEPS - steps.left < 50
+    with pytest.raises(gitconfig.WildmatchSpent):
+        gitconfig.wildmatch(
+            b"*[" + b"b" * gitconfig._WM_STEPS + b"]", b"a", steps=steps
+        )
+    with pytest.raises(gitconfig.WildmatchSpent):
+        gitconfig.wildmatch(b"gh:*", b"gh:acme/lib", steps=steps)
+
+    def deep(levels: int) -> bool:
+        return (
+            deep(levels - 1) if levels else gitconfig.wildmatch(b"*a" * 100, b"a" * 101)
+        )
+
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(len(inspect.stack()) + 150)
+    try:
+        with pytest.raises(gitconfig.WildmatchSpent):
+            deep(40)
+    finally:
+        sys.setrecursionlimit(limit)
+
+
+#: The reviewer's deep pattern: 650 ``*a`` after a URL's start, which git
+#: matches against a 700-character URL.
+_DEEP = "https://x.invalid/" + "*a" * 650
+_LONG_URL = "https://x.invalid/" + "a" * 700
+
+
+@pytest.mark.parametrize("matters", [True, False], ids=["rule_matches", "neutral"])
+def test_a_pattern_git_settles_and_the_port_does_not_reads_as_unsettled(
+    tmp_path: Path, matters: bool
+) -> None:
+    """ENG-207's round 7: a global ``hasconfig:remote.*.url:`` include
+    whose pattern nests 650 stars raised RecursionError out of
+    `location.capture`; git answers it (the include holds). The condition
+    now reads as not settled, and the capture declines where the include
+    could change what is keyed (its rule matches the URL) and keys git's
+    URL where it could not."""
+    repo = _repo(tmp_path / "repo", remote=_LONG_URL)
+    rules = tmp_path / "rules.inc"
+    prefix = "https://x.invalid/" if matters else "zz:"
+    rules.write_text(
+        f'[url "https://m.invalid/"]\n\tinsteadOf = {prefix}\n', encoding="utf-8"
+    )
+    _include(_global(), f"hasconfig:remote.*.url:{_DEEP}", rules)
+    fetched = "https://m.invalid/" + "a" * 700 if matters else _LONG_URL
+    assert _fetched(repo) == fetched, "premise: git settles the include, which holds"
+    if matters:
+        _declines(repo, git_dies=False)
+    else:
+        assert _keys(repo) == {_key(repo, _LONG_URL)}
+
+
+@pytest.mark.parametrize("matters", [True, False], ids=["rule_matches", "neutral"])
+def test_a_slow_pattern_is_given_up_within_a_bound(
+    tmp_path: Path, matters: bool
+) -> None:
+    """ENG-207's round 7: ``**/`` repeated 22 times, under ``onbranch:``
+    against a branch of 22 folders, took the port about 10 s, and git a
+    quarter of one (it does not match). The read's matching gives up
+    within its steps (`gitconfig._WM_STEPS`, about 40 ms), well inside a
+    second for the capture's every read, and the condition reads as not
+    settled: the capture declines where the include could change what is
+    keyed and keys git's URL where it could not."""
+    repo = _repo(tmp_path / "repo")
+    _git(repo, "switch", "-q", "-c", "a/" * 22 + "y")
+    rules = tmp_path / "rules.inc"
+    rules.write_text(
+        _RULES if matters else _RULES.replace("gh:", "zz:"), encoding="utf-8"
+    )
+    _include(_global(), "onbranch:" + "**/" * 22 + "z", rules)
+    assert _fetched(repo) == "gh:acme/lib", (
+        "premise: git settles it, and it does not hold"
+    )
+    started = time.perf_counter()
+    if matters:
+        _declines(repo, git_dies=False)
+    else:
+        assert _keys(repo) == {_key(repo, "gh:acme/lib")}
+    assert time.perf_counter() - started < 2.0
 
 
 # ---------------------------------------------------------------------------

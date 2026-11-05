@@ -581,16 +581,22 @@ one, where one that does has git refuse the configuration. Another
 git's wildmatch matches them (`gitconfig.wildmatch`, `WM_PATHNAME`):
 `*`, `?`, `**` as a whole component, brackets with ranges, negation,
 the twelve character classes (`[:alnum:]` to `[:xdigit:]`, ASCII) and
-backslash escapes. A HEAD githead declines (a reftable repository's,
+backslash escapes, within bounds git's matcher in C does not have: 150
+nested stars and 200,000 steps a read (about 40 ms,
+`gitconfig.WildmatchSpent`), past which the condition is not settled.
+A HEAD githead declines (a reftable repository's,
 which lives in its tables) is asked of `git symbolic-ref -q HEAD`, one
 process, only for a capture whose config reads an `onbranch:` include,
 with the tables' lists and `packed-refs` stamped, so a steady prompt
 spawns none. Where a condition is still not settled here (git does not
 answer for HEAD within the fetch budget; a `%(prefix)` path in a
-`gitdir:` pattern), the include declines the capture only where it
-could change what is keyed: it sets a remote URL, an insteadOf rule
-whose prefix matches a URL keyed, the default branch where a
-`branches/` file is read, or a line git may die on; an include whose
+`gitdir:` pattern; a pattern past the matcher's bounds), the include
+declines the capture only where it could change what is keyed: it sets
+a remote URL, an insteadOf rule whose prefix matches a URL keyed, an
+insteadOf rule under a base another rule gives the prefix rewriting a
+URL keyed under another base (git ranks bases in the order it meets
+them), the default branch where a `branches/` file is read, or a line
+git may die on; an include whose
 rule matches none of the URLs leaves the capture as git reads it.
 Where the URLs `hasconfig:` is matched against are not settled, or git
 refuses the configuration, the capture declines (indeterminate, not

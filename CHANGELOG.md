@@ -717,9 +717,13 @@ eighteenth was built.
   and backslash escapes are read as git's wildmatch reads them, and the
   HEAD of a reftable repository, which githead does not read, is asked of
   `git symbolic-ref`, once, only where an `onbranch:` include is read, so
-  a steady prompt spawns none. Where git's reading is still not settled
-  (git does not answer for HEAD, a `%(prefix)` path in a `gitdir:`
-  pattern, a legacy file that is no regular file or is over 64 KiB),
+  a steady prompt spawns none. The matcher is bounded where git's, in C,
+  is not: past 150 nested stars or 200,000 steps a read (about 40 ms),
+  where a pattern of 650 `*a` raised RecursionError out of the capture
+  and `**/` repeated 20 times took 3.2 s, a pattern is not settled. Where
+  git's reading is still not settled (git does not answer for HEAD, a
+  `%(prefix)` path in a `gitdir:` pattern, a pattern past the matcher's
+  bounds, a legacy file that is no regular file or is over 64 KiB),
   the capture declines rather than key another answer, but only where
   the include could change what is keyed: one that sets a remote URL, an
   insteadOf rule whose prefix matches a URL keyed, an insteadOf rule of

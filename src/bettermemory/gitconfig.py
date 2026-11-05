@@ -40,7 +40,7 @@ import stat
 import sys
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from types import ModuleType
 
@@ -185,8 +185,9 @@ class _Dies(Exception):
 class _Reading:
     """One `config_tree` read: the files it has taken, the identity
     (device, inode) of each file open on the include chain, whether a
-    stamped read stamps its own file, and whether a file it cannot read
-    for want of permission is skipped, as git skips a global config."""
+    stamped read stamps its own file, whether a file it cannot read
+    for want of permission is skipped, as git skips a global config, and
+    the steps its conditions' patterns have left (`Steps`)."""
 
     files: int = 0
     chain: list[tuple[int, int]] = field(default_factory=list)
@@ -196,6 +197,7 @@ class _Reading:
     forbidding: bool = False
     asks_remote_urls: bool = False
     forbidden: bool = False
+    steps: Steps = field(default_factory=lambda: Steps())
 
     @property
     def remote_rules(self) -> bool:
@@ -977,26 +979,48 @@ def _condition(
     `git_dir`; ``onbranch:`` and ``hasconfig:remote.*.url:`` against the
     read's `IncludeContext` (`_branch_condition`, `_remote_url_condition`);
     None where it is not evaluated here (no context or git directory
-    given, or one that cannot settle it); False for a condition git does
-    not know, another ``hasconfig:`` among them, which git ignores."""
+    given, or one that cannot settle it, a pattern the read's matching
+    does not settle among them, `WildmatchSpent`); False for a condition
+    git does not know, another ``hasconfig:`` among them, which git
+    ignores."""
     for prefix, icase in (("gitdir:", False), ("gitdir/i:", True)):
         if condition.startswith(prefix):
             if git_dir is None:
                 return None
-            return _gitdir_matches(condition[len(prefix) :], including, git_dir, icase)
+            pattern = condition[len(prefix) :]
+            return _gitdir_matches(pattern, including, git_dir, icase, reading.steps)
     if condition.startswith("onbranch:"):
-        return _branch_condition(condition[len("onbranch:") :], reading.context)
+        pattern = condition[len("onbranch:") :]
+        return _branch_condition(pattern, reading.context, reading.steps)
     if condition.startswith(_HAS_REMOTE_URL):
         return _remote_url_condition(condition[len(_HAS_REMOTE_URL) :], reading)
     return False
 
 
-def _branch_condition(pattern: str, context: IncludeContext | None) -> bool | None:
+def _any_match(
+    pattern: bytes, texts: Iterable[bytes], steps: Steps, *, icase: bool = False
+) -> bool | None:
+    """Whether `pattern` matches any of `texts` (`wildmatch`, its steps
+    taken from `steps`); None where none does and the match of one is not
+    settled (`WildmatchSpent`)."""
+    spent = False
+    for text in texts:
+        try:
+            if wildmatch(pattern, text, icase=icase, steps=steps):
+                return True
+        except WildmatchSpent:
+            spent = True
+    return None if spent else False
+
+
+def _branch_condition(
+    pattern: str, context: IncludeContext | None, steps: Steps
+) -> bool | None:
     """config.c's ``include_by_branch``: the branch HEAD names, its name
     under ``refs/heads/``, matched as a path against `pattern`, with
     ``**`` put after one that ends in a separator; never where HEAD is detached
-    or names another ref. None with no context, or where the branch is
-    not known."""
+    or names another ref. None with no context, where the branch is not
+    known, or where the match is not settled (`_any_match`)."""
     if context is None:
         return None
     branch = context.branch()
@@ -1007,7 +1031,7 @@ def _branch_condition(pattern: str, context: IncludeContext | None) -> bool | No
     spelled = subsection_bytes(pattern)
     if spelled[-1:] in (b"/", os.sep.encode()):
         spelled += b"**"
-    return wildmatch(spelled, branch)
+    return _any_match(spelled, (branch,), steps)
 
 
 def _remote_url_condition(pattern: str, reading: _Reading) -> bool | None:
@@ -1015,8 +1039,10 @@ def _remote_url_condition(pattern: str, reading: _Reading) -> bool | None:
     the config git reads matches `pattern` as a path, the pattern as it
     is (no ``**`` put after a ``/``); true, whatever the pattern, for the
     read that collects them (`IncludeContext.collecting`). None with no
-    context, and before the URLs are collected
-    (`ConfigValues.asks_remote_urls`)."""
+    context, before the URLs are collected
+    (`ConfigValues.asks_remote_urls`), and where no URL matches and the
+    match of one is not settled (`_any_match`, the URLs in order, so the
+    answer does not turn on how a set is hashed)."""
     context = reading.context
     if context is None:
         return None
@@ -1026,7 +1052,7 @@ def _remote_url_condition(pattern: str, reading: _Reading) -> bool | None:
         reading.asks_remote_urls = True
         return None
     spelled = subsection_bytes(pattern)
-    return any(wildmatch(spelled, url) for url in context.remote_urls)
+    return _any_match(spelled, sorted(context.remote_urls), reading.steps)
 
 
 def _slashed(path: str) -> str:
@@ -1036,7 +1062,7 @@ def _slashed(path: str) -> str:
 
 
 def _gitdir_matches(
-    pattern: str, including: str, git_dir: str, icase: bool
+    pattern: str, including: str, git_dir: str, icase: bool, steps: Steps
 ) -> bool | None:
     """config.c's ``include_by_gitdir``: the pattern expanded as git
     expands a path (`_interpolate`, HOME resolved; left as written where
@@ -1044,7 +1070,8 @@ def _gitdir_matches(
     directory (that part matched literally), ``**/`` put before a relative
     one and ``**`` after one that ends in a separator; matched as a path
     against the real git directory, then against it as given. None where
-    the pattern names git's runtime prefix, not known here."""
+    the pattern names git's runtime prefix, not known here, and where
+    neither matches and the match is not settled (`_any_match`)."""
     try:
         expanded = _interpolate(pattern, real_home=True)
     except _Overflow:
@@ -1061,25 +1088,24 @@ def _gitdir_matches(
     if pattern[-1:] in ("/", os.sep):
         pattern += "**"
     spelled = subsection_bytes(pattern)
-    seen = set()
-    for text in (os.path.realpath(git_dir), os.path.abspath(git_dir)):
-        named = os.fsencode(_slashed(text))
-        if named not in seen and _literal_then_wild(spelled, named, literal, icase):
-            return True
-        seen.add(named)
-    return False
+    named = dict.fromkeys(
+        os.fsencode(_slashed(text))
+        for text in (os.path.realpath(git_dir), os.path.abspath(git_dir))
+    )
+    rests = [t[literal:] for t in named if _literal_head(spelled, t, literal, icase)]
+    return _any_match(spelled[literal:], rests, steps, icase=icase)
 
 
-def _literal_then_wild(pattern: bytes, text: bytes, literal: int, icase: bool) -> bool:
-    """`include_by_gitdir`'s match: the first `literal` bytes compared as
-    they are (without case where `icase`), then the rest by `wildmatch`."""
-    if literal:
-        if len(text) < literal:
-            return False
-        head, given = pattern[:literal], text[:literal]
-        if (head.lower() != given.lower()) if icase else (head != given):
-            return False
-    return wildmatch(pattern[literal:], text[literal:], icase=icase)
+def _literal_head(pattern: bytes, text: bytes, literal: int, icase: bool) -> bool:
+    """Whether `include_by_gitdir`'s first `literal` bytes, compared as
+    they are (without case where `icase`), agree; the rest is matched by
+    `wildmatch`."""
+    if not literal:
+        return True
+    if len(text) < literal:
+        return False
+    head, given = pattern[:literal], text[:literal]
+    return (head.lower() == given.lower()) if icase else (head == given)
 
 
 # ---------------------------------------------------------------------------
@@ -1123,7 +1149,41 @@ _CLASSES: dict[bytes, Callable[[int], bool]] = {
 }
 
 
-def wildmatch(pattern: bytes, text: bytes, *, icase: bool = False) -> bool:
+#: The steps one read's matching may take (`Steps`): a step of ``dowild``,
+#: of a ``*``'s walk along the text and of a bracket's, about 0.2 us each,
+#: so a read spends at most about 40 ms matching (measured, macOS, Python
+#: 3.13: ``**/`` repeated 24 times is given up in 40 ms; git, in C, takes
+#: a second to answer it). A real pattern takes a few dozen steps
+#: (tests/test_location_git_parse.py).
+_WM_STEPS = 200_000
+#: The stars `dowild` may nest (two Python frames each), well within
+#: Python's recursion limit with a capture's own frames below them.
+_WM_DEPTH = 150
+
+
+class WildmatchSpent(Exception):
+    """A pattern this port of git's wildmatch does not settle within its
+    bounds (`_WM_STEPS` steps, `_WM_DEPTH` nested stars, or Python's
+    recursion limit): git, whose matcher recurses in C unbounded, answers
+    it, and the condition it is matched for reads as not settled, so the
+    capture declines where its include could change what is keyed
+    (ENG-207's round 7)."""
+
+
+class Steps:
+    """The steps a read's matching has left (`_WM_STEPS`), shared by every
+    pattern one `config_tree` read matches, so a file of many slow
+    patterns is bounded as one is."""
+
+    __slots__ = ("left",)
+
+    def __init__(self, left: int = _WM_STEPS) -> None:
+        self.left = left
+
+
+def wildmatch(
+    pattern: bytes, text: bytes, *, icase: bool = False, steps: Steps | None = None
+) -> bool:
     """git's ``wildmatch`` with ``WM_PATHNAME`` (wildmatch.c, git 2.54), and
     ``WM_CASEFOLD`` with `icase`, over bytes: ``*`` and ``?`` match no
     ``/``; a ``**`` that is a whole path component matches across it,
@@ -1131,15 +1191,28 @@ def wildmatch(pattern: bytes, text: bytes, *, icase: bool = False) -> bool:
     ``^`` to negate, a backslash escape and the character classes of
     `_CLASSES`, and matches no ``/``; a backslash elsewhere makes the next
     byte literal. Checked against git's matching of ``hasconfig:`` and
-    ``onbranch:`` patterns (tests/test_location_git_parse.py)."""
-    return _dowild(pattern, 0, text, 0, icase) == _WM_MATCH
+    ``onbranch:`` patterns (tests/test_location_git_parse.py).
+    `WildmatchSpent` past `steps` (a fresh `Steps` where none is given) or
+    `_WM_DEPTH`."""
+    try:
+        return _dowild(pattern, 0, text, 0, icase, steps or Steps(), 0) == _WM_MATCH
+    except RecursionError:
+        raise WildmatchSpent("the pattern nests deeper than Python's stack") from None
 
 
-def _dowild(p: bytes, pi: int, text: bytes, ti: int, icase: bool) -> int:
+def _dowild(
+    p: bytes, pi: int, text: bytes, ti: int, icase: bool, steps: Steps, depth: int
+) -> int:
     """wildmatch.c's ``dowild``, from `pi` in the pattern and `ti` in the
-    text, line for line."""
+    text, line for line, `depth` stars down; each step taken from `steps`
+    (`WildmatchSpent`)."""
+    if depth > _WM_DEPTH:
+        raise WildmatchSpent(f"the pattern nests more than {_WM_DEPTH} stars")
     n, m = len(p), len(text)
     while pi < n:
+        steps.left -= 1
+        if steps.left < 0:
+            raise WildmatchSpent(f"the patterns take more than {_WM_STEPS} steps")
         p_ch = p[pi]
         if ti >= m and p_ch != _STAR:
             return _WM_ABORT_ALL
@@ -1157,12 +1230,12 @@ def _dowild(p: bytes, pi: int, text: bytes, ti: int, icase: bool) -> int:
             if t_ch == _SLASH:
                 return _WM_NOMATCH
         elif p_ch == _STAR:
-            found = _star(p, pi, text, ti, icase)
+            found = _star(p, pi, text, ti, icase, steps, depth)
             if isinstance(found, int):
                 return found
             pi, ti = found
         elif p_ch == _OPEN:
-            found_at = _bracket(p, pi, t_ch, icase)
+            found_at = _bracket(p, pi, t_ch, icase, steps)
             if found_at < 0:
                 return found_at
             if found_at == 0:
@@ -1176,11 +1249,12 @@ def _dowild(p: bytes, pi: int, text: bytes, ti: int, icase: bool) -> int:
 
 
 def _star(
-    p: bytes, pi: int, text: bytes, ti: int, icase: bool
+    p: bytes, pi: int, text: bytes, ti: int, icase: bool, steps: Steps, depth: int
 ) -> int | tuple[int, int]:
     """``dowild``'s ``*`` at `pi`: its answer, or where the pattern and the
     text stand when the loop goes on (one ``*`` and a ``/``, which matches
     the next directory)."""
+    depth += 1
     n, m = len(p), len(text)
     pi += 1
     if pi < n and p[pi] == _STAR:
@@ -1192,7 +1266,10 @@ def _star(
             nxt in (0, _SLASH)
             or (nxt == _BACKSLASH and pi + 1 < n and p[pi + 1] == _SLASH)
         ):
-            if nxt == _SLASH and _dowild(p, pi + 1, text, ti, icase) == _WM_MATCH:
+            if (
+                nxt == _SLASH
+                and _dowild(p, pi + 1, text, ti, icase, steps, depth) == _WM_MATCH
+            ):
                 return _WM_MATCH
             match_slash = True
         else:
@@ -1212,6 +1289,9 @@ def _star(
     while True:
         if ti >= m:
             break
+        steps.left -= 1
+        if steps.left < 0:
+            raise WildmatchSpent(f"the patterns take more than {_WM_STEPS} steps")
         if p[pi] not in _GLOB_SPECIAL:
             p_ch = p[pi]
             if icase and _upper(p_ch):
@@ -1227,7 +1307,7 @@ def _star(
                 t_ch = text[ti] if ti < m else 0
             if t_ch != p_ch or ti >= m:
                 return _WM_ABORT_ALL if match_slash else _WM_ABORT_TO_STARSTAR
-        matched = _dowild(p, pi, text, ti, icase)
+        matched = _dowild(p, pi, text, ti, icase, steps, depth)
         if matched != _WM_NOMATCH:
             if not match_slash or matched != _WM_ABORT_TO_STARSTAR:
                 return matched
@@ -1238,11 +1318,11 @@ def _star(
     return _WM_ABORT_ALL
 
 
-def _bracket(p: bytes, pi: int, t_ch: int, icase: bool) -> int:
+def _bracket(p: bytes, pi: int, t_ch: int, icase: bool, steps: Steps) -> int:
     """``dowild``'s bracket at `pi` against the text's byte `t_ch` (case
     folded with `icase`): where it closes when it matches, 0 where it does
     not, `_WM_ABORT_ALL` where it is not closed or names no class git
-    knows."""
+    knows. Each byte of it is a step of `steps`."""
     n = len(p)
 
     def at(i: int) -> int:
@@ -1259,6 +1339,9 @@ def _bracket(p: bytes, pi: int, t_ch: int, icase: bool) -> int:
     prev_ch = 0
     matched = False
     while True:
+        steps.left -= 1
+        if steps.left < 0:
+            raise WildmatchSpent(f"the patterns take more than {_WM_STEPS} steps")
         if not p_ch:
             return _WM_ABORT_ALL
         if p_ch == _BACKSLASH:
