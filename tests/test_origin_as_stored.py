@@ -147,7 +147,9 @@ def test_a_forged_commit_graph_moves_no_count(
     elif forgery == "tree":
         root = _plain(repo, "rev-parse", f"{partial.anchor}^{{tree}}")
         _forge_graph(repo, tree=(partial.commits, root))
-        assert not set(partial.commits) & set(_touching(repo)), "premise"
+        # git before 2.38 lists the commits past the graph's trees (ENG-227).
+        if _git_version() >= (2, 38):
+            assert not set(partial.commits) & set(_touching(repo)), "premise"
     else:
         _forge_graph(repo, blind=True)
         assert changed not in _touching(repo), "premise"
@@ -1234,7 +1236,11 @@ def test_the_tree_check_reads_names_alone_and_fetches_nothing(
     checkout whose filter left the blob out reads the file as not held, and
     one that left the trees out reads nothing held: the read falls back to
     every spelling there, never fewer (ENG-220's review, round D). No object
-    is fetched."""
+    is fetched. Git from 2.39 to 2.44 ends the check at the first object
+    the clone lacks ("could not fetch ... from promisor remote", lazy
+    fetching disabled or not), so a partial clone's read has no answer and
+    declines (ENG-227: 2.39.5, 2.43.7 and 2.44.4 exit 128; 2.38.5 and
+    2.45.4 name the object missing and go on)."""
     from bettermemory import verify_spelling
 
     source = _repository(tmp_path)
@@ -1253,11 +1259,13 @@ def test_the_tree_check_reads_names_alone_and_fetches_nothing(
     folder = _SPELLED["NFD"].rsplit("/", 1)[0]
     names = {_SPELLED["NFD"], _SPELLED["NFC"], folder}
     held = verify_spelling._held(dest, anchor, names)
-    expected = {
+    expected: dict[str, set[str] | None] = {
         "full": {_SPELLED["NFD"], folder},
         "blobless": {folder},
         "treeless": set(),
     }
+    if clone != "full" and (2, 39) <= _git_version() < (2, 45):
+        expected[clone] = None
     assert held == expected[clone]
     assert _plain(dest, "count-objects", "-v") == objects, "nothing fetched"
 

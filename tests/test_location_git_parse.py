@@ -936,7 +936,11 @@ def test_a_prefix_path_is_read_as_this_git_expands_it(
         real = Path(os.path.realpath(repo)).as_posix()
         where = real if case == "gitdir_holds" else "bettermemory-nowhere"
         _include(_global(), f"gitdir:%(prefix)/{where}/", rules)
-    fetched = "gh:acme/lib" if case == "gitdir_not" else _MIRRORED
+    # ENG-227: a git that leaves %(prefix) as written (before 2.34) reads
+    # only the literal include.
+    expands = gitsystem.sources().prefix != gitconfig.AS_WRITTEN
+    taken = case == "include_literal" or (case != "gitdir_not" and expands)
+    fetched = _MIRRORED if taken else "gh:acme/lib"
     assert _fetched(repo) == fetched, "premise: git's reading"
     keys = _keys(repo)
     assert _key(repo, fetched) in keys

@@ -57,6 +57,8 @@ from bettermemory.gitobjects import committed_at
 from bettermemory.membership import Location, Membership
 from bettermemory.store import Store
 
+from .test_origin_patch import _git_version
+
 
 class _OverBudget(Exception):
     """A traversal read more commits than the test allows."""
@@ -654,6 +656,19 @@ def _dates() -> list[tuple[str, bytes, int]]:
 
 
 _DATES = _dates()
+#: The lines of `_DATES` git before 2.41 reads another time from (2.34.8
+#: and 2.40.4 alike): it takes the number after the line's first ``>``, a
+#: ``+`` sign, and any blank before it, vertical tab and form feed too.
+_OLDER_READS = frozenset(
+    {
+        "several >",
+        "> in the zone",
+        "leading +",
+        "zone, no time",
+        "vertical tab",
+        "form feed",
+    }
+)
 
 
 def _filled(template: bytes, parent: str) -> bytes:
@@ -904,20 +919,26 @@ def test_git_reads_each_committer_time_as_the_traversal_does(
     """The table of `test_a_committer_time_is_read_as_git_reads_it`,
     written into a repository by ``hash-object --literally`` and read back
     by ``git rev-list --no-walk --timestamp``: git reads every time as
-    `gitobjects.committed_at` does (review of ENG-203)."""
+    `gitobjects.committed_at` does (review of ENG-203). git before 2.41
+    reads six of them otherwise (`_OLDER_READS`, ENG-227); the time only
+    orders the walk, which makes no commit reachable from another."""
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
     parent = _write_object(repo, _body(_TREE + _AUTHOR + b"committer C <c> 3 +0000"))
+    older = _git_version() < (2, 41)
+    differ = []
 
     for name, template, expected in _DATES:
         body = _filled(template, parent)
         oid = _write_object(repo, body, literally=True)
         listed = _git(repo, "rev-list", "--no-walk", "--timestamp", oid)
-        assert (name, int(listed.split()[0])) == (name, expected)
+        if int(listed.split()[0]) != expected:
+            differ.append(name)
         assert (name, committed_at(body, len(oid))) == (name, expected)
+    assert set(differ) <= (_OLDER_READS if older else set()), differ
 
 
 def _apart(line: list[str]) -> tuple[dict[str, set[str]], list[str]]:
@@ -1316,7 +1337,8 @@ def test_git_is_run_past_a_commit_graph_naming_parents_no_object_holds(
     first parent of X, two unrelated roots, makes plain ``git merge-base
     --independent`` keep X alone. `RepositoryHistory.independent` pins
     ``core.commitGraph`` off and keeps both, as the traversal reads the
-    objects (review of ENG-203, round 2)."""
+    objects (review of ENG-203, round 2). git before 2.54 keeps both past
+    this file (ENG-227: 2.52.0 does), and the answer is the same."""
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
     repo = tmp_path / "repo"
@@ -1325,7 +1347,8 @@ def test_git_is_run_past_a_commit_graph_naming_parents_no_object_holds(
     graph = repo / ".git" / "objects" / "info" / "commit-graph"
     graph.parent.mkdir(parents=True, exist_ok=True)
     graph.write_bytes(_graph({p: (1, 100), x: (2, 200)}, {x: p}))
-    assert _git(repo, "merge-base", "--independent", x, p).split() == [x]
+    plain = set(_git(repo, "merge-base", "--independent", x, p).split())
+    assert plain == ({x} if _git_version() >= (2, 54) else {x, p}), "premise"
     common = str(repo / ".git")
 
     assert RepositoryHistory(common).independent([x, p]) == frozenset({x, p})

@@ -419,9 +419,16 @@ def test_a_patch_never_starts_a_git_in_a_planted_submodule(
         config = tmp_path / "global.cfg"
         config.write_text("[diff]\n\tsubmodule = diff\n")
         monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
-    _plain_git(submodule.repo, "log", "-p", "-1", submodule.bump)
-    assert submodule.marker.exists(), "the control: plain git runs the program"
-    submodule.marker.unlink()
+    control = subprocess.run(
+        ["git", "-C", str(submodule.repo), "log", "-p", "-1", submodule.bump],
+        capture_output=True,
+        check=False,
+    )
+    # ENG-227: git before 2.34 (2.32.7, 2.33.8) itself dies by SIGSEGV here.
+    if control.returncode >= 0:
+        assert control.returncode == 0, control.stderr
+        assert submodule.marker.exists(), "the control: plain git runs the program"
+    submodule.marker.unlink(missing_ok=True)
     stream = submodule.patch()
     assert stream is not None
     assert f"+Subproject commit {submodule.s2}" in stream
@@ -577,19 +584,22 @@ def test_the_local_patch_split_reads_a_missing_blob_as_missing(
 ) -> None:
     """The split's ``log --raw`` and ``cat-file --batch-check`` fetch
     nothing, and the first blob is still absent. Where git reads
-    ``GIT_NO_LAZY_FETCH``, the check names each blob the clone lacks as
-    missing: every commit reads one, so each is counted and none streamed.
-    Under the empty ``GIT_ALLOW_PROTOCOL`` alone, the setting an older git
-    is held by, git tries the fetch, is refused the transport and ends
-    the check, and the split declines: the per-file count, as before. git
+    ``GIT_NO_LAZY_FETCH`` and goes on past a blob the clone lacks (2.45),
+    the check names each such blob missing: every commit reads one, so
+    each is counted and none streamed. Under the empty
+    ``GIT_ALLOW_PROTOCOL`` alone, the setting an older git is held by, git
+    tries the fetch, is refused the transport and ends the check, and the
+    split declines: the per-file count, as before; so does 2.44, which
+    reads the pin, fetches nothing and still ends the check there. git
     before 2.39 tries no fetch there and names each blob missing, as
-    under ``GIT_NO_LAZY_FETCH`` (ENG-227: 2.38.5 does, 2.39.5 does not)."""
+    under ``GIT_NO_LAZY_FETCH`` (ENG-227: 2.38.5 does, 2.39.5 and 2.44.4
+    do not, 2.45.4 does)."""
     if kept is not None:
         if "GIT_NO_LAZY_FETCH" in kept and _git_version() < (2, 44):
             pytest.skip("GIT_NO_LAZY_FETCH is read from git 2.44")
         monkeypatch.setattr(_git, "NO_FETCH", kept)
     window = _split(blobless)
-    lazy_off = "GIT_NO_LAZY_FETCH" in _git.NO_FETCH and _git_version() >= (2, 44)
+    lazy_off = "GIT_NO_LAZY_FETCH" in _git.NO_FETCH and _git_version() >= (2, 45)
     if lazy_off or _git_version() < (2, 39):
         assert window is not None
         assert (window.stream, len(window.counted)) == ("", 3)

@@ -177,9 +177,12 @@ def test_git_s_output_reaches_a_reader_with_its_cr(tmp_path: Path) -> None:
     """`run_git` decodes git's output from its bytes, every CR kept (it
     read text once, which turned a CR LF into an LF and a name ending in a
     CR into another): a value holding a CR, printed before git's LF,
-    reaches the reader as git wrote it."""
+    reaches the reader as git wrote it. The value is quoted, which every
+    git reads its CR from; ``git config x.y`` before 2.43 writes one
+    unquoted, which git reads with its CR trimmed (ENG-227)."""
     repo = checkout(tmp_path / "work" / "app")
-    _git(repo, "config", "x.y", "v\r")
+    with (repo / ".git" / "config").open("ab") as fh:
+        fh.write(b'[x]\n\ty = "v\r"\n')
     done = git_runner.run_git(["config", "x.y"], cwd=repo)
     assert done is not None and done.returncode == 0
     assert done.stdout == "v\r\n", repr(done.stdout)

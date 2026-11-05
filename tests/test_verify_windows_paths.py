@@ -28,6 +28,7 @@ from bettermemory.githead import GitDir
 from bettermemory.gitobjects import ObjectReader
 
 from .conftest import set_git_discovery_ceiling
+from .test_origin_patch import _git_version
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
@@ -256,12 +257,15 @@ def test_the_skip_worktree_bit_reads_in_every_index_layout_git_writes(
     """The index git writes for a sparse checkout (version 3, the bit in
     each entry's second flags word), a sparse index (one directory entry,
     ``web/``, for everything the cone leaves out of ``web``) and a version
-    4 index (each name compressed against the one before it) read alike."""
-    options = ("--sparse-index",) if layout == "sparse-index" else ()
+    4 index (each name compressed against the one before it) read alike.
+    A sparse index is of the cone mode alone, which git before 2.37 sets
+    only when asked, and ``ls-files --sparse`` lists it from git 2.35
+    (ENG-227)."""
+    options = ("--cone", "--sparse-index") if layout == "sparse-index" else ()
     sparse = _sparse(tmp_path, *options)
     if layout == "version-4":
         _git(sparse, "update-index", "--index-version", "4")
-    if layout == "sparse-index":
+    if layout == "sparse-index" and _git_version() >= (2, 35):
         listed = _git(sparse, "ls-files", "--sparse").splitlines()
         assert "web/" in listed and "web/main.py" not in listed, "premise"
     (sparse / "api" / "main.py").unlink()
