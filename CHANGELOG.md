@@ -1553,27 +1553,51 @@ eighteenth was built.
   file's attributes sets it (MS-FSA 2.1.5.15.2), and a CopyFile2 copy
   (`shutil.copy2` on Windows, Explorer, `copy`) keeps the source's, so
   on the Windows runner such a copy's re-mint was read as the host's.
-  Rung 2 reads no re-mint from stamps kept in FILETIME's 100 ns ticks
-  (every mtime and ctime a whole tick, not every one a whole second: NTFS
-  as Windows reads it, and a view of it without birth time, WSL2's 9p
-  (drvfs), which Docker Desktop's WSL2 bind mounts go through), the
-  checkout's, the sighting's or the other machine's, and the sighting
-  is read as without the rule (fail closed). A Windows host reads birth
-  time, so its own sightings are as before, and so does an SMB view (the
-  Linux client reads the server's CreationTime as the birth time), which
-  never reaches the rule; a container without birth time reading a
-  Windows host's files over drvfs registers a second checkout as in
-  9.0.0rc18. Whether drvfs reads ChangeTime as the ctime is not
-  measured. B still reads them, as a view's token keeps B standing,
-  which asks. A file system keeping microseconds reads as ticks, and
-  one keeping nanoseconds does by chance: a linked worktree's one stamp
-  about once in 100; a checkout's two on APFS (Apple Silicon) about once
-  in 2,400 (3 in 5,000 measured), as `git init` writes them a short gap
-  apart that is a whole tick 4.2% of the time on the 24 MHz clock; on a
-  coarse-clock Linux file system such as ext4 about once in 100, its two
-  files given one time (inferred). Each fails closed (ENG-235). A
-  snapshot, an overlay's
-  lower layer or a block-level clone keeps the ctimes, but the rule
+  Rung 2 reads no re-mint from files kept in FILETIME's 100 ns ticks
+  (NTFS as Windows reads it, and a view of it without birth time, WSL2's
+  9p, drvfs, which Docker Desktop's WSL2 bind mounts go through), and the
+  sighting is read as without the rule (fail closed). The capture
+  decides that once, over the mtimes and ctimes of all it reads on the
+  git directory's device, not the stamps alone (ENG-235): the cwd, the
+  git and common directories, the root, HEAD, config and the stamped
+  files, eight distinct times for a fresh checkout or linked worktree on
+  APFS. Every one a whole tick and not every one a whole second; on
+  Windows always; and on Linux, where it reads no birth time, wherever
+  the mount table names the device drvfs (a `9p` mount with
+  `aname=drvfs`, a container's bind mount of one, or WSL1's `drvfs`),
+  whatever its times. The location token posts it (`ticks`, which an
+  earlier daemon ignores) and the checkout row keeps it inside
+  `stamps_json`, an object beside the stamps that every release since
+  9.0.0rc15 reads past: no schema step, where a column would need one
+  and the log's fold in 9.0.0rc15 to rc18 refuses a put naming a column
+  it does not know. Another machine's record is passed over where it
+  says it read the files in ticks, or, written by an earlier release,
+  shares no stamp with this machine's to the nanosecond and its stamps
+  read as ticks; a client or a record that does not say reads by its
+  stamps. A Windows host reads birth time, so its own sightings are as
+  before, and so does an SMB view (the Linux client reads the server's
+  CreationTime as the birth time), which never reaches the rule; a
+  container without birth time reading a Windows host's files over
+  drvfs registers a second checkout as in 9.0.0rc18. Whether drvfs reads
+  ChangeTime as the ctime is not measured, and the mount table decides
+  drvfs either way. B still reads them, as a view's token keeps B
+  standing, which asks. A file system keeping microseconds reads as
+  ticks, and one keeping nanoseconds by chance, which the stamps alone
+  met often: on APFS (Apple Silicon) a linked worktree's one stamp 41
+  times in 3,000, a fresh checkout's two 2 in 6,000, where the capture
+  decided ticks for none of the 9,000. Its eight times read as ticks
+  under once in four million: files written back to back share the
+  24 MHz clock's offset, so each after the first is a whole tick about
+  once in 15 given those before it (680,000 runs measured: 6,854, 400,
+  27 and 4 for the first one to four), and taking each of the last five
+  at one in three still gives that. On a coarse-clock Linux file system
+  such as ext4, which reaches the rule only behind a share without birth
+  time, files written within one clock tick share one time: about one
+  in 10,000 to a million for a fresh checkout where NTP disciplines the
+  clock, fewer as its git directory changes, and about once in 100
+  until the clock is next set where nothing does (inferred, not
+  measured). Each fails closed. A snapshot, an overlay's lower layer or
+  a block-level clone keeps the ctimes, but the rule
   reads only a token found in the checkout's own git directory, which
   with birth time the checkout takes anyway, so it takes no token a
   checkout with birth time would not. A copy landed on the checkout's
@@ -1696,10 +1720,12 @@ eighteenth was built.
   `src/bettermemory/store_schema.py`, `src/bettermemory/store_steps.py`,
   `src/bettermemory/store.py`, `src/bettermemory/store_admission.py`,
   `src/bettermemory/location_git.py`,
-  `src/bettermemory/location_stamps.py`,
+  `src/bettermemory/location_stamps.py`, `src/bettermemory/location.py`,
+  `src/bettermemory/membership_rows.py`,
   `src/bettermemory/membership_alias.py`, `docs/internals.md`,
   `docs/api.md`, `docs/operations.md`, `CONTRIBUTING.md`,
   `tests/test_membership_shared_git_dir.py`,
+  `tests/test_membership_ticks.py`,
   `tests/test_membership_restated.py`, `tests/test_membership_alias.py`,
   `tests/test_membership_store.py`, `tests/test_store_steps.py`,
   `tests/test_store_versions.py`, `tests/test_cross_build.py`)

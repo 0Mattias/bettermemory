@@ -57,6 +57,17 @@ def _key_from(row: Mapping[str, Any], prefix: str) -> ObjectKey | None:
     return ObjectKey(str(device), str(inode), None if birth is None else str(birth))
 
 
+#: The key of the element of a checkout's ``stamps_json`` that holds its
+#: ``ticks`` (ENG-235): an object beside the five-element stamps, which
+#: every release that reads the column skips (`_stamps_from` from
+#: 9.0.0rc15 on reads five-element lists alone), so it needs no column of
+#: its own. A new column would: the log folds the checkouts table, and an
+#: earlier build's fold refuses a put naming a column it does not know.
+#: An earlier build that rewrites the row drops it, which reads as not
+#: said.
+TICKS_KEY = "ticks"
+
+
 def _stamps_from(raw: Any) -> tuple[InitStamp, ...]:
     out: list[InitStamp] = []
     for item in raw or ():
@@ -67,6 +78,25 @@ def _stamps_from(raw: Any) -> tuple[InitStamp, ...]:
                 )
             )
     return tuple(out)
+
+
+def _ticks_from(raw: Any) -> bool | None:
+    """The ``ticks`` a checkout's ``stamps_json`` holds (`TICKS_KEY`), or
+    None where it holds none or another value."""
+    for item in raw or ():
+        value = item.get(TICKS_KEY) if isinstance(item, Mapping) else None
+        if isinstance(value, bool):
+            return value
+    return None
+
+
+def _stamps_json(k: Checkout) -> list[Any]:
+    """A checkout's ``stamps_json``: its stamps, and its ``ticks`` where
+    said (`TICKS_KEY`)."""
+    out: list[Any] = [list(s) for s in k.stamps]
+    if k.ticks is not None:
+        out.append({TICKS_KEY: k.ticks})
+    return out
 
 
 def _view_from(row: Mapping[str, Any]) -> View:
@@ -104,6 +134,7 @@ def _checkout_from(row: Mapping[str, Any], views: Sequence[View]) -> Checkout:
         views=tuple(sorted(views, key=lambda v: v.order)),
         sessions=tuple(str(x) for x in unresolved.get("sessions") or ()),
         replaced_by=unresolved.get("replaced_by"),
+        ticks=_ticks_from(row["stamps_json"]),
     )
 
 
@@ -118,7 +149,7 @@ def _checkout_row(k: Checkout) -> dict[str, Any]:
         "git_dir": k.git_dir,
         "token": k.token,
         "token_status": k.token_status,
-        "stamps_json": [list(s) for s in k.stamps],
+        "stamps_json": _stamps_json(k),
         "last_head": k.last_head,
         "branch": k.branch,
         "remotes_json": list(k.remotes),

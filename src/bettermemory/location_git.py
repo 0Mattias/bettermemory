@@ -1192,6 +1192,10 @@ class Capture:
     daemon tell whether it reads the same object at ``cwd``.
     ``alias_keys`` are the remote keys spelled with an ``insteadOf``
     prefix of the system or the global config (`read_remotes`, ENG-207).
+    ``ticks`` is whether the git directory's file system keeps its times
+    in FILETIME's 100 ns ticks, as this capture's reads decide it
+    (`location._ticks`, ENG-235), or None where it was not decided (no
+    git directory read, or a client from before it).
     ``kept_apart`` is set where the repository was reached through a
     ``.git`` entry naming a git directory kept apart (`kept_apart`),
     ``tree_recorded`` where this capture made the first record of its
@@ -1221,6 +1225,7 @@ class Capture:
     token_written: str | None = None
     token_status: str = "n/a"
     stamps: tuple[tuple[str, int, int, int, int], ...] = ()
+    ticks: bool | None = None
     files: tuple[FileSeen, ...] = ()
     file_errors: tuple[str, ...] = ()
     file_tracked: bool | None = None
@@ -1268,6 +1273,7 @@ class Capture:
             "token_written": self.token_written,
             "token_status": self.token_status,
             "stamps": [list(s) for s in self.stamps],
+            "ticks": self.ticks,
             "files": [
                 {
                     "id": f.id,
@@ -1329,6 +1335,7 @@ class Capture:
                     (_text(s[0]), int(s[1]), int(s[2]), int(s[3]), int(s[4]))
                     for s in _bounded(raw.get("stamps"), 8)
                 ),
+                ticks=_opt_bool(raw.get("ticks")),
                 files=tuple(
                     FileSeen(
                         id=_text(f["id"]),
@@ -1365,6 +1372,12 @@ def _text(value: Any) -> str:
 
 def _opt_text(value: Any) -> str | None:
     return None if value is None else _text(value)
+
+
+def _opt_bool(value: Any) -> bool | None:
+    if value is not None and not isinstance(value, bool):
+        raise TypeError("not a boolean")
+    return value
 
 
 def _choice(value: Any, allowed: Sequence[str]) -> str:
