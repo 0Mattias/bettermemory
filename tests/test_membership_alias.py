@@ -50,6 +50,17 @@ __all__ = ["counted", "lab", "neutral_git"]
 #: The tests that run git.
 _ON_GIT = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
+#: The folder the checkouts lie in, absolute for the platform (a drive on
+#: Windows) as a capture records a view, so a declared folder, which the
+#: model makes so (`membership.view_path`), names the same one.
+_W = os.path.join(os.path.abspath(os.sep), "w")
+
+
+def _w(name: str) -> str:
+    """The folder `name` in `_W`."""
+    return os.path.join(_W, name)
+
+
 ALIAS = "gh/acme/lib"
 FULL = "github.com/acme/lib"
 
@@ -87,8 +98,8 @@ def _split_pair_with(
     world: World, *, alias_files: tuple[ProjectFileRef, ...] = ()
 ) -> tuple[Repo, Repo, Resolution, Resolution]:
     """`_split_pair`, the alias clone first seen carrying `alias_files`."""
-    full = world.repo("/w/full", remote=FULL)
-    alias = world.clone(full, "/w/alias", remote=ALIAS, files=alias_files)
+    full = world.repo(_w("full"), remote=FULL)
+    alias = world.clone(full, _w("alias"), remote=ALIAS, files=alias_files)
     full.commit()
     first = world.see(full)
     second = world.see(alias)
@@ -137,10 +148,10 @@ def test_an_alias_clone_and_its_full_url_clone_resolve_to_one_project(
     assert ALIAS in merged[0]
     assert world.see(full).project == first.project
     assert _alias_sighting(world, alias, {ALIAS: FULL}).project == first.project
-    third = world.clone(full, "/w/third", remote=FULL)
+    third = world.clone(full, _w("third"), remote=FULL)
     res = world.see(third)
     assert (res.outcome, res.project, res.rule) == (SILENT, first.project, "join:H+R")
-    fourth = world.clone(full, "/w/fourth", remote=ALIAS)
+    fourth = world.clone(full, _w("fourth"), remote=ALIAS)
     res = _alias_sighting(world, fourth, {ALIAS: FULL})
     assert (res.outcome, res.project) == (SILENT, first.project)
     assert len(_merges(world)) == 1
@@ -159,7 +170,7 @@ def test_a_third_clone_asked_before_the_join_joins_without_asking_again(
     full, alias, first, second = _split_pair(world)
     _caught_up(full, alias)
     _alias_sighting(world, alias, {ALIAS: FULL}, strict=True)  # as rc14 saw it
-    third = world.clone(full, "/w/third", remote=FULL)
+    third = world.clone(full, _w("third"), remote=FULL)
     asked = world.see(third)
     assert asked.outcome == ASK
     assert {str(c) for c in world.model.proposal(str(asked.proposal)).candidates} == {
@@ -198,8 +209,8 @@ def test_repositories_sharing_only_an_alias_spelling_stay_apart(
     the alias key ``gh/lib``. The remote is read on the URL each fetches,
     which the other does not hold, so neither joins the other; nor do two
     repositories whose aliases share only a prefix."""
-    upstream = world.repo("/w/upstream", remote="github.com/acme/lib")
-    fork = world.clone(upstream, "/w/fork", remote="github.com/other/lib")
+    upstream = world.repo(_w("upstream"), remote="github.com/acme/lib")
+    fork = world.clone(upstream, _w("fork"), remote="github.com/other/lib")
     fork.commit()
     forked = world.see(fork)
     up = world.see(upstream)
@@ -209,8 +220,8 @@ def test_repositories_sharing_only_an_alias_spelling_stay_apart(
         a = _alias_sighting(world, upstream, {"gh/lib": "github.com/acme/lib"})
         b = _alias_sighting(world, fork, {"gh/lib": "github.com/other/lib"})
         assert a.project == up.project and b.project == forked.project
-    lib = world.repo("/w/lib", remote="gh/acme/lib")
-    app = world.repo("/w/app", remote="gh/acme/app")
+    lib = world.repo(_w("lib"), remote="gh/acme/lib")
+    app = world.repo(_w("app"), remote="gh/acme/app")
     lib_aliases = {"gh/acme/lib": "github.com/acme/lib"}
     app_aliases = {"gh/acme/app": "github.com/acme/app"}
     seen_lib = _alias_sighting(world, lib, lib_aliases)
@@ -248,8 +259,8 @@ def test_a_project_re_pointed_at_the_url_stays_apart_under_either_spelling(
     expands to it, the project stays apart: only a project minted on the
     alias as written is the split the rule repairs, so a remote's
     spelling decides no merge."""
-    full = world.repo("/w/full", remote=FULL)
-    mine = world.clone(full, "/w/mine", remote="github.com/me/mine")
+    full = world.repo(_w("full"), remote=FULL)
+    mine = world.clone(full, _w("mine"), remote="github.com/me/mine")
     full.commit()
     first = world.see(full)
     second = world.see(mine)
@@ -274,8 +285,8 @@ def test_a_project_re_pointed_at_the_alias_before_a_rule_names_it_stays_apart(
     alias while no rule names it, so a sighting records the alias as
     written alone, and the rule added after. The project was minted on
     its own remote, not on the alias: it stays apart."""
-    full = world.repo("/w/full", remote=FULL)
-    mine = world.clone(full, "/w/mine", remote="github.com/me/mine")
+    full = world.repo(_w("full"), remote=FULL)
+    mine = world.clone(full, _w("mine"), remote="github.com/me/mine")
     full.commit()
     first = world.see(full)
     second = world.see(mine)
@@ -292,8 +303,8 @@ def test_a_project_minted_on_the_alias_expanded_stays_apart(world: World) -> Non
     was minted on the URL's key too, so no alias kept as written split
     it, and once the other project fetches from the URL a sighting's
     evidence merges neither."""
-    full = world.repo("/w/full")
-    alias = world.clone(full, "/w/alias", remote=ALIAS)
+    full = world.repo(_w("full"))
+    alias = world.clone(full, _w("alias"), remote=ALIAS)
     full.commit()
     first = world.see(full)
     second = _alias_sighting(world, alias, {ALIAS: FULL})
@@ -353,8 +364,8 @@ def test_a_projects_first_checkout_row_is_read_once_for_the_open_store(
     process. The row found is kept for the open store and the project: a
     second judgment, at a new HEAD, reads no log row. Another store, whose
     project of the same id has another first row, reads its own."""
-    full = world.repo("/w/full", remote=FULL)
-    mine = world.clone(full, "/w/mine", remote="github.com/me/mine")
+    full = world.repo(_w("full"), remote=FULL)
+    mine = world.clone(full, _w("mine"), remote="github.com/me/mine")
     full.commit()
     world.see(full)
     second = world.see(mine)
@@ -399,9 +410,9 @@ def test_what_is_read_in_a_transaction_rolled_back_is_not_kept(
     rows. Nothing read past the last row committed is kept
     (`Store.committed_seq`): the next judgment reads the log the rollback
     left."""
-    alias = world.repo("/w/alias", remote=ALIAS)
+    alias = world.repo(_w("alias"), remote=ALIAS)
     alias.commit()
-    mine = world.repo("/w/mine", remote="github.com/me/mine")
+    mine = world.repo(_w("mine"), remote="github.com/me/mine")
     mine.commit()
     store = world.store
     head = max((row.seq for row in store.log_rows()), default=0)
@@ -458,8 +469,8 @@ def test_a_project_minted_with_no_checkout_is_judged_by_the_first_to_join_it(
     project merges. None found yet is kept as how far the log was
     read, not as an answer, since a checkout row can come later: a
     judgment before the clone joined reads the rows written since."""
-    full = world.repo("/w/full", remote=FULL)
-    alias = world.clone(full, "/w/alias", remote=ALIAS)
+    full = world.repo(_w("full"), remote=FULL)
+    alias = world.clone(full, _w("alias"), remote=ALIAS)
     alias.commit()
     full.commit()
     pid = _minted_with_no_checkout(world, alias)
@@ -495,8 +506,8 @@ def test_a_key_the_other_project_holds_only_as_an_alias_is_no_remote_witness(
     does not meet it there: no checkout of that project fetches from
     exactly what this one does."""
     old = "old.example/acme/lib"
-    up = world.repo("/w/q", remote=old)
-    fork = world.clone(up, "/w/k", remote="ol/acme/lib")
+    up = world.repo(_w("q"), remote=old)
+    fork = world.clone(up, _w("k"), remote="ol/acme/lib")
     up.commit()
     q = _alias_sighting(world, up, {old: "gh.example/acme/lib"})
     k = world.see(fork)
@@ -514,7 +525,7 @@ def test_two_projects_fetching_from_the_url_leave_both_apart(world: World) -> No
     holds commits of both, the evidence does not say which: nothing is
     joined."""
     full, alias, first, second = _split_pair(world)
-    other = world.repo("/w/other", remote="example.invalid/elsewhere")
+    other = world.repo(_w("other"), remote="example.invalid/elsewhere")
     assert world.see(other).outcome == NEW
     other.remotes = {FULL}
     world.see(other)
@@ -531,14 +542,14 @@ def test_a_project_holding_only_some_of_the_remotes_is_not_counted(
     alone. Only the project that fetches from both is named, and the two
     join."""
     up = "github.com/upstream/lib"
-    full = world.repo("/w/full", remote=FULL)
+    full = world.repo(_w("full"), remote=FULL)
     full.remotes = {FULL, up}
-    alias = world.clone(full, "/w/alias", remote=ALIAS)
+    alias = world.clone(full, _w("alias"), remote=ALIAS)
     full.commit()
     first = world.see(full)
     second = world.see(alias)
     assert (first.outcome, second.outcome) == (NEW, NEW)
-    upstream = world.repo("/w/upstream", remote="example.invalid/elsewhere")
+    upstream = world.repo(_w("upstream"), remote="example.invalid/elsewhere")
     assert world.see(upstream).outcome == NEW
     upstream.remotes = {up}
     world.see(upstream)
@@ -568,7 +579,7 @@ def test_projects_of_two_tenants_stay_apart(world: World) -> None:
     tenant = _client(world, "acme", boundary=True)
     full = world.repo("/clients/acme/full", remote=FULL)
     full.files = (tenant,)
-    alias = world.clone(full, "/w/alias", remote=ALIAS)
+    alias = world.clone(full, _w("alias"), remote=ALIAS)
     alias.files = ()
     full.commit()
     first = world.see(full)
@@ -618,14 +629,14 @@ def test_a_project_file_bound_to_either_project_leaves_the_two_apart(
     """The review's P3: ``project init`` in the alias clone binds its file
     to its project; a file bound to either project pins it."""
     full, alias, first, second = _split_pair(world)
-    f = _file("/w/alias")
+    f = _file(_w("alias"))
     world.model.declare(
         Declaration(
             "init",
             "os:tester",
             checkout=second.checkout,
             file_id=f.id,
-            directory="/w/alias",
+            directory=_w("alias"),
         )
     )
     alias.files = (f,)
@@ -638,7 +649,7 @@ def test_a_file_bound_by_a_sighting_leaves_the_two_apart(world: World) -> None:
     """A project file the full-URL clone carries, bound at its sighting
     and not by a declaration, pins its project as well."""
     full, alias, first, second = _split_pair(world)
-    full.files = (_file("/w/full"),)
+    full.files = (_file(_w("full")),)
     assert world.see(full).project == first.project
     _caught_up(full, alias)
     _stays_apart(world, alias, second)
@@ -654,7 +665,7 @@ def test_a_declared_join_of_the_alias_clone_elsewhere_is_kept(world: World) -> N
     project of another repository merges its project there; the next
     sighting does not merge that project into the full-URL clone's."""
     full, alias, first, second = _split_pair(world)
-    other = world.repo("/w/other", remote="github.com/acme/other")
+    other = world.repo(_w("other"), remote="github.com/acme/other")
     po = world.see(other)
     world.model.declare(
         Declaration("join", "os:tester", checkout=second.checkout, target=po.project)
@@ -671,9 +682,9 @@ def test_a_declared_move_of_the_alias_clone_is_kept(world: World) -> None:
     """The review's P2: ``project join`` moving the alias clone (its
     project kept another checkout) into another repository's project."""
     full, alias, first, second = _split_pair(world)
-    twin = world.copy(alias, "/w/alias-twin")
+    twin = world.copy(alias, _w("alias-twin"))
     world.see(twin)
-    other = world.repo("/w/other", remote="github.com/acme/other")
+    other = world.repo(_w("other"), remote="github.com/acme/other")
     po = world.see(other)
     world.model.declare(
         Declaration("join", "os:tester", checkout=second.checkout, target=po.project)
@@ -689,9 +700,9 @@ def test_a_declared_move_of_the_alias_clone_is_kept(world: World) -> None:
 def test_a_declared_separation_is_kept(world: World) -> None:
     """The alias clone was asked at its first sight and answered as a
     project of its own: its sightings do not join it to the other."""
-    full = world.repo("/w/full", remote=FULL)
+    full = world.repo(_w("full"), remote=FULL)
     first = world.see(full)
-    alias = world.clone(full, "/w/alias", remote=ALIAS)
+    alias = world.clone(full, _w("alias"), remote=ALIAS)
     asked = world.see(alias)
     assert asked.outcome == ASK
     world.model.declare(Declaration("new", "os:tester", checkout=asked.checkout))
