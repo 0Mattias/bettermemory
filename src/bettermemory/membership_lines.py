@@ -202,6 +202,38 @@ def line_alias_joined(
     )
 
 
+def line_alias_held(
+    root: str,
+    name: str,
+    project_id: str,
+    target: str,
+    target_id: str,
+    question: str,
+    checkout: str,
+    where: tuple[str | None, str | None],
+    shown: str,
+) -> str:
+    """L4 held: the alias clone's project and the project of the URL its
+    alias stands for, kept apart while a question is open on another
+    checkout of either where a sighting shows it (`membership_alias`,
+    ENG-207). The alias clone's sighting shows it wherever it sits
+    (ENG-215): its id, its checkout, `where` (the machine, when another,
+    and the path it was last seen at), and `shown`, the question's own
+    line, whose calls answer it from here as from there."""
+    machine, path = where
+    on = f" on machine {quoted(machine)}" if machine is not None else ""
+    at = f", last seen at {quoted(path)}" if path is not None else ""
+    prefix = "bettermemory: "
+    said = shown[len(prefix) :] if shown.startswith(prefix) else shown
+    return (
+        f"bettermemory: {quoted(root)}: its project {_named(name, project_id)} "
+        f"stays apart from {_named(target, target_id)}, whose remotes it "
+        f"fetches from, while question {printable(question)} is open on "
+        f"checkout {printable(checkout)}{on}{at}; answered here or there, it "
+        f"is closed: {printable(said)}"
+    )
+
+
 def line_remote_diverged(
     root: str,
     new_key: str,

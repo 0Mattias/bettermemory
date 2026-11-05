@@ -733,6 +733,77 @@ def test_a_question_no_sighting_shows_leaves_the_two_to_join(
     assert world.model.proposal(pr.id).checkout == x.checkout
 
 
+@pytest.mark.parametrize("holder", ["live", "elsewhere", "gone_elsewhere"])
+def test_a_question_holding_the_join_is_shown_at_the_alias_clone(
+    world: World, holder: str
+) -> None:
+    """Review R9 B: an import's question about the alias clone's project
+    P, open on a second checkout of P where a sighting shows it: this
+    machine's live one, a container's sighted within `RETIRE_AFTER`
+    (``elsewhere``), or a container's whose folder is gone there, removed
+    10 days ago, not yet stale (``gone_elsewhere``). It holds the join
+    while it is open, and each sighting of the alias clone shows it,
+    naming its checkout, where the machine is and the path it was last
+    seen at, with its own calls, whose id answers it from here: it is not
+    moved, and is asked at its own checkout too, once, as that checkout's
+    own (the live one an alias clone fetched as well, whose sighting the
+    question holds). Answered at the host, the next sighting joins.
+    Before, a gone container's question held the join for `RETIRE_AFTER`,
+    shown at no sighting."""
+    full, alias, first, second = _split_pair(world)
+    box = holder != "live"
+    twin = world.clone(
+        alias, "/w/alias-twin", remote=ALIAS, machine="M2" if box else world.machine
+    )
+    other = world.see(twin, model=world.model_for("M2") if box else None)
+    assert other.checkout is not None and other.checkout != second.checkout
+    qid = _about_another(world, other.checkout, str(second.project), IMPORT)
+    if holder == "gone_elsewhere":
+        del world.disk[(twin.machine, twin.path)]
+        with world.model._call():
+            k = world.model.checkout(other.checkout)
+            old = isoformat_utc(world.clock - timedelta(days=10))
+            for v in k.views:
+                world.model._put_view(dataclasses.replace(v, last_seen=old))
+    _caught_up(full, alias)
+    _caught_up(full, twin)
+    reads = _reads_in_the_transaction(world)
+
+    seen = [_alias_sighting(world, alias, {ALIAS: FULL}) for _ in range(2)]
+
+    assert reads == []
+    assert [s.project for s in seen] == [second.project] * 2
+    assert _alias_merges(world) == []
+    for s in seen:
+        (held,) = [line for line in s.lines if qid in line]
+        assert f"question {qid} is open on checkout {other.checkout}" in held
+        assert ('on machine "M2"' in held) == box
+        assert 'last seen at "/w/alias-twin"' in held
+        assert f'action="answer_question", id="{qid}"' in held
+        assert held.count("bettermemory: ") == 1
+    q = world.model.proposal(qid)
+    assert (q.state, q.checkout) == ("open", other.checkout)
+    if holder != "gone_elsewhere":
+        there = (
+            _alias_sighting(world, twin, {ALIAS: FULL})
+            if holder == "live"
+            else world.see(twin, model=world.model_for("M2"))
+        )
+        assert there.checkout == other.checkout and there.proposal == qid
+        (own,) = [line for line in there.lines if qid in line]
+        assert "stays apart" not in own
+        assert _alias_merges(world) == []
+
+    world.model.declare(
+        Declaration("new", "os:tester", checkout=other.checkout, proposal=qid)
+    )
+    assert world.model.proposal(qid).state == "answered"
+    joined = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    assert joined.project == first.project and len(_alias_merges(world)) == 1
+    assert not any(qid in line for line in joined.lines)
+
+
 def test_a_question_the_join_asks_is_placed_by_views_read_before_it(
     world: World,
 ) -> None:

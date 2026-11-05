@@ -1354,7 +1354,11 @@ eighteenth was built.
   merged where a question is open on a checkout of either where a
   sighting shows it (not one retired, nor one of this machine's whose
   folder is gone, nor another machine's last sighted 180 days ago or
-  more: ENG-215), a project
+  more: ENG-215; each sighting of the alias clone shows such a
+  question, wherever it sits, naming its checkout, where that is and
+  the calls that answer it, and leaves it there: one on a removed
+  container's checkout, not yet 180 days quiet, held the join shown at
+  no sighting), a project
   file is bound to either, or a declaration says which project either
   is (a join, move or separation of the alias clone or of a full-URL
   clone, a record written at one moved, an answer at one about its own
@@ -1376,7 +1380,8 @@ eighteenth was built.
   as it does re-pointed at the URL: a remote's spelling decides no
   merge. A sighting that merges nothing is kept for the checkout's
   evidence, so a steady prompt at an alias clone costs what any
-  checkout's does. `docs/internals.md` states the rule.
+  checkout's does, except while a question holds the join, so the
+  sighting after its answer joins. `docs/internals.md` states the rule.
   (`src/bettermemory/membership_alias.py`,
   `src/bettermemory/membership_resolve.py`,
   `src/bettermemory/membership_records.py`,
@@ -1505,7 +1510,10 @@ eighteenth was built.
   and names it, where it stayed shown nowhere, named by `project
   pending` and `bettermemory health` alone; and such a question holds
   no alias clone's join (ENG-207), where it held one shown at no
-  sighting (rows of kinds 9.0.0rc18
+  sighting, while one that holds it, a sighting showing it where it is
+  (a removed container's among them, until 180 days quiet), each
+  sighting of the alias clone shows, naming its checkout, where it was
+  last seen and the calls that answer it from there (rows of kinds 9.0.0rc18
   reads: it verifies, opens, reads and writes such a store). The views
   of this machine's checkouts such a placing reads, a heal's included,
   and those the alias rule reads, are read before the sighting's

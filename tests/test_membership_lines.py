@@ -223,6 +223,9 @@ _WRITERS: dict[str, Callable[[str], str]] = {
     "alias_joined": lambda h: membership_lines.line_alias_joined(
         h, h, h, h, h, ["H", "R"]
     ),
+    "alias_held": lambda h: membership_lines.line_alias_held(
+        h, h, h, h, h, h, h, (h, h), membership_lines.line_import(h, h, [(h, h, [h])])
+    ),
     "remote_diverged": lambda h: membership_lines.line_remote_diverged(
         h, h, h, h, h, question=h
     ),
@@ -279,6 +282,17 @@ _VALUED: dict[str, Callable[[str], str]] = {
     "joined": lambda v: membership_lines.line_joined(v, v, "P002", ["H"]),
     "alias_joined": lambda v: membership_lines.line_alias_joined(
         v, v, "P002", v, "P003", ["H", "R"]
+    ),
+    "alias_held": lambda v: membership_lines.line_alias_held(
+        v,
+        v,
+        "P002",
+        v,
+        "P003",
+        "Q001",
+        "K001",
+        (v, v),
+        membership_lines.line_import(v, v, [(v, "P002", ["H"])], question="Q001"),
     ),
     "remote_diverged": lambda v: membership_lines.line_remote_diverged(
         v, v, v, "P002", v, question="Q001"

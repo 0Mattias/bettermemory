@@ -946,7 +946,18 @@ project P into one other project Q where all of these hold:
   holds nothing: no sighting shows it there, and the next sighting of a live
   checkout of the project it offers to join another to asks it there
   (`_asked_here`, ENG-215), the joining sighting included where that
-  project is P or Q.
+  project is P or Q. One that holds the join, on another checkout of P
+  or Q, here or on another machine, each sighting of the alias clone
+  shows (`membership_alias._held`, the L4 line held): its id, its
+  checkout, that checkout's machine where it is another and the path it
+  was last seen at, then the question's own line, whose calls answer it
+  from the alias clone as from its checkout; it stays where it is,
+  asked there too. One on a container's checkout whose folder is gone
+  there holds the join until `RETIRE_AFTER` has passed since its last
+  sighting, shown at no sighting of its own. Its checkout's views are
+  among those `membership_alias.planned` reads before the transaction,
+  and such a sighting is not kept as passed, so the one after its
+  answer reads the rule again.
 - Q is the one settled project besides P that holds every remote the
   checkout fetches from (its keys less its alias keys; a provisional
   project, such as a third clone's that was asked, is not counted), and
@@ -1332,7 +1343,9 @@ round. A question whose project has no live checkout anywhere, and
 one on another machine's checkout whose folder is gone there, until
 `RETIRE_AFTER` has passed since its last sighting, are named by `bettermemory
 health` (its open questions, with each one's checkout and path) and by
-`project pending`, and `project show` names those of each project.
+`project pending`, and `project show` names those of each project; one
+that holds an alias clone's join (ENG-207) each sighting of the alias
+clone shows too.
 
 So a later
 move of the checkout at the path (`project new`, `project join`)

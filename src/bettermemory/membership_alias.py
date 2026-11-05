@@ -37,7 +37,12 @@ nothing a user said or a file binds stands against it:
   another machine's none of whose views was sighted for `RETIRE_AFTER`,
   holds nothing, and the sighting that joins asks it where it offers to
   join another project to P's or Q's: `membership_shared._asked_here`,
-  ENG-215), and no project file is bound to either;
+  ENG-215), and no project file is bound to either. A question that
+  holds the join the alias clone's sighting shows, wherever it sits,
+  naming its checkout, and its calls answer it from there as from its
+  own (`_held`, ENG-215): one on a container's checkout whose folder is
+  gone there holds it until `RETIRE_AFTER` has passed since its last
+  sighting, shown at no sighting of its own;
 * Q is the one settled project besides P that holds every remote the
   checkout fetches from (its keys less its alias keys; a provisional
   project, such as a third clone's that was asked, is not counted), and
@@ -65,10 +70,11 @@ its next sighting (`membership_resolve._observe`), so a third clone asked
 between the two joins Q. A sighting the rule leaves as it is, is kept for
 the checkout's evidence (its project, tenant, HEAD, remotes and alias
 keys) in this process (`_PASSED`), so a prompt at an alias clone that
-never joins reads nothing more after its first; a declaration found
-against a pair is kept for the pair (`_DECLARED`), and a project's first
-checkout row for the open store (`_FIRST`), since the log only grows
-once committed.
+never joins reads nothing more after its first, unless a question holds
+the join, which the sighting after its answer reads again; a
+declaration found against a pair is kept for the pair (`_DECLARED`), and
+a project's first checkout row for the open store (`_FIRST`), since the
+log only grows once committed.
 """
 
 from __future__ import annotations
@@ -81,8 +87,8 @@ from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
 from . import _caches
-from .membership_lines import line_alias_joined
-from .membership_records import OPEN, H, R, Checkout, Location
+from .membership_lines import line_alias_held, line_alias_joined
+from .membership_records import OPEN, H, R, Checkout, Location, Proposal
 from .membership_shared import _SUBJECT, _unseen
 
 if TYPE_CHECKING:
@@ -161,7 +167,7 @@ def rejoin(
     )
     if _kept(_PASSED, seen):
         return []
-    q = _target(self, k, pid, frozenset(fetched), aliases, tenant)
+    q, holding = _target(self, k, pid, frozenset(fetched), aliases, tenant)
     witnesses = (
         []
         if q is None
@@ -171,6 +177,9 @@ def rejoin(
         _keep(_PASSED, seen)
         return []
     p = self.project(pid)
+    if holding:
+        # Not kept: the sighting after an answer reads the rule again.
+        return _held(self, k, loc, p.name, pid, q, holding)
     self._merge(
         pid,
         q,
@@ -186,6 +195,49 @@ def rejoin(
             loc.root or loc.cwd, self.project(q).name, q, p.name, pid, (H, R)
         )
     ]
+
+
+def _held(
+    self: Membership,
+    k: Checkout,
+    loc: Location,
+    name: str,
+    pid: str,
+    q: str,
+    holding: list[tuple[Proposal, Checkout]],
+) -> list[str]:
+    """The lines of the questions holding the join of `k`'s project
+    `pid` into `q` (`_target`), each open on another checkout of either
+    where a sighting shows it, here or on another machine: its id, its
+    checkout and where that was last seen, and its own line, whose calls
+    answer it from here as from there. It stays where it is, asked there
+    too. One open on `k` is named by the sighting already
+    (`membership_resolve._caller`). Reads each question's line as shown
+    (`restated`); no view."""
+    target = self.project(q).name
+    lines = []
+    for pr, c in holding:
+        if c.id == k.id:
+            continue
+        newest = c.newest_view
+        where = (
+            c.machine if c.machine != self.machine else None,
+            newest.path if newest is not None else None,
+        )
+        lines.append(
+            line_alias_held(
+                loc.root or loc.cwd,
+                name,
+                pid,
+                target,
+                q,
+                pr.id,
+                c.id,
+                where,
+                self.restated(pr).line,
+            )
+        )
+    return lines
 
 
 def _keys(loc: Location) -> tuple[frozenset[str], frozenset[str]]:
@@ -248,11 +300,15 @@ def _target(
     fetched: frozenset[str],
     aliases: frozenset[str],
     tenant: str | None,
-) -> str | None:
+) -> tuple[str | None, list[tuple[Proposal, Checkout]]]:
     """The project Q the rule merges P, the checkout `k`'s project
-    `pid`, into, or None: every condition of the module but H."""
+    `pid`, into, or None: every condition of the module but H, and the
+    questions holding the join, with their checkouts, where any is open
+    on a checkout of either that a sighting shows it at (`_held` shows
+    them; whether the user said which project P or Q is is then not
+    read, and nothing is merged while one is open)."""
     if not _settled(self, pid, tenant):
-        return None
+        return None, []
     holders: dict[str, set[str]] = defaultdict(set)
     for row in self._store.membership_rows(
         "project_remotes", column_in=("remote_key", sorted(fetched))
@@ -262,29 +318,32 @@ def _target(
             holders[q].add(str(row["remote_key"]))
     named = [q for q, keys in holders.items() if keys >= fetched]
     if len(named) != 1 or not _settled(self, named[0], tenant):
-        return None
+        return None, []
     q = named[0]
     held = self._checkouts_by_project([pid, q])
     if not any(set(c.remotes) == fetched for c in held.get(q, ())):
-        return None
+        return None, []
     if not _minted_on(self, pid, aliases, fetched):
-        return None
-    by_id = {c.id: c for cs in held.values() for c in cs}
-    if any(
-        pr.checkout == k.id
-        or (pr.checkout in by_id and not _unseen(self, by_id[pr.checkout]))
-        for pr in self._open_proposals()
-    ):
-        return None
+        return None, []
     members = {*self._members(pid), *self._members(q)}
     if self._store.membership_rows(
         "project_files", column_in=("project", sorted(members))
     ):
-        return None
+        return None, []
+    by_id = {c.id: c for cs in held.values() for c in cs}
+    by_id[k.id] = k
+    holding = [
+        (pr, by_id[pr.checkout])
+        for pr in self._open_proposals()
+        if pr.checkout == k.id
+        or (pr.checkout in by_id and not _unseen(self, by_id[pr.checkout]))
+    ]
+    if holding:
+        return q, holding
     anchors = [k, *(c for c in held.get(q, ()) if set(c.remotes) == fetched)]
     if _declared(self, pid, q, anchors):
-        return None
-    return q
+        return None, []
+    return q, []
 
 
 def _settled(self: Membership, pid: str, tenant: str | None) -> bool:
