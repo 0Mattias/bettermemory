@@ -335,8 +335,9 @@ def _target(
     holding = [
         (pr, by_id[pr.checkout])
         for pr in self._open_proposals()
-        if pr.checkout == k.id
-        or (pr.checkout in by_id and not _unseen(self, by_id[pr.checkout]))
+        if pr.checkout is not None
+        and pr.checkout in by_id
+        and (pr.checkout == k.id or not _unseen(self, by_id[pr.checkout]))
     ]
     if holding:
         return q, holding
