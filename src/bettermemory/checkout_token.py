@@ -611,13 +611,27 @@ def _blocked(claim: Path) -> bool:
 def _holder(claim: Path) -> str | None:
     """What `claim` holds (its holder's nonce; empty where a holder was
     killed making it, or, where links are refused, between its create and
-    its write), or None where there is none. A claim that is no small ASCII
-    regular file is named by what is wrong with it, which stays the same
-    while it stays."""
+    its write), or None where there is none or it cannot be read now. A
+    claim that is no small ASCII regular file is named by what is wrong
+    with it, which stays the same while it stays; an open or a read the
+    filesystem refused names nothing (`_claim_read`), so a waiter whose
+    reads fail alike through its wait never breaks the claim for it."""
+    found = _claim_read(claim)
+    return found if isinstance(found, str) else None
+
+
+def _claim_read(claim: Path) -> str | TokenRead:
+    """`_holder`'s read: what `claim` holds, or the read that found none
+    (``absent``) or could not say (``unreadable``). An unreadable claim is
+    whoever's: on SMB an open of the claim is refused while the server
+    holds the lease key of the client's file (one for every name of it,
+    and the claim is linked to its holder's own) for its other name, a
+    handle the client kept goes stale as the name is replaced, and an
+    open meets the share mode of another's removal in hand (ENG-228)."""
     text = _read_text(claim)
-    if isinstance(text, str):
+    if isinstance(text, str) or text.state in ("absent", "unreadable"):
         return text
-    return None if text.state == "absent" else f"{text.state}: {text.detail}"
+    return f"{text.state}: {text.detail}"
 
 
 def _break(info: Path, held: str, now: float | None) -> None:
@@ -638,10 +652,8 @@ def _break(info: Path, held: str, now: float | None) -> None:
     marks = _break_marks(info, held, now)
     if marks is None:
         return
-    claim = info / _CLAIM_NAME
     try:
-        if _holder(claim) == held:
-            _unlink_quietly(claim, lambda: _holder(claim) == held)
+        _remove_holding(info / _CLAIM_NAME, held)
     finally:
         for mark in marks:
             _unlink_quietly(mark)
@@ -693,8 +705,43 @@ def _release(claim: Path, nonce: str) -> None:
     """Remove `claim` if it still holds `nonce`: a claim a waiter broke
     (this holder stalled past the wait) and another took is left to its
     holder."""
-    if _holder(claim) == nonce:
-        _unlink_quietly(claim, lambda: _holder(claim) == nonce)
+    _remove_holding(claim, nonce)
+
+
+def _remove_holding(claim: Path, held: str) -> None:
+    """Remove `claim` while it holds `held`, as a holder's release or a
+    breaker's removal: each removal follows a read that found `held`, so a
+    claim another took since is left. A read that could not say whose the
+    claim is (``unreadable``, `_claim_read`) and a removal the filesystem
+    refused are tried again, in pauses growing from
+    `_REREAD_DELAY_SECONDS`, for up to `_RACE_READ_SECONDS`; the claim
+    found gone, or another's, ends it. On SMB the client removes a name
+    another thread has in hand (a waiter's read or lookup of the claim)
+    by renaming it away, and a rename the server refuses fails the
+    removal as ``EIO``: either left a claim this re-mint took, as did the
+    read, for the next re-mint to wait out and break (ENG-228). A claim
+    still there past the budget is left to that break."""
+    deadline = time.monotonic() + _RACE_READ_SECONDS
+    pause = _REREAD_DELAY_SECONDS
+    while True:
+        found = _claim_read(claim)
+        if isinstance(found, str):
+            if found != held:
+                return
+            try:
+                unlink_retrying(claim, lambda: _holder(claim) == held)
+                return
+            except FileNotFoundError:
+                return
+            except OSError:
+                pass
+        elif found.state == "absent":
+            return
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        time.sleep(min(pause, left))
+        pause = min(2 * pause, _RACE_PAUSE_MAX_SECONDS)
 
 
 def _read_at(path: Path) -> TokenRead:

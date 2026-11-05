@@ -1481,7 +1481,18 @@ and renames under a claim, `info/bettermemory.tmp-claim`: a file already
 holding the holder's nonce, hard-linked to that name, so no waiter reads
 a claim empty while it is made (where links are refused, an exclusive
 create and a write), removed by the holder only while it holds that
-nonce. A re-mint finding it waits up to 1.5 s. A claim holding one nonce
+nonce. A read of the claim the filesystem refuses names no holder: on
+SMB the server refuses the client's lease key while it holds it for the
+claim's other name, a handle goes stale as the name is replaced, an open
+meets the share mode of a removal in hand, and the client removes a name
+another thread has in hand by renaming it away, a rename the server can
+refuse (`EIO`). A removal, the holder's or a breaker's, reads such a
+claim again and tries a refused removal again, in growing pauses for up
+to 1.5 s, each removal after a read that found the nonce it is removed
+for, so a claim another took meanwhile is left (ENG-228: either left the
+holder's claim, for the next re-mint to wait out and break); and a
+waiter whose reads are refused alike through its wait has found no
+claim, and breaks none. A re-mint finding it waits up to 1.5 s. A claim holding one nonce
 through the whole wait was left by a re-mint killed holding it: of the
 waiters that found it so, the one that creates
 `info/bettermemory.tmp-break-`, a digest of that nonce and a generation,

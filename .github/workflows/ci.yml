@@ -475,9 +475,13 @@ jobs:
       # local_tmp_path): SQLite's WAL needs shared memory a network
       # filesystem does not give, and the leg tests the repositories, not
       # the store.
+      # The concurrent re-mints test runs 300 rounds here and on SMB, not
+      # 30 (BETTERMEMORY_TEST_REMINT_ROUNDS): a claim a release left was
+      # seen on SMB once in 19 runs of 30 (ENG-228).
       - name: Membership tests on NFS
         env:
           BETTERMEMORY_TEST_LOCAL_TMP: ${{ runner.temp }}/bettermemory-local
+          BETTERMEMORY_TEST_REMINT_ROUNDS: "300"
         run: >-
           uv run pytest -p no:cacheprovider --basetemp=/mnt/nfs/pytest -q -rfEs
           tests/test_checkout_token.py tests/test_project_file.py
@@ -556,6 +560,7 @@ jobs:
         env:
           BETTERMEMORY_TEST_LOCAL_TMP: ${{ runner.temp }}/bettermemory-local
           BETTERMEMORY_TEST_SETTLE_SECONDS: "3"
+          BETTERMEMORY_TEST_REMINT_ROUNDS: "300"
         run: >-
           uv run pytest -p no:cacheprovider --basetemp=/mnt/smb/pytest -q -rfEs
           tests/test_checkout_token.py tests/test_project_file.py
@@ -584,6 +589,7 @@ jobs:
         if: ${{ !cancelled() && steps.share.outcome == 'success' }}
         env:
           BETTERMEMORY_TEST_LOCAL_TMP: ${{ runner.temp }}/bettermemory-local
+          BETTERMEMORY_TEST_REMINT_ROUNDS: "300"
         run: >-
           uv run pytest -p no:cacheprovider --basetemp=/mnt/smb/pytest-remounted
           -q -rfEs tests/test_checkout_token.py

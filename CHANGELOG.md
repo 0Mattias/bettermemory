@@ -335,6 +335,25 @@ eighteenth was built.
 
 #### Fixed
 
+- **A re-mint removes its claim on SMB (ENG-228).** A re-mint naming its
+  lineage reads and renames under a claim in `info/` and removes it
+  only while it holds its nonce. On SMB a read of the claim can be
+  refused for a moment: the server refuses the client's lease key while
+  it holds it for the claim's other name, a handle goes stale as the
+  name is replaced, an open meets the share mode of a removal in hand.
+  And the client removes a name another thread has in hand (a waiter
+  reading the claim) by renaming it away, a rename the server can refuse
+  (`EIO`). The holder took either for another's claim, or swallowed it,
+  and left its claim in `info/`, for the next re-mint to wait out and
+  break (CI run 41965490499's SMB leg). A removal, the holder's or a
+  breaker's, now reads such a claim again and tries a refused removal
+  again, in growing pauses for up to 1.5 s, each after a read that
+  found its nonce, so a claim another took meanwhile is still left.
+  A waiter whose reads of the claim are refused alike through its wait
+  no longer breaks it, where on SMB that was a live holder's and both
+  wrote. The concurrent re-mints test runs 300 rounds on the SMB and
+  NFS legs (`BETTERMEMORY_TEST_REMINT_ROUNDS`).
+
 - **Nothing a repository sets makes a changed claim read fresh
   (ENG-220).** Claim drift reads a window's commits and their patches
   with `git log`, and the repository's own config, `config.worktree`,
