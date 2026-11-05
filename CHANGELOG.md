@@ -665,6 +665,21 @@ eighteenth was built.
   `tests/test_unread_history.py`, `tests/test_commit_drift_cache.py`,
   `tests/test_origin_as_stored.py`)
 
+- **A walk that met its timeout is walked once a minute (ENG-220).**
+  The health rollup keeps no row between calls, so every call walked each
+  verified head again, and a walk that met its 5 s bound with its names
+  and again as the listing of its commits alone cost 10 s on every call
+  (the review's round E). Such a walk is now kept a minute beside the
+  walk memo, under its key (`origin._WALK_TIMED_OUT`): the commits listed
+  alone, or the walk given up. Served again it counts its timeout again,
+  and a walk given up again, as a pass's `walked` serves it, so a caller
+  keeps nothing from it past its own timeout memo; a commit, a fetch or
+  a change to the files beside the history moves its key, and an outcome
+  read while those files changed is not kept. With the walk and its
+  listing each held to the 5 s bound, three rollups in a row took
+  10.03 s, 10.02 s and 10.02 s before, and 10.06 s, 0.01 s and 0.00 s
+  after. (`src/bettermemory/origin.py`, `tests/test_origin_as_stored.py`)
+
 - **No window passes a command line's bound (ENG-220).** The patch
   stream and the split's listing named up to 256 commits on git's
   command line (10,496 characters), and they and the two path-filtered

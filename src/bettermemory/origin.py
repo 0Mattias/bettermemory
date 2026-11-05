@@ -1170,7 +1170,8 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
 # walk that listed its names is stored, never a None nor the commits
 # listed alone after a timeout: a None is also what a git process that
 # failed yields (an object briefly unreadable, a timeout), and the
-# fallback taken on a failure must not outlive the call that met it. A
+# fallback taken on a failure must not outlive the call that met it, save
+# a timeout's, kept a minute apart (`_WALK_TIMED_OUT`, below). A
 # caller that resolves many memories in one pass keeps the Nones for that
 # pass, and the walks no memo keeps, in its `walked` mapping
 # (`commits_since_anchor`). The lock makes each look-up-and-touch and each
@@ -1183,9 +1184,24 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
 # commit, 183 KB at 1,000 commits and 1.4 MB at 10,000, so 128 walks of
 # 10,000 commits hold about 180 MB; the walk took 15 us a commit, and the
 # 5 s ceiling admits one of about 335,000 commits (about 47 MB).
+#
+# A walk that met its timeout is kept apart, under the same key, for
+# `_WALK_TIMED_OUT_SECONDS` (`_WALK_TIMED_OUT`): the commits listed alone
+# where its names met it, or None where the listing met it too (given up,
+# `origin_history.unwalked`). Each costs a 5 s bound or two, which every
+# call in that minute would pay again: a health rollup walks each verified
+# head again on every call, with no per-row memo (ENG-220's review, round
+# E). It is served as the pass's `walked` serves it, counted as a timeout
+# again, so a caller keeps nothing from it past its own timeout memo; a
+# commit, a fetch or a change to the files beside the history moves its
+# key, as it moves the walk's.
 _WALK_MEMO_CAP = 128
+_WALK_TIMED_OUT_SECONDS = 60.0
 _WalkKey: TypeAlias = tuple[str, str, str, tuple[object, ...]]
 _WALK_MEMO: OrderedDict[_WalkKey, ReachableWalk] = OrderedDict()
+_WALK_TIMED_OUT: OrderedDict[_WalkKey, tuple[float, ReachableWalk | None]] = (
+    OrderedDict()
+)
 _WALK_MEMO_LOCK = threading.Lock()
 
 
@@ -1193,6 +1209,46 @@ _WALK_MEMO_LOCK = threading.Lock()
 def _clear_walk_memo() -> None:
     with _WALK_MEMO_LOCK:
         _WALK_MEMO.clear()
+        _WALK_TIMED_OUT.clear()
+
+
+def _timed_out_walk(key: _WalkKey) -> tuple[bool, ReachableWalk | None]:
+    """Whether a walk for `key` met its timeout less than
+    `_WALK_TIMED_OUT_SECONDS` ago, and its outcome: the commits listed
+    alone, or None where it was given up. A kept one is counted on the
+    calling thread as the walk that met it was: a timeout, and a walk
+    given up (`origin_history.note_unwalked`) where it was."""
+    with _WALK_MEMO_LOCK:
+        kept = _WALK_TIMED_OUT.get(key)
+        if kept is None:
+            return False, None
+        if not 0.0 <= time.monotonic() - kept[0] < _WALK_TIMED_OUT_SECONDS:
+            del _WALK_TIMED_OUT[key]
+            return False, None
+        _WALK_TIMED_OUT.move_to_end(key)
+    _git_runner.note_timed_out()
+    if kept[1] is None:
+        origin_history.note_unwalked()
+    return True, kept[1]
+
+
+def _keep_timed_out_walk(
+    key: _WalkKey | None,
+    walk: ReachableWalk | None,
+    toplevel: Path,
+    held: dict[str, tuple[int, int]],
+) -> None:
+    """Keep the outcome of a walk for `key` that met its timeout, where
+    the files beside the history are as they were before it ran."""
+    if key is None:
+        return
+    if walk_files_signature(toplevel) != key[3] or not directories_held(held):
+        return
+    with _WALK_MEMO_LOCK:
+        _WALK_TIMED_OUT[key] = (time.monotonic(), walk)
+        _WALK_TIMED_OUT.move_to_end(key)
+        while len(_WALK_TIMED_OUT) > _WALK_MEMO_CAP:
+            _WALK_TIMED_OUT.popitem(last=False)
 
 
 # Record separator for the walk's format line, the same control
@@ -1213,7 +1269,8 @@ def commits_since_anchor(
 
     One git process per distinct (root, anchor, head) and stamps of the
     files beside the history (`walk_files_signature`), the walks memoised
-    (see `_WALK_MEMO`) and the Nones not.
+    (see `_WALK_MEMO`) and the Nones not, save a timeout's for a minute
+    (`_WALK_TIMED_OUT`).
     ``git log --boundary --name-only anchor..<head>``, the head named by
     its hash, lists every commit in the range with the paths it changed,
     and marks the range's boundary commits with ``-`` in ``%m``: the
@@ -1236,11 +1293,12 @@ def commits_since_anchor(
 
     A walk whose names meet their timeout falls back to its commits listed
     alone, with no diff (`ReachableWalk.listed` False), whose whole length
-    claim drift keeps; it is not memoised past the pass. Where that listing
-    meets its timeout too, the walk is given up on (`origin_history.
-    unwalked`) and the caller omits the count: it never reads the author
-    dates in its place, which a rebased or back-dated commit moves
-    (ENG-220's review, round C).
+    claim drift keeps; it is kept a minute, apart from the walks
+    (`_WALK_TIMED_OUT`). Where that listing meets its timeout too, the walk
+    is given up on (`origin_history.unwalked`), kept a minute as well, and
+    the caller omits the count: it never reads the author dates in its
+    place, which a rebased or back-dated commit moves (ENG-220's review,
+    round C).
 
     None, and the author-date fallback, when: `anchor` is not a full
     hash (never handed to git as a revision), git cannot answer, the
@@ -1267,6 +1325,9 @@ def commits_since_anchor(
             if stored is not None:
                 _WALK_MEMO.move_to_end(key)
                 return stored
+        kept, timed_out_walk = _timed_out_walk(key)
+        if kept:
+            return timed_out_walk
     if walked is not None and within in walked:
         seen = walked[within]
         if isinstance(seen, ReachableWalk):
@@ -1289,6 +1350,7 @@ def commits_since_anchor(
         walk = _walk_reachable(toplevel, anchor, head, names=False)
         if walk is None and _git_runner.timed_out_calls() != timed_out:
             origin_history.note_unwalked()
+            _keep_timed_out_walk(key, None, toplevel, held)
             if walked is not None:
                 walked[within] = None
             return None
@@ -1297,6 +1359,8 @@ def commits_since_anchor(
             walked[within] = _git_runner.failed_calls() != failed
         return None
     if key is None or not walk.listed:
+        if not walk.listed:
+            _keep_timed_out_walk(key, walk, toplevel, held)
         if walked is not None:
             walked[within] = walk
         return walk

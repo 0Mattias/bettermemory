@@ -1372,8 +1372,9 @@ def test_a_walk_whose_names_time_out_keeps_the_conservative_count(
     the author dates miss it, 0. Where the walk's names meet their
     timeout, the hit read those dates, 0; its commits are now listed
     alone and each counts, 2 on the reachable basis, and no date is read.
-    Kept for the pass (`walked`) and out of the walk memo; served again,
-    it counts its timeout again (round D)."""
+    Out of the walk memo, it is kept a minute apart (`_WALK_TIMED_OUT`, round
+    E), and for the pass (`walked`) where no memo keys it; served again
+    from either, it counts its timeout again (round D)."""
     repo = _repository(tmp_path)
     anchor = _rebased(repo)
     assert _seen(_hit(repo, [_FOO], anchor)) == (1, (_FOO,), verify.BASIS_REACHABILITY)
@@ -1382,13 +1383,19 @@ def test_a_walk_whose_names_time_out_keeps_the_conservative_count(
     met = _timing_out(monkeypatch, "--name-only")
     assert _seen(_hit(repo, [_FOO], anchor)) == (2, (), verify.BASIS_REACHABILITY)
     assert len(met) == 1 and not origin._WALK_MEMO
-    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
     head = _plain(repo, "rev-parse", "HEAD")
+    failed, timed_out = _git.failed_calls(), _git.timed_out_calls()
+    kept = origin.commits_since_anchor(repo, anchor, toplevel=repo, head=head)
+    assert kept is not None and not kept.listed and len(kept.commits) == 2
+    assert kept.touched == {} and kept.shas_touching(["x"]) == set(kept.commits)
+    assert len(met) == 1, "kept a minute"
+    assert (_git.failed_calls(), _git.timed_out_calls()) == (failed + 1, timed_out + 1)
+    monkeypatch.setattr(origin, "walk_files_signature", lambda *a, **k: None)
+    walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
     first = origin.commits_since_anchor(
         repo, anchor, toplevel=repo, head=head, walked=walked
     )
-    assert first is not None and not first.listed and len(first.commits) == 2
-    assert first.touched == {} and first.shas_touching(["x"]) == set(first.commits)
+    assert first is not None and not first.listed and len(met) == 2
     failed, timed_out = _git.failed_calls(), _git.timed_out_calls()
     again = origin.commits_since_anchor(
         repo, anchor, toplevel=repo, head=head, walked=walked
@@ -1466,6 +1473,8 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
     counted = verify_basis._count_since_verify(repo, _VERIFIED, anchor)
     assert counted is CommitDriftUnread.TIMEOUT
     assert rollup() == ([], {"m": CommitDriftUnread.TIMEOUT})
+    # Where no memo keys the walk (the files unreadable), the pass keeps it.
+    monkeypatch.setattr(origin, "walk_files_signature", lambda *a, **k: None)
     _caches.clear_all()
     walked: dict[tuple[str, str, str], origin.ReachableWalk | bool | None] = {}
     for _ in range(2):
@@ -1486,6 +1495,99 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
         assert origin_history.unwalked() == unwalked + 1
         assert _git.timed_out_calls() > timed_out
     assert len(met) == 2 * 3 + 2, "the second hit ran no walk"
+
+
+@pytest.mark.parametrize("flag", ["--boundary", "--name-only"])
+def test_a_walk_that_met_its_timeout_is_walked_once_a_minute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str
+) -> None:
+    """The health rollup has no per-row memo, so each call walked m's
+    anchor again, a 5 s bound or two each time (ENG-220's review, round
+    E). The walk's names meet their timeout (the commits listed alone,
+    counted 2) or its listing does too (given up, m unread). Called again
+    within the minute, the rollup runs no walk and reads m the same,
+    counted as a timeout again, and given up again where it was; past the
+    minute, and after a commit moves the head, it walks again. The walk
+    memo keeps neither."""
+    from bettermemory import health
+    from bettermemory.origin import Origin
+
+    repo = _repository(tmp_path)
+    _plain(repo, "remote", "add", "origin", _URL)
+    anchor = _rebased(repo)
+    given_up = flag == "--boundary"
+    outcome = ([], 1) if given_up else ([2], 0)
+    per = 2 if given_up else 1
+
+    def debt() -> tuple[list[int], int]:
+        got = health._compute_commit_drift_debt(
+            by_id={"m": _stats("m")},
+            origin_repo_by_id={"m": _URL},
+            caller_origin=Origin(cwd=str(repo), repo=_URL, branch=None),
+            anchor_paths_by_id={"m": (_MOD,)},
+            claims_by_id=None,
+            verified_head_by_id={"m": anchor},
+        )
+        assert got is not None
+        return [row.commits_since_verify for row in got.rows], got.unread
+
+    def walks() -> int:
+        """The walks that met their timeout; the dates' extension after a
+        commit (`origin_dates`, ``--format=%m%H %at``) holds the flag too."""
+        return sum("--format=%m%H %at" not in argv for argv in met)
+
+    _caches.clear_all()
+    met = _timing_out(monkeypatch, flag)
+    assert debt() == outcome and walks() == per
+    timed_out, unwalked = _git.timed_out_calls(), origin_history.unwalked()
+    assert debt() == outcome and walks() == per, "no walk within the minute"
+    assert _git.timed_out_calls() > timed_out
+    assert origin_history.unwalked() == unwalked + given_up
+    assert not origin._WALK_MEMO and len(origin._WALK_TIMED_OUT) == 1
+    monkeypatch.setattr(origin, "_WALK_TIMED_OUT_SECONDS", 0.0)
+    assert debt() == outcome and walks() == 2 * per, "past the minute"
+    monkeypatch.setattr(origin, "_WALK_TIMED_OUT_SECONDS", 60.0)
+    _commit(repo, {"notes.md": "n\n"}, 2)
+    moved = ([], 1) if given_up else ([3], 0)
+    assert debt() == moved and walks() == 3 * per, "a commit moves the key"
+    assert debt() == moved and walks() == 3 * per
+
+
+def test_a_walk_that_met_its_timeout_is_not_kept_where_the_files_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The files beside the history change while the walk runs, as a fetch
+    or a replace ref written meanwhile changes them: its outcome is not
+    kept under the key read before it, and the next call walks again."""
+    repo = _repository(tmp_path)
+    anchor = _rebased(repo)
+    head = _plain(repo, "rev-parse", "HEAD")
+    real_signature = origin.walk_files_signature
+    moved = [0]
+
+    def signature(toplevel: Path, **kwargs: Any) -> Any:
+        read = real_signature(toplevel, **kwargs)
+        return None if read is None else (*read, moved[0])
+
+    monkeypatch.setattr(origin, "walk_files_signature", signature)
+    real = subprocess.run
+    met: list[Any] = []
+
+    def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if "--boundary" in argv:
+            met.append(argv)
+            moved[0] += 1
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    _caches.clear_all()
+    for _ in range(2):
+        assert (
+            origin.commits_since_anchor(repo, anchor, toplevel=repo, head=head) is None
+        )
+        assert not origin._WALK_TIMED_OUT
+    assert len(met) == 4, "walked again"
 
 
 _URL = "git@github.com:example/as-stored.git"
