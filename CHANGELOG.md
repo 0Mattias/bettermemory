@@ -1016,7 +1016,12 @@ eighteenth was built.
   answer kept in the state directory for its PATH stands (the git binary
   unchanged, under an hour old, and on macOS the developer directory
   `DEVELOPER_DIR` or `xcode-select` names the same), so a prompt spawns
-  no git for it. A git that does not answer, or none on PATH, reads for
+  no git for it. The answer's file is its record format's own
+  (`git-config-sources-v4.json`; a release of an earlier format keeps
+  `git-config-sources.json`), so releases of two formats sharing a state
+  directory, a daemon of one beside hook clients of another, keep their
+  answers apart; in one file each dropped the other's and asked git
+  again at its next process. A git that does not answer, or none on PATH, reads for
   a minute as the last answer git gave for that PATH, and as naming
   `/etc/gitconfig` (none on Windows) where it never answered; a failed
   ask is never recorded over git's answer. Each file is parsed as git

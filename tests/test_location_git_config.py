@@ -825,6 +825,52 @@ def test_git_is_asked_once_for_a_path_and_the_answer_kept_in_the_state_directory
     assert asks() == 0
 
 
+def test_records_of_two_formats_in_one_state_directory_each_stand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's review of round 8: the record was one file of one format,
+    so builds of formats 3 and 4 sharing a state directory each dropped
+    the other's whole record as they wrote their own, and each asked git
+    again at its next process (4, 0, 6, 0, 4, 6 spawns, alternating). Each
+    format has a file of its own: processes of this build alternating with
+    ones of other formats (format 3's ``git-config-sources.json``, and a
+    later format's by this build's rule) each ask once, then stand on
+    their own record. The sweep of other probes leaves every record,
+    however old."""
+    state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
+    fake = _FakeGit(monkeypatch, tmp_path / "git")
+    later = gitsystem.RECORD_FORMAT + 1
+    builds = {
+        "this": (gitsystem.RECORD_FORMAT, gitsystem.RECORD),
+        "format_3": (3, "git-config-sources.json"),
+        "later": (later, f"git-config-sources-v{later}.json"),
+    }
+
+    def turn(build: str) -> int:
+        """A new process of `build`: its record's format and file."""
+        version, name = builds[build]
+        before = len(fake.asked)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(gitsystem, "RECORD_FORMAT", version)
+            mp.setattr(gitsystem, "RECORD", name)
+            _caches.clear_all()
+            gitsystem.sources()
+        return len(fake.asked) - before
+
+    order = ["this", "format_3", "this", "later", "format_3", "this", "later", "this"]
+    assert [turn(b) for b in order] == [5, 5, 0, 5, 0, 0, 0, 0]
+    names = sorted(name for _v, name in builds.values())
+    assert sorted(p.name for p in state.glob("git-config-sources*")) == names
+    for version, name in builds.values():
+        assert json.loads((state / name).read_text())["format"] == version
+    old = time.time() - 2 * gitsystem.REASK_SECONDS
+    for name in names:
+        os.utime(state / name, (old, old))
+    gitsystem._sweep_probes(state)
+    assert all((state / name).is_file() for name in names)
+    assert [turn(b) for b in builds] == [0, 0, 0]
+
+
 def test_a_git_that_does_not_answer_reads_as_the_fallback_until_asked_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

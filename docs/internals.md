@@ -555,10 +555,16 @@ file's path is spelled with the platform's separator where it enters
 (an include's target, the machine's files), so one file is named one
 way wherever it is stamped or compared. A hook client is a new
 process each prompt, so the answer is kept in the state directory
-(`git-config-sources.json`) for the PATH, as its digest, with the stamp
-of the git binary found on that PATH; a capture stats that binary and
-asks again only where it changed, the answer is an hour old, or none is
-recorded. On macOS the key holds the developer directory too
+(`git-config-sources-v4.json`) for the PATH, as its digest, with the
+stamp of the git binary found on that PATH; a capture stats that binary
+and asks again only where it changed, the answer is an hour old, or none
+is recorded. Each record format has a file of its own (a release of
+format 3 and before keeps `git-config-sources.json`), so releases of two
+formats sharing a state directory, a daemon of one beside hook clients
+of another, each keep their answer; in one file each dropped the
+other's whole record as it wrote its own, and asked git again at its
+next process. The sweep of other probes removes folders of a probe's
+name alone, never a record. On macOS the key holds the developer directory too
 (`DEVELOPER_DIR`, else the target of `/var/db/xcode_select_link`, one
 readlink), since `/usr/bin/git` is a shim whose stamp does not change
 when `xcode-select --switch` picks another; xcrun's default, where

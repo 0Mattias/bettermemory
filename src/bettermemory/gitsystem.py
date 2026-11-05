@@ -86,14 +86,19 @@ from . import _git as _git_runner
 from ._fsutil import atomic_write_bytes, ensure_owner_only_dir
 from .gitconfig import _UNSTATED, Stamp, file_stamp
 
-#: The record's file in the state directory.
-RECORD = "git-config-sources.json"
 #: The format the record carries in its ``format`` field: 2 adds how git
 #: reads a remote (`Sources.legacy`, `Sources.resets`), 3 how it expands
 #: ``%(prefix)`` (`Sources.prefix`), 4 whether it reads a compatibility
-#: object format other than the object format (`Sources.compat_differ`),
-#: so a record of an earlier format is asked again.
+#: object format other than the object format (`Sources.compat_differ`).
 RECORD_FORMAT = 4
+#: The record's file in the state directory: one of each format's own, so
+#: builds of two formats sharing the state directory (a daemon of one
+#: release beside hook clients of another, two installed releases) each
+#: keep their answers. In one file each dropped the other's whole record
+#: as it wrote its own, and each asked git again at its next process: on
+#: every prompt where two releases alternate (ENG-207's review of round
+#: 8). Builds of format 3 and before keep ``git-config-sources.json``.
+RECORD = f"git-config-sources-v{RECORD_FORMAT}.json"
 #: How long the questions may take together: the capture's budget
 #: for a fetch (`location_git.FETCH_BUDGET`; tests/test_location_git_config.py
 #: pins the two equal), under every hook's. Measured (ENG-207, macOS, git
@@ -685,8 +690,8 @@ def _own_files(listing: bytes) -> tuple[str, ...]:
 
 
 def _record_path() -> Path:
-    """``<state>/git-config-sources.json``, under the state directory the
-    daemon and the hook client resolve alike."""
+    """`RECORD` (this format's) in the state directory the daemon and the
+    hook client resolve alike."""
     from . import _daemon_client
 
     return _daemon_client.resolve_state_dir() / RECORD
