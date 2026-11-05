@@ -967,23 +967,32 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
             (c for c in res.chain if c not in own and model.project(c).boundary),
             None,
         )
-    done = model.declare(
-        Declaration(
-            action,
-            principal(),
-            checkout=k.id,
-            proposal=pr.id if pr is not None else None,
-            target=res.project if below else None,
-            file_id=written.id,
-            name=display,
-            directory=cwd,
-            boundary=boundary,
-            outer_tenant=outer,
-            replaced=(
-                existing.id if isinstance(existing, project_file.ProjectFile) else None
-            ),
-        )
+    declaration = Declaration(
+        action,
+        principal(),
+        checkout=k.id,
+        proposal=pr.id if pr is not None else None,
+        target=res.project if below else None,
+        file_id=written.id,
+        name=display,
+        directory=cwd,
+        boundary=boundary,
+        outer_tenant=outer,
+        replaced=(
+            existing.id if isinstance(existing, project_file.ProjectFile) else None
+        ),
     )
+    try:
+        done = model.declare(declaration)
+    except ValueError as exc:
+        # The model refuses what it cannot place (a folder the checkout the
+        # file's first sight made does not hold, ENG-207's round 8), as
+        # `_init_position` refuses before the write: here the file is
+        # written, and nothing is declared.
+        refuse(
+            f"{exc}; wrote {quoted(str(path))} ({written.id}) and declared "
+            "nothing: the next session decides"
+        )
     location.forget(cwd)
     _print_init_done(
         ctx,

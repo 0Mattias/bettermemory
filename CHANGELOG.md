@@ -1188,7 +1188,11 @@ eighteenth was built.
   `core.fscache` and `core.longpaths` as the booleans it reads, so a
   machine's common settings keep the answer from the files.
   `_git.run_git` takes `unset`, applied beneath its scrub and pins like
-  `env`.
+  `env`. `bettermemory project init` in a plain folder, which writes the
+  project file before the folder's first sight makes its checkout,
+  refuses in one line where the model cannot place the folder in that
+  checkout, naming the file it wrote and that it declared nothing, where
+  the model's refusal ended the command with a traceback.
   (`src/bettermemory/gitsystem.py`, `src/bettermemory/gitconfig.py`,
   `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
   `src/bettermemory/gitfile_rule.py`, `src/bettermemory/_git.py`,
@@ -1199,7 +1203,9 @@ eighteenth was built.
   `tests/test_location_git_include_conditions.py`,
   `tests/test_membership_cost.py`, `tests/test_git_no_fetch.py`,
   `tests/test_location_gitdir_format.py`, `tests/test_origin_cache.py`,
-  `tests/test_gitobjects.py`, `tests/test_commit_drift_cache.py`)
+  `tests/test_gitobjects.py`, `tests/test_commit_drift_cache.py`,
+  `src/bettermemory/cli/project_cmd.py`, `tests/test_membership_cli.py`,
+  `tests/test_membership_alias.py`)
 
 - **A plant seen first while the checkout's share answers with errors
   no longer takes its record (ENG-217).** Since 9.0.0rc18 a checkout

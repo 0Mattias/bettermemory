@@ -809,6 +809,35 @@ def test_i29_init_in_a_plain_folder_makes_a_folder_project(
     assert "declaration:os:tester" in bound[0]["evidence"]
 
 
+def test_init_refuses_what_the_folder_s_first_sight_cannot_place(
+    scene: Scene, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ENG-207's round 8: in a plain folder init writes the file first and
+    declares in the checkout its first sight makes, which no check placed
+    the folder in before (`_init_position` places it in a checkout seen
+    before). Where the model cannot place it there it refuses
+    (`Membership._declared_below`: a ValueError, which a handler returns
+    as the tool's error), and init said so with a traceback; it now
+    refuses in one line, naming the file it wrote and that it declared
+    nothing."""
+    notes = scene.root / "notes"
+    notes.mkdir()
+    assert scene.see(notes).project == GLOBAL
+
+    def cannot_place(self: mb.Membership, decl: Any, k: Any) -> bool:
+        raise ValueError(
+            f"cannot tell where {decl.directory} stands in checkout {k.id}"
+        )
+
+    monkeypatch.setattr(mb.Membership, "_declared_below", cannot_place)
+    typed(monkeypatch, "notes")
+    err = refused(monkeypatch, capsys, "project", "init")
+    path = notes / project_file.PROJECT_FILE_NAME
+    assert f"cannot tell where {notes} stands" in err
+    assert f"wrote {quoted(str(path))}" in err and "declared nothing" in err
+    assert isinstance(project_file.parse(path), project_file.ProjectFile)
+
+
 def _home(scene: Scene, record_id: str) -> Home:
     found = scene.model.home(record_id)
     assert found is not None
