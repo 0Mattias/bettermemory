@@ -139,13 +139,19 @@ class IncludeContext:
     `prefix`, called at the first ``%(prefix)/`` path and kept, is the
     directory the git on PATH expands that to (`gitsystem.Sources.prefix`;
     None where it is not known, where such a path of a relative rest is
-    not settled; ENG-207's round 7)."""
+    not settled; ENG-207's round 7). Its `hasconfig`, called at the first
+    ``hasconfig:`` condition and kept, says whether the git on PATH takes
+    one (`gitsystem.Sources.hasconfig`, git 2.36 and later): where it does
+    not, git ignores the condition, as any it does not know, and so does
+    the read; None where it is not known, where no such condition is
+    settled (ENG-227)."""
 
     def __init__(
         self,
         branch: Callable[[], bytes | None],
         *,
         prefix: Callable[[], str | None] | None = None,
+        hasconfig: Callable[[], bool | None] | None = None,
         remote_urls: frozenset[bytes] | None = None,
         collecting: bool = False,
     ) -> None:
@@ -153,20 +159,28 @@ class IncludeContext:
         self.prefix: _Once[str | None] = (
             prefix if isinstance(prefix, _Once) else _Once(prefix or _unknown)
         )
+        self.hasconfig: _Once[bool | None] = (
+            hasconfig if isinstance(hasconfig, _Once) else _Once(hasconfig or _unknown)
+        )
         self.remote_urls = remote_urls
         self.collecting = collecting
 
     def collect(self) -> IncludeContext:
         """This context for the read that collects the remote URLs."""
-        return IncludeContext(self.branch, prefix=self.prefix, collecting=True)
+        return IncludeContext(
+            self.branch, prefix=self.prefix, hasconfig=self.hasconfig, collecting=True
+        )
 
     def with_urls(self, urls: frozenset[bytes]) -> IncludeContext:
         """This context with the remote URLs collected."""
-        return IncludeContext(self.branch, prefix=self.prefix, remote_urls=urls)
+        return IncludeContext(
+            self.branch, prefix=self.prefix, hasconfig=self.hasconfig, remote_urls=urls
+        )
 
 
 def _unknown() -> None:
-    """A context's prefix where none is given: not known."""
+    """A context's prefix, or whether git takes a hasconfig include,
+    where none is given: not known."""
 
 
 _T = TypeVar("_T")
@@ -430,6 +444,22 @@ def _parse_config(
                 _condition(sub, path, git_dir, reading)
 
 
+#: The release from which git keeps a tab or a CR inside a value as
+#: written (ENG-227: ``git config --list`` of ``x = a<TAB>b`` and ``x =
+#: y<CR>z``, against git built from each release, reads ``a b`` and ``y z``
+#: through 2.44.4, as written from 2.45.4): an older git reads each such
+#: byte outside quotes as a space (config.c's ``parse_value``), which a
+#: value read here does not tell from one inside them.
+KEEPS_SPACES_SINCE = (2, 45)
+
+
+def spaced(value: bytes) -> bool:
+    """Whether `value` holds a tab or a CR, which git before
+    `KEEPS_SPACES_SINCE` may read as a space: a path or a URL holding one
+    names another to it."""
+    return b"\t" in value or b"\r" in value
+
+
 def _include(
     including: str,
     condition: str | None,
@@ -443,7 +473,8 @@ def _include(
     ``handle_path_include``): under `condition` (an ``includeIf``
     section's) only where it holds, evaluated first; a value that is
     missing or that git cannot expand (`_include_target`) dies; a missing
-    file is skipped. Where the condition is not evaluated here, what the
+    file is skipped; one holding a tab or a CR (`spaced`) is not read
+    whole (ENG-227). Where the condition is not evaluated here, what the
     file sets goes to `out.undecided`, its values not taken, and where git
     dies reading it, or reads more than is read here, to
     `out.maybe_dies`."""
@@ -459,6 +490,9 @@ def _include(
         if value is None:
             what = "include.path" if condition is None else "an includeIf's path"
             raise _Dies(f"{including} sets {what} with no value")
+        if spaced(value):
+            # The file named turns on the git: the read is not whole.
+            raise _Overflow(os.fsdecode(value.split(b"\0", 1)[0]))
         target = _include_target(value, including, reading.prefix)
         context = reading.context
         if (
@@ -1055,7 +1089,9 @@ def _condition(
     given, or one that cannot settle it, a pattern the read's matching
     does not settle among them, `WildmatchSpent`); False for a condition
     git does not know, another ``hasconfig:`` among them, which git
-    ignores."""
+    ignores, and ``hasconfig:remote.*.url:`` too for a git before 2.36,
+    which knows none (`IncludeContext.hasconfig`; None where that is not
+    known, ENG-227)."""
     for prefix, icase in (("gitdir:", False), ("gitdir/i:", True)):
         if condition.startswith(prefix):
             if git_dir is None:
@@ -1066,6 +1102,10 @@ def _condition(
         pattern = condition[len("onbranch:") :]
         return _branch_condition(pattern, reading.context, reading.steps)
     if condition.startswith(_HAS_REMOTE_URL):
+        if reading.context is not None:
+            takes = reading.context.hasconfig()
+            if takes is not True:
+                return takes
         return _remote_url_condition(condition[len(_HAS_REMOTE_URL) :], reading)
     return False
 
@@ -1648,7 +1688,11 @@ def git_entries(data: bytes) -> list[Entry] | None:
     file ends a line. A name is lower case but for a quoted subsection,
     whose escapes are undone, and is cut at its first NUL byte, as git's
     ``strcmp`` reads it: ``[core "worktree\\0"]`` names ``core.worktree``.
-    A value is kept as written (`_value`), NUL bytes and all."""
+    A value is kept as written (`_value`), NUL bytes and all. git before
+    2.45 reads a tab or a CR inside a value, outside quotes, as a space
+    (ENG-227); the reads that take a value as a URL or a path decline
+    where one holds either and the git on PATH may be older
+    (`location_git._spellings`, `gitfile_rule.tree_format`, `_include`)."""
     if data.startswith(_UTF8_BOM):
         data = data[len(_UTF8_BOM) :]
     elif data[:1] == _UTF8_BOM[:1]:

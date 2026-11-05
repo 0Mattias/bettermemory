@@ -20,19 +20,28 @@ origin cache's tests do.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from bettermemory import githead, location, origin
+from bettermemory import githead, gitsystem, location, origin
 from bettermemory.location import remote_key
 
 from .test_membership_security import neutral_git
+from .test_origin_patch import _git_version
 
 _RULES = '[url "https://mirror.invalid/"]\n\tinsteadOf = gh:\n'
 _MIRRORED = "https://mirror.invalid/acme/lib"
+#: git takes an ``includeIf "hasconfig:remote.*.url:..."`` from 2.36
+#: (ENG-227: 2.35.8 ignores the condition, 2.36.6 takes it); an older git
+#: is no witness of how one is matched.
+needs_hasconfig = pytest.mark.skipif(
+    _git_version() < (2, 36), reason="git takes a hasconfig include from 2.36"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -276,6 +285,41 @@ def test_an_onbranch_include_in_the_global_config_is_taken(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("takes", [False, None], ids=["ignored", "unsaid"])
+def test_a_hasconfig_include_is_read_as_this_git_reads_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, takes: bool | None
+) -> None:
+    """ENG-227: git before 2.36 knows no ``hasconfig:`` condition and
+    ignores it, as any condition it does not know (2.34.8 and 2.35.8 fetch
+    from the URL as written), where the capture took the include's
+    insteadOf rule, and keyed a URL that git never fetches from. The
+    condition is now read as the git on PATH reads one
+    (`gitsystem.Sources.hasconfig`): ignored where it takes none, and not
+    settled where it has not said, so the capture declines, as the
+    include's rule could change the URL keyed. Where the git on PATH is
+    that old, its own answer is the witness, and the origin's, which asks
+    that git, agrees."""
+    repo = _repo(tmp_path / "repo")
+    rules = tmp_path / "rules.inc"
+    rules.write_text(_RULES, encoding="utf-8")
+    _include(repo / ".git" / "config", "hasconfig:remote.*.url:gh:acme/*", rules)
+    if _git_version() < (2, 36):
+        assert _fetched(repo) == "gh:acme/lib", "premise: this git ignores it"
+        assert origin.capture(repo).repo == "gh:acme/lib"
+    real = gitsystem.sources
+
+    def sources(**kw: Any) -> gitsystem.Sources:
+        return dataclasses.replace(real(**kw), hasconfig=takes)
+
+    monkeypatch.setattr(gitsystem, "sources", sources)
+    if takes is False:
+        assert _keys(repo) == {_key(repo, "gh:acme/lib")}
+    else:
+        assert _capture(repo).state == location.INDETERMINATE
+
+
+@needs_hasconfig
+@pytest.mark.usefixtures("git_answered")
 def test_a_hasconfig_include_is_taken_where_a_remote_url_matches(
     tmp_path: Path,
 ) -> None:
@@ -320,6 +364,8 @@ def test_a_hasconfig_include_is_taken_where_a_remote_url_matches(
         ("nomatch", False),
     ],
 )
+@needs_hasconfig
+@pytest.mark.usefixtures("git_answered")
 def test_a_hasconfig_pattern_is_matched_as_git_matches_it(
     tmp_path: Path, pattern: str, holds: bool
 ) -> None:
@@ -336,6 +382,8 @@ def test_a_hasconfig_pattern_is_matched_as_git_matches_it(
     assert (_key(repo, mirrored) in _keys(repo)) is holds
 
 
+@needs_hasconfig
+@pytest.mark.usefixtures("git_answered")
 def test_a_hasconfig_include_matches_every_scope_in_either_order(
     tmp_path: Path,
 ) -> None:
@@ -366,6 +414,8 @@ def test_a_hasconfig_include_matches_every_scope_in_either_order(
 
 
 @pytest.mark.parametrize("key", ["path", "other"])
+@needs_hasconfig
+@pytest.mark.usefixtures("git_answered")
 def test_a_remote_url_an_includeif_sets_under_hasconfig_declines(
     tmp_path: Path, key: str
 ) -> None:
@@ -408,6 +458,7 @@ def test_a_remote_url_an_includeif_sets_under_hasconfig_declines(
         ("hasconfig:remote.*.url:gh[[:space:]]acme/*", False),
     ],
 )
+@pytest.mark.usefixtures("git_answered")
 def test_a_class_or_a_backslash_in_a_pattern_is_read_as_git_reads_it(
     tmp_path: Path, condition: str, rewritten: bool
 ) -> None:
@@ -419,6 +470,8 @@ def test_a_class_or_a_backslash_in_a_pattern_is_read_as_git_reads_it(
     A backslash is written twice in the file, as a subsection spells one;
     a ``**`` not after a slash is one ``*``, as git's ``WM_PATHNAME``
     reads it."""
+    if condition.startswith("hasconfig:") and _git_version() < (2, 36):
+        pytest.skip("git takes a hasconfig include from 2.36")
     repo = _repo(tmp_path / "repo")
     rules = tmp_path / "rules.inc"
     rules.write_text(_RULES, encoding="utf-8")
@@ -433,6 +486,8 @@ def test_a_class_or_a_backslash_in_a_pattern_is_read_as_git_reads_it(
 # ---------------------------------------------------------------------------
 # The legacy remote files
 # ---------------------------------------------------------------------------
+# An older git's ``git init`` makes ``branches/`` from its template (2.39.5
+# and earlier, ENG-227), so each test makes it where it is not.
 
 
 @pytest.mark.usefixtures("git_answered")
@@ -463,7 +518,7 @@ def test_a_legacy_remotes_file_is_read_and_an_edit_is_seen(tmp_path: Path) -> No
     (folder / "new").write_text("URL: https://legacy.invalid/new\n")
     assert _fetched(repo, "new") == "https://legacy.invalid/new"
     assert _keys(repo) == {_key(repo, "https://legacy.invalid/new")}
-    (repo / ".git" / "branches").mkdir()
+    (repo / ".git" / "branches").mkdir(exist_ok=True)
     (repo / ".git" / "branches" / "more").write_text("https://branch.invalid/m\n")
     assert _fetched(repo, "more") == "https://branch.invalid/m"
     assert _key(repo, "https://branch.invalid/m") in _keys(repo)
@@ -475,12 +530,15 @@ def test_a_legacy_file_is_read_only_where_git_reads_it(tmp_path: Path) -> None:
     a URL, the global config's included and an emptied list not; then
     ``branches/<name>`` where the first gives no URL (its first line to a
     ``#``, a blank before it kept). An empty ``URL:`` empties the list, as
-    an empty ``remote.<name>.url`` does in the config, where the capture
-    reads it so too."""
+    an empty ``remote.<name>.url`` does in the config, where git does (2.46
+    and later, `gitsystem.Sources.resets`; an older one fetches from the
+    first URL, ENG-227), and the capture reads it so too."""
+    resets = gitsystem.sources().resets
+    assert resets is not None, "premise: git says how it reads an empty URL"
     repo = _repo(tmp_path / "repo")
     remotes, branches = repo / ".git" / "remotes", repo / ".git" / "branches"
     remotes.mkdir()
-    branches.mkdir()
+    branches.mkdir(exist_ok=True)
     (remotes / "origin").write_text("URL: https://legacy.invalid/origin\n")
     (remotes / "both").write_text("Pull: x\n")
     (branches / "both").write_text("  https://branch.invalid/b #dev  \nsecond\n")
@@ -500,9 +558,9 @@ def test_a_legacy_file_is_read_only_where_git_reads_it(tmp_path: Path) -> None:
     expected = {
         "origin": "gh:acme/lib",
         "both": "https://branch.invalid/b ",
-        "reset": "https://b.invalid/b",
+        "reset": "https://b.invalid/b" if resets else "https://a.invalid/a",
         "machine": "https://machine.invalid/m",
-        "cleared": "https://b.invalid/c",
+        "cleared": "https://b.invalid/c" if resets else "https://a.invalid/c",
     }
     for name, url in expected.items():
         assert _fetched(repo, name) == url, f"premise: git reads {name} so"
@@ -511,8 +569,9 @@ def test_a_legacy_file_is_read_only_where_git_reads_it(tmp_path: Path) -> None:
         assert (_key(repo, url) in keys) is (name != "machine"), name
     for gone in ("https://legacy.invalid/origin", "https://legacy.invalid/m"):
         assert _key(repo, gone) not in keys
-    assert _key(repo, "https://a.invalid/a") not in keys
-    assert _key(repo, "https://a.invalid/c") not in keys
+    # An older git keeps every URL around the empty one, the capture too.
+    assert (_key(repo, "https://a.invalid/a") in keys) is not resets
+    assert (_key(repo, "https://a.invalid/c") in keys) is not resets
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs here")
@@ -525,7 +584,7 @@ def test_a_legacy_file_that_is_no_regular_file_declines(tmp_path: Path) -> None:
     remotes = repo / ".git" / "remotes"
     remotes.mkdir()
     (remotes / "folder").mkdir()
-    (repo / ".git" / "branches").mkdir()
+    (repo / ".git" / "branches").mkdir(exist_ok=True)
     (repo / ".git" / "branches" / "folder").write_text("https://branch.invalid/f\n")
     assert _fetched(repo, "folder") == "https://branch.invalid/f"
     assert _keys(repo) == {_key(repo, "https://branch.invalid/f")}
@@ -552,7 +611,7 @@ def test_origins_legacy_file_is_in_the_signature(tmp_path: Path) -> None:
     legacy.write_text("URL: https://legacy.invalid/two\n")
     assert origin.capture(repo).repo == "https://legacy.invalid/two"
     legacy.unlink()
-    (repo / ".git" / "branches").mkdir()
+    (repo / ".git" / "branches").mkdir(exist_ok=True)
     (repo / ".git" / "branches" / "origin").write_text("https://branch.invalid/o\n")
     assert _fetched(repo) == "https://branch.invalid/o"
     assert origin.capture(repo).repo == "https://branch.invalid/o"

@@ -47,6 +47,7 @@ from .gitconfig import (
     _LEGACY_FOLDERS as _LEGACY_FOLDERS,
 )
 from .gitconfig import (
+    KEEPS_SPACES_SINCE,
     UNSETTLED,
     ConfigFile,
     ConfigValues,
@@ -61,6 +62,7 @@ from .gitconfig import (
     config_tree,
     file_stamp,
     git_bool,
+    spaced,
     subsection_bytes,
     unchanged,
 )
@@ -343,10 +345,14 @@ def _repository_paths(common_dir: str, git_dir: str) -> list[str] | str:
     ``config.worktree`` (ENG-207's review: a remote or an insteadOf rule
     set there is the repository's too). Why not, where git dies on the
     common config's format and reads no variable of the repository (the
-    reviewer's R14)."""
+    reviewer's R14), or where whether it reads ``config.worktree`` turns
+    on a version the git on PATH has not named (ENG-227)."""
     worktree_config = reads_worktree_config(common_dir)
     if worktree_config is None:
-        return f"git dies reading the format of {os.path.join(common_dir, 'config')}"
+        return (
+            f"git dies reading the format of {os.path.join(common_dir, 'config')}, "
+            "or this git has not said how it reads it"
+        )
     paths = [os.path.join(common_dir, "config")]
     if worktree_config:
         paths.append(os.path.join(git_dir, "config.worktree"))
@@ -522,7 +528,10 @@ def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
       and under ``hasconfig:remote.*.url:`` against every
       ``remote.<name>.url`` of that config, read as git collects them
       first: every includeIf that holds there is forbidden to set one,
-      and one that does has git refuse the configuration.
+      and one that does has git refuse the configuration. A git before
+      2.36 knows no such condition and ignores it, and so does the read
+      (`gitsystem.Sources.hasconfig`; not settled where git has not said,
+      ENG-227).
     - A remote's URLs are its ``remote.<name>.url`` values in that order,
       an empty one emptying the list where this git does
       (`gitsystem.Sources.resets`, remote.c's ``add_url``); a remote with
@@ -566,6 +575,7 @@ def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
     context = IncludeContext(
         lambda: _head_branch(common_dir, git_dir, files),
         prefix=lambda: sources().prefix,
+        hasconfig=lambda: sources().hasconfig,
     )
     own = _read_configs(paths, git_dir, context, files, stamp_first=False)
     why = _failed(own)
@@ -625,6 +635,10 @@ def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
 #: Each insteadOf base, in the order git met it, with its prefixes, each
 #: with whether the machine's config gives it.
 _Rewrites = dict[str, list[tuple[bytes, bool]]]
+#: The variables a URL is read from, which decline holding a tab or a CR
+#: on a git before `KEEPS_SPACES_SINCE` (`_spellings`, ENG-227).
+_SPACED = (("remote", "url"), ("url", "insteadof"))
+_AS_A_SPACE = "git before 2.45 reads as a space"
 
 
 def _spellings(
@@ -637,8 +651,10 @@ def _spellings(
     each with whether it is the repository's own, and of the legacy
     remotes `legacy` names (`legacy_remote`), as `_rewrites` says; why
     the capture declines where an undecided include could change them,
-    or a legacy file is not read. `_Unknown` where what this git does is
-    not known (`sources`) and matters."""
+    a legacy file is not read, or a URL or an insteadOf prefix holds a
+    tab or a CR (`gitconfig.spaced`) for a git not known to keep it
+    (ENG-227). `_Unknown` where what this git does is not known
+    (`sources`) and matters."""
 
     def resets() -> bool:
         flag = sources().resets
@@ -652,6 +668,10 @@ def _spellings(
         for (section, sub, key), found in read.items():
             if sub is None:
                 continue
+            if (section, key) in _SPACED and any(spaced(v) for v in found if v):
+                version = sources().version
+                if version is None or version[:2] < KEEPS_SPACES_SINCE:
+                    return f"a {section}.{key} holds blank space {_AS_A_SPACE}"
             if section == "remote" and key == "url" and not sub.startswith("/"):
                 entries = remotes.setdefault(sub, [])
                 for value in found:

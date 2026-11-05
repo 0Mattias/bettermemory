@@ -925,6 +925,7 @@ def test_each_replace_pin_alone_holds_the_window(
     [pytest.param(True, marks=needs_reftable), False],
     ids=["reftable", "files"],
 )
+@pytest.mark.usefixtures("git_answered")
 def test_a_replace_ref_after_the_split_is_kept_moves_no_count(
     tmp_path: Path, basis: str, reftable: bool
 ) -> None:

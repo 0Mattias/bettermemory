@@ -192,6 +192,10 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     own: no system file, the null device for the global one, and none of
     the caller's config variables."""
     _plain_git(tmp_path, "init", "-q")
+    # git before 2.42 has no such variable, and is asked its system listing
+    # (ENG-227), with no system file of the caller's and the null device
+    # for the global one.
+    older = [list(gitsystem._SYSTEM_LIST)] if _git_version() < (2, 42) else []
     calls: list[tuple[list[str], object, dict[str, str]]] = []
     real = subprocess.run
 
@@ -230,7 +234,9 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     compat_dir = os.path.join(probe[0], gitsystem._COMPAT_PROBE)
     assert [c[0][1 + len(_git.PINS) :] for c in calls] == [
         list(gitsystem._VAR),
+        *older,
         list(gitsystem._LIST),
+        list(gitsystem._VERSION_ASK),
         [f"--git-dir={probe[0]}", *gitsystem._REMOTE_ASK],
         [f"--git-dir={probe[0]}", *gitsystem._PREFIX_ASK],
         [f"--git-dir={compat_dir}", *gitsystem._COMPAT_ASK],
@@ -244,16 +250,22 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
         assert env.items() >= ceiling.items()
         assert (env["GIT_NO_LAZY_FETCH"], env["GIT_ALLOW_PROTOCOL"]) == ("1", "")
         assert not set(_git.SCRUBBED_ENV) & set(env)
+    if older:
+        assert "GIT_CONFIG_SYSTEM" not in calls[1][2]
+        assert calls[1][2]["GIT_CONFIG_GLOBAL"] == os.devnull
+        del calls[1]
     assert "GIT_CONFIG_SYSTEM" not in calls[0][2]
+    # The version (ENG-227), as the system file is asked: no config needed.
+    assert "GIT_CONFIG_SYSTEM" not in calls[2][2]
     assert (
         calls[1][2]["GIT_CONFIG_SYSTEM"]
         == calls[1][2]["GIT_CONFIG_GLOBAL"]
-        == calls[2][2]["GIT_CONFIG_GLOBAL"]
         == calls[3][2]["GIT_CONFIG_GLOBAL"]
         == calls[4][2]["GIT_CONFIG_GLOBAL"]
+        == calls[5][2]["GIT_CONFIG_GLOBAL"]
         == os.devnull
     )
-    for probed in (calls[2][2], calls[3][2], calls[4][2]):
+    for probed in (calls[3][2], calls[4][2], calls[5][2]):
         assert probed["GIT_CONFIG_NOSYSTEM"] == "1"
         assert "GIT_CONFIG_COUNT" not in probed
 
@@ -569,13 +581,16 @@ def test_the_local_patch_split_reads_a_missing_blob_as_missing(
     missing: every commit reads one, so each is counted and none streamed.
     Under the empty ``GIT_ALLOW_PROTOCOL`` alone, the setting an older git
     is held by, git tries the fetch, is refused the transport and ends
-    the check, and the split declines: the per-file count, as before."""
+    the check, and the split declines: the per-file count, as before. git
+    before 2.39 tries no fetch there and names each blob missing, as
+    under ``GIT_NO_LAZY_FETCH`` (ENG-227: 2.38.5 does, 2.39.5 does not)."""
     if kept is not None:
         if "GIT_NO_LAZY_FETCH" in kept and _git_version() < (2, 44):
             pytest.skip("GIT_NO_LAZY_FETCH is read from git 2.44")
         monkeypatch.setattr(_git, "NO_FETCH", kept)
     window = _split(blobless)
-    if "GIT_NO_LAZY_FETCH" in _git.NO_FETCH and _git_version() >= (2, 44):
+    lazy_off = "GIT_NO_LAZY_FETCH" in _git.NO_FETCH and _git_version() >= (2, 44)
+    if lazy_off or _git_version() < (2, 39):
         assert window is not None
         assert (window.stream, len(window.counted)) == ("", 3)
     else:

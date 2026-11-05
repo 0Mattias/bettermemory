@@ -867,6 +867,7 @@ def test_another_accounts_repository_git_answered_for_is_kept(
     assert probes == []
 
 
+@pytest.mark.usefixtures("git_answered")
 def test_a_reftable_repositorys_branch_switch_is_seen_at_once(
     tmp_path: Path, probes: list[tuple[str, ...]]
 ) -> None:

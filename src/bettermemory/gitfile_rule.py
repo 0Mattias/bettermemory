@@ -267,6 +267,25 @@ _EXTENSIONS_V1: dict[bytes, str | frozenset[bytes]] = {
     # reads it as it was built (`_judge_format`).
     b"compatobjectformat": frozenset({b"sha1", b"sha256"}),
 }
+# The format-1 extensions an older git does not know, with the release
+# that first reads each (ENG-227: ``git rev-parse --show-toplevel`` in a
+# repository of format 1 setting it, against git built from each release:
+# refStorage dies on 2.43.7 and is read from 2.44.4, relativeWorktrees on
+# 2.46.4 and from 2.48.2, submodulePathConfig on 2.52.0 and from 2.54.0;
+# no 2.47 or 2.53 was built, so each is taken from the release after). An
+# older git dies on one, as on any extension it does not know, and where
+# git has not named its version the format is not known
+# (`gitsystem.is_at_least`, fail closed). compatObjectFormat is asked of
+# git itself (`_reads_compat`).
+_EXTENSIONS_SINCE: dict[bytes, tuple[int, int]] = {
+    b"refstorage": (2, 44),
+    b"relativeworktrees": (2, 48),
+    b"submodulepathconfig": (2, 54),
+}
+# The release from which git reads ``config.worktree`` under a format
+# version below -1 (ENG-227: ``git remote`` lists a remote set there from
+# 2.42.4, and not on 2.41.3 or earlier).
+_WORKTREE_CONFIG_BELOW_SINCE = (2, 42)
 
 
 def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFormat:
@@ -319,6 +338,17 @@ def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFor
     elif has_common:
         return TreeFormat()
     worktree = taken.get(_WORKTREE)
+    # One holding a tab or a CR names another folder to a git before 2.45
+    # (ENG-227).
+    if (
+        worktree is not None
+        and gitconfig.spaced(worktree)
+        and _git_is_at_least(gitconfig.KEEPS_SPACES_SINCE) is not True
+    ):
+        return TreeFormat(
+            f"{os.path.join(where, 'config')} names a working tree holding blank "
+            "space git before 2.45 reads as a space"
+        )
     return TreeFormat(
         worktree=None if worktree is None else os.fsdecode(worktree.split(b"\0", 1)[0]),
         bare=_BARE in taken and gitconfig.git_bool(taken[_BARE]) is True,
@@ -388,6 +418,7 @@ def _judge_format(
     taken: dict[bytes, bytes | None] = {}
     v1_only = unknown = False
     compat: bytes | None = None
+    newer: list[bytes] = []
     for name, value in entries:
         if name == _VERSION:
             number = gitconfig.git_int(value)
@@ -407,6 +438,8 @@ def _judge_format(
                 compat = b"" if value is None else value.split(b"\0", 1)[0]
             v1_only = v1_only or ext in _EXTENSIONS_V1
             unknown = unknown or rule is None
+            if ext in _EXTENSIONS_SINCE and ext not in newer:
+                newer.append(ext)
             if name == _WORKTREE_CONFIG:
                 worktree_config = gitconfig.git_bool(value) is True
             elif name == _OBJECT_FORMAT and value is not None:
@@ -420,6 +453,20 @@ def _judge_format(
         return f"{path} sets an extension of format 1 in a repository of format 0"
     if version >= 1 and unknown:
         return f"{path} sets a repository extension git does not know"
+    # One the git on PATH may be too old to know (ENG-227).
+    for ext in newer if version >= 1 else ():
+        since = _EXTENSIONS_SINCE[ext]
+        knows = _git_is_at_least(since)
+        if knows is None:
+            return (
+                f"{path} sets extensions.{ext.decode('ascii')}, and this git has "
+                "not named its version"
+            )
+        if not knows:
+            return (
+                f"{path} sets extensions.{ext.decode('ascii')}, which git before "
+                f"{since[0]}.{since[1]} does not know"
+            )
     # A format git does not clear (a version of 1 or below -1) keeps the
     # compat format. One the same as the object format no git from 2.45
     # reads: a build without Rust dies on any ("compatibility hash
@@ -458,11 +505,23 @@ def _judge_format(
 def _reads_compat() -> bool | None:
     """Whether the git on PATH reads a compatibility object format other
     than its repository's object format (`gitsystem.reads_compat`),
-    imported here, where a repository sets one: no other format's
-    reading states its binary."""
+    imported here, where a repository sets one: no format's reading
+    states its binary but this one and `_git_is_at_least`'s."""
     from . import gitsystem
 
     return gitsystem.reads_compat()
+
+
+def _git_is_at_least(release: tuple[int, int]) -> bool | None:
+    """Whether the git on PATH names `release` or a later one as its
+    version (`gitsystem.is_at_least`), imported here, where a format sets
+    what an older git reads otherwise (ENG-227). The answer states the git
+    binary, so each discovery of a reftable repository (format 1 and
+    ``extensions.refStorage``) makes one stat call more: a git replaced
+    under the same PATH is read as the one it is at once."""
+    from . import gitsystem
+
+    return gitsystem.is_at_least(release)
 
 
 def _extension_reads(rule: str | frozenset[bytes], value: bytes | None) -> bool:
@@ -484,15 +543,20 @@ def reads_worktree_config(common_dir: str) -> bool | None:
     an include sets is not taken, as git does not take it) and as git
     then keeps it: a ``core.repositoryformatversion`` that is not set
     clears it (``read_repository_format``), and git 2.54 keeps it under
-    any other version it reads. None where git dies on that config: a
-    version above 1, a value or a file git refuses (`_common_format`),
-    where git reads no variable of the repository at all. Checked against
-    git's ``git remote`` (tests/test_location_git_config.py)."""
+    any other version it reads; one below -1 from 2.42 alone
+    (`_WORKTREE_CONFIG_BELOW_SINCE`, ENG-227). None where git dies on that
+    config: a version above 1, a value or a file git refuses
+    (`_common_format`), where git reads no variable of the repository at
+    all; and below -1 where the git on PATH has not named its version.
+    Checked against git's ``git remote``
+    (tests/test_location_git_config.py)."""
     read = _common_format(common_dir)
     if isinstance(read, str):
         return None
     if read.version > 1:
         return None
+    if read.worktree_config and read.version < -1:
+        return _git_is_at_least(_WORKTREE_CONFIG_BELOW_SINCE)
     return read.worktree_config and read.version != -1
 
 

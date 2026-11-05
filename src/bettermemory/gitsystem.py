@@ -10,7 +10,9 @@ suppresses with it: Apple's git reads its developer directory's
 ``usr/share/git-core/gitconfig`` (scope ``unknown``), and git for
 Windows has read ``%PROGRAMDATA%\\Git\\config``. Where these are is built
 into the binary, so git alone names them: ``git var GIT_CONFIG_SYSTEM``
-names the system file (git 2.42 and later), and ``git config --list
+names the system file (git 2.42 and later; an older git is asked
+``git config --system --list --show-origin``, which names the file where
+it holds an entry, `_SYSTEM_LIST`, ENG-227), and ``git config --list
 --show-scope --show-origin`` with the system and global files set to
 the null device names each other file it reads that holds an entry, at
 system or unknown scope (git 2.26 and later). `sources` answers both,
@@ -44,6 +46,24 @@ it reads the answer asked here, under format 1, below -1 too, so one
 other than the object format that a git of 2.44 or earlier reads there
 is declined as well.
 
+ENG-227 adds two, for the oldest git supported (`gitversion.MINIMUM`):
+whether git takes an ``includeIf "hasconfig:remote.*.url:..."`` (git 2.36
+and later; an older one ignores the condition as one it does not know),
+asked in the question `_PREFIX_ASK` already is, which lists the probe's
+``bettermemory`` variables, one of them in a file such an include of the
+probe's config reads (`Sources.hasconfig`, no process more); and the
+version git names (``git version``, `Sources.version`), which the reads
+whose rules changed with a release take their rule from: the words
+``branch.autoSetupMerge`` takes (`origin_gitfiles`), the extensions a
+repository's format may set and ``config.worktree`` under a version
+below -1 (`gitfile_rule`), and a tab or a CR inside a value
+(`location_git`, `gitfile_rule`). For a git before 2.42, which has no
+``GIT_CONFIG_SYSTEM`` variable, the system file is the one its system
+listing names first (`_SYSTEM_LIST`). Each was found by
+running the git-reading suites against git built from each release's
+source (docs/operations.md, "Supported git"), and a read whose answer
+turns on one declines where git has not said.
+
 A hook client is a new process each prompt, and asking costs a git
 process for each question (13 ms each measured, ENG-207), so the answer
 is kept in the state directory (`RECORD`), for the PATH it was asked
@@ -51,8 +71,9 @@ under (on macOS with the developer directory, `_developer`), with the
 stamp of the git binary found on that PATH then; a capture reads the
 record and stats that binary, and asks git again only where the binary
 stamps otherwise, the answer is older than `REASK_SECONDS` (one that
-did not say how git reads a remote, expands ``%(prefix)`` or reads a
-compatibility object format, `RETRY_SECONDS`) or none is recorded. The
+did not say how git reads a remote, expands ``%(prefix)``, reads a
+compatibility object format, takes a hasconfig include or names its
+version, `RETRY_SECONDS`) or none is recorded. The
 questions together are bound by `ASK_SECONDS`, the
 capture's own fetch budget. A git that does not answer within it or
 cannot run, or none on PATH, reads as the last answer git gave for that
@@ -89,14 +110,17 @@ from typing import Any
 
 from . import _caches
 from . import _git as _git_runner
+from . import gitversion
 from ._fsutil import atomic_write_bytes, ensure_owner_only_dir
 from .gitconfig import _UNSTATED, Stamp, file_stamp
 
 #: The format the record carries in its ``format`` field: 2 adds how git
 #: reads a remote (`Sources.legacy`, `Sources.resets`), 3 how it expands
 #: ``%(prefix)`` (`Sources.prefix`), 4 whether it reads a compatibility
-#: object format other than the object format (`Sources.compat_differ`).
-RECORD_FORMAT = 4
+#: object format other than the object format (`Sources.compat_differ`),
+#: 5 whether it takes a hasconfig include and its version
+#: (`Sources.hasconfig`, `Sources.version`; ENG-227).
+RECORD_FORMAT = 5
 #: The record's file in the state directory: one of each format's own, so
 #: builds of two formats sharing the state directory (a daemon of one
 #: release beside hook clients of another, two installed releases) each
@@ -115,8 +139,13 @@ RECORD = f"git-config-sources-v{RECORD_FORMAT}.json"
 #: ``config --type=path`` there (round 7) about as long; ``rev-parse
 #: --git-dir`` in `_COMPAT_PROBE` (round 8, a load average of 8 to 10) a
 #: median of 10 ms, 14 ms at most over 50 calls, and the six questions a
-#: first ask made then (one more than now, in a git directory whose
-#: compat format was its object format) 95 ms together.
+#: first ask made then (in a git directory whose compat format was its
+#: object format) 95 ms together. ENG-227's ``git version`` makes six
+#: again (seven for a git before 2.42, `_SYSTEM_LIST`); the hasconfig
+#: question rides on `_PREFIX_ASK`, no process more. The whole ask over
+#: 30 asks then (macOS, beside other suites' runs): /usr/bin/git 2.54 a
+#: median of 71 ms, 157 ms at most; git 2.34.8 built from source, seven
+#: processes, 30 and 82 ms; 2.56.0, 37 and 94 ms; each ask whole.
 ASK_SECONDS = 0.3
 #: How long an answer stands while its git binary stamps as it did: a git
 #: installed ahead of it on the same PATH is asked within this.
@@ -125,7 +154,17 @@ REASK_SECONDS = 3600.0
 RETRY_SECONDS = 60.0
 _FALLBACK = None if os.name == "nt" else "/etc/gitconfig"
 _VAR = ("var", "GIT_CONFIG_SYSTEM")
+#: The system file of a git before 2.42, which has no such variable
+#: (ENG-227): the file the first entry of its system config comes from,
+#: where it holds one (a build of another prefix reads
+#: ``<prefix>/etc/gitconfig``, git for Windows its installation's). One
+#: that holds none names nothing, and the fallback stands:
+#: `/etc/gitconfig`, which a distribution's git, built for prefix /usr,
+#: reads.
+_SYSTEM_LIST = ("config", "--system", "--list", "--show-origin", "-z")
 _LIST = ("config", "--list", "--show-scope", "--show-origin", "-z")
+#: The version git names (`Sources.version`, `gitversion.parse`).
+_VERSION_ASK = ("version",)
 _OVERRIDES = ("GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM")
 _DEVNULL = {"GIT_CONFIG_SYSTEM": os.devnull, "GIT_CONFIG_GLOBAL": os.devnull}
 #: PATHs whose answer the record and the process keep, newest first.
@@ -151,15 +190,25 @@ ASK_FOLDER = "git-ask"
 #: same as its object format: git aborts there (the module's docstring).
 _COMPAT_PROBE = "compat-differ"
 _COMPAT_FORMAT = b"sha256"
+#: The file the probe's hasconfig include reads (`_PREFIX_ASK`), and the
+#: variable it sets.
+_HASCONFIG_FILE = "hasconfig.inc"
+_HASCONFIG_NAME = "bettermemory.hasconfig"
 #: The git directory under the state directory git is asked how it reads
 #: a remote in (`_probe_repository`): a remote ``p`` its config gives no
 #: URL and whose ``remotes/p`` file gives one, an empty one and another;
-#: how it expands ``%(prefix)/`` (`_PREFIX_ASK`); and, in the git
+#: how it expands ``%(prefix)/`` and whether it takes a hasconfig include
+#: (`_PREFIX_ASK`: the include matches the URL of the remote ``h`` its
+#: config names, and reads `_HASCONFIG_FILE` beside it); and, in the git
 #: directory `_COMPAT_PROBE` in it, whether it reads a compat format.
 _PROBE_FILES = {
     "HEAD": b"ref: refs/heads/main\n",
     "config": b"[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
+    b'[remote "h"]\n\turl = bettermemory-probe-h\n'
+    b'[includeIf "hasconfig:remote.*.url:bettermemory-probe-h"]\n'
+    b"\tpath = " + _HASCONFIG_FILE.encode("ascii") + b"\n"
     b"[bettermemory]\n\tprefix = %(prefix)/z\n",
+    _HASCONFIG_FILE: b"[bettermemory]\n\thasconfig = yes\n",
     "remotes/p": b"URL: bettermemory-probe-a\nURL:\nURL: bettermemory-probe-b\n",
     f"{_COMPAT_PROBE}/HEAD": b"ref: refs/heads/main\n",
     f"{_COMPAT_PROBE}/config": b"[core]\n\trepositoryformatversion = 1\n"
@@ -215,8 +264,12 @@ _REMOTE_ANSWERS = {
 #: the developer directory) names it; ``%(prefix)`` itself for a git that
 #: leaves the path as written. The value does not start with
 #: ``:(optional)``, which ``--type=path`` strips and git 2.54's include
-#: path does not.
-_PREFIX_ASK = ("config", "--type=path", "--get", "bettermemory.prefix")
+#: path does not. The question lists every ``bettermemory`` variable
+#: (ENG-227), each a name and its value ended by a NUL: one of
+#: `_HASCONFIG_NAME` too where git took the config's hasconfig include
+#: (`Sources.hasconfig`: git 2.36 and later), none where it ignored it.
+_PREFIX_ASK = ("config", "-z", "--type=path", "--get-regexp", r"^bettermemory\.")
+_PREFIX_NAME = "bettermemory.prefix"
 _PREFIX_TAIL = "/z"
 #: The fifth, in `_COMPAT_PROBE` (ENG-207's round 8): git reads
 #: the format of a git directory it is named (setup.c's
@@ -248,7 +301,11 @@ class Sources:
     sets a ``compatObjectFormat`` other than its object format
     (`compat_differ`), None where git did not say (`_COMPAT_ASK`;
     ENG-207's round 8). One the same as the object format git never reads
-    and is never asked of (the module's docstring)."""
+    and is never asked of (the module's docstring). ENG-227: whether it
+    takes an ``includeIf "hasconfig:remote.*.url:..."`` (`hasconfig`, git
+    2.36 and later, `_PREFIX_ASK`), and the version it names (`version`,
+    ``git version``, `gitversion.parse`), each None where git did not
+    say."""
 
     own: tuple[str, ...]
     system: str | None
@@ -256,6 +313,8 @@ class Sources:
     resets: bool | None = None
     prefix: str | None = None
     compat_differ: bool | None = None
+    hasconfig: bool | None = None
+    version: tuple[int, int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -328,6 +387,15 @@ def reads_compat() -> bool | None:
     return sources().compat_differ
 
 
+def is_at_least(release: tuple[int, int]) -> bool | None:
+    """Whether the git on this process's PATH names `release` (major,
+    minor) or a later one as its version (`Sources.version`); None where
+    git has not named one (ENG-227). For the reads whose rule changed
+    with a release, which decline where this is None."""
+    found = sources().version
+    return None if found is None else found[:2] >= release
+
+
 def _key(path: str | None) -> str:
     """A PATH's name in the record: its digest, with the developer
     directory's on macOS (`_developer`), so the record holds no PATH; an
@@ -360,15 +428,22 @@ def _current(answer: _Answer, now: float, *, stamp: bool = True) -> bool:
     back: one kept after a failed ask (`tried`) for `RETRY_SECONDS` from
     then; else one younger than its lifetime (`REASK_SECONDS`,
     `RETRY_SECONDS` for a git that never answered or did not say how it
-    reads a remote, expands ``%(prefix)`` or reads a compatibility object
-    format, `Sources.legacy`, `Sources.prefix`, `Sources.compat_differ`)
-    whose git binary stamps as it did (not stated where `stamp` is
-    off)."""
+    reads a remote, expands ``%(prefix)``, reads a compatibility object
+    format, takes a hasconfig include or names its version,
+    `Sources.legacy`, `Sources.prefix`, `Sources.compat_differ`,
+    `Sources.hasconfig`, `Sources.version`) whose git binary stamps as it
+    did (not stated where `stamp` is off)."""
     if answer.tried is not None:
         return 0 <= now - answer.tried < RETRY_SECONDS
     age = now - answer.asked
     found = answer.sources
-    said = (found.legacy, found.prefix, found.compat_differ)
+    said = (
+        found.legacy,
+        found.prefix,
+        found.compat_differ,
+        found.hasconfig,
+        found.version,
+    )
     whole = answer.ok and None not in said
     if not 0 <= age < (REASK_SECONDS if whole else RETRY_SECONDS):
         return False
@@ -447,31 +522,86 @@ def _ask(key: str, now: float) -> _Answer:
     left = deadline - time.monotonic()
     if named is None or left <= 0:
         return failed
+    # A git before 2.42 has no such variable, and answers with an error;
+    # its system file is the one its system config's first entry is from.
+    system = (
+        named.stdout.strip()
+        if named.returncode == 0
+        else _older_system(folder, ceiling, deadline)
+    )
+    if system is None:
+        return failed
     listed = _git_runner.run_git(
         _LIST,
         cwd=folder,
-        timeout=left,
+        timeout=max(deadline - time.monotonic(), 0.0),
         text=False,
         env={**_DEVNULL, **ceiling},
         unset=_OVERRIDES,
     )
     if listed is None:
         return failed
-    # A git before 2.42 has no such variable, one before 2.26 no scopes:
-    # each answers with an error, which names nothing.
-    system = named.stdout.strip() if named.returncode == 0 else ""
+    # One before 2.26 has no scopes: it answers with an error, which names
+    # nothing.
     own = _own_files(listed.stdout) if listed.returncode == 0 else ()
+    version = _version(folder, ceiling, deadline)
     found = Sources(
-        own, system or _FALLBACK, *_reads_remotes(folder, ceiling, deadline)
+        own,
+        system or _FALLBACK,
+        *_reads_remotes(folder, ceiling, deadline),
+        version=version,
     )
     return _Answer(key, git, stamp, now, True, found)
 
 
+def _older_system(folder: str, ceiling: dict[str, str], deadline: float) -> str | None:
+    """The system file a git before 2.42 reads (`_SYSTEM_LIST`): the file
+    its system config's first entry comes from; "" where it names none
+    (no entry, or git refuses the file), and the fallback stands; None
+    where git does not answer before the monotonic `deadline`."""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        return None
+    done = _git_runner.run_git(
+        _SYSTEM_LIST,
+        cwd=folder,
+        timeout=left,
+        text=False,
+        env={"GIT_CONFIG_GLOBAL": os.devnull, **ceiling},
+        unset=_OVERRIDES,
+    )
+    if done is None:
+        return None
+    first = done.stdout.split(b"\0", 1)[0] if done.returncode == 0 else b""
+    if not first.startswith(b"file:"):
+        return ""
+    path = os.fsdecode(first[len(b"file:") :])
+    return path if _absolute(path) and len(path) <= _MAX_PATH else ""
+
+
+def _version(
+    folder: str, ceiling: dict[str, str], deadline: float
+) -> tuple[int, int, int] | None:
+    """The version the git on PATH names (``git version``,
+    `gitversion.parse`), asked before the monotonic `deadline`; None where
+    it does not answer in time or names none."""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        return None
+    done = _git_runner.run_git(
+        _VERSION_ASK, cwd=folder, timeout=left, env=ceiling, unset=_OVERRIDES
+    )
+    if done is None or done.returncode != 0:
+        return None
+    return gitversion.parse(done.stdout)
+
+
 #: What git says in the probe (`_reads_remotes`): `Sources.legacy`,
-#: `Sources.resets`, `Sources.prefix` and `Sources.compat_differ`.
-_Probed = tuple[bool | None, bool | None, str | None, bool | None]
+#: `Sources.resets`, `Sources.prefix`, `Sources.compat_differ` and
+#: `Sources.hasconfig`.
+_Probed = tuple[bool | None, bool | None, str | None, bool | None, bool | None]
 #: `_reads_remotes`' answer where git did not give one.
-_UNSAID: _Probed = (None, None, None, None)
+_UNSAID: _Probed = (None, None, None, None, None)
 
 
 def _reads_remotes(folder: str, ceiling: dict[str, str], deadline: float) -> _Probed:
@@ -479,13 +609,15 @@ def _reads_remotes(folder: str, ceiling: dict[str, str], deadline: float) -> _Pr
     `Sources.resets`), from its answer to `_REMOTE_ASK` in the probe's
     git directory (`_probe_repository`), the directory it expands
     ``%(prefix)`` to (`Sources.prefix`), from its answer to `_PREFIX_ASK`
-    there, and whether it reads a compatibility object format other than
-    the object format (`Sources.compat_differ`), from whether it exits 0
-    asked `_COMPAT_ASK` in `_COMPAT_PROBE` (ENG-207's round 8), each
-    asked from `folder` before the monotonic `deadline` with no config
-    but the probe's own; `_UNSAID` where git does not answer the first two
-    so, and it is asked again after `RETRY_SECONDS` (`_current`), as it
-    is where it does not answer the last in time, which alone is unsaid. A build's own option list (``git
+    there, which also says whether it takes a hasconfig include
+    (`Sources.hasconfig`, ENG-227), and whether it reads a compatibility
+    object format other than the object format (`Sources.compat_differ`),
+    from whether it exits 0 asked `_COMPAT_ASK` in `_COMPAT_PROBE`
+    (ENG-207's round 8), each asked from `folder` before the monotonic
+    `deadline` with no config but the probe's own; `_UNSAID` where git
+    does not answer the first two so, and it is asked again after
+    `RETRY_SECONDS` (`_current`), as it is where it does not answer the
+    last in time, which alone is unsaid. A build's own option list (``git
     version --build-options``) names no breaking changes (git 2.54's
     ``help.c``), so git is asked what it does. The answers are kept only
     where the probe stamps after git answers as it did before its content
@@ -508,10 +640,25 @@ def _reads_remotes(folder: str, ceiling: dict[str, str], deadline: float) -> _Pr
     if _probe_stamps(root) != before or not _probe_holds(root):
         return _UNSAID
     legacy, resets = _REMOTE_ANSWERS.get(said[0].strip(), (None, None))
-    expanded = said[1].endswith(_PREFIX_TAIL)
-    prefix = said[1][: -len(_PREFIX_TAIL)] if expanded else None
+    variables = _variables(said[1])
+    value = variables.get(_PREFIX_NAME)
+    expanded = value is not None and value.endswith(_PREFIX_TAIL)
+    prefix = value[: -len(_PREFIX_TAIL)] if value is not None and expanded else None
+    hasconfig = None if value is None else _HASCONFIG_NAME in variables
     differ = None if compat is None else compat.returncode == 0
-    return legacy, resets, prefix, differ
+    return legacy, resets, prefix, differ, hasconfig
+
+
+def _variables(listing: str) -> dict[str, str]:
+    """The variables ``git config -z --get-regexp`` lists, each a name, a
+    newline and its value, ended by a NUL (`_PREFIX_ASK`); the last of a
+    name stands."""
+    found: dict[str, str] = {}
+    for item in listing.split("\0"):
+        if item:
+            name, _sep, value = item.partition("\n")
+            found[name] = value
+    return found
 
 
 def _probe_ask(
@@ -753,13 +900,15 @@ def _recorded(key: str) -> _Answer | None:
                 a, b, c, d, e = (int(x) for x in stamp)
                 stamped = (a, b, c, d, e)
             tried = entry.get("tried")
-            flags = [entry.get(name) for name in ("legacy", "resets", "compat_differ")]
+            names = ("legacy", "resets", "compat_differ", "hasconfig")
+            flags = [entry.get(name) for name in names]
             if not all(flag is None or isinstance(flag, bool) for flag in flags):
                 return None
-            legacy, resets, differ = flags
+            legacy, resets, differ, hasconfig = flags
             prefix = entry.get("prefix")
             if prefix is not None and (not isinstance(prefix, str) or "\0" in prefix):
                 return None
+            version = _recorded_version(entry.get("version"))
             return _Answer(
                 key=key,
                 git=git,
@@ -773,12 +922,29 @@ def _recorded(key: str) -> _Answer | None:
                     resets,
                     prefix,
                     differ,
+                    hasconfig,
+                    version,
                 ),
                 tried=None if tried is None else float(tried),
             )
         except (KeyError, TypeError, ValueError):
             return None
     return None
+
+
+def _recorded_version(raw: Any) -> tuple[int, int, int] | None:
+    """A recorded `Sources.version`: three ints in range, or None where git
+    did not name one; ValueError where the record holds anything else,
+    which is no entry (`_recorded`)."""
+    if raw is None:
+        return None
+    if (
+        not isinstance(raw, list)
+        or len(raw) != 3
+        or not all(type(part) is int and 0 <= part < 1 << 16 for part in raw)
+    ):
+        raise ValueError("not a version")
+    return raw[0], raw[1], raw[2]
 
 
 def _record(answer: _Answer) -> None:
@@ -803,6 +969,10 @@ def _record(answer: _Answer) -> None:
         "resets": answer.sources.resets,
         "prefix": answer.sources.prefix,
         "compat_differ": answer.sources.compat_differ,
+        "hasconfig": answer.sources.hasconfig,
+        "version": None
+        if answer.sources.version is None
+        else list(answer.sources.version),
         "tried": answer.tried,
     }
     others = [e for e in _entries() if e.get("path") != answer.key]

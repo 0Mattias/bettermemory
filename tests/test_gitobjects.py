@@ -30,6 +30,8 @@ from bettermemory import gitfile_rule, gitobjects
 from bettermemory.gitobjects import Commit, ObjectReader, TreeEntry
 from bettermemory.location_git import RepositoryHistory
 
+from .test_origin_patch import _git_version
+
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
 _OFS_DELTA = 6
@@ -905,7 +907,10 @@ def test_the_object_format_is_read_as_git_reads_it(tmp_path: Path) -> None:
     as setup.c reads a repository's format (`gitfile_rule.object_format`).
     A line reader of gitobjects' own took ``objectFormat`` where no
     ``core.repositoryformatversion`` is set, which git clears (sha1), and
-    under format 0, where git dies; and lowercased a value git refuses."""
+    under format 0, where git dies; and lowercased a value git refuses.
+    git before 2.45 knows no ``compatObjectFormat`` and reads on past one
+    git 2.45 dies on, where the reader refuses it still (ENG-227)."""
+    compat_known = _git_version() >= (2, 45)
     repo = _init(tmp_path / "repo")
     config = repo / ".git" / "config"
     body = config.read_bytes()
@@ -924,7 +929,8 @@ def test_the_object_format_is_read_as_git_reads_it(tmp_path: Path) -> None:
             config.write_bytes(head + tail)
             git_says = _git_object_format(repo)
             ours = gitfile_rule.object_format(head + tail)
-            if ours != git_says:
+            refused = ours is None and b"compatObjectFormat" in tail
+            if ours != git_says and (compat_known or not refused):
                 differ.append((version, tail, git_says, ours))
     assert differ == []
 

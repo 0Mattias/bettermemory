@@ -51,9 +51,11 @@ _URL = "https://example.invalid/acme/game.git"
 _BASE_STATS = 10
 #: The steady prompt's further stat calls at a reftable checkout: the
 #: ``refs/heads`` file git writes there and the ``refs/heads/.invalid``
-#: its HEAD names, which the signature's read of HEAD's chain states
+#: its HEAD names, which the signature's read of HEAD's chain states, and
+#: the git binary, whose version the format's ``extensions.refStorage`` is
+#: read by (ENG-227, `gitfile_rule._git_is_at_least`)
 #: (`test_head_s_branch_costs_one_git_only_where_its_files_do_not_settle_it`).
-_REFTABLE_STATS = 2
+_REFTABLE_STATS = 3
 #: The steady prompt's readlink calls where the system config is read for
 #: a checkout's remotes: on macOS the one that keys git's answer of its
 #: system config files on the developer directory (`gitsystem._developer`,
@@ -452,6 +454,7 @@ def test_e16_a_config_file_read_costs_one_stat_and_no_git(
 
 @pytest.mark.parametrize("onbranch", [False, True])
 @pytest.mark.parametrize("backend", ["files", "reftable"])
+@pytest.mark.usefixtures("git_answered")
 def test_head_s_branch_costs_one_git_only_where_its_files_do_not_settle_it(
     tmp_path: Path,
     lab: tuple[Store, MachineIdentity, Config],
@@ -470,11 +473,13 @@ def test_head_s_branch_costs_one_git_only_where_its_files_do_not_settle_it(
     as config files, one stat each. Measured on macOS (git 2.54): the new
     process 1 spawn with a reftable HEAD and an include, 0 otherwise; the
     steady prompt 0 spawns, and 13 stat calls with 3 files (no include)
-    and 16 with 6 for the files backend, 15 with 3 and 19 with 7 for
+    and 16 with 6 for the files backend, 16 with 3 and 20 with 7 for
     reftable, whose checkout states the ``refs/heads`` stub git writes
-    and the ``refs/heads/.invalid`` its HEAD names (`_REFTABLE_STATS`),
-    with or without an include, as at 7054bb06; there the include had
-    the capture decline."""
+    and the ``refs/heads/.invalid`` its HEAD names, and the git binary,
+    whose version decides the format's ``extensions.refStorage`` (ENG-227:
+    git before 2.44 dies on it, `gitsystem.is_at_least`)
+    (`_REFTABLE_STATS`), with or without an include; at 7054bb06, one
+    fewer (no binary), and the include had the capture decline."""
     store, identity, config = lab
     repo = tmp_path / "game"
     repo.mkdir()
