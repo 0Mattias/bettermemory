@@ -1193,10 +1193,14 @@ eighteenth was built.
   (`location_git.machine_config_reads`), so it costs the files no read
   or stat once an origin is captured. In a process that has captured
   none, the files read each such file once, opening and stating it, and
-  the origin's signature taken within a second after takes that read's
-  stamps rather than stating the file again (`location_git.FRESH_SECONDS`),
-  so the two state it once, as the signature alone did (it stated each
-  twice, 9 stats becoming 14). `push.default` and the
+  the origin's signature taken within a second after, for a folder with
+  no kept capture, takes that read's stamps rather than stating the file
+  again (`location_git.FRESH_SECONDS`), so the two state it once, as the
+  signature alone did (it stated each twice, 9 stats becoming 14). A
+  signature compared with a kept capture states the files: one that took
+  the read's stamps there, the read evicted and taken again cold, missed
+  a rule written within the second after it and answered the kept
+  capture's old URL. `push.default` and the
   `branch.autoSetupMerge` and `branch.autoSetupRebase` words are read as
   git reads them (where any value declined), and Git for Windows'
   `core.fscache` and `core.longpaths` as the booleans it reads, so a

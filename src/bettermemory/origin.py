@@ -191,8 +191,11 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
 
     started = time.monotonic()
     started_wall = time.time()
-    signature = _capture_signature(resolved)
+    # The entry first: a signature compared with one states the machine's
+    # config, never reusing a read's stamps, which a change inside the
+    # window postdates (ENG-207's review of round 10).
     entry = _ORIGIN_CACHE.get(cwd_str)
+    signature = _capture_signature(resolved, reuse=entry is None)
     keep = False
     repo_url: str | None
     repo_url_alternates: tuple[str, ...]
@@ -350,7 +353,7 @@ class _OriginEntry:
     captured_wall: float
 
 
-def _capture_signature(start: Path) -> githead.Signature:
+def _capture_signature(start: Path, *, reuse: bool = False) -> githead.Signature:
     """The change detector a capture of `start` is kept against: the
     directory's `githead.signature` (the git directory, HEAD, the loose refs
     HEAD's chain reads, packed-refs, config and the variables that move
@@ -378,12 +381,14 @@ def _capture_signature(start: Path) -> githead.Signature:
     git includes is seen. Where the files do not settle the repository,
     the base signature already equals no other; where a stamp or the
     spelling cannot be read, a new object makes this one equal no other
-    either."""
+    either. With `reuse`, for a signature no kept entry is compared with,
+    the machine's config takes the stamps of a read taken just before
+    (`location_git.machine_config_stamps`)."""
     base, gd = capture_files(start)
     if gd is None:
         return base
     try:
-        extra: list[object] = [machine_config_stamps(str(gd.gitdir))]
+        extra: list[object] = [machine_config_stamps(str(gd.gitdir), reuse=reuse)]
         extra.append(repository_config_stamps(str(gd.commondir), str(gd.gitdir)))
         extra.append(legacy_remote_stamps(str(gd.commondir), "origin"))
         spelled = _spelled_as_git(gd.worktree_root)

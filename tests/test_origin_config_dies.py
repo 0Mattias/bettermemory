@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _caches, githead, location_git, origin
+from bettermemory import _caches, gitconfig, githead, location_git, origin
 
 from .test_location_git_include_conditions import _git, _repo
 from .test_membership_security import neutral_git
@@ -409,10 +409,84 @@ def test_a_cold_process_states_the_machine_s_config_once_for_both(
     _caches.clear_all()
     files = stated(lambda: origin.toplevel_and_head_from_files(repo))
     assert set(files) == names, "premise: the files read the machine's config"
-    assert stated(lambda: location_git.machine_config_stamps(git_dir)) == []
-    later = stated(lambda: location_git.machine_config_stamps(git_dir))
+    stamps = location_git.machine_config_stamps
+    assert stated(lambda: stamps(git_dir, reuse=True)) == []
+    later = stated(lambda: stamps(git_dir, reuse=True))
     assert set(later) == names
+    # A signature that does not reuse (one a kept entry is compared with)
+    # states the files, and takes the mark: the one after it states them.
+    _caches.clear_all()
+    stated(lambda: origin.toplevel_and_head_from_files(repo))
+    assert stated(lambda: stamps(git_dir)) == later
+    assert stated(lambda: stamps(git_dir, reuse=True)) == later
+    # A cold capture states each file once: its first signature reuses
+    # the files' read, its keep-check states them.
+    _caches.clear_all()
+    stated(lambda: origin.toplevel_and_head_from_files(repo))
+    assert stated(lambda: origin.capture(repo)) == later
     _caches.clear_all()
     stated(lambda: origin.toplevel_and_head_from_files(repo))
     monkeypatch.setattr(location_git, "FRESH_SECONDS", 0.0)
-    assert stated(lambda: location_git.machine_config_stamps(git_dir)) == later
+    assert stated(lambda: stamps(git_dir, reuse=True)) == later
+
+
+#: A global ``insteadOf`` rule that rewrites the repositories' remote.
+_REWRITE = (
+    '[user]\n\tname = A\n[url "https://new.example/"]\n'
+    "\tinsteadOf = https://old.example/\n"
+)
+
+
+def test_a_change_inside_the_window_reaches_a_kept_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's review of round 10: a kept capture's machine-config read
+    evicted (the bound scaled down to 1, which another repository's
+    capture fills), the files' answer reads the config again, cold, and
+    marks it fresh; a global ``insteadOf`` rule written within
+    `location_git.FRESH_SECONDS` after it reaches the next capture. Its
+    signature, compared with the kept entry, states the machine's config,
+    never reusing the read's stamps, which predate the rule: reused, they
+    equalled the entry's and the capture answered the old URL."""
+    machine = _machine(tmp_path, monkeypatch)
+    repo = _repo(tmp_path / "repo")
+    _git(repo, "remote", "set-url", "origin", "https://old.example/x.git")
+    other = _repo(tmp_path / "other")
+    found = githead.find_gitdir(repo)
+    assert found is not None
+    key = (str(machine), str(found.gitdir), gitconfig._home())
+    _caches.clear_all()
+    assert origin.capture(repo).repo == "https://old.example/x.git"
+    assert str(Path(os.path.realpath(repo))) in origin._ORIGIN_CACHE, "premise: kept"
+    monkeypatch.setattr(location_git, "_STAMPED_KEPT", 1)
+    origin.capture(other)
+    assert key not in location_git._STAMPED_READS, "premise: evicted"
+    assert origin.toplevel_and_head_from_files(repo) is not None
+    assert key in location_git._FRESH_READS, "premise: read cold, fresh"
+    machine.write_text(_REWRITE, encoding="utf-8")
+    assert origin.capture(repo).repo == "https://new.example/x.git"
+    assert origin.capture(repo).repo == "https://new.example/x.git"
+
+
+def test_a_change_inside_the_window_is_never_kept_unseen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A capture with no kept entry reuses the files' read for its first
+    signature (the cold-process saving); a rule written inside the window
+    after the read is what git's probes read, and the keep-check, which
+    states the files, sees it: the capture answers the new URL, and the
+    entry kept, by it or the next, holds the stamps of the config as it
+    is, never those from before the rule."""
+    machine = _machine(tmp_path, monkeypatch)
+    repo = _repo(tmp_path / "repo")
+    _git(repo, "remote", "set-url", "origin", "https://old.example/x.git")
+    resolved = Path(os.path.realpath(repo))
+    _caches.clear_all()
+    assert origin.toplevel_and_head_from_files(repo) is not None
+    machine.write_text(_REWRITE, encoding="utf-8")
+    for _ in range(2):
+        assert origin.capture(repo).repo == "https://new.example/x.git"
+        entry = origin._ORIGIN_CACHE.get(str(resolved))
+        if entry is not None:
+            assert entry.signature == origin._capture_signature(resolved)
+    assert str(resolved) in origin._ORIGIN_CACHE
