@@ -2323,13 +2323,13 @@ def test_the_repository_config_is_parsed_once_per_stamp(
     )
     _git(repo, "config", "push.followTags", "true")
     parsed: list[int] = []
-    real = origin._config_variable_names
+    real = origin_gitfiles._config_entries
 
-    def counted(data: bytes) -> set[bytes] | None:
+    def counted(data: bytes) -> list[tuple[bytes, bytes | None]] | None:
         parsed.append(len(data))
         return real(data)
 
-    monkeypatch.setattr(origin_gitfiles, "_config_variable_names", counted)
+    monkeypatch.setattr(origin_gitfiles, "_config_entries", counted)
     for _ in range(3):
         out, _ = _attach(memories, caller, monkeypatch)
     assert _counts(out, ids) == [0, 0]

@@ -1066,8 +1066,10 @@ def toplevel_and_head_from_files(cwd: Path | None) -> tuple[Path, str] | None:
     and a ``-c`` do not move a discovered repository's working tree).
     ``core.worktree`` set in either file, read as git reads it
     (`_config_variable_names`), a line naming ``bare`` with anything but a
-    plain false, and a file git refuses, that holds a NUL byte or that
-    cannot be read decline (`_config_moves_worktree`), and so does
+    plain false, a file git refuses, that holds a NUL byte, that cannot be
+    read or that ``git rev-parse`` may die reading (an include, a value
+    its default config refuses: `origin_gitfiles._rev_parse_dies`)
+    decline (`_config_moves_worktree`), and so does
     everything `githead` declines, a ``.git`` entry membership refuses
     among them; the process `repo_toplevel_and_head` runs then answers no
     repository for such an entry without running (`_git_result`).

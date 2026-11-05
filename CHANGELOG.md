@@ -752,12 +752,25 @@ eighteenth was built.
   capture keys at once (`repos_match` in health and recall compared the
   alias meanwhile); a hit states each such file once. The config a
   shell's environment gives git (`GIT_CONFIG_COUNT`, `git -c`) is not
-  read: it is not the repository's or the machine's. `_git.run_git`
-  takes `unset`, applied beneath its scrub and pins like `env`.
+  read: it is not the repository's or the machine's. The root and head
+  the origin reads from a repository's files with no process
+  (`toplevel_and_head_from_files`, for commit drift) read its config with
+  git's own parser, where a parser of the origin's own named the
+  variables, and decline where `git rev-parse --show-toplevel HEAD` may
+  die reading it, where they answered a root and a head git does not
+  print: an include (git dies on one with no value, an empty one or one
+  of a folder), and a value git's default config refuses (a `user.name`
+  or `core.excludesFile` with no value, a `core.filemode` that is no
+  boolean, a format version above 1), checked variable by variable
+  against git 2.54; git then answers, one process, and the settings a
+  checkout commonly carries keep the answer from the files.
+  `_git.run_git` takes `unset`, applied beneath its scrub and pins like
+  `env`.
   (`src/bettermemory/gitsystem.py`, `src/bettermemory/gitconfig.py`,
   `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
   `src/bettermemory/gitfile_rule.py`, `src/bettermemory/_git.py`,
-  `src/bettermemory/origin.py`, `tests/test_location_git_config.py`,
+  `src/bettermemory/origin.py`, `src/bettermemory/origin_gitfiles.py`,
+  `tests/test_origin_config_dies.py`, `tests/test_location_git_config.py`,
   `tests/test_location_git_parse.py`,
   `tests/test_location_git_include_conditions.py`,
   `tests/test_membership_cost.py`, `tests/test_git_no_fetch.py`,

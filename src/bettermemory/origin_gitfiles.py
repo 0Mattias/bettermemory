@@ -11,9 +11,10 @@ entry, and the file signatures the drift memos key on
 
 This module lives apart from `origin.py` to keep each module under the
 package's 2,000-line bound (ENG-96). It imports the standard library,
-`_caches` and `githead`, and `claims.hunk_lines` where it reads a patch;
-`origin` imports it, never the reverse, and
-re-exports every name a caller reads. Patches of `_config_variable_names`
+`_caches`, `githead` and `gitconfig` (git's parser of a config file,
+which `githead` loads already), and `claims.hunk_lines` where it reads a
+patch; `origin` imports it, never the reverse, and re-exports every name
+a caller reads. Patches of `_config_entries`
 and `_INDEX_FIRST_READ` go here, where their readers are.
 """
 
@@ -29,7 +30,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import _caches, githead
+from . import _caches, gitconfig, githead
 from ._location_probe import path_missing
 
 
@@ -49,12 +50,14 @@ class _ConfigFacts:
     sets as git reads them (`_config_variable_names`; None where git
     refuses the file or it holds a NUL byte), whether it names an
     attributes file or an attribute tree (``attributesfile`` or ``[attr``
-    anywhere in it, in any case), and whether a line names ``bare`` with
-    anything but a plain false."""
+    anywhere in it, in any case), whether a line names ``bare`` with
+    anything but a plain false, and whether ``git rev-parse`` may die
+    reading it (`_rev_parse_dies`; ENG-207's round 7)."""
 
     names: frozenset[bytes] | None
     attributes_elsewhere: bool
     bare_moves: bool
+    git_dies: bool = False
 
 
 _NO_CONFIG = _ConfigFacts(
@@ -63,14 +66,19 @@ _NO_CONFIG = _ConfigFacts(
 
 
 def _facts_of(data: bytes) -> _ConfigFacts:
-    names = _config_variable_names(data)
+    entries = _config_entries(data)
     lowered = data.lower()
     return _ConfigFacts(
-        names=None if names is None else frozenset(names),
+        names=None if entries is None else frozenset(n for n, _v in entries),
         attributes_elsewhere=b"attributesfile" in lowered or b"[attr" in lowered,
         bare_moves=any(
             b"bare" in line and _BARE_FALSE.fullmatch(line) is None
             for line in lowered.split(b"\n")
+        ),
+        git_dies=entries is not None
+        and any(
+            _rev_parse_dies(n, None if v is None else v.split(b"\0", 1)[0])
+            for n, v in entries
         ),
     )
 
@@ -197,18 +205,25 @@ def _config_moves_worktree(gd: githead.GitDir) -> bool:
     set in the common config or in config.worktree, read as git reads the
     files (a branch, a remote or ``extensions.worktreeConfig`` that merely
     holds the word sets nothing), a line naming ``bare`` with anything but
-    a plain false, and a file git refuses, that holds a NUL byte or that
-    cannot be read. config.worktree is read whether or not the extension
-    is set, an over-decline that costs one process where a file git does
-    not read sets either. The answer only decides whether the files or git
-    answer, so a false yes costs one process and a false no would be a
-    wrong root."""
+    a plain false, a file git refuses, that holds a NUL byte or that
+    cannot be read, and a file ``git rev-parse`` may die reading
+    (`_rev_parse_dies`: ENG-207's round 7, where the files answered a root
+    and a head git does not print). config.worktree is read whether or not
+    the extension is set, an over-decline that costs one process where a
+    file git does not read sets either. The answer only decides whether
+    the files or git answer, so a false yes costs one process and a false
+    no would be a wrong root, or one where git dies."""
     for path in (gd.commondir / "config", gd.gitdir / "config.worktree"):
         read = _config_facts(path)
         if read is None:
             return True
         facts = read[1]
-        if facts.names is None or b"core.worktree" in facts.names or facts.bare_moves:
+        if (
+            facts.names is None
+            or b"core.worktree" in facts.names
+            or facts.bare_moves
+            or facts.git_dies
+        ):
             return True
     return False
 
@@ -668,160 +683,162 @@ def _global_attributes_path(root: Path) -> str | None:
     return os.path.join(root, candidate)
 
 
-# git's isspace (sane_ctype in ctype.c), the letters a variable's name
-# starts with, the characters it continues with (iskeychar), and the
-# escapes a value may hold. ASCII only, as git's are.
-_CONFIG_SPACE = frozenset(b" \t\n\r")
-_CONFIG_ALPHA = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
-_CONFIG_KEYCHAR = _CONFIG_ALPHA | frozenset(b"0123456789-")
-_CONFIG_ESCAPES = frozenset(b'tbn\\"')
-_UTF8_BOM = b"\xef\xbb\xbf"
+#: The variables of a repository's config ``git rev-parse --show-toplevel
+#: HEAD`` dies on where they hold no boolean (`gitconfig.git_bool`; no
+#: value is true), as git 2.54 reads them: config.c's ``git_default_config``
+#: and the repository settings resolving HEAD reads (ENG-207's round 7,
+#: each checked against git, tests/test_origin_config_dies.py). Every
+#: ``advice.<key>`` is read so too.
+_DIES_UNLESS_BOOL = frozenset(
+    {
+        b"core.filemode",
+        b"core.ignorecase",
+        b"core.precomposeunicode",
+        b"core.symlinks",
+        b"core.sparsecheckout",
+        b"core.sparsecheckoutcone",
+        b"core.trustctime",
+        b"core.quotepath",
+        b"core.ignorestat",
+        b"core.protecthfs",
+        b"core.protectntfs",
+        b"core.warnambiguousrefs",
+        b"core.multipackindex",
+        b"core.commitgraph",
+        b"user.useconfigonly",
+        b"color.pager",
+        b"pager.color",
+        b"sparse.expectfilesoutsideofpatterns",
+        b"extensions.preciousobjects",
+        b"extensions.worktreeconfig",
+        b"feature.manyfiles",
+    }
+)
+#: The variables it dies on with no value, and reads any value of.
+_DIES_UNSET = frozenset(
+    {
+        b"core.excludesfile",
+        b"core.attributesfile",
+        b"core.editor",
+        b"core.askpass",
+        b"core.whitespace",
+        b"core.fsync",
+        b"core.fsyncmethod",
+        b"core.checkroundtripencoding",
+        b"core.untrackedcache",
+        b"user.name",
+        b"user.email",
+        b"author.name",
+        b"author.email",
+        b"committer.name",
+        b"committer.email",
+        b"i18n.commitencoding",
+        b"i18n.logoutputencoding",
+        b"attr.tree",
+        b"extensions.partialclone",
+    }
+)
+#: The variables that take a boolean or one word more (any case), and
+#: whether no value dies.
+_DIES_UNLESS_WORD = {
+    b"core.autocrlf": (b"input", False),
+    b"core.safecrlf": (b"warn", False),
+    b"core.logallrefupdates": (b"always", True),
+}
+#: The variables of the sections git reads whole that it reads any value
+#: of; any other variable there (`_READ_WHOLE`) is one whose reading is
+#: not ported here, and declines.
+_READ_ANY = frozenset(
+    {
+        b"core.bare",
+        b"core.worktree",
+        b"core.hookspath",
+        b"core.pager",
+        b"core.sshcommand",
+        b"core.eol",
+        b"core.fsmonitor",
+        b"core.splitindex",
+        b"core.bigfilethreshold",
+        b"core.notesref",
+        b"core.preloadindex",
+        b"core.alternaterefscommand",
+        b"core.alternaterefsprefixes",
+        b"extensions.noop",
+    }
+)
+#: Sections of whose variables git reads more than are named here.
+_READ_WHOLE = (b"core.", b"extensions.", b"feature.", b"index.", b"color.advice")
+#: Variables of other sections git reads by rules not ported here.
+_READ_ELSEWHERE = frozenset(
+    {
+        b"push.default",
+        b"pack.packsizelimit",
+        b"pack.compression",
+        b"branch.autosetupmerge",
+        b"branch.autosetuprebase",
+    }
+)
+
+
+def _rev_parse_dies(name: bytes, value: bytes | None) -> bool:
+    """Whether ``git rev-parse --show-toplevel HEAD`` may die on the
+    repository's config setting `name` (as `gitconfig.git_entries` names
+    it) to `value`: a value of a variable git reads that it refuses
+    (`_DIES_UNLESS_BOOL`, `_DIES_UNSET`, `_DIES_UNLESS_WORD`, a
+    ``core.repositoryformatversion`` that is no int or is above 1), a
+    variable git reads by a rule not ported here (`_READ_WHOLE`,
+    `_READ_ELSEWHERE`), and an include, whose file is not read here (git
+    dies on one with no value, an empty one and one of a folder). A false
+    yes costs one process (`_config_moves_worktree`)."""
+    if name in _DIES_UNLESS_BOOL or name.startswith(b"advice."):
+        return gitconfig.git_bool(value) is None
+    if name in _DIES_UNSET:
+        return value is None
+    if name in _DIES_UNLESS_WORD:
+        word, unset_dies = _DIES_UNLESS_WORD[name]
+        if value is None:
+            return unset_dies
+        said = value.split(b"\0", 1)[0].lower()
+        return said != word and gitconfig.git_bool(value) is None
+    if name == b"core.repositoryformatversion":
+        number = gitconfig.git_int(value)
+        return number is None or number > 1
+    if name == b"include.path" or (
+        name.startswith(b"includeif.") and name.endswith(b".path")
+    ):
+        return True
+    if name in _READ_ANY:
+        return False
+    return name in _READ_ELSEWHERE or name.startswith(_READ_WHOLE)
+
+
+def _config_entries(data: bytes) -> list[gitconfig.Entry] | None:
+    """The variables the config file `data` sets, as git's own parser
+    reads them (`gitconfig.git_entries`, ENG-207's round 7, which replaced
+    a parser of this module's own), each name to its first NUL byte and
+    each value too, as git's callbacks see them; None where git refuses
+    the file, and None for any file holding a NUL byte: git keeps a name
+    only up to a NUL in it, so ``[log "follow\\0"] x`` sets ``log.follow``
+    to git (and an escaped letter spells the word without its bytes),
+    which the raw text `_facts_of` also reads (``attributesfile``,
+    ``bare``) does not show."""
+    if b"\0" in data:
+        return None
+    return gitconfig.git_entries(data)
 
 
 def _config_variable_names(data: bytes) -> set[bytes] | None:
     """The names of the variables the config file `data` sets, as git's own
-    parser reads the file (``git_parse_source`` in config.c) and ``git
-    config --list --name-only`` prints them: ``section.key`` or
+    parser reads the file (`_config_entries`) and ``git config --list
+    --name-only`` prints them: ``section.key`` or
     ``section.subsection.key``, the section and the key in lower case, a
-    quoted subsection as written. A section header wherever a key may
-    start, a key with or without a value, comments, quoted and escaped
-    values, a value continued onto the next line by a backslash outside a
-    comment, CRLF line ends and a leading byte order mark are read as git
-    reads them, so ``log.follow`` is named in any case or layout git
-    accepts and a ``follow`` inside a value, a comment, a subsection or a
-    longer key is not. None where git refuses the file ("bad config
-    line"), and None for any file holding a NUL byte: git keeps a name only
-    up to a NUL in it, so ``[log "follow\\0"] x`` sets ``log.follow`` to git
-    (and an escaped letter spells the word without its bytes), which this
-    reader does not model. Past those, the names are the ones git lists,
-    pinned against git on the texts of tests/test_commit_drift_cache.py.
-    Values are read only to find where they end."""
-    if b"\0" in data:
-        return None
-    text = data.replace(b"\r\n", b"\n")
-    end = len(text)
-    pos = 0
-    if text[:1] == _UTF8_BOM[:1]:
-        if not text.startswith(_UTF8_BOM):
-            return None
-        pos = len(_UTF8_BOM)
-    names: set[bytes] = set()
-    section = b""
-    comment = False
-    while pos < end:
-        c = text[pos]
-        pos += 1
-        if c == 0x0A:
-            comment = False
-        elif comment or c in _CONFIG_SPACE:
-            continue
-        elif c in b"#;":
-            comment = True
-        elif c == 0x5B:  # "["
-            header = _config_section(text, pos)
-            if header is None:
-                return None
-            section, pos = header
-        elif c in _CONFIG_ALPHA:
-            start = pos - 1
-            while pos < end and text[pos] in _CONFIG_KEYCHAR:
-                pos += 1
-            key = text[start:pos].lower()
-            while pos < end and text[pos] in b" \t":
-                pos += 1
-            if pos < end:
-                c = text[pos]
-                pos += 1
-                if c == 0x3D:  # "="
-                    after = _config_value_end(text, pos)
-                    if after is None:
-                        return None
-                    pos = after
-                elif c != 0x0A:
-                    return None
-            names.add(section + b"." + key if section else key)
-        else:
-            return None
-    return names
-
-
-def _config_section(text: bytes, pos: int) -> tuple[bytes, int] | None:
-    """The name a section header gives the keys under it, and the position
-    after its ``]``, for a header whose ``[`` ends at `pos`; None where git
-    refuses the header (``get_base_var`` and ``get_extended_base_var`` in
-    config.c). ``[name]`` and the older ``[name.sub]`` are lower-cased
-    whole; ``[name "sub"]`` keeps the subsection as written, each
-    backslash escape read as the character it escapes."""
-    end = len(text)
-    name = bytearray()
-    while True:
-        if pos >= end:
-            return None
-        c = text[pos]
-        pos += 1
-        if c == 0x5D:  # "]"
-            return (bytes(name), pos) if name else None
-        if c in _CONFIG_SPACE:
-            break
-        if c not in _CONFIG_KEYCHAR and c != 0x2E:  # "."
-            return None
-        name.append(c + 32 if 0x41 <= c <= 0x5A else c)
-    while True:
-        if c == 0x0A or pos >= end:
-            return None
-        c = text[pos]
-        pos += 1
-        if c not in _CONFIG_SPACE:
-            break
-    if c != 0x22:  # a quoted subsection must follow
-        return None
-    name.append(0x2E)
-    while True:
-        if pos >= end:
-            return None
-        c = text[pos]
-        pos += 1
-        if c == 0x0A:
-            return None
-        if c == 0x22:
-            break
-        if c == 0x5C:  # a backslash escapes the next character
-            if pos >= end or text[pos] == 0x0A:
-                return None
-            c = text[pos]
-            pos += 1
-        name.append(c)
-    if pos >= end or text[pos] != 0x5D:
-        return None
-    return bytes(name), pos + 1
-
-
-def _config_value_end(text: bytes, pos: int) -> int | None:
-    """Where the value that starts at `pos` ends: past the newline that
-    ends its line, or a later one where a backslash outside a comment
-    continues it. None where git refuses the value (``parse_value`` in
-    config.c): a quote still open at its end, or an escape git does not
-    know."""
-    end = len(text)
-    quote = False
-    comment = False
-    while pos < end:
-        c = text[pos]
-        pos += 1
-        if c == 0x0A:
-            return None if quote else pos
-        if comment or (c in _CONFIG_SPACE and not quote):
-            continue
-        if c in b"#;" and not quote:
-            comment = True
-        elif c == 0x5C:
-            if pos < end:
-                if text[pos] != 0x0A and text[pos] not in _CONFIG_ESCAPES:
-                    return None
-                pos += 1
-        elif c == 0x22:
-            quote = not quote
-    return None if quote else pos
+    quoted subsection as written, so ``log.follow`` is named in any case
+    or layout git accepts and a ``follow`` inside a value, a comment, a
+    subsection or a longer key is not; None where git refuses the file
+    or it holds a NUL byte. Pinned against git on the texts of
+    tests/test_commit_drift_cache.py."""
+    entries = _config_entries(data)
+    return None if entries is None else {name for name, _value in entries}
 
 
 def attribute_files_signature(
