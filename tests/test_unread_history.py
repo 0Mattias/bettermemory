@@ -60,6 +60,7 @@ from .test_commit_drift_cache import (
     _EXTENSION,
     _NAMED_HISTORY,
     _REMOTE,
+    _STORES,
     _T0,
     _T1,
     _V1,
@@ -160,7 +161,7 @@ def test_a_search_hit_whose_history_was_not_read_is_flagged(
         other = _by_id(out)[outside]
         assert "commit_drift_unread" not in other and "commit_drift_count" not in other
     assert not _response._DRIFT_MEMO
-    assert bool(_response._DRIFT_TIMED_OUT) == (cause == "timeout")
+    assert bool(_response._DRIFT_TIMED_OUT) == (cause == "timeout"), _STORES
 
 
 @pytest.mark.parametrize("cause", _CAUSES)

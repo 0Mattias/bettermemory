@@ -254,13 +254,95 @@ def _attach(
         return real_run(argv, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", spy)
+    real_store = _response._DriftPass.store
+    _STORES.clear()
+    monkeypatch.setattr(_response._DriftPass, "store", _recording(real_store))
     try:
         builder.attach_commit_drift_counts(
             out, hits, memories, caller_origin=caller, admission=_counted(memories)
         )
     finally:
         monkeypatch.setattr(subprocess, "run", real_run)
+        monkeypatch.setattr(_response._DriftPass, "store", real_store)
     return out, calls
+
+
+#: What each store of the last `_attach` met (`_recording`), for the
+#: message of a premise that the memo kept a row: on Windows CI a pass's
+#: memo was found empty where the macOS legs keep it, on five tests, one
+#: leg of four where the four run the same pass before the premise, and
+#: the log said no more (run 42027942574).
+_STORES: list[dict[str, object]] = []
+
+
+def _recording(real: Any) -> Any:
+    """`_DriftPass.store`, recording in `_STORES` what it held when called
+    and, read just before and again just after it, each check it makes
+    that does not hold, with the value the pass keyed and the one read:
+    the head, the signature, the files beside the history and each
+    directory held. A check that moved between the two reads shows twice
+    or once; a store that held nothing to keep (0 resolved, 0 timed out)
+    was given nothing by the rows, which a failure counted during a
+    resolution explains."""
+
+    def moved(self: Any) -> dict[str, object]:
+        out: dict[str, object] = {}
+        if self._keyed is None:
+            return out
+        root, head = self._keyed
+        if self._owned:
+            now: object = origin.toplevel_and_head_from_files(self.cwd)
+            if now != self._keyed:
+                out["head"] = (self._keyed, now)
+        elif (now := origin_gitfiles.located_head(root)) != head:
+            out["head"] = (head, now)
+        if (now := githead.signature(self.cwd, owner=self._owned)) != self._signature:
+            out["signature"] = (self._signature, now)
+        if self._walk_files is not None and (
+            (now := origin.walk_files_signature(root)) != self._walk_files
+        ):
+            out["walk_files"] = (self._walk_files, now)
+        for directory, recorded in self._held_directories.items():
+            try:
+                status = os.stat(directory)
+                now = (status.st_mtime_ns, status.st_ctime_ns)
+            except OSError as exc:
+                now = repr(exc)
+            if now != recorded:
+                out[directory] = (recorded, now, _through_handle(directory))
+        return out
+
+    def store(self: Any) -> bool:
+        seen: dict[str, object] = {
+            "resolved": len(self._resolved),
+            "timed_out": len(self._timed_out),
+            "broken": self._broken,
+            "keyed": self._keyed is not None,
+            "owned": self._owned,
+            "before": moved(self),
+        }
+        kept = bool(real(self))
+        seen["kept"] = kept
+        seen["after"] = moved(self)
+        _STORES.append(seen)
+        return kept
+
+    return store
+
+
+def _through_handle(path: str) -> object:
+    """A held file's ``(st_mtime_ns, st_ctime_ns)`` read through an open
+    handle, for `_recording`: Windows' `os.stat` may answer from the
+    directory entry by name, `os.fstat` answers from the file. None for a
+    directory, which `os.open` does not open there."""
+    if not os.path.isfile(path):
+        return None
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        status = os.fstat(fd)
+    finally:
+        os.close(fd)
+    return (status.st_mtime_ns, status.st_ctime_ns)
 
 
 def _keying(repo: Path) -> list[tuple[str, ...]]:
@@ -641,17 +723,24 @@ def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
     hits = run_search(memories, "widget rule", max_results=50)
     builder = ResponseBuilder(stale_after_days=30)
     out = [builder.hit_to_dict(hit, now=_NOW) for hit in hits]
+    real_store = _response._DriftPass.store
+    _STORES.clear()
+    monkeypatch.setattr(_response._DriftPass, "store", _recording(real_store))
     builder.attach_commit_drift_counts(
         out, hits, memories, caller_origin=caller, admission=_counted(memories)
     )
+    monkeypatch.setattr(_response._DriftPass, "store", real_store)
     monkeypatch.setattr(subprocess, "run", real_run)
+    stores = list(_STORES)
     assert _by_id(out)[memory_id]["commit_drift_count"] == 2, "the unfiltered fallback"
 
     keying = _keying(repo)
     assert (keying == []) == (os.name == "posix" and githead._POSIX), "who keys"
     after, calls = _attach(memories, caller, monkeypatch)
     if failure == "timeout":
-        assert _by_id(after)[memory_id]["commit_drift_count"] == 2, "kept a minute"
+        assert _by_id(after)[memory_id]["commit_drift_count"] == 2, (
+            f"kept a minute ({stores})"
+        )
         assert calls == keying, "the row forks nothing"
         clock[0] += _response._TIMED_OUT_SECONDS
         after, calls = _attach(memories, caller, monkeypatch)
@@ -705,7 +794,7 @@ def test_every_hit_at_an_anchor_whose_names_timed_out_is_kept_a_minute(
     assert len(walks) == 2, "premise: the names, then the commits alone, once"
     assert [_by_id(out)[i]["commit_drift_count"] for i in ids] == [1, 1]
     assert not _response._DRIFT_MEMO
-    assert len(_response._DRIFT_TIMED_OUT) == 2
+    assert len(_response._DRIFT_TIMED_OUT) == 2, _STORES
     out, calls = _attach(memories, caller, monkeypatch)
     assert calls == _keying(repo) and len(walks) == 2, "kept a minute"
     clock[0] += _response._TIMED_OUT_SECONDS
@@ -756,7 +845,7 @@ def test_every_head_move_is_a_new_key_wherever_the_rows_are_keyed(
 
     cold, _ = _attach(memories, caller, monkeypatch)
     assert counts(cold) == [1, 1]
-    assert len(_response._DRIFT_MEMO) == 2, "premise: both rows are keyed"
+    assert len(_response._DRIFT_MEMO) == 2, f"premise: both rows are keyed ({_STORES})"
     warm, calls = _attach(memories, caller, monkeypatch)
     assert counts(warm) == [1, 1] and calls == _keying(repo), "the memo answers"
     head = _git(repo, "rev-parse", "HEAD")
@@ -826,7 +915,9 @@ def test_the_memoised_verdicts_run_no_git_wherever_the_rows_are_keyed(
     the row is left unresolved, as before."""
     repo, caller, memory_id, memories = _cited_once(memory_dir, tmp_path, monkeypatch)
     _attach(memories, caller, monkeypatch)
-    assert len(_response._DRIFT_MEMO) == 1, "premise: the search keyed the row"
+    assert len(_response._DRIFT_MEMO) == 1, (
+        f"premise: the search keyed the row ({_STORES})"
+    )
     keyed_by_files = _keying(repo) == []
     calls: list[tuple[str, ...]] = []
     real_run = subprocess.run
