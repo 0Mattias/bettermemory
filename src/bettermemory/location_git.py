@@ -32,6 +32,7 @@ import os
 import re
 import stat
 import threading
+import time
 from collections import deque
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -822,12 +823,24 @@ def config_unchanged(cap: Capture) -> bool:
 _STAMPED_READS: dict[tuple[str, str, str | None], ConfigValues] = {}
 _STAMPED_LOCK = threading.Lock()
 _STAMPED_KEPT = 256
+#: The reads `machine_config_reads` took from the files, by `_STAMPED_READS`'
+#: key, with when (`time.monotonic`): the stamps `machine_config_stamps`
+#: takes next within `FRESH_SECONDS` are those reads' own, the files not
+#: stated again (ENG-207's review of round 8: a cold process stated each
+#: twice, its files' answer and then the origin's signature, 9 stats
+#: become 14). Each is taken once; a later signature states the files.
+_FRESH_READS: dict[tuple[str, str, str | None], float] = {}
+#: How long a read `machine_config_reads` took stands for the next stamps
+#: unstated: a change to a file within it is seen at the signature after,
+#: as one made just after the stamps were stated is.
+FRESH_SECONDS = 1.0
 
 
 @_caches.register
 def _clear_stamped_reads() -> None:
     with _STAMPED_LOCK:
         _STAMPED_READS.clear()
+        _FRESH_READS.clear()
 
 
 def _stamped_read(path: str, git_dir: str) -> ConfigValues:
@@ -863,9 +876,21 @@ def machine_config_stamps(git_dir: str) -> tuple[object, ...]:
     stamps them (`_rewrites`). `origin`'s capture is kept against it, so
     a rule set there reaches its next capture as it reaches a capture's
     (`config_unchanged`). Each file and its includes are read once and
-    then only stated (`_stamped_read`)."""
+    then only stated (`_stamped_read`), save where `machine_config_reads`
+    read it within `FRESH_SECONDS`: its stamps are then that read's, not
+    stated again, once (`_FRESH_READS`)."""
     named = _machine_configs(stamp=False)
-    return (named, *(tuple(_stamped_read(p, git_dir).files or ()) for p in named))
+    home, now = _home(), time.monotonic()
+    stamps: list[object] = [named]
+    for path in named:
+        key = (path, git_dir, home)
+        with _STAMPED_LOCK:
+            taken = _FRESH_READS.pop(key, None)
+            read = _STAMPED_READS.get(key)
+        if read is None or taken is None or not 0 <= now - taken < FRESH_SECONDS:
+            read = _stamped_read(path, git_dir)
+        stamps.append(tuple(read.files or ()))
+    return tuple(stamps)
 
 
 def machine_config_reads(git_dir: str) -> tuple[ConfigValues, ...]:
@@ -875,12 +900,23 @@ def machine_config_reads(git_dir: str) -> tuple[ConfigValues, ...]:
     each signature (a changed one is read again there), so one read here
     is as fresh as the origin captured before it (ENG-207's round 8,
     `origin_gitfiles._machine_config_dies`). A file no capture of this
-    process read yet is read, once, and kept."""
+    process read yet is read, opened and stated, once, and kept, and the
+    stamps the origin's signature takes next reuse that read's
+    (`_FRESH_READS`), so the two together state it once."""
     home, out = _home(), []
     for path in _machine_configs(stamp=False):
+        key = (path, git_dir, home)
         with _STAMPED_LOCK:
-            read = _STAMPED_READS.get((path, git_dir, home))
-        out.append(read if read is not None else _stamped_read(path, git_dir))
+            read = _STAMPED_READS.get(key)
+        if read is None:
+            started = time.monotonic()
+            read = _stamped_read(path, git_dir)
+            with _STAMPED_LOCK:
+                _FRESH_READS.pop(key, None)
+                _FRESH_READS[key] = started
+                while len(_FRESH_READS) > _STAMPED_KEPT:
+                    del _FRESH_READS[next(iter(_FRESH_READS))]
+        out.append(read)
     return tuple(out)
 
 

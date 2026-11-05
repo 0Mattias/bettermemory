@@ -1191,7 +1191,12 @@ eighteenth was built.
   condition the read does not evaluate too. That is judged from the
   reads the origin's capture keeps against their stamps
   (`location_git.machine_config_reads`), so it costs the files no read
-  once an origin is captured. `push.default` and the
+  or stat once an origin is captured. In a process that has captured
+  none, the files read each such file once, opening and stating it, and
+  the origin's signature taken within a second after takes that read's
+  stamps rather than stating the file again (`location_git.FRESH_SECONDS`),
+  so the two state it once, as the signature alone did (it stated each
+  twice, 9 stats becoming 14). `push.default` and the
   `branch.autoSetupMerge` and `branch.autoSetupRebase` words are read as
   git reads them (where any value declined), and Git for Windows'
   `core.fscache` and `core.longpaths` as the booleans it reads, so a

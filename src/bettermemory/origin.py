@@ -1079,7 +1079,8 @@ def toplevel_and_head_from_files(cwd: Path | None) -> tuple[Path, str] | None:
     its default config refuses: `origin_gitfiles._rev_parse_dies`)
     decline (`_config_moves_worktree`), as does a machine's config git may
     die reading (`_machine_config_dies`, from the reads the origin's
-    capture keeps, so with no read), and so does
+    capture keeps: none read once one is captured, else read once, the
+    signature after reusing the stats), and so does
     everything `githead` declines, a ``.git`` entry membership refuses
     among them; the process `repo_toplevel_and_head` runs then answers no
     repository for such an entry without running (`_git_result`).

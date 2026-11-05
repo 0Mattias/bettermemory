@@ -850,7 +850,9 @@ def _machine_config_dies(
     machine's config (the system's and the global files, with what they
     include) for the repository whose git directory is `git_dir`, from
     `reads` (`location_git.machine_config_reads`: the reads `origin`'s
-    capture keeps against its stamps, so this costs no read): one git
+    capture keeps against its stamps, so this costs no read where an
+    origin was captured, and where none was the file is read once, the
+    origin's signature after taking that read's stats): one git
     dies reading or may (a line its parser refuses, an include it cannot
     read or follow: `gitconfig.ConfigValues.dies`, `maybe_dies`), one read
     in part, and a value `_machine_value_dies` refuses, under an include

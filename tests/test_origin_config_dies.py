@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _caches, origin
+from bettermemory import _caches, githead, location_git, origin
 
 from .test_location_git_include_conditions import _git, _repo
 from .test_membership_security import neutral_git
@@ -362,3 +362,57 @@ def test_the_machine_s_config_costs_the_files_no_read(
             patch.setattr(os, name, spy(getattr(os, name)))
         assert origin.toplevel_and_head_from_files(repo) is not None
     assert touched == []
+
+
+def test_a_cold_process_states_the_machine_s_config_once_for_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's review of round 8: in a process that has captured no
+    origin, the files' answer reads the machine's config, each file opened
+    and stated, and the origin's signature then stated each again (9
+    stats became 14). The signature that follows within
+    `location_git.FRESH_SECONDS` takes that read's stamps, so the two
+    state each file once; the signature after it, and one past the
+    window, state the files as before."""
+    machine = _machine(tmp_path, monkeypatch)
+    extra = tmp_path / "machine-extra.gitconfig"
+    extra.write_text("[core]\n\tautocrlf = input\n", encoding="utf-8")
+    machine.write_text(
+        f"[user]\n\tname = A Person\n[include]\n\tpath = {extra.as_posix()}\n",
+        encoding="utf-8",
+    )
+    repo = _repo(tmp_path / "repo")
+    found = githead.find_gitdir(repo)
+    assert found is not None
+    git_dir = str(found.gitdir)
+    names = {machine.name, extra.name}
+    touched: list[str] = []
+
+    def spy(real: Any) -> Any:
+        def counted(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if isinstance(path, (str, os.PathLike)) and (
+                os.path.basename(os.fspath(path)) in names
+            ):
+                touched.append(os.path.basename(os.fspath(path)))
+            return real(path, *args, **kwargs)
+
+        return counted
+
+    def stated(call: Any) -> list[str]:
+        touched.clear()
+        with monkeypatch.context() as patch:
+            for name in ("stat", "lstat"):
+                patch.setattr(os, name, spy(getattr(os, name)))
+            call()
+        return sorted(touched)
+
+    _caches.clear_all()
+    files = stated(lambda: origin.toplevel_and_head_from_files(repo))
+    assert set(files) == names, "premise: the files read the machine's config"
+    assert stated(lambda: location_git.machine_config_stamps(git_dir)) == []
+    later = stated(lambda: location_git.machine_config_stamps(git_dir))
+    assert set(later) == names
+    _caches.clear_all()
+    stated(lambda: origin.toplevel_and_head_from_files(repo))
+    monkeypatch.setattr(location_git, "FRESH_SECONDS", 0.0)
+    assert stated(lambda: location_git.machine_config_stamps(git_dir)) == later
