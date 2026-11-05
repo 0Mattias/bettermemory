@@ -39,6 +39,7 @@ from typing import Any
 import pytest
 
 from bettermemory import _caches, gitconfig, gitsystem, location, location_git, origin
+from bettermemory import _git as git_runner
 from bettermemory.location import remote_key
 
 from .test_location_git_config import _aged, _FakeGit, _record
@@ -993,7 +994,7 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
     again after `gitsystem.RETRY_SECONDS`. The next ask, with no writer,
     rebuilds the probe and answers as git does."""
     truth = _this_git()
-    real = gitsystem._git_runner.run_git
+    real = git_runner.run_git
     question = gitsystem._PREFIX_ASK if name == "config" else gitsystem._REMOTE_ASK
 
     def tampered(args: Sequence[str], **kw: Any) -> Any:
@@ -1003,7 +1004,7 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
             os.replace(path + ".t", path)
         return real(args, **kw)
 
-    monkeypatch.setattr(gitsystem._git_runner, "run_git", tampered)
+    monkeypatch.setattr(git_runner, "run_git", tampered)
     where = gitsystem._where()
     assert where is not None
     assert _ask_probe() == gitsystem._UNSAID
@@ -1016,14 +1017,14 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
         check=True,
     )
     if name == "config":
-        wrong = asked.stdout.strip() != truth[2] + "/z"
+        wrong = asked.stdout.strip() != f"{truth[2]}/z"
     else:
         wrong = gitsystem._REMOTE_ANSWERS[asked.stdout.strip()] != truth[:2]
     assert wrong, "premise: git answers wrong"
     _caches.clear_all()
     found = gitsystem.sources()
     assert (found.legacy, found.resets, found.prefix) == (None, None, None)
-    monkeypatch.setattr(gitsystem._git_runner, "run_git", real)
+    monkeypatch.setattr(git_runner, "run_git", real)
     assert _ask_probe() == truth
 
 
