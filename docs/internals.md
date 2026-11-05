@@ -498,13 +498,19 @@ files at the null device, the build's own files that hold an entry
 (git 2.26 and later); a file it names by a path with no drive on
 Windows is not kept. A third question asks how that git reads a remote,
 which its build decides and no option list names: `git ls-remote
---get-url p` in a git directory under the state directory (`git-probe`)
-whose remote `p` only `remotes/p` names, with the URLs `a`, an empty
-one and `b`, prints `b` for a git that reads the legacy files and
-empties a remote's URLs at an empty one (2.46 and later), `a` for one
-before 2.46, and `p` for one built with breaking changes, which reads
-no legacy file; anything else leaves both unknown, and the answer is
-asked again after a minute. All three run in an empty owner-only folder
+--get-url p` in a git directory under the state directory
+(`git-probe-<digest>`, named by a digest of what it holds, so a build
+that probes with other content has a folder of its own) whose remote
+`p` only `remotes/p` names, with the URLs `a`, an empty one and `b`,
+prints `b` for a git that reads the legacy files and empties a remote's
+URLs at an empty one (2.46 and later), `a` for one before 2.46, and `p`
+for one built with breaking changes, which reads no legacy file;
+anything else leaves both unknown, and the answer is asked again after
+a minute. The probe is stamped before its content is checked and again
+after git answers, and the answer is kept only where nothing changed,
+so another writer there while git reads it leaves the answer unknown
+rather than wrong; an entry it is not built with is removed (a link
+unlinked, never followed) and the probe built again. All three run in an empty owner-only folder
 under the state directory (`git-ask`), with `GIT_CEILING_DIRECTORIES`
 naming the state directory, so git finds no repository there wherever
 the state directory sits (the root of git's drive, asked before, can be

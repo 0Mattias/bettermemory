@@ -52,6 +52,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 import threading
 import time
@@ -108,13 +109,27 @@ ASK_FOLDER = "git-ask"
 #: The git directory under the state directory git is asked how it reads
 #: a remote in (`_probe_repository`): a remote ``p`` its config gives no
 #: URL and whose ``remotes/p`` file gives one, an empty one and another.
-PROBE_FOLDER = "git-probe"
 _PROBE_FILES = {
     "HEAD": b"ref: refs/heads/main\n",
     "config": b"[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
     "remotes/p": b"URL: bettermemory-probe-a\nURL:\nURL: bettermemory-probe-b\n",
 }
 _PROBE_FOLDERS = ("objects", "refs", "remotes")
+
+
+def _probe_name(files: dict[str, bytes], folders: tuple[str, ...]) -> str:
+    """The probe's folder for `files` and `folders`: named by a digest of
+    them, so a build that probes with other content keeps a folder of its
+    own, and the two never rewrite each other's while git reads it
+    (ENG-207's round 7)."""
+    held = repr((sorted(files.items()), folders)).encode("ascii")
+    return "git-probe-" + hashlib.sha256(held).hexdigest()[:16]
+
+
+PROBE_FOLDER = _probe_name(_PROBE_FILES, _PROBE_FOLDERS)
+#: What of the probe is stamped around git's answer: the folder, its
+#: folders and its files (`_probe_stamps`).
+_PROBE_STAMPED = ("", *_PROBE_FOLDERS, *_PROBE_FILES)
 #: The question (``git ls-remote --get-url p``), and the URL it prints for
 #: each answer: the last of the file's (it reads the file and an empty
 #: URL empties the list), the first (it reads the file, and an empty URL
@@ -351,50 +366,121 @@ def _reads_remotes(
     it does not answer so, and the answer is asked again after
     `RETRY_SECONDS` (`_current`). A build's own option list
     (``git version --build-options``) names no breaking changes (git
-    2.54's ``help.c``), so git is asked what it does."""
+    2.54's ``help.c``), so git is asked what it does. The answer is kept
+    only where the probe stamps after git answers as it did before its
+    content was checked (`_probe_stamps`): another writer's file there
+    while git read it (ENG-207's round 7: one rewriting ``remotes/p``
+    made about one ask in three answer wrong) leaves both None."""
     probe = _probe_repository()
     if probe is None or left <= 0:
         return None, None
+    root, before = probe
     done = _git_runner.run_git(
         _REMOTE_ASK,
         cwd=folder,
-        git_dir=probe,
+        git_dir=root,
         timeout=left,
         env={**_DEVNULL, "GIT_CONFIG_NOSYSTEM": "1", **ceiling},
         unset=_PROBE_UNSET,
     )
     if done is None or done.returncode != 0:
         return None, None
+    if _probe_stamps(root) != before or not _probe_holds(root):
+        return None, None
     return _REMOTE_ANSWERS.get(done.stdout.strip(), (None, None))
 
 
-def _probe_repository() -> str | None:
-    """The git directory `_REMOTE_ASK` is asked in: `PROBE_FOLDER` under
-    the state directory, owner-only, holding `_PROBE_FILES` and the
-    folders git's test of a git directory looks for, and nothing else
-    (an entry of another's could change the answer: none is read). None
-    where it cannot be made so."""
+def _probe_repository() -> tuple[str, list[Stamp | None]] | None:
+    """The git directory `_REMOTE_ASK` is asked in, with its stamps
+    (`_probe_stamps`) taken before its content was checked:
+    `PROBE_FOLDER` under the state directory, owner-only, holding
+    `_PROBE_FILES` and the folders git's test of a git directory looks
+    for, and nothing else (an entry of another's could change the answer:
+    none is read). Where it does not hold so (`_probe_holds`), what does
+    not belong is removed and it is built again, once, rather than left
+    unknown and asked again each `RETRY_SECONDS`; None where it still
+    does not, the folder is a link, or it cannot be made so."""
     from . import _daemon_client
 
     try:
         root = _daemon_client.resolve_state_dir() / PROBE_FOLDER
-        ensure_owner_only_dir(root, parents=True)
-        for name in _PROBE_FOLDERS:
-            ensure_owner_only_dir(root / name)
-        for name, data in _PROBE_FILES.items():
-            path = root / name
-            try:
-                same = path.read_bytes() == data
-            except FileNotFoundError:
-                same = False
-            if not same:
-                atomic_write_bytes(path, data, mode_before_rename=0o600)
-        expected = {*_PROBE_FOLDERS, *(n for n in _PROBE_FILES if "/" not in n)}
-        if set(os.listdir(root)) != expected or os.listdir(root / "remotes") != ["p"]:
-            return None
-        return os.path.realpath(root)
+        for _attempt in range(2):
+            ensure_owner_only_dir(root, parents=True)
+            if root.is_symlink():
+                return None
+            for name in _PROBE_FOLDERS:
+                ensure_owner_only_dir(root / name)
+            for name, data in _PROBE_FILES.items():
+                path = root / name
+                try:
+                    same = path.read_bytes() == data
+                except FileNotFoundError:
+                    same = False
+                if not same:
+                    atomic_write_bytes(path, data, mode_before_rename=0o600)
+            real = os.path.realpath(root)
+            before = _probe_stamps(real)
+            if _probe_holds(real):
+                return real, before
+            _clear_probe(root)
     except (OSError, ValueError):
-        return None
+        pass
+    return None
+
+
+def _probe_stamps(root: str) -> list[Stamp | None]:
+    """The stamps of the probe at `root`: the folder and its folders,
+    whose times move as an entry is made or removed, and each file."""
+    return [file_stamp(os.path.join(root, name)) for name in _PROBE_STAMPED]
+
+
+def _probe_holds(root: str) -> bool:
+    """Whether the probe at `root` holds what it is built to and nothing
+    else: each of `_PROBE_FOLDERS` a folder and each of `_PROBE_FILES` a
+    regular file with its content (neither a link), and no other entry
+    in it or in ``remotes``."""
+    expected = {*_PROBE_FOLDERS, *(n for n in _PROBE_FILES if "/" not in n)}
+    if set(os.listdir(root)) != expected or os.listdir(
+        os.path.join(root, "remotes")
+    ) != ["p"]:
+        return False
+    for name in _PROBE_FOLDERS:
+        if not stat.S_ISDIR(os.lstat(os.path.join(root, name)).st_mode):
+            return False
+    for name, data in _PROBE_FILES.items():
+        path = os.path.join(root, name)
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return False
+        with open(path, "rb") as f:
+            if f.read(len(data) + 1) != data:
+                return False
+    return True
+
+
+def _clear_probe(root: Path) -> None:
+    """Remove from the probe at `root` (no link: `_probe_repository`)
+    each entry that does not belong (`_probe_holds`): one of another
+    name, in it or in ``remotes``, and one of a probe's name that is not
+    of its kind, a link among them (a link is removed, never followed). A
+    file whose content is another's is written again by the build."""
+    files = {n for n in _PROBE_FILES if "/" not in n}
+    for folder, keep_folders, keep_files in (
+        (root, set(_PROBE_FOLDERS), files),
+        (root / "remotes", set(), {"p"}),
+    ):
+        if folder.is_symlink() or not folder.is_dir():
+            continue
+        for entry in list(os.scandir(folder)):
+            is_dir = entry.is_dir(follow_symlinks=False)
+            is_file = entry.is_file(follow_symlinks=False)
+            if (entry.name in keep_folders and is_dir) or (
+                entry.name in keep_files and is_file
+            ):
+                continue
+            if is_dir:
+                shutil.rmtree(entry.path)
+            else:
+                os.unlink(entry.path)
 
 
 def _own_files(listing: bytes) -> tuple[str, ...]:

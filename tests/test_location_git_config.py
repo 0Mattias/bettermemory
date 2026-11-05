@@ -707,7 +707,8 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
     }
     # How git reads a remote is asked of the probe's git directory alone,
     # with no config file of the machine's or the caller's read.
-    assert remote_kw["git_dir"] == gitsystem._probe_repository()
+    probe = gitsystem._probe_repository()
+    assert probe is not None and remote_kw["git_dir"] == probe[0]
     assert remote_kw["env"] == {
         "GIT_CONFIG_SYSTEM": os.devnull,
         "GIT_CONFIG_GLOBAL": os.devnull,

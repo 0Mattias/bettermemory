@@ -222,7 +222,7 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     assert [c[0][1 + len(_git.PINS) :] for c in calls] == [
         list(gitsystem._VAR),
         list(gitsystem._LIST),
-        [f"--git-dir={probe}", *gitsystem._REMOTE_ASK],
+        [f"--git-dir={probe[0]}", *gitsystem._REMOTE_ASK],
     ]
     where = gitsystem._where()
     assert where is not None

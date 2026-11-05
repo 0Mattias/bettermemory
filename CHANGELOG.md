@@ -711,7 +711,12 @@ eighteenth was built.
   changes reads neither): `gitsystem` asks git both with the system
   files, from the URL `git ls-remote --get-url` prints for a remote only
   a legacy file of a git directory under the state directory names (9 ms
-  measured, once an hour with the rest). An insteadOf rule is chosen as
+  measured, once an hour with the rest). That git directory is named by
+  a digest of its content, stamped before its content is checked and
+  after git answers, the answer kept only where nothing changed (another
+  writer rewriting it made one ask in three answer wrong, kept an hour),
+  and rebuilt where it holds an entry it is not built with, which left
+  the answer unknown and asked again every minute. An insteadOf rule is chosen as
   git chooses it (an empty prefix matches every URL; of equal prefixes
   the first under the base git met first). A pattern's character classes
   and backslash escapes are read as git's wildmatch reads them, and the

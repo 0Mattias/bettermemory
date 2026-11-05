@@ -25,10 +25,14 @@ from __future__ import annotations
 
 import inspect
 import os
+import shutil
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -778,7 +782,7 @@ def test_how_git_reads_a_remote_is_asked_of_git_and_recorded() -> None:
         "GIT_CONFIG_GLOBAL": os.devnull,
     }
     asked = subprocess.run(
-        ["git", f"--git-dir={probe}", *gitsystem._REMOTE_ASK],
+        ["git", f"--git-dir={probe[0]}", *gitsystem._REMOTE_ASK],
         capture_output=True,
         text=True,
         env=env,
@@ -789,6 +793,141 @@ def test_how_git_reads_a_remote_is_asked_of_git_and_recorded() -> None:
     entry = _record(state)["entries"][0]
     assert (entry["legacy"], entry["resets"]) == said
     assert _record(state)["format"] == gitsystem.RECORD_FORMAT == 2
+
+
+def _this_git() -> tuple[bool | None, bool | None]:
+    """How the git on PATH reads a remote, asked once in a fresh probe."""
+    where = gitsystem._where()
+    assert where is not None
+    said = gitsystem._reads_remotes(*where, 5.0)
+    assert said in gitsystem._REMOTE_ANSWERS.values(), "premise: git answers"
+    return said
+
+
+#: What another writer puts in ``remotes/p``: the content git answers
+#: "reads no reset" for (its first URL alone) and "reads no legacy file"
+#: for (an empty file, which names no URL).
+_TAMPERED = [b"URL: bettermemory-probe-a\n", b""]
+
+
+@pytest.mark.parametrize("content", _TAMPERED, ids=["no_reset", "no_legacy"])
+def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
+    monkeypatch: pytest.MonkeyPatch, content: bytes
+) -> None:
+    """ENG-207's round 7: another writer rewriting ``remotes/p`` while git
+    read it made git answer for its content, and the answer was kept (an
+    hour for "reads no legacy file"). The probe is stamped before its
+    content is checked and again after git answers, and the answer is kept
+    only where nothing changed: here the writer replaces the file in the
+    middle of each ask, git answers for its content, and the ask says
+    nothing, so it is asked again after `gitsystem.RETRY_SECONDS`. The next
+    ask, with no writer, rebuilds the probe and answers as git does."""
+    truth = _this_git()
+    real = gitsystem._git_runner.run_git
+
+    def tampered(args: Sequence[str], **kw: Any) -> Any:
+        if tuple(args) == gitsystem._REMOTE_ASK:
+            path = os.path.join(kw["git_dir"], "remotes", "p")
+            Path(path + ".t").write_bytes(content)
+            os.replace(path + ".t", path)
+        return real(args, **kw)
+
+    monkeypatch.setattr(gitsystem._git_runner, "run_git", tampered)
+    where = gitsystem._where()
+    assert where is not None
+    assert gitsystem._reads_remotes(*where, 5.0) == (None, None)
+    root = Path(where[0]).parent / gitsystem.PROBE_FOLDER
+    asked = subprocess.run(
+        ["git", f"--git-dir={root}", *gitsystem._REMOTE_ASK],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+        check=True,
+    )
+    assert gitsystem._REMOTE_ANSWERS[asked.stdout.strip()] != truth, (
+        "premise: git answers wrong"
+    )
+    _caches.clear_all()
+    found = gitsystem.sources()
+    assert (found.legacy, found.resets) == (None, None)
+    monkeypatch.setattr(gitsystem._git_runner, "run_git", real)
+    assert gitsystem._reads_remotes(*where, 5.0) == truth
+
+
+def test_no_wrong_answer_is_kept_under_a_writer_racing_the_probe() -> None:
+    """ENG-207's round 7, the reviewer's race: a thread rewrites
+    ``remotes/p`` as fast as it can, each time with one of `_TAMPERED`,
+    while asks run, which gave 79 "reads no legacy" and 66 "no reset"
+    answers in 480 before. Every ask now answers as git does with the
+    probe as built, or says nothing."""
+    truth = _this_git()
+    where = gitsystem._where()
+    assert where is not None
+    path = Path(where[0]).parent / gitsystem.PROBE_FOLDER / "remotes" / "p"
+    stop = threading.Event()
+    writes = 0
+
+    def writer() -> None:
+        nonlocal writes
+        while not stop.is_set():
+            try:
+                path.with_name(".t").write_bytes(_TAMPERED[writes % 2])
+                os.replace(path.with_name(".t"), path)
+            except OSError:
+                pass
+            writes += 1
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        said = [gitsystem._reads_remotes(*where, 5.0) for _ in range(60)]
+    finally:
+        stop.set()
+        thread.join()
+    assert writes > 60, "premise: the writer raced the asks"
+    assert set(said) <= {truth, (None, None)}, said
+    assert gitsystem._reads_remotes(*where, 5.0) == truth
+
+
+@pytest.mark.parametrize(
+    "stray", ["file", "folder", "link", "remote", "linked_remotes"]
+)
+def test_a_probe_holding_another_entry_is_rebuilt(tmp_path: Path, stray: str) -> None:
+    """ENG-207's round 7: a probe holding an entry it is not built with
+    stayed unknown, and git was asked again every minute. The entry is
+    removed (a link unlinked, never followed) and the probe built again,
+    and git's answer is kept; another build's probe, of other content,
+    has a folder of its own (`gitsystem._probe_name`)."""
+    if "link" in stray and sys.platform == "win32":
+        pytest.skip("a symbolic link needs a privilege Windows CI does not hold")
+    truth = _this_git()
+    where = gitsystem._where()
+    assert where is not None
+    root = Path(where[0]).parent / gitsystem.PROBE_FOLDER
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_bytes(b"x")
+    if stray == "file":
+        (root / "commondir").write_bytes(b"elsewhere\n")
+    elif stray == "folder":
+        (root / "branches").mkdir()
+        (root / "branches" / "p").write_bytes(b"gh:planted\n")
+    elif stray == "link":
+        (root / "HEAD").unlink()
+        (root / "HEAD").symlink_to(outside / "keep")
+    elif stray == "remote":
+        (root / "remotes" / "q").write_bytes(b"URL: gh:planted\n")
+    else:
+        shutil.rmtree(root / "remotes")
+        (root / "remotes").symlink_to(outside, target_is_directory=True)
+    assert gitsystem._reads_remotes(*where, 5.0) == truth
+    assert gitsystem._probe_holds(str(root))
+    assert (outside / "keep").read_bytes() == b"x"
+    other = gitsystem._probe_name({**gitsystem._PROBE_FILES, "HEAD": b"x\n"}, ())
+    assert other != gitsystem.PROBE_FOLDER
+    assert gitsystem.PROBE_FOLDER == gitsystem._probe_name(
+        gitsystem._PROBE_FILES, gitsystem._PROBE_FOLDERS
+    )
 
 
 @pytest.mark.parametrize(
