@@ -51,9 +51,9 @@ from bettermemory.location_git import (
     INDEPENDENT_MAX,
     Reach,
     RepositoryHistory,
-    _committed_at,
     reachable_among,
 )
+from bettermemory.gitobjects import committed_at
 from bettermemory.membership import Location, Membership
 from bettermemory.store import Store
 
@@ -675,7 +675,7 @@ def test_a_committer_time_is_read_as_git_reads_it(body: bytes, expected: int) ->
     never raising (a long number is not read by ``int`` whole). git's
     readings are the live test's below."""
     parent = "0123456789abcdef0123456789abcdef01234567"
-    assert _committed_at(_filled(body, parent), 40) == expected
+    assert committed_at(_filled(body, parent), 40) == expected
 
 
 pytestmark_git = pytest.mark.skipif(
@@ -904,7 +904,7 @@ def test_git_reads_each_committer_time_as_the_traversal_does(
     """The table of `test_a_committer_time_is_read_as_git_reads_it`,
     written into a repository by ``hash-object --literally`` and read back
     by ``git rev-list --no-walk --timestamp``: git reads every time as
-    `_committed_at` does (review of ENG-203)."""
+    `gitobjects.committed_at` does (review of ENG-203)."""
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
     repo = tmp_path / "repo"
@@ -917,7 +917,7 @@ def test_git_reads_each_committer_time_as_the_traversal_does(
         oid = _write_object(repo, body, literally=True)
         listed = _git(repo, "rev-list", "--no-walk", "--timestamp", oid)
         assert (name, int(listed.split()[0])) == (name, expected)
-        assert (name, _committed_at(body, len(oid))) == (name, expected)
+        assert (name, committed_at(body, len(oid))) == (name, expected)
 
 
 def _apart(line: list[str]) -> tuple[dict[str, set[str]], list[str]]:
@@ -1360,7 +1360,7 @@ def test_the_reader_takes_the_parent_lines_git_takes(
     """git reads a commit's parents from the ``parent`` lines directly
     after its ``tree`` line; a correctly hashed commit X whose one
     ``parent`` line follows its ``author`` line has none. The reader reads
-    it so too (`_parent_lines`), so the traversal, a container's client
+    it so too (`gitobjects.parent_lines`), so the traversal, a container's client
     and git keep both of the tied projects whose witnesses are P and X,
     where the reader that took every ``parent`` line joined X's (review of
     ENG-203, round 2)."""

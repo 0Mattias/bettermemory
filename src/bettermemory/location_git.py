@@ -226,11 +226,6 @@ _FULL_HASH = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 #: on every call (`_git.NO_FETCH`, ENG-218).
 _UNGRAFTED = {"GIT_GRAFT_FILE": os.devnull}
 _INDEPENDENT_ARGS = ("merge-base", "--independent")
-#: git's ``timestamp_t``, a ``uintmax_t`` (git-compat-util.h): 64 bits on
-#: every platform git builds for, and where ``strtoumax`` saturates.
-_TIME_MAX = (1 << 64) - 1
-_DIGITS = re.compile(rb"[0-9]*")
-_HEX = re.compile(rb"[0-9a-fA-F]*")
 _HEAD_LIMIT = 1 << 16
 # Environment variables that move git's discovery; under any of them the
 # capture reads what they name and is never cached.
@@ -1644,15 +1639,15 @@ class RepositoryHistory:
         when = 0
         if body is not None:
             hexsz = 64 if len(sha) == 64 else 40
-            header = _parent_lines(body, hexsz)
+            header = gitobjects.parent_lines(body, hexsz)
             found = () if header is None else header[0]
-            when = _committed_at(body, hexsz)
+            when = gitobjects.committed_at(body, hexsz)
         self._parents[sha] = found
         self._committed[sha] = when
         return found
 
     def committed(self, commit: str) -> int:
-        """The commit's committer time (`_committed_at`), read from the
+        """The commit's committer time (`gitobjects.committed_at`), read from the
         object its parents are read from, so ordering a commit costs no
         read beyond its parents'."""
         sha = commit.lower()
@@ -1672,7 +1667,7 @@ class RepositoryHistory:
         witnesses the most-specific rule keeps
         (`membership.Membership._most_specific`), read with no bound on how
         far apart they lie. Git is held to the parent lines the objects
-        hold, as this reader reads them (`_parent_lines`): no replace refs
+        hold, as this reader reads them (`gitobjects.parent_lines`): no replace refs
         (``--no-replace-objects``), no commit-graph (``core.commitGraph``
         off: a graph file can name parents no object holds), no grafts
         (``GIT_GRAFT_FILE`` the null device), and, as on every call the
@@ -1893,84 +1888,6 @@ def reachable_among(
         bounded=bounded or (cut and rise > 0),
         handled=handled,
     )
-
-
-def _committed_at(body: bytes, hexsz: int) -> int:
-    """The committer time of the commit whose object body is `body` (its
-    ids `hexsz` hex digits), as git's ``parse_commit_buffer`` and
-    ``parse_commit_date`` (commit.c, git 2.54) read it: past the ``tree``
-    line and the ``parent`` lines, each of fixed length, the next line must
-    start ``author`` and the one after it ``committer`` and end in a
-    newline; after that line's last ``>`` and any spaces, tabs and carriage
-    returns (git's ``isspace``), a digit or ``-`` starts the number, which
-    ``strtoumax`` reads into git's ``timestamp_t`` (`_TIME_MAX`): leading
-    zeros skipped, a ``-`` wrapping it modulo 2**64, a number past 2**64 - 1
-    saturating there. 0 where git reads none, and where git refuses the
-    object (a short or non-hex ``tree`` or ``parent`` line). The same as
-    ``git rev-list --no-walk --timestamp`` (git 2.54) on all 46 commits of
-    tests/test_location_reachable.py, written by ``hash-object
-    --literally`` (ENG-203). The time only orders `reachable_among`'s
-    traversal, so no value read here makes one commit reachable from
-    another."""
-    header = _parent_lines(body, hexsz)
-    if header is None:
-        return 0
-    at = header[1]
-    if not body.startswith(b"author", at):
-        return 0
-    at = body.find(b"\n", at) + 1
-    if at == 0 or not body.startswith(b"committer", at):
-        return 0
-    eol = body.find(b"\n", at)
-    mark = body.rfind(b">", at, eol)
-    if eol < 0 or mark < 0:
-        return 0
-    at = mark + 1
-    while at < eol and body[at] in b" \t\r":
-        at += 1
-    if at == eol or body[at] not in b"0123456789-":
-        return 0
-    minus = body[at] == 45
-    digits = _DIGITS.match(body, at + minus, eol)
-    run = b"" if digits is None else digits.group().lstrip(b"0")
-    if len(run) > 20:
-        return _TIME_MAX
-    value = int(run or b"0")
-    if value > _TIME_MAX:
-        return _TIME_MAX
-    return -value % (1 << 64) if minus else value
-
-
-def _parent_lines(body: bytes, hexsz: int) -> tuple[tuple[str, ...], int] | None:
-    """The parents of the commit whose object body is `body` (its ids
-    `hexsz` hex digits), and where its header goes on past them, as git's
-    ``parse_commit_buffer`` (commit.c, git 2.54) reads them: the ``tree``
-    line, then each ``parent`` line of fixed length directly after it; a
-    ``parent`` line anywhere else is no parent. None where git refuses the
-    object (a short or non-hex ``tree`` or ``parent`` line), so the
-    traversal and ``git merge-base`` read one parent list (ENG-203)."""
-    at = hexsz + 6
-    if not (body.startswith(b"tree ") and len(body) > at and body[at - 1] == 10):
-        return None
-    if not _hex_at(body, 5, hexsz):
-        return None
-    step = hexsz + 8
-    parents: list[str] = []
-    while at + step - 1 < len(body) and body.startswith(b"parent ", at):
-        if len(body) <= at + step or not _hex_at(body, at + 7, hexsz):
-            return None
-        if body[at + step - 1] != 10:
-            return None
-        parents.append(body[at + 7 : at + step - 1].decode("ascii").lower())
-        at += step
-    return tuple(parents), at
-
-
-def _hex_at(body: bytes, at: int, hexsz: int) -> bool:
-    """Whether `body` holds `hexsz` hex digits of either case at `at`, as
-    git's ``get_oid_hex_algop`` reads an object id there."""
-    found = _HEX.match(body, at, at + hexsz)
-    return found is not None and found.end() == at + hexsz
 
 
 def walk(
