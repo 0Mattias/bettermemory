@@ -494,6 +494,7 @@ def _listed_urls(repo: Path) -> dict[str, list[str]]:
 
 
 @pytest.mark.parametrize("case", list(CORPUS))
+@pytest.mark.usefixtures("git_answered")
 def test_a_corpus_of_configs_is_keyed_as_git_lists_its_remotes(
     tmp_path: Path, case: str
 ) -> None:
@@ -876,6 +877,7 @@ def _prefix() -> str:
         "gitdir_not",
     ],
 )
+@pytest.mark.usefixtures("git_answered")
 def test_a_prefix_path_is_read_as_this_git_expands_it(
     tmp_path: Path, case: str
 ) -> None:
@@ -1049,6 +1051,7 @@ def test_an_unsettled_include_naming_a_tied_base_declines(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("git_answered")
 def test_how_git_reads_a_remote_is_asked_of_git_and_recorded() -> None:
     """The WITH_BREAKING_CHANGES ruling: whether the git on PATH reads the
     legacy ``remotes/`` and ``branches/`` files, and whether an empty URL
@@ -1099,6 +1102,7 @@ def _compat_repository(path: Path, compat: str) -> bool:
     return done.returncode == 0
 
 
+@pytest.mark.usefixtures("git_answered")
 def test_whether_git_reads_a_compatibility_object_format_is_git_s_answer(
     tmp_path: Path,
 ) -> None:

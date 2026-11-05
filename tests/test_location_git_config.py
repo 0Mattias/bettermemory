@@ -646,6 +646,7 @@ class _FakeGit:
         monkeypatch.setattr(shutil, "which", lambda _name: str(binary))
 
 
+@pytest.mark.usefixtures("git_answered")
 def test_the_system_config_is_the_file_git_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

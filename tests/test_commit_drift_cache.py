@@ -1667,7 +1667,7 @@ def test_the_whole_history_memo_is_bounded_in_dates(
     assert [len(e.dates) for e in origin_history._TIMESTAMPS_MEMO.values()] == [2]
 
 
-@pytest.mark.usefixtures("discovery")
+@pytest.mark.usefixtures("discovery", "git_answered")
 def test_a_history_past_the_date_budget_is_remembered_as_a_failed_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -499,6 +499,7 @@ _GIT_ABORTS = pytest.mark.skipif(
 
 
 @pytest.mark.parametrize("case", sorted(EXTENSION_BUILT))
+@pytest.mark.usefixtures("git_answered")
 def test_a_compatibility_object_format_is_read_as_this_git_reads_it(
     tmp_path: Path, runs: list[Path | None], case: str
 ) -> None:

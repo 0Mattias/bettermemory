@@ -556,6 +556,26 @@ def clear_caches() -> None:
     _caches.clear_all()
 
 
+@pytest.fixture
+def git_answered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The git on PATH asked gitsystem's questions under a budget no runner
+    runs out of, and its answer recorded in this test's state directory,
+    where every later read takes it, a cleared cache's too, for as long as
+    it stands (`gitsystem.REASK_SECONDS`): for a test whose premise is
+    git's answer (how it reads a remote, expands ``%(prefix)``, reads a
+    compatibility object format). The test's first capture asked it under
+    the product's own `gitsystem.ASK_SECONDS`, which a slow runner ran out
+    of: the answer was unsaid and the read declined, as it should (ENG-207,
+    Windows CI run 42063789116). The product's budget is the test's."""
+    from bettermemory import gitsystem
+
+    with monkeypatch.context() as patch:
+        patch.setattr(gitsystem, "ASK_SECONDS", 30.0)
+        found = gitsystem.sources()
+    said = (found.legacy, found.resets, found.prefix, found.compat_differ)
+    assert None not in said, f"premise: git answers gitsystem's questions: {said}"
+
+
 def _outside(
     bases: Sequence[str], path: object, *, existing_only: bool = False
 ) -> str | None:

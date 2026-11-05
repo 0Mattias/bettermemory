@@ -435,6 +435,7 @@ def test_a_class_or_a_backslash_in_a_pattern_is_read_as_git_reads_it(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("git_answered")
 def test_a_legacy_remotes_file_is_read_and_an_edit_is_seen(tmp_path: Path) -> None:
     """``remotes/<name>`` names a remote git fetches from (its ``URL:``
     lines; ``git remote`` does not list it): the capture keys its URLs as
@@ -468,6 +469,7 @@ def test_a_legacy_remotes_file_is_read_and_an_edit_is_seen(tmp_path: Path) -> No
     assert _key(repo, "https://branch.invalid/m") in _keys(repo)
 
 
+@pytest.mark.usefixtures("git_answered")
 def test_a_legacy_file_is_read_only_where_git_reads_it(tmp_path: Path) -> None:
     """git reads ``remotes/<name>`` only for a remote no config file gives
     a URL, the global config's included and an emptied list not; then
@@ -514,6 +516,7 @@ def test_a_legacy_file_is_read_only_where_git_reads_it(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs here")
+@pytest.mark.usefixtures("git_answered")
 def test_a_legacy_file_that_is_no_regular_file_declines(tmp_path: Path) -> None:
     """A FIFO would block git's read; the capture declines on it instead of
     waiting or reading another answer. A folder git reads nothing from
