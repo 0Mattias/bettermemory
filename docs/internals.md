@@ -1250,22 +1250,29 @@ at it is homed at the one read, in the project its home names (the
 same either way), its views at that one's paths are deleted, its open
 questions are settled, and it is retired (its row kept,
 `checkout_retired` naming the one it went into and why). A question
-about its project (a changed remote's, the root file's) is closed as
-settled (`settled:<checkout>`, by the heal or the declaration, an answer
-that decides nothing) rather than moved onto the record read: no
-sighting shows it at the path any more, an answer would move a record
-no sighting reads (a changed remote's separate answer, a project of its
-own with nothing delivered at the path), and it was asked of the idle
-record's project and evidence, which the record read need not share;
-that record's own sightings open the questions that hold for it. A
-question about something else (an import's, which only the import
-opens; the records of a folder that could not be read; a part below the
-root) is moved onto the record read, its checkout re-pointed and its
-candidates, evidence and line kept, so it is still asked at the path
-and answered there (a bare join's target is its checkout's project);
-where the record read already asks the same (the same imported
-project, unresolved project or part's folder), the idle one's is closed
-as settled. So a later move of the checkout at the path (`project new`,
+about its project (a changed remote's, the root file's) and a part's
+below the root are closed as settled (`settled:<checkout>`, by the heal
+or the declaration, an answer that decides nothing) rather than moved
+onto the record read: no sighting shows them at the path any more, an
+answer would move a record no sighting reads (a changed remote's
+separate answer, a project of its own with nothing delivered at the
+path) or mint a part of the idle record's project (a part's, whose
+parent is that project), and they were asked of the idle record's
+project and evidence, which the record read need not share; that
+record's own sightings open the questions that hold for it, a part's
+with its own project as the parent. A question about another project
+(an import's, which only the import opens; the records of a folder that
+could not be read) offers to join that project to its checkout's,
+named in its line, the answer it offers and a bare join's target alike.
+It is moved, its checkout re-pointed and its candidates, evidence and
+line kept, to a checkout of the project it names (`_asked_at`): the
+record read where that is its project (a heal in the first record's
+project, an answer joining it); else a live checkout of that project,
+this machine's first (the container's, after the heal of a second
+record in the container's project that held nothing); and with none
+it stays open on the idle record, answered by its id. Where the
+checkout it goes to already asks the same (the same imported or
+unresolved project), the idle one's is closed as settled. So a later move of the checkout at the path (`project new`,
 `project join`) carries every record written there, where the one left
 behind kept its own in the old project, and a sighting of another
 object at the path (a restore) finds one checkout there for B to

@@ -116,14 +116,14 @@ _PICKING = frozenset({FIRST_SIGHT, FILE_CONTRADICTION, DUPLICATE_CHECKOUT})
 #: the project), merge it into another or make the checkout a project of
 #: its own.
 _ABOUT_ELSE = frozenset({SUBPROJECT_CONTRADICTION, LEGACY, IMPORT})
-#: What a question about something else asks about, by its evidence key
-#: (`_retire_into`): the imported project, the project of the records
-#: written where the folder could not be read (the migration's and an
-#: unresolved location's), the part's folder below the root.
+#: The questions about another project that a retired record's question
+#: is moved for (`_asked_at`), by the evidence key naming that project:
+#: an import's imported project, and the project of the records written
+#: where the folder could not be read (the migration's and an unresolved
+#: location's). Their candidate is the project they would join it to.
 _SUBJECT = {
     IMPORT: "imported_project",
     LEGACY: "unresolved_project",
-    SUBPROJECT_CONTRADICTION: "dir",
 }
 
 
@@ -485,23 +485,28 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
     `kept` and `by`, which rung 2 reads to pass over it from then on
     (`retired_into`).
 
+    Each question is placed where it is asked from then on (`_asked_at`).
     A question about `idle`'s project (a changed remote's, the root
-    file's, its own duplicate's) is closed as settled into `kept`
-    (``settled:<kept>``, an answer that decides nothing, `_decides`): it
-    was asked of `idle`'s project and evidence (a changed remote against
-    the project `idle` is in, which `kept` need not be in), an answer
-    there would move a record no sighting reads, and `kept`'s own
-    sightings open the questions that hold for it. A question about
-    something else (`_ABOUT_ELSE`: an import's, which only the import
-    opens, the records of a folder that could not be read, a part below
-    the root) is moved onto `kept`, its checkout re-pointed and the rest
-    of it kept, so it is still asked at the path and its answer acts
-    there (a bare join's target is its checkout's project), unless
-    `kept` already asks the same (`_SUBJECT`), where it is closed as
-    settled. The rows are of kinds 9.0.0rc18 reads (a home's, a
-    checkout's and a question's put, a view's deletion,
-    ``proposal_answered``, ``checkout_retired``). Indexed reads of
-    `idle`'s homes and of `idle`'s and `kept`'s open questions.
+    file's, its own duplicate's) and a part's below the root are closed
+    as settled into `kept` (``settled:<kept>``, an answer that decides
+    nothing, `_decides`): they were asked of `idle`'s project and
+    evidence (a changed remote against the project `idle` is in, a part
+    weighed against it as the parent), which `kept` need not share, an
+    answer there would move a record no sighting reads or mint a part
+    of that project, and `kept`'s own sightings open the questions that
+    hold for it (a part's with `kept`'s project its parent). A question
+    about another project (`_SUBJECT`: an import's, which only the import
+    opens; the records of a folder that could not be read) is moved,
+    its checkout re-pointed and its candidates, evidence and line kept,
+    to a checkout of the project it offers to join that project to: so
+    its line, the answer it offers and a bare join (whose target is its
+    checkout's project) name one project, and the answer acts there.
+    Where the same is asked there already, it is closed as settled. The
+    rows are of kinds 9.0.0rc18 reads (a home's, a checkout's and a
+    question's put, a view's deletion, ``proposal_answered``,
+    ``checkout_retired``). Indexed reads of `idle`'s homes and open
+    questions, and of each checkout a question moves to and its open
+    questions.
 
     A record already retired into another (`retired_into`) is left as it
     is, nothing written: rung 2 passes over it, so no flow retires it
@@ -517,15 +522,49 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
                 "checkout_view",
                 {"checkout": idle.id, "machine": v.machine, "path": v.path},
             )
-    asked = {_asks(pr) for pr in self._open_proposals(kept.id)}
+    asked: dict[str, set[tuple[str, str]]] = {}
     for pr in self._open_proposals(idle.id):
-        if pr.kind in _ABOUT_ELSE and _asks(pr) not in asked:
-            self._put_proposal(dataclasses.replace(pr, checkout=kept.id))
-            asked.add(_asks(pr))
+        where = _asked_at(self, pr, idle, kept)
+        if where == idle.id:
+            continue
+        if where is not None and where not in asked:
+            asked[where] = {_asks(x) for x in self._open_proposals(where)}
+        if where is None or _asks(pr) in asked[where]:
+            self._close(pr, f"{SETTLED}{where or kept.id}", by)
         else:
-            self._close(pr, f"{SETTLED}{kept.id}", by)
+            self._put_proposal(dataclasses.replace(pr, checkout=where))
+            asked[where].add(_asks(pr))
     self._put_checkout(dataclasses.replace(idle, retired=True))
     self._event("checkout_retired", checkout=idle.id, into=kept.id, evidence=by)
+
+
+def _asked_at(
+    self: Membership, pr: Proposal, idle: Checkout, kept: Checkout
+) -> str | None:
+    """Where `pr`, a question open on `idle` as it is retired into
+    `kept`, is asked from then on (`_retire_into`): None where it is
+    closed as settled (any but a question about another project,
+    `_SUBJECT`); else `kept` where `kept` is in the project it offers to
+    join that one to (its candidate: the same project after a heal of a
+    record in the first one's, and after an answer joining it); else a
+    live checkout of that project, this machine's first (the container's
+    after a heal of a second record in its project, holding nothing);
+    and with none, `idle`, where it stays open, its project's, answered
+    by id (`project pending`). One read of the candidate's checkouts
+    where `kept` is in another project."""
+    if pr.kind not in _SUBJECT:
+        return None
+    named = {self._canon(c) for c in pr.candidates}
+    if self._canon(kept.project) in named:
+        return kept.id
+    live = [
+        k
+        for q in sorted(named)
+        for k in self._checkouts_of(q)
+        if k.id != idle.id and not k.retired
+    ]
+    live.sort(key=lambda k: (k.machine != self.machine, k.id))
+    return live[0].id if live else idle.id
 
 
 def _asks(pr: Proposal) -> tuple[str, str]:

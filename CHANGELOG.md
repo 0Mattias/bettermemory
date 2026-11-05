@@ -1473,12 +1473,16 @@ eighteenth was built.
   it, so the container's next re-mint continues the one read, where
   after an answer joining the first checkout's project the first, first
   in order, was brought back holding nothing; a question about its
-  project still open on it is closed as settled (`settled:<checkout>`),
-  where it stayed pending, shown nowhere, and answering it moved the
-  record no sighting reads; and one about something else (an import's,
-  which only the import opens, records written where the folder could
-  not be read, a part below the root) is moved onto the one read and
-  asked there, unless that one asks the same (rows of kinds 9.0.0rc18
+  project or a part below the root still open on it is closed as
+  settled (`settled:<checkout>`), where it stayed pending, shown
+  nowhere, and answering it moved the record no sighting reads, the one
+  read asking a part's with its own parent; and one about another
+  project (an import's, which only the import opens, records written
+  where the folder could not be read) is moved to a checkout of the
+  project it offers to join that one to (the one read, the container's
+  after a heal of a record in the container's project, or with no live
+  one left open where it was), so its line and its answers name one
+  project, unless that checkout asks the same (rows of kinds 9.0.0rc18
   reads: it verifies, opens, reads and writes such a store). `project
   why` of a record moved so names the checkout it was written in and
   the one it went into, with the retired one's rows, where it named the
