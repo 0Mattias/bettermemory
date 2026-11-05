@@ -21,8 +21,10 @@ files.
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -186,3 +188,177 @@ def test_a_checkout_s_common_settings_keep_the_files_answer(
     with (repo / ".git" / "config").open("a", encoding="utf-8") as fh:
         fh.write(text)
     assert _answers(repo) == (True, True)
+
+
+def _machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The global config git and the readers read (``GIT_CONFIG_GLOBAL``),
+    empty, and no system config."""
+    path = tmp_path / "machine-global.gitconfig"
+    path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(path))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    return path
+
+
+def test_the_files_answer_only_where_git_does_on_the_machine_s_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's round 8: git dies on the machine's config as on the
+    repository's (``git_default_config`` reads every scope), and the files
+    answered there. Each of `KEYS` with each of `VALUES` in the global
+    config: where ``git rev-parse --show-toplevel HEAD`` dies the files
+    decline (`origin_gitfiles._machine_config_dies`), and they answer for
+    most of what git reads on past."""
+    machine = _machine(tmp_path, monkeypatch)
+    repo = _repo(tmp_path / "repo")
+    wrong: list[tuple[str, str | None]] = []
+    died = answered = 0
+    for name in KEYS:
+        for value in VALUES:
+            machine.write_text(_text(name, value), encoding="utf-8")
+            git_answers, files_answer = _answers(repo)
+            died += not git_answers
+            answered += files_answer
+            if files_answer and not git_answers:
+                wrong.append((name, value))
+    assert wrong == []
+    assert died > 100, "premise: git dies on many"
+    assert answered > len(KEYS) * len(VALUES) // 2, "the files answer most of the rest"
+
+
+#: Includes the machine's config may hold, with git's answer: it dies on
+#: one with no value, on a bad line, and on one whose file holds a value it
+#: refuses, under a condition that holds too; it reads past a missing one.
+MACHINE_INCLUDES = {
+    "no_value": ("[include]\n\tpath\n", False),
+    "bad_line": ("[include\n", False),
+    "missing": ("[include]\n\tpath = {dir}/missing.inc\n", True),
+    "dying_file": ("[include]\n\tpath = {dir}/dying.inc\n", False),
+    "onbranch_dying": (
+        '[includeIf "onbranch:main"]\n\tpath = {dir}/dying.inc\n',
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(MACHINE_INCLUDES))
+def test_a_machine_s_include_git_dies_on_declines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """The machine's includes are read where they stand (the origin's
+    capture reads them): one git dies reading, or whose file holds a value
+    it refuses, declines, under a condition the read does not evaluate too
+    (``onbranch:``); one of a missing file keeps the files' answer."""
+    machine = _machine(tmp_path, monkeypatch)
+    repo = _repo(tmp_path / "repo")
+    (tmp_path / "dying.inc").write_text("[core]\n\texcludesfile\n", encoding="utf-8")
+    text, git_reads = MACHINE_INCLUDES[case]
+    machine.write_text(text.format(dir=tmp_path.as_posix()), encoding="utf-8")
+    assert _answers(repo) == (git_reads, git_reads)
+
+
+#: What a machine's config commonly holds: an identity, an editor, line
+#: ends, a pager, push and pull and branch defaults, aliases, colours, a
+#: credential helper, LFS, Git for Windows' system settings, and includes.
+MACHINE_COMMON = """[user]
+\tname = A Person
+\temail = a@example.invalid
+[core]
+\teditor = vim
+\texcludesFile = ~/.gitignore_global
+\tautocrlf = input
+\tpager = less -FRX
+\tfscache = true
+\tlongpaths = true
+\tsymlinks = false
+[push]
+\tdefault = simple
+\tautoSetupRemote = true
+[pull]
+\trebase = true
+[branch]
+\tautoSetupMerge = simple
+\tautoSetupRebase = always
+[init]
+\tdefaultBranch = main
+[alias]
+\tst = status -sb
+[color]
+\tui = auto
+[credential]
+\thelper = osxkeychain
+[filter "lfs"]
+\tclean = git-lfs clean -- %f
+\trequired = true
+[include]
+\tpath = {dir}/missing.inc
+[includeIf "gitdir:{dir}/"]
+\tpath = {dir}/work.inc
+"""
+
+
+def test_a_machine_s_common_settings_keep_the_files_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What a machine's config commonly sets is read by git without
+    dying, and the files answer for it with no process: ``push.default``
+    and the ``branch.autoSetup*`` words are read as git reads them, where
+    any value of them declined, and Git for Windows' own booleans too."""
+    machine = _machine(tmp_path, monkeypatch)
+    (tmp_path / "work.inc").write_text("[user]\n\temail = w@example.invalid\n")
+    machine.write_text(MACHINE_COMMON.format(dir=tmp_path.as_posix()), encoding="utf-8")
+    repo = _repo(tmp_path / "repo")
+    assert _answers(repo) == (True, True)
+
+
+#: The words ``push.default`` and the ``branch.autoSetup*`` settings take,
+#: as written, and spellings git refuses.
+WORDS = [
+    *(("push.default", w) for w in ("nothing", "matching", "simple", "upstream")),
+    *(("push.default", w) for w in ("tracking", "current", "Simple", "true", None)),
+    *(("branch.autosetuprebase", w) for w in ("never", "local", "remote", "always")),
+    *(("branch.autosetuprebase", w) for w in ("Always", "true", None)),
+    *(("branch.autosetupmerge", w) for w in ("always", "inherit", "simple", "true")),
+    *(("branch.autosetupmerge", w) for w in ("ALWAYS", "maybe", None)),
+]
+
+
+@pytest.mark.parametrize(("name", "value"), WORDS)
+def test_a_word_is_read_as_git_reads_it(
+    tmp_path: Path, name: str, value: str | None
+) -> None:
+    """Each word git takes, and each spelling it dies on, in the
+    repository's config: the files answer exactly where git does."""
+    repo = _repo(tmp_path / "repo")
+    with (repo / ".git" / "config").open("a", encoding="utf-8") as fh:
+        fh.write(_text(name, value))
+    git_answers, files_answer = _answers(repo)
+    assert files_answer == git_answers
+
+
+def test_the_machine_s_config_costs_the_files_no_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The machine's config is judged from the reads the origin's capture
+    keeps against its stamps (`location_git.machine_config_reads`): after
+    a capture, the files' answer opens and states no file of it."""
+    machine = _machine(tmp_path, monkeypatch)
+    machine.write_text("[user]\n\tname = A Person\n", encoding="utf-8")
+    repo = _repo(tmp_path / "repo")
+    _caches.clear_all()
+    assert origin.capture(repo).repo is not None
+    touched: list[str] = []
+
+    def spy(real: Any) -> Any:
+        def counted(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if os.path.basename(os.fspath(path)) == machine.name:
+                touched.append(real.__name__)
+            return real(path, *args, **kwargs)
+
+        return counted
+
+    with monkeypatch.context() as patch:
+        for name in ("stat", "lstat", "open"):
+            patch.setattr(os, name, spy(getattr(os, name)))
+        assert origin.toplevel_and_head_from_files(repo) is not None
+    assert touched == []

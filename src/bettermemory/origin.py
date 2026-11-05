@@ -58,6 +58,7 @@ from . import _caches, githead, gitfile_rule, identity, origin_history
 from ._location_probe import path_gone
 from .location_git import (  # the config the cache is kept against
     legacy_remote_stamps,
+    machine_config_reads,
     machine_config_stamps,
     repository_config_stamps,
 )
@@ -72,6 +73,7 @@ from .location_git import (  # the config the cache is kept against
 # patches one patches `origin_gitfiles`, where the readers are.
 from .origin_gitfiles import (
     _config_moves_worktree,
+    _machine_config_dies,
     _shortening_refs,
     _unquote_c_path,
     attribute_files_signature,
@@ -1075,7 +1077,9 @@ def toplevel_and_head_from_files(cwd: Path | None) -> tuple[Path, str] | None:
     plain false, a file git refuses, that holds a NUL byte, that cannot be
     read or that ``git rev-parse`` may die reading (an include, a value
     its default config refuses: `origin_gitfiles._rev_parse_dies`)
-    decline (`_config_moves_worktree`), and so does
+    decline (`_config_moves_worktree`), as does a machine's config git may
+    die reading (`_machine_config_dies`, from the reads the origin's
+    capture keeps, so with no read), and so does
     everything `githead` declines, a ``.git`` entry membership refuses
     among them; the process `repo_toplevel_and_head` runs then answers no
     repository for such an entry without running (`_git_result`).
@@ -1090,7 +1094,11 @@ def toplevel_and_head_from_files(cwd: Path | None) -> tuple[Path, str] | None:
     if gd is None:
         return None
     head = githead.head_sha(gd)
-    if head is None or _config_moves_worktree(gd):
+    if (
+        head is None
+        or _config_moves_worktree(gd)
+        or _machine_config_dies(machine_config_reads, gd.gitdir)
+    ):
         return None
     root = _spelled_as_git(gd.worktree_root)
     if root is None:

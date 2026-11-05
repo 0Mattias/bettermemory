@@ -866,6 +866,22 @@ def machine_config_stamps(git_dir: str) -> tuple[object, ...]:
     return (named, *(tuple(_stamped_read(p, git_dir).files or ()) for p in named))
 
 
+def machine_config_reads(git_dir: str) -> tuple[ConfigValues, ...]:
+    """The reads of the machine's config `machine_config_stamps` keeps for
+    the repository whose git directory is `git_dir` (`_stamped_read`), as
+    kept, with no file read or stated: `origin`'s capture states them at
+    each signature (a changed one is read again there), so one read here
+    is as fresh as the origin captured before it (ENG-207's round 8,
+    `origin_gitfiles._machine_config_dies`). A file no capture of this
+    process read yet is read, once, and kept."""
+    home, out = _home(), []
+    for path in _machine_configs(stamp=False):
+        with _STAMPED_LOCK:
+            read = _STAMPED_READS.get((path, git_dir, home))
+        out.append(read if read is not None else _stamped_read(path, git_dir))
+    return tuple(out)
+
+
 def repository_config_stamps(common_dir: str, git_dir: str) -> tuple[object, ...]:
     """The repository's own config as git reads it, as stamps (ENG-207's
     review): the common config and, where git reads it

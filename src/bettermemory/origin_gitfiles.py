@@ -28,7 +28,7 @@ import stat
 import sys
 import threading
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -723,6 +723,10 @@ _DIES_UNLESS_BOOL = frozenset(
         b"extensions.preciousobjects",
         b"extensions.worktreeconfig",
         b"feature.manyfiles",
+        # Git for Windows' own, booleans there and read any way elsewhere:
+        # its system config sets core.fscache (ENG-207's round 8).
+        b"core.fscache",
+        b"core.longpaths",
     }
 )
 #: The variables it dies on with no value, and reads any value of.
@@ -756,6 +760,20 @@ _DIES_UNLESS_WORD = {
     b"core.safecrlf": (b"warn", False),
     b"core.logallrefupdates": (b"always", True),
 }
+#: The variables that take one of a set of words, as written (``strcmp``),
+#: and die on any other value and on none: config.c's
+#: ``git_default_push_config`` and ``git_default_branch_config``.
+_DIES_UNLESS_NAMED = {
+    b"push.default": frozenset(
+        {b"nothing", b"matching", b"simple", b"upstream", b"tracking", b"current"}
+    ),
+    b"branch.autosetuprebase": frozenset({b"never", b"local", b"remote", b"always"}),
+}
+#: The variables that take one of a set of words, as written, or a
+#: boolean (no value is true).
+_DIES_UNLESS_BOOL_OR_NAMED = {
+    b"branch.autosetupmerge": frozenset({b"always", b"inherit", b"simple"}),
+}
 #: The variables of the sections git reads whole that it reads any value
 #: of; any other variable there (`_READ_WHOLE`) is one whose reading is
 #: not ported here, and declines.
@@ -780,22 +798,15 @@ _READ_ANY = frozenset(
 #: Sections of whose variables git reads more than are named here.
 _READ_WHOLE = (b"core.", b"extensions.", b"feature.", b"index.", b"color.advice")
 #: Variables of other sections git reads by rules not ported here.
-_READ_ELSEWHERE = frozenset(
-    {
-        b"push.default",
-        b"pack.packsizelimit",
-        b"pack.compression",
-        b"branch.autosetupmerge",
-        b"branch.autosetuprebase",
-    }
-)
+_READ_ELSEWHERE = frozenset({b"pack.packsizelimit", b"pack.compression"})
 
 
 def _rev_parse_dies(name: bytes, value: bytes | None) -> bool:
     """Whether ``git rev-parse --show-toplevel HEAD`` may die on the
     repository's config setting `name` (as `gitconfig.git_entries` names
     it) to `value`: a value of a variable git reads that it refuses
-    (`_DIES_UNLESS_BOOL`, `_DIES_UNSET`, `_DIES_UNLESS_WORD`, a
+    (`_DIES_UNLESS_BOOL`, `_DIES_UNSET`, `_DIES_UNLESS_WORD`,
+    `_DIES_UNLESS_NAMED`, `_DIES_UNLESS_BOOL_OR_NAMED`, a
     ``core.repositoryformatversion`` that is no int or is above 1), a
     variable git reads by a rule not ported here (`_READ_WHOLE`,
     `_READ_ELSEWHERE`), and an include, whose file is not read here (git
@@ -811,6 +822,15 @@ def _rev_parse_dies(name: bytes, value: bytes | None) -> bool:
             return unset_dies
         said = value.split(b"\0", 1)[0].lower()
         return said != word and gitconfig.git_bool(value) is None
+    if name in _DIES_UNLESS_NAMED:
+        return value is None or value.split(b"\0", 1)[0] not in _DIES_UNLESS_NAMED[name]
+    if name in _DIES_UNLESS_BOOL_OR_NAMED:
+        if (
+            value is not None
+            and value.split(b"\0", 1)[0] in _DIES_UNLESS_BOOL_OR_NAMED[name]
+        ):
+            return False
+        return gitconfig.git_bool(value) is None
     if name == b"core.repositoryformatversion":
         number = gitconfig.git_int(value)
         return number is None or number > 1
@@ -821,6 +841,54 @@ def _rev_parse_dies(name: bytes, value: bytes | None) -> bool:
     if name in _READ_ANY:
         return False
     return name in _READ_ELSEWHERE or name.startswith(_READ_WHOLE)
+
+
+def _machine_config_dies(
+    reads: Callable[[str], Sequence[gitconfig.ConfigValues]], git_dir: Path
+) -> bool:
+    """Whether ``git rev-parse --show-toplevel HEAD`` may die reading the
+    machine's config (the system's and the global files, with what they
+    include) for the repository whose git directory is `git_dir`, from
+    `reads` (`location_git.machine_config_reads`: the reads `origin`'s
+    capture keeps against its stamps, so this costs no read): one git
+    dies reading or may (a line its parser refuses, an include it cannot
+    read or follow: `gitconfig.ConfigValues.dies`, `maybe_dies`), one read
+    in part, and a value `_machine_value_dies` refuses, under an include
+    whose condition is not evaluated too (`ConfigValues.undecided`), an
+    include itself aside, which the read followed (ENG-207's round 8: the
+    files answered a root and a head where git dies on the machine's
+    config). True where the reads cannot be had."""
+    try:
+        found = reads(str(git_dir))
+    except (OSError, ValueError):
+        return True
+    for read in found:
+        if read.dies is not None or read.maybe_dies is not None or not read.complete:
+            return True
+        for values in (read, read.undecided):
+            for (section, sub, key), held in values.items():
+                if section in ("include", "includeif"):
+                    continue
+                name = b".".join(
+                    (
+                        section.encode("ascii"),
+                        *(() if sub is None else (gitconfig.subsection_bytes(sub),)),
+                        key.encode("ascii"),
+                    )
+                )
+                if any(_machine_value_dies(name, value) for value in held):
+                    return True
+    return False
+
+
+def _machine_value_dies(name: bytes, value: bytes | None) -> bool:
+    """`_rev_parse_dies` for a variable of the machine's config, where
+    ``core.bare``, which only a repository's own config moves the working
+    tree by (`_config_moves_worktree`), is read as git's default config
+    reads it at every scope: a boolean, or git dies."""
+    if name == b"core.bare":
+        return gitconfig.git_bool(value) is None
+    return _rev_parse_dies(name, value)
 
 
 def _config_entries(data: bytes) -> list[gitconfig.Entry] | None:

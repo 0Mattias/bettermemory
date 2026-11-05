@@ -31,6 +31,7 @@ from bettermemory import (
     _response,
     gitfile_rule,
     githead,
+    gitsystem,
     origin,
     origin_dates,
     origin_gitfiles,
@@ -132,6 +133,14 @@ def _git_input(repo: Path, text: str, *args: str) -> str:
         .stdout.decode("utf-8")
         .strip()
     )
+
+
+def _machine_named() -> None:
+    """Have git name the machine's config files, as the origin's capture
+    has before any drift pass (`location_git.machine_config_reads`): asked
+    once and recorded for the hour (`gitsystem.sources`), so a count of
+    the processes the files' path runs counts none of those asks."""
+    gitsystem.sources()
 
 
 def _repo(tmp_path: Path, name: str = "repo") -> Path:
@@ -1101,6 +1110,7 @@ def test_the_files_answer_what_git_answers(
     assert origin.toplevel_and_head_from_files(repo) is None, "no commit yet"
     assert origin.repo_toplevel_and_head(repo) is None
     _commit(repo, "seed", when=_T0, files={"a.txt": "a\n"})
+    _machine_named()
     for cwd in (repo, repo / "src"):
         git_root = Path(_git(cwd, "rev-parse", "--show-toplevel")).resolve()
         git_head = _git(cwd, "rev-parse", "HEAD")
@@ -1453,6 +1463,7 @@ def test_the_whole_history_is_memoised_per_root_and_head(
     repo = _repo(tmp_path)
     (repo / "src").mkdir()
     head = _commit(repo, "seed", when=_T0)
+    _machine_named()
     calls: list[tuple[str, ...]] = []
     real_run = subprocess.run
 
@@ -1589,6 +1600,7 @@ def test_a_failed_whole_history_read_is_remembered_for_a_minute(
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     repo = _repo(tmp_path)
     _commit(repo, "seed", when=_T0)
+    _machine_named()
     real_run = subprocess.run
     spawned: list[tuple[str, ...]] = []
 

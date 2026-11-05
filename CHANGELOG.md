@@ -1159,18 +1159,32 @@ eighteenth was built.
   or `core.excludesFile` with no value, a `core.filemode` that is no
   boolean, a format version above 1), checked variable by variable
   against git 2.54; git then answers, one process, and the settings a
-  checkout commonly carries keep the answer from the files.
+  checkout commonly carries keep the answer from the files. So do they
+  where git may die reading the machine's config, which its default
+  config reads at every scope: a system or global file, or one it
+  includes, that git's parser refuses or that sets such a value (a
+  `core.bare` that is no boolean among them), under an include whose
+  condition the read does not evaluate too. That is judged from the
+  reads the origin's capture keeps against their stamps
+  (`location_git.machine_config_reads`), so it costs the files no read
+  once an origin is captured. `push.default` and the
+  `branch.autoSetupMerge` and `branch.autoSetupRebase` words are read as
+  git reads them (where any value declined), and Git for Windows'
+  `core.fscache` and `core.longpaths` as the booleans it reads, so a
+  machine's common settings keep the answer from the files.
   `_git.run_git` takes `unset`, applied beneath its scrub and pins like
   `env`.
   (`src/bettermemory/gitsystem.py`, `src/bettermemory/gitconfig.py`,
   `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
   `src/bettermemory/gitfile_rule.py`, `src/bettermemory/_git.py`,
   `src/bettermemory/origin.py`, `src/bettermemory/origin_gitfiles.py`,
+  `src/bettermemory/gitobjects.py`, `src/bettermemory/verify_anchoring.py`,
   `tests/test_origin_config_dies.py`, `tests/test_location_git_config.py`,
   `tests/test_location_git_parse.py`,
   `tests/test_location_git_include_conditions.py`,
   `tests/test_membership_cost.py`, `tests/test_git_no_fetch.py`,
-  `tests/test_location_gitdir_format.py`, `tests/test_origin_cache.py`)
+  `tests/test_location_gitdir_format.py`, `tests/test_origin_cache.py`,
+  `tests/test_gitobjects.py`, `tests/test_commit_drift_cache.py`)
 
 - **A plant seen first while the checkout's share answers with errors
   no longer takes its record (ENG-217).** Since 9.0.0rc18 a checkout
