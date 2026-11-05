@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 from bettermemory import store as store_module
+from bettermemory import store_admission
 from bettermemory.membership import (
     BLOBS_PER_WITNESS,
     GLOBAL,
@@ -32,6 +33,8 @@ from bettermemory.membership import (
     Membership,
     ObjectKey,
 )
+from bettermemory.membership_records import OPEN
+from bettermemory.membership_shared import _SUBJECT
 from bettermemory.models import Confidence, Episode, Memory, Source, generate_ulid
 from bettermemory.store import (
     FOLDED_TABLES,
@@ -737,6 +740,45 @@ def _rc3_fold(path: Path) -> dict[str, dict[Any, Any]]:
     finally:
         scratch.close()
         live.close()
+
+
+def test_the_open_questions_are_read_through_their_index(tmp_path: Path) -> None:
+    """ENG-215, review R8 2: every sighting reads the open questions of the
+    kinds about another project (`membership_shared._asked_here`), which
+    walked every question ever asked. A new store holds
+    `proposals_by_state`, a plain index on their state and kind, and a
+    store an earlier build made gains it at its next open, its revision
+    and its log as they were; the read goes through it. A plain index on
+    columns, which an earlier build admits as one it never creates
+    (`store_admission._PLAIN_INDEX`): 9.0.0rc18 refuses one with a WHERE."""
+    path, keys = tmp_path / "memory.sqlite", tmp_path / "keys"
+    text = "CREATE INDEX proposals_by_state ON proposals(state, kind)"
+    with Store.create(path, keys_dir=keys) as s:
+        s.put_memory(_memory())
+        revision = s.meta()["schema_revision"]
+        rows = len(s.log_rows())
+    assert ("index", "proposals_by_state", text) in _master(path)
+    assert store_admission._PLAIN_INDEX.fullmatch(text)
+    conn = sqlite3.connect(str(path))
+    conn.execute("DROP INDEX proposals_by_state")
+    conn.commit()
+    conn.close()
+    assert ("index", "proposals_by_state", text) not in _master(path)
+    with Store.open(path, keys_dir=keys) as s:
+        assert (s.meta()["schema_revision"], len(s.log_rows())) == (revision, rows)
+        ran: list[str] = []
+        s.conn.set_trace_callback(ran.append)
+        s.membership_rows(
+            "proposals", where={"state": OPEN}, column_in=("kind", sorted(_SUBJECT))
+        )
+        s.conn.set_trace_callback(None)
+        (select,) = [x for x in ran if x.lstrip().upper().startswith("SELECT")]
+        plan = " ".join(
+            str(r[-1]) for r in s.conn.execute("EXPLAIN QUERY PLAN " + select)
+        )
+        assert "USING INDEX proposals_by_state" in plan, plan
+        assert s.log_verify()["status"] == "ok"
+    assert ("index", "proposals_by_state", text) in _master(path)
 
 
 def test_an_rc3_build_reads_the_migrated_store(tmp_path: Path) -> None:

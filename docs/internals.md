@@ -1303,7 +1303,9 @@ own sightings of a checkout of the project move it. A question about
 the checkout it is on (a first sight's, a changed remote's, the root
 file's, a duplicate's, a part's) stays on it, as it asks about that one.
 The rows are a question's put and `proposal_answered`; the cost, one
-read of the open questions of the two kinds at each sighting, and for
+read of the open questions of the two kinds at each sighting (through
+`proposals_by_state`, an index of the questions by state and kind of
+`store_schema.ADDITIVE_SCHEMA`), and for
 each one of the checkout's project open on another checkout, that
 checkout's row and, where it is this machine's and not retired, its
 liveness. That liveness is read before the sighting's transaction with

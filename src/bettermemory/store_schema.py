@@ -956,9 +956,19 @@ CREATE TABLE IF NOT EXISTS returned (
 # whether a session already corroborated a memory: without it the read
 # walked every ``memory_put`` row, measured at 1.4 ms over 10,000 rows and
 # 7.7 ms over 50,000 (scratch run on this tree), growing with the log.
+# `proposals_by_state` holds the questions by state and kind, which every
+# sighting reads, open ones of the kinds about another project
+# (`membership_shared._asked_here` and `_asked_plan`, ENG-215): without it
+# the read walked every question ever asked, answered ones included,
+# measured at 3.2 ms over 50,000 answered and 0.02 ms through the index
+# (scratch run on this tree, medians of 200). It is a plain index on
+# columns, so 9.0.0rc18's admission admits it as an index it never creates
+# (`store_admission._PLAIN_INDEX`) and that build still opens a store that
+# has it, where it refuses a partial one (``WHERE state = 'open'``).
 ADDITIVE_SCHEMA = """
 CREATE INDEX IF NOT EXISTS log_corroborations ON log(session)
     WHERE kind = 'memory_put';
+CREATE INDEX IF NOT EXISTS proposals_by_state ON proposals(state, kind);
 """
 
 

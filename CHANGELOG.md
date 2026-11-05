@@ -1502,7 +1502,13 @@ eighteenth was built.
   transaction with the others its ladder reads, so none is read with
   the store's write lock held and a container is asked for them all in
   one round, where each was read in the transaction, a container asked
-  in a round of its own for each (eight did not settle). `project
+  in a round of its own for each (eight did not settle). The open
+  questions a sighting reads for it are read through an index of their
+  state and kind (`proposals_by_state`), which a store gains at its
+  next open, its revision as it was, where the read walked every
+  question ever asked (3.2 ms over 50,000 answered, 0.02 ms through the
+  index); a plain index on columns, so 9.0.0rc18 still opens, reads and
+  writes a store that has it. `project
   why` of a record moved so names the checkout it was written in and
   the one it went into, with the retired one's rows, where it named the
   one read as the one written in; `project list` says `retired into
@@ -1524,11 +1530,13 @@ eighteenth was built.
   `src/bettermemory/membership_declare.py`,
   `src/bettermemory/membership_lines.py`,
   `src/bettermemory/store_membership.py`,
+  `src/bettermemory/store_schema.py`,
   `src/bettermemory/location_git.py`,
   `src/bettermemory/location_stamps.py`,
   `src/bettermemory/membership_alias.py`, `docs/internals.md`,
   `tests/test_membership_shared_git_dir.py`,
-  `tests/test_membership_restated.py`, `tests/test_membership_alias.py`)
+  `tests/test_membership_restated.py`, `tests/test_membership_alias.py`,
+  `tests/test_membership_store.py`)
 
 ### 9.0.0rc18
 
