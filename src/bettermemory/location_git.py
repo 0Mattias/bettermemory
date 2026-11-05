@@ -616,6 +616,11 @@ def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
     return _Remotes(spellings, files, named)
 
 
+#: Each insteadOf base, in the order git met it, with its prefixes, each
+#: with whether the machine's config gives it.
+_Rewrites = dict[str, list[tuple[bytes, bool]]]
+
+
 def _spellings(
     reads: Sequence[tuple[ConfigValues, bool]],
     legacy: Sequence[str],
@@ -636,7 +641,7 @@ def _spellings(
         return flag
 
     remotes: dict[str, list[tuple[bytes, bool]]] = {}
-    rewrites: dict[str, list[tuple[bytes, bool]]] = {}
+    rewrites: _Rewrites = {}
     for read, mine in reads:
         for (section, sub, key), found in read.items():
             if sub is None:
@@ -668,35 +673,53 @@ def _spellings(
                 if got is not None:
                     remotes[name] = [(url, True) for url in got]
     keyed = [url for found in remotes.values() for url, mine in found if mine and url]
-    why = _undecided_matters([r for r, _m in reads], keyed, bool(pending))
+    best = {url: _best_rule(url, rewrites) for url in keyed}
+    why = _undecided_matters([r for r, _m in reads], best, bool(pending), rewrites)
     if why is not None:
         return why
     out: list[Spelling] = []
-    for url in keyed:
-        best: tuple[bytes, bytes, bool] | None = None
-        for base, prefixes in rewrites.items():
-            for prefix, by_machine in prefixes:
-                if url.startswith(prefix) and (
-                    best is None or len(best[1]) < len(prefix)
-                ):
-                    best = (subsection_bytes(base), prefix, by_machine)
-        if best is None:
+    for url, rule in best.items():
+        if rule is None:
             out.append((_url_text(url), None, False))
         else:
-            rewritten = best[0] + url[len(best[1]) :]
-            out.append((_url_text(url), _url_text(rewritten), best[2]))
+            base, prefix, by_machine = rule
+            rewritten = subsection_bytes(base) + url[len(prefix) :]
+            out.append((_url_text(url), _url_text(rewritten), by_machine))
     return out
 
 
+def _best_rule(url: bytes, rewrites: _Rewrites) -> tuple[str, bytes, bool] | None:
+    """The insteadOf rule git rewrites `url` by (remote.c's ``alias_url``),
+    as its base, its prefix and whether it is the machine's: the longest
+    prefix of `rewrites` (each base's prefixes, the bases in the order git
+    met them) that `url` starts with, of equal ones the first; or None."""
+    best: tuple[str, bytes, bool] | None = None
+    for base, prefixes in rewrites.items():
+        for prefix, by_machine in prefixes:
+            if url.startswith(prefix) and (best is None or len(best[1]) < len(prefix)):
+                best = (base, prefix, by_machine)
+    return best
+
+
 def _undecided_matters(
-    reads: Sequence[ConfigValues], keyed: Sequence[bytes], legacy: bool
+    reads: Sequence[ConfigValues],
+    best: dict[bytes, tuple[str, bytes, bool] | None],
+    legacy: bool,
+    rewrites: _Rewrites,
 ) -> str | None:
     """Why an include under a condition not settled here could change the
-    URLs keyed (`keyed`), or None where none could (ENG-207's round 6: one
+    URLs keyed (`best`, each with the rule that rewrites it, `_best_rule`
+    over `rewrites`), or None where none could (ENG-207's round 6: one
     that cannot touch them leaves the capture as git reads it): it sets a
     remote URL, an insteadOf rule whose prefix matches a URL keyed, or,
     where a legacy ``branches`` file is read (`legacy`), the default
-    branch; or git may die reading it (`gitconfig.ConfigValues.maybe_dies`)."""
+    branch; or git may die reading it (`gitconfig.ConfigValues.maybe_dies`).
+    An insteadOf rule of any prefix counts too where it names a base
+    another rule gives the prefix that rewrites a keyed URL under another
+    base: git ranks bases in the order it first meets them, so where the
+    include holds, it can meet that base first and take its prefix
+    (ENG-207's round 7)."""
+    keyed = list(best)
     for read in reads:
         if read.maybe_dies is not None:
             return f"an include under an unsettled condition may make git die: {read.maybe_dies}"
@@ -711,6 +734,9 @@ def _undecided_matters(
             if section == "url" and key == "insteadof" and sub is not None:
                 if any(p is not None and u.startswith(p) for p in found for u in keyed):
                     return "an include sets an insteadOf rule matching a remote URL under an unsettled condition"
+                tied = {p for p, _m in rewrites.get(sub, ())}
+                if any(r and r[0] != sub and r[1] in tied for r in best.values()):
+                    return "an include names the base of an insteadOf rule tied with the one rewriting a remote URL under an unsettled condition"
             if legacy and (section, sub, key) == ("init", None, "defaultbranch"):
                 return "an include sets the default branch under an unsettled condition"
     return None

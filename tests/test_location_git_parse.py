@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory import _caches, gitconfig, gitsystem, location, origin
+from bettermemory import _caches, gitconfig, gitsystem, location, location_git, origin
 from bettermemory.location import remote_key
 
 from .test_location_git_config import _aged, _FakeGit, _record
@@ -602,6 +602,55 @@ def test_an_unsettled_include_declines_only_where_it_could_change_the_answer(
         _declines(repo, git_dies=False)
     else:
         assert _keys(repo) == {_key(repo, "gh:acme/lib")}
+
+
+def _unsettled(monkeypatch: pytest.MonkeyPatch, *, holds: bool) -> str:
+    """An ``onbranch:`` condition git settles, holding on the repository's
+    branch (``main``) where `holds`, that the capture reads as not
+    settled: git is taken as not answering for HEAD's branch in time
+    (`location_git._asked_branch`)."""
+    monkeypatch.setattr(location_git, "_head_branch", lambda *_a: gitconfig.UNSETTLED)
+    return "onbranch:main" if holds else "onbranch:other"
+
+
+#: Two bases whose ``gh:`` prefixes tie, in either order.
+_TIED = {
+    "c_first": '[url "https://C.invalid/"]\n\tinsteadOf = gh:\n'
+    '[url "https://B.invalid/"]\n\tinsteadOf = gh:\n',
+    "b_first": '[url "https://B.invalid/"]\n\tinsteadOf = gh:\n'
+    '[url "https://C.invalid/"]\n\tinsteadOf = gh:\n',
+}
+
+
+@pytest.mark.parametrize("holds", [True, False], ids=["holds", "does_not_hold"])
+@pytest.mark.parametrize("order", list(_TIED))
+def test_an_unsettled_include_naming_a_tied_base_declines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, order: str, holds: bool
+) -> None:
+    """ENG-207's round 7: git ranks insteadOf bases in the order it first
+    meets them, so an include under a condition not settled here that
+    names base B, with a rule matching nothing, has git meet B first where
+    it holds, and take B's ``gh:`` over C's though the config lists C's
+    first. The capture declines where the include could change the rule
+    taken (B ties the rule that rewrites the URL, under another base), and
+    keys what git fetches where B is the base taken either way. It keyed
+    C's URL, which git does not fetch."""
+    repo = _repo(tmp_path / "repo")
+    rules = tmp_path / "rules.inc"
+    rules.write_text(
+        '[url "https://B.invalid/"]\n\tinsteadOf = zz-nomatch:\n', encoding="utf-8"
+    )
+    _include(_global(), _unsettled(monkeypatch, holds=holds), rules)
+    _append(_global(), _TIED[order])
+    first = "C" if order == "c_first" else "B"
+    fetched = f"https://{'B' if holds else first}.invalid/acme/lib"
+    assert _fetched(repo) == fetched, "premise: git's rewrite"
+    if order == "c_first":
+        _declines(repo, git_dies=False)
+    else:
+        keys = _keys(repo)
+        assert _key(repo, fetched) in keys
+        assert _key(repo, "https://C.invalid/acme/lib") not in keys
 
 
 # ---------------------------------------------------------------------------

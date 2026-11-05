@@ -722,8 +722,11 @@ eighteenth was built.
   pattern, a legacy file that is no regular file or is over 64 KiB),
   the capture declines rather than key another answer, but only where
   the include could change what is keyed: one that sets a remote URL, an
-  insteadOf rule whose prefix matches a URL keyed, or a line git may die
-  on. One such include anywhere had every capture decline, though its
+  insteadOf rule whose prefix matches a URL keyed, an insteadOf rule of
+  any prefix under a base another rule gives a prefix tied with the one
+  rewriting a URL keyed (git ranks bases in the order it first meets
+  them, so where the include holds that base can win the tie), or a line
+  git may die on. One such include anywhere had every capture decline, though its
   rule matched none of the repository's URLs. The origin cache (`origin.capture`),
   which saw a rule in the global config or in a file the repository's
   config includes only once its ten minutes ran out, is kept against the
