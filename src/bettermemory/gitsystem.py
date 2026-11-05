@@ -31,12 +31,18 @@ knows no such extension), 2.45 to 2.53 read it, and from 2.54 a build
 with Rust reads it and one without dies ("compatibility hash algorithm
 support requires Rust", repository.c's ``repo_set_compat_hash_algo``),
 so git is asked what it does, not its build's options. git is never
-asked of one the same as the object format, which no git reads: 2.44 and
-earlier know no such extension, a build without Rust dies on any, and
-every other stops at ``BUG("hash_algo and compat_hash_algo match")``,
-which aborts the process (usage.c's ``BUG_vfl``), leaving a crash report
-or a core at each ask (ENG-207's review of round 8). `gitfile_rule`
-reads that one as a format git dies on, asking nothing.
+asked of one the same as the object format, which no git from 2.45
+reads: a build without Rust dies on any, and every other stops at
+``BUG("hash_algo and compat_hash_algo match")``, which aborts the
+process (usage.c's ``BUG_vfl``), leaving a crash report or a core at
+each ask (ENG-207's review of round 8). git 2.44 and earlier know no
+such extension: under format 1 they die on it, and under a version below
+-1 they read the repository, since setup.c there verifies no extension
+of a negative format (ENG-207's review of round 10). `gitfile_rule`
+declines that pairing, asking nothing, which fails closed against those;
+it reads the answer asked here, under format 1, below -1 too, so one
+other than the object format that a git of 2.44 or earlier reads there
+is declined as well.
 
 A hook client is a new process each prompt, and asking costs a git
 process for each question (13 ms each measured, ENG-207), so the answer

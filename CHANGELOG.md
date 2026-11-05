@@ -1083,16 +1083,20 @@ eighteenth was built.
   of. A `compatObjectFormat` is read as git reads it: once (a second
   dies), `sha1` or `sha256`, cleared with no format version set, and of
   format 1 alone under format 0; under format 1, or a version below -1,
-  one the same as the object format makes every git die (2.44 and
-  earlier know no such extension, a build without Rust dies on any, and
-  every other aborts at a `BUG()`), so the readers decline it with no git
-  asked, and one other than the object format is read as the git on PATH
-  was built (2.44 and earlier die on it, 2.45 to 2.53 read it, and from
-  2.54 a build with Rust, as CI's 2.56 is, reads it and one without
-  dies), so that git is asked in the probe of its system config, in a
-  git directory there (`gitsystem.reads_compat`, recorded with the
-  rest), and the readers follow its answer; where it has not said, they
-  decline. The object reader
+  one the same as the object format is read by no git from 2.45 (a
+  build without Rust dies on any, and every other aborts at a `BUG()`),
+  so the readers decline it with no git asked, and one other than the
+  object format is read as the git on PATH was built (2.44 and earlier
+  die on it under format 1, 2.45 to 2.53 read it, and from 2.54 a build
+  with Rust, as CI's 2.56 is, reads it and one without dies), so that git
+  is asked in the probe of its system config, in a git directory of
+  format 1 there (`gitsystem.reads_compat`, recorded with the rest), and
+  the readers follow its answer under both versions; where it has not
+  said, they decline. git 2.44 and earlier, which know no such
+  extension, die on either pairing under format 1 and read the
+  repository under a version below -1, whose extensions their setup.c
+  does not verify: the readers decline both there, which fails closed.
+  The object reader
   (`gitobjects.ObjectReader`, and the index reader of claim drift) takes
   its object format from that reading (`gitfile_rule.object_format`),
   where a line reader of its own took an `objectFormat = sha256` that

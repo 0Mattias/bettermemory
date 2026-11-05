@@ -421,20 +421,26 @@ def _judge_format(
     if version >= 1 and unknown:
         return f"{path} sets a repository extension git does not know"
     # A format git does not clear (a version of 1 or below -1) keeps the
-    # compat format. One the same as the object format no git reads: git
-    # 2.44 and earlier know no such extension, a build without Rust dies
-    # on any ("compatibility hash algorithm support requires Rust"), and
-    # every other aborts at repository.c's ``BUG("hash_algo and
-    # compat_hash_algo match")``, so git is not asked of it (gitsystem's
-    # docstring). Another git reads as it was built, which the file does
-    # not say: the git on PATH is asked (`gitsystem.reads_compat`,
-    # ENG-207's round 8), and where it has not said the format is not
-    # known here (fail closed).
+    # compat format. One the same as the object format no git from 2.45
+    # reads: a build without Rust dies on any ("compatibility hash
+    # algorithm support requires Rust"), and every other aborts at
+    # repository.c's ``BUG("hash_algo and compat_hash_algo match")``, so
+    # git is not asked of it (gitsystem's docstring). git 2.44 and earlier
+    # know no such extension: they die on it under format 1, and below -1
+    # they read the repository, as setup.c there verifies no extension of
+    # a negative format; the format is declined either way, which fails
+    # closed against those (ENG-207's review of round 10). Another git
+    # reads as it was built, which the file does not say: the git on PATH
+    # is asked under format 1 (`gitsystem.reads_compat`, ENG-207's round
+    # 8), and the answer read below -1 too, as git from 2.45 reads both
+    # alike; one that dies under format 1 declines below -1 where 2.44 and
+    # earlier read it (fail closed again), and where git has not said the
+    # format is not known here (fail closed).
     if compat is not None and version != -1 and version <= 1:
         if compat == hash_name:
             return (
                 f"{path} sets a compatibility object format the same as its "
-                "object format, which git dies on"
+                "object format, which no git from 2.45 reads"
             )
         reads = _reads_compat()
         if reads is None:
@@ -442,7 +448,10 @@ def _judge_format(
                 f"{path} sets a compatibility object format git has not said it reads"
             )
         if not reads:
-            return f"{path} sets a compatibility object format this git dies on"
+            return (
+                f"{path} sets a compatibility object format this git dies on "
+                "under format 1"
+            )
     return _Format(version, worktree_config, taken, hash_name)
 
 

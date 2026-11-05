@@ -1017,7 +1017,8 @@ def test_whether_git_reads_a_compatibility_object_format_is_asked_and_recorded(
     process; one git did not give in time is unsaid
     (`gitsystem.reads_compat` None), and the PATH is asked again after
     `RETRY_SECONDS`, not `REASK_SECONDS`. Of one the same as the object
-    format git is not asked, and nothing is recorded: no git reads it."""
+    format git is not asked, and nothing is recorded: no git from 2.45
+    reads it."""
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     fake = _FakeGit(monkeypatch, tmp_path / "git")
     fake.compat = code

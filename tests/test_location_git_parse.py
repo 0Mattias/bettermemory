@@ -1123,25 +1123,27 @@ _GIT_ABORTS = pytest.mark.skipif(
 )
 
 
-def test_a_compatibility_object_format_the_same_is_read_as_git_dying_unasked(
+def test_a_compatibility_object_format_the_same_is_declined_unasked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ENG-207's review of round 8: no git reads a repository whose
-    ``compatObjectFormat`` is its object format, so the format is read as
-    one git dies on, and git is not asked: asking it aborted a git at each
-    ask, a crash report or a core each time. The premise is git's source.
-    git 2.44 knows no such extension, and dies on it under format 1 as on
-    any it does not know (setup.c in v2.44.0). From git 2.45 to 2.53
-    repository.c's ``repo_set_compat_hash_algo`` stops at
+    """ENG-207's review of round 8: no git from 2.45 reads a repository
+    whose ``compatObjectFormat`` is its object format, so the format is
+    declined, and git is not asked: asking it aborted a git at each ask, a
+    crash report or a core each time. The premise is git's source. From
+    git 2.45 to 2.53 repository.c's ``repo_set_compat_hash_algo`` stops at
     ``BUG("hash_algo and compat_hash_algo match")``. From 2.54 (repository.c
     in v2.54.0 and on master) a build with Rust stops at the same
     ``BUG()``, and one without it dies on any compatibility object format.
-    usage.c's ``BUG_vfl`` ends in ``abort()``, so the git on PATH is asked
-    only under ``BETTERMEMORY_TEST_GIT_ABORTS=1``
+    git 2.44 knows no such extension (setup.c in v2.44.0): it dies on it
+    under format 1, as on any it does not know, and reads the repository
+    below -1, whose extensions it does not verify, where the decline fails
+    closed (ENG-207's review of round 10). usage.c's ``BUG_vfl`` ends in
+    ``abort()``, so the git on PATH is asked only under
+    ``BETTERMEMORY_TEST_GIT_ABORTS=1``
     (`test_git_dies_on_a_repository_whose_compat_format_is_its_own`)."""
 
     def asked() -> bool | None:
-        raise AssertionError("git asked of a pairing no git reads")
+        raise AssertionError("git asked of a pairing no git from 2.45 reads")
 
     monkeypatch.setattr(gitsystem, "reads_compat", asked)
     for version in (b"1", b"-2"):

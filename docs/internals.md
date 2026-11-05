@@ -536,13 +536,16 @@ probe, of format 1 and object format sha1, whether that git reads a
 and earlier die on it (no such extension), 2.45 to 2.53 read it, and from
 2.54 a build with Rust reads it and one without dies. A repository's
 format with such a pairing is read by that answer (format 1 and a
-version below -1 alike, as setup.c verifies them alike), declined where
-git has not said. One the same as the object format is never asked: no
-git reads it (2.44 and earlier know no such extension, a build without
-Rust dies on any, and every other stops at `BUG()` in repository.c's
+version below -1 alike, as setup.c from 2.45 reads them alike), declined
+where git has not said. One the same as the object format is never
+asked: no git from 2.45 reads it (a build without Rust dies on any, and
+every other stops at `BUG()` in repository.c's
 `repo_set_compat_hash_algo`, which aborts the process and leaves a crash
-report or a core), so a repository that sets one is declined as git
-dying there, with no git run. All
+report or a core), so a repository that sets one is declined, with no
+git run. git 2.44 and earlier know no such extension: they die on it
+under format 1, and read the repository under a version below -1, whose
+extensions setup.c there does not verify; the readers decline both
+pairings there, which fails closed against those gits. All
 of them run in an empty owner-only folder under the state directory
 (`git-ask`), with `GIT_CEILING_DIRECTORIES` naming the state directory,
 so git finds no repository there wherever the state directory sits (the
