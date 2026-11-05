@@ -1351,7 +1351,9 @@ eighteenth was built.
   project, in its tenant, that fetches from every remote it fetches
   from (one of that project's checkouts names exactly those keys) and
   whose witness commit it holds, outside the strict switch. Nothing is
-  merged where a question is open on a checkout of either, a project
+  merged where a question is open on a checkout of either where a
+  sighting shows it (not one retired, nor one of this machine's whose
+  folder is gone: ENG-215), a project
   file is bound to either, or a declaration names either, a project
   merged into either or a checkout of either (a join, move, init, new
   or separate project, unjoin, absorb, declared remote or moved
@@ -1491,7 +1493,9 @@ eighteenth was built.
   machine's whose folder is gone): the container's checkout brought back
   by its next sighting, or one joined to the project since, takes it
   and names it, where it stayed shown nowhere, named by `project
-  pending` and `bettermemory health` alone (rows of kinds 9.0.0rc18
+  pending` and `bettermemory health` alone; and such a question holds
+  no alias clone's join (ENG-207), where it held one shown at no
+  sighting (rows of kinds 9.0.0rc18
   reads: it verifies, opens, reads and writes such a store). `project
   why` of a record moved so names the checkout it was written in and
   the one it went into, with the retired one's rows, where it named the
@@ -1515,9 +1519,10 @@ eighteenth was built.
   `src/bettermemory/membership_lines.py`,
   `src/bettermemory/store_membership.py`,
   `src/bettermemory/location_git.py`,
-  `src/bettermemory/location_stamps.py`, `docs/internals.md`,
+  `src/bettermemory/location_stamps.py`,
+  `src/bettermemory/membership_alias.py`, `docs/internals.md`,
   `tests/test_membership_shared_git_dir.py`,
-  `tests/test_membership_restated.py`)
+  `tests/test_membership_restated.py`, `tests/test_membership_alias.py`)
 
 ### 9.0.0rc18
 

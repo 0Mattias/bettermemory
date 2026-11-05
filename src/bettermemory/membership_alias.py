@@ -32,7 +32,11 @@ nothing a user said or a file binds stands against it:
   remote's spelling decides no merge;
 * P and Q are settled (`_settled`): neither provisional, a part, a folder
   project or a boundary, both in the location's tenant; no question is
-  open on a checkout of either, and no project file is bound to either;
+  open on a checkout of either where a sighting shows it (one on a
+  retired checkout, or on one of this machine's whose folder is gone,
+  holds nothing, and the sighting that joins asks it where it offers to
+  join another project to P's or Q's: `membership_shared._asked_here`,
+  ENG-215), and no project file is bound to either;
 * Q is the one settled project besides P that holds every remote the
   checkout fetches from (its keys less its alias keys; a provisional
   project, such as a third clone's that was asked, is not counted), and
@@ -71,6 +75,7 @@ from typing import TYPE_CHECKING, Any
 from . import _caches
 from .membership_lines import line_alias_joined
 from .membership_records import H, R, Checkout, Location
+from .membership_shared import _unseen
 
 if TYPE_CHECKING:
     from .membership import Membership
@@ -191,8 +196,13 @@ def _target(
         return None
     if not _minted_on(self, pid, aliases, fetched):
         return None
-    checkouts = {c.id for cs in held.values() for c in cs} | {k.id}
-    if any(pr.checkout in checkouts for pr in self._open_proposals()):
+    by_id = {c.id: c for cs in held.values() for c in cs}
+    checkouts = set(by_id) | {k.id}
+    if any(
+        pr.checkout == k.id
+        or (pr.checkout in by_id and not _unseen(self, by_id[pr.checkout]))
+        for pr in self._open_proposals()
+    ):
         return None
     members = {*self._members(pid), *self._members(q)}
     if self._store.membership_rows(

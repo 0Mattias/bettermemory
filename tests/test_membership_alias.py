@@ -31,7 +31,7 @@ from bettermemory.config import Config
 from bettermemory.location import resolve_here
 from bettermemory.machine import MachineIdentity
 from bettermemory.membership import ASK, GLOBAL, NEW, SILENT, Declaration, Resolution
-from bettermemory.membership_records import ProjectFileRef
+from bettermemory.membership_records import IMPORT, ProjectFileRef
 from bettermemory.store import Store
 
 from .test_membership_cost import (
@@ -621,6 +621,71 @@ def test_an_open_question_on_either_project_leaves_the_two_apart(
         line="a question",
     )
     _stays_apart(world, alias, second)
+
+
+@pytest.mark.parametrize("holder", ["retired", "gone", "live"])
+@pytest.mark.parametrize("about", ["the_alias_project", "another_project"])
+def test_a_question_no_sighting_shows_leaves_the_two_to_join(
+    world: World, about: str, holder: str
+) -> None:
+    """An import's question open on a second checkout of the alias clone's
+    project, offering to join the imported project to that project or to
+    a third one. Where no sighting shows it there (that checkout retired,
+    as ENG-215's heal leaves a record whose project has no live checkout,
+    or its folder gone here) it holds nothing: the alias clone's sighting
+    merges the two projects, and where the question is about the alias
+    clone's project, that sighting asks it, moved to the alias clone's
+    checkout; about the third project, it stays, asked at that project's
+    next sighting. Where a sighting shows it (``live``), the two stay
+    apart while it is open. Before, it held the join, shown at no
+    sighting."""
+    full, alias, first, second = _split_pair(world)
+    twin = world.clone(alias, "/w/alias-twin", remote=ALIAS)
+    other = world.see(twin)
+    assert other.project == second.project and other.checkout != second.checkout
+    third = world.repo("/w/third", remote="example.invalid/third")
+    x = world.see(third)
+    imported = world.see(world.repo("/w/imported", remote="example.invalid/i"))
+    target = str(second.project if about == "the_alias_project" else x.project)
+    pr = world.model.open_proposal(
+        checkout=str(other.checkout),
+        kind=IMPORT,
+        candidates=[target],
+        evidence={
+            "imported_project": str(imported.project),
+            "source": "export.json",
+            "codes": {target: ["H"]},
+        },
+        reason=IMPORT,
+        line="an import's question",
+        distinct="imported_project",
+    )
+    if holder == "retired":
+        with world.model._call():
+            k = world.model.checkout(str(other.checkout))
+            world.model._put_checkout(dataclasses.replace(k, retired=True))
+            world.model._event("checkout_retired", checkout=k.id)
+    elif holder == "gone":
+        del world.disk[(twin.machine, twin.path)]
+    _caught_up(full, alias)
+
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    q = world.model.proposal(pr.id)
+    if holder == "live":
+        assert seen.project == second.project and _merges(world) == []
+        assert (q.state, q.checkout) == ("open", other.checkout)
+        return
+    assert seen.project == first.project and len(_merges(world)) == 1
+    if about == "the_alias_project":
+        assert (q.state, q.checkout) == ("open", seen.checkout)
+        assert any(pr.id in line for line in seen.lines)
+        return
+    assert (q.state, q.checkout) == ("open", other.checkout)
+    assert not any(pr.id in line for line in seen.lines)
+    again = world.see(third)
+    assert again.checkout == x.checkout and any(pr.id in line for line in again.lines)
+    assert world.model.proposal(pr.id).checkout == x.checkout
 
 
 def test_a_project_file_bound_to_either_project_leaves_the_two_apart(

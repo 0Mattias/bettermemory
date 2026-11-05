@@ -939,7 +939,13 @@ project P into one other project Q where all of these hold:
   remote's spelling decides no merge.
 - P and Q are settled: neither provisional, a part, a folder project or
   a boundary, both in the location's tenant; no question is open on a
-  checkout of either, and no project file is bound to either.
+  checkout of either where a sighting shows it, and no project file is
+  bound to either. A question on a retired checkout, or on one of this
+  machine's whose folder is gone (`membership_shared._unseen`), holds
+  nothing: no sighting shows it there, and the next sighting of a live
+  checkout of the project it offers to join another to asks it there
+  (`_asked_here`, ENG-215), the joining sighting included where that
+  project is P or Q.
 - Q is the one settled project besides P that holds every remote the
   checkout fetches from (its keys less its alias keys; a provisional
   project, such as a third clone's that was asked, is not counted), and
