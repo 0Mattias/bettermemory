@@ -29,8 +29,21 @@ import pytest
 from bettermemory import _caches, origin
 
 from .test_location_git_include_conditions import _git, _repo
+from .test_membership_security import neutral_git
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+
+
+@pytest.fixture(autouse=True)
+def _neutral(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No user or system git config, and a fixed author and committer in
+    the environment (`neutral_git`), so `_repo`'s commit needs no identity
+    of the machine's: a runner with none made it die ("Author identity
+    unknown"). A ``user.name`` a case writes in the repository's config
+    still reaches ``git rev-parse``, which reads it whatever names the
+    commit's author."""
+    neutral_git(tmp_path, monkeypatch)
+
 
 #: Variables of git's default config, of the repository settings and of
 #: other sections, each written with every one of `VALUES`.
