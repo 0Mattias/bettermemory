@@ -24,6 +24,7 @@ how this git reads a legacy remote file and an empty URL is asked of it
 from __future__ import annotations
 
 import dataclasses
+import getpass
 import inspect
 import os
 import shutil
@@ -259,6 +260,45 @@ def test_a_config_that_cannot_be_read_is_read_as_git_reads_it(
             _declines(repo)
     finally:
         locked.chmod(0o600)
+
+
+def test_git_for_windows_names_no_user_s_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's round 7: Git for Windows' ``getpwnam`` is a stub that
+    names no account, so an include of ``~<user>/x`` dies there and a
+    ``gitdir:~<user>/`` pattern is matched as written; this reader read
+    both as not settled. With the platform read as Windows, an include of
+    this account's ``~<name>/`` dies, and the pattern holds for a git
+    directory under a folder named ``~<name>`` (git's literal match)."""
+    user = getpass.getuser()
+    rules = tmp_path / "x.inc"
+    rules.write_text("[t]\n\tv = 1\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "platform", "win32")
+    config = tmp_path / "config"
+    config.write_text(f"[include]\n\tpath = ~{user}/x.inc\n", encoding="utf-8")
+    read = gitconfig.config_tree(str(config))
+    assert read.dies is not None and "cannot expand" in read.dies
+    git_dir = tmp_path / f"~{user}" / "repo" / ".git"
+    git_dir.mkdir(parents=True)
+    config.write_text(
+        f'[includeIf "gitdir:~{user}/"]\n\tpath = {rules.as_posix()}\n',
+        encoding="utf-8",
+    )
+    read = gitconfig.config_tree(str(config), git_dir=str(git_dir))
+    assert read.complete and read.dies is None and not read.undecided
+    assert read[("t", None, "v")] == [b"1"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Git for Windows' getpwnam")
+def test_an_include_of_a_user_s_home_dies_under_git_for_windows(tmp_path: Path) -> None:
+    """The same, against Git for Windows itself: an include of this
+    account's ``~<name>/x`` makes git die, and the capture declines."""
+    repo = _repo(tmp_path / "repo")
+    _write(repo, "local", f"[include]\n\tpath = ~{getpass.getuser()}/x\n")
+    done = _git(repo, "ls-remote", "--get-url", "origin", check=False)
+    assert done.returncode != 0, "premise: git dies"
+    _declines(repo)
 
 
 @pytest.mark.parametrize(

@@ -493,7 +493,7 @@ def _interpolate(
     ``%(prefix)`` with no ``/`` is a name like any other. A leading
     ``~/`` (or ``~``) is HOME, resolved with `real_home`, and a leading
     ``~user/`` that user's home directory; None where git cannot expand
-    it (HOME unset, no such user)."""
+    it (HOME unset, no such user, any user on Windows: `_user_home`)."""
     if path.startswith(_RUNTIME_PREFIX):
         found = None if prefix is None else prefix()
         rest = path[len(_RUNTIME_PREFIX) :]
@@ -523,18 +523,19 @@ def _interpolate(
 
 
 def _user_home(user: str) -> str | None:
-    """The home directory of the account `user` (``getpwnam``), None where
-    there is none; `_Overflow` on Windows, where git's own lookup is not
-    read here."""
+    """The home directory of the account `user` as git looks it up
+    (``getpwnam``), None where there is none. Git for Windows' ``getpwnam``
+    is a stub that names no account, so there every ``~user`` is none: an
+    include of one dies, and a ``gitdir:`` pattern of one is matched as
+    written (ENG-207's round 7; it was read as not settled)."""
     if sys.platform == "win32":
-        raise _Overflow(user)
-    else:
-        import pwd
+        return None
+    import pwd
 
-        try:
-            return str(pwd.getpwnam(user).pw_dir)
-        except (KeyError, OSError, ValueError):
-            return None
+    try:
+        return str(pwd.getpwnam(user).pw_dir)
+    except (KeyError, OSError, ValueError):
+        return None
 
 
 def _include_target(

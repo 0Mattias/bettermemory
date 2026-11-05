@@ -477,10 +477,13 @@ git 2.54's parser parses it (`gitconfig.git_entries`, through
 `gitconfig.config_tree`), never through git, so git's `safe.directory`
 refusal never applies. Where git dies reading it (a line its parser
 refuses, a `url`, `insteadOf` or `include.path` with no value, an
-include it cannot read, a directory, `~user` naming no user, an include
-past git's depth of 10, a remote or branch variable remote.c's reader
+include it cannot read, a directory, `~user` naming no user, which is
+any user under Git for Windows, whose `getpwnam` names none (a
+`gitdir:` pattern of one is matched as written there), an include past
+git's depth of 10, a remote or branch variable remote.c's reader
 refuses: a string with no value, a boolean that is none, a refspec it
-cannot parse), the capture declines (indeterminate, not kept) and the
+cannot parse, and a promisor variable promisor-remote.c refuses), the
+capture declines (indeterminate, not kept) and the
 origin, which asks git, records no repository; never a folder outside
 one (ENG-207's round 6). A global config git may not read is skipped,
 as git skips it; a system config or an include it may not read is one
