@@ -1610,25 +1610,21 @@ def test_i07_token_write_denied_records_the_failure_and_asks_by_content(
         (a / ".git" / "info").chmod(0o755)
 
     u = unborn(tmp_path / "vol" / "draft")
+    u2 = tmp_path / "disk" / "draft"
     (u / "outline.md").write_text("one\ntwo\n")
     (u / "notes").mkdir()
     (u / "notes" / "n1.md").write_text("n\n")
-    for p in [u / ".git", *(u / ".git").rglob("*")]:
-        if p.is_dir():
-            p.chmod(0o555)
+    _dirs_mode(u / ".git", 0o555)
     try:
         lab.write("u1", u)
         k = lab.model().checkout(str(lab.checkout_of("u1")))
         assert k.token is None and k.manifest is not None
-        u2 = copy(u, tmp_path / "disk" / "draft")
+        copy(u, u2)
     finally:
-        for p in [u2 / ".git", *(u2 / ".git").rglob("*")]:
-            if p.is_dir():
-                p.chmod(0o755)
+        _dirs_mode(u / ".git", 0o755)
+        _dirs_mode(u2 / ".git", 0o755)
     remove(u)
-    for p in [u2 / ".git", *(u2 / ".git").rglob("*")]:
-        if p.is_dir():
-            p.chmod(0o555)
+    _dirs_mode(u2 / ".git", 0o555)
     try:
         res, brief = lab.view(u2)
         assert (res.rule, brief) == ("ask:content_only", [])
@@ -1640,9 +1636,18 @@ def test_i07_token_write_denied_records_the_failure_and_asks_by_content(
         res, brief = lab.view(u2)
         assert (res.outcome, brief) == (SILENT, ["u1"])
     finally:
-        for p in [u2 / ".git", *(u2 / ".git").rglob("*")]:
-            if p.is_dir():
-                p.chmod(0o755)
+        _dirs_mode(u2 / ".git", 0o755)
+
+
+def _dirs_mode(root: Path, mode: int) -> None:
+    """`mode` on `root` and every directory below it, where `root` exists:
+    a `finally` restores whichever trees a failure left read-only, so the
+    failure is the one reported and tmp_path can be removed."""
+    if not root.is_dir():
+        return
+    for p in [root, *root.rglob("*")]:
+        if p.is_dir() and not p.is_symlink():
+            p.chmod(mode)
 
 
 def test_x07_token_write_skipped_by_policy_asks_by_content_and_says_so(
