@@ -686,6 +686,50 @@ def _resolve(gd: GitDir) -> tuple[bytes | None, str | None]:
     return None, sha
 
 
+def head_unborn(gd: GitDir) -> bool | None:
+    """Whether HEAD names a branch with no commit, as the files read it:
+    True where the ref HEAD's chain ends at has neither a loose file nor a
+    ``packed-refs`` line; False where HEAD is detached, or where a ref the
+    chain reads exists, whatever it holds: a loose file of a shape `_parse`
+    refuses (garbage, NULs, nothing) is a ref git cannot read, not one that
+    is missing (ENG-220's review, round F). None wherever the files do not
+    settle it: a HEAD `head_bytes` does not read or `_parse` refuses (a
+    reftable repository's ``ref: refs/heads/.invalid`` among them), a chain
+    past git's depth, a per-worktree ref with no loose file, a
+    ``packed-refs`` `_packed` refuses, and any OSError."""
+    head = head_bytes(gd)
+    if head is None:
+        return None
+    try:
+        name, _ = _parse(head)
+        reads = 1
+        while name is not None:
+            if reads == _MAX_READS:
+                return None
+            reads += 1
+            try:
+                target, sha = _lookup(gd, name)
+            except _Unsettled:
+                return False if _loose_ref(gd, name) else None
+            if target is None:
+                return sha is None
+            name = target
+        return False
+    except (_Unsettled, OSError, ValueError):
+        return None
+
+
+def _loose_ref(gd: GitDir, name: bytes) -> bool:
+    """Whether a loose file stands for the ref `name`, whatever it holds;
+    a directory there is none, as `_lookup` reads it."""
+    base = gd.gitdir if name.startswith(_PER_WORKTREE) else gd.commondir
+    try:
+        status = os.lstat(os.fsencode(base) + b"/" + name)
+    except (OSError, ValueError):
+        return False
+    return not stat.S_ISDIR(status.st_mode)
+
+
 def head_sha(gd: GitDir) -> str | None:
     """HEAD resolved to a full lowercase hash: the commit ``git rev-parse
     --verify HEAD^{commit}`` prints. None on an unborn branch or a missing

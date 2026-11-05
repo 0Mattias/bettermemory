@@ -53,7 +53,9 @@ def commit_author_timestamps(
     where a history applies and was not read, why
     (`origin_history.HistoryUnread`): git met its timeout, failed on the
     head (named by its hash, or HEAD where the plumbing finds both the
-    repository and its head), refused a repository whose ``.git`` or
+    repository and its head, or a ref of HEAD's that exists and that git
+    cannot read, which the files tell from an unborn branch), refused a
+    repository whose ``.git`` or
     ``HEAD`` entry stands at or above `cwd`, or one no reader reads there
     (an ``objects`` directory no one may search: ``ERROR``, ENG-220's
     review, round F), or printed
@@ -211,8 +213,9 @@ def _refused_head(cwd: Path) -> HistoryUnread | None:
     stops at one membership refuses (`_unread_entry`), ``ERROR`` where an
     entry stands otherwise, since git then
     refused a repository there, as the keyed read names its refusal
-    (ENG-220's review, round F); None where ``git rev-parse --verify -q
-    HEAD`` fails (a branch with no commit), no history that applies;
+    (ENG-220's review, round F); where ``git rev-parse --verify -q HEAD``
+    fails, None on a branch with no commit, no history that applies, and
+    ``ERROR`` on one whose ref git cannot read (`_unborn_or_broken`);
     ``ERROR`` where both answer, since git then failed on a head the
     repository holds; and a probe that met its timeout, ``TIMEOUT``
     (`origin_history.unanswered`). Run only on that failure, so a read
@@ -222,10 +225,38 @@ def _refused_head(cwd: Path) -> HistoryUnread | None:
         before = origin_history.git_counts()
         if origin._git(cwd, *probe, timeout=5.0) is not None:
             continue
-        if probe is _HEAD_PROBES[0] and origin_history.git_counts() == before:
+        if origin_history.git_counts() != before:
+            return origin_history.unanswered(before, named=False)
+        if probe is _HEAD_PROBES[0]:
             return _unread_entry(cwd)
-        return origin_history.unanswered(before, named=False)
+        return _unborn_or_broken(cwd)
     return HistoryUnread.ERROR
+
+
+def _unborn_or_broken(cwd: Path) -> HistoryUnread | None:
+    """Why ``git rev-parse --verify -q HEAD`` failed in a repository git
+    reads: None where HEAD names a branch with no commit; ``ERROR`` where
+    the ref HEAD names exists and git cannot resolve it (a loose file of
+    garbage or NULs, a ``packed-refs`` git dies on: ENG-220's review, round
+    F), or HEAD is detached at no hash git reads. The files settle it where
+    they read the ref (`githead.head_unborn`); where they do not (a
+    reftable repository, a ``packed-refs`` they decline) plumbing does:
+    ``git symbolic-ref -q HEAD`` names the branch and ``git show-ref
+    --exists`` exits 2 where it does not exist. Any other answer is
+    ``ERROR``, a call that met its timeout ``TIMEOUT`` and one that found
+    no binary None (`origin_history.unanswered`)."""
+    gd = githead.gitdir_at(cwd) or githead.locate(cwd)
+    unborn = None if gd is None else githead.head_unborn(gd)
+    if unborn is not None:
+        return None if unborn else HistoryUnread.ERROR
+    before = origin_history.git_counts()
+    name = origin._git(cwd, "symbolic-ref", "-q", "HEAD", timeout=5.0)
+    if name is None or not name.startswith("refs/"):
+        return origin_history.unanswered(before, named=True)
+    shown = origin._git_result(cwd, "show-ref", "--exists", name, timeout=5.0)
+    if shown is None:
+        return origin_history.unanswered(before, named=True)
+    return None if shown.returncode == 2 else HistoryUnread.ERROR
 
 
 def _unread_entry(cwd: Path) -> HistoryUnread | None:

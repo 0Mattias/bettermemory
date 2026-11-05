@@ -740,6 +740,23 @@ eighteenth was built.
   so no commit leg runs there. (`src/bettermemory/githead.py`,
   `src/bettermemory/origin_dates.py`, `tests/test_unread_history.py`)
 
+- **A ref git cannot read is no unborn branch (ENG-220).** `git
+  rev-parse --verify -q HEAD` fails on a branch with no commit and on one
+  whose ref holds garbage or NULs alike, so a broken `refs/heads/main`
+  read as an unborn branch, its history as one that does not apply, and
+  every surface read the memory fresh (the review's round F). The files
+  now tell the two apart where they read the ref
+  (`githead.head_unborn`): a branch with neither a loose file nor a
+  `packed-refs` line is unborn and reads not applicable, and a ref that
+  exists, whatever it holds, reads `error`, unread; a chain of symbolic
+  refs is read to its end. Where the files do not settle it (a reftable
+  repository, a `packed-refs` they decline) the plumbing does: `git
+  symbolic-ref -q HEAD` names the branch at the chain's end, and `git
+  show-ref --exists` exits 2 where it does not exist; a symbolic-ref
+  that fails, and a git before 2.43 that knows no `--exists`, read
+  `error`. (`src/bettermemory/githead.py`,
+  `src/bettermemory/origin_dates.py`, `tests/test_unread_history.py`)
+
 - **No window passes a command line's bound (ENG-220).** The patch
   stream and the split's listing named up to 256 commits on git's
   command line (10,496 characters), and they and the two path-filtered

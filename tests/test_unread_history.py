@@ -541,6 +541,153 @@ def test_under_git_dir_a_refused_head_is_told_apart_by_plumbing(
         assert probes == []
 
 
+#: Each shape of a head git cannot resolve: what the history reads, and how
+#: many plumbing calls past the two probes tell it (none where the files do).
+_HEADS = {
+    "unborn": (None, 0),
+    "garbage ref": (CommitDriftUnread.ERROR, 0),
+    "NUL-filled ref": (CommitDriftUnread.ERROR, 0),
+    "empty ref": (CommitDriftUnread.ERROR, 0),
+    "packed-refs git dies on": (CommitDriftUnread.ERROR, 1),
+    "packed-refs git dies on, a directory at the ref": (CommitDriftUnread.ERROR, 1),
+    "chained to a missing ref": (None, 0),
+    "chained to a garbage ref": (CommitDriftUnread.ERROR, 0),
+    "unborn, files unsettled": (None, 2),
+    "garbage ref, files unsettled": (CommitDriftUnread.ERROR, 1),
+    "unborn, files unsettled, a git with no --exists": (CommitDriftUnread.ERROR, 2),
+    "reftable unborn": (None, 2),
+}
+
+
+def _break_head(repo: Path, case: str) -> None:
+    """Give `repo`'s branch the head shape `case` names, after two commits
+    (none for an unborn branch)."""
+    if "unborn" in case:
+        return
+    _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
+    _commit(repo, "post", when=_T1, files={"notes0.md": "a1\n"})
+    ref = repo / ".git" / "refs" / "heads" / "main"
+    if case.startswith("garbage ref"):
+        ref.write_text("not a hash\n", encoding="utf-8")
+    elif case == "NUL-filled ref":
+        ref.write_bytes(b"\0" * 41)
+    elif case == "empty ref":
+        ref.write_bytes(b"")
+    elif case.startswith("chained to"):
+        ref.write_text("ref: refs/heads/x\n", encoding="utf-8")
+        if case.endswith("garbage ref"):
+            (ref.parent / "x").write_text("not a hash\n", encoding="utf-8")
+    elif case.startswith("packed-refs git dies on"):
+        _git(repo, "pack-refs", "--all")
+        assert not ref.exists(), "premise: the branch is packed alone"
+        packed = repo / ".git" / "packed-refs"
+        lines = packed.read_text(encoding="utf-8").splitlines()
+        packed.write_text("\n".join([*lines[:-1], "zzzz refs/heads/main", ""]))
+        if case.endswith("a directory at the ref"):
+            # No loose file, as `_lookup` reads a directory there: the
+            # files leave it to the plumbing.
+            ref.mkdir()
+
+
+@pytest.mark.parametrize("moved", [False, True], ids=["files", "GIT_DIR"])
+@pytest.mark.parametrize("case", list(_HEADS))
+def test_a_ref_git_cannot_read_is_told_from_an_unborn_branch(
+    case: str, moved: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``git rev-parse --verify -q HEAD`` fails on an unborn branch and on a
+    branch whose ref git cannot read alike, and no key is read for either.
+    The files tell them apart (`githead.head_unborn`): an unborn branch has
+    neither a loose file nor a ``packed-refs`` line and reads None, as no
+    history applies; a loose file of garbage, NULs or nothing is a ref that
+    exists, and reads `error`, unread, never not applicable (ENG-220's
+    review, round F); a chain of symbolic refs is read to its end. Where
+    the files do not settle it (a ``packed-refs`` they decline, a reftable
+    repository, here also the files read as unsettled) the plumbing does:
+    ``git symbolic-ref -q HEAD`` names the branch at the chain's end, which
+    ``git show-ref --exists`` finds missing (exit 2: unborn) or not; a
+    symbolic-ref that fails, and a git that knows no ``--exists``, read
+    `error`. Alike under GIT_DIR, which every git the package runs
+    drops."""
+    if case == "reftable unborn":
+        repo = tmp_path / "repo"
+        made = subprocess.run(
+            ["git", "init", "-q", "-b", "main", "--ref-format=reftable", str(repo)],
+            capture_output=True,
+        )
+        if made.returncode != 0:
+            pytest.skip("this git writes no reftable repository")
+    else:
+        repo = _repo(tmp_path)
+        _break_head(repo, case)
+    if "files unsettled" in case:
+        monkeypatch.setattr(githead, "head_unborn", lambda gd: None)
+    if moved:
+        elsewhere = _repo(tmp_path, "elsewhere")
+        _commit(elsewhere, "other", when=_T0, files={"other.md": "o\n"})
+        monkeypatch.setenv("GIT_DIR", str(elsewhere / ".git"))
+    real_run = subprocess.run
+    plumbed: list[Any] = []
+
+    def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if "symbolic-ref" in argv or "show-ref" in argv:
+            plumbed.append(argv)
+        if "--exists" in argv and case.endswith("no --exists"):
+            # A git before 2.43 knows no such option.
+            return subprocess.CompletedProcess(argv, 129, b"", b"error: unknown option")
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    _caches.clear_all()
+    assert origin_history.located_key(repo) is None, "premise: nothing keys it"
+    want, calls = _HEADS[case]
+    assert origin_dates.commit_author_timestamps(repo) is want
+    assert len(plumbed) == calls
+
+
+@pytest.mark.usefixtures("keyed_by")
+@pytest.mark.parametrize("case", ["garbage ref", "NUL-filled ref"])
+def test_a_ref_git_cannot_read_reads_unread_on_every_surface(
+    case: str, tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The branch's loose ref holds garbage or NULs. Its history applies and
+    was not read: the search hit is flagged and reads spot_check_required,
+    memory_show's count and the health rollup read `error`, whether the
+    files or git's answer would key the rows (ENG-220's review, round F)."""
+    repo, caller, cited, _, memories = _scenario(tmp_path, memory_dir, monkeypatch)
+    before, _ = _attach(memories, caller, monkeypatch)
+    assert _by_id(before)[cited]["commit_drift_count"] == 1, "premise: it applies"
+    ref = repo / ".git" / "refs" / "heads" / "main"
+    ref.write_bytes(b"not a hash\n" if case == "garbage ref" else b"\0" * 41)
+    why = CommitDriftUnread.ERROR
+    _caches.clear_all()
+    out, _ = _attach(memories, caller, monkeypatch)
+    hit = _by_id(out)[cited]
+    assert hit["commit_drift_unread"] is True and "commit_drift_count" not in hit
+    assert hit["staleness_verdict"] == "spot_check_required"
+    assert hit["verification"]["recommendation"] == unread_recommendation(why)
+    _caches.clear_all()
+    shown = compute_commit_drift(
+        _V1,
+        _URL,
+        caller_origin=None,
+        body=f"widget rule lives in {repo / 'notes0.md'}",
+        anchor=ClaimAnchor(root=str(repo), rule="home_checkout"),
+    )
+    assert shown is why
+    _caches.clear_all()
+    debt = health._compute_commit_drift_debt(
+        by_id={"m": _stats("m")},
+        origin_repo_by_id={"m": _URL},
+        caller_origin=Origin(cwd=str(repo), repo=_URL, branch=None),
+        anchor_paths_by_id={"m": (str(repo / "notes0.md"),)},
+        claims_by_id=None,
+        verified_head_by_id=None,
+    )
+    assert debt is not None and debt.rows == []
+    unread = {"unread": 1, "unread_causes": {why.value: 1}, "unread_ids": ["m"]}
+    assert debt.to_dict().items() >= unread.items()
+
+
 @pytest.mark.usefixtures("keyed_by")
 def test_a_repository_nothing_reads_reads_unread_never_not_applicable(
     tmp_path: Path,
