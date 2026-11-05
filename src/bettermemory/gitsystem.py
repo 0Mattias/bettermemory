@@ -20,7 +20,9 @@ with breaking changes reads no legacy ``remotes/`` or ``branches/`` file,
 and git from 2.46 empties a remote's URLs at an empty one; git is asked
 ``ls-remote --get-url`` of a remote only a legacy file of a git
 directory under the state directory names (`_probe_repository`), and
-the URL it prints says both.
+the URL it prints says both. A fourth (ENG-207's round 7) asks there
+the directory that git expands ``%(prefix)`` to in a path, which a
+RUNTIME_PREFIX build takes from where its binary runs (`_PREFIX_ASK`).
 
 A hook client is a new process each prompt, and asking costs a git
 process for each question (13 ms each measured, ENG-207), so the answer
@@ -29,8 +31,9 @@ under (on macOS with the developer directory, `_developer`), with the
 stamp of the git binary found on that PATH then; a capture reads the
 record and stats that binary, and asks git again only where the binary
 stamps otherwise, the answer is older than `REASK_SECONDS` (one that
-did not say how git reads a remote, `RETRY_SECONDS`) or none is
-recorded. The three questions together are bound by `ASK_SECONDS`, the
+did not say how git reads a remote or expands ``%(prefix)``,
+`RETRY_SECONDS`) or none is recorded. The four questions together are
+bound by `ASK_SECONDS`, the
 capture's own fetch budget. A git that does not answer within it or
 cannot run, or none on PATH, reads as the last answer git gave for that
 PATH (`_kept`: one a racing process recorded meanwhile, else the
@@ -69,16 +72,18 @@ from .gitconfig import _UNSTATED, Stamp, file_stamp
 #: The record's file in the state directory.
 RECORD = "git-config-sources.json"
 #: The format the record carries in its ``format`` field: 2 adds how git
-#: reads a remote (`Sources.legacy`, `Sources.resets`), so a record of
-#: format 1 is asked again.
-RECORD_FORMAT = 2
-#: How long the three questions may take together: the capture's budget
+#: reads a remote (`Sources.legacy`, `Sources.resets`), 3 how it expands
+#: ``%(prefix)`` (`Sources.prefix`), so a record of an earlier format is
+#: asked again.
+RECORD_FORMAT = 3
+#: How long the four questions may take together: the capture's budget
 #: for a fetch (`location_git.FETCH_BUDGET`; tests/test_location_git_config.py
 #: pins the two equal), under every hook's. Measured (ENG-207, macOS, git
 #: 2.54 through /usr/bin/git's xcrun shim, a load average of 12 to 15):
 #: medians of 13 and 14 ms for ``git var``, 82 ms at most over 100 calls;
 #: ``ls-remote --get-url`` in the probe (round 6, the same git, a load
-#: average of 4) a median of 9 ms, 11 ms at most over 100 calls.
+#: average of 4) a median of 9 ms, 11 ms at most over 100 calls, and
+#: ``config --type=path`` there (round 7) about as long.
 ASK_SECONDS = 0.3
 #: How long an answer stands while its git binary stamps as it did: a git
 #: installed ahead of it on the same PATH is asked within this.
@@ -108,10 +113,12 @@ _MACOS = sys.platform == "darwin"
 ASK_FOLDER = "git-ask"
 #: The git directory under the state directory git is asked how it reads
 #: a remote in (`_probe_repository`): a remote ``p`` its config gives no
-#: URL and whose ``remotes/p`` file gives one, an empty one and another.
+#: URL and whose ``remotes/p`` file gives one, an empty one and another;
+#: and how it expands ``%(prefix)/`` (`_PREFIX_ASK`).
 _PROBE_FILES = {
     "HEAD": b"ref: refs/heads/main\n",
-    "config": b"[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+    "config": b"[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
+    b"[bettermemory]\n\tprefix = %(prefix)/z\n",
     "remotes/p": b"URL: bettermemory-probe-a\nURL:\nURL: bettermemory-probe-b\n",
 }
 _PROBE_FOLDERS = ("objects", "refs", "remotes")
@@ -141,6 +148,19 @@ _REMOTE_ANSWERS = {
     "bettermemory-probe-a": (True, False),
     "p": (False, True),
 }
+#: The fourth question, in the probe (ENG-207's round 7): git expands its
+#: config's ``bettermemory.prefix``, ``%(prefix)/z``, as it expands an
+#: include's path (path.c's ``interpolate_path``: ``system_path``), and
+#: what it prints less `_PREFIX_TAIL` is the directory a ``%(prefix)/``
+#: path names before its relative rest (`Sources.prefix`): the runtime
+#: prefix of a RUNTIME_PREFIX build (Apple's git, git for Windows), taken
+#: from where the binary runs, so the record's key (PATH, and on macOS
+#: the developer directory) names it; ``%(prefix)`` itself for a git that
+#: leaves the path as written. The value does not start with
+#: ``:(optional)``, which ``--type=path`` strips and git 2.54's include
+#: path does not.
+_PREFIX_ASK = ("config", "--type=path", "--get", "bettermemory.prefix")
+_PREFIX_TAIL = "/z"
 #: The caller's variables that would reach the probe's config.
 _PROBE_UNSET = (
     "GIT_CONFIG_SYSTEM",
@@ -159,12 +179,15 @@ class Sources:
     legacy ``remotes/`` and ``branches/`` files (`legacy`: a git built
     with breaking changes reads neither), and whether an empty
     ``remote.<name>.url`` empties the remote's URLs (`resets`, git 2.46
-    and later), each None where git did not say (`_reads_remotes`)."""
+    and later), each None where git did not say (`_reads_remotes`); and
+    the directory it expands ``%(prefix)`` to in a path (`prefix`,
+    `_PREFIX_ASK`; ENG-207's round 7), None where git did not say."""
 
     own: tuple[str, ...]
     system: str | None
     legacy: bool | None = None
     resets: bool | None = None
+    prefix: str | None = None
 
 
 @dataclass(frozen=True)
@@ -254,12 +277,13 @@ def _current(answer: _Answer, now: float, *, stamp: bool = True) -> bool:
     back: one kept after a failed ask (`tried`) for `RETRY_SECONDS` from
     then; else one younger than its lifetime (`REASK_SECONDS`,
     `RETRY_SECONDS` for a git that never answered or did not say how it
-    reads a remote, `Sources.legacy`) whose git binary
-    stamps as it did (not stated where `stamp` is off)."""
+    reads a remote or expands ``%(prefix)``, `Sources.legacy`,
+    `Sources.prefix`) whose git binary stamps as it did (not stated where
+    `stamp` is off)."""
     if answer.tried is not None:
         return 0 <= now - answer.tried < RETRY_SECONDS
     age = now - answer.asked
-    whole = answer.ok and answer.sources.legacy is not None
+    whole = answer.ok and None not in (answer.sources.legacy, answer.sources.prefix)
     if not 0 <= age < (REASK_SECONDS if whole else RETRY_SECONDS):
         return False
     return not stamp or answer.git is None or file_stamp(answer.git) == answer.stamp
@@ -318,7 +342,7 @@ def _absolute(path: str, flavour: ModuleType = os.path) -> bool:
 
 
 def _ask(key: str, now: float) -> _Answer:
-    """git's answer for the PATH `key` names, the three questions within
+    """git's answer for the PATH `key` names, the four questions within
     `ASK_SECONDS` together; the fallback, not ok, where git is not on
     PATH, cannot run or does not answer in time."""
     failed = _Answer(key, None, None, now, False, Sources((), _FALLBACK))
@@ -351,43 +375,57 @@ def _ask(key: str, now: float) -> _Answer:
     # each answers with an error, which names nothing.
     system = named.stdout.strip() if named.returncode == 0 else ""
     own = _own_files(listed.stdout) if listed.returncode == 0 else ()
-    legacy, resets = _reads_remotes(folder, ceiling, deadline - time.monotonic())
-    found = Sources(own, system or _FALLBACK, legacy, resets)
+    legacy, resets, prefix = _reads_remotes(folder, ceiling, deadline)
+    found = Sources(own, system or _FALLBACK, legacy, resets, prefix)
     return _Answer(key, git, stamp, now, True, found)
 
 
+#: `_reads_remotes`' answer where git did not give one.
+_UNSAID: tuple[bool | None, bool | None, str | None] = (None, None, None)
+
+
 def _reads_remotes(
-    folder: str, ceiling: dict[str, str], left: float
-) -> tuple[bool | None, bool | None]:
+    folder: str, ceiling: dict[str, str], deadline: float
+) -> tuple[bool | None, bool | None, str | None]:
     """How the git on PATH reads a remote (`Sources.legacy`,
     `Sources.resets`), from its answer to `_REMOTE_ASK` in the probe's
-    git directory (`_probe_repository`), asked from `folder` within
-    `left` seconds with no config but the probe's own; (None, None) where
-    it does not answer so, and the answer is asked again after
-    `RETRY_SECONDS` (`_current`). A build's own option list
-    (``git version --build-options``) names no breaking changes (git
-    2.54's ``help.c``), so git is asked what it does. The answer is kept
-    only where the probe stamps after git answers as it did before its
-    content was checked (`_probe_stamps`): another writer's file there
-    while git read it (ENG-207's round 7: one rewriting ``remotes/p``
-    made about one ask in three answer wrong) leaves both None."""
+    git directory (`_probe_repository`), and the directory it expands
+    ``%(prefix)`` to (`Sources.prefix`), from its answer to `_PREFIX_ASK`
+    there, both asked from `folder` before the monotonic `deadline` with
+    no config but the probe's own; `_UNSAID` where git does not answer
+    so, and it is asked again after `RETRY_SECONDS` (`_current`). A
+    build's own option list (``git version --build-options``) names no
+    breaking changes (git 2.54's ``help.c``), so git is asked what it
+    does. The answers are kept only where the probe stamps after git
+    answers as it did before its content was checked (`_probe_stamps`):
+    another writer's file there while git read it (ENG-207's round 7:
+    one rewriting ``remotes/p`` made about one ask in three answer
+    wrong) leaves them unsaid."""
     probe = _probe_repository()
-    if probe is None or left <= 0:
-        return None, None
+    if probe is None:
+        return _UNSAID
     root, before = probe
-    done = _git_runner.run_git(
-        _REMOTE_ASK,
-        cwd=folder,
-        git_dir=root,
-        timeout=left,
-        env={**_DEVNULL, "GIT_CONFIG_NOSYSTEM": "1", **ceiling},
-        unset=_PROBE_UNSET,
-    )
-    if done is None or done.returncode != 0:
-        return None, None
+    said: list[str] = []
+    for question in (_REMOTE_ASK, _PREFIX_ASK):
+        left = deadline - time.monotonic()
+        done = None
+        if left > 0:
+            done = _git_runner.run_git(
+                question,
+                cwd=folder,
+                git_dir=root,
+                timeout=left,
+                env={**_DEVNULL, "GIT_CONFIG_NOSYSTEM": "1", **ceiling},
+                unset=_PROBE_UNSET,
+            )
+        if done is None or done.returncode != 0:
+            return _UNSAID
+        said.append(done.stdout.rstrip("\r\n"))
     if _probe_stamps(root) != before or not _probe_holds(root):
-        return None, None
-    return _REMOTE_ANSWERS.get(done.stdout.strip(), (None, None))
+        return _UNSAID
+    legacy, resets = _REMOTE_ANSWERS.get(said[0].strip(), (None, None))
+    expanded = said[1].endswith(_PREFIX_TAIL)
+    return legacy, resets, said[1][: -len(_PREFIX_TAIL)] if expanded else None
 
 
 def _probe_repository() -> tuple[str, list[Stamp | None]] | None:
@@ -565,13 +603,18 @@ def _recorded(key: str) -> _Answer | None:
                 flag is None or isinstance(flag, bool) for flag in (legacy, resets)
             ):
                 return None
+            prefix = entry.get("prefix")
+            if prefix is not None and (not isinstance(prefix, str) or "\0" in prefix):
+                return None
             return _Answer(
                 key=key,
                 git=git,
                 stamp=stamped,
                 asked=float(entry["asked"]),
                 ok=entry.get("ok") is True and git is not None and stamped is not None,
-                sources=Sources(tuple(p for p in files if p), system, legacy, resets),
+                sources=Sources(
+                    tuple(p for p in files if p), system, legacy, resets, prefix
+                ),
                 tried=None if tried is None else float(tried),
             )
         except (KeyError, TypeError, ValueError):
@@ -599,6 +642,7 @@ def _record(answer: _Answer) -> None:
         "system": answer.sources.system,
         "legacy": answer.sources.legacy,
         "resets": answer.sources.resets,
+        "prefix": answer.sources.prefix,
         "tried": answer.tried,
     }
     others = [e for e in _entries() if e.get("path") != answer.key]

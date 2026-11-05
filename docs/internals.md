@@ -510,13 +510,21 @@ a minute. The probe is stamped before its content is checked and again
 after git answers, and the answer is kept only where nothing changed,
 so another writer there while git reads it leaves the answer unknown
 rather than wrong; an entry it is not built with is removed (a link
-unlinked, never followed) and the probe built again. All three run in an empty owner-only folder
-under the state directory (`git-ask`), with `GIT_CEILING_DIRECTORIES`
-naming the state directory, so git finds no repository there wherever
-the state directory sits (the root of git's drive, asked before, can be
-a working tree: a share's root, a `subst` drive, `/` in a container),
-and with the caller's `GIT_CONFIG_SYSTEM` unset (the third with no
-config file but the probe's), within 0.3 s together (the capture's
+unlinked, never followed) and the probe built again. A fourth question
+asks there the directory that git expands `%(prefix)` to in a path
+(`git config --type=path` of the probe config's `%(prefix)/z`), which a
+RUNTIME_PREFIX build such as Apple's takes from where its binary runs;
+an include's path and a `gitdir:` pattern are expanded with it as git's
+`system_path` expands them: an absolute rest as it is, a relative one
+after that directory, `%(prefix)` with no `/` as written, and a path of
+a git that does not expand it (it prints `%(prefix)/z`) as written. All
+four run in an empty owner-only folder under the state directory
+(`git-ask`), with `GIT_CEILING_DIRECTORIES` naming the state directory,
+so git finds no repository there wherever the state directory sits (the
+root of git's drive, asked before, can be a working tree: a share's
+root, a `subst` drive, `/` in a container), and with the caller's
+`GIT_CONFIG_SYSTEM` unset (the third and fourth with no config file but
+the probe's), within 0.3 s together (the capture's
 fetch budget), only for a repository with a remote. A config
 file's path is spelled with the platform's separator where it enters
 (an include's target, the machine's files), so one file is named one
@@ -595,8 +603,9 @@ which lives in its tables) is asked of `git symbolic-ref -q HEAD`, one
 process, only for a capture whose config reads an `onbranch:` include,
 with the tables' lists and `packed-refs` stamped, so a steady prompt
 spawns none. Where a condition is still not settled here (git does not
-answer for HEAD within the fetch budget; a `%(prefix)` path in a
-`gitdir:` pattern; a pattern past the matcher's bounds), the include
+answer for HEAD within the fetch budget; a `%(prefix)` path of a
+relative rest where git has not said what it expands `%(prefix)` to; a
+pattern past the matcher's bounds), the include
 declines the capture only where it could change what is keyed: it sets
 a remote URL, an insteadOf rule whose prefix matches a URL keyed, an
 insteadOf rule under a base another rule gives the prefix rewriting a

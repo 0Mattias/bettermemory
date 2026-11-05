@@ -725,10 +725,17 @@ eighteenth was built.
   a steady prompt spawns none. The matcher is bounded where git's, in C,
   is not: past 150 nested stars or 200,000 steps a read (about 40 ms),
   where a pattern of 650 `*a` raised RecursionError out of the capture
-  and `**/` repeated 20 times took 3.2 s, a pattern is not settled. Where
-  git's reading is still not settled (git does not answer for HEAD, a
-  `%(prefix)` path in a `gitdir:` pattern, a pattern past the matcher's
-  bounds, a legacy file that is no regular file or is over 64 KiB),
+  and `**/` repeated 20 times took 3.2 s, a pattern is not settled. A
+  `%(prefix)/` path, in an include or a `gitdir:` pattern, is expanded
+  as git's `system_path` expands it, where it declined the capture: an
+  absolute rest as it is, a relative one after the directory the git on
+  PATH expands `%(prefix)` to, asked of git in the probe with the rest
+  (`git config --type=path`, the record's format 3; a RUNTIME_PREFIX
+  build such as Apple's takes it from where its binary runs), and
+  `%(prefix)` with no `/` as written. Where git's reading is still not
+  settled (git does not answer for HEAD, or what it expands `%(prefix)`
+  to, a pattern past the matcher's bounds, a legacy file that is no
+  regular file or is over 64 KiB),
   the capture declines rather than key another answer, but only where
   the include could change what is keyed: one that sets a remote URL, an
   insteadOf rule whose prefix matches a URL keyed, an insteadOf rule of

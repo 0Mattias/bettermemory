@@ -187,7 +187,8 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     never reaches git; the caller's GIT_CONFIG_SYSTEM is unset for ``git
     var`` and the system and global files are the null device for the
     listing. The third question, how git reads a remote (ENG-207's round
-    6), is asked of the probe's own git directory with no config but its
+    6), and the fourth, the directory it expands ``%(prefix)`` to (round
+    7), are asked of the probe's own git directory with no config but its
     own: no system file, the null device for the global one, and none of
     the caller's config variables."""
     _plain_git(tmp_path, "init", "-q")
@@ -217,12 +218,17 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     # the URL another and the answer none.
     said = (answer.sources.legacy, answer.sources.resets)
     assert said in gitsystem._REMOTE_ANSWERS.values()
+    # So does the fourth, the directory git expands %(prefix) to, which a
+    # GIT_CONFIG_* variable of the caller's naming the probe's key would
+    # change.
+    assert answer.sources.prefix is not None
     probe = gitsystem._probe_repository()
     assert probe is not None
     assert [c[0][1 + len(_git.PINS) :] for c in calls] == [
         list(gitsystem._VAR),
         list(gitsystem._LIST),
         [f"--git-dir={probe[0]}", *gitsystem._REMOTE_ASK],
+        [f"--git-dir={probe[0]}", *gitsystem._PREFIX_ASK],
     ]
     where = gitsystem._where()
     assert where is not None
@@ -238,10 +244,12 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
         calls[1][2]["GIT_CONFIG_SYSTEM"]
         == calls[1][2]["GIT_CONFIG_GLOBAL"]
         == calls[2][2]["GIT_CONFIG_GLOBAL"]
+        == calls[3][2]["GIT_CONFIG_GLOBAL"]
         == os.devnull
     )
-    assert calls[2][2]["GIT_CONFIG_NOSYSTEM"] == "1"
-    assert "GIT_CONFIG_COUNT" not in calls[2][2]
+    for probed in (calls[2][2], calls[3][2]):
+        assert probed["GIT_CONFIG_NOSYSTEM"] == "1"
+        assert "GIT_CONFIG_COUNT" not in probed
 
 
 def test_the_hostile_clone_runs_its_command_for_a_git_that_may_fetch(

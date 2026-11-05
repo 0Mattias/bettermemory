@@ -23,6 +23,7 @@ how this git reads a legacy remote file and an empty URL is asked of it
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import os
 import shutil
@@ -675,11 +676,18 @@ def test_a_global_include_is_read_as_git_reads_it_on_any_ref_backend(
     assert keys <= {_key(repo, "gh:acme/lib"), _key(repo, _MIRRORED)}
 
 
-#: An include git settles and this reader does not: ``%(prefix)`` names
-#: git's own installation, which a capture does not ask for.
-_UNSETTLED = "gitdir:%(prefix)/bettermemory-nowhere/"
+def _prefix_unsaid(monkeypatch: pytest.MonkeyPatch) -> str:
+    """A ``gitdir:%(prefix)/`` condition git settles (it does not hold)
+    and the capture does not: git is taken as not having said what it
+    expands ``%(prefix)`` to (`gitsystem.Sources.prefix`)."""
+    real = gitsystem.sources
+    monkeypatch.setattr(
+        gitsystem, "sources", lambda **kw: dataclasses.replace(real(**kw), prefix=None)
+    )
+    return "gitdir:%(prefix)/bettermemory-nowhere/"
 
 
+@pytest.mark.parametrize("unsettled", ["prefix", "branch"])
 @pytest.mark.parametrize(
     ("text", "declines"),
     [
@@ -693,22 +701,126 @@ _UNSETTLED = "gitdir:%(prefix)/bettermemory-nowhere/"
     ids=["matching_rule", "other_rule", "longer_rule", "remote_url", "dies", "neutral"],
 )
 def test_an_unsettled_include_declines_only_where_it_could_change_the_answer(
-    tmp_path: Path, text: str, declines: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    text: str,
+    declines: bool,
+    unsettled: str,
 ) -> None:
     """ENG-207's round 6: an include under a condition not settled here
-    has the capture decline where what it reads could change the URLs
-    keyed: an insteadOf rule whose prefix matches one, a remote URL, or a
-    line git may die on. A rule that matches none of them, or a file that
-    sets neither, leaves the capture as git reads it."""
+    (a ``%(prefix)`` path where git has not said what it expands that to,
+    an ``onbranch:`` where git does not answer for HEAD) has the capture
+    decline where what it reads could change the URLs keyed: an insteadOf
+    rule whose prefix matches one, a remote URL, or a line git may die on.
+    A rule that matches none of them, or a file that sets neither, leaves
+    the capture as git reads it."""
     repo = _repo(tmp_path / "repo")
     rules = tmp_path / "rules.inc"
     rules.write_text(text, encoding="utf-8")
-    _include(_global(), _UNSETTLED, rules)
+    condition = (
+        _prefix_unsaid(monkeypatch)
+        if unsettled == "prefix"
+        else _unsettled(monkeypatch, holds=False)
+    )
+    _include(_global(), condition, rules)
     assert _fetched(repo) == "gh:acme/lib", "premise: git reads no such include"
     if declines:
         _declines(repo, git_dies=False)
     else:
         assert _keys(repo) == {_key(repo, "gh:acme/lib")}
+
+
+def _prefix() -> str:
+    """The directory the git on PATH expands ``%(prefix)`` to, as
+    `gitsystem` asked it, checked against git's own expansion of a path
+    (``git config --type=path``)."""
+    found = gitsystem.sources().prefix
+    assert found is not None, "premise: git says"
+    probe = gitsystem._probe_repository()
+    assert probe is not None
+    asked = _git(
+        Path(probe[0]), "config", "--type=path", "--get", "bettermemory.prefix"
+    )
+    assert asked.stdout.rstrip("\r\n") == found + "/z"
+    return found
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "include_relative",
+        "include_absolute",
+        "include_literal",
+        "gitdir_holds",
+        "gitdir_not",
+    ],
+)
+def test_a_prefix_path_is_read_as_this_git_expands_it(
+    tmp_path: Path, case: str
+) -> None:
+    """ENG-207's round 7: a ``%(prefix)/`` path was not settled here, and
+    an include naming one declined the capture where its rule matched a
+    URL. It is now git's ``system_path``: an absolute rest as it is (the
+    reviewer's ``gitdir:%(prefix)//<git dir>/``, which git takes as
+    holding, and an include of ``%(prefix)//<file>``), a relative one
+    after the directory the git on PATH expands ``%(prefix)`` to, asked
+    of git (`gitsystem.Sources.prefix`; here an include climbing from it
+    to a file), and a ``%(prefix)`` with no ``/`` a file of that name;
+    a ``gitdir:`` pattern under the prefix that names no git directory
+    does not hold. Each is checked against the URL git fetches."""
+    repo = _repo(tmp_path / "repo")
+    config = repo / ".git" / "config"
+    rules = tmp_path / "rules.inc"
+    rules.write_text(_RULES, encoding="utf-8")
+    if case == "include_relative":
+        prefix = os.path.realpath(_prefix())
+        try:
+            climb = os.path.relpath(rules, prefix)
+        except ValueError:
+            pytest.skip("git's prefix is on another drive")
+        _append(config, f"[include]\n\tpath = %(prefix)/{Path(climb).as_posix()}\n")
+    elif case == "include_absolute":
+        _append(config, f"[include]\n\tpath = %(prefix)/{rules.as_posix()}\n")
+    elif case == "include_literal":
+        (repo / ".git" / "%(prefix)").write_text(_RULES, encoding="utf-8")
+        _append(config, "[include]\n\tpath = %(prefix)\n")
+    else:
+        real = Path(os.path.realpath(repo)).as_posix()
+        where = real if case == "gitdir_holds" else "bettermemory-nowhere"
+        _include(_global(), f"gitdir:%(prefix)/{where}/", rules)
+    fetched = "gh:acme/lib" if case == "gitdir_not" else _MIRRORED
+    assert _fetched(repo) == fetched, "premise: git's reading"
+    keys = _keys(repo)
+    assert _key(repo, fetched) in keys
+    assert keys <= {_key(repo, "gh:acme/lib"), _key(repo, _MIRRORED)}
+
+
+def test_a_git_that_leaves_prefix_as_written_is_read_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A git that does not expand ``%(prefix)/`` prints the probe's path
+    as written (`gitconfig.AS_WRITTEN`), and its include of
+    ``%(prefix)/x`` is the file ``%(prefix)/x`` beside the including
+    config, an absolute rest too."""
+    real = gitsystem.sources
+    monkeypatch.setattr(
+        gitsystem,
+        "sources",
+        lambda **kw: dataclasses.replace(real(**kw), prefix=gitconfig.AS_WRITTEN),
+    )
+    repo = _repo(tmp_path / "repo")
+    (repo / ".git" / "%(prefix)").mkdir()
+    (repo / ".git" / "%(prefix)" / "x").write_text(_RULES, encoding="utf-8")
+    _append(repo / ".git" / "config", "[include]\n\tpath = %(prefix)/x\n")
+    assert _key(repo, _MIRRORED) in _keys(repo)
+    _caches.clear_all()
+    (repo / ".git" / "%(prefix)" / "x").unlink()
+    rules = tmp_path / "rules.inc"
+    rules.write_text(_RULES, encoding="utf-8")
+    _append(
+        repo / ".git" / "config", f"[include]\n\tpath = %(prefix)/{rules.as_posix()}\n"
+    )
+    assert _key(repo, _MIRRORED) not in _keys(repo)
 
 
 def _unsettled(monkeypatch: pytest.MonkeyPatch, *, holds: bool) -> str:
@@ -792,15 +904,23 @@ def test_how_git_reads_a_remote_is_asked_of_git_and_recorded() -> None:
     assert (found.legacy, found.resets) == said
     entry = _record(state)["entries"][0]
     assert (entry["legacy"], entry["resets"]) == said
-    assert _record(state)["format"] == gitsystem.RECORD_FORMAT == 2
+    assert entry["prefix"] == found.prefix == _prefix()
+    assert _record(state)["format"] == gitsystem.RECORD_FORMAT == 3
 
 
-def _this_git() -> tuple[bool | None, bool | None]:
-    """How the git on PATH reads a remote, asked once in a fresh probe."""
+def _ask_probe() -> tuple[bool | None, bool | None, str | None]:
+    """`gitsystem._reads_remotes`, asked from git's folder with 5 s."""
     where = gitsystem._where()
     assert where is not None
-    said = gitsystem._reads_remotes(*where, 5.0)
-    assert said in gitsystem._REMOTE_ANSWERS.values(), "premise: git answers"
+    return gitsystem._reads_remotes(*where, time.monotonic() + 5.0)
+
+
+def _this_git() -> tuple[bool | None, bool | None, str | None]:
+    """How the git on PATH reads a remote and expands ``%(prefix)``,
+    asked once in a fresh probe."""
+    said = _ask_probe()
+    assert said[:2] in gitsystem._REMOTE_ANSWERS.values(), "premise: git answers"
+    assert said[2] is not None, "premise: git answers"
     return said
 
 
@@ -810,24 +930,35 @@ def _this_git() -> tuple[bool | None, bool | None]:
 _TAMPERED = [b"URL: bettermemory-probe-a\n", b""]
 
 
-@pytest.mark.parametrize("content", _TAMPERED, ids=["no_reset", "no_legacy"])
+#: Another writer's content for the probe's config, which git expands to
+#: another prefix.
+_ELSEWHERE = b"[bettermemory]\n\tprefix = /bettermemory-elsewhere/z\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [("remotes/p", _TAMPERED[0]), ("remotes/p", _TAMPERED[1]), ("config", _ELSEWHERE)],
+    ids=["no_reset", "no_legacy", "prefix"],
+)
 def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
-    monkeypatch: pytest.MonkeyPatch, content: bytes
+    monkeypatch: pytest.MonkeyPatch, name: str, content: bytes
 ) -> None:
     """ENG-207's round 7: another writer rewriting ``remotes/p`` while git
     read it made git answer for its content, and the answer was kept (an
     hour for "reads no legacy file"). The probe is stamped before its
     content is checked and again after git answers, and the answer is kept
-    only where nothing changed: here the writer replaces the file in the
-    middle of each ask, git answers for its content, and the ask says
-    nothing, so it is asked again after `gitsystem.RETRY_SECONDS`. The next
-    ask, with no writer, rebuilds the probe and answers as git does."""
+    only where nothing changed: here the writer replaces the file (or the
+    config git expands ``%(prefix)`` from) in the middle of each ask, git
+    answers for its content, and the ask says nothing, so it is asked
+    again after `gitsystem.RETRY_SECONDS`. The next ask, with no writer,
+    rebuilds the probe and answers as git does."""
     truth = _this_git()
     real = gitsystem._git_runner.run_git
+    question = gitsystem._PREFIX_ASK if name == "config" else gitsystem._REMOTE_ASK
 
     def tampered(args: Sequence[str], **kw: Any) -> Any:
-        if tuple(args) == gitsystem._REMOTE_ASK:
-            path = os.path.join(kw["git_dir"], "remotes", "p")
+        if tuple(args) == question:
+            path = os.path.join(kw["git_dir"], *name.split("/"))
             Path(path + ".t").write_bytes(content)
             os.replace(path + ".t", path)
         return real(args, **kw)
@@ -835,23 +966,25 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
     monkeypatch.setattr(gitsystem._git_runner, "run_git", tampered)
     where = gitsystem._where()
     assert where is not None
-    assert gitsystem._reads_remotes(*where, 5.0) == (None, None)
+    assert _ask_probe() == gitsystem._UNSAID
     root = Path(where[0]).parent / gitsystem.PROBE_FOLDER
     asked = subprocess.run(
-        ["git", f"--git-dir={root}", *gitsystem._REMOTE_ASK],
+        ["git", f"--git-dir={root}", *question],
         capture_output=True,
         text=True,
         env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
         check=True,
     )
-    assert gitsystem._REMOTE_ANSWERS[asked.stdout.strip()] != truth, (
-        "premise: git answers wrong"
-    )
+    if name == "config":
+        wrong = asked.stdout.strip() != truth[2] + "/z"
+    else:
+        wrong = gitsystem._REMOTE_ANSWERS[asked.stdout.strip()] != truth[:2]
+    assert wrong, "premise: git answers wrong"
     _caches.clear_all()
     found = gitsystem.sources()
-    assert (found.legacy, found.resets) == (None, None)
+    assert (found.legacy, found.resets, found.prefix) == (None, None, None)
     monkeypatch.setattr(gitsystem._git_runner, "run_git", real)
-    assert gitsystem._reads_remotes(*where, 5.0) == truth
+    assert _ask_probe() == truth
 
 
 def test_no_wrong_answer_is_kept_under_a_writer_racing_the_probe() -> None:
@@ -880,13 +1013,13 @@ def test_no_wrong_answer_is_kept_under_a_writer_racing_the_probe() -> None:
     thread = threading.Thread(target=writer)
     thread.start()
     try:
-        said = [gitsystem._reads_remotes(*where, 5.0) for _ in range(60)]
+        said = [_ask_probe() for _ in range(60)]
     finally:
         stop.set()
         thread.join()
     assert writes > 60, "premise: the writer raced the asks"
-    assert set(said) <= {truth, (None, None)}, said
-    assert gitsystem._reads_remotes(*where, 5.0) == truth
+    assert set(said) <= {truth, gitsystem._UNSAID}, said
+    assert _ask_probe() == truth
 
 
 @pytest.mark.parametrize(
@@ -920,7 +1053,7 @@ def test_a_probe_holding_another_entry_is_rebuilt(tmp_path: Path, stray: str) ->
     else:
         shutil.rmtree(root / "remotes")
         (root / "remotes").symlink_to(outside, target_is_directory=True)
-    assert gitsystem._reads_remotes(*where, 5.0) == truth
+    assert _ask_probe() == truth
     assert gitsystem._probe_holds(str(root))
     assert (outside / "keep").read_bytes() == b"x"
     other = gitsystem._probe_name({**gitsystem._PROBE_FILES, "HEAD": b"x\n"}, ())
@@ -994,4 +1127,7 @@ def test_a_remote_is_read_as_this_git_reads_it(
     _aged(state, "asked", gitsystem.RETRY_SECONDS)
     _caches.clear_all()
     gitsystem.sources()
-    assert len(fake.asked) - asked == (0 if legacy is not None else 3)
+    # Asked again: the system file, the listing, the remote and, where git
+    # answered the remote at all, the prefix.
+    again = 0 if legacy is not None else 3 if said is None else 4
+    assert len(fake.asked) - asked == again

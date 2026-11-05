@@ -559,7 +559,11 @@ def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
     if isinstance(paths, str):
         return _Remotes([], [], (), paths)
     files: list[ConfigFile] = []
-    context = IncludeContext(lambda: _head_branch(common_dir, git_dir, files))
+    sources = _sources_once()
+    context = IncludeContext(
+        lambda: _head_branch(common_dir, git_dir, files),
+        prefix=lambda: sources().prefix,
+    )
     own = _read_configs(paths, git_dir, context, files, stamp_first=False)
     why = _failed(own)
     if why is not None:
@@ -571,7 +575,6 @@ def _rewrites(common_dir: str, git_dir: str) -> _Remotes:
         _remote_url_names(read) or _remote_url_names(read.undecided) for read in own
     ):
         return _Remotes([], files)
-    sources = _sources_once()
     named = _machine_configs(sources=sources)
     gentle = frozenset(_native(p) for p in _global_configs())
     machine = _read_configs(named, git_dir, context, files, gentle=gentle)

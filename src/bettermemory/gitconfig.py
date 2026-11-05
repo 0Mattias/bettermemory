@@ -43,6 +43,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from types import ModuleType
+from typing import Generic, TypeVar
 
 from . import _caches
 from ._location_probe import path_missing
@@ -134,33 +135,57 @@ class IncludeContext:
     `collecting`, the read that collects them, where git takes every such
     condition as holding and refuses a remote URL in a file an
     ``includeIf`` reads. A read with a context that is not collecting
-    dies where git's reader of remotes dies (`_remote_rule`)."""
+    dies where git's reader of remotes dies (`_remote_rule`). Its
+    `prefix`, called at the first ``%(prefix)/`` path and kept, is the
+    directory the git on PATH expands that to (`gitsystem.Sources.prefix`;
+    None where it is not known, where such a path of a relative rest is
+    not settled; ENG-207's round 7)."""
 
     def __init__(
         self,
         branch: Callable[[], bytes | None],
         *,
+        prefix: Callable[[], str | None] | None = None,
         remote_urls: frozenset[bytes] | None = None,
         collecting: bool = False,
-        _known: list[bytes | None] | None = None,
     ) -> None:
-        self._branch_of = branch
-        self._known: list[bytes | None] = [] if _known is None else _known
+        self.branch = branch if isinstance(branch, _Once) else _Once(branch)
+        self.prefix: _Once[str | None] = (
+            prefix if isinstance(prefix, _Once) else _Once(prefix or _unknown)
+        )
         self.remote_urls = remote_urls
         self.collecting = collecting
 
-    def branch(self) -> bytes | None:
-        if not self._known:
-            self._known.append(self._branch_of())
-        return self._known[0]
-
     def collect(self) -> IncludeContext:
         """This context for the read that collects the remote URLs."""
-        return IncludeContext(self._branch_of, collecting=True, _known=self._known)
+        return IncludeContext(self.branch, prefix=self.prefix, collecting=True)
 
     def with_urls(self, urls: frozenset[bytes]) -> IncludeContext:
         """This context with the remote URLs collected."""
-        return IncludeContext(self._branch_of, remote_urls=urls, _known=self._known)
+        return IncludeContext(self.branch, prefix=self.prefix, remote_urls=urls)
+
+
+def _unknown() -> None:
+    """A context's prefix where none is given: not known."""
+
+
+_T = TypeVar("_T")
+
+
+class _Once(Generic[_T]):
+    """`of`'s answer, asked at the first call and kept, for every context
+    made from one (`IncludeContext.collect`, `IncludeContext.with_urls`)."""
+
+    __slots__ = ("_held", "_of")
+
+    def __init__(self, of: Callable[[], _T]) -> None:
+        self._of = of
+        self._held: list[_T] = []
+
+    def __call__(self) -> _T:
+        if not self._held:
+            self._held.append(self._of())
+        return self._held[0]
 
 
 #: What `IncludeContext.branch` answers where the branch HEAD names is not
@@ -198,6 +223,12 @@ class _Reading:
     asks_remote_urls: bool = False
     forbidden: bool = False
     steps: Steps = field(default_factory=lambda: Steps())
+
+    @property
+    def prefix(self) -> Callable[[], str | None] | None:
+        """The directory git expands ``%(prefix)`` to, as the read's
+        context says (`IncludeContext.prefix`); None with no context."""
+        return None if self.context is None else self.context.prefix
 
     @property
     def remote_rules(self) -> bool:
@@ -411,7 +442,7 @@ def _include(
         if value is None:
             what = "include.path" if condition is None else "an includeIf's path"
             raise _Dies(f"{including} sets {what} with no value")
-        target = _include_target(value, including)
+        target = _include_target(value, including, reading.prefix)
         context = reading.context
         if (
             holds
@@ -445,17 +476,34 @@ def _include(
 
 #: The prefix git expands to the directory it runs from (``system_path``).
 _RUNTIME_PREFIX = "%(prefix)/"
+#: What `IncludeContext.prefix` answers for a git that leaves
+#: ``%(prefix)/`` as written (it prints its own spelling).
+AS_WRITTEN = "%(prefix)"
 
 
-def _interpolate(path: str, *, real_home: bool) -> str | None:
-    """git's ``interpolate_path``: a leading ``~/`` (or ``~``) is HOME,
-    resolved with `real_home`, and a leading ``~user/`` that user's home
-    directory; None where git cannot expand it (HOME unset, no such
-    user). `_Overflow` for git's runtime prefix (``%(prefix)/``), which
-    git expands to the directory it runs from, and for a user named on
-    Windows, neither known here."""
+def _interpolate(
+    path: str, *, real_home: bool, prefix: Callable[[], str | None] | None = None
+) -> str | None:
+    """git's ``interpolate_path``: a leading ``%(prefix)/`` is git's
+    ``system_path`` of the rest (ENG-207's round 7): the rest where it is
+    absolute (`_git_absolute`), else the rest after the directory the git
+    on PATH expands ``%(prefix)`` to (`prefix`, `IncludeContext.prefix`)
+    and a ``/``, the path as written for a git that does not expand it
+    (`AS_WRITTEN`), and `_Overflow` where `prefix` does not say; a
+    ``%(prefix)`` with no ``/`` is a name like any other. A leading
+    ``~/`` (or ``~``) is HOME, resolved with `real_home`, and a leading
+    ``~user/`` that user's home directory; None where git cannot expand
+    it (HOME unset, no such user)."""
     if path.startswith(_RUNTIME_PREFIX):
-        raise _Overflow(path)
+        found = None if prefix is None else prefix()
+        rest = path[len(_RUNTIME_PREFIX) :]
+        if found == AS_WRITTEN:
+            return path
+        if _git_absolute(rest):
+            return rest
+        if found is None:
+            raise _Overflow(path)
+        return found + "/" + rest
     if not path.startswith("~"):
         return path
     slash = path.find("/")
@@ -489,15 +537,17 @@ def _user_home(user: str) -> str | None:
             return None
 
 
-def _include_target(value: bytes, including: str) -> str:
+def _include_target(
+    value: bytes, including: str, prefix: Callable[[], str | None] | None = None
+) -> str:
     """The file an include's `value` names, as config.c's
-    ``handle_path_include`` takes it: expanded (`_interpolate`; `_Dies`
-    where git cannot), a relative path taken from the including file's
-    directory, and spelled with the platform's separator (`_native`). An
-    empty value names that directory, which git dies reading
-    (`_config_bytes`)."""
+    ``handle_path_include`` takes it: expanded (`_interpolate`, with git's
+    `prefix`; `_Dies` where git cannot), a relative path taken from the
+    including file's directory, and spelled with the platform's separator
+    (`_native`). An empty value names that directory, which git dies
+    reading (`_config_bytes`)."""
     raw = os.fsdecode(value)
-    target = _interpolate(raw, real_home=False)
+    target = _interpolate(raw, real_home=False, prefix=prefix)
     if target is None:
         raise _Dies(f"{including} includes {raw!r}, which git cannot expand")
     if not _git_absolute(target):
@@ -988,7 +1038,7 @@ def _condition(
             if git_dir is None:
                 return None
             pattern = condition[len(prefix) :]
-            return _gitdir_matches(pattern, including, git_dir, icase, reading.steps)
+            return _gitdir_matches(pattern, including, git_dir, icase, reading)
     if condition.startswith("onbranch:"):
         pattern = condition[len("onbranch:") :]
         return _branch_condition(pattern, reading.context, reading.steps)
@@ -1062,18 +1112,21 @@ def _slashed(path: str) -> str:
 
 
 def _gitdir_matches(
-    pattern: str, including: str, git_dir: str, icase: bool, steps: Steps
+    pattern: str, including: str, git_dir: str, icase: bool, reading: _Reading
 ) -> bool | None:
     """config.c's ``include_by_gitdir``: the pattern expanded as git
-    expands a path (`_interpolate`, HOME resolved; left as written where
-    git cannot expand it), ``./`` taken from the including file's real
-    directory (that part matched literally), ``**/`` put before a relative
-    one and ``**`` after one that ends in a separator; matched as a path
-    against the real git directory, then against it as given. None where
-    the pattern names git's runtime prefix, not known here, and where
-    neither matches and the match is not settled (`_any_match`)."""
+    expands a path (`_interpolate`, HOME resolved and ``%(prefix)/`` with
+    the read's `_Reading.prefix`; left as written where git cannot expand
+    it), ``./`` taken from the including file's real directory (that part
+    matched literally), ``**/`` put before a relative one and ``**``
+    after one that ends in a separator; matched as a path against the
+    real git directory, then against it as given (the read's steps,
+    `_any_match`). None where the pattern names git's runtime prefix and
+    the directory it names is not known, and where neither matches and
+    the match is not settled."""
+    steps = reading.steps
     try:
-        expanded = _interpolate(pattern, real_home=True)
+        expanded = _interpolate(pattern, real_home=True, prefix=reading.prefix)
     except _Overflow:
         return None
     if expanded is not None:
