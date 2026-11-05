@@ -1,6 +1,6 @@
 """The commit-drift cache: the per-hit resolution memoised in
 `_response.attach_commit_drift_counts`, the whole-history author dates
-memoised per (root, head) in `origin.commit_author_timestamps`, and the root
+memoised per (root, head) in `origin_dates.commit_author_timestamps`, and the root
 and the head read from the repository's files (`githead`).
 
 Real repositories and real stores under `tmp_path`; the `ResponseBuilder` is
@@ -31,6 +31,7 @@ from bettermemory import (
     gitfile_rule,
     githead,
     origin,
+    origin_dates,
     origin_gitfiles,
     origin_history,
     verify,
@@ -265,7 +266,7 @@ def _by_id(out: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 #: The log that reads a head's whole history, and the one that reads what a
-#: head adds to an earlier head's (`origin._extended_author_timestamps`).
+#: head adds to an earlier head's (`origin_dates._extended_author_timestamps`).
 _WHOLE_HISTORY = ("log", "--format=%at")
 _EXTENSION = ("log", "--boundary", "--format=%m%H %at")
 
@@ -907,7 +908,7 @@ def test_a_head_that_moves_during_the_attach_stores_nothing(
     if blind:
         monkeypatch.setattr(githead, "signature", lambda *a, **k: ("blind",))
 
-    real_touching = origin.commit_author_timestamps_touching_pathspecs
+    real_touching = origin_dates.commit_author_timestamps_touching_pathspecs
     moved: list[str] = []
 
     def commit_then_read(*args: Any, **kwargs: Any) -> Any:
@@ -1022,7 +1023,7 @@ def test_a_head_that_leaves_and_returns_during_the_attach_stores_nothing(
     memories = store.load_all()
     _age(repo / ".git" / "HEAD", repo / ".git" / "refs")
     away, back = ("side", "main") if move == "switch" else (other, head)
-    real_log = origin.commit_author_timestamps_touching_pathspecs
+    real_log = origin_dates.commit_author_timestamps_touching_pathspecs
     real_walk = origin._walk_reachable
     moved: list[str] = []
 
@@ -1222,7 +1223,7 @@ def test_a_commit_after_the_history_is_read_is_never_kept_under_its_head(
         verified_head=None if dated else anchor,
     )
     memories = store.load_all()
-    real = origin.commit_author_timestamps
+    real = origin_dates.commit_author_timestamps
     landed: list[str] = []
 
     def read_then_commit(*args: Any, **kwargs: Any) -> Any:
@@ -1453,15 +1454,15 @@ def test_the_whole_history_is_memoised_per_root_and_head(
         return real_run(argv, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", spy)
-    first = origin.commit_author_timestamps(repo)
-    again = origin.commit_author_timestamps(repo / "src")
+    first = origin_dates.commit_author_timestamps(repo)
+    again = origin_dates.commit_author_timestamps(repo / "src")
     assert first == [_T0]
     assert again is first
     assert calls == [(*_WHOLE_HISTORY, head)], "the log names the head it is keyed on"
 
     moved = _commit(repo, "post", when=_T1)
     calls.clear()
-    after = origin.commit_author_timestamps(repo)
+    after = origin_dates.commit_author_timestamps(repo)
     assert after == [_T0, _T1]
     assert calls == [(*_EXTENSION, f"{head}..{moved}")], (
         "the moved head reads only the commits it adds"
@@ -1505,7 +1506,7 @@ def test_a_head_that_does_not_descend_reads_its_whole_history(
         _git(repo, "checkout", "-q", "-b", "side", base)
         _commit(repo, "side 1", when=_T2)
     tip = _git(repo, "rev-parse", "HEAD")
-    assert len(origin.commit_author_timestamps(repo) or []) == 2
+    assert len(origin_dates.commit_author_timestamps(repo) or []) == 2
     if move == "switch":
         _git(repo, "checkout", "-q", "main")
     elif move == "back":
@@ -1515,11 +1516,11 @@ def test_a_head_that_does_not_descend_reads_its_whole_history(
     moved = _git(repo, "rev-parse", "HEAD")
     assert moved != tip
     calls = _history_calls(monkeypatch)
-    got = origin.commit_author_timestamps(repo)
+    got = origin_dates.commit_author_timestamps(repo)
     whole = _whole_history_logs(calls)
     assert whole[-1] == (*_WHOLE_HISTORY, moved)
     _caches.clear_all()
-    assert got == origin.commit_author_timestamps(repo)
+    assert got == origin_dates.commit_author_timestamps(repo)
 
 
 @pytest.mark.usefixtures("discovery")
@@ -1539,7 +1540,7 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
     repo = _repo(tmp_path)
     seed = _commit(repo, "seed", when=_T0)
     second = _commit(repo, "second", when=_T1)
-    assert origin.commit_author_timestamps(repo) == [_T0, _T1]
+    assert origin_dates.commit_author_timestamps(repo) == [_T0, _T1]
     if history == "shallow":
         (repo / ".git" / "shallow").write_bytes(f"{second}\n".encode())
     elif history == "graft":
@@ -1550,7 +1551,7 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
     moved = _commit(repo, "third", when=_T2)
     calls = _history_calls(monkeypatch)
     failed = origin.failed_git_calls()
-    got = origin.commit_author_timestamps(repo)
+    got = origin_dates.commit_author_timestamps(repo)
     assert seed not in _git(repo, "log", "--format=%H", moved)
     if history == "shallow":
         assert got is None, "behind the cut the dates are not read"
@@ -1581,17 +1582,17 @@ def test_a_failed_whole_history_read_is_remembered_for_a_minute(
         raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
 
     monkeypatch.setattr(subprocess, "run", times_out)
-    assert origin.commit_author_timestamps(repo) is None
+    assert origin_dates.commit_author_timestamps(repo) is None
     assert len(spawned) == 1
     monkeypatch.setattr(subprocess, "run", real_run)
     calls = _history_calls(monkeypatch)
     for _ in range(3):
         failed = origin.failed_git_calls()
-        assert origin.commit_author_timestamps(repo) is None
+        assert origin_dates.commit_author_timestamps(repo) is None
         assert origin.failed_git_calls() == failed + 1
     assert calls == []
     clock[0] += origin_history._FAILURE_SECONDS
-    assert origin.commit_author_timestamps(repo) == [_T0]
+    assert origin_dates.commit_author_timestamps(repo) == [_T0]
     assert len(_whole_history_logs(calls)) == 1
 
 
@@ -1604,10 +1605,10 @@ def test_the_whole_history_memo_is_bounded(
     second = _repo(tmp_path, "second")
     _commit(first, "seed", when=_T0)
     _commit(second, "seed", when=_T1)
-    assert origin.commit_author_timestamps(first) == [_T0]
-    assert origin.commit_author_timestamps(second) == [_T1]
+    assert origin_dates.commit_author_timestamps(first) == [_T0]
+    assert origin_dates.commit_author_timestamps(second) == [_T1]
     assert len(origin_history._TIMESTAMPS_MEMO) == 1
-    assert origin.commit_author_timestamps(first) == [_T0]
+    assert origin_dates.commit_author_timestamps(first) == [_T0]
 
 
 @pytest.mark.usefixtures("discovery")
@@ -1624,14 +1625,14 @@ def test_the_whole_history_memo_is_bounded_in_dates(
     _commit(first, "two", when=_T1)
     _commit(second, "one", when=_T1)
     _commit(second, "two", when=_T2)
-    assert origin.commit_author_timestamps(first) == [_T0, _T1]
-    assert origin.commit_author_timestamps(second) == [_T1, _T2]
+    assert origin_dates.commit_author_timestamps(first) == [_T0, _T1]
+    assert origin_dates.commit_author_timestamps(second) == [_T1, _T2]
     assert [key[0] for key in origin_history._TIMESTAMPS_MEMO] == [
         str(second.resolve())
     ]
     _commit(second, "three", when=_NOW)
     _commit(second, "four", when=_NOW)
-    assert len(origin.commit_author_timestamps(second) or []) == 4
+    assert len(origin_dates.commit_author_timestamps(second) or []) == 4
     assert [len(e.dates) for e in origin_history._TIMESTAMPS_MEMO.values()] == [2]
 
 
@@ -1651,17 +1652,17 @@ def test_a_history_past_the_date_budget_is_remembered_as_a_failed_read(
     _commit(repo, "one", when=_T0)
     head = _commit(repo, "two", when=_T1)
     calls = _history_calls(monkeypatch)
-    assert origin.commit_author_timestamps(repo) == [_T0, _T1]
+    assert origin_dates.commit_author_timestamps(repo) == [_T0, _T1]
     assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, head)]
     assert not origin_history._TIMESTAMPS_MEMO
     calls.clear()
     for _ in range(3):
         failed = origin.failed_git_calls()
-        assert origin.commit_author_timestamps(repo) is None
+        assert origin_dates.commit_author_timestamps(repo) is None
         assert origin.failed_git_calls() == failed + 1
     assert calls == []
     clock[0] += origin_history._FAILURE_SECONDS
-    assert origin.commit_author_timestamps(repo) == [_T0, _T1]
+    assert origin_dates.commit_author_timestamps(repo) == [_T0, _T1]
     assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, head)]
 
 
@@ -4038,18 +4039,20 @@ def test_the_whole_history_memo_touches_a_hit_under_its_lock(
     """The read is stubbed, so the other thread inserts at once; so is the
     shallow file's, since neither root is a repository."""
     monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_CAP", 1)
-    monkeypatch.setattr(origin, "_read_author_timestamps", lambda cwd, revision: [_T0])
+    monkeypatch.setattr(
+        origin_dates, "_read_author_timestamps", lambda cwd, revision: [_T0]
+    )
     monkeypatch.setattr(origin_history, "cuts", lambda start, walk=False: frozenset())
     touched = (Path("/touched"), "a" * 40)
     evicting = (Path("/evicting"), "b" * 40)
-    first = origin.commit_author_timestamps(touched[0], located=touched)
+    first = origin_dates.commit_author_timestamps(touched[0], located=touched)
     memo = _Interleaved(
         origin_history._TIMESTAMPS_MEMO,
         (str(touched[0]), touched[1]),
-        lambda: origin.commit_author_timestamps(evicting[0], located=evicting),
+        lambda: origin_dates.commit_author_timestamps(evicting[0], located=evicting),
     )
     monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO", memo)
-    assert origin.commit_author_timestamps(touched[0], located=touched) is first
+    assert origin_dates.commit_author_timestamps(touched[0], located=touched) is first
     memo.others[0].join()
     assert memo.errors == []
     assert list(memo) == [(str(evicting[0]), evicting[1])]

@@ -1,12 +1,12 @@
 """How `origin` reads a repository's history, and the whole-history author
-dates `origin.commit_author_timestamps` keeps.
+dates `origin_dates.commit_author_timestamps` keeps.
 
 Every git `origin` runs reads the history as its objects hold it, whatever
 the repository sets (`AS_STORED_ENV`, `AS_STORED_CONFIG`, `AS_STORED_DIFF`,
 `AS_STORED_PATHS`), and no count is read behind a shallow file's cut
 (`cuts`).
 
-`origin` reads from git the author date of every commit a head reaches
+`origin_dates` reads from git the author date of every commit a head reaches
 (``git log --format=%at <head>``), or of the commits a head reaches that a
 head already read does not (``<old>..<new>``); this module keeps what was
 read, per repository root and head, with the stamps of the files that
@@ -16,7 +16,8 @@ and remembers for a while each read that failed. The reachable walk
 
 This module lives apart from `origin.py` to keep each module under the
 package's 2,000-line bound (ENG-96). It imports the standard library,
-`_caches` and `githead`; `origin` imports it, never the reverse.
+`_caches` and `githead`; `origin` and `origin_dates` import it, never the
+reverse.
 """
 
 from __future__ import annotations

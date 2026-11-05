@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 from bettermemory import _caches, _git, githead, origin, origin_history, origin_patch
+from bettermemory import origin_dates
 from bettermemory import verify as verify_mod
 from bettermemory.claims import COMMIT_MARK, load_claims, parse_claim
 from bettermemory.origin_patch import PatchWindow, local_patch_window
@@ -1096,13 +1097,13 @@ def test_no_window_passes_a_command_line_s_bound(
     def reads(window: list[str], paths: list[str]) -> list[list[str]]:
         seen.clear()
         assert (
-            origin.commit_author_timestamps_touching_pathspecs(
+            origin_dates.commit_author_timestamps_touching_pathspecs(
                 repo, paths, toplevel=repo
             )
             == []
         )
         assert (
-            origin.commit_author_sha_pairs_touching_pathspecs(
+            origin_dates.commit_author_sha_pairs_touching_pathspecs(
                 repo, paths, toplevel=repo
             )
             == []
@@ -1145,7 +1146,7 @@ def test_a_line_that_cannot_carry_a_pathspec_reads_as_no_answer() -> None:
     ):
         assert origin_history.log_stdin(revisions, pathspecs) is None
     assert (
-        origin.commit_author_timestamps_touching_pathspecs(
+        origin_dates.commit_author_timestamps_touching_pathspecs(
             Path(os.devnull), [":(literal)a\nb.py"], toplevel=Path(os.devnull)
         )
         is None
@@ -1168,8 +1169,8 @@ def test_pathspecs_past_a_command_line_s_bound_read_as_git_reads_them(
     wide = [*noise, *alone]
     assert len(" ".join(wide)) > _WINDOWS_COMMAND_LINE
     for read in (
-        origin.commit_author_timestamps_touching_pathspecs,
-        origin.commit_author_sha_pairs_touching_pathspecs,
+        origin_dates.commit_author_timestamps_touching_pathspecs,
+        origin_dates.commit_author_sha_pairs_touching_pathspecs,
     ):
         got = read(repo, wide, toplevel=repo)
         assert got and got == read(repo, alone, toplevel=repo)

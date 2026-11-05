@@ -32,7 +32,7 @@ from typing import Any, cast
 
 import pytest
 
-from bettermemory import _caches, _git, origin, origin_history, verify
+from bettermemory import _caches, _git, origin, origin_dates, origin_history, verify
 from bettermemory.claims import load_claims
 from bettermemory.verify import ResolvedCommitDrift
 from bettermemory.verify_basis import CommitDriftUnread
@@ -202,7 +202,7 @@ def _unread_or_hit(
         cwd=repo,
         toplevel=repo,
         head=_plain(repo, "rev-parse", "HEAD"),
-        timestamps=lambda: origin.commit_author_timestamps(repo),
+        timestamps=lambda: origin_dates.commit_author_timestamps(repo),
         anchors=anchors,
         claims=load_claims(claims),
         since=_VERIFIED,
@@ -1076,15 +1076,15 @@ def test_a_line_the_format_did_not_print_declines_the_read(
     failed = origin.failed_git_calls()
     got: object
     if reader == "dates":
-        got = origin.commit_author_timestamps_touching_pathspecs(
+        got = origin_dates.commit_author_timestamps_touching_pathspecs(
             tmp_path, ["src/mod.py"], toplevel=tmp_path
         )
     elif reader == "pairs":
-        got = origin.commit_author_sha_pairs_touching_pathspecs(
+        got = origin_dates.commit_author_sha_pairs_touching_pathspecs(
             tmp_path, ["src/mod.py"], toplevel=tmp_path
         )
     elif reader == "whole":
-        got = origin._read_author_timestamps(tmp_path, "HEAD")
+        got = origin_dates._read_author_timestamps(tmp_path, "HEAD")
     else:
         got = origin._walk_reachable(tmp_path, _SHA, "b" * 40)
     assert got is None
@@ -1099,9 +1099,11 @@ def test_an_extension_with_a_garbled_line_reads_the_history_whole(
     raw = f"-{_SHA} 1735700400\n>{'b' * 40} +AAE-1735704000\n"
     done = subprocess.CompletedProcess(["git"], 0, stdout=raw, stderr="")
     monkeypatch.setattr(origin, "_git_result", lambda *a, **k: done)
-    assert origin._extended_author_timestamps(tmp_path, _SHA, [], "b" * 40) is None
+    assert (
+        origin_dates._extended_author_timestamps(tmp_path, _SHA, [], "b" * 40) is None
+    )
     done.stdout = raw.replace("+AAE-", "")
-    got = origin._extended_author_timestamps(tmp_path, _SHA, [], "b" * 40)
+    got = origin_dates._extended_author_timestamps(tmp_path, _SHA, [], "b" * 40)
     assert got == [datetime(2025, 1, 1, 4, tzinfo=timezone.utc)]
 
 
@@ -1159,12 +1161,12 @@ def test_a_deepened_clone_is_read_at_once(
     _plain(tmp_path, "clone", "-q", partial.source.as_uri(), str(full))
     shallow = tmp_path / "shallow"
     _plain(tmp_path, "clone", "-q", "--depth=3", partial.source.as_uri(), str(shallow))
-    every = origin.commit_author_timestamps(full)
+    every = origin_dates.commit_author_timestamps(full)
     assert every is not None and len(every) == len(_LATE)
-    assert origin.commit_author_timestamps(shallow) is None
-    assert origin.commit_author_timestamps(shallow) is None, "remembered"
+    assert origin_dates.commit_author_timestamps(shallow) is None
+    assert origin_dates.commit_author_timestamps(shallow) is None, "remembered"
     _plain(shallow, "fetch", "-q", deepen)
-    assert origin.commit_author_timestamps(shallow) == every
+    assert origin_dates.commit_author_timestamps(shallow) == every
 
 
 def test_git_output_keeps_its_carriage_returns(tmp_path: Path) -> None:
@@ -1436,7 +1438,7 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
 
     def rollup() -> tuple[list[int], int]:
         _caches.clear_all()
-        history = origin.commit_author_timestamps(repo)
+        history = origin_dates.commit_author_timestamps(repo)
         assert history is not None
         rows, unread = health_stats._drift_rows_for_candidates(
             [_stats("m")],
@@ -1466,7 +1468,7 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
             cwd=repo,
             toplevel=repo,
             head=head,
-            timestamps=lambda: origin.commit_author_timestamps(repo),
+            timestamps=lambda: origin_dates.commit_author_timestamps(repo),
             anchors=(),
             claims=load_claims([_FOO]),
             since=_VERIFIED,
@@ -1547,7 +1549,7 @@ def test_the_health_rollups_count_a_walk_given_up_as_unread(
     drifted = ["d"] if drifting else []
     assert ([row.id for row in debt.rows], debt.unread) == (drifted, 1)
     assert debt.to_dict()["unread"] == 1
-    history = origin.commit_author_timestamps(repo)
+    history = origin_dates.commit_author_timestamps(repo)
     assert history is not None
     rows, unconfirmed, unread = health._drift_rows_by_root(
         candidates,

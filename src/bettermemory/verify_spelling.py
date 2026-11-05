@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import origin, origin_history
+from . import origin, origin_dates, origin_history
 from .claims import lone_surrogate, spellings_capped, stored_spellings
 
 
@@ -194,7 +194,7 @@ def _changed(
         return False
     if since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
-    pairs = origin.commit_author_sha_pairs_touching_pathspecs(
+    pairs = origin_dates.commit_author_sha_pairs_touching_pathspecs(
         cwd, literal_pathspecs(names), toplevel=toplevel
     )
     return pairs is not None and bool(pairs) and pairs[-1][0] > since

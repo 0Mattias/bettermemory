@@ -45,6 +45,7 @@ from bettermemory import (
     githead,
     location,
     origin,
+    origin_dates,
     origin_gitfiles,
     origin_history,
 )
@@ -204,7 +205,7 @@ def test_a_refused_git_entry_gives_no_origin_and_runs_no_git(
         assert origin.repo_toplevel_and_head(folder) is None
         assert origin.toplevel_and_head_from_files(folder) is None
         assert origin.head_sha(folder) is None
-        assert origin.commit_author_timestamps(folder) is None
+        assert origin_dates.commit_author_timestamps(folder) is None
         assert origin.commit_reachable(folder, head) is None
         assert origin_history.located_key(folder) is None
         assert githead.find_gitdir(folder) is None

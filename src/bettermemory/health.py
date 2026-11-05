@@ -54,10 +54,10 @@ from . import location
 from .origin import (
     Origin,
     capture,
-    commit_author_timestamps,
     repo_toplevel_and_head,
     repos_match,
 )
+from .origin_dates import commit_author_timestamps
 from .verify import (
     Anchoring,
     commit_drift_anchor_paths,

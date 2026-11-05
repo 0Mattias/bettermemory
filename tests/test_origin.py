@@ -21,14 +21,16 @@ import pytest
 from bettermemory.origin import (
     Origin,
     capture,
-    commit_author_timestamps,
-    commit_author_timestamps_touching_pathspecs,
     commit_patch_stream,
     repo_toplevel,
     repos_match,
     resolve_repo_pathspecs,
     should_include_for_caller,
     worktrees_match,
+)
+from bettermemory.origin_dates import (
+    commit_author_timestamps,
+    commit_author_timestamps_touching_pathspecs,
 )
 
 from .conftest import set_git_discovery_ceiling

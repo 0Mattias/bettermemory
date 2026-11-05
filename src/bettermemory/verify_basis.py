@@ -10,7 +10,8 @@ is the third outcome, where neither basis was read in time.
 
 This module lives apart from `verify.py` to keep it well under the
 package's 1,900-line watch line (ENG-97). It is a leaf of the verify
-family: from the package it imports `origin` and `origin_history` alone;
+family: from the package it imports `origin`, `origin_dates` and
+`origin_history` alone;
 `verify` imports it, and the per-hit surfaces (`_response`, `verdict`)
 import `CommitDriftUnread` from it. A patch on `commit_author_timestamps`,
 `commits_since_anchor` or `repo_toplevel_and_head` that must reach the
@@ -26,10 +27,10 @@ from pathlib import Path
 
 from .origin import (
     ReachableWalk,
-    commit_author_timestamps,
     commits_since_anchor,
     repo_toplevel_and_head,
 )
+from .origin_dates import commit_author_timestamps
 from .origin_history import unwalked
 
 # The axis a commit-drift count was measured on, carried as `basis` on

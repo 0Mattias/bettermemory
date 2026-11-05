@@ -128,12 +128,14 @@ from .origin import (
     MAX_PATCH_STREAM_COMMITS,
     Origin,
     ReachableWalk,
-    commit_author_sha_pairs_touching_pathspecs,
-    commit_author_timestamps_touching_pathspecs,
     commit_patch_stream,
     commits_since_anchor,
     repo_toplevel,
     resolve_repo_pathspecs,
+)
+from .origin_dates import (
+    commit_author_sha_pairs_touching_pathspecs,
+    commit_author_timestamps_touching_pathspecs,
 )
 from .origin_history import Walked, unwalked
 from .origin_patch import local_patch_window, too_large

@@ -39,7 +39,6 @@ from .identity import SOURCE_PROCESS_CWD, Actor
 from .origin import (
     Origin,
     attribute_files_signature,
-    commit_author_timestamps,
     failed_git_calls,
     files_held,
     gitattributes_signature,
@@ -48,6 +47,7 @@ from .origin import (
     toplevel_and_head_from_files,
     walk_files_signature,
 )
+from .origin_dates import commit_author_timestamps
 from .origin_history import Walked
 from .verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION, CommitDriftUnread
 from .time_utils import isoformat_utc as _isoformat_utc
