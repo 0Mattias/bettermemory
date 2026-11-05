@@ -35,7 +35,14 @@ from bettermemory import (
     origin_history,
     verify,
 )
-from bettermemory.health_model import CrossRepoDrift, MemoryStats
+from bettermemory.health_model import (
+    CommitDriftDebt,
+    CrossRepoDrift,
+    CrossRepoDriftGroup,
+    MemoryStats,
+    unread_fields,
+)
+from bettermemory.health_recommend import _compute_recommendations
 from bettermemory.origin import Origin
 from bettermemory.store import Store
 from bettermemory.verify import ClaimAnchor, compute_commit_drift
@@ -215,6 +222,13 @@ async def test_every_surface_names_the_cause(
     assert (debt["rows"], debt["unread"]) == ([], 1)
     assert debt["unread_causes"] == {why.value: 1}
     assert debt["unread_ids"] == [memory_id]
+    (spot,) = [
+        recommendation
+        for recommendation in report["recommendations"]
+        if recommendation["kind"] == "spot_check_unread"
+    ]
+    assert (spot["count"], spot["memory_ids"]) == (1, [memory_id])
+    assert f"({why.value} 1)" in spot["summary"]
 
 
 def _stats(memory_id: str) -> MemoryStats:
@@ -379,6 +393,57 @@ def test_where_no_key_is_read_a_shallow_clone_reads_unread_too(
     nowhere = tmp_path / "nowhere"
     nowhere.mkdir()
     assert origin_dates.commit_author_timestamps(nowhere) is None
+
+
+def _unread_report(
+    caller: dict[str, CommitDriftUnread], groups: list[dict[str, CommitDriftUnread]]
+) -> Any:
+    """A report whose only buckets are the caller's checkout's commit drift
+    and the estate's groups, with `caller` and each group unread."""
+    debt = CommitDriftDebt(current_repo=_URL, current_cwd="/w", **unread_fields(caller))
+    estate = CrossRepoDrift(
+        groups=[
+            CrossRepoDriftGroup(
+                repo=f"git@example.com:g/{n}.git",
+                worktree_root=f"/g{n}",
+                candidates=len(unread),
+                **unread_fields(unread),
+            )
+            for n, unread in enumerate(groups)
+        ]
+    )
+    return SimpleNamespace(
+        dead_weight=[],
+        contradicted=[],
+        cold_endorsement_memories=SimpleNamespace(total=0, rows=[]),
+        commit_drift_debt=debt,
+        cross_repo_drift=estate,
+        provenance=None,
+        rare_scopes=[],
+    )
+
+
+def test_health_recommends_a_spot_check_of_every_unread_memory() -> None:
+    """One unread memory is enough: the recommendation counts the caller's
+    checkout and each estate group, names each cause and how many, and its
+    action names the spot-check, the re-stamp and each present cause's
+    remedy, a shallow clone's fetch among them; its ids are capped at 10.
+    Nothing unread, no recommendation."""
+    timeout, shallow = CommitDriftUnread.TIMEOUT, CommitDriftUnread.SHALLOW
+    assert _compute_recommendations(_unread_report({}, [{}])) == []
+    (one,) = _compute_recommendations(_unread_report({"m": shallow}, []))
+    assert (one.kind, one.count, one.memory_ids) == ("spot_check_unread", 1, ["m"])
+    assert "(shallow 1)" in one.summary and "git fetch --unshallow" in one.action
+    assert "memory_verify" in one.action and "timeout" not in one.action
+    caller = {f"c{n}": timeout for n in range(8)}
+    groups = [{f"g{n}": shallow for n in range(4)}, {"e": CommitDriftUnread.ERROR}]
+    (many,) = _compute_recommendations(_unread_report(caller, groups))
+    assert many.count == 13 and len(many.memory_ids) == 10
+    assert many.memory_ids == [*caller, "g0", "g1"]
+    assert "(error 1, shallow 4, timeout 8)" in many.summary
+    for remedy in ("git log", "git fetch --unshallow", "run health again"):
+        assert remedy in many.action
+    assert "longer than" not in many.action
 
 
 def test_a_walk_given_up_reads_unread_only_where_the_leg_applies(

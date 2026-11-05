@@ -1308,6 +1308,7 @@ RECOMMENDATION_KINDS: tuple[str, ...] = (
     "resolve_contradicted",
     "cleanup_cold_endorsements",
     "verify_drifted",
+    "spot_check_unread",
     "review_unaccounted",
     "fix_typo_scopes",
 )

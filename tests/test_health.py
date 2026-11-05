@@ -3201,6 +3201,7 @@ def test_recommendation_kinds_constant_matches_compute_output() -> None:
         "resolve_contradicted",
         "cleanup_cold_endorsements",
         "verify_drifted",
+        "spot_check_unread",
         "review_unaccounted",
         "fix_typo_scopes",
     }

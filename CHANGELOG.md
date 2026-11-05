@@ -30,6 +30,23 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 The nineteenth candidate closes the residuals filed while the
 eighteenth was built.
 
+#### Added
+
+- **Health recommends a spot-check of every memory whose history was
+  not read (ENG-220).** The new `spot_check_unread` recommendation counts
+  the memories under `unread` in `commit_drift_debt` and in each
+  `cross_repo_drift` group, from one memory up, as a contradiction's
+  does: none of them reads caught up. Its summary names each cause and
+  how many (`timeout`, `over_budget`, `shallow`, `error`), and its action
+  the spot-check, the re-stamp after which the count walks from the
+  stamp's head without the whole history, and each present cause's
+  remedy: `git fetch --unshallow` for a shallow clone, another run once
+  git answers in time for a timeout, `git log` in the checkout for an
+  error. `memory_ids` is capped at 10, as every kind's is. The builders
+  moved to `health_recommend.py`. (`src/bettermemory/health_recommend.py`,
+  `src/bettermemory/health_model.py`, `docs/api.md`,
+  `tests/test_unread_history.py`, `tests/test_health.py`)
+
 #### Changed
 
 - **A numeric config key refuses a boolean (ENG-221).** Python counts a
