@@ -520,14 +520,22 @@ RUNTIME_PREFIX build such as Apple's takes from where its binary runs;
 an include's path and a `gitdir:` pattern are expanded with it as git's
 `system_path` expands them: an absolute rest as it is, a relative one
 after that directory, `%(prefix)` with no `/` as written, and a path of
-a git that does not expand it (it prints `%(prefix)/z`) as written. All
-four run in an empty owner-only folder under the state directory
+a git that does not expand it (it prints `%(prefix)/z`) as written. A
+fifth asks, with `git rev-parse --git-dir` in two git directories inside
+the probe, both of format 1 and object format sha1, whether that git
+reads a `compatObjectFormat` of sha256 (other than the object format)
+and one of sha1 (the same): git 2.54 built without Rust dies on both,
+one built with Rust reads the first and dies on the second, and a
+repository's format is read by that answer for its pairing (format 1
+and a version below -1 alike, as setup.c verifies them alike), declined
+where git has not said. All
+of them run in an empty owner-only folder under the state directory
 (`git-ask`), with `GIT_CEILING_DIRECTORIES` naming the state directory,
 so git finds no repository there wherever the state directory sits (the
 root of git's drive, asked before, can be a working tree: a share's
 root, a `subst` drive, `/` in a container), and with the caller's
-`GIT_CONFIG_SYSTEM` unset (the third and fourth with no config file but
-the probe's), within 0.3 s together (the capture's
+`GIT_CONFIG_SYSTEM` unset (the probe's questions with no config file
+but the probe's), within 0.3 s together (the capture's
 fetch budget), only for a repository with a remote. A config
 file's path is spelled with the platform's separator where it enters
 (an include's target, the machine's files), so one file is named one
@@ -716,7 +724,9 @@ parse, a value git dies on (an empty `core.worktree`, one with no value,
 a `core.bare` that is no boolean, a format version above 1, an extension
 its reader refuses), an extension of format 1 under format 0 and one git
 does not know under format 1 (`gitfile_rule._EXTENSIONS_V0`,
-`_EXTENSIONS_V1`; a `compatObjectFormat` is refused wherever it is set),
+`_EXTENSIONS_V1`; a `compatObjectFormat` set twice, and one under a
+version git does not clear that the git on PATH dies on or has not said
+it reads, which its build decides: `gitsystem.reads_compat`),
 a file that cannot be read and one over 2 MiB give no reading, and the
 git directory is refused (fail closed). The object format the object
 reader sizes names by is read the same way (`gitfile_rule.object_format`,

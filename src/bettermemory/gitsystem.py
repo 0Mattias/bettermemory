@@ -23,6 +23,15 @@ directory under the state directory names (`_probe_repository`), and
 the URL it prints says both. A fourth (ENG-207's round 7) asks there
 the directory that git expands ``%(prefix)`` to in a path, which a
 RUNTIME_PREFIX build takes from where its binary runs (`_PREFIX_ASK`).
+A fifth (ENG-207's round 8) asks, in two git directories in the probe
+(`_COMPAT_PROBES`), whether git reads a repository whose format keeps
+its extensions and sets a ``compatObjectFormat``, one other than its
+object format and one the same (`Sources.compat_differ`,
+`Sources.compat_same`): git 2.54 built without Rust dies on both
+("compatibility hash algorithm support requires Rust"), one built with
+it reads the first and dies on the second (repository.c's
+``repo_set_compat_hash_algo``), and a git before that rule may read
+both, so git is asked what it does, not its build's options.
 
 A hook client is a new process each prompt, and asking costs a git
 process for each question (13 ms each measured, ENG-207), so the answer
@@ -31,9 +40,9 @@ under (on macOS with the developer directory, `_developer`), with the
 stamp of the git binary found on that PATH then; a capture reads the
 record and stats that binary, and asks git again only where the binary
 stamps otherwise, the answer is older than `REASK_SECONDS` (one that
-did not say how git reads a remote or expands ``%(prefix)``,
-`RETRY_SECONDS`) or none is recorded. The four questions together are
-bound by `ASK_SECONDS`, the
+did not say how git reads a remote, expands ``%(prefix)`` or reads a
+compatibility object format, `RETRY_SECONDS`) or none is recorded. The
+questions together are bound by `ASK_SECONDS`, the
 capture's own fetch budget. A git that does not answer within it or
 cannot run, or none on PATH, reads as the last answer git gave for that
 PATH (`_kept`: one a racing process recorded meanwhile, else the
@@ -56,9 +65,11 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -73,17 +84,21 @@ from .gitconfig import _UNSTATED, Stamp, file_stamp
 RECORD = "git-config-sources.json"
 #: The format the record carries in its ``format`` field: 2 adds how git
 #: reads a remote (`Sources.legacy`, `Sources.resets`), 3 how it expands
-#: ``%(prefix)`` (`Sources.prefix`), so a record of an earlier format is
-#: asked again.
-RECORD_FORMAT = 3
-#: How long the four questions may take together: the capture's budget
+#: ``%(prefix)`` (`Sources.prefix`), 4 whether it reads a compatibility
+#: object format (`Sources.compat_differ`, `Sources.compat_same`), so a
+#: record of an earlier format is asked again.
+RECORD_FORMAT = 4
+#: How long the questions may take together: the capture's budget
 #: for a fetch (`location_git.FETCH_BUDGET`; tests/test_location_git_config.py
 #: pins the two equal), under every hook's. Measured (ENG-207, macOS, git
 #: 2.54 through /usr/bin/git's xcrun shim, a load average of 12 to 15):
 #: medians of 13 and 14 ms for ``git var``, 82 ms at most over 100 calls;
 #: ``ls-remote --get-url`` in the probe (round 6, the same git, a load
 #: average of 4) a median of 9 ms, 11 ms at most over 100 calls, and
-#: ``config --type=path`` there (round 7) about as long.
+#: ``config --type=path`` there (round 7) about as long; ``rev-parse
+#: --git-dir`` in a git directory of `_COMPAT_PROBES` (round 8, a load
+#: average of 8 to 10) a median of 10 ms, 14 ms at most over 50 calls,
+#: and the six questions of a first ask 95 ms together.
 ASK_SECONDS = 0.3
 #: How long an answer stands while its git binary stamps as it did: a git
 #: installed ahead of it on the same PATH is asked within this.
@@ -111,17 +126,39 @@ XCODE_SELECT_LINK = "/var/db/xcode_select_link"
 _MACOS = sys.platform == "darwin"
 #: The folder under the state directory git is asked in (`_where`).
 ASK_FOLDER = "git-ask"
+#: The two git directories in the probe git is asked in whether it reads
+#: a compatibility object format (`_COMPAT_ASK`), each bare, of format 1
+#: and of object format sha1 (none set), by the ``compatObjectFormat``
+#: each sets: one other than its object format, and the same one.
+_COMPAT_PROBES = {"compat-differ": b"sha256", "compat-same": b"sha1"}
 #: The git directory under the state directory git is asked how it reads
 #: a remote in (`_probe_repository`): a remote ``p`` its config gives no
 #: URL and whose ``remotes/p`` file gives one, an empty one and another;
-#: and how it expands ``%(prefix)/`` (`_PREFIX_ASK`).
+#: how it expands ``%(prefix)/`` (`_PREFIX_ASK`); and, in a git directory
+#: of each of `_COMPAT_PROBES` in it, whether it reads that one.
 _PROBE_FILES = {
     "HEAD": b"ref: refs/heads/main\n",
     "config": b"[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
     b"[bettermemory]\n\tprefix = %(prefix)/z\n",
     "remotes/p": b"URL: bettermemory-probe-a\nURL:\nURL: bettermemory-probe-b\n",
+    **{f"{name}/HEAD": b"ref: refs/heads/main\n" for name in _COMPAT_PROBES},
+    **{
+        f"{name}/config": b"[core]\n\trepositoryformatversion = 1\n\tbare = true\n"
+        b"[extensions]\n\tcompatObjectFormat = " + compat + b"\n"
+        for name, compat in _COMPAT_PROBES.items()
+    },
 }
-_PROBE_FOLDERS = ("objects", "refs", "remotes")
+_PROBE_FOLDERS = (
+    "objects",
+    "refs",
+    "remotes",
+    *(name + sub for name in _COMPAT_PROBES for sub in ("", "/objects", "/refs")),
+)
+#: The probe's folders whose every entry it names (`_probe_holds`): the
+#: probe, ``remotes`` and each of `_COMPAT_PROBES`; git writes nothing in
+#: an ``objects`` or ``refs`` folder answering these questions, and they
+#: are not listed.
+_PROBE_LISTED = ("", "remotes", *_COMPAT_PROBES)
 
 
 def _probe_name(files: dict[str, bytes], folders: tuple[str, ...]) -> str:
@@ -161,6 +198,11 @@ _REMOTE_ANSWERS = {
 #: path does not.
 _PREFIX_ASK = ("config", "--type=path", "--get", "bettermemory.prefix")
 _PREFIX_TAIL = "/z"
+#: The fifth, in each of `_COMPAT_PROBES` (ENG-207's round 8): git reads
+#: the format of a git directory it is named (setup.c's
+#: ``apply_repository_format``, which sets the compatibility object
+#: format), and exits 0 where it reads it, non-zero where it dies.
+_COMPAT_ASK = ("rev-parse", "--git-dir")
 #: The caller's variables that would reach the probe's config.
 _PROBE_UNSET = (
     "GIT_CONFIG_SYSTEM",
@@ -179,15 +221,21 @@ class Sources:
     legacy ``remotes/`` and ``branches/`` files (`legacy`: a git built
     with breaking changes reads neither), and whether an empty
     ``remote.<name>.url`` empties the remote's URLs (`resets`, git 2.46
-    and later), each None where git did not say (`_reads_remotes`); and
-    the directory it expands ``%(prefix)`` to in a path (`prefix`,
-    `_PREFIX_ASK`; ENG-207's round 7), None where git did not say."""
+    and later), each None where git did not say (`_reads_remotes`); the
+    directory it expands ``%(prefix)`` to in a path (`prefix`,
+    `_PREFIX_ASK`; ENG-207's round 7), None where git did not say; and
+    whether it reads a repository whose format keeps its extensions and
+    sets a ``compatObjectFormat`` other than its object format
+    (`compat_differ`) or the same one (`compat_same`), each None where git
+    did not say (`_COMPAT_ASK`; ENG-207's round 8)."""
 
     own: tuple[str, ...]
     system: str | None
     legacy: bool | None = None
     resets: bool | None = None
     prefix: str | None = None
+    compat_differ: bool | None = None
+    compat_same: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -245,6 +293,21 @@ def sources(*, stamp: bool = True) -> Sources:
     return held.sources
 
 
+def reads_compat(same: bool) -> bool | None:
+    """Whether the git on this process's PATH reads a repository whose
+    format keeps its extensions (a version set, of 1 or below -1) and sets
+    a ``compatObjectFormat``, the same as its object format where `same`
+    and another otherwise (`Sources.compat_same`, `Sources.compat_differ`):
+    asked of git under format 1 and object format sha1, which a repository
+    of a version below -1 or of object format sha256 is read as
+    (repository.c's ``repo_set_compat_hash_algo`` compares the two names
+    alone, after setup.c's ``verify_repository_format``, which a version
+    below -1 passes as 1 does); None where git has not said
+    (`gitfile_rule._judge_format`, ENG-207's round 8)."""
+    found = sources()
+    return found.compat_same if same else found.compat_differ
+
+
 def _key(path: str | None) -> str:
     """A PATH's name in the record: its digest, with the developer
     directory's on macOS (`_developer`), so the record holds no PATH; an
@@ -277,13 +340,16 @@ def _current(answer: _Answer, now: float, *, stamp: bool = True) -> bool:
     back: one kept after a failed ask (`tried`) for `RETRY_SECONDS` from
     then; else one younger than its lifetime (`REASK_SECONDS`,
     `RETRY_SECONDS` for a git that never answered or did not say how it
-    reads a remote or expands ``%(prefix)``, `Sources.legacy`,
-    `Sources.prefix`) whose git binary stamps as it did (not stated where
-    `stamp` is off)."""
+    reads a remote, expands ``%(prefix)`` or reads a compatibility object
+    format, `Sources.legacy`, `Sources.prefix`, `Sources.compat_differ`,
+    `Sources.compat_same`) whose git binary stamps as it did (not stated
+    where `stamp` is off)."""
     if answer.tried is not None:
         return 0 <= now - answer.tried < RETRY_SECONDS
     age = now - answer.asked
-    whole = answer.ok and None not in (answer.sources.legacy, answer.sources.prefix)
+    found = answer.sources
+    said = (found.legacy, found.prefix, found.compat_differ, found.compat_same)
+    whole = answer.ok and None not in said
     if not 0 <= age < (REASK_SECONDS if whole else RETRY_SECONDS):
         return False
     return not stamp or answer.git is None or file_stamp(answer.git) == answer.stamp
@@ -342,7 +408,7 @@ def _absolute(path: str, flavour: ModuleType = os.path) -> bool:
 
 
 def _ask(key: str, now: float) -> _Answer:
-    """git's answer for the PATH `key` names, the four questions within
+    """git's answer for the PATH `key` names, the questions within
     `ASK_SECONDS` together; the fallback, not ok, where git is not on
     PATH, cannot run or does not answer in time."""
     failed = _Answer(key, None, None, now, False, Sources((), _FALLBACK))
@@ -375,61 +441,89 @@ def _ask(key: str, now: float) -> _Answer:
     # each answers with an error, which names nothing.
     system = named.stdout.strip() if named.returncode == 0 else ""
     own = _own_files(listed.stdout) if listed.returncode == 0 else ()
-    legacy, resets, prefix = _reads_remotes(folder, ceiling, deadline)
-    found = Sources(own, system or _FALLBACK, legacy, resets, prefix)
+    found = Sources(
+        own, system or _FALLBACK, *_reads_remotes(folder, ceiling, deadline)
+    )
     return _Answer(key, git, stamp, now, True, found)
 
 
+#: What git says in the probe (`_reads_remotes`): `Sources.legacy`,
+#: `Sources.resets`, `Sources.prefix`, `Sources.compat_differ` and
+#: `Sources.compat_same`.
+_Probed = tuple[bool | None, bool | None, str | None, bool | None, bool | None]
 #: `_reads_remotes`' answer where git did not give one.
-_UNSAID: tuple[bool | None, bool | None, str | None] = (None, None, None)
+_UNSAID: _Probed = (None, None, None, None, None)
 
 
-def _reads_remotes(
-    folder: str, ceiling: dict[str, str], deadline: float
-) -> tuple[bool | None, bool | None, str | None]:
+def _reads_remotes(folder: str, ceiling: dict[str, str], deadline: float) -> _Probed:
     """How the git on PATH reads a remote (`Sources.legacy`,
     `Sources.resets`), from its answer to `_REMOTE_ASK` in the probe's
-    git directory (`_probe_repository`), and the directory it expands
+    git directory (`_probe_repository`), the directory it expands
     ``%(prefix)`` to (`Sources.prefix`), from its answer to `_PREFIX_ASK`
-    there, both asked from `folder` before the monotonic `deadline` with
-    no config but the probe's own; `_UNSAID` where git does not answer
-    so, and it is asked again after `RETRY_SECONDS` (`_current`). A
-    build's own option list (``git version --build-options``) names no
-    breaking changes (git 2.54's ``help.c``), so git is asked what it
-    does. The answers are kept only where the probe stamps after git
-    answers as it did before its content was checked (`_probe_stamps`):
-    another writer's file there while git read it (ENG-207's round 7:
-    one rewriting ``remotes/p`` made about one ask in three answer
-    wrong) leaves them unsaid."""
+    there, and whether it reads a compatibility object format
+    (`Sources.compat_differ`, `Sources.compat_same`), from whether it
+    exits 0 asked `_COMPAT_ASK` in each of `_COMPAT_PROBES` (ENG-207's
+    round 8), each asked from `folder` before the monotonic `deadline`
+    with no config but the probe's own; `_UNSAID` where git does not
+    answer the first two so, and it is asked again after `RETRY_SECONDS`
+    (`_current`), as it is where it does not answer one of the last two
+    in time, which alone is unsaid. A build's own option list (``git
+    version --build-options``) names no breaking changes (git 2.54's
+    ``help.c``), so git is asked what it does. The answers are kept only
+    where the probe stamps after git answers as it did before its content
+    was checked (`_probe_stamps`): another writer's file there while git
+    read it (ENG-207's round 7: one rewriting ``remotes/p`` made about one
+    ask in three answer wrong) leaves them unsaid."""
     probe = _probe_repository()
     if probe is None:
         return _UNSAID
     root, before = probe
     said: list[str] = []
     for question in (_REMOTE_ASK, _PREFIX_ASK):
-        left = deadline - time.monotonic()
-        done = None
-        if left > 0:
-            done = _git_runner.run_git(
-                question,
-                cwd=folder,
-                git_dir=root,
-                timeout=left,
-                env={**_DEVNULL, "GIT_CONFIG_NOSYSTEM": "1", **ceiling},
-                unset=_PROBE_UNSET,
-            )
+        done = _probe_ask(question, folder, root, ceiling, deadline)
         if done is None or done.returncode != 0:
             return _UNSAID
         said.append(done.stdout.rstrip("\r\n"))
+    compat = [
+        _probe_ask(_COMPAT_ASK, folder, os.path.join(root, name), ceiling, deadline)
+        for name in _COMPAT_PROBES
+    ]
     if _probe_stamps(root) != before or not _probe_holds(root):
         return _UNSAID
     legacy, resets = _REMOTE_ANSWERS.get(said[0].strip(), (None, None))
     expanded = said[1].endswith(_PREFIX_TAIL)
-    return legacy, resets, said[1][: -len(_PREFIX_TAIL)] if expanded else None
+    prefix = said[1][: -len(_PREFIX_TAIL)] if expanded else None
+    differ, same = [None if done is None else done.returncode == 0 for done in compat]
+    return legacy, resets, prefix, differ, same
+
+
+def _probe_ask(
+    question: tuple[str, ...],
+    folder: str,
+    git_dir: str,
+    ceiling: dict[str, str],
+    deadline: float,
+) -> subprocess.CompletedProcess[str] | None:
+    """git's answer to `question` in the git directory `git_dir` of the
+    probe, asked from `folder` with no config but the probe's own, before
+    the monotonic `deadline`; None where none is left or git does not
+    answer in it."""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        return None
+    return _git_runner.run_git(
+        question,
+        cwd=folder,
+        git_dir=git_dir,
+        timeout=left,
+        env={**_DEVNULL, "GIT_CONFIG_NOSYSTEM": "1", **ceiling},
+        unset=_PROBE_UNSET,
+    )
 
 
 def _probe_repository() -> tuple[str, list[Stamp | None]] | None:
-    """The git directory `_REMOTE_ASK` is asked in, with its stamps
+    """The git directory `_REMOTE_ASK` and `_PREFIX_ASK` are asked in,
+    which holds those `_COMPAT_ASK` is (`_COMPAT_PROBES`), with its stamps
     (`_probe_stamps`) taken before its content was checked:
     `PROBE_FOLDER` under the state directory, owner-only, holding
     `_PROBE_FILES` and the folders git's test of a git directory looks
@@ -472,16 +566,31 @@ def _probe_stamps(root: str) -> list[Stamp | None]:
     return [file_stamp(os.path.join(root, name)) for name in _PROBE_STAMPED]
 
 
+def _probe_children(folder: str) -> tuple[set[str], set[str]]:
+    """The folders and the files the probe holds in its folder `folder`
+    ("" the probe itself), by name."""
+    prefix = folder + "/" if folder else ""
+
+    def within(names: Iterable[str]) -> set[str]:
+        return {
+            n[len(prefix) :]
+            for n in names
+            if n.startswith(prefix) and "/" not in n[len(prefix) :]
+        }
+
+    return within(_PROBE_FOLDERS), within(_PROBE_FILES)
+
+
 def _probe_holds(root: str) -> bool:
     """Whether the probe at `root` holds what it is built to and nothing
     else: each of `_PROBE_FOLDERS` a folder and each of `_PROBE_FILES` a
     regular file with its content (neither a link), and no other entry
-    in it or in ``remotes``."""
-    expected = {*_PROBE_FOLDERS, *(n for n in _PROBE_FILES if "/" not in n)}
-    if set(os.listdir(root)) != expected or os.listdir(
-        os.path.join(root, "remotes")
-    ) != ["p"]:
-        return False
+    in a folder of `_PROBE_LISTED` (it, ``remotes`` and each git
+    directory of `_COMPAT_PROBES`)."""
+    for folder in _PROBE_LISTED:
+        folders, files = _probe_children(folder)
+        if set(os.listdir(os.path.join(root, folder))) != folders | files:
+            return False
     for name in _PROBE_FOLDERS:
         if not stat.S_ISDIR(os.lstat(os.path.join(root, name)).st_mode):
             return False
@@ -498,14 +607,13 @@ def _probe_holds(root: str) -> bool:
 def _clear_probe(root: Path) -> None:
     """Remove from the probe at `root` (no link: `_probe_repository`)
     each entry that does not belong (`_probe_holds`): one of another
-    name, in it or in ``remotes``, and one of a probe's name that is not
-    of its kind, a link among them (a link is removed, never followed). A
-    file whose content is another's is written again by the build."""
-    files = {n for n in _PROBE_FILES if "/" not in n}
-    for folder, keep_folders, keep_files in (
-        (root, set(_PROBE_FOLDERS), files),
-        (root / "remotes", set(), {"p"}),
-    ):
+    name, in a folder of `_PROBE_LISTED`, and one of a probe's name that
+    is not of its kind, a link among them (a link is removed, never
+    followed). A file whose content is another's is written again by the
+    build."""
+    for name in _PROBE_LISTED:
+        folder = root / name if name else root
+        keep_folders, keep_files = _probe_children(name)
         if folder.is_symlink() or not folder.is_dir():
             continue
         for entry in list(os.scandir(folder)):
@@ -598,11 +706,13 @@ def _recorded(key: str) -> _Answer | None:
                 a, b, c, d, e = (int(x) for x in stamp)
                 stamped = (a, b, c, d, e)
             tried = entry.get("tried")
-            legacy, resets = entry.get("legacy"), entry.get("resets")
-            if not all(
-                flag is None or isinstance(flag, bool) for flag in (legacy, resets)
-            ):
+            flags = [
+                entry.get(name)
+                for name in ("legacy", "resets", "compat_differ", "compat_same")
+            ]
+            if not all(flag is None or isinstance(flag, bool) for flag in flags):
                 return None
+            legacy, resets, differ, same = flags
             prefix = entry.get("prefix")
             if prefix is not None and (not isinstance(prefix, str) or "\0" in prefix):
                 return None
@@ -613,7 +723,13 @@ def _recorded(key: str) -> _Answer | None:
                 asked=float(entry["asked"]),
                 ok=entry.get("ok") is True and git is not None and stamped is not None,
                 sources=Sources(
-                    tuple(p for p in files if p), system, legacy, resets, prefix
+                    tuple(p for p in files if p),
+                    system,
+                    legacy,
+                    resets,
+                    prefix,
+                    differ,
+                    same,
                 ),
                 tried=None if tried is None else float(tried),
             )
@@ -643,6 +759,8 @@ def _record(answer: _Answer) -> None:
         "legacy": answer.sources.legacy,
         "resets": answer.sources.resets,
         "prefix": answer.sources.prefix,
+        "compat_differ": answer.sources.compat_differ,
+        "compat_same": answer.sources.compat_same,
         "tried": answer.tried,
     }
     others = [e for e in _entries() if e.get("path") != answer.key]

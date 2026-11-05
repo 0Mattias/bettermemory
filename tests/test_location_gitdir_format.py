@@ -33,6 +33,7 @@ from bettermemory import (
     gitconfig,
     gitfile_rule,
     githead,
+    gitsystem,
     location,
     location_audit,
     origin,
@@ -366,10 +367,11 @@ def test_a_config_git_dies_on_is_refused_by_both_readers(
 
 _V1 = b"[core]\n\trepositoryformatversion = 1\n"
 
-#: Extensions git 2.54 dies on, as a tail to a config of format 0 (a
-#: version a tail sets standing, the last of two), and with no version
-#: set ("unset_"): a value its reader refuses, one of format 1 under
-#: format 0, one it does not know under format 1.
+#: Extensions git dies on however it was built, as a tail to a config of
+#: format 0 (a version a tail sets standing, the last of two), and with
+#: no version set ("unset_"): a value its reader refuses, one of format 1
+#: under format 0, one it does not know under format 1; a compatibility
+#: object format set twice.
 EXTENSION_DIES = {
     "partial_clone_no_value": b"[extensions]\n\tpartialClone\n",
     "precious_no_boolean": b"[extensions]\n\tpreciousObjects = maybe\n",
@@ -380,12 +382,18 @@ EXTENSION_DIES = {
     "object_format_case": _V1 + b"[extensions]\n\tobjectFormat = SHA1\n",
     "ref_storage_no_value": _V1 + b"[extensions]\n\trefStorage\n",
     "relative_no_boolean": _V1 + b"[extensions]\n\trelativeWorktrees = maybe\n",
-    "compat_object_format": _V1 + b"[extensions]\n\tcompatObjectFormat = sha256\n",
+    "compat_in_v0": b"[extensions]\n\tcompatObjectFormat = sha1\n",
     "unset_precious_no_boolean": b"[extensions]\n\tpreciousObjects = maybe\n",
+    "unset_compat_unknown": b"[extensions]\n\tcompatObjectFormat = sha3\n",
+    "unset_compat_no_value": b"[extensions]\n\tcompatObjectFormat\n",
+    "unset_compat_twice": b"[extensions]\n\tcompatObjectFormat = sha256\n"
+    + b"[extensions]\n\tcompatObjectFormat = sha256\n",
 }
 
-#: Extensions git 2.54 reads on: one it does not know under format 0, a
-#: value each reader takes, and one of format 1 with no version set.
+#: Extensions git reads on however it was built: one it does not know
+#: under format 0, a value each reader takes, and one of format 1 with no
+#: version set (a compatibility object format in each pairing among
+#: them, which git clears there).
 EXTENSION_READS = {
     "unknown_in_v0": b"[extensions]\n\tbogus = 1\n",
     "partial_clone_named": b"[extensions]\n\tpartialClone = origin\n",
@@ -394,6 +402,13 @@ EXTENSION_READS = {
     + b"[extensions]\n\tobjectFormat = sha1\n\trefStorage = files\n\tnoop-v1\n"
     + b"\trelativeWorktrees\n\tsubmodulePathConfig = true\n\tnoop = x\n",
     "unset_v1_only": b"[extensions]\n\trefStorage = files\n\tbogus = 1\n",
+    "unset_compat_sha1": b"[extensions]\n\tcompatObjectFormat = sha1\n",
+    "unset_compat_sha256": b"[extensions]\n\tobjectFormat = sha1\n"
+    + b"\tcompatObjectFormat = sha256\n",
+    "unset_compat_over_sha256": b"[extensions]\n\tobjectFormat = sha256\n"
+    + b"\tcompatObjectFormat = sha1\n",
+    "unset_compat_same": b"[extensions]\n\tobjectFormat = sha256\n"
+    + b"\tcompatObjectFormat = sha256\n",
 }
 
 
@@ -439,6 +454,113 @@ def test_an_extension_git_reads_keeps_the_root(tmp_path: Path, case: str) -> Non
     assert cap.state == location.REPO and _same(cap.root, app), cap
     got = origin.capture(app)
     assert got.repo == REMOTE and _same(got.worktree_root, app)
+
+
+_BELOW_0 = b"[core]\n\trepositoryformatversion = -2\n"
+
+#: A compatibility object format under a version git keeps it at (1, and
+#: below -1), which git reads as it was built (ENG-207's round 8): git
+#: 2.54 built without Rust dies on each ("compatibility hash algorithm
+#: support requires Rust"), git 2.56 built with it reads one other than
+#: the object format and dies on the same one. A "_same" case names the
+#: object format again.
+EXTENSION_BUILT = {
+    "v1_differ": _V1 + b"[extensions]\n\tcompatObjectFormat = sha256\n",
+    "v1_same": _V1 + b"[extensions]\n\tcompatObjectFormat = sha1\n",
+    "below_0_differ": _BELOW_0 + b"[extensions]\n\tcompatObjectFormat = sha256\n",
+    "below_0_same": _BELOW_0 + b"[extensions]\n\tcompatObjectFormat = sha1\n",
+}
+
+
+@pytest.mark.parametrize("case", sorted(EXTENSION_BUILT))
+def test_a_compatibility_object_format_is_read_as_this_git_reads_it(
+    tmp_path: Path, runs: list[Path | None], case: str
+) -> None:
+    """A ``compatObjectFormat`` under a version git keeps it at is read as
+    the git on PATH reads it, which its build decides, asked of that git
+    in the probe (`gitsystem.reads_compat`, under format 1): where git
+    reads it and names the folder its toplevel, both readers root the
+    checkout there; where it dies, neither names a root, and no git runs
+    in the folder. The readers refused each, and the test took git 2.54's
+    answer, dying, for its premise, which git 2.56 built with Rust does
+    not give (ENG-207's round 8, CI)."""
+    app, _other = _apps(tmp_path)
+    _extend(app, case, EXTENSION_BUILT[case])
+    git_reads = _toplevel(app).returncode == 0
+    said = gitsystem.reads_compat(case.endswith("_same"))
+    assert said is git_reads, "the probe answers as git reads the repository"
+    runs.clear()
+
+    cap = _membership(app)
+    if git_reads:
+        assert cap.state == location.REPO and _same(cap.root, app), cap
+        got = origin.capture(app)
+        assert got.repo == REMOTE and _same(got.worktree_root, app)
+        return
+    assert cap.state == location.INDETERMINATE
+    assert cap.detail.startswith("repository format: "), cap.detail
+    _no_origin(app)
+    assert [cwd for cwd in runs if _inside(cwd, app)] == []
+
+
+#: How a git may read a compatibility object format, as
+#: `gitsystem.reads_compat` answers (one other than the object format,
+#: the same one): as git 2.54 built without Rust (neither), one built
+#: with it (the other alone), a git before that rule (both) and one that
+#: has not said.
+_COMPAT_SAID = {
+    "without_rust": (False, False),
+    "with_rust": (True, False),
+    "both": (True, True),
+    "unsaid": (None, None),
+}
+
+
+@pytest.mark.parametrize("build", list(_COMPAT_SAID))
+def test_a_compatibility_object_format_is_judged_by_what_git_said(
+    monkeypatch: pytest.MonkeyPatch, build: str
+) -> None:
+    """The format's reading follows the git on PATH's answer for its own
+    pairing (`gitfile_rule._judge_format`): a ``compatObjectFormat`` other
+    than the object format, or the same one, sha1 or sha256, under format
+    1 and below -1. Where git reads it the object format stands (that of a
+    version below -1 too, which keeps it), and where git dies or has not
+    said there is none (fail closed: git is asked). With no version set
+    git clears it, and no git is asked; under format 0 it dies, unasked."""
+    differ, same = _COMPAT_SAID[build]
+    asked: list[bool] = []
+
+    def reads(pair_same: bool) -> bool | None:
+        asked.append(pair_same)
+        return same if pair_same else differ
+
+    monkeypatch.setattr(gitsystem, "reads_compat", reads)
+    wrong = []
+    for version in (b"1", b"-2"):
+        for main, compat in (
+            (b"sha1", b"sha256"),
+            (b"sha256", b"sha1"),
+            (b"sha1", b"sha1"),
+            (b"sha256", b"sha256"),
+        ):
+            data = (
+                b"[core]\n\trepositoryformatversion = " + version + b"\n"
+                b"[extensions]\n\tobjectFormat = " + main + b"\n"
+                b"\tcompatObjectFormat = " + compat + b"\n"
+            )
+            expect = main if (same if main == compat else differ) else None
+            if gitfile_rule.object_format(data) != expect:
+                wrong.append((version, main, compat))
+    assert wrong == []
+    assert asked == [False, False, True, True] * 2
+    asked.clear()
+    cleared = b"[extensions]\n\tobjectFormat = sha256\n\tcompatObjectFormat = sha1\n"
+    assert gitfile_rule.object_format(cleared) == b"sha1"
+    assert (
+        gitfile_rule.object_format(b"[core]\n\trepositoryformatversion = 0\n" + cleared)
+        is None
+    )
+    assert asked == []
 
 
 def test_a_config_past_the_format_bound_is_refused(tmp_path: Path) -> None:

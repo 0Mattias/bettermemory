@@ -222,6 +222,9 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
     # GIT_CONFIG_* variable of the caller's naming the probe's key would
     # change.
     assert answer.sources.prefix is not None
+    # And the fifth, whether it reads a compatibility object format, in
+    # the probe's git directories of one (ENG-207's round 8).
+    assert None not in (answer.sources.compat_differ, answer.sources.compat_same)
     probe = gitsystem._probe_repository()
     assert probe is not None
     assert [c[0][1 + len(_git.PINS) :] for c in calls] == [
@@ -229,6 +232,10 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
         list(gitsystem._LIST),
         [f"--git-dir={probe[0]}", *gitsystem._REMOTE_ASK],
         [f"--git-dir={probe[0]}", *gitsystem._PREFIX_ASK],
+        *(
+            [f"--git-dir={os.path.join(probe[0], name)}", *gitsystem._COMPAT_ASK]
+            for name in gitsystem._COMPAT_PROBES
+        ),
     ]
     where = gitsystem._where()
     assert where is not None
@@ -245,9 +252,11 @@ def test_the_system_config_questions_run_outside_any_repository_under_the_pins(
         == calls[1][2]["GIT_CONFIG_GLOBAL"]
         == calls[2][2]["GIT_CONFIG_GLOBAL"]
         == calls[3][2]["GIT_CONFIG_GLOBAL"]
+        == calls[4][2]["GIT_CONFIG_GLOBAL"]
+        == calls[5][2]["GIT_CONFIG_GLOBAL"]
         == os.devnull
     )
-    for probed in (calls[2][2], calls[3][2]):
+    for probed in (calls[2][2], calls[3][2], calls[4][2], calls[5][2]):
         assert probed["GIT_CONFIG_NOSYSTEM"] == "1"
         assert "GIT_CONFIG_COUNT" not in probed
 

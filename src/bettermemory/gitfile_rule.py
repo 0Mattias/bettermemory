@@ -238,6 +238,7 @@ class TreeFormat:
 _VERSION = b"core.repositoryformatversion"
 _WORKTREE_CONFIG = b"extensions.worktreeconfig"
 _OBJECT_FORMAT = b"extensions.objectformat"
+_COMPAT_FORMAT = b"extensions.compatobjectformat"
 _BARE = b"core.bare"
 _WORKTREE = b"core.worktree"
 _EXTENSIONS = b"extensions."
@@ -262,9 +263,9 @@ _EXTENSIONS_V1: dict[bytes, str | frozenset[bytes]] = {
     b"refstorage": frozenset({b"files", b"reftable"}),
     b"relativeworktrees": _BOOLEAN,
     b"submodulepathconfig": _BOOLEAN,
-    # Read with the object format it is checked against, which git 2.54
-    # refuses here in every pairing tried: declined wherever it is set.
-    b"compatobjectformat": frozenset(),
+    # Read once (a second dies) and kept where a version is set, where git
+    # reads it as it was built (`_judge_format`).
+    b"compatobjectformat": frozenset({b"sha1", b"sha256"}),
 }
 
 
@@ -358,8 +359,10 @@ def object_format(data: bytes) -> bytes | None:
     followed): b"sha1" or b"sha256", b"sha1" where no
     ``core.repositoryformatversion`` is set (git clears every extension
     there, ``objectFormat`` with them) or the file sets none; None where
-    git dies on the format (`_judge_format`, a version above 1), cannot
-    parse the file, or the file is larger than `gitconfig._FORMAT_LIMIT`.
+    git dies on the format (`_judge_format`, a version above 1, a
+    ``compatObjectFormat`` the git on PATH dies on or has not said it
+    reads), cannot parse the file, or the file is larger than
+    `gitconfig._FORMAT_LIMIT`.
     `gitobjects.ObjectReader` sizes object names by it (ENG-207), where a
     line reader of its own took ``objectFormat`` under no version."""
     if len(data) > gitconfig._FORMAT_LIMIT:
@@ -384,6 +387,7 @@ def _judge_format(
     version, worktree_config, hash_name = -1, False, b"sha1"
     taken: dict[bytes, bytes | None] = {}
     v1_only = unknown = False
+    compat: bytes | None = None
     for name, value in entries:
         if name == _VERSION:
             number = gitconfig.git_int(value)
@@ -395,6 +399,12 @@ def _judge_format(
             rule = _EXTENSIONS_V0.get(ext, _EXTENSIONS_V1.get(ext))
             if rule is not None and not _extension_reads(rule, value):
                 return _dies(path, name)
+            if name == _COMPAT_FORMAT:
+                # setup.c's ``handle_extension`` takes it once, whatever
+                # the version: a second dies ("already specified").
+                if compat is not None:
+                    return _dies(path, name)
+                compat = b"" if value is None else value.split(b"\0", 1)[0]
             v1_only = v1_only or ext in _EXTENSIONS_V1
             unknown = unknown or rule is None
             if name == _WORKTREE_CONFIG:
@@ -410,7 +420,32 @@ def _judge_format(
         return f"{path} sets an extension of format 1 in a repository of format 0"
     if version >= 1 and unknown:
         return f"{path} sets a repository extension git does not know"
+    # A format git does not clear (a version of 1 or below -1) keeps the
+    # compat format, which git reads as it was built: git 2.54 without
+    # Rust dies on it ("compatibility hash algorithm support requires
+    # Rust"), one built with it reads one other than the object format
+    # and dies on the same one. The build's, not the file's: the git on
+    # PATH is asked (`gitsystem.reads_compat`, ENG-207's round 8), and
+    # where it has not said the format is not known here (fail closed).
+    if compat is not None and version != -1 and version <= 1:
+        reads = _reads_compat(compat == hash_name)
+        if reads is None:
+            return (
+                f"{path} sets a compatibility object format git has not said it reads"
+            )
+        if not reads:
+            return f"{path} sets a compatibility object format this git dies on"
     return _Format(version, worktree_config, taken, hash_name)
+
+
+def _reads_compat(same: bool) -> bool | None:
+    """Whether the git on PATH reads a compatibility object format the
+    same as its repository's object format where `same`, another
+    otherwise (`gitsystem.reads_compat`), imported here, where a
+    repository sets one: no other format's reading states its binary."""
+    from . import gitsystem
+
+    return gitsystem.reads_compat(same)
 
 
 def _extension_reads(rule: str | frozenset[bytes], value: bytes | None) -> bool:

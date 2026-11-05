@@ -884,6 +884,8 @@ _FORMAT_TAILS = (
     b"[extensions\n\tobjectformat = sha256\n",
     b"[extensions]\n\tobjectformat = sha256\n\tobjectformat = sha1\n",
     b"[extensions]\n\tobjectformat = sha1\n\tobjectformat = sha256\n",
+    b"[extensions]\n\tobjectformat = sha256\n\tcompatObjectFormat = sha1\n",
+    b"[extensions]\n\tcompatObjectFormat = sha256\n\tcompatObjectFormat = sha1\n",
 )
 
 

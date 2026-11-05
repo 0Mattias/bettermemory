@@ -1063,9 +1063,17 @@ eighteenth was built.
   value, an `objectFormat` other than `sha1` or `sha256`, a `refStorage`
   other than `files` or `reftable`, a boolean that is none), one of
   format 1 under format 0 and one git does not know under format 1 make
-  git die, and membership and the origin decline there (fail closed, and
-  a `compatObjectFormat` wherever it is set), where membership rooted the
-  checkout at a folder git names no toplevel of. The object reader
+  git die, and membership and the origin decline there (fail closed),
+  where membership rooted the checkout at a folder git names no toplevel
+  of. A `compatObjectFormat` is read as git reads it: once (a second
+  dies), `sha1` or `sha256`, cleared with no format version set, and of
+  format 1 alone under format 0; under format 1, or a version below -1,
+  the git on PATH reads it as it was built (git 2.54 built without Rust
+  dies on it, a git built with Rust, as CI's 2.56 is, reads one other
+  than the object format and dies on the same one), so that git is asked
+  which in the probe of its system config, in two git directories there
+  (`gitsystem.reads_compat`, recorded with the rest), and the readers
+  follow its answer; where it has not said, they decline. The object reader
   (`gitobjects.ObjectReader`, and the index reader of claim drift) takes
   its object format from that reading (`gitfile_rule.object_format`),
   where a line reader of its own took an `objectFormat = sha256` that
