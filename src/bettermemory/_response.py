@@ -14,11 +14,10 @@ a single multi-hit response uses one consistent "now" across rows.
 
 from __future__ import annotations
 
-import bisect
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -39,10 +38,8 @@ from .models import (
 from .identity import SOURCE_PROCESS_CWD, Actor
 from .origin import (
     Origin,
-    ReachableWalk,
     attribute_files_signature,
     commit_author_timestamps,
-    commits_since_anchor,
     failed_git_calls,
     files_held,
     gitattributes_signature,
@@ -51,7 +48,7 @@ from .origin import (
     toplevel_and_head_from_files,
     walk_files_signature,
 )
-from .origin_history import Walked, unwalked
+from .origin_history import Walked
 from .verify_basis import COMMIT_DRIFT_UNREAD_RECOMMENDATION, CommitDriftUnread
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
@@ -61,15 +58,12 @@ from .claims import Claim, governed_claim_paths, load_claims
 if TYPE_CHECKING:
     from .admission import Admission, DriftScope
 from .verify import (
-    BASIS_AUTHOR_DATE,
-    BASIS_REACHABILITY,
     ResolvedCommitDrift,
-    _quiescent_drift_applicable,
     commit_drift_anchor_paths,
     compute_staleness_verdict,
     remote_verification_status,
     compute_verification_status,
-    resolve_commit_drift,
+    resolve_hit_drift,
     verdict_from_signals,
 )
 
@@ -508,7 +502,7 @@ class _DriftPass:
         failed = failed_git_calls()
         timed_out = timed_out_calls()
         located = self.located()
-        resolved = _resolve_hit_drift(
+        resolved = resolve_hit_drift(
             cwd=self.cwd,
             toplevel=located[0] if located is not None else None,
             head=located[1] if located is not None else None,
@@ -540,7 +534,7 @@ class _DriftPass:
         ``git rev-parse``), or None where no key is settled and the row
         runs uncached.
 
-        Keyed on every input `_resolve_hit_drift` reads (the head's
+        Keyed on every input `verify.resolve_hit_drift` reads (the head's
         history, `timestamps`, is read under the same root and head). Only
         where the root and the head are keyed (`_keyed_pair`): `store`
         reads the head again as they were read, and elsewhere the row runs
@@ -1858,115 +1852,6 @@ def _stamp_hit_drift(
         path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
         commit_drift_count=count,
     )
-
-
-def _resolve_hit_drift(
-    *,
-    cwd: Path,
-    toplevel: Path | None,
-    head: str | None,
-    timestamps: Callable[[], list[datetime] | None],
-    anchors: tuple[str, ...],
-    claims: Sequence[Claim],
-    since: datetime,
-    verified_head: str | None,
-    walked: Walked,
-) -> _Drift:
-    """One hit's commit drift as `ResponseBuilder.attach_commit_drift_
-    counts` stamps it: the count, the basis it was measured on and the
-    claim detail, None when the count is omitted, or `CommitDriftUnread`
-    when the walk was given up. `timestamps` reads
-    the head's whole history (`_DriftPass.timestamps`), called only on the
-    author-date basis, as `verify.compute_commit_drift` reads it; a None
-    there omits the count, as it does on that function. Everything else
-    read here is an argument, and all of it is in the per-hit memo's key
-    (`_DRIFT_MEMO`), with the attribute files a governed claim's patch
-    stream reads and the files beside the history the walk reads.
-    `walked` is the pass's record of the walks no memo keeps
-    (`origin.commits_since_anchor`)."""
-    # The basis, per hit, by the rule `verify.compute_commit_drift`
-    # applies: the reachable walk from the stamp's recorded HEAD when the
-    # record carries one and HEAD still descends from it, the author-date
-    # bisect otherwise.
-    walk: ReachableWalk | None = None
-    if verified_head is not None and head is not None:
-        given_up = unwalked()
-        walk = commits_since_anchor(
-            cwd, verified_head, toplevel=toplevel, head=head, walked=walked
-        )
-        if walk is None and unwalked() != given_up:
-            # The walk and the listing of its commits both met their
-            # timeout: no count, never one off the author dates
-            # (`origin_history.unwalked`), and not read as fresh.
-            return CommitDriftUnread.UNREAD
-    if walk is not None:
-        count = len(walk.commits)
-        basis = BASIS_REACHABILITY
-    else:
-        # bisect_right on the ascending list gives the first index
-        # strictly greater than `since`; len - idx is the count of
-        # commits strictly after the verify timestamp.
-        # Equal-timestamp commits are not counted as drift,
-        # matching the health rollup's semantics. The search read the
-        # history before its first hit and stopped where it failed, so
-        # only a pass that reads it here can meet the None.
-        history = timestamps()
-        if history is None:
-            return None
-        idx = bisect.bisect_right(history, since)
-        count = len(history) - idx
-        basis = BASIS_AUTHOR_DATE
-    # Narrow to commits that touched an anchor (mirrors memory_show
-    # / the expand_top block), so stable-claim memories don't nag
-    # here. None means the anchors all escape this repo: the
-    # signal is not applicable, and the caller omits the field.
-    #
-    # The `count > 0` guard mirrors `verify.compute_commit_drift` +
-    # `health._compute_commit_drift_debt` (the four anchor-narrowing
-    # sites must gate identically). It is no longer a CORRECTNESS
-    # guard: `resolve_commit_drift_count` now counts the path-filtered
-    # commits on AUTHOR date (`git log --format=%aI`) with the same
-    # `bisect_right` boundary as the unfiltered bisect, so the filtered
-    # count is a strict subset and can never exceed `count`. (It once
-    # counted on COMMITTER date via `rev-list --since`, whose inclusive
-    # whole-second boundary could resurrect drift a clean bisect had
-    # ruled out, hence the clamp this guard used to backstop. Both are
-    # gone; the date spaces are unified at the source.)
-    # What the guard still does: route a caught-up memory to the
-    # quiescent applicability classification below instead of the
-    # narrowing, so an unmoved repo reads "clean" only for a memory
-    # the signal actually applies to.
-    if count > 0:
-        # The claim-aware entry point over the same shared core
-        # `memory_show` uses (`resolve_commit_drift_count` is its
-        # count-only projection): a claim-carrying memory gets
-        # the weak-tier narrowing here too, or this surface would
-        # nag `spot_check_recommended` on a memory `memory_show`
-        # reads as fresh.
-        return resolve_commit_drift(
-            cwd=cwd,
-            since=since,
-            unfiltered=count,
-            anchors=anchors,
-            claims=claims,
-            toplevel=toplevel,
-            walk=walk,
-        )
-    if not _quiescent_drift_applicable(cwd, anchors, claims, toplevel=toplevel):
-        # Zero repo-wide commits since the verify. Classify
-        # applicability BEFORE minting the affirmative 0 the model
-        # reads as "measured, nothing moved", by the same
-        # escape/phantom rules `verify.compute_commit_drift` runs
-        # on its quiescent branch, so a hit citing only
-        # remote-host paths omits the key here exactly as
-        # memory_show returns None for it. Pre-fix this surface
-        # gated ALL resolution on `count > 0` and stamped 0 on
-        # the very memory the show surface had stopped reading
-        # clean. The escape half is pure path arithmetic against
-        # the threaded toplevel; only a memory with at least one
-        # in-repo anchor pays the phantom check's filtered log.
-        return None
-    return ResolvedCommitDrift(count, basis=basis)
 
 
 def _claim_at_index(event: dict[str, Any], index: int) -> str | None:

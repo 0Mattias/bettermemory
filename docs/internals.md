@@ -1762,7 +1762,8 @@ Ranking is drift-independent; `verify.py` then annotates each hit with
 the staleness verdict from path, commit and calendar drift (path drift
 in `verify_anchoring.py`, with its body-candidate pass in
 `path_drift_steps.py`, over the candidates `verify_candidates.py`
-extracts; the commit-drift count's bases in `verify_basis.py`; a claim
+extracts; the calendar leg in `verify_status.py`; the commit-drift
+count's bases in `verify_basis.py`; a claim
 window's patch over the commits whose blobs a partial clone holds, the
 rest counted per file, in `origin_patch.py`; every git `origin.py` runs
 reads the history as its objects hold it, past the repository's replace

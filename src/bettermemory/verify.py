@@ -1,8 +1,9 @@
 """Staleness signals for retrieved memories.
 
 Three concepts, all surfaced on retrieval so a consuming model can
-self-triage before relying on stored content. The first lives in
-`verify_anchoring`, which this module re-exports; the other two live here.
+self-triage before relying on stored content. The first two live in
+`verify_anchoring` and `verify_status`, which this module re-exports; the
+third lives here.
 
 1. **Path drift** (`verify_anchoring.detect_path_drift`,
    `PathDriftReport`). A memory body
@@ -12,7 +13,7 @@ self-triage before relying on stored content. The first lives in
    long before the memory's `updated` timestamp would suggest. We catch
    the easy cases by extracting path-shaped tokens and stat'ing them.
 
-2. **Verification staleness** (`compute_verification_status`,
+2. **Verification staleness** (`verify_status.compute_verification_status`,
    `VerificationStatus`). A memory's `last_verified_at` timestamp records
    the last time its claims were spot-checked against ground truth.
    Null means never verified; an old timestamp means the world may have
@@ -106,7 +107,7 @@ and `compute_commit_drift`'s count of the commits since a verify.
 from __future__ import annotations
 
 import bisect
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -130,12 +131,27 @@ from .origin import (
     commit_author_sha_pairs_touching_pathspecs,
     commit_author_timestamps_touching_pathspecs,
     commit_patch_stream,
+    commits_since_anchor,
     repo_toplevel,
     resolve_repo_pathspecs,
 )
+from .origin_history import Walked, unwalked
 from .origin_patch import local_patch_window, too_large
-from .verify_basis import BASIS_AUTHOR_DATE, BASIS_REACHABILITY, _count_since_verify
+from .verify_basis import (
+    BASIS_AUTHOR_DATE,
+    BASIS_REACHABILITY,
+    CommitDriftUnread,
+    _count_since_verify,
+)
 from .verify_spelling import Spelled, spelled
+from .verify_status import (
+    DEFAULT_VERIFICATION_STALE_DAYS,
+    VerificationStatus,
+    compute_verification_status,
+)
+from .verify_status import (
+    remote_verification_status as remote_verification_status,
+)
 from .verify_spelling import literal_pathspecs as _literal_pathspecs
 
 # The path-drift scan lives in `verify_anchoring` and `verify_candidates`,
@@ -197,232 +213,10 @@ from .verify_candidates import (
 
 
 # ---------------------------------------------------------------------------
-# Verification staleness
-# ---------------------------------------------------------------------------
-#
-# `last_verified_at` is the timestamp the `memory_verify` tool stamps when an
-# agent has confirmed a memory's body still matches reality. Null means
-# never verified. The retrieval surface used to expose the raw timestamp
-# and lean on prose guidance to make the consuming model do the staleness
-# arithmetic — which fails open whenever the model's attention wavers.
-#
-# Replacing the raw timestamp with a structured `verification` block (status,
-# age, recommendation) puts the staleness verdict in the response payload
-# itself. The model can ignore prose; it cannot easily ignore a literal
-# `recommendation` string sitting next to the body it just retrieved. That
-# inversion — from "model decides whether to spot-check" to "tool decides
-# whether to ask the model to spot-check" — is the whole point. This caught
-# a real-world drift in the field (a memory whose tool list lagged the code
-# by three new tools). The cost of being too cautious here is one extra
-# spot-check per retrieval; the cost of being too lax is exactly the kind
-# of stale-memory incident this project exists to prevent.
-
-
-# Default freshness window. After this many days, a verified memory flips
-# from "fresh" to "stale" and gets a re-spot-check recommendation. 30 days
-# matches the recency-boost half-life (`recency_boost_half_life_days`) —
-# memories the ranker is no longer treating as "fresh" for ordering also
-# stop counting as "fresh" for verification. Override via
-# `behavior.verification_stale_days` in config.toml.
-DEFAULT_VERIFICATION_STALE_DAYS = 30
-
-
-@dataclass(frozen=True)
-class VerificationStatus:
-    """Structured staleness verdict for a memory's `last_verified_at`.
-
-    `status` is one of:
-
-    - ``"never"``: `last_verified_at` is None — the memory has not been
-      spot-checked since it was written. Highest-risk profile; the body
-      may have been wrong on day 1, may have drifted since, and no
-      human/agent has confirmed otherwise.
-    - ``"stale"``: `last_verified_at` is set, but more than
-      `stale_after_days` ago. The world may have moved on since the
-      last spot-check.
-    - ``"fresh"``: verified within the staleness window. No action
-      needed beyond the usual path-drift triage.
-    - ``"remote"`` (6.6.0): the file carries a `last_verified_at`, but it
-      arrived by `sync pull` and this host has never verified the record
-      since (`index.verified_locally_at` is NULL on a `synced` row). The
-      stamp is another host's, or an attacker's; on this host it is not
-      evidence. Built by `remote_verification_status`, applied by
-      `_response.ResponseBuilder.apply_trust`.
-
-    `age_days` is the integer day count since the last verification, or
-    None when status is ``"never"`` or ``"remote"``. `recommendation` is a short
-    actionable string aimed at the retrieving model — non-None for
-    ``"never"`` and ``"stale"``, None for ``"fresh"``. Putting the
-    recommendation in the payload (rather than only in the prose system
-    prompt) is the load-bearing piece: a model scanning structured
-    fields cannot miss the explicit ask to spot-check.
-    """
-
-    status: str
-    last_verified_at: datetime | None
-    age_days: int | None
-    recommendation: str | None
-    stale_after_days: int
-
-    def to_dict(self) -> dict[str, Any]:
-        """JSON-friendly serialization for the tool response.
-
-        `last_verified_at` is rendered ISO-8601 with the `+00:00` suffix
-        normalised to ``Z`` to match the rest of the server's datetime
-        formatting. The block is emitted in full on every retrieval
-        (including ``"fresh"``) so a consumer can branch on a stable
-        shape — `recommendation: null` is the explicit "nothing to do"
-        signal.
-        """
-        return {
-            "status": self.status,
-            "last_verified_at": (
-                None
-                if self.last_verified_at is None
-                else self.last_verified_at.isoformat().replace("+00:00", "Z")
-            ),
-            "age_days": self.age_days,
-            "recommendation": self.recommendation,
-            "stale_after_days": self.stale_after_days,
-        }
-
-
-# Recommendation strings live as module constants so tests can match on
-# them without duplicating prose, and so future tone tweaks happen in one
-# place. Both end with the concrete tool call to make next-step routing
-# unambiguous from the model's side.
-_NEVER_RECOMMENDATION = (
-    "This memory has never been spot-checked since it was written. Before "
-    "relying on any specific claim it makes (file path, commit hash, "
-    "version, configuration, list of items), confirm at least one against "
-    "ground truth. If the claim still holds, call memory_verify(id, "
-    "note=...) to record the check. If it has drifted, fix the body via "
-    "memory_update first, then memory_verify the corrected memory."
-)
-
-
-def _stale_recommendation(age_days: int) -> str:
-    return (
-        f"Last spot-checked {age_days} days ago — past the freshness window. "
-        "Re-confirm at least one verifiable claim (path, commit, version, "
-        "config, list) and call memory_verify(id, note=...) to refresh, or "
-        "memory_update if a claim has drifted."
-    )
-
-
-def _remote_recommendation(last_verified_at: datetime) -> str:
-    stamp = last_verified_at.isoformat().replace("+00:00", "Z")
-    return (
-        f"This memory arrived by sync pull and its verification stamp ({stamp}) "
-        "was written on another host; this host has not checked it, so the "
-        "stamp is not evidence here. Confirm at least one claim against "
-        "ground truth on this machine and call memory_verify(id, note=..., "
-        "verified_paths=[...]) with paths that resolve here to adopt it, or "
-        "memory_update if a claim has drifted."
-    )
-
-
-def remote_verification_status(
-    last_verified_at: datetime,
-    *,
-    stale_after_days: int = DEFAULT_VERIFICATION_STALE_DAYS,
-) -> VerificationStatus:
-    """The verification block for a synced record whose stamp this host
-    never made (see the ``"remote"`` status on `VerificationStatus`).
-
-    `last_verified_at` is the stamp the file carries, kept in the block
-    for transparency; `age_days` is None because the calendar leg
-    measures distance from a local check and there was none.
-    `verdict_from_signals` reads ``"remote"`` like ``"never"``: no local
-    anchor, so the verdict is `spot_check_required` whatever the drift
-    legs say.
-    """
-    if last_verified_at.tzinfo is None:
-        last_verified_at = last_verified_at.replace(tzinfo=timezone.utc)
-    return VerificationStatus(
-        status="remote",
-        last_verified_at=last_verified_at,
-        age_days=None,
-        recommendation=_remote_recommendation(last_verified_at),
-        stale_after_days=max(0, stale_after_days),
-    )
-
-
-def compute_verification_status(
-    last_verified_at: datetime | None,
-    *,
-    now: datetime,
-    stale_after_days: int = DEFAULT_VERIFICATION_STALE_DAYS,
-) -> VerificationStatus:
-    """Classify a memory's verification staleness.
-
-    `now` is injected rather than read from the clock so callers can fix
-    a single timestamp across a multi-hit retrieval (consistent with how
-    `search.search` threads its own `now`) and tests can pin time. A
-    timezone-naive `last_verified_at` is treated as UTC, matching the
-    convention `search_bm25._recency_factor` uses — every datetime in the
-    store is UTC-aware in practice, but defensive normalisation keeps a
-    legacy file from raising.
-
-    `stale_after_days <= 0` collapses the "fresh" window to nothing —
-    every verified memory becomes "stale" immediately. Useful for tests
-    that want the stale-recommendation branch without sleeping. A
-    negative value behaves the same as 0 (clamped), to avoid a silent
-    inverted comparison.
-
-    Boundary semantic: the comparison is strict-greater on the actual
-    elapsed seconds (not the floored day count), so a memory at
-    exactly `stale_after_days` of age is still fresh and only flips
-    to stale once it crosses the threshold. The intuitive reading of
-    "fresh for 30 days, then stale" then matches the implementation —
-    without the strict boundary the verdict flipped at midnight UTC
-    on day 30 instead of day 31, the audit's "fresh at 23:59, stale
-    at 00:01" surprise. Comparing in seconds (rather than the floored
-    `age_days`) keeps the zero-threshold carve-out intact: any
-    measurable elapsed time satisfies `age_seconds > 0`, so
-    `stale_after_days=0` still flips immediately.
-    """
-    threshold = max(0, stale_after_days)
-
-    if last_verified_at is None:
-        return VerificationStatus(
-            status="never",
-            last_verified_at=None,
-            age_days=None,
-            recommendation=_NEVER_RECOMMENDATION,
-            stale_after_days=threshold,
-        )
-
-    if last_verified_at.tzinfo is None:
-        last_verified_at = last_verified_at.replace(tzinfo=timezone.utc)
-
-    age_seconds = max(0.0, (now - last_verified_at).total_seconds())
-    age_days = int(age_seconds // 86400)
-    threshold_seconds = threshold * 86400
-
-    if age_seconds > threshold_seconds:
-        return VerificationStatus(
-            status="stale",
-            last_verified_at=last_verified_at,
-            age_days=age_days,
-            recommendation=_stale_recommendation(age_days),
-            stale_after_days=threshold,
-        )
-
-    return VerificationStatus(
-        status="fresh",
-        last_verified_at=last_verified_at,
-        age_days=age_days,
-        recommendation=None,
-        stale_after_days=threshold,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Commit drift — repo-aware staleness
 # ---------------------------------------------------------------------------
 #
-# Calendar verification staleness ((2) above) misses the case the project
+# Calendar verification staleness ((2) above, `verify_status`) misses the case the project
 # was actually built to catch: a memory describes the state of the repo
 # the user is currently working on, the user just rewrote half of it, and
 # the calendar still says "fresh" because they verified the row two hours
@@ -1524,6 +1318,117 @@ def _narrow_commit_drift(
         claims_drifted=claims_drifted,
         basis=basis,
     )
+
+
+def resolve_hit_drift(
+    *,
+    cwd: Path,
+    toplevel: Path | None,
+    head: str | None,
+    timestamps: Callable[[], list[datetime] | None],
+    anchors: tuple[str, ...],
+    claims: Sequence[Claim],
+    since: datetime,
+    verified_head: str | None,
+    walked: Walked,
+) -> ResolvedCommitDrift | CommitDriftUnread | None:
+    """One hit's commit drift as `_response.ResponseBuilder.attach_commit_
+    drift_counts` stamps it and `_response._DriftPass.lookup` resolves it
+    for every surface: the count, the basis it was measured on and the
+    claim detail, None when the count is omitted, or `CommitDriftUnread`
+    when the walk was given up. `timestamps` reads
+    the head's whole history (`_response._DriftPass.timestamps`), called
+    only on the author-date basis, as `compute_commit_drift` reads it; a
+    None there omits the count, as it does on that function. Everything
+    else read here is an argument, and all of it is in the per-hit memo's
+    key (`_response._DRIFT_MEMO`), with the attribute files a governed
+    claim's patch stream reads and the files beside the history the walk
+    reads. `walked` is the pass's record of the walks no memo keeps
+    (`origin.commits_since_anchor`). It lives beside `compute_commit_drift`
+    and `_narrow_commit_drift`, whose rule it applies."""
+    # The basis, per hit, by the rule `compute_commit_drift`
+    # applies: the reachable walk from the stamp's recorded HEAD when the
+    # record carries one and HEAD still descends from it, the author-date
+    # bisect otherwise.
+    walk: ReachableWalk | None = None
+    if verified_head is not None and head is not None:
+        given_up = unwalked()
+        walk = commits_since_anchor(
+            cwd, verified_head, toplevel=toplevel, head=head, walked=walked
+        )
+        if walk is None and unwalked() != given_up:
+            # The walk and the listing of its commits both met their
+            # timeout: no count, never one off the author dates
+            # (`origin_history.unwalked`), and not read as fresh.
+            return CommitDriftUnread.UNREAD
+    if walk is not None:
+        count = len(walk.commits)
+        basis = BASIS_REACHABILITY
+    else:
+        # bisect_right on the ascending list gives the first index
+        # strictly greater than `since`; len - idx is the count of
+        # commits strictly after the verify timestamp.
+        # Equal-timestamp commits are not counted as drift,
+        # matching the health rollup's semantics. The search read the
+        # history before its first hit and stopped where it failed, so
+        # only a pass that reads it here can meet the None.
+        history = timestamps()
+        if history is None:
+            return None
+        idx = bisect.bisect_right(history, since)
+        count = len(history) - idx
+        basis = BASIS_AUTHOR_DATE
+    # Narrow to commits that touched an anchor (mirrors memory_show
+    # / the expand_top block), so stable-claim memories don't nag
+    # here. None means the anchors all escape this repo: the
+    # signal is not applicable, and the caller omits the field.
+    #
+    # The `count > 0` guard mirrors `compute_commit_drift` +
+    # `health._compute_commit_drift_debt` (the four anchor-narrowing
+    # sites must gate identically). It is no longer a CORRECTNESS
+    # guard: `resolve_commit_drift_count` now counts the path-filtered
+    # commits on AUTHOR date (`git log --format=%aI`) with the same
+    # `bisect_right` boundary as the unfiltered bisect, so the filtered
+    # count is a strict subset and can never exceed `count`. (It once
+    # counted on COMMITTER date via `rev-list --since`, whose inclusive
+    # whole-second boundary could resurrect drift a clean bisect had
+    # ruled out, hence the clamp this guard used to backstop. Both are
+    # gone; the date spaces are unified at the source.)
+    # What the guard still does: route a caught-up memory to the
+    # quiescent applicability classification below instead of the
+    # narrowing, so an unmoved repo reads "clean" only for a memory
+    # the signal actually applies to.
+    if count > 0:
+        # The claim-aware entry point over the same shared core
+        # `memory_show` uses (`resolve_commit_drift_count` is its
+        # count-only projection): a claim-carrying memory gets
+        # the weak-tier narrowing here too, or this surface would
+        # nag `spot_check_recommended` on a memory `memory_show`
+        # reads as fresh.
+        return resolve_commit_drift(
+            cwd=cwd,
+            since=since,
+            unfiltered=count,
+            anchors=anchors,
+            claims=claims,
+            toplevel=toplevel,
+            walk=walk,
+        )
+    if not _quiescent_drift_applicable(cwd, anchors, claims, toplevel=toplevel):
+        # Zero repo-wide commits since the verify. Classify
+        # applicability BEFORE minting the affirmative 0 the model
+        # reads as "measured, nothing moved", by the same
+        # escape/phantom rules `compute_commit_drift` runs
+        # on its quiescent branch, so a hit citing only
+        # remote-host paths omits the key here exactly as
+        # memory_show returns None for it. Pre-fix this surface
+        # gated ALL resolution on `count > 0` and stamped 0 on
+        # the very memory the show surface had stopped reading
+        # clean. The escape half is pure path arithmetic against
+        # the threaded toplevel; only a memory with at least one
+        # in-repo anchor pays the phantom check's filtered log.
+        return None
+    return ResolvedCommitDrift(count, basis=basis)
 
 
 def commit_drift_status(resolved: ResolvedCommitDrift) -> CommitDriftStatus:

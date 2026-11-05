@@ -32,7 +32,7 @@ from typing import Any, cast
 
 import pytest
 
-from bettermemory import _caches, _git, _response, origin, origin_history, verify
+from bettermemory import _caches, _git, origin, origin_history, verify
 from bettermemory.claims import load_claims
 from bettermemory.verify import ResolvedCommitDrift
 from bettermemory.verify_basis import CommitDriftUnread
@@ -198,7 +198,7 @@ def _unread_or_hit(
 ) -> ResolvedCommitDrift | CommitDriftUnread | None:
     """`_hit`, where the history may not be read in time."""
     _caches.clear_all()
-    return _response._resolve_hit_drift(
+    return verify.resolve_hit_drift(
         cwd=repo,
         toplevel=repo,
         head=_plain(repo, "rev-parse", "HEAD"),
@@ -1462,7 +1462,7 @@ def test_a_walk_whose_listing_times_out_too_reads_unread(
     for _ in range(2):
         timed_out = _git.timed_out_calls()
         unwalked = origin_history.unwalked()
-        got = _response._resolve_hit_drift(
+        got = verify.resolve_hit_drift(
             cwd=repo,
             toplevel=repo,
             head=head,
