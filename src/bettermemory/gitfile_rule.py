@@ -239,8 +239,32 @@ _VERSION = b"core.repositoryformatversion"
 _WORKTREE_CONFIG = b"extensions.worktreeconfig"
 _BARE = b"core.bare"
 _WORKTREE = b"core.worktree"
-# The four, as `gitconfig.read_git_config` keeps a reading of them alone.
-_FORMAT_NAMES = frozenset({_VERSION, _WORKTREE_CONFIG, _BARE, _WORKTREE})
+_EXTENSIONS = b"extensions."
+# The four and every extension, as `gitconfig.read_git_config` keeps a
+# reading of them alone (a name ending in "." keeps those it starts).
+_FORMAT_NAMES = frozenset({_VERSION, _WORKTREE_CONFIG, _BARE, _WORKTREE, _EXTENSIONS})
+# The extensions git 2.54 reads in a repository of any format (setup.c's
+# ``handle_extension_v0``) and those of format 1 alone (``handle_extension``),
+# each with the values it reads: a boolean (`gitconfig.git_bool`), any
+# value but none, one of a set of names, or anything. Checked against
+# ``git rev-parse`` (tests/test_location_gitdir_format.py).
+_BOOLEAN, _SOME_VALUE, _ANY = "boolean", "some value", "any"
+_EXTENSIONS_V0: dict[bytes, str | frozenset[bytes]] = {
+    b"noop": _ANY,
+    b"preciousobjects": _BOOLEAN,
+    b"partialclone": _SOME_VALUE,
+    b"worktreeconfig": _BOOLEAN,
+}
+_EXTENSIONS_V1: dict[bytes, str | frozenset[bytes]] = {
+    b"noop-v1": _ANY,
+    b"objectformat": frozenset({b"sha1", b"sha256"}),
+    b"refstorage": frozenset({b"files", b"reftable"}),
+    b"relativeworktrees": _BOOLEAN,
+    b"submodulepathconfig": _BOOLEAN,
+    # Read with the object format it is checked against, which git 2.54
+    # refuses here in every pairing tried: declined wherever it is set.
+    b"compatobjectformat": frozenset(),
+}
 
 
 def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFormat:
@@ -264,10 +288,11 @@ def tree_format(git_dir: str, common: tuple[str, bool] | None = None) -> TreeFor
     ``core.worktree`` win, and takes the two whether or not a
     ``commondir`` named the common directory; without it, a git directory
     with a ``commondir`` (a linked worktree's) takes neither from the
-    common config. Git's other checks of a format (its extensions, which
-    vary by version) are not read: where one makes git die, git names no
-    working tree, and no origin records one. `common` is `_git_common`'s
-    answer where the caller read it already (`judge`)."""
+    common config. Its extensions are read as git 2.54 reads them
+    (`_common_format`; ENG-207's round 7, which they were not): a value
+    git refuses, a format-1 extension under format 0 and one git does not
+    know under format 1 make git die, and are `why`. `common` is
+    `_git_common`'s answer where the caller read it already (`judge`)."""
     try:
         where, has_common = common or _git_common(git_dir)
     except _Unsettled:
@@ -306,28 +331,54 @@ def _common_format(
     ``core.repositoryformatversion`` (-1 where it is not set), its
     ``extensions.worktreeConfig`` and the ``core.bare`` and
     ``core.worktree`` it sets (`_take`), the last of each standing; or why
-    it is not known: a value git dies on, a file git cannot parse, one
-    larger than `gitconfig._FORMAT_LIMIT` and one that cannot be read."""
+    it is not known: a value git dies on (an extension's among them,
+    `_EXTENSIONS_V0`, `_EXTENSIONS_V1`), an extension the version set
+    refuses, a file git cannot parse, one larger than
+    `gitconfig._FORMAT_LIMIT` and one that cannot be read."""
     path = os.path.join(common_dir, "config")
     read = gitconfig.read_git_config(path, _FORMAT_NAMES)
     if read.why is not None:
         return read.why
     version, worktree_config = -1, False
     taken: dict[bytes, bytes | None] = {}
+    v1_only = unknown = False
     for name, value in read.entries:
         if name == _VERSION:
             number = gitconfig.git_int(value)
             if number is None:
                 return _dies(path, name)
             version = number
-        elif name == _WORKTREE_CONFIG:
-            flag = gitconfig.git_bool(value)
-            if flag is None:
+        elif name.startswith(_EXTENSIONS):
+            ext = name[len(_EXTENSIONS) :]
+            rule = _EXTENSIONS_V0.get(ext, _EXTENSIONS_V1.get(ext))
+            if rule is not None and not _extension_reads(rule, value):
                 return _dies(path, name)
-            worktree_config = flag
+            v1_only = v1_only or ext in _EXTENSIONS_V1
+            unknown = unknown or rule is None
+            if name == _WORKTREE_CONFIG:
+                worktree_config = gitconfig.git_bool(value) is True
         elif not _take(name, value, taken):
             return _dies(path, name)
+    # setup.c's ``verify_repository_format``, on a version that is set: a
+    # format-1 extension in a repository of format 0, an extension git
+    # does not know in one of format 1 (ENG-207's round 7).
+    if version == 0 and v1_only:
+        return f"{path} sets an extension of format 1 in a repository of format 0"
+    if version >= 1 and unknown:
+        return f"{path} sets a repository extension git does not know"
     return version, worktree_config, taken
+
+
+def _extension_reads(rule: str | frozenset[bytes], value: bytes | None) -> bool:
+    """Whether git reads an extension's `value` by its `rule`
+    (`_EXTENSIONS_V0`, `_EXTENSIONS_V1`), and does not die on it."""
+    if rule == _ANY:
+        return True
+    if rule == _BOOLEAN:
+        return gitconfig.git_bool(value) is not None
+    if value is None:
+        return False
+    return rule == _SOME_VALUE or value.split(b"\0", 1)[0] in rule
 
 
 def reads_worktree_config(common_dir: str) -> bool | None:

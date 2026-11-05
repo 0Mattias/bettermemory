@@ -1544,7 +1544,8 @@ def read_git_config(path: str, names: frozenset[bytes] | None = None) -> GitConf
     exist sets nothing, as git reads it. The open does not block, so a FIFO
     fails instead of waiting.
 
-    With `names`, only the entries of those names are kept, in order, and
+    With `names`, only the entries of those names are kept, in order (a
+    name ending in ``.``, ``extensions.``, keeps every one it starts), and
     the reading is kept with the digest of the bytes read (`_FORMAT_MEMO`):
     a later read that finds the same bytes (the file is read whole each
     time) parses nothing."""
@@ -1597,7 +1598,10 @@ def read_git_config(path: str, names: frozenset[bytes] | None = None) -> GitConf
     if entries is None:
         read = GitConfigRead(why=f"{path} is a config git cannot parse")
     else:
-        read = GitConfigRead(tuple(e for e in entries if e[0] in names))
+        starts = tuple(n for n in names if n.endswith(b"."))
+        read = GitConfigRead(
+            tuple(e for e in entries if e[0] in names or e[0].startswith(starts))
+        )
     with _FORMAT_MEMO_LOCK:
         _FORMAT_MEMO[key] = (digest, read)
         _FORMAT_MEMO.move_to_end(key)

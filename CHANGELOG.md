@@ -688,7 +688,15 @@ eighteenth was built.
   does (no include followed, cleared where no
   `core.repositoryformatversion` is set), and so does the capture, which
   took it through an include too and keyed a remote `git remote` does
-  not list; where git dies on that format, no remote is read. Where git
+  not list; where git dies on that format, no remote is read. The
+  format's extensions are read as git 2.54 reads them, where only
+  `worktreeConfig` was: a value git refuses (a `partialClone` with no
+  value, an `objectFormat` other than `sha1` or `sha256`, a `refStorage`
+  other than `files` or `reftable`, a boolean that is none), one of
+  format 1 under format 0 and one git does not know under format 1 make
+  git die, and membership and the origin decline there (fail closed, and
+  a `compatObjectFormat` wherever it is set), where membership rooted the
+  checkout at a folder git names no toplevel of. Where git
   does not read `config.worktree`, an origin hit no longer states it,
   one stat fewer. An include under `onbranch:` or
   `hasconfig:remote.*.url:` gave the capture none of its values, where
@@ -774,7 +782,7 @@ eighteenth was built.
   `tests/test_location_git_parse.py`,
   `tests/test_location_git_include_conditions.py`,
   `tests/test_membership_cost.py`, `tests/test_git_no_fetch.py`,
-  `tests/test_origin_cache.py`)
+  `tests/test_location_gitdir_format.py`, `tests/test_origin_cache.py`)
 
 - **A plant seen first while the checkout's share answers with errors
   no longer takes its record (ENG-217).** Since 9.0.0rc18 a checkout

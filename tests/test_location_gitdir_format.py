@@ -364,6 +364,83 @@ def test_a_config_git_dies_on_is_refused_by_both_readers(
     assert [cwd for cwd in runs if _inside(cwd, app)] == []
 
 
+_V1 = b"[core]\n\trepositoryformatversion = 1\n"
+
+#: Extensions git 2.54 dies on, as a tail to a config of format 0 (a
+#: version a tail sets standing, the last of two), and with no version
+#: set ("unset_"): a value its reader refuses, one of format 1 under
+#: format 0, one it does not know under format 1.
+EXTENSION_DIES = {
+    "partial_clone_no_value": b"[extensions]\n\tpartialClone\n",
+    "precious_no_boolean": b"[extensions]\n\tpreciousObjects = maybe\n",
+    "worktree_config_no_boolean": b"[extensions]\n\tworktreeConfig = maybe\n",
+    "v1_only_in_v0": b"[extensions]\n\trefStorage = files\n",
+    "unknown_in_v1": _V1 + b"[extensions]\n\tbogus = 1\n",
+    "object_format_unknown": _V1 + b"[extensions]\n\tobjectFormat = sha3\n",
+    "object_format_case": _V1 + b"[extensions]\n\tobjectFormat = SHA1\n",
+    "ref_storage_no_value": _V1 + b"[extensions]\n\trefStorage\n",
+    "relative_no_boolean": _V1 + b"[extensions]\n\trelativeWorktrees = maybe\n",
+    "compat_object_format": _V1 + b"[extensions]\n\tcompatObjectFormat = sha256\n",
+    "unset_precious_no_boolean": b"[extensions]\n\tpreciousObjects = maybe\n",
+}
+
+#: Extensions git 2.54 reads on: one it does not know under format 0, a
+#: value each reader takes, and one of format 1 with no version set.
+EXTENSION_READS = {
+    "unknown_in_v0": b"[extensions]\n\tbogus = 1\n",
+    "partial_clone_named": b"[extensions]\n\tpartialClone = origin\n",
+    "precious": b"[extensions]\n\tpreciousObjects = true\n",
+    "v1_known": _V1
+    + b"[extensions]\n\tobjectFormat = sha1\n\trefStorage = files\n\tnoop-v1\n"
+    + b"\trelativeWorktrees\n\tsubmodulePathConfig = true\n\tnoop = x\n",
+    "unset_v1_only": b"[extensions]\n\trefStorage = files\n\tbogus = 1\n",
+}
+
+
+def _extend(app: Path, case: str, tail: bytes) -> None:
+    if case.startswith("unset_"):
+        _without_version(app, tail)
+    else:
+        config = app / ".git" / "config"
+        config.write_bytes(config.read_bytes() + tail)
+
+
+@pytest.mark.parametrize("case", sorted(EXTENSION_DIES))
+def test_an_extension_git_dies_on_is_refused_by_both_readers(
+    tmp_path: Path, runs: list[Path | None], case: str
+) -> None:
+    """The repository's extensions, read as setup.c reads them: a value git
+    refuses, a format-1 extension under format 0 and one git does not know
+    under format 1 make git die (``git rev-parse``), and neither reader
+    names a root. The rule read none but ``worktreeConfig``, and rooted the
+    checkout at the folder git names no toplevel of (ENG-207's round 7)."""
+    app, _other = _apps(tmp_path)
+    _extend(app, case, EXTENSION_DIES[case])
+    assert _toplevel(app).returncode != 0
+    runs.clear()
+
+    cap = _membership(app)
+    assert cap.state == location.INDETERMINATE
+    assert cap.detail.startswith("repository format: "), cap.detail
+    _no_origin(app)
+    assert [cwd for cwd in runs if _inside(cwd, app)] == []
+
+
+@pytest.mark.parametrize("case", sorted(EXTENSION_READS))
+def test_an_extension_git_reads_keeps_the_root(tmp_path: Path, case: str) -> None:
+    """Where git reads the extensions and names the folder its toplevel,
+    both readers root the checkout there (no extension read as fatal that
+    git reads on)."""
+    app, _other = _apps(tmp_path)
+    _extend(app, case, EXTENSION_READS[case])
+    _git_names(app, app)
+
+    cap = _membership(app)
+    assert cap.state == location.REPO and _same(cap.root, app), cap
+    got = origin.capture(app)
+    assert got.repo == REMOTE and _same(got.worktree_root, app)
+
+
 def test_a_config_past_the_format_bound_is_refused(tmp_path: Path) -> None:
     """git reads a config of any size; one past `gitconfig._FORMAT_LIMIT`
     is not read here, and is refused (fail closed) rather than judged by a
