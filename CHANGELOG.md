@@ -1211,12 +1211,16 @@ eighteenth was built.
   refuses in one line where the model cannot place the folder in that
   checkout, naming the file it wrote and that it declared nothing, where
   the model's refusal ended the command with a traceback; so it does
-  where the store fails the first sight's or the declaration's write
-  once the file is written (SQLite busy or locked past the busy timeout,
-  read-only, an I/O error, a full disk, a corrupt file or one that is no
-  database, a transaction SQLite rolled back, or an `OSError` beneath),
-  naming the store's error. An SQL error and any other error remain a
-  traceback.
+  where the store fails any step once the file is written, the first
+  sight's write, the read of the checkout it made, a rebind's read of
+  the boundaries above, the declaration's write and the report's read of
+  it (SQLite busy or locked past the busy timeout, read-only, an I/O
+  error, a full disk, a corrupt file or one that is no database, a
+  transaction SQLite rolled back, or an `OSError` beneath), naming the
+  step, the error by its class (SQLite's apart from a file's, so an
+  error of a file the first sight read is not called the store's) and,
+  after the declaration, that it stands. An SQL error and any other
+  error remain a traceback.
   (`src/bettermemory/gitsystem.py`, `src/bettermemory/gitconfig.py`,
   `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
   `src/bettermemory/gitfile_rule.py`, `src/bettermemory/_git.py`,

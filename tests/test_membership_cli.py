@@ -847,6 +847,15 @@ def _coded(cls: type[sqlite3.DatabaseError], message: str, code: int) -> Excepti
     return exc
 
 
+def _named(exc: Exception) -> str:
+    """`exc` as init's refusal names it: SQLite's class with its module
+    (``sqlite3.OperationalError: ...``), a built-in one bare
+    (``OSError: [Errno 28] ...``)."""
+    kind = type(exc)
+    module = "" if kind.__module__ == "builtins" else f"{kind.__module__}."
+    return f"{module}{kind.__name__}: {exc}"
+
+
 #: How a store fails a write, as the declaration meets it: SQLite's
 #: errors with their result codes, the store's own word for a
 #: transaction SQLite rolled back (`Store._require_open`), and a file
@@ -917,8 +926,9 @@ def test_init_refuses_where_the_store_fails_the_declaration(
     and then declares, and a store that failed the declaration's write (a
     full disk, a read-only or locked store, an I/O error, a malformed
     file) ended the command in a traceback, the file written. It refuses
-    in one line, exit 2, naming the store's error, the file it wrote and
-    that it declared nothing; the store holds no row of the declaration."""
+    in one line, exit 2, naming the error by its class (SQLite's apart from
+    a file's), the file it wrote and that it declared nothing; the store
+    holds no row of the declaration."""
     notes = scene.root / "notes"
     notes.mkdir()
     assert scene.see(notes).project == GLOBAL
@@ -926,9 +936,8 @@ def test_init_refuses_where_the_store_fails_the_declaration(
     typed(monkeypatch, "notes")
     err = refused(monkeypatch, capsys, "project", "init")
     path = notes / project_file.PROJECT_FILE_NAME
-    said = str(_STORE_FAILURES[failure]())
     assert err.startswith(
-        f"bettermemory: the store did not take the declaration ({said}"
+        f"bettermemory: the declaration failed ({_named(_STORE_FAILURES[failure]())})"
     )
     assert f"wrote {quoted(str(path))}" in err and "declared nothing" in err
     assert isinstance(project_file.parse(path), project_file.ProjectFile)
@@ -982,8 +991,8 @@ def test_init_refuses_where_the_store_fails_the_folder_s_first_sight(
     err = refused(monkeypatch, capsys, "project", "init")
     path = notes / project_file.PROJECT_FILE_NAME
     assert err.startswith(
-        "bettermemory: the store did not take the folder's first sight "
-        "(database or disk is full)"
+        "bettermemory: the folder's first sight failed "
+        "(sqlite3.OperationalError: database or disk is full)"
     )
     assert f"wrote {quoted(str(path))}" in err and "declared nothing" in err
     assert isinstance(project_file.parse(path), project_file.ProjectFile)

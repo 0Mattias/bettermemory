@@ -34,7 +34,7 @@ import json
 import os
 import sqlite3
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, TypeVar
 
@@ -227,11 +227,31 @@ def _store_failed(exc: BaseException) -> bool:
     return type(exc) is sqlite3.OperationalError
 
 
-def _stored(call: Callable[[], _T], what: str, written: ProjectFile) -> _T:
-    """`call()`, a write of `what` init makes once it wrote the project
-    file `written`: where the store fails it (`_store_failed`, its
-    transaction rolled back), one line naming the store's error, the file
-    written and that nothing was declared, and exit 2, as where the model
+def _failure(exc: BaseException) -> str:
+    """`exc` named by its class, as a refusal quotes it: SQLite's
+    (``sqlite3.OperationalError: disk I/O error``) apart from a file's
+    (``OSError: [Errno 28] No space left on device``), so the line says
+    which failed, the store or a file the step read (ENG-207's review of
+    round 10)."""
+    kind = type(exc)
+    module = "" if kind.__module__ == "builtins" else f"{kind.__module__}."
+    return f"{module}{kind.__qualname__}: {exc}"
+
+
+def _stored(
+    call: Callable[[], _T],
+    what: str,
+    written: ProjectFile,
+    *,
+    declared: bool = False,
+) -> _T:
+    """`call()`, a step of init's that reads or writes the store once it
+    wrote the project file `written` (`what`: the folder's first sight, a
+    read, the declaration, the report of it): where it fails as the store
+    or a file beneath it fails (`_store_failed`, a write's transaction
+    rolled back), one line naming the step, the error by its class
+    (`_failure`), the file written and whether the declaration stands
+    (`declared`, for the report after it), and exit 2, as where the model
     refuses the declaration; any other error goes on (ENG-207's review of
     round 8: a traceback, the file written)."""
     try:
@@ -239,10 +259,14 @@ def _stored(call: Callable[[], _T], what: str, written: ProjectFile) -> _T:
     except (OSError, sqlite3.DatabaseError) as exc:
         if not _store_failed(exc):
             raise
+        stands = (
+            "declared it: `bettermemory project list` shows it"
+            if declared
+            else "declared nothing: the next session decides"
+        )
         refuse(
-            f"the store did not take {what} ({exc}); wrote "
-            f"{quoted(str(written.path))} ({written.id}) and declared nothing: "
-            "the next session decides"
+            f"{what} failed ({_failure(exc)}); wrote "
+            f"{quoted(str(written.path))} ({written.id}) and {stands}"
         )
 
 
@@ -804,6 +828,14 @@ def _init_position(
     return k, below, bound
 
 
+def _outer_boundary(model: Membership, keeps: str, chain: Sequence[str]) -> str | None:
+    """The first boundary on the caller's `chain` outside the chain of the
+    project a rebind keeps (`keeps`), which the declaration names as the
+    tenant it sits in; None where there is none."""
+    own = model.chain_of(keeps)
+    return next((c for c in chain if c not in own and model.project(c).boundary), None)
+
+
 def _init_proposal(
     model: Membership, k: Checkout | None, new: bool, below: bool, cwd: str
 ) -> Proposal | None:
@@ -1020,16 +1052,20 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
             return
         # The folder's first sight made it a folder project from this file:
         # the declaration binds the file there, whatever the flags.
-        k = model.checkout(res.checkout)
+        made = res.checkout
+        k = _stored(
+            lambda: model.checkout(made), "the read of the checkout it made", written
+        )
         action = "init"
     else:
         action = "init_new" if new else "init_rebind" if rebind else "init"
     outer: str | None = None
     if rebind and keeps is not None:
-        own = model.chain_of(keeps)
-        outer = next(
-            (c for c in res.chain if c not in own and model.project(c).boundary),
-            None,
+        kept_id, chain = keeps, res.chain
+        outer = _stored(
+            lambda: _outer_boundary(model, kept_id, chain),
+            "the read of the boundaries above it",
+            written,
         )
     declaration = Declaration(
         action,
@@ -1058,19 +1094,24 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
             "nothing: the next session decides"
         )
     location.forget(cwd)
-    _print_init_done(
-        ctx,
-        model,
-        done,
-        k,
-        path=path,
-        written=written,
-        enclosing=enclosing,
-        boundary=boundary,
-        fence=fence,
-        new=new,
-        pr=pr,
-        lifted=lifted,
+    _stored(
+        lambda: _print_init_done(
+            ctx,
+            model,
+            done,
+            k,
+            path=path,
+            written=written,
+            enclosing=enclosing,
+            boundary=boundary,
+            fence=fence,
+            new=new,
+            pr=pr,
+            lifted=lifted,
+        ),
+        "the report of what it declared",
+        written,
+        declared=True,
     )
 
 
