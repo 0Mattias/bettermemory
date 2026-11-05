@@ -733,12 +733,17 @@ eighteenth was built.
   named git's refusal. A folder no such entry stands above reads not
   applicable as before, and so does one where git's walk stops at an
   entry membership refuses (`gitfile_rule.discovery_refusal`), which
-  leaves the folder outside any repository (ENG-158). The surfaces reach
-  this reader only where the caller's location resolved into a project:
-  a caller whose own checkout is the unreadable one is resolved outside
-  any repository by the location's discovery, which reads as git does,
-  so no commit leg runs there. (`src/bettermemory/githead.py`,
-  `src/bettermemory/origin_dates.py`, `tests/test_unread_history.py`)
+  leaves the folder outside any repository (ENG-158). Health's estate
+  check reaches this reader at a live view of the home checkout
+  (`cross_repo_drift`): the memories homed in such a checkout now count
+  under `unread`, as `error`, where the estate check skipped the root as
+  git unreachable in the home checkout (the review's round G). The
+  per-memory surfaces reach it only where the caller's location
+  resolved into a project: a caller whose own checkout is the
+  unreadable one is resolved outside any repository by the location's
+  discovery, which reads as git does, so no commit leg runs there.
+  (`src/bettermemory/githead.py`, `src/bettermemory/origin_dates.py`,
+  `tests/test_unread_history.py`)
 
 - **A ref git cannot read is no unborn branch (ENG-220).** `git
   rev-parse --verify -q HEAD` fails on a branch with no commit and on one

@@ -705,13 +705,15 @@ def test_a_repository_nothing_reads_reads_unread_never_not_applicable(
 ) -> None:
     """A repository whose objects directory no one may search is read by
     neither git nor the files: git's discovery passes over its `.git` as no
-    git directory, and so does `githead`'s. Its `.git` still stands there
-    (`githead.entry_above`), so its history applies and was not read: it
-    reads `error`, never not applicable (ENG-220's review, round F), on the
-    search hit, memory_show's count and the health rollup, whether the
-    files or git's answer would key the rows; with no root read, so does
-    the hit citing only an outside path. A folder that no `.git` or `HEAD`
-    entry stands at or above still reads None."""
+    git directory, and so does `githead`'s. Git would have stopped at its
+    `.git` but for that (`githead.entry_above`), so its history applies
+    and was not read: it reads `error`, never not applicable (ENG-220's
+    review, round F), on the search hit, memory_show's count, the health
+    rollup and the estate check's live view of the home checkout, which
+    skipped the root as git unreachable there (round G), whether the files
+    or git's answer would key the rows; with no root read, so does the hit
+    citing only an outside path. A folder git's walk passes no repository
+    in still reads None."""
     repo, caller, cited, outside, memories = _scenario(
         tmp_path, memory_dir, monkeypatch
     )
@@ -752,6 +754,18 @@ def test_a_repository_nothing_reads_reads_unread_never_not_applicable(
     assert debt is not None and debt.rows == []
     unread = {"unread": 1, "unread_causes": {why.value: 1}, "unread_ids": ["m"]}
     assert debt.to_dict().items() >= unread.items()
+    # The estate check reaches the reader too: the live view of the home
+    # checkout reads its candidates unread, where it skipped the root as
+    # git unreachable there (ENG-220's review, round G).
+    legs: dict[str, Any] = {
+        "anchor_paths_by_id": {"m": (str(repo / "notes0.md"),)},
+        "claims_by_id": None,
+        "verified_head_by_id": None,
+    }
+    _caches.clear_all()
+    live = health._cross_repo_group(_URL, str(repo), [_stats("m")], **legs)
+    assert live is not None and live.rows == []
+    assert live.to_dict().items() >= unread.items()
     nowhere = tmp_path / "nowhere"
     nowhere.mkdir()
     assert not githead.entry_above(nowhere), "premise: no entry stands above"
