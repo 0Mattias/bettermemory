@@ -66,7 +66,6 @@ from bettermemory.membership_records import (
     FILE_CONTRADICTION,
     IMPORT,
     LEGACY,
-    LEGACY_SEPARATE,
     REMOTE_DIVERGED,
     SUBPROJECT_CONTRADICTION,
     UNRESOLVED_LOCATION,
@@ -1463,10 +1462,11 @@ def test_a_question_on_a_second_checkout_keeps_it_where_it_asks_its_project(
     remote's answered by keeping its project (``join_own``) or by `project
     join` into another (``join_other``, merging the container's project
     there) keeps it, silent and not asked. Open, or closed by an answer
-    that decided nothing (``decided_nothing``), it is not, nor is one
-    about something else whatever its answer (the migration's question
-    about a gone folder's records, closed as deciding nothing; a part's
-    folder below the root, joined): the sighting yields to the first
+    that decided nothing (``decided_nothing``: settled, as a declaration
+    closes one on a record it retires), it is not, nor is one about
+    something else whatever its answer (the migration's question about a
+    gone folder's records, answered separate; a part's folder below the
+    root, joined): the sighting yields to the first
     checkout where nothing was written at the second, and asks
     (``duplicate_checkout``) where h2 was. Before, an answer to a changed
     remote's question did not keep the checkout, so the heal or the
@@ -1492,9 +1492,13 @@ def test_a_question_on_a_second_checkout_keeps_it_where_it_asks_its_project(
         model = lab.model()
         with model._call():
             if kind == LEGACY:
-                model._close(model.proposal(qid), "new", LEGACY_SEPARATE)
+                # Its separate answer, the user's.
+                model._close(model.proposal(qid), "new", "declaration:os:tester")
             else:
-                model._close(model.proposal(qid), "withdrawn", "a later release")
+                # As a declaration settles one on a record it retires.
+                model._close(
+                    model.proposal(qid), f"settled:{hid}", "declaration:os:tester"
+                )
     location.forget()
 
     res, admitted = lab.view(line)
@@ -1514,6 +1518,40 @@ def test_a_question_on_a_second_checkout_keeps_it_where_it_asks_its_project(
     else:
         assert (res.checkout, res.outcome, res.rule) == (dup, ASK, "object+token")
         assert admitted == ["h2"] and DUPLICATE_CHECKOUT in asked
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("by", ["project_file", "declaration:os:tester"])
+def test_a_remote_question_the_project_file_closed_is_no_choice(
+    tmp_path: Path, lab: Lab, by: str
+) -> None:
+    """A changed remote's question on a second checkout in the first one's
+    project, nothing written at it, closed ``join``: by the rule that
+    closes it where the root's project file names the checkout's project
+    (``project_file``), which no person answered, the sighting yields to
+    the first checkout; by a declaration, it is a choice there, and the
+    checkout is kept. Before, the rule's answer counted as a person's, so
+    the second checkout was kept."""
+    line, box, hid, kid = _shared(tmp_path, lab, "line")
+    _the_containers_re_mint(lab, box, kid, "missed")
+    assert box.post(lab).checkout == kid
+    dup, _found = _rc18_registered(lab, line)
+    project = lab.model().checkout(dup).project
+    assert project == lab.model().checkout(hid).project
+    qid = _asked_on(lab, dup, REMOTE_DIVERGED, project)
+    model = lab.model()
+    with model._call():
+        model._close(model.proposal(qid), "join", by)
+    location.forget()
+
+    res, admitted = lab.view(line)
+
+    if by == "project_file":
+        assert (res.checkout, res.outcome, res.rule) == (hid, SILENT, "object+remint")
+        assert admitted == ["h1"] and lab.model().checkout(dup).retired
+    else:
+        assert (res.checkout, res.rule) == (dup, "object+token")
+        assert not lab.model().checkout(dup).retired
 
 
 @pytest.mark.usefixtures("no_birth")

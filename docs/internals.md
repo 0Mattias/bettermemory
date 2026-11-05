@@ -1209,9 +1209,11 @@ than the first's (`project init` there), no one was asked about its
 project there (`_asked_where`: a question asking which project it is in,
 a first sight's, its project file's contradiction or its own
 `duplicate_checkout`, open or answered; or a question of another kind,
-a changed remote's, answered by deciding its project, a project of its
-own, a join to any project or its own kept; not one open, nor one closed
-by an answer that decided nothing, nor one about something else, a part
+a changed remote's, answered by a declaration deciding its project, a
+project of its own, a join to any project or its own kept; not one
+open, nor one closed by an answer that decided nothing, nor one a rule
+closed, a changed remote's `join` by the root's project file (whose
+binding is read on its own), nor one about something else, a part
 below the root, an import, a gone folder's records, whatever its
 answer), the membership log registers it by a silent
 first-sight join with the token among its witnesses, and no row of the

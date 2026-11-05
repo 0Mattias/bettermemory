@@ -372,11 +372,13 @@ def _asked_where(self: Membership, checkout: str) -> bool:
     """Whether someone was asked about `checkout`'s project there: a
     question asking which project it is in (`_PICKING`), open or
     answered; or one of another kind but those about something else
-    (`_ABOUT_ELSE`), answered by deciding its project (`_decides`: a
-    project of its own, a join to any project, its own kept). An open
-    question of another kind is not, nor an answer that decided nothing
-    (one closed as settled into another record, `_retire_into`). One
-    indexed read of its questions."""
+    (`_ABOUT_ELSE`), answered by a declaration (`_declared_answer`)
+    deciding its project (`_decides`: a project of its own, a join to any
+    project, its own kept). An open question of another kind is not, nor
+    an answer that decided nothing (one closed as settled into another
+    record, `_retire_into`), nor one a rule wrote (a changed remote's
+    closed ``join`` by the root's project file: the file's binding is
+    read on its own, `_chosen`). One indexed read of its questions."""
     rows = self._store.membership_rows("proposals", where={"checkout": checkout})
     return any(
         row["kind"] in _PICKING
@@ -384,6 +386,7 @@ def _asked_where(self: Membership, checkout: str) -> bool:
             row["state"] == ANSWERED
             and row["kind"] not in _ABOUT_ELSE
             and _decides(str(row["answer"] or ""))
+            and _declared_answer(row)
         )
         for row in rows
     )
@@ -392,9 +395,19 @@ def _asked_where(self: Membership, checkout: str) -> bool:
 def _decides(answer: str) -> bool:
     """Whether a question's answer decided its checkout's project: a
     project of its own (``new``, the separate answer), a join (``join:``
-    a project, or ``join`` where the root's project file named it), or
+    a project, or ``join``, the one the root's project file names), or
     the project kept with a fresh project file (``rebind``)."""
     return answer in ("new", "join", "rebind") or answer.startswith("join:")
+
+
+def _declared_answer(row: Mapping[str, Any]) -> bool:
+    """Whether a question's row was answered by a declaration (answered
+    by ``declaration:<principal>``, `membership_declare._declare`, as
+    every release since membership writes it), not by a rule: the root's
+    project file closing a changed remote's question ``join``
+    (`membership_resolve`), the migration's legacy separation, a heal's
+    settling."""
+    return str(row["answered_by"] or "").startswith("declaration:")
 
 
 def _joined_silently_by_token(self: Membership, checkout: str) -> bool:
