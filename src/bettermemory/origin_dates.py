@@ -108,15 +108,18 @@ def commit_author_timestamps(
     itself: every caller only bisects it. Replace refs and grafts move
     nothing (`origin_history.AS_STORED_ENV`). A ``shallow`` file that is
     not read (`origin_history.cuts`) answers ``SHALLOW`` with no process;
-    one that lists commits has the log name each commit and is read whole,
-    never extended, and a history that reaches one of them answers
-    ``SHALLOW`` (`_read_author_timestamps`), while one that reaches none
-    counts. ``SHALLOW`` is counted as a failure and remembered under the
-    file's stamp (`origin_history.history_guard`), so a fetch that deepens
-    or unshallows the clone is read on the next call: git reads no commit
-    behind a cut, and no window on the dates can be shown to stop short of
-    it. A history kept before the cut was written is still returned until
-    the head moves.
+    one that lists commits has the log name each commit, and a history
+    that reaches one of them answers ``SHALLOW`` (`_read_author_timestamps`),
+    while one that reaches none counts. A head is extended from an earlier
+    one only where that one's history was checked against the same cuts
+    and the file has not changed since (`origin_history.base_for`), and
+    then reaches a cut only where a commit it adds is one
+    (`_extended_author_timestamps`). ``SHALLOW`` is counted as a failure
+    and remembered under the file's stamp (`origin_history.history_guard`),
+    so a fetch that deepens or unshallows the clone is read on the next
+    call: git reads no commit behind a cut, and no window on the dates can
+    be shown to stop short of it. A history kept before the cut was
+    written is still returned until the head moves.
     """
     if cwd is None:
         return None
@@ -150,16 +153,16 @@ def commit_author_timestamps(
             origin_history.remember_failure(key, guard, failure)
         origin_history.note_unread(failure)
         return failure
-    # A history a cut may stop is read whole, its commits named.
-    base = None if guard is None or cut else origin_history.base_for(key[0], guard)
+    base = None if guard is None else origin_history.base_for(key[0], guard, cut)
     dates: list[datetime] | HistoryUnread | None = None
     if base is not None:
-        dates = _extended_author_timestamps(cwd, base[0], base[1], key[1])
+        base_head, base_dates, cut = base
+        dates = _extended_author_timestamps(cwd, base_head, base_dates, key[1], cut)
     if dates is None:
         dates = _read_author_timestamps(cwd, key[1], cut)
     if isinstance(dates, HistoryUnread):
         origin_history.remember_failure(key, guard, dates)
-    elif dates is not None and not origin_history.remember(key, dates, guard):
+    elif dates is not None and not origin_history.remember(key, dates, guard, cut):
         dates = HistoryUnread.OVER_BUDGET
         origin_history.remember_failure(key, guard, dates)
         _git_runner.note_failed()
@@ -300,14 +303,19 @@ def _unread_entry(cwd: Path) -> HistoryUnread | None:
 
 
 def _extended_author_timestamps(
-    cwd: Path, base_head: str, base: list[datetime], head: str
-) -> list[datetime] | None:
+    cwd: Path, base_head: str, base: list[datetime], head: str, cut: frozenset[str]
+) -> list[datetime] | HistoryUnread | None:
     """`base`, the ascending author dates of `base_head`'s history, with the
     dates of the commits `head` reaches and `base_head` does not, where
     `base_head` is an ancestor of `head`: ``git log --boundary
     <base_head>..<head>``, whose boundary holds `base_head` exactly then
     (`origin._walk_reachable` reads the same mark). The list is new and shares
-    `base`'s dates. None, and the caller reads the history whole, where
+    `base`'s dates. `base_head`'s history reaches none of the shallow file's
+    `cut` (`origin_history.base_for`), so `head`'s reaches one only where
+    the range lists it, as it lists a cut a merge brings in: then
+    ``SHALLOW``, counted as a failure, as the whole read answers, and a
+    head that adds no cut is extended where it was read whole (ENG-220's
+    review, round F). None, and the caller reads the history whole, where
     `base_head` is no ancestor (a switched or rewritten branch, a head that
     moved back, an object gone) or git did not answer; a non-zero exit is
     not counted as a failure, since the whole read follows it."""
@@ -324,8 +332,11 @@ def _extended_author_timestamps(
     lines = origin_history.read_lines(result.stdout, _marked_seconds)
     if lines is None or (False, base_head, 0) not in lines:
         return None
-    added = [value for listed, _, value in lines if listed]
-    return sorted(base + origin_history.author_dates(added))
+    added = [(sha, value) for listed, sha, value in lines if listed]
+    if not cut.isdisjoint(sha for sha, _ in added):
+        _git_runner.note_failed()
+        return HistoryUnread.SHALLOW
+    return sorted(base + origin_history.author_dates([value for _, value in added]))
 
 
 def _marked_seconds(line: str) -> tuple[bool, str, int] | None:

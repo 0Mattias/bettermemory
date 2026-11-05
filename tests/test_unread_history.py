@@ -33,6 +33,7 @@ from bettermemory import (
     health,
     health_render,
     health_stats,
+    origin,
     origin_dates,
     origin_history,
     verify,
@@ -55,17 +56,23 @@ from bettermemory.verify_basis import (
 )
 
 from .test_commit_drift_cache import (
+    _EXTENSION,
+    _NAMED_HISTORY,
     _REMOTE,
     _T0,
     _T1,
     _V1,
+    _WHOLE_HISTORY,
     _attach,
     _by_id,
     _caller,
     _commit,
     _git,
+    _history_calls,
     _repo,
+    _whole_history_logs,
     _write,
+    discovery,  # noqa: F401
     keyed_by,  # noqa: F401
 )
 
@@ -987,9 +994,8 @@ def test_a_cut_reads_shallow_only_where_the_history_reaches_it(
     at one: origin's main reset onto, the fetched branch merged in and a
     clone two commits deep read `shallow`, and so does a shallow file that
     is not read. The merge follows a count at the head before it, under the
-    same shallow file: a history a cut may stop is read whole, so no
-    extension of that count reads past the cut. Alike where no key is
-    read."""
+    same shallow file, so it extends that count, and the range it adds
+    lists the cut. Alike where no key is read."""
     source = _repo(tmp_path, "source")
     for day in range(5):
         _commit(
@@ -1036,3 +1042,170 @@ def test_a_cut_reads_shallow_only_where_the_history_reaches_it(
         assert got is CommitDriftUnread.SHALLOW
     else:
         assert isinstance(got, list) and len(got) == 5, "the main branch whole"
+
+
+def _clone_beside_a_cut(tmp_path: Path, depth: int = 1) -> tuple[Path, Path]:
+    """A full clone of five commits on main that fetched a branch of
+    another repository (three commits) `depth` commits deep into
+    ``other``, and that repository: the clone's shallow file lists a cut
+    its main branch never reaches. The clone is read once, whole."""
+    source = _repo(tmp_path, "source")
+    for day in range(5):
+        _commit(
+            source,
+            f"c{day}",
+            when=_T0 + timedelta(days=day),
+            files={"a.md": f"{day}\n"},
+        )
+    other = _repo(tmp_path, "other")
+    for day in range(3):
+        _commit(
+            other, f"o{day}", when=_T1 + timedelta(days=day), files={"b.md": f"{day}\n"}
+        )
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", source.as_uri(), str(clone))
+    _git(
+        clone,
+        "fetch",
+        "-q",
+        f"--depth={depth}",
+        other.as_uri(),
+        "main:refs/heads/other",
+    )
+    assert (clone / ".git" / "shallow").exists(), "premise: a cut"
+    _caches.clear_all()
+    first = origin_dates.commit_author_timestamps(clone)
+    assert isinstance(first, list) and len(first) == 5, "premise: main whole"
+    return clone, other
+
+
+@pytest.mark.usefixtures("discovery")
+@pytest.mark.parametrize("move", ["a commit", "a merge of a full branch"])
+def test_a_head_move_under_a_cut_it_never_reaches_is_extended(
+    move: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full clone that fetched an unrelated branch with ``--depth=1``
+    holds a cut its main branch never reaches, and a head that moves on
+    there, by a commit or a merge of a branch with its whole history,
+    reads only the commits it adds, as it does with no shallow file: one
+    process, the range's log, and no read of the whole history (ENG-220's
+    review, round F). The range names each commit, none a cut, so the
+    dates count, the same as a read with nothing kept, and share the
+    earlier head's dates and cuts."""
+    clone, _ = _clone_beside_a_cut(tmp_path)
+    head = _git(clone, "rev-parse", "HEAD")
+    first = origin_dates.commit_author_timestamps(clone)
+    assert isinstance(first, list)
+    if move == "a commit":
+        _commit(clone, "c5", when=_T0 + timedelta(days=9), files={"a.md": "5\n"})
+    else:
+        _git(clone, "checkout", "-q", "-b", "side", "HEAD~2")
+        _commit(clone, "s0", when=_T0 + timedelta(days=9), files={"s.md": "s\n"})
+        _git(clone, "checkout", "-q", "main")
+        _git(clone, "merge", "-q", "--no-ff", "-m", "m", "side")
+    moved = _git(clone, "rev-parse", "HEAD")
+    calls = _history_calls(monkeypatch)
+    got = origin_dates.commit_author_timestamps(clone)
+    assert calls == [(*_EXTENSION, f"{head}..{moved}")], "no whole read"
+    assert isinstance(got, list) and len(got) == len(first) + (
+        1 if move == "a commit" else 2
+    )
+    assert got[0] is first[0], "the earlier head's dates, shared"
+    earlier, later = origin_history._TIMESTAMPS_MEMO.values()
+    assert later.cut is earlier.cut, "and its cuts, held once"
+    _caches.clear_all()
+    assert got == origin_dates.commit_author_timestamps(clone)
+
+
+@pytest.mark.usefixtures("discovery")
+@pytest.mark.parametrize("depth", [1, 2], ids=["the cut merged", "a cut behind it"])
+def test_a_merge_that_brings_a_cut_in_reads_shallow_off_the_range(
+    depth: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fetched branch merged into a main branch whose history was
+    counted, under the same shallow file: the range the merge adds lists
+    the cut, the fetched tip itself or, fetched two deep, its parent, so
+    the extension reads `shallow` from that one log, counted as a failed
+    read, with no read of the whole history; and the next call answers
+    the same with no process."""
+    clone, _ = _clone_beside_a_cut(tmp_path, depth)
+    head = _git(clone, "rev-parse", "HEAD")
+    cut = (clone / ".git" / "shallow").read_text(encoding="utf-8").split()
+    assert cut == [_git(clone, "rev-parse", f"other~{depth - 1}")], "premise"
+    _git(clone, "merge", "-q", "--allow-unrelated-histories", "-m", "m", "other")
+    moved = _git(clone, "rev-parse", "HEAD")
+    calls = _history_calls(monkeypatch)
+    failed = origin.failed_git_calls()
+    got = origin_dates.commit_author_timestamps(clone)
+    assert got is CommitDriftUnread.SHALLOW
+    assert calls == [(*_EXTENSION, f"{head}..{moved}")], "no whole read"
+    assert origin.failed_git_calls() == failed + 1
+    calls.clear()
+    assert origin_dates.commit_author_timestamps(clone) is CommitDriftUnread.SHALLOW
+    assert calls == []
+
+
+#: How the shallow file changes between two heads, and the log the second
+#: head's history is then read whole by.
+_CHANGED = {
+    "a cut added": _NAMED_HISTORY,
+    "the file rewritten as it was": _NAMED_HISTORY,
+    "a cut added within the stamp's tick": _NAMED_HISTORY,
+    "the clone unshallowed": _WHOLE_HISTORY,
+}
+
+
+@pytest.mark.usefixtures("discovery")
+@pytest.mark.parametrize("change", list(_CHANGED))
+def test_a_shallow_file_changed_between_heads_reads_the_history_whole(
+    change: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An earlier head's history was checked against the cuts the shallow
+    file listed then; once the file changed, its cuts may stop the history
+    anywhere, so the next head is no extension of it and its history is
+    read whole, as with nothing kept: another branch fetched with
+    ``--depth=1``, the file written again with the same lines, the clone
+    unshallowed. A change the file's stamp does not see (here the guard
+    is held still) is told by the cuts themselves."""
+    clone, other = _clone_beside_a_cut(tmp_path)
+    shallow = clone / ".git" / "shallow"
+    if change == "a cut added within the stamp's tick":
+        monkeypatch.setattr(origin_history, "history_guard", lambda root: ("held",))
+        _caches.clear_all()
+        assert isinstance(origin_dates.commit_author_timestamps(clone), list)
+    if change.startswith("a cut added"):
+        third = _repo(tmp_path, "third")
+        _commit(third, "t0", when=_T1, files={"t.md": "t\n"})
+        _git(clone, "fetch", "-q", "--depth=1", third.as_uri(), "main:refs/heads/t")
+        assert len(shallow.read_text(encoding="utf-8").split()) == 2, "premise"
+    elif change == "the file rewritten as it was":
+        lines = shallow.read_bytes()
+        shallow.unlink()
+        shallow.write_bytes(lines)
+    else:
+        _git(
+            clone, "fetch", "-q", "--unshallow", other.as_uri(), "main:refs/heads/other"
+        )
+        assert not shallow.exists(), "premise: no cut"
+    moved = _commit(clone, "c5", when=_T0 + timedelta(days=9), files={"a.md": "5\n"})
+    calls = _history_calls(monkeypatch)
+    got = origin_dates.commit_author_timestamps(clone)
+    assert _whole_history_logs(calls) == [(*_CHANGED[change], moved)]
+    assert isinstance(got, list) and len(got) == 6
+    _caches.clear_all()
+    assert got == origin_dates.commit_author_timestamps(clone)
+
+
+def test_an_entry_checked_against_other_cuts_is_no_base() -> None:
+    """The memo gives an entry as the base a head extends only under the
+    guard it was read under and the cuts its history was checked against;
+    the base carries the entry's own cuts."""
+    cut = frozenset({"a" * 40})
+    origin_history.remember(("/r", "1" * 40), [_T0], ("g",), cut)
+    assert origin_history.base_for("/r", ("g",), frozenset({"b" * 40})) is None
+    assert origin_history.base_for("/r", ("g",), frozenset()) is None
+    assert origin_history.base_for("/r", ("h",), cut) is None
+    assert origin_history.base_for("/q", ("g",), cut) is None
+    found = origin_history.base_for("/r", ("g",), frozenset({"a" * 40}))
+    assert found is not None and found[:2] == ("1" * 40, [_T0])
+    assert found[2] is cut

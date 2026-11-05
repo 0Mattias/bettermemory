@@ -267,9 +267,11 @@ def _by_id(out: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {hit["id"]: hit for hit in out}
 
 
-#: The log that reads a head's whole history, and the one that reads what a
+#: The log that reads a head's whole history, the one that reads it where a
+#: shallow file lists commits, naming each, and the one that reads what a
 #: head adds to an earlier head's (`origin_dates._extended_author_timestamps`).
 _WHOLE_HISTORY = ("log", "--format=%at")
+_NAMED_HISTORY = ("log", "--format=%H %at")
 _EXTENSION = ("log", "--boundary", "--format=%m%H %at")
 
 
@@ -279,7 +281,8 @@ def _whole_history_logs(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
     return [
         c
         for c in calls
-        if (c[:2] == _WHOLE_HISTORY or c[:3] == _EXTENSION) and "--" not in c
+        if c[:2] in (_WHOLE_HISTORY, _NAMED_HISTORY) or c[:3] == _EXTENSION
+        if "--" not in c
     ]
 
 
@@ -1540,10 +1543,10 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
 ) -> None:
     """A shallow file changes which commits a head reaches without moving
     it, so an entry read before such a change is no base for a head read
-    after it (`origin_history.history_guard`); and since the dates behind
-    its cut are not read, no history is read under it at all
-    (`origin_history.cuts`): unread for the cut, counted as a failed read,
-    and no log. A graft
+    after it (`origin_history.history_guard`): the history is read whole,
+    naming each commit, and since the dates behind its cut are not read
+    (`origin_history.cuts`), one that reaches it reads unread for the cut,
+    counted as a failed read. A graft
     or a replacement ref changes what git's own log reaches but not what
     `origin` reads, the history as its objects hold it
     (`origin_history.AS_STORED_ENV`); its stamp still reads the history whole, which
@@ -1566,7 +1569,7 @@ def test_a_head_after_the_history_files_moved_reads_its_whole_history(
     assert seed not in _git(repo, "log", "--format=%H", moved)
     if history == "shallow":
         assert got is CommitDriftUnread.SHALLOW, "behind the cut nothing is read"
-        assert _whole_history_logs(calls) == []
+        assert _whole_history_logs(calls) == [(*_NAMED_HISTORY, moved)]
         assert origin.failed_git_calls() == failed + 1
     else:
         assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, moved)]

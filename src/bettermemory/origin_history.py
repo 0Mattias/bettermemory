@@ -159,11 +159,13 @@ class HistoryUnread(enum.Enum):
     - ``SHALLOW``: the clone is shallow, its ``shallow`` file listing a
       commit the head's history reaches (or unreadable, `cuts`), and git
       reads no commit behind one; a cut the history never reaches, as a
-      branch fetched with ``--depth`` beside a full one, reads nothing.
-      No window on the dates can be shown to stop short of the cut: a
-      commit there authored before the stamp hides parents authored after
-      it. A walk from a stamp's head whose range holds no cut is read in
-      full, and counts.
+      branch fetched with ``--depth`` beside a full one, reads nothing,
+      and a head that moves on from one whose history reached none, under
+      the same file, reaches one only where a commit it adds is one
+      (`base_for`). No window on the dates can be shown to stop short of
+      the cut: a commit there authored before the stamp hides parents
+      authored after it. A walk from a stamp's head whose range holds no
+      cut is read in full, and counts.
     - ``ERROR``: git ran and failed on a head named by its hash (a non-zero
       exit), printed a line its format does not print (`read_lines`), or
       could not be spawned for another reason than a binary or a directory
@@ -225,11 +227,15 @@ _FAILURE_SECONDS = 60.0
 
 @dataclass(frozen=True)
 class _Entry:
-    """The ascending author dates of a head's history, and the
-    `history_guard` read before they were, None where it could not be."""
+    """The ascending author dates of a head's history, the `history_guard`
+    read before they were, None where it could not be, and the commits the
+    ``shallow`` file listed then (`cuts`), none of which the history
+    reaches: the read named each commit it listed against them, or listed
+    none where the file is not there."""
 
     dates: list[datetime]
     guard: Guard | None
+    cut: frozenset[str]
 
 
 # The entries, oldest first; the failures, by when each was met. The lock
@@ -272,29 +278,39 @@ def recall(
     return None, None
 
 
-def base_for(root: str, guard: Guard) -> tuple[str, list[datetime]] | None:
-    """The most recently used entry under `root` read under `guard`, as
-    ``(head, dates)``: the history a head of the same repository extends
-    when that head is its ancestor."""
+def base_for(
+    root: str, guard: Guard, cut: frozenset[str]
+) -> tuple[str, list[datetime], frozenset[str]] | None:
+    """The most recently used entry under `root` read under `guard` and
+    checked against `cut`, as ``(head, dates, cut)``: the history a head of
+    the same repository extends when that head is its ancestor. Its
+    history reaches none of `cut`, so the head's reaches one only where
+    the commits it adds list one; an entry checked against other cuts, a
+    shallow file that changed since, is none (ENG-220's review, round F).
+    The cut returned is the entry's own, equal to `cut`, which the caller
+    keeps in its place so the entries of one shallow file hold it once."""
     with _TIMESTAMPS_MEMO_LOCK:
         for (entry_root, head), entry in reversed(_TIMESTAMPS_MEMO.items()):
-            if entry_root == root and entry.guard == guard:
-                return head, entry.dates
+            if entry_root == root and entry.guard == guard and entry.cut == cut:
+                return head, entry.dates, entry.cut
     return None
 
 
-def remember(key: Key, dates: list[datetime], guard: Guard | None) -> bool:
-    """Keep `dates` for `key`, read under `guard`, and evict the oldest
-    entries past `_TIMESTAMPS_MEMO_CAP` or `_TIMESTAMPS_MEMO_SLOTS`; True.
-    A list longer than the slots is not kept, and False says so: the caller
-    remembers its key as a failed read's (`remember_failure`, with
-    `HistoryUnread.OVER_BUDGET`), so the calls of the next minute answer
-    that where each would read the history whole again (review Ob, D3)."""
+def remember(
+    key: Key, dates: list[datetime], guard: Guard | None, cut: frozenset[str]
+) -> bool:
+    """Keep `dates` for `key`, read under `guard` and checked against `cut`
+    (`_Entry`), and evict the oldest entries past `_TIMESTAMPS_MEMO_CAP` or
+    `_TIMESTAMPS_MEMO_SLOTS`; True. A list longer than the slots is not
+    kept, and False says so: the caller remembers its key as a failed
+    read's (`remember_failure`, with `HistoryUnread.OVER_BUDGET`), so the
+    calls of the next minute answer that where each would read the history
+    whole again (review Ob, D3)."""
     if len(dates) > _TIMESTAMPS_MEMO_SLOTS:
         return False
     with _TIMESTAMPS_MEMO_LOCK:
         _TIMESTAMPS_FAILED.pop(key, None)
-        _TIMESTAMPS_MEMO[key] = _Entry(dates, guard)
+        _TIMESTAMPS_MEMO[key] = _Entry(dates, guard, cut)
         _TIMESTAMPS_MEMO.move_to_end(key)
         held = sum(len(entry.dates) for entry in _TIMESTAMPS_MEMO.values())
         while len(_TIMESTAMPS_MEMO) > _TIMESTAMPS_MEMO_CAP or (

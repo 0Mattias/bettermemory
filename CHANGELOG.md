@@ -764,11 +764,27 @@ eighteenth was built.
   author dates unread, though its main branch's history is whole (the
   review's round F). Where the file lists commits, the dates' log now
   names each commit, as the walk's already did, and reads `shallow` only
-  where it lists a cut; a history that reaches none counts. Such a
-  history is read whole, never extended from an earlier head's dates, so
-  a merge that brings a cut in is seen. A `shallow` file that is not read
+  where it lists a cut; a history that reaches none counts, and a merge
+  that brings a cut in reads `shallow`. A `shallow` file that is not read
   still reads `shallow`, with or without a key; an unshallowed clone and
   an empty file read as before. (`src/bettermemory/origin_dates.py`,
+  `src/bettermemory/origin_history.py`, `tests/test_unread_history.py`,
+  `tests/test_commit_drift_cache.py`)
+
+- **A head that moves on beside a cut it never reaches is extended
+  (ENG-220).** Where the `shallow` file listed commits, every head the
+  dates were read for was read whole, so a full clone that fetched an
+  unrelated branch with `--depth=1` ran the log of its whole history on
+  each head move: 692 ms a move on a synthetic history of 100,000
+  commits, where a clone with no shallow file reads the commits the head
+  adds in 15 ms (the review's round F). An entry of the memo now keeps
+  the cuts its history was checked against, and a head extends an
+  earlier head's dates only under the same guard and the same cuts: the
+  range it adds names each commit and reads `shallow` where it lists a
+  cut, as a merge that brings a cut, or the history behind one, in lists
+  it. A shallow file that changed since, or an entry checked against
+  other cuts, reads the history whole as before. A head move there now
+  takes 15 ms. (`src/bettermemory/origin_dates.py`,
   `src/bettermemory/origin_history.py`, `tests/test_unread_history.py`,
   `tests/test_commit_drift_cache.py`)
 

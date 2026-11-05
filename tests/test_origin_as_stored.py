@@ -1105,10 +1105,15 @@ def test_an_extension_with_a_garbled_line_reads_the_history_whole(
     done = subprocess.CompletedProcess(["git"], 0, stdout=raw, stderr="")
     monkeypatch.setattr(origin, "_git_result", lambda *a, **k: done)
     assert (
-        origin_dates._extended_author_timestamps(tmp_path, _SHA, [], "b" * 40) is None
+        origin_dates._extended_author_timestamps(
+            tmp_path, _SHA, [], "b" * 40, frozenset()
+        )
+        is None
     )
     done.stdout = raw.replace("+AAE-", "")
-    got = origin_dates._extended_author_timestamps(tmp_path, _SHA, [], "b" * 40)
+    got = origin_dates._extended_author_timestamps(
+        tmp_path, _SHA, [], "b" * 40, frozenset()
+    )
     assert got == [datetime(2025, 1, 1, 4, tzinfo=timezone.utc)]
 
 
