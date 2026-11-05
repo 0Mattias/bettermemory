@@ -94,10 +94,14 @@ _PRINCIPAL = "os:fixture"
 def neutral_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """No user or system configuration reaches git (signing, hooks, the
     default branch), a fixed author and committer, and no variable that
-    points git or bettermemory somewhere else."""
-    empty = tmp_path / "gitconfig-empty"
-    empty.write_text("")
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+    points git or bettermemory somewhere else. Automatic gc and maintenance
+    are off, as in the other suites' fixtures: each commit otherwise starts
+    a detached `git maintenance run --auto`, which outlives it and writes
+    in the git directory (`objects/maintenance.lock`) while a test may be
+    copying or removing it (ENG-230)."""
+    config = tmp_path / "gitconfig"
+    config.write_text("[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
     monkeypatch.setenv("FILTER_BRANCH_SQUELCH_WARNING", "1")
