@@ -335,6 +335,22 @@ eighteenth was built.
 
 #### Fixed
 
+- **A session is placed in a repository only where git finds it
+  (ENG-232).** Membership's discovery walked past two of git's stops. It
+  compared a `GIT_CEILING_DIRECTORIES` entry as written, where git
+  resolves it through its links. And it read any non-empty
+  `GIT_DISCOVERY_ACROSS_FILESYSTEM` as true, where git reads `0`,
+  `false`, `no` and `off` as false and dies on a value that is no
+  boolean (`maybe`). The real-world case is a dotfiles repository at a
+  home named through a link, with `GIT_CEILING_DIRECTORIES=$HOME`. There
+  a session in a folder below home, where git finds no repository, was
+  placed in the dotfiles project. Its brief and search's auto scope
+  delivered that project's records as the caller's own, search and
+  `memory_show` read them fresh with no drift count, and a write from
+  there was homed to that project. The walk is now git's
+  (`githead.probed`, shared with ENG-220's `entry_above`). A value git
+  dies on leaves the capture INDETERMINATE.
+
 - **A re-mint removes its claim on SMB (ENG-228).** A re-mint naming its
   lineage reads and renames under a claim in `info/` and removes it
   only while it holds its nonce. On SMB a read of the claim can be

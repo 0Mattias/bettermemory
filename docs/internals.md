@@ -2166,7 +2166,19 @@ pointer above it; at a refused entry the origin is that of a folder
 outside any repository. Membership's discovery stops by the same test
 (`gitfile_rule.judge`, and the folder itself in `location_git._discover`),
 so the two walks stop at one entry, and they part only where membership
-refuses what it stops at. Membership passes over a refused entry and
+refuses what it stops at. Both probe the directories git's discovery
+does (`githead.probed`): below each `GIT_CEILING_DIRECTORIES` entry as git
+resolves it through its links (unless it follows an empty entry), and up
+to a filesystem boundary unless `GIT_DISCOVERY_ACROSS_FILESYSTEM` reads
+true as git reads a boolean (`githead.across_filesystems`); a value git
+dies on leaves the capture INDETERMINATE, as git then reads no repository
+anywhere (ENG-232: membership compared a ceiling as written and read any
+value but the empty one as true, so a session below a dotfiles
+repository at a home a link names, `GIT_CEILING_DIRECTORIES=$HOME`, was
+placed in that repository's project, its brief and search delivering its
+records and its writes homed there, where git found no repository). With
+the variable set the per-prompt signature resolves each entry, an
+`lstat` per component of its path. Membership passes over a refused entry and
 goes on upward, so at a plant inside the user's own checkout (a
 vendored folder whose `.git` file names another checkout) it places the
 folder in the enclosing checkout, while git's walk, and the origin with

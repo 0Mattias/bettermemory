@@ -130,6 +130,7 @@ from .location_git import (
     UNANSWERED,
     WALK_LIMIT,
     Capture,
+    DiscoveryDies,
     GitDies,
     Key,
     RepositoryHistory,
@@ -553,6 +554,9 @@ def _capture_uncached(
         git = _discover(real)
     except OSError as exc:
         return _indeterminate(real, f"unreadable: {exc}", cwd_key)
+    except DiscoveryDies as exc:
+        # git dies before it walks (ENG-232): no repository anywhere.
+        return _indeterminate(real, f"discovery: {exc}", cwd_key)
     except GitDies as exc:
         # git dies on the format of the repository its walk reaches, and
         # reads nothing there, or that format is not known here: never a

@@ -493,7 +493,7 @@ def _locate(start: Path, *, walk: bool, as_git: bool, stable: bool) -> GitDir | 
         status = os.stat(here)
         if not stat.S_ISDIR(status.st_mode):
             return None
-        for directory in _probed(here, status.st_dev):
+        for directory in probed(here, status.st_dev):
             found = _probe(directory, owner=False, as_git=as_git, stable=stable)
             if found is not None or not walk:
                 return found
@@ -502,9 +502,10 @@ def _locate(start: Path, *, walk: bool, as_git: bool, stable: bool) -> GitDir | 
         return None
 
 
-def _probed(here: str, device: int | None) -> Iterator[str]:
+def probed(here: str, device: int | None) -> Iterator[str]:
     """The directories git's discovery probes from `here`, a resolved
-    directory, in order (``setup_git_directory_gently_1``): `here`, then
+    directory, in order (``setup_git_directory_gently_1``), the walk
+    `location_git._discover` takes too (ENG-232): `here`, then
     each parent up to the filesystem's root, stopping below a
     ``GIT_CEILING_DIRECTORIES`` entry that is a strict ancestor of `here`
     (`_ceilings`, compared in this platform's case, `_below`) and, where
@@ -526,15 +527,22 @@ def _device(path: str) -> int:
     return os.stat(path).st_dev
 
 
-def _across_filesystems() -> bool:
-    """git's ``git_env_bool("GIT_DISCOVERY_ACROSS_FILESYSTEM", 0)``: False
-    where it is unset, else its value read as a config boolean
-    (`gitconfig.git_bool`); True where git dies on the value, so the walk
-    reaches as far as any git could."""
+def across_filesystems() -> bool | None:
+    """git's ``git_env_bool("GIT_DISCOVERY_ACROSS_FILESYSTEM", 0)``, which
+    its discovery reads before it walks: False where it is unset, else its
+    value read as a config boolean (`gitconfig.git_bool`: ``0``,
+    ``false``, ``no``, ``off`` and the empty value are false); None where
+    git dies on the value, and so runs nothing."""
     raw = os.environ.get("GIT_DISCOVERY_ACROSS_FILESYSTEM")
     if raw is None:
         return False
-    value = gitconfig.git_bool(os.fsencode(raw))
+    return gitconfig.git_bool(os.fsencode(raw))
+
+
+def _across_filesystems() -> bool:
+    """`across_filesystems`, True where git dies on the value, so the walk
+    reaches as far as any git could."""
+    value = across_filesystems()
     return True if value is None else value
 
 
@@ -571,7 +579,7 @@ def entry_above(start: Path) -> bool:
     (`_stops_at`): a repository may stand there that neither these readers
     nor git reads, as behind an ``objects`` directory no one may search,
     so a history read there is unread, never not applicable (ENG-220's
-    review, round F). The walk is git's (`_probed`): from ``realpath
+    review, round F). The walk is git's (`probed`): from ``realpath
     (start)``, it stops below a ``GIT_CEILING_DIRECTORIES`` entry and at a
     filesystem boundary unless ``GIT_DISCOVERY_ACROSS_FILESYSTEM`` says to
     cross it (`_across_filesystems`), and it asks the filesystem for the
@@ -591,7 +599,7 @@ def entry_above(start: Path) -> bool:
         if not stat.S_ISDIR(status.st_mode):
             return False
         device = None if _across_filesystems() else status.st_dev
-        return any(_stops_at(directory) for directory in _probed(here, device))
+        return any(_stops_at(directory) for directory in probed(here, device))
     except (OSError, ValueError):
         return True
 
