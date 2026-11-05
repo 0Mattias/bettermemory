@@ -63,6 +63,7 @@ from .membership_records import (
     SUBPROJECT_CONTRADICTION,
     Checkout,
     Location,
+    Proposal,
     _found_token,
     _norm,
 )
@@ -115,6 +116,15 @@ _PICKING = frozenset({FIRST_SIGHT, FILE_CONTRADICTION, DUPLICATE_CHECKOUT})
 #: the project), merge it into another or make the checkout a project of
 #: its own.
 _ABOUT_ELSE = frozenset({SUBPROJECT_CONTRADICTION, LEGACY, IMPORT})
+#: What a question about something else asks about, by its evidence key
+#: (`_retire_into`): the imported project, the project of the records
+#: written where the folder could not be read (the migration's and an
+#: unresolved location's), the part's folder below the root.
+_SUBJECT = {
+    IMPORT: "imported_project",
+    LEGACY: "unresolved_project",
+    SUBPROJECT_CONTRADICTION: "dir",
+}
 
 
 def _shared_remint(
@@ -456,20 +466,29 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
     either way, so nothing delivered changes and a later move of `kept`
     (`project new`, `project join`) carries it; `idle`'s views on its
     machine at a path of `kept`'s are deleted, so that path is `kept`'s
-    alone (B reads no other checkout there); each question still open on
-    `idle` is closed as settled into `kept` (``settled:<kept>``, an
-    answer that decides nothing, `_decides`), as no sighting shows it
-    now and an answer there would move a record no sighting reads; and
-    `idle` is retired, its row kept, with a ``checkout_retired`` row
-    naming `kept` and `by`, which rung 2 reads to pass over it from then
-    on (`retired_into`). A question is closed rather than moved onto
-    `kept`: it was asked of `idle`'s project and evidence (a changed
-    remote against the project `idle` is in, which `kept` need not be
-    in), and `kept`'s own sightings open the questions that hold for it.
-    The rows are of kinds 9.0.0rc18 reads (a home's, a checkout's and a
-    question's put, a view's deletion, ``proposal_answered``,
-    ``checkout_retired``). Indexed reads of `idle`'s homes and open
-    questions."""
+    alone (B reads no other checkout there); the questions still open on
+    `idle` are settled, as no sighting shows them there now; and `idle`
+    is retired, its row kept, with a ``checkout_retired`` row naming
+    `kept` and `by`, which rung 2 reads to pass over it from then on
+    (`retired_into`).
+
+    A question about `idle`'s project (a changed remote's, the root
+    file's, its own duplicate's) is closed as settled into `kept`
+    (``settled:<kept>``, an answer that decides nothing, `_decides`): it
+    was asked of `idle`'s project and evidence (a changed remote against
+    the project `idle` is in, which `kept` need not be in), an answer
+    there would move a record no sighting reads, and `kept`'s own
+    sightings open the questions that hold for it. A question about
+    something else (`_ABOUT_ELSE`: an import's, which only the import
+    opens, the records of a folder that could not be read, a part below
+    the root) is moved onto `kept`, its checkout re-pointed and the rest
+    of it kept, so it is still asked at the path and its answer acts
+    there (a bare join's target is its checkout's project), unless
+    `kept` already asks the same (`_SUBJECT`), where it is closed as
+    settled. The rows are of kinds 9.0.0rc18 reads (a home's, a
+    checkout's and a question's put, a view's deletion,
+    ``proposal_answered``, ``checkout_retired``). Indexed reads of
+    `idle`'s homes and of `idle`'s and `kept`'s open questions."""
     for row in self._store.membership_rows("homes", where={"checkout": idle.id}):
         self._put("home", {**row, "checkout": kept.id, "rule": f"{row['rule']}|{by}"})
     paths = {_norm(v.path) for v in kept.views_on(idle.machine)}
@@ -479,10 +498,20 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
                 "checkout_view",
                 {"checkout": idle.id, "machine": v.machine, "path": v.path},
             )
+    asked = {_asks(pr) for pr in self._open_proposals(kept.id)}
     for pr in self._open_proposals(idle.id):
-        self._close(pr, f"{SETTLED}{kept.id}", by)
+        if pr.kind in _ABOUT_ELSE and _asks(pr) not in asked:
+            self._put_proposal(dataclasses.replace(pr, checkout=kept.id))
+            asked.add(_asks(pr))
+        else:
+            self._close(pr, f"{SETTLED}{kept.id}", by)
     self._put_checkout(dataclasses.replace(idle, retired=True))
     self._event("checkout_retired", checkout=idle.id, into=kept.id, evidence=by)
+
+
+def _asks(pr: Proposal) -> tuple[str, str]:
+    """A question's kind and what it asks about (`_SUBJECT`)."""
+    return pr.kind, str(pr.evidence.get(_SUBJECT.get(pr.kind, "")) or "")
 
 
 def retired_into(self: Membership, checkout: str) -> str | None:

@@ -50,7 +50,7 @@ import shutil
 import stat
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -64,10 +64,12 @@ from bettermemory.membership import ASK, SILENT, Declaration, Membership
 from bettermemory.membership_records import (
     DUPLICATE_CHECKOUT,
     FILE_CONTRADICTION,
+    IMPORT,
     LEGACY,
     LEGACY_SEPARATE,
     REMOTE_DIVERGED,
     SUBPROJECT_CONTRADICTION,
+    UNRESOLVED_LOCATION,
 )
 from bettermemory.membership_shared import _same_file
 from bettermemory.store import Store
@@ -1113,21 +1115,33 @@ def test_a_retired_record_is_not_re_keyed_at_its_old_path(
 
 
 def _settled(
-    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, how: str
+    tmp_path: Path,
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+    how: str,
+    ask: Callable[[Path, str, str], object] | None = None,
 ) -> tuple[Path, Shared, str, str, str]:
     """Two records of the host's git directory settled into one, h1
-    written at the first and h2 at the second: by the heal (the second in
-    the first one's project) or by joining the first record's project at
-    the second one's question (``join_first``). The repository, the
-    container, the container's checkout, the record kept and the one
-    retired."""
+    written at the first: by the heal, h2 written at the second in the
+    first one's project (``heal``) or nothing written at the second, in
+    the container's project (``heal_apart``); or by joining the first
+    record's project at the second one's question, h2 written there
+    (``join_first``). `ask` is called with the repository, the record to
+    be kept and the one to be retired before the sighting or answer that
+    settles them. The
+    repository, the container, the container's checkout, the record kept
+    and the one retired."""
     line, box, hid, kid = _shared(tmp_path, lab, "line")
     first = lab.model().checkout(hid).project
     _the_containers_re_mint(lab, box, kid, "missed" if how == "heal" else "recorded")
     if how == "heal":
         assert box.post(lab).checkout == kid
     dup, _found = _rc18_registered(lab, line)
-    _written_at(lab, "h2", line, monkeypatch)
+    if how != "heal_apart":
+        _written_at(lab, "h2", line, monkeypatch)
+    kept, idle = (dup, hid) if how == "join_first" else (hid, dup)
+    if ask is not None:
+        ask(line, kept, idle)
     res, _admitted = lab.view(line)
     if how == "join_first":
         assert res.proposal is not None
@@ -1137,7 +1151,6 @@ def _settled(
             )
         )
     location.forget()
-    kept, idle = (hid, dup) if how == "heal" else (dup, hid)
     assert lab.model().checkout(idle).retired
     return line, box, kid, kept, idle
 
@@ -1174,6 +1187,136 @@ def test_the_record_kept_takes_the_next_re_mint_by_the_container(
     location.forget()
     after, admitted = lab.view(line)
     assert (after.checkout, admitted) == (kept, ["h1", "h2"])
+
+
+def _asked_about_else(lab: Lab, line: Path, checkout: str, kind: str) -> str:
+    """A question about something else than `checkout`'s project opened
+    on it as its writer opens one: an import's about project X, the
+    records of project X written where `line` could not be read, or a
+    part below the root bound to X. Its id."""
+    other = make_repo(line.parent / f"other-{kind}", commits=1)
+    x = lab.write(f"x-{kind}", other).project
+    location.forget()
+    model = lab.model()
+    mine = model.canonical(model.checkout(checkout).project)
+    assert x is not None and mine is not None and x != mine
+    evidences: dict[str, dict[str, object]] = {
+        IMPORT: {
+            "imported_project": x,
+            "source": "export.json",
+            "codes": {mine: ["H"]},
+        },
+        LEGACY: {
+            "unresolved_project": x,
+            "unresolved_checkout": "K900",
+            "path": str(line),
+            "memories": 1,
+            "episodes": 0,
+            "sessions": [],
+        },
+        SUBPROJECT_CONTRADICTION: {
+            "file": "F900",
+            "dir": str(line / "part"),
+            "path": str(line / "part" / ".bettermemory"),
+            "parent": mine,
+            "name": "part",
+        },
+    }
+    evidence = evidences[kind]
+    with model._call():
+        pr = model._open_proposal(
+            checkout=checkout,
+            kind=kind,
+            candidates=[x] if kind == SUBPROJECT_CONTRADICTION else [mine],
+            evidence=evidence,
+            reason=UNRESOLVED_LOCATION if kind == LEGACY else kind,
+            line=f"a question of kind {kind}",
+            signature=None,
+        )
+    return pr.id
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("settled", ["heal", "heal_apart", "join_first"])
+@pytest.mark.parametrize("kind", [IMPORT, LEGACY, SUBPROJECT_CONTRADICTION])
+def test_a_question_about_another_project_moves_onto_the_record_kept(
+    tmp_path: Path,
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    settled: str,
+) -> None:
+    """A question about something else than its checkout's project, open
+    on the record retired when two records of the host's git directory
+    are settled into one (by either heal, or by the answer joining the
+    first record's project): an import's (which only the import opens),
+    about records written where the folder could not be read, or about a
+    part below the root. It is moved onto the record kept, as it was
+    asked: open, the same id, candidates and evidence, in `project
+    pending` there, named at the path's next sighting (which asks), and
+    answered there, an import's bare join merging the imported project
+    into the kept record's project. Before, it was closed as settled
+    with the record's questions about its own project, so the user was
+    never asked."""
+    asked: dict[str, str] = {}
+
+    def ask(line: Path, _kept: str, idle: str) -> None:
+        asked["q"] = _asked_about_else(lab, line, idle, kind)
+
+    line, _box, _kid, kept, _idle = _settled(tmp_path, lab, monkeypatch, settled, ask)
+    qid = asked["q"]
+    before = lab.model().proposal(qid)
+
+    res, _admitted = lab.view(line)
+
+    moved = lab.model().proposal(qid)
+    assert (moved.state, moved.checkout, moved.answer) == ("open", kept, None)
+    assert (moved.candidates, moved.evidence) == (before.candidates, before.evidence)
+    assert (qid, kept) in {(p.id, p.checkout) for p in lab.model().pending()}
+    assert res.checkout == kept and res.outcome == ASK
+    assert any(qid in x for x in res.lines)
+    if kind == IMPORT:
+        x = str(moved.evidence["imported_project"])
+        lab._declaring().declare(
+            Declaration("join", "os:tester", checkout=kept, proposal=qid)
+        )
+        model = lab.model()
+        assert model.canonical(x) == model.canonical(model.checkout(kept).project)
+        assert model.proposal(qid).state == "answered"
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_question_the_record_kept_asks_too_is_closed_on_the_one_retired(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same import's question open on both records when the heal
+    settles them: the record kept asks it already, so the retired one's
+    is closed as settled into it, and one is pending."""
+    asked: dict[str, str] = {}
+
+    def ask(line: Path, kept: str, idle: str) -> None:
+        asked["idle"] = _asked_about_else(lab, line, idle, IMPORT)
+        model = lab.model()
+        pr = model.proposal(asked["idle"])
+        with model._call():
+            asked["kept"] = model._open_proposal(
+                checkout=kept,
+                kind=IMPORT,
+                candidates=list(pr.candidates),
+                evidence=pr.evidence,
+                reason=IMPORT,
+                line="the same import's question",
+                signature=None,
+                distinct="imported_project",
+            ).id
+
+    _line, _box, _kid, kept, _idle = _settled(tmp_path, lab, monkeypatch, "heal", ask)
+
+    model = lab.model()
+    idle_q, kept_q = model.proposal(asked["idle"]), model.proposal(asked["kept"])
+    assert (idle_q.state, idle_q.answer) == ("answered", f"settled:{kept}")
+    assert (kept_q.state, kept_q.checkout) == ("open", kept)
+    assert [p.id for p in model.pending() if p.kind == IMPORT] == [kept_q.id]
 
 
 @pytest.mark.usefixtures("no_birth")

@@ -1470,11 +1470,14 @@ eighteenth was built.
   deleted, so a restore there re-keys the one read; rung 2 passes over
   it, so the container's next re-mint continues the one read, where
   after an answer joining the first checkout's project the first, first
-  in order, was brought back holding nothing; and a question
-  still open on it is closed as settled (`settled:<checkout>`), where
-  it stayed pending, shown nowhere, and answering it moved the record
-  no sighting reads (rows of kinds 9.0.0rc18 reads: it verifies, opens,
-  reads and writes such a store).
+  in order, was brought back holding nothing; a question about its
+  project still open on it is closed as settled (`settled:<checkout>`),
+  where it stayed pending, shown nowhere, and answering it moved the
+  record no sighting reads; and one about something else (an import's,
+  which only the import opens, records written where the folder could
+  not be read, a part below the root) is moved onto the one read and
+  asked there, unless that one asks the same (rows of kinds 9.0.0rc18
+  reads: it verifies, opens, reads and writes such a store).
   The rule costs one read of the
   checkouts' token index, with no views, at each reading of rung 2 where
   the token found is neither recorded nor the checkout's own re-mint

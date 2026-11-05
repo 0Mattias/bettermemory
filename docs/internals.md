@@ -1245,17 +1245,25 @@ none reads from then on: the second after a heal, the first after the
 answer (the sightings resolve the second, the answer a choice there).
 That one is retired into the other (`_retire_into`): each record homed
 at it is homed at the one read, in the project its home names (the
-same either way), its views at that one's paths are deleted, each
-question still open on it is closed as settled (`settled:<checkout>`,
-by the heal or the declaration, an answer that decides nothing), and it
-is retired (its row kept, `checkout_retired` naming the one it went
-into and why). A question is closed rather than moved onto the record
-read: no sighting shows it at the path any more, an answer would move a
-record no sighting reads (a changed remote's separate answer, a project
-of its own with nothing delivered at the path), and it was asked of the
-idle record's project and evidence, which the record read need not
-share; that record's own sightings open the questions that hold for
-it. So a later move of the checkout at the path (`project new`,
+same either way), its views at that one's paths are deleted, its open
+questions are settled, and it is retired (its row kept,
+`checkout_retired` naming the one it went into and why). A question
+about its project (a changed remote's, the root file's) is closed as
+settled (`settled:<checkout>`, by the heal or the declaration, an answer
+that decides nothing) rather than moved onto the record read: no
+sighting shows it at the path any more, an answer would move a record
+no sighting reads (a changed remote's separate answer, a project of its
+own with nothing delivered at the path), and it was asked of the idle
+record's project and evidence, which the record read need not share;
+that record's own sightings open the questions that hold for it. A
+question about something else (an import's, which only the import
+opens; the records of a folder that could not be read; a part below the
+root) is moved onto the record read, its checkout re-pointed and its
+candidates, evidence and line kept, so it is still asked at the path
+and answered there (a bare join's target is its checkout's project);
+where the record read already asks the same (the same imported
+project, unresolved project or part's folder), the idle one's is closed
+as settled. So a later move of the checkout at the path (`project new`,
 `project join`) carries every record written there, where the one left
 behind kept its own in the old project, and a sighting of another
 object at the path (a restore) finds one checkout there for B to
@@ -1267,9 +1275,9 @@ read, which holds the records, where the retired one, first in order
 after an answer joining its project, was continued by it as well and
 brought back holding none. The retired flag alone is no such marker, as
 a checkout retired as quiet is brought back by its next sighting. The
-rows are of kinds 9.0.0rc18 reads: a home's and a
-checkout's put, a view's deletion, and `checkout_retired`, whose extra
-fields it passes over. Joining its own project or the separate answer
+rows are of kinds 9.0.0rc18 reads: a home's, a checkout's and a
+question's put, a view's deletion, `proposal_answered`, and
+`checkout_retired`, whose extra fields it passes over. Joining its own project or the separate answer
 leaves both records: the two are in other projects by the user's
 answer, and the first one's records stay in the first project.
 
