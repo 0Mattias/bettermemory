@@ -719,6 +719,27 @@ eighteenth was built.
   `src/bettermemory/origin_history.py`, `tests/test_origin_as_stored.py`,
   `tests/test_commit_drift_cache.py`, `tests/test_origin.py`)
 
+- **A repository nothing reads reads unread, never not applicable
+  (ENG-220).** A repository whose `objects` directory no one may search
+  is read by neither git nor the files (git's discovery passes over its
+  `.git` as no git directory, and `githead`'s with it), so
+  `origin_dates.commit_author_timestamps` read it as no repository and
+  the history as one that does not apply (the review's round F). Where
+  no repository is read and a `.git` or `HEAD` entry stands at or above
+  the directory (`githead.entry_above`, a stat that fails counting as
+  one), the history now reads `error`, unread; and where nothing keys
+  the read and `git rev-parse --git-dir` fails under such an entry, as on
+  a config git dies on, it reads `error` too, as the keyed read already
+  named git's refusal. A folder no such entry stands above reads not
+  applicable as before, and so does one where git's walk stops at an
+  entry membership refuses (`gitfile_rule.discovery_refusal`), which
+  leaves the folder outside any repository (ENG-158). The surfaces reach
+  this reader only where the caller's location resolved into a project:
+  a caller whose own checkout is the unreadable one is resolved outside
+  any repository by the location's discovery, which reads as git does,
+  so no commit leg runs there. (`src/bettermemory/githead.py`,
+  `src/bettermemory/origin_dates.py`, `tests/test_unread_history.py`)
+
 - **No window passes a command line's bound (ENG-220).** The patch
   stream and the split's listing named up to 256 commits on git's
   command line (10,496 characters), and they and the two path-filtered

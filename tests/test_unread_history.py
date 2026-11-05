@@ -16,6 +16,7 @@ cause, and a root where no history applies stays unconfirmed.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,7 @@ import pytest
 from bettermemory import (
     _caches,
     _response,
+    githead,
     health,
     health_render,
     health_stats,
@@ -452,7 +454,8 @@ def test_health_recommends_a_spot_check_of_every_unread_memory() -> None:
 _REFUSED = {
     "answered": (list, 0),
     "no repository": (None, 0),
-    "git refuses the repository": (None, 1),
+    "git refuses the repository": (CommitDriftUnread.ERROR, 1),
+    "objects unreadable": (CommitDriftUnread.ERROR, 0),
     "unborn": (None, 2),
     "error": (CommitDriftUnread.ERROR, 2),
     "probe timeout": (CommitDriftUnread.TIMEOUT, 1),
@@ -462,20 +465,26 @@ _REFUSED = {
 
 @pytest.mark.parametrize("case", list(_REFUSED))
 def test_under_git_dir_a_refused_head_is_told_apart_by_plumbing(
-    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    case: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """GIT_DIR, here naming another repository, moves git's discovery, so
     nothing keys the read and the log runs from HEAD; every git the package
     runs drops GIT_DIR (`_git.SCRUBBED_ENV`), so the log and the probes
     alike read the directory's own repository. Where git exits non-zero on
-    HEAD, the exit of plumbing run there tells why: a repository git will
-    not read (its config git dies on: `rev-parse --git-dir` fails) and a
-    branch with no commit (`rev-parse --verify -q HEAD` fails) read None, as
-    a folder whose files name no repository does with no git run at all; a
-    repository whose head resolves and whose history git cannot walk (its
-    root commit's object gone) reads `error`, unread; a probe that meets its
-    timeout reads `timeout`. A log that answers, or that meets its own
-    timeout (`timeout`), runs neither probe."""
+    HEAD, the exit of plumbing run there tells why: a branch with no commit
+    (`rev-parse --verify -q HEAD` fails) reads None, as a folder whose files
+    name no repository and that no `.git` entry stands above does with no
+    git run at all; a repository git will not read (its config git dies
+    on: `rev-parse --git-dir` fails while its `.git` stands there) reads
+    `error`, as one whose objects directory no one may search does with no
+    git run (ENG-220's review, round F), and so does a repository whose
+    head resolves and whose history git cannot walk (its root commit's
+    object gone); a probe that meets its timeout reads `timeout`. A log
+    that answers, or that meets its own timeout (`timeout`), runs neither
+    probe."""
     elsewhere = _repo(tmp_path, "elsewhere")
     _commit(elsewhere, "other", when=_T0, files={"other.md": "o\n"})
     repo = _repo(tmp_path)
@@ -493,6 +502,10 @@ def test_under_git_dir_a_refused_head_is_told_apart_by_plumbing(
             config = repo / ".git" / "config"
             with config.open("a", encoding="utf-8") as handle:
                 handle.write("[include]\n\tpath\n")
+        elif case == "objects unreadable":
+            objects = repo / ".git" / "objects"
+            objects.chmod(0)
+            request.addfinalizer(lambda: objects.chmod(0o755))
     real_run = subprocess.run
     probes: list[Any] = []
 
@@ -517,7 +530,7 @@ def test_under_git_dir_a_refused_head_is_told_apart_by_plumbing(
     else:
         assert got is want
     assert len(probes) == probed
-    if case == "error":
+    if case in ("error", "git refuses the repository"):
         # Keyed, the log names the head by its hash, which the repository
         # holds: git's refusal of it is an error with no probe.
         monkeypatch.delenv("GIT_DIR")
@@ -526,6 +539,84 @@ def test_under_git_dir_a_refused_head_is_told_apart_by_plumbing(
         assert origin_history.located_key(repo) is not None, "premise: keyed"
         assert origin_dates.commit_author_timestamps(repo) is want
         assert probes == []
+
+
+@pytest.mark.usefixtures("keyed_by")
+def test_a_repository_nothing_reads_reads_unread_never_not_applicable(
+    tmp_path: Path,
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    """A repository whose objects directory no one may search is read by
+    neither git nor the files: git's discovery passes over its `.git` as no
+    git directory, and so does `githead`'s. Its `.git` still stands there
+    (`githead.entry_above`), so its history applies and was not read: it
+    reads `error`, never not applicable (ENG-220's review, round F), on the
+    search hit, memory_show's count and the health rollup, whether the
+    files or git's answer would key the rows; with no root read, so does
+    the hit citing only an outside path. A folder that no `.git` or `HEAD`
+    entry stands at or above still reads None."""
+    repo, caller, cited, outside, memories = _scenario(
+        tmp_path, memory_dir, monkeypatch
+    )
+    objects = repo / ".git" / "objects"
+    objects.chmod(0)
+    request.addfinalizer(lambda: objects.chmod(0o755))
+    why = CommitDriftUnread.ERROR
+    _caches.clear_all()
+    assert origin_history.located_key(repo) is None, "premise: nothing reads it"
+    assert origin_dates.commit_author_timestamps(repo) is why
+    out, _ = _attach(memories, caller, monkeypatch)
+    hit = _by_id(out)[cited]
+    assert hit["commit_drift_unread"] is True and "commit_drift_count" not in hit
+    assert hit["staleness_verdict"] == "spot_check_required"
+    assert hit["verification"]["recommendation"] == unread_recommendation(why)
+    # With no root that git or the files read, no anchor can be shown to
+    # escape the repository (`verify.applicable_unread`): the hit citing
+    # only an outside path is flagged too, never read fresh.
+    assert _by_id(out)[outside]["commit_drift_unread"] is True
+    _caches.clear_all()
+    shown = compute_commit_drift(
+        _V1,
+        _URL,
+        caller_origin=None,
+        body=f"widget rule lives in {repo / 'notes0.md'}",
+        anchor=ClaimAnchor(root=str(repo), rule="home_checkout"),
+    )
+    assert shown is why
+    _caches.clear_all()
+    debt = health._compute_commit_drift_debt(
+        by_id={"m": _stats("m")},
+        origin_repo_by_id={"m": _URL},
+        caller_origin=Origin(cwd=str(repo), repo=_URL, branch=None),
+        anchor_paths_by_id={"m": (str(repo / "notes0.md"),)},
+        claims_by_id=None,
+        verified_head_by_id=None,
+    )
+    assert debt is not None and debt.rows == []
+    unread = {"unread": 1, "unread_causes": {why.value: 1}, "unread_ids": ["m"]}
+    assert debt.to_dict().items() >= unread.items()
+    nowhere = tmp_path / "nowhere"
+    nowhere.mkdir()
+    assert not githead.entry_above(nowhere), "premise: no entry stands above"
+    assert origin_dates.commit_author_timestamps(nowhere) is None
+
+
+@pytest.mark.skipif(os.name != "posix", reason="a directory's search bit is POSIX's")
+def test_an_entry_no_stat_reads_counts_as_one(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """`githead.entry_above` counts a ``.git`` it cannot stat for a reason
+    other than absence as an entry: a repository may stand there."""
+    locked = tmp_path / "locked"
+    inner = locked / "inner"
+    inner.mkdir(parents=True)
+    locked.chmod(0o600)
+    request.addfinalizer(lambda: locked.chmod(0o755))
+    assert githead.entry_above(inner)
+    locked.chmod(0o755)
+    assert not githead.entry_above(inner)
 
 
 def test_a_walk_given_up_reads_unread_only_where_the_leg_applies(

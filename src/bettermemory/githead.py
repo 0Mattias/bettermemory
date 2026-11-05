@@ -526,6 +526,19 @@ def _entry_above(start: Path) -> bool:
         here = parent
 
 
+def entry_above(start: Path) -> bool:
+    """Whether a ``.git`` or a ``HEAD`` entry sits in `start` or above it
+    (`_entry_above`), and True where a stat fails for any reason but
+    absence: a repository may stand there that neither these readers nor
+    git reads, as behind an ``objects`` directory no one may search, so a
+    history read there is unread, never not applicable (ENG-220's review,
+    round F)."""
+    try:
+        return _entry_above(start)
+    except OSError:
+        return True
+
+
 def _located(start: Path) -> GitDir | None:
     """The discovery `signature` makes with `owner` False: the repository
     `locate` finds, for where `_discover` declines for the platform or for

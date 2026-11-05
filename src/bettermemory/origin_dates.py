@@ -17,11 +17,12 @@ imports it, and the drift readers (`verify`, `verify_basis`, `_response`,
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
 from . import _git as _git_runner
-from . import origin, origin_history
+from . import gitfile_rule, githead, origin, origin_history
 from .origin_history import HistoryUnread
 
 
@@ -43,12 +44,19 @@ def commit_author_timestamps(
 
     Returns a list of timezone-aware datetimes; None where no history
     applies (cwd is None, git not on PATH, a directory that is not there,
-    no repository the files name, and, from ``HEAD`` where no pair names
-    the head, a repository git will not read or a branch with no commit,
-    which `_refused_head` tells by the exit of plumbing); and where a
-    history applies and was not read, why (`origin_history.HistoryUnread`):
-    git met its timeout, failed on the head (named by its hash, or HEAD
-    where the plumbing finds both the repository and its head) or printed
+    no repository the files name and no ``.git`` or ``HEAD`` entry at or
+    above `cwd` but one membership refuses (`_unread_entry`: the folder is
+    then one outside any repository, ENG-158), and, from ``HEAD`` where no
+    pair names the head, a folder
+    git finds no repository for under no such entry or a branch with no
+    commit, which `_refused_head` tells by the exit of plumbing); and
+    where a history applies and was not read, why
+    (`origin_history.HistoryUnread`): git met its timeout, failed on the
+    head (named by its hash, or HEAD where the plumbing finds both the
+    repository and its head), refused a repository whose ``.git`` or
+    ``HEAD`` entry stands at or above `cwd`, or one no reader reads there
+    (an ``objects`` directory no one may search: ``ERROR``, ENG-220's
+    review, round F), or printed
     a line its format does not print (one such line declines the whole
     read), the history is longer than the memo's budget, or the clone is
     shallow. A caller reads the third outcome as neither a count nor a
@@ -117,9 +125,10 @@ def commit_author_timestamps(
     if key is None:
         cut = origin_history.cuts(cwd, walk=True)
         if cut is None:
-            # No repository the files name: none applies, as before.
+            # No repository the files read: none applies only where no
+            # entry may hold one that nothing reads (`_unread_entry`).
             _git_runner.note_failed()
-            return None
+            return _unread_entry(cwd)
         if cut:
             _git_runner.note_failed()
             return HistoryUnread.SHALLOW
@@ -160,7 +169,8 @@ def _read_author_timestamps(
     named by its hash is a head the repository holds, so git's refusal of
     it is an error). Git's refusal of ``HEAD`` also answers a folder that
     is no repository and a branch with no commit, which `_refused_head`
-    tells apart from an error by the exit of two plumbing calls."""
+    tells apart from an error by the exit of two plumbing calls and the
+    files."""
     # timeout=5.0, not the 1.0 default: the default is calibrated for
     # write-path origin capture, where origin is nice-to-have and a
     # hanging git must never stall a memory_write. This log and its two
@@ -196,18 +206,40 @@ def _refused_head(cwd: Path) -> HistoryUnread | None:
     """Why ``git log HEAD`` exited non-zero at `cwd`, told by the exit of
     plumbing run from the same directory under the same environment, so
     the variables that move git's discovery apply to it as they did to the
-    log: None where ``git rev-parse --git-dir`` fails (no repository) or
-    ``git rev-parse --verify -q HEAD`` does (a branch with no commit),
-    neither a history that applies; ``ERROR`` where both answer, since git
-    then failed on a head the repository holds; and a probe that met its
-    timeout, ``TIMEOUT`` (`origin_history.unanswered`). Run only on that
-    failure, so a read that answers runs neither; the log's failure is
-    already counted on the calling thread."""
+    log: None where ``git rev-parse --git-dir`` fails (no repository) and
+    no ``.git`` or ``HEAD`` entry stands at or above `cwd`, or git's walk
+    stops at one membership refuses (`_unread_entry`), ``ERROR`` where an
+    entry stands otherwise, since git then
+    refused a repository there, as the keyed read names its refusal
+    (ENG-220's review, round F); None where ``git rev-parse --verify -q
+    HEAD`` fails (a branch with no commit), no history that applies;
+    ``ERROR`` where both answer, since git then failed on a head the
+    repository holds; and a probe that met its timeout, ``TIMEOUT``
+    (`origin_history.unanswered`). Run only on that failure, so a read
+    that answers runs neither; the log's failure is already counted on
+    the calling thread."""
     for probe in _HEAD_PROBES:
         before = origin_history.git_counts()
-        if origin._git(cwd, *probe, timeout=5.0) is None:
-            return origin_history.unanswered(before, named=False)
+        if origin._git(cwd, *probe, timeout=5.0) is not None:
+            continue
+        if probe is _HEAD_PROBES[0] and origin_history.git_counts() == before:
+            return _unread_entry(cwd)
+        return origin_history.unanswered(before, named=False)
     return HistoryUnread.ERROR
+
+
+def _unread_entry(cwd: Path) -> HistoryUnread | None:
+    """Why no history was read at `cwd`, where no reader reads a repository
+    there: ``ERROR`` where a ``.git`` or ``HEAD`` entry stands at or above
+    `cwd` (`githead.entry_above`), which may hold one nothing reads, as
+    behind an ``objects`` directory no one may search, which git's walk
+    passes over (ENG-220's review, round F); None where none stands, and
+    where git's walk from `cwd` stops at an entry membership refuses
+    (`gitfile_rule.discovery_refusal`, ENG-158), which leaves the folder
+    one outside any repository along every path the origin family reads."""
+    if gitfile_rule.discovery_refusal(os.fspath(cwd)) is not None:
+        return None
+    return HistoryUnread.ERROR if githead.entry_above(cwd) else None
 
 
 def _extended_author_timestamps(
