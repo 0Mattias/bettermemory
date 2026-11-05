@@ -32,11 +32,15 @@ import argparse
 import getpass
 import json
 import os
+import sqlite3
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, NoReturn, TypeVar
 
 from .._printable import printable, quoted
+
+_T = TypeVar("_T")
 
 if TYPE_CHECKING:
     from ..membership import (
@@ -180,6 +184,66 @@ def refuse(line: str) -> NoReturn:
     terminal as one (ENG-154)."""
     sys.stderr.write(f"bettermemory: {printable(line)}\n")
     raise SystemExit(2)
+
+
+#: SQLite's primary result codes for a store that could not take a write,
+#: whatever the call made (`_store_failed`): busy or locked past the busy
+#: timeout, read-only, an I/O error, a permission refused, a file it
+#: cannot open, a lock protocol it could not keep, a full disk, and a
+#: file that is corrupt or no database (SQLite's own check failing).
+_STORE_FAILED_CODES = frozenset(
+    {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+        sqlite3.SQLITE_READONLY,
+        sqlite3.SQLITE_IOERR,
+        sqlite3.SQLITE_PERM,
+        sqlite3.SQLITE_CANTOPEN,
+        sqlite3.SQLITE_PROTOCOL,
+        sqlite3.SQLITE_FULL,
+        sqlite3.SQLITE_CORRUPT,
+        sqlite3.SQLITE_NOTADB,
+    }
+)
+
+
+def _store_failed(exc: BaseException) -> bool:
+    """Whether `exc`, which a declaration raised, is the store failing its
+    write rather than the code: SQLite's word for one of
+    `_STORE_FAILED_CODES` (an extended code read as its primary one), the
+    store's own that SQLite rolled its transaction back (an
+    ``OperationalError`` it raises with no code, `Store._require_open`), or
+    a file beneath it failing (an ``OSError``: the key, the disk). An SQL
+    error (``SQLITE_ERROR``), a misused connection
+    (``sqlite3.ProgrammingError``) and every other class are the code's,
+    and end in a traceback (ENG-207's review of round 8)."""
+    if isinstance(exc, OSError):
+        return True
+    if not isinstance(exc, sqlite3.DatabaseError):
+        return False
+    code = getattr(exc, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        return code & 0xFF in _STORE_FAILED_CODES
+    return type(exc) is sqlite3.OperationalError
+
+
+def _stored(call: Callable[[], _T], what: str, written: ProjectFile) -> _T:
+    """`call()`, a write of `what` init makes once it wrote the project
+    file `written`: where the store fails it (`_store_failed`, its
+    transaction rolled back), one line naming the store's error, the file
+    written and that nothing was declared, and exit 2, as where the model
+    refuses the declaration; any other error goes on (ENG-207's review of
+    round 8: a traceback, the file written)."""
+    try:
+        return call()
+    except (OSError, sqlite3.DatabaseError) as exc:
+        if not _store_failed(exc):
+            raise
+        refuse(
+            f"the store did not take {what} ({exc}); wrote "
+            f"{quoted(str(written.path))} ({written.id}) and declared nothing: "
+            "the next session decides"
+        )
 
 
 def principal() -> str:
@@ -945,7 +1009,7 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
         refuse(f"could not write {quoted(str(path))}: {exc}; nothing changed")
     location.forget(cwd)
     if k is None:
-        _, res = caller(ctx)
+        _, res = _stored(lambda: caller(ctx), "the folder's first sight", written)
         for line in res.lines:
             print(line)
         if res.checkout is None:
@@ -983,7 +1047,7 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
         ),
     )
     try:
-        done = model.declare(declaration)
+        done = _stored(lambda: model.declare(declaration), "the declaration", written)
     except ValueError as exc:
         # The model refuses what it cannot place (a folder the checkout the
         # file's first sight made does not hold, ENG-207's round 8), as

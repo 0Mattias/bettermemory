@@ -1206,7 +1206,13 @@ eighteenth was built.
   project file before the folder's first sight makes its checkout,
   refuses in one line where the model cannot place the folder in that
   checkout, naming the file it wrote and that it declared nothing, where
-  the model's refusal ended the command with a traceback.
+  the model's refusal ended the command with a traceback; so it does
+  where the store fails the first sight's or the declaration's write
+  once the file is written (SQLite busy or locked past the busy timeout,
+  read-only, an I/O error, a full disk, a corrupt file or one that is no
+  database, a transaction SQLite rolled back, or an `OSError` beneath),
+  naming the store's error. An SQL error and any other error remain a
+  traceback.
   (`src/bettermemory/gitsystem.py`, `src/bettermemory/gitconfig.py`,
   `src/bettermemory/location_git.py`, `src/bettermemory/location.py`,
   `src/bettermemory/gitfile_rule.py`, `src/bettermemory/_git.py`,

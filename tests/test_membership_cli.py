@@ -17,14 +17,16 @@ rows where one applies.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import io
 import itertools
 import json
 import shutil
+import sqlite3
 import subprocess
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -834,6 +836,155 @@ def test_init_refuses_what_the_folder_s_first_sight_cannot_place(
     err = refused(monkeypatch, capsys, "project", "init")
     path = notes / project_file.PROJECT_FILE_NAME
     assert f"cannot tell where {notes} stands" in err
+    assert f"wrote {quoted(str(path))}" in err and "declared nothing" in err
+    assert isinstance(project_file.parse(path), project_file.ProjectFile)
+
+
+def _coded(cls: type[sqlite3.DatabaseError], message: str, code: int) -> Exception:
+    """`cls(message)` as SQLite raises it, with its result code."""
+    exc = cls(message)
+    exc.sqlite_errorcode = code
+    return exc
+
+
+#: How a store fails a write, as the declaration meets it: SQLite's
+#: errors with their result codes, the store's own word for a
+#: transaction SQLite rolled back (`Store._require_open`), and a file
+#: beneath it failing.
+_STORE_FAILURES: dict[str, Callable[[], Exception]] = {
+    "full": lambda: _coded(
+        sqlite3.OperationalError, "database or disk is full", sqlite3.SQLITE_FULL
+    ),
+    "read_only": lambda: _coded(
+        sqlite3.OperationalError,
+        "attempt to write a readonly database",
+        sqlite3.SQLITE_READONLY,
+    ),
+    "io": lambda: _coded(
+        sqlite3.OperationalError, "disk I/O error", sqlite3.SQLITE_IOERR_WRITE
+    ),
+    "locked": lambda: _coded(
+        sqlite3.OperationalError, "database is locked", sqlite3.SQLITE_BUSY
+    ),
+    "malformed": lambda: _coded(
+        sqlite3.DatabaseError,
+        "database disk image is malformed",
+        sqlite3.SQLITE_CORRUPT,
+    ),
+    "rolled_back": lambda: sqlite3.OperationalError(
+        "the write transaction was rolled back by an error inside it"
+    ),
+    "no_space": lambda: OSError(errno.ENOSPC, "No space left on device"),
+}
+#: Errors of the code, not the store: an SQL error, a misused connection
+#: and a plain bug, each of which init lets through as a traceback.
+_CODE_FAILURES: dict[str, Callable[[], Exception]] = {
+    "sql": lambda: _coded(
+        sqlite3.OperationalError, "no such table: x", sqlite3.SQLITE_ERROR
+    ),
+    "misuse": lambda: sqlite3.ProgrammingError("Cannot operate on a closed database."),
+    "bug": lambda: TypeError("an argument of the wrong type"),
+}
+
+
+def _declaring_fails(
+    monkeypatch: pytest.MonkeyPatch, fail: Callable[[], Exception]
+) -> None:
+    """The store raises `fail()`'s error at each row the declaration
+    writes (`Store._append`, which every logged write goes through), and
+    takes every other write."""
+    real = mb.Membership.declare
+
+    def failing(self: Store, *args: Any, **kwargs: Any) -> Any:
+        raise fail()
+
+    def declare(self: mb.Membership, decl: Any) -> Any:
+        with monkeypatch.context() as patch:
+            patch.setattr(Store, "_append", failing)
+            return real(self, decl)
+
+    monkeypatch.setattr(mb.Membership, "declare", declare)
+
+
+@pytest.mark.parametrize("failure", sorted(_STORE_FAILURES))
+def test_init_refuses_where_the_store_fails_the_declaration(
+    scene: Scene,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: str,
+) -> None:
+    """ENG-207's review of round 8: in a plain folder init writes the file
+    and then declares, and a store that failed the declaration's write (a
+    full disk, a read-only or locked store, an I/O error, a malformed
+    file) ended the command in a traceback, the file written. It refuses
+    in one line, exit 2, naming the store's error, the file it wrote and
+    that it declared nothing; the store holds no row of the declaration."""
+    notes = scene.root / "notes"
+    notes.mkdir()
+    assert scene.see(notes).project == GLOBAL
+    _declaring_fails(monkeypatch, _STORE_FAILURES[failure])
+    typed(monkeypatch, "notes")
+    err = refused(monkeypatch, capsys, "project", "init")
+    path = notes / project_file.PROJECT_FILE_NAME
+    said = str(_STORE_FAILURES[failure]())
+    assert err.startswith(
+        f"bettermemory: the store did not take the declaration ({said}"
+    )
+    assert f"wrote {quoted(str(path))}" in err and "declared nothing" in err
+    assert isinstance(project_file.parse(path), project_file.ProjectFile)
+    # The folder's first sight bound the file (its own rows); nothing the
+    # declaration writes, each naming its principal, is in the store.
+    rows = [json.dumps(r.payload) for r in scene.store.membership_log(None)]
+    assert rows and not [r for r in rows if "os:tester" in r]
+
+
+@pytest.mark.parametrize("failure", sorted(_CODE_FAILURES))
+def test_init_lets_an_error_of_the_code_through(
+    scene: Scene, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """Only the store's failures are refused in a line (`_store_failed`):
+    an SQL error, a misused connection and any other error the
+    declaration raises end in a traceback, as a bug must."""
+    notes = scene.root / "notes"
+    notes.mkdir()
+    assert scene.see(notes).project == GLOBAL
+    raised = _CODE_FAILURES[failure]()
+    _declaring_fails(monkeypatch, lambda: raised)
+    typed(monkeypatch, "notes")
+    with pytest.raises(type(raised)) as caught:
+        bm(monkeypatch, "project", "init")
+    assert caught.value is raised
+
+
+def test_init_refuses_where_the_store_fails_the_folder_s_first_sight(
+    scene: Scene, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """In a plain folder init reads the folder again once the file is
+    written, and that first sight writes the checkout it makes there, as
+    the declaration writes: a store failing every write from the file on
+    ended the command in a traceback there too. It refuses in the same
+    line (`_stored`)."""
+    notes = scene.root / "notes"
+    notes.mkdir()
+    assert scene.see(notes).project == GLOBAL
+    real = project_file.write
+
+    def failing(self: Store, *args: Any, **kwargs: Any) -> Any:
+        raise _STORE_FAILURES["full"]()
+
+    def write(*args: Any, **kwargs: Any) -> project_file.ProjectFile:
+        done = real(*args, **kwargs)
+        monkeypatch.setattr(Store, "_append", failing)
+        return done
+
+    monkeypatch.setattr(project_file, "write", write)
+    typed(monkeypatch, "notes")
+    err = refused(monkeypatch, capsys, "project", "init")
+    path = notes / project_file.PROJECT_FILE_NAME
+    assert err.startswith(
+        "bettermemory: the store did not take the folder's first sight "
+        "(database or disk is full)"
+    )
     assert f"wrote {quoted(str(path))}" in err and "declared nothing" in err
     assert isinstance(project_file.parse(path), project_file.ProjectFile)
 
