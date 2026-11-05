@@ -594,7 +594,12 @@ def _break_head(repo: Path, case: str) -> None:
         assert not ref.exists(), "premise: the branch is packed alone"
         packed = repo / ".git" / "packed-refs"
         lines = packed.read_text(encoding="utf-8").splitlines()
-        packed.write_text("\n".join([*lines[:-1], "zzzz refs/heads/main", ""]))
+        # As bytes: a text-mode write ends each line in CRLF on Windows, and
+        # git then reads every name with a CR on its end, so the branch reads
+        # missing (unborn) where the line git dies on was meant to stand.
+        packed.write_bytes(
+            "\n".join([*lines[:-1], "zzzz refs/heads/main", ""]).encode()
+        )
         if case.endswith("a directory at the ref"):
             # No loose file, as `_lookup` reads a directory there: the
             # files leave it to the plumbing.

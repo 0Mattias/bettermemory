@@ -762,6 +762,24 @@ eighteenth was built.
   `error`. (`src/bettermemory/githead.py`,
   `src/bettermemory/origin_dates.py`, `tests/test_unread_history.py`)
 
+- **A `packed-refs` file git does not read line by line is left to the
+  plumbing (ENG-220).** The files read only the lines naming the ref
+  asked for, but git binary-searches a sorted `packed-refs` for that
+  ref, so a line of no shape git reads kills it where the search meets
+  the line ("unexpected line in packed-refs") and hides the ref where
+  the search steps past it. A bad line naming another ref left a head
+  git cannot read, and a file written with CRLF lines, as a text-mode
+  write leaves it on Windows, whose bad line named the branch read as
+  one recording no branch: the branch read unborn and its history not
+  applicable where git died on it (Windows CI, run 42027942574). Such a
+  file now declines whichever ref its odd line names, as does one whose
+  names git reads with a CR or as broken, and one whose records stand
+  out of the order its header claims, which git's search can step past;
+  the plumbing settles them. The check reads every line once per
+  content: 110 to 150 ms for 100,000 refs, 0.2 ms for 200.
+  (`src/bettermemory/githead.py`, `tests/test_githead.py`,
+  `tests/test_unread_history.py`)
+
 - **A shallow file's cut reads shallow only where the history reaches it
   (ENG-220).** Any commit a `shallow` file listed read the whole history
   `shallow`, so a full clone that fetched another branch, or origin's

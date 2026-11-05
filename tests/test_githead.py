@@ -201,6 +201,99 @@ def test_loose_ref_shadows_a_stale_packed_entry(tmp_path: Path) -> None:
     assert githead.head_sha(gd) == new
 
 
+#: ``packed-refs`` shapes the reader declines, each an edit of the file
+#: ``git pack-refs --all`` wrote for a ``main`` and an ``other`` branch at
+#: one commit and an annotated tag: the branch whose line changes, what
+#: replaces it, and the line ending.
+_PACKED_DECLINED = {
+    # A line git dies on where its binary search or a walk meets it
+    # ("unexpected line in packed-refs").
+    "a line git dies on, for the branch": ("main", "zzzz", "\n"),
+    # The same with CRLF lines, as a text-mode write leaves it on Windows:
+    # the line naming the branch no longer reads as the branch's, and the
+    # branch read unborn where git died (Windows CI, run 42027942574).
+    "a line git dies on, for the branch, CRLF": ("main", "zzzz", "\r\n"),
+    # git reads HEAD past it here, and dies on it elsewhere.
+    "a line git dies on, for another ref": ("other", "zzzz", "\n"),
+    # Every name with a CR on its end, the peeled line one git dies on.
+    "CRLF lines alone": (None, None, "\r\n"),
+    # A name check_refname_format refuses: git reads a broken ref there.
+    "a name git reads as broken": ("other", "refs/heads/a..b", "\n"),
+    # Out of the order the header claims, so git's search steps past main.
+    "records out of order": ("other", "refs/heads/aaa", "\n"),
+}
+
+
+@pytest.mark.parametrize("case", list(_PACKED_DECLINED))
+def test_a_packed_refs_file_git_does_not_read_whole_declines_every_ref(
+    case: str, tmp_path: Path
+) -> None:
+    """git binary-searches a sorted ``packed-refs`` for the one ref it is
+    asked for (packed-backend.c's ``find_reference_location``), so a line
+    of no shape it reads kills it where the search meets the line and
+    hides the ref where the search steps past it, and a walk of every ref
+    dies on it (``next_record``). The reader read only the lines naming
+    the ref it was asked for, so a bad line elsewhere left a head git
+    cannot read, and a CRLF file's bad line naming the branch left the
+    branch unborn: the commit drift leg read not applicable where git
+    fails on the history. Every such file now declines, for any ref, and
+    so does one whose names git reads with a CR or as broken, or whose
+    records stand out of the order its header claims: the plumbing
+    settles (`head_unborn` None). On every platform: `locate` reads the
+    repository there too."""
+    line_of, replaced, ending = _PACKED_DECLINED[case]
+    repo = _init_repo(tmp_path / "repo")
+    _commit(repo, "one")
+    _run(repo, "branch", "other")
+    _run(repo, "tag", "--annotate", "v1", "--message", "release")
+    _run(repo, "pack-refs", "--all")
+    packed = repo / ".git" / "packed-refs"
+    lines = packed.read_text(encoding="utf-8").splitlines()
+    if line_of is not None:
+        name = f"refs/heads/{line_of}"
+        at = next(i for i, line in enumerate(lines) if line.endswith(f" {name}"))
+        sha = lines[at].split(" ", 1)[0]
+        lines[at] = f"zzzz {name}" if replaced == "zzzz" else f"{sha} {replaced}"
+    # As bytes, so the line ends are the case's own on every platform.
+    packed.write_bytes((ending.join(lines) + ending).encode())
+    # git does not read the file line by line: a walk of every ref fails
+    # on it, or HEAD misses the branch's line.
+    walk = _git(repo, "show-ref")
+    head = _git(repo, "rev-parse", "--verify", "--quiet", "HEAD")
+    assert walk.returncode == 128 or head.returncode != 0, (
+        f"premise: {walk.returncode} {head.returncode}"
+    )
+    gd = githead.locate(repo)
+    assert gd is not None
+    assert githead.head_sha(gd) is None
+    assert githead.head_unborn(gd) is None
+
+
+@pytest.mark.parametrize("hexsz", [40, 64])
+def test_a_packed_refs_file_git_reads_whole_is_read(hexsz: int) -> None:
+    """The header, records of one hash length with their peeled lines, and
+    names `check_refname_format` accepts: the shape git writes, read."""
+    sha, peeled = "a" * hexsz, "b" * hexsz
+    data = (
+        "# pack-refs with: peeled fully-peeled sorted \n"
+        f"{sha} refs/heads/main\n{sha} refs/tags/v1\n^{peeled}\n"
+    ).encode()
+    assert githead._packed_reads(data)
+    for bad in (
+        data.replace(b"^", b"#"),
+        data + f"^{peeled}\n".encode(),
+        data + f"{'c' * (104 - hexsz)} refs/heads/x\n".encode(),
+        data.replace(b"refs/heads/main", b"refs/heads/.main"),
+        data.replace(b"refs/heads/main", b"refs/heads/main.lock"),
+        data.replace(b"refs/heads/main", b"refs/tags/zz"),
+    ):
+        assert not githead._packed_reads(bad), bad
+    # git sorts a file whose header does not claim it sorted.
+    unsorted = data.replace(b"refs/heads/main", b"refs/tags/zz")
+    assert githead._packed_reads(unsorted.replace(b" sorted", b""))
+    assert githead._packed_reads(unsorted.split(b"\n", 1)[1])
+
+
 @posix_only
 def test_linked_worktree(tmp_path: Path) -> None:
     """A linked worktree's ``.git`` is a file naming its own git directory

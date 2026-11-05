@@ -84,11 +84,15 @@ too, by reading the object the ref names through
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import stat
 import sys
+import threading
+from collections import OrderedDict
 from collections.abc import Iterator
+from itertools import pairwise
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -722,11 +726,103 @@ def _parse(content: bytes) -> tuple[bytes | None, str | None]:
     raise _Unsettled
 
 
+def _packed_shape(hex_digits: int) -> re.Pattern[bytes]:
+    """A ``packed-refs`` file whose every line git reads (packed-backend.c's
+    ``next_record``): the header first, if any, then records of a hash of
+    `hex_digits` digits, a space and a name, each followed by at most one
+    peeled ``^`` line of a hash as long. A name here holds no byte
+    `_BAD_REF_BYTES` names, so no space, CR or other control character;
+    `_BAD_NAME` reads the rest of ``check_refname_format``."""
+    digest = rb"[0-9a-f]{%d}" % hex_digits
+    name = rb"[^\x00-\x20\x7f~^:?*\[\\]+"
+    return re.compile(
+        rb"(?:# pack-refs with:[^\n]*\n)?(?:%s %s\n(?:\^%s\n)?)*"
+        % (digest, name, digest)
+    )
+
+
+# The two object formats' files (`_packed`).
+_PACKED_SHAPES = (_packed_shape(40), _packed_shape(64))
+# What ``check_refname_format`` refuses in a name beyond its bytes: ``..``,
+# ``@{``, an empty component, a component that starts with a dot or ends in
+# ``.lock``, a trailing slash or dot. Read over the whole file, whose header
+# and hashes hold none of these.
+_BAD_NAME = re.compile(rb"\.\.|@\{|//|/\.| \.|/\n|\.lock(?:/|\n)|\.\n")
+# A record's name, in a file `_PACKED_SHAPES` matched: neither the header
+# nor a peeled line starts with a hex digit.
+_PACKED_NAME = re.compile(rb"^[0-9a-f]+ ([^\n]+)$", re.MULTILINE)
+_PACKED_HEADER = b"# pack-refs with:"
+
+
+def _packed_in_order(data: bytes) -> bool:
+    """Whether git's binary search (``find_reference_location``) finds
+    every record of the ``packed-refs`` content `data`: always when its
+    header does not claim ``sorted``, since git sorts such a file itself
+    (``sort_snapshot``), and otherwise when the names rise byte by byte.
+    Out of that order, the search can step past the ref asked for, which
+    git then reads as missing where its line holds a hash."""
+    if not data.startswith(_PACKED_HEADER):
+        return True
+    traits = data[len(_PACKED_HEADER) : data.index(b"\n")].split()
+    if b"sorted" not in traits:
+        return True
+    names = _PACKED_NAME.findall(data)
+    return all(low < high for low, high in pairwise(names))
+
+
+# Whether each ``packed-refs`` content `_packed` met reads as git reads it
+# (`_packed_reads`), by the digest of its bytes, so a file read again
+# unchanged is not checked again and no clock decides that it is
+# unchanged. Measured (macOS, Python 3.11): the check reads every line,
+# 110 to 150 ms for 100,000 refs (8 MB), where finding one name's line
+# takes 2 ms and the digest 6; 0.2 ms for 200 refs. Bounded at
+# `_PACKED_READS_CAP` contents, the least recently used dropped first.
+_PACKED_READS: OrderedDict[bytes, bool] = OrderedDict()
+_PACKED_READS_CAP = 64
+_PACKED_READS_LOCK = threading.Lock()
+
+
+def _packed_reads(data: bytes) -> bool:
+    """Whether git reads the ``packed-refs`` content `data` as `_packed`
+    does, line by line: every line of it (`_PACKED_SHAPES`, `_BAD_NAME`)
+    and every record where it stands (`_packed_in_order`). Remembered by
+    its digest (`_PACKED_READS`)."""
+    digest = hashlib.blake2b(data, digest_size=16).digest()
+    with _PACKED_READS_LOCK:
+        known = _PACKED_READS.get(digest)
+        if known is not None:
+            _PACKED_READS.move_to_end(digest)
+            return known
+    reads = (
+        any(shape.fullmatch(data) for shape in _PACKED_SHAPES)
+        and _BAD_NAME.search(data) is None
+        and _packed_in_order(data)
+    )
+    with _PACKED_READS_LOCK:
+        _PACKED_READS[digest] = reads
+        while len(_PACKED_READS) > _PACKED_READS_CAP:
+            _PACKED_READS.popitem(last=False)
+    return reads
+
+
 def _packed(commondir: Path, name: bytes) -> str | None:
     """The hash ``packed-refs`` records for `name`, None when it records
     none. The header line and the peeled ``^`` lines never match. A file
     git would reject (a malformed header, a last line with no newline), a
-    second entry for the name, or a line of any other shape declines."""
+    second entry for the name, and a file git does not read line by line
+    (`_packed_reads`) decline, whichever name the odd line holds. git
+    binary-searches a sorted file for the one ref it is asked for, so a
+    line of any other shape kills it where the search meets that line
+    (``unexpected line in packed-refs``) and hides the ref where the
+    search steps past it, and which of the two depends on the file's
+    layout; a walk of every ref dies on it. A file read for one name's
+    line alone answered a head git cannot read: a CRLF file whose bad
+    line named the branch (a text-mode write on Windows) read as one
+    recording no branch, and the branch as unborn, where git died
+    (Windows CI, run 42027942574). A record whose name
+    ``check_refname_format`` refuses, which git reads as a broken ref,
+    declines too (`_BAD_NAME`), as do records out of the order the
+    header claims and hashes of both lengths."""
     try:
         data = _read(os.path.join(commondir, "packed-refs"), _PACKED_LIMIT)
     except FileNotFoundError as exc:
@@ -740,6 +836,7 @@ def _packed(commondir: Path, name: bytes) -> str | None:
         len(data) > _PACKED_LIMIT
         or not data.endswith(b"\n")
         or (header and not data.startswith(b"# pack-refs with:"))
+        or not _packed_reads(data)
     ):
         raise _Unsettled
     # A ref name holds no space and no newline, so the name between the
