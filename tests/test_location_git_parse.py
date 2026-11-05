@@ -1437,8 +1437,14 @@ def test_another_content_s_probe_is_swept_once_it_is_an_hour_old(
     (outside / "keep").write_bytes(b"x")
     old = time.time() - gitsystem.REASK_SECONDS - 60
 
-    def aged(path: Path) -> Path:
-        os.utime(path, (old, old), follow_symlinks=False)
+    def aged(path: Path, *, link: bool = False) -> Path:
+        # Not followed only for a link: Windows (where no link is made
+        # here) has no utime that does not follow, and raised at every
+        # call (ENG-207, Windows CI); every other path takes this call.
+        if link:
+            os.utime(path, (old, old), follow_symlinks=False)
+        else:
+            os.utime(path, (old, old))
         return path
 
     def probe(name: str) -> Path:
@@ -1461,7 +1467,7 @@ def test_another_content_s_probe_is_swept_once_it_is_an_hour_old(
     holding = state / "git-probe-bbbbbbbbbbbbbbbb"
     if links:
         link.symlink_to(outside, target_is_directory=True)
-        aged(link)
+        aged(link, link=True)
         probe(holding.name)
         (holding / "out").symlink_to(outside, target_is_directory=True)
         aged(holding)
