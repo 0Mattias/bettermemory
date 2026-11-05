@@ -1234,9 +1234,14 @@ So the capture decides ticks where every time is a whole tick and not
 every one a whole second (`in_ticks`); on Windows always; and on Linux,
 where its git directory holds no birth time, wherever /proc/self/mountinfo
 names the device drvfs (a `9p` mount whose options hold `aname=drvfs`,
-a container's bind mount of one included, or WSL1's `drvfs`), whatever
-its times, as WSL2's grain and its ctime are not measured
-(`kept_in_ticks`). A coarse-clock Linux file system such as ext4 reads
+a container's bind mount of one included, a `virtiofs` one tagged
+`drvfs` as WSL 2.7's opt-in virtiofs tags it, `drvfsC0`, or WSL1's
+`drvfs`), whatever its times, as WSL2's grain and its ctime are not
+measured here (`kept_in_ticks`). Later WSL releases tag that virtiofs by
+a GUID, which the times decide. A drvfs `stat` reported in
+microsoft/WSL#14301 gives its times in 100 ns, no birth time, and a
+change time equal to the modify time, so not the creation time; whether
+it is ChangeTime is not known. A coarse-clock Linux file system such as ext4 reads
 birth time where it is mounted, and reaches the rule only behind a share
 without it (Docker Desktop's or podman's VM on a Linux host, NFS); there
 files written within one clock tick share one time, so a fresh

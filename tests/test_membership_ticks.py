@@ -472,7 +472,8 @@ def test_windows_keeps_ticks_whatever_its_times(
 
 #: /proc/self/mountinfo lines: WSL2's drive mount, a container's bind
 #: mount of it (an optional field before the separator), WSL1's, another
-#: 9p mount, a virtiofs share, and a line too short to read.
+#: 9p mount, a virtiofs share, a line too short to read, and WSL2's
+#: opt-in virtiofs drive mount as 2.7 tags it (microsoft/WSL#14301).
 _MOUNTS = (
     "102 87 0:52 / /mnt/c rw,noatime - 9p C:\\134 rw,dirsync,"
     "aname=drvfs;path=C:\\;uid=1000;gid=1000;symlinkroot=/mnt/,mmap,"
@@ -484,6 +485,7 @@ _MOUNTS = (
     "40 24 0:54 / /mnt/wslg rw,relatime - 9p none rw,aname=wslg,trans=fd\n"
     "50 24 0:55 / /workspaces rw,relatime - virtiofs mount0 rw\n"
     "60 24 0:57\n"
+    "70 24 0:58 / /mnt/e rw,noatime - virtiofs drvfsE0 rw\n"
 )
 
 
@@ -497,6 +499,7 @@ _MOUNTS = (
         (54, False),
         (55, False),
         (57, False),
+        (58, True),
         (99, False),
     ],
 )
@@ -504,9 +507,10 @@ def test_drvfs_is_read_from_the_mount_table(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, minor: int, drvfs: bool
 ) -> None:
     """A device a 9p mount naming ``aname=drvfs`` (WSL2, a container's
-    bind mount of it) or a ``drvfs`` one (WSL1) holds keeps ticks
-    whatever its times; another 9p mount, a virtiofs share, a line too
-    short and a device no line names do not."""
+    bind mount of it), a virtiofs one tagged drvfs (WSL2's opt-in
+    virtiofs) or a ``drvfs`` one (WSL1) holds keeps ticks whatever its
+    times; another 9p mount, another virtiofs share, a line too short and
+    a device no line names do not."""
     table = tmp_path / "mountinfo"
     table.write_text(_MOUNTS, encoding="utf-8")
     monkeypatch.setattr(location_stamps, "_MOUNTINFO", str(table))

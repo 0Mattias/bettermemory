@@ -1564,9 +1564,11 @@ eighteenth was built.
   APFS. Every one a whole tick and not every one a whole second; on
   Windows always; and on Linux, where it reads no birth time, wherever
   the mount table names the device drvfs (a `9p` mount with
-  `aname=drvfs`, a container's bind mount of one, or WSL1's `drvfs`),
-  whatever its times. The location token posts it (`ticks`, which an
-  earlier daemon ignores) and the checkout row keeps it inside
+  `aname=drvfs`, a container's bind mount of one, a `virtiofs` one
+  tagged `drvfs` as WSL 2.7's opt-in virtiofs tags it, or WSL1's
+  `drvfs`), whatever its times; later WSL releases tag that virtiofs by
+  a GUID, which its times decide. The location token posts it (`ticks`,
+  which an earlier daemon ignores) and the checkout row keeps it inside
   `stamps_json`, an object beside the stamps that every release since
   9.0.0rc15 reads past: no schema step, where a column would need one
   and the log's fold in 9.0.0rc15 to rc18 refuses a put naming a column
@@ -1578,9 +1580,11 @@ eighteenth was built.
   before, and so does an SMB view (the Linux client reads the server's
   CreationTime as the birth time), which never reaches the rule; a
   container without birth time reading a Windows host's files over
-  drvfs registers a second checkout as in 9.0.0rc18. Whether drvfs reads
-  ChangeTime as the ctime is not measured, and the mount table decides
-  drvfs either way. B still reads them, as a view's token keeps B
+  drvfs registers a second checkout as in 9.0.0rc18. A drvfs `stat`
+  reported in microsoft/WSL#14301 gives its times in 100 ns, no birth
+  time, and a change time equal to the modify time, so not the creation
+  time; whether it is ChangeTime is not measured, and the mount table
+  decides drvfs either way. B still reads them, as a view's token keeps B
   standing, which asks. A file system keeping microseconds reads as
   ticks, and one keeping nanoseconds by chance, which the stamps alone
   met often: on APFS (Apple Silicon) a linked worktree's one stamp 41

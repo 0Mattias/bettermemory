@@ -131,9 +131,11 @@ def _device_name(device: int) -> str:
 def _drvfs(device: int) -> bool:
     """Whether `device` is a WSL drvfs mount of a Windows drive, as
     /proc/self/mountinfo names it: a ``9p`` mount whose superblock options
-    hold ``aname=drvfs`` (WSL2, and a container's bind mount of one), or a
-    ``drvfs`` one (WSL1). False off Linux, or where the table cannot be
-    read."""
+    hold ``aname=drvfs`` (WSL2, and a container's bind mount of one), a
+    ``virtiofs`` one whose tag names it drvfs (WSL2's opt-in virtiofs, as
+    2.7 tags it, ``drvfsC0``; later releases tag it by a GUID, which the
+    times decide), or a ``drvfs`` one (WSL1). False off Linux, or where
+    the table cannot be read."""
     if not _LINUX:
         return False
     want = _device_name(device)
@@ -145,9 +147,12 @@ def _drvfs(device: int) -> bool:
                     continue
                 tail = fields[fields.index("-", 6) + 1 :]
                 fstype = tail[0] if tail else ""
+                source = tail[1] if len(tail) > 1 else ""
                 options = tail[2] if len(tail) > 2 else ""
-                if fstype == "drvfs" or (
-                    fstype == "9p" and _DRVFS_ANAME.search(options)
+                if (
+                    fstype == "drvfs"
+                    or (fstype == "9p" and _DRVFS_ANAME.search(options))
+                    or (fstype == "virtiofs" and source.startswith("drvfs"))
                 ):
                     return True
     except (OSError, ValueError):
