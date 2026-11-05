@@ -133,12 +133,32 @@ def _fd_stamp(fd: int) -> githead.Stamp:
     )
 
 
+def _read_flags() -> int:
+    """The flags `_config_facts` and `_index_gitmodules` open with: read
+    only, without blocking on a FIFO, not inherited, and binary. Windows'
+    C runtime opens a file in text mode unless told ``O_BINARY``: a read
+    then ends at the first Ctrl-Z byte (0x1A) and folds each CR LF into
+    LF, which git, reading every file in binary, does not. An index whose
+    first entry holds a 0x1A (a 26-byte file's size, a timestamp's byte,
+    an object id's) was read short and declined as unsettled, so no row
+    was keyed: the drift memo kept nothing on Windows wherever one fell
+    there (`walk_files_signature`). A config read short would lose what
+    follows the byte. Read when called, as every flag is: off Windows it
+    adds nothing."""
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+
+
 def _config_facts(path: Path) -> tuple[githead.Stamp | None, _ConfigFacts] | None:
     """``(stamp, facts)`` of the configuration file `path`: its `githead.
     stamp`, None when it does not exist (and then facts that set nothing),
     and what it holds. None when it cannot be read, is not a regular file
     or is larger than `_CONFIG_LIMIT`. The open does not block, so a FIFO
-    fails instead of waiting."""
+    fails instead of waiting, and is binary (`_read_flags`)."""
     key = os.fspath(path)
     try:
         current = githead.stamp(path)
@@ -151,7 +171,7 @@ def _config_facts(path: Path) -> tuple[githead.Stamp | None, _ConfigFacts] | Non
         if kept is not None and kept[0] == current:
             _CONFIG_MEMO.move_to_end(key)
             return kept
-    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags = _read_flags()
     try:
         fd = os.open(path, flags)
     except OSError as exc:
@@ -1259,7 +1279,7 @@ def _index_gitmodules(gd: githead.GitDir) -> tuple[object, ...] | None:
         raise _IndexUnsettled
     path = gd.gitdir / "index"
     key = os.fspath(path)
-    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags = _read_flags()
     try:
         fd = os.open(path, flags)
     except FileNotFoundError as exc:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -296,7 +297,9 @@ def _recording(real: Any) -> Any:
     directory held. A check that moved between the two reads shows twice
     or once; a store that held nothing to keep (0 resolved, 0 timed out)
     was given nothing by the rows, which a failure counted during a
-    resolution explains."""
+    resolution explains, or no key: `walk_files` says whether the files
+    beside the history were read, and whether they declined (an index read
+    short in Windows' text mode did: run 42105626749)."""
 
     def moved(self: Any) -> dict[str, object]:
         out: dict[str, object] = {}
@@ -342,6 +345,13 @@ def _recording(real: Any) -> Any:
             "broken": self._broken,
             "keyed": self._keyed is not None,
             "owned": self._owned,
+            "walk_files": (
+                "unread"
+                if not self._walk_files_read
+                else "declined"
+                if self._walk_files is None
+                else "read"
+            ),
             "before": moved(self),
         }
         kept = bool(real(self))
@@ -4148,6 +4158,164 @@ def test_an_index_the_reader_cannot_settle_keys_nothing(
     else:
         _git(repo, "config", "extensions.objectFormat", "sha256")
     assert origin.walk_files_signature(root) is None
+
+
+#: The files `walk_files_signature` reads beside the history.
+_WALK_FILES = frozenset({"index", "config", "config.worktree"})
+
+
+def _text_mode(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Read the walk's files (`_WALK_FILES`) as Windows' C runtime reads a
+    file opened without ``O_BINARY``: a read ends at the first Ctrl-Z byte
+    (0x1A), with nothing after it until a seek, and folds each CR LF into
+    LF. Where the host has no ``O_BINARY`` (POSIX) one is made, a bit no
+    other open flag uses, and dropped before the real open; on Windows the
+    runtime does it itself. Only those files: a module that binds its
+    flags at import has no made bit to pass. Returns the paths opened in
+    text mode."""
+    binary = getattr(os, "O_BINARY", None)
+    made = 0
+    if binary is None:
+        taken = 0
+        for name in dir(os):
+            value = getattr(os, name)
+            if name.startswith("O_") and isinstance(value, int):
+                taken |= value
+        made = next(1 << bit for bit in range(30, 8, -1) if not taken & (1 << bit))
+        monkeypatch.setattr(os, "O_BINARY", made, raising=False)
+        binary = made
+    real_open, real_read, real_lseek, real_close = os.open, os.read, os.lseek, os.close
+    ended: dict[int, bool] = {}
+    opened: list[str] = []
+
+    def text_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        fd = int(real_open(path, flags & ~made, *args, **kwargs))
+        name = os.path.basename(os.fsdecode(path))
+        if not flags & binary and name in _WALK_FILES:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                ended[fd] = False
+                opened.append(os.fsdecode(path))
+        return fd
+
+    def text_read(fd: int, length: int) -> bytes:
+        if ended.get(fd):
+            return b""
+        data = real_read(fd, length)
+        if fd in ended:
+            cut = data.find(b"\x1a")
+            if cut >= 0:
+                ended[fd] = True
+                data = data[:cut]
+            data = data.replace(b"\r\n", b"\n")
+        return data
+
+    def text_lseek(fd: int, position: int, how: int) -> int:
+        if fd in ended:
+            ended[fd] = False
+        return real_lseek(fd, position, how)
+
+    def text_close(fd: int) -> None:
+        ended.pop(fd, None)
+        real_close(fd)
+
+    monkeypatch.setattr(os, "open", text_open)
+    monkeypatch.setattr(os, "read", text_read)
+    monkeypatch.setattr(os, "lseek", text_lseek)
+    monkeypatch.setattr(os, "close", text_close)
+    return opened
+
+
+def _text_read(path: Path) -> bytes:
+    """`path` read through an open without ``O_BINARY``, under `_text_mode`."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        return os.read(fd, 1 << 20)
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.usefixtures("discovery")
+def test_an_index_holding_a_ctrl_z_keys_the_walk_as_git_reads_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows' C runtime reads a file opened without ``O_BINARY`` in text
+    mode, which ends at the first Ctrl-Z byte (0x1A). An index's entries
+    hold binary stamps, sizes and object ids, so its first entry holds one
+    wherever a byte of them falls on it: here the size of a 26-byte file.
+    The index is read in binary, so the walk files are read past it as git
+    reads them and key the walk; read in text mode, the index was read
+    short, declined as unsettled, and no row was keyed (the Windows legs of
+    the memo tests, whose stores held nothing: run 42105626749)."""
+    repo = _repo(tmp_path)
+    (repo / "a.txt").write_bytes(b"x" * 26)
+    _commit(repo, "c0", when=_T0)
+    root = repo.resolve()
+    index = repo / ".git" / "index"
+    held = index.read_bytes()
+    assert held[12 + 36 : 12 + 40] == b"\0\0\0\x1a", "premise: the size is a Ctrl-Z"
+    want = origin.walk_files_signature(root)
+    assert want is not None
+    _caches.clear_all()
+    opened = _text_mode(monkeypatch)
+    assert len(_text_read(index)) < len(held), "premise: text mode reads it short"
+    opened.clear()
+    assert origin.walk_files_signature(root) == want
+    assert opened == [], "every walk file is opened in binary"
+
+
+@pytest.mark.usefixtures("discovery")
+def test_a_config_holding_a_ctrl_z_is_read_on_as_git_reads_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Git reads a config past a Ctrl-Z byte in a comment, and past a CR LF
+    line end; a text-mode read ends at the byte and loses what follows it.
+    The config is read in binary, so the variables after the byte are
+    among those it sets."""
+    repo = _repo(tmp_path)
+    _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
+    config = repo / ".git" / "config"
+    config.write_bytes(
+        config.read_bytes() + b"# held \x1a here\r\n[log]\r\n\tfollow = true\r\n"
+    )
+    assert "log.follow=true" in _git(repo, "config", "--list"), "premise: git reads on"
+    _caches.clear_all()
+    opened = _text_mode(monkeypatch)
+    assert b"follow" not in _text_read(config), "premise: text mode ends at it"
+    opened.clear()
+    read = origin_gitfiles._config_facts(config)
+    assert read is not None and read[1].names is not None
+    assert b"log.follow" in read[1].names
+    assert opened == []
+
+
+@pytest.mark.usefixtures("discovery")
+def test_a_row_is_kept_where_the_index_holds_a_ctrl_z(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The memo keeps a row whose repository's index holds a Ctrl-Z byte,
+    on both legs, with the walk files read as Windows' runtime reads a
+    file opened in text mode (`_text_mode`): the next search reads it from
+    the memo, with no git."""
+    repo = _repo(tmp_path)
+    (repo / "a.txt").write_bytes(b"x" * 26)
+    _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
+    _commit(repo, "c1", when=_T1, files={"notes0.md": "b\n"})
+    held = (repo / ".git" / "index").read_bytes()
+    assert held[12 + 36 : 12 + 40] == b"\0\0\0\x1a", "premise: the size is a Ctrl-Z"
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    memory_id = _write(
+        store, caller, monkeypatch, f"widget rule lives in {repo / 'notes0.md'}"
+    )
+    memories = store.load_all()
+    _caches.clear_all()
+    _text_mode(monkeypatch)
+    cold, _ = _attach(memories, caller, monkeypatch)
+    assert _by_id(cold)[memory_id]["commit_drift_count"] == 1
+    assert len(_response._DRIFT_MEMO) == 1, f"the row is kept ({_STORES})"
+    warm, calls = _attach(memories, caller, monkeypatch)
+    assert _by_id(warm)[memory_id]["commit_drift_count"] == 1
+    assert calls == _keying(repo), "the memo answers"
 
 
 @files_only

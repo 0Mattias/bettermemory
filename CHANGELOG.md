@@ -814,6 +814,19 @@ eighteenth was built.
   is a directory. (`src/bettermemory/gitfile_rule.py`,
   `tests/test_unread_history.py`)
 
+- **The drift memo keeps rows on Windows.** The repository's config and
+  index were the only files the package opened without `O_BINARY`, and
+  Windows' C runtime reads such a file in text mode: a read ends at the
+  first Ctrl-Z byte (0x1A) and folds CR LF into LF. An index whose first
+  entry held the byte, in a stamp, a size or an object id, was read
+  short and declined, the files beside the history keyed nothing, and
+  no row was kept, so each search resolved every row with git, as before
+  the memo; no count read wrong from it. Which test met the byte moved
+  with each run's timestamps. Both open in binary now, and a config is
+  read past the byte as git reads it.
+  (`src/bettermemory/origin_gitfiles.py`,
+  `tests/test_commit_drift_cache.py`)
+
 - **A shallow file's cut reads shallow only where the history reaches it
   (ENG-220).** Any commit a `shallow` file listed read the whole history
   `shallow`, so a full clone that fetched another branch, or origin's
