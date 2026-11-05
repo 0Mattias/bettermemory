@@ -807,10 +807,11 @@ def test_no_row_is_keyed_under_a_variable_that_moves_discovery(
 def test_the_memoised_verdicts_run_no_git_wherever_the_rows_are_keyed(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`verdict.memoised_verdicts` runs no process, on a hook's deadline.
-    Where the files settle the root and the head it reads the row a search
-    resolved; where they do not, the one ``git rev-parse`` that keys the row
-    is a process, so the row is left unresolved, as before."""
+    """`verdict.memoised_verdicts` runs no process: the tests read the
+    memo through it (the brief reads no verdict). Where the files settle
+    the root and the head it reads the row a search resolved; where they
+    do not, the one ``git rev-parse`` that keys the row is a process, so
+    the row is left unresolved, as before."""
     repo, caller, memory_id, memories = _cited_once(memory_dir, tmp_path, monkeypatch)
     _attach(memories, caller, monkeypatch)
     assert len(_response._DRIFT_MEMO) == 1, "premise: the search keyed the row"

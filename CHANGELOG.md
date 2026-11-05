@@ -324,10 +324,11 @@ eighteenth was built.
   reads them. Under a variable that moves git's discovery no row is
   keyed; read that way a governed claim's row is not keyed while neither
   XDG_CONFIG_HOME nor HOME is set, since Git for Windows then derives a
-  home of its own, whose global attributes file is not read; and the
-  brief's memoised read (`verdict.memoised_verdicts`), which runs no
-  process, still leaves such a row unresolved. A warm search or
-  `memory_show` there runs that one process.
+  home of its own, whose global attributes file is not read; and
+  `verdict.memoised_verdicts`, which runs no process, still leaves such a
+  row unresolved. Only the tests read it: the brief reads no verdict and
+  says nothing of a pointer's freshness, so no row reads fresh there. A
+  warm search or `memory_show` there runs that one process.
   (`src/bettermemory/_response.py`,
   `src/bettermemory/origin_gitfiles.py`, `src/bettermemory/origin.py`,
   `tests/test_commit_drift_cache.py`, `tests/test_verdict.py`)

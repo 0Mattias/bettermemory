@@ -72,8 +72,8 @@ _FUTURE = datetime(2099, 1, 1, tzinfo=timezone.utc)
 # githead declines file discovery off POSIX, so on Windows the files settle
 # no root and head: the drift memo keys each call's rows on one `git
 # rev-parse` there (`_response._DriftPass._keyed_pair`), so a warm call runs
-# that one process, and the brief's memoised read, which runs none, leaves
-# the rows unresolved. The tests that count no process run on POSIX alone.
+# that one process, and `memoised_verdicts`, which runs none, leaves the
+# rows unresolved. The tests that count no process run on POSIX alone.
 _MEMO_IS_POSIX = pytest.mark.skipif(
     sys.platform == "win32", reason="githead declines file discovery off POSIX"
 )

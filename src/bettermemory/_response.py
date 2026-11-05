@@ -244,9 +244,8 @@ class _DriftPass:
     commit landing between the two reads is never counted under the other
     head's key; a row is keyed only where the history the pass read was
     read at its key's head (`_history_at`). What
-    the pass resolves is kept by `store`, at its end (or
-    after each row, for the brief's fill), only while what it was keyed on
-    still reads as it did when the pass opened.
+    the pass resolves is kept by `store`, at its end, only while what it
+    was keyed on still reads as it did when the pass opened.
 
     Not shared between threads: each caller opens its own. The memo it
     reads and merges into is lock-guarded, and every other memo the
@@ -642,9 +641,8 @@ class _DriftPass:
 
         Every comparison is with what the pass read when it opened (or
         when it first keyed a part), never with an earlier `store`'s read,
-        so a pass may store more than once (`verdict.fill_verdicts` stores
-        after each row it resolves): each store that holds covers every
-        resolution since the pass opened. Merged resolutions leave the
+        so a pass may store more than once: each store that holds covers
+        every resolution since the pass opened. Merged resolutions leave the
         pass, so a later store merges only what came after. A store that
         fails discards what it held and breaks the pass: every later store
         on it fails too, so a stamp moved back by hand never readmits a
