@@ -113,6 +113,7 @@ from .membership_shared import (
     ASK_WHICH,
     HEAL,
     _ask_which,
+    _asked_here,
     _healed,
     _restamped,
     _retire_into,
@@ -775,7 +776,11 @@ def _caller(
 ) -> Resolution:
     """The caller's resolution at checkout `k`: its sub-project where a
     nested file names one, its chain and tenant, and every open
-    proposal of the checkout named (which turns SILENT into ASK)."""
+    proposal of the checkout named (which turns SILENT into ASK), the
+    questions about another project that offer to join it to `k`'s and
+    that no sighting showed where they were moved to `k` first
+    (`membership_shared._asked_here`, ENG-215)."""
+    _asked_here(self, k)
     pid = self._canon(k.project)
     own_file: list[str] = []
     rf = loc.root_file

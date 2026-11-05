@@ -1273,9 +1273,39 @@ second record in the container's project that held nothing), where a
 live one is not retired and, if it is this machine's, holds one of its
 views now (`_unseen`), so a checkout here whose folder is gone, which
 no sighting shows, is passed over; and with none it stays open on the
-idle record, answered by its id. Where the
+idle record until a sighting asks it (below). Where the
 checkout it goes to already asks the same (the same imported or
-unresolved project), the idle one's is closed as settled. So a later
+unresolved project), the idle one's is closed as settled.
+
+A sighting asks such a question wherever it resolves a live checkout of
+the question's project (`_caller` names the questions open on the
+checkout it resolves). Before naming them, it moves to that checkout
+each question about another project offering to join that one to the
+checkout's project that is open where no sighting shows it
+(`_asked_here`, `_unseen`): on a retired checkout (a record retired
+while that project had no live checkout, a checkout retired since, into
+a record of another project or as quiet) or on one of this machine's
+whose views hold it no longer (its folder gone). So the container's
+checkout, brought back by its next sighting, or a checkout joined to
+that project since asks it at its next sighting, its candidates,
+evidence and line kept, and its answer acts there; where that checkout
+asks the same already, the other is closed as settled into it (by
+`sighting`). A question on a live checkout stays, asked at that
+checkout's sightings, and so does one on another machine's checkout
+that is not retired, as its folder is read on that machine alone, whose
+own sightings of a checkout of the project move it. A question about
+the checkout it is on (a first sight's, a changed remote's, the root
+file's, a duplicate's, a part's) stays on it, as it asks about that one.
+The rows are a question's put and `proposal_answered`; the cost, one
+read of the open questions of the two kinds at each sighting, and for
+each one of the checkout's project open on another checkout, that
+checkout's row and, where it is this machine's and not retired, its
+liveness. A question whose project has no live checkout anywhere, and
+one about a checkout no sighting reaches, are named by `bettermemory
+health` (its open questions, with each one's checkout and path) and by
+`project pending`, and `project show` names those of each project.
+
+So a later
 move of the checkout at the path (`project new`, `project join`)
 carries every record written there, where the one left behind kept its
 own in the old project, and a sighting of another object at the path (a

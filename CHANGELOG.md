@@ -1485,7 +1485,13 @@ eighteenth was built.
   after a heal of a record in the container's project, never one of
   this machine's whose folder is gone, or with no live one left open
   where it was), so its line and its answers name one
-  project, unless that checkout asks the same (rows of kinds 9.0.0rc18
+  project, unless that checkout asks the same. A sighting of a live
+  checkout of that project then asks such a question wherever no
+  sighting shows it where it is (on a retired checkout, or one of this
+  machine's whose folder is gone): the container's checkout brought back
+  by its next sighting, or one joined to the project since, takes it
+  and names it, where it stayed shown nowhere, named by `project
+  pending` and `bettermemory health` alone (rows of kinds 9.0.0rc18
   reads: it verifies, opens, reads and writes such a store). `project
   why` of a record moved so names the checkout it was written in and
   the one it went into, with the retired one's rows, where it named the

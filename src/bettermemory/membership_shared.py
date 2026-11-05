@@ -25,7 +25,11 @@ from the records of the other machines that see the same files:
   earlier one, where the later one is the second checkout a sighting
   that did not read such a re-mint registered (9.0.0rc18 and earlier
   could not) and no one chose it; a question naming both projects where
-  records were written at it since in another project than the first's.
+  records were written at it since in another project than the first's;
+- `_retire_into` and `_asked_here`: the record no sighting reads from
+  then on retired into the one kept, its questions about another
+  project moved to a live checkout of that project, and asked at the
+  next sighting of one where none was live.
 
 The init stamps are what tells a view from a copy: the name, mtime, ctime
 and size of `description`, `info/exclude` and a linked worktree's
@@ -60,6 +64,7 @@ from .membership_records import (
     FIRST_SIGHT,
     IMPORT,
     LEGACY,
+    OPEN,
     SUBPROJECT_CONTRADICTION,
     Checkout,
     Location,
@@ -67,7 +72,7 @@ from .membership_records import (
     _found_token,
     _norm,
 )
-from .membership_rows import _checkout_from
+from .membership_rows import _checkout_from, _proposal_from
 
 if TYPE_CHECKING:
     from .membership import Membership
@@ -89,6 +94,9 @@ ASK_WHICH = "ask"
 #: The answer a question on a record retired into another is closed with,
 #: followed by that record's id (`_retire_into`).
 SETTLED = "settled:"
+#: Who closes a question a sighting found asked at its checkout already,
+#: as it moved the questions no sighting showed there (`_asked_here`).
+ASKED_HERE = "sighting"
 #: The log rows `_joined_silently_by_token` reads of a checkout, each kind
 #: through the log's kind index: its registration, and the rows a
 #: declaration writes naming it as their ``checkout`` (a join or a
@@ -501,7 +509,8 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
     to a live checkout of the project it offers to join that project to
     (`_asked_at`): so its line, the answer it offers and a bare join
     (whose target is its checkout's project) name one project, and the
-    answer acts there.
+    answer acts there. With no live one, it stays on `idle` until a
+    sighting of one asks it there (`_asked_here`).
     Where the same is asked there already, it is closed as settled. The
     rows are of kinds 9.0.0rc18 reads (a home's, a checkout's and a
     question's put, a view's deletion, ``proposal_answered``,
@@ -552,10 +561,10 @@ def _asked_at(
     this machine's only where one of its views holds it now), this
     machine's first, then by id (the container's after a heal of a
     second record in its project, holding nothing); and with none,
-    `idle`, where it stays open, its project's, answered by id (`project
-    pending`). One read of the candidate's checkouts where `kept` is in
-    another project, and of the liveness of this machine's ones, in that
-    order, until one holds."""
+    `idle`, where it stays open until a sighting of a live checkout of
+    that project asks it there (`_asked_here`). One read of the
+    candidate's checkouts where `kept` is in another project, and of the
+    liveness of this machine's ones, in that order, until one holds."""
     if pr.kind not in _SUBJECT:
         return None
     named = {self._canon(c) for c in pr.candidates}
@@ -566,6 +575,47 @@ def _asked_at(
         key=lambda k: (k.machine != self.machine, k.id),
     )
     return next((k.id for k in ranked if not _unseen(self, k)), idle.id)
+
+
+def _asked_here(self: Membership, k: Checkout) -> None:
+    """The questions about another project (`_SUBJECT`) that offer to
+    join it to `k`'s project, moved to `k`, the checkout a sighting
+    resolves (`membership_resolve._caller`, which names the questions
+    open on it), where they are open on a checkout no sighting shows them
+    at (`_unseen`): left on a record retired while that project had no
+    live checkout (`_asked_at`), or on a checkout retired or gone since.
+    So whenever a live checkout of a question's project is sighted (one
+    retired as quiet brought back, a checkout new to the project), the
+    question is asked there, its candidates, evidence and line kept;
+    where `k` asks the same already, it is closed as settled into `k`.
+    A question open on a live checkout stays where it is, asked at that
+    checkout's sightings, and so does one on another machine's checkout
+    that is not retired, whose views are read there alone. The rows are
+    a question's put and ``proposal_answered``, of kinds 9.0.0rc18 reads.
+    One read of the open questions of those kinds at each sighting, and
+    for each one of `k`'s project open elsewhere, its checkout and that
+    checkout's liveness where it is this machine's and not retired."""
+    pid = self._canon(k.project)
+    rows = self._store.membership_rows(
+        "proposals", where={"state": OPEN}, column_in=("kind", sorted(_SUBJECT))
+    )
+    asked: set[tuple[str, str]] | None = None
+    for pr in (_proposal_from(r) for r in rows):
+        if pr.checkout == k.id or pid not in {self._canon(c) for c in pr.candidates}:
+            continue
+        try:
+            at = self.checkout(pr.checkout) if pr.checkout else None
+        except KeyError:
+            at = None
+        if at is not None and not _unseen(self, at):
+            continue
+        if asked is None:
+            asked = {_asks(x) for x in self._open_proposals(k.id)}
+        if _asks(pr) in asked:
+            self._close(pr, f"{SETTLED}{k.id}", ASKED_HERE)
+        else:
+            self._put_proposal(dataclasses.replace(pr, checkout=k.id))
+            asked.add(_asks(pr))
 
 
 def _unseen(self: Membership, k: Checkout) -> bool:

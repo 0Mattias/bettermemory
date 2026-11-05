@@ -1459,6 +1459,168 @@ def test_a_moved_question_passes_over_a_checkout_whose_folder_is_gone(
 
 
 @pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("later", ["container_seen", "checkout_joined"])
+@pytest.mark.parametrize("kind", [IMPORT, LEGACY])
+def test_a_question_left_on_a_retired_record_is_asked_later(
+    tmp_path: Path,
+    lab: Lab,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    later: str,
+) -> None:
+    """The heal retires the second record, in the container's project,
+    while that project has no live checkout (the container's retired as
+    quiet), so its question about another project stays open on it. The
+    host's sightings, in the host's project, leave it there. The next
+    sighting of a live checkout of the container's project asks it, moved
+    there with its candidates and evidence: the container's, which that
+    sighting brings back (``container_seen``), or a checkout of this host
+    joined to that project since (``checkout_joined``); and a bare join
+    there joins the other project to the one the line names. Before, no
+    sighting showed it again: only `project pending` named it."""
+    line, box, kid, _kept, idle, qid = _asked_where_its_project_is(
+        tmp_path, lab, monkeypatch, kind, "heal_apart_alone"
+    )
+    before = lab.model().proposal(qid)
+    theirs = str(before.candidates[0])
+    host, _admitted = lab.view(line)
+    assert lab.model().proposal(qid).checkout == idle
+    assert not any(qid in x for x in host.lines)
+    declaring = lab._declaring(box.identity)
+
+    if later == "container_seen":
+        seen = box.post(lab)
+        at = kid
+    else:
+        repo = make_repo(tmp_path / "host" / "theirs", commits=1)
+        at = _joined_to(lab, repo, "theirs-here", theirs)
+        declaring = lab._declaring()
+        seen, _admitted = lab.view(repo)
+
+    model = lab.model()
+    moved = model.proposal(qid)
+    assert (seen.checkout, seen.outcome) == (at, ASK)
+    assert any(qid in x for x in seen.lines)
+    assert (moved.state, moved.checkout) == ("open", at)
+    assert (moved.candidates, moved.evidence) == (before.candidates, before.evidence)
+    assert {p.id: p.checkout for p in model.pending()}.get(qid) == at
+    declaring.declare(Declaration("join", "os:tester", checkout=at, proposal=qid))
+    model = lab.model()
+    x = str(before.evidence[membership_shared._SUBJECT[kind]])
+    assert model.proposal(qid).state == "answered"
+    assert model.canonical(x) == model.canonical(theirs)
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_question_whose_checkout_is_retired_later_is_asked_again(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The heal moved the second record's question about another project
+    to the container's checkout; that checkout is then retired into a
+    record of another project. With no other live checkout of the
+    container's project, the question stays on it; the container's next
+    sighting at the path registers a checkout of that project there (its
+    git directory's, S), and asks the question, moved there. Before, it
+    stayed on the retired checkout, shown at no sighting."""
+    line, box, kid, _kept, _idle, qid = _asked_where_its_project_is(
+        tmp_path, lab, monkeypatch, IMPORT, "heal_apart"
+    )
+    assert lab.model().proposal(qid).checkout == kid
+    theirs = lab.model().canonical(lab.model().checkout(kid).project)
+    other = make_repo(tmp_path / "box" / "other", commits=1)
+    into = lab.write("o1", other, identity=box.identity).checkout
+    assert into is not None
+    model = lab._declaring()
+    with model._call():
+        model._retire_into(model.checkout(kid), model.checkout(into), "test")
+    assert lab.model().proposal(qid).checkout == kid
+    location.forget()
+
+    seen = box.post(lab)
+
+    model = lab.model()
+    assert seen.checkout not in (None, kid) and seen.outcome == ASK
+    assert model.canonical(seen.project) == theirs
+    assert any(qid in x for x in seen.lines)
+    assert (model.proposal(qid).state, model.proposal(qid).checkout) == (
+        "open",
+        seen.checkout,
+    )
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize(
+    "holder",
+    ["gone", "retired", "asked_here_too", "live", "other_machine", "its_own"],
+)
+def test_a_question_no_sighting_shows_is_asked_where_one_does(
+    tmp_path: Path, lab: Lab, holder: str
+) -> None:
+    """An import's question about another project, open on a checkout of
+    the project it offers to join that one to, and a sighting of another
+    checkout of that project on this host. The question is asked there,
+    moved, where no sighting shows it where it is: that checkout's folder
+    is gone (``gone``) or it is retired as quiet (``retired``); and where
+    the checkout sighted asks the same already, it is closed as settled
+    into that one (``asked_here_too``). It stays where it is on a live
+    checkout here (``live``) and on another machine's checkout, whose
+    folder is read there alone (``other_machine``); and a question about
+    the checkout it is on (a changed remote's), whose folder is gone,
+    stays there, as it asks about that one (``its_own``)."""
+    here = make_repo(tmp_path / "host" / "here", commits=1)
+    wrote = lab.write("here", here)
+    project, sighted_id = wrote.project, wrote.checkout
+    assert project is not None and sighted_id is not None
+    third = _container_machine(lab, "third") if holder == "other_machine" else None
+    where = tmp_path / ("third" if third else "host") / "there"
+    there = make_repo(where, commits=1)
+    on = _joined_to(lab, there, "there", project, third)
+    if holder == "its_own":
+        qid = _asked_on(lab, on, REMOTE_DIVERGED, project)
+    else:
+        qid = _asked_about_else(lab, there, on, IMPORT)
+    same: str | None = None
+    if holder == "asked_here_too":
+        model = lab.model()
+        pr = model.proposal(qid)
+        with model._call():
+            same = model._open_proposal(
+                checkout=sighted_id,
+                kind=IMPORT,
+                candidates=list(pr.candidates),
+                evidence=pr.evidence,
+                reason=IMPORT,
+                line="the same import's question",
+                signature=None,
+                distinct="imported_project",
+            ).id
+    if holder in ("gone", "asked_here_too", "its_own"):
+        shutil.rmtree(there)
+    elif holder == "retired":
+        _quiet(lab, on)
+    location.forget()
+
+    res, _admitted = lab.view(here)
+
+    model = lab.model()
+    q = model.proposal(qid)
+    assert res.checkout == sighted_id
+    if holder in ("live", "other_machine", "its_own"):
+        assert (q.state, q.checkout) == ("open", on)
+        assert not any(qid in x for x in res.lines)
+    elif holder == "asked_here_too":
+        assert (q.state, q.answer, q.answered_by) == (
+            "answered",
+            f"settled:{sighted_id}",
+            "sighting",
+        )
+        assert [p.id for p in model.pending() if p.kind == IMPORT] == [same]
+    else:
+        assert (q.state, q.checkout) == ("open", sighted_id)
+        assert res.outcome == ASK and any(qid in x for x in res.lines)
+
+
+@pytest.mark.usefixtures("no_birth")
 @pytest.mark.parametrize("settled", ["heal", "heal_apart"])
 def test_the_record_kept_asks_a_part_with_its_own_parent(
     tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, settled: str
