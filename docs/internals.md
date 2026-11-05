@@ -530,14 +530,19 @@ an include's path and a `gitdir:` pattern are expanded with it as git's
 `system_path` expands them: an absolute rest as it is, a relative one
 after that directory, `%(prefix)` with no `/` as written, and a path of
 a git that does not expand it (it prints `%(prefix)/z`) as written. A
-fifth asks, with `git rev-parse --git-dir` in two git directories inside
-the probe, both of format 1 and object format sha1, whether that git
-reads a `compatObjectFormat` of sha256 (other than the object format)
-and one of sha1 (the same): git 2.54 built without Rust dies on both,
-one built with Rust reads the first and dies on the second, and a
-repository's format is read by that answer for its pairing (format 1
-and a version below -1 alike, as setup.c verifies them alike), declined
-where git has not said. All
+fifth asks, with `git rev-parse --git-dir` in a git directory inside the
+probe, of format 1 and object format sha1, whether that git reads a
+`compatObjectFormat` of sha256, other than the object format: git 2.44
+and earlier die on it (no such extension), 2.45 to 2.53 read it, and from
+2.54 a build with Rust reads it and one without dies. A repository's
+format with such a pairing is read by that answer (format 1 and a
+version below -1 alike, as setup.c verifies them alike), declined where
+git has not said. One the same as the object format is never asked: no
+git reads it (2.44 and earlier know no such extension, a build without
+Rust dies on any, and every other stops at `BUG()` in repository.c's
+`repo_set_compat_hash_algo`, which aborts the process and leaves a crash
+report or a core), so a repository that sets one is declined as git
+dying there, with no git run. All
 of them run in an empty owner-only folder under the state directory
 (`git-ask`), with `GIT_CEILING_DIRECTORIES` naming the state directory,
 so git finds no repository there wherever the state directory sits (the

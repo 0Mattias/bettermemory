@@ -421,14 +421,22 @@ def _judge_format(
     if version >= 1 and unknown:
         return f"{path} sets a repository extension git does not know"
     # A format git does not clear (a version of 1 or below -1) keeps the
-    # compat format, which git reads as it was built: git 2.54 without
-    # Rust dies on it ("compatibility hash algorithm support requires
-    # Rust"), one built with it reads one other than the object format
-    # and dies on the same one. The build's, not the file's: the git on
-    # PATH is asked (`gitsystem.reads_compat`, ENG-207's round 8), and
-    # where it has not said the format is not known here (fail closed).
+    # compat format. One the same as the object format no git reads: git
+    # 2.44 and earlier know no such extension, a build without Rust dies
+    # on any ("compatibility hash algorithm support requires Rust"), and
+    # every other aborts at repository.c's ``BUG("hash_algo and
+    # compat_hash_algo match")``, so git is not asked of it (gitsystem's
+    # docstring). Another git reads as it was built, which the file does
+    # not say: the git on PATH is asked (`gitsystem.reads_compat`,
+    # ENG-207's round 8), and where it has not said the format is not
+    # known here (fail closed).
     if compat is not None and version != -1 and version <= 1:
-        reads = _reads_compat(compat == hash_name)
+        if compat == hash_name:
+            return (
+                f"{path} sets a compatibility object format the same as its "
+                "object format, which git dies on"
+            )
+        reads = _reads_compat()
         if reads is None:
             return (
                 f"{path} sets a compatibility object format git has not said it reads"
@@ -438,14 +446,14 @@ def _judge_format(
     return _Format(version, worktree_config, taken, hash_name)
 
 
-def _reads_compat(same: bool) -> bool | None:
-    """Whether the git on PATH reads a compatibility object format the
-    same as its repository's object format where `same`, another
-    otherwise (`gitsystem.reads_compat`), imported here, where a
-    repository sets one: no other format's reading states its binary."""
+def _reads_compat() -> bool | None:
+    """Whether the git on PATH reads a compatibility object format other
+    than its repository's object format (`gitsystem.reads_compat`),
+    imported here, where a repository sets one: no other format's
+    reading states its binary."""
     from . import gitsystem
 
-    return gitsystem.reads_compat(same)
+    return gitsystem.reads_compat()
 
 
 def _extension_reads(rule: str | frozenset[bytes], value: bytes | None) -> bool:

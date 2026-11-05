@@ -39,7 +39,15 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _caches, gitconfig, gitsystem, location, location_git, origin
+from bettermemory import (
+    _caches,
+    gitconfig,
+    gitfile_rule,
+    gitsystem,
+    location,
+    location_git,
+    origin,
+)
 from bettermemory import _git as git_runner
 from bettermemory.location import remote_key
 
@@ -1072,39 +1080,124 @@ def test_how_git_reads_a_remote_is_asked_of_git_and_recorded() -> None:
     assert _record(state)["format"] == gitsystem.RECORD_FORMAT == 4
 
 
-@pytest.mark.parametrize("compat", ["sha256", "sha1"], ids=["differ", "same"])
-def test_whether_git_reads_a_compatibility_object_format_is_git_s_answer(
-    tmp_path: Path, compat: str
-) -> None:
-    """ENG-207's round 8: whether the git on PATH reads a repository of
-    format 1 and object format sha1 that sets ``compatObjectFormat`` to
-    sha256 (`Sources.compat_differ`) or to sha1 (`Sources.compat_same`) is
-    what git does with such a repository of its own making: ``git init
-    --bare``, the format set by ``git config``, read by ``git rev-parse``.
-    git 2.54 built without Rust dies on both; git 2.56 built with it reads
-    the first and dies on the second."""
-    repo = tmp_path / "bare.git"
-    subprocess.run(["git", "init", "-q", "--bare", str(repo)], check=True)
+def _compat_repository(path: Path, compat: str) -> bool:
+    """A bare repository of git's own making at `path`, of format 1 and
+    object format sha1, its ``compatObjectFormat`` set to `compat` by
+    ``git config``: whether git reads it (``git rev-parse --git-dir``
+    exits 0)."""
+    subprocess.run(["git", "init", "-q", "--bare", str(path)], check=True)
     for key, value in (
         ("core.repositoryformatversion", "1"),
         ("extensions.compatObjectFormat", compat),
     ):
-        subprocess.run(["git", f"--git-dir={repo}", "config", key, value], check=True)
-    git_reads = (
-        subprocess.run(
-            ["git", f"--git-dir={repo}", "rev-parse", "--git-dir"],
-            capture_output=True,
-            check=False,
-        ).returncode
-        == 0
+        subprocess.run(["git", f"--git-dir={path}", "config", key, value], check=True)
+    done = subprocess.run(
+        ["git", f"--git-dir={path}", "rev-parse", "--git-dir"],
+        capture_output=True,
+        check=False,
     )
+    return done.returncode == 0
+
+
+def test_whether_git_reads_a_compatibility_object_format_is_git_s_answer(
+    tmp_path: Path,
+) -> None:
+    """ENG-207's round 8: whether the git on PATH reads a repository of
+    format 1 and object format sha1 that sets ``compatObjectFormat`` to
+    sha256 (`Sources.compat_differ`) is what git does with such a
+    repository of its own making. git 2.54 built without Rust dies on it;
+    git 2.56 built with it reads it."""
+    git_reads = _compat_repository(tmp_path / "bare.git", "sha256")
     found = gitsystem.sources()
-    same = compat == "sha1"
-    assert (found.compat_same if same else found.compat_differ) is git_reads
-    assert gitsystem.reads_compat(same) is git_reads
+    assert found.compat_differ is git_reads
+    assert gitsystem.reads_compat() is git_reads
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     entry = _record(state)["entries"][0]
-    assert entry["compat_same" if same else "compat_differ"] is git_reads
+    assert entry["compat_differ"] is git_reads
+
+
+def test_a_compatibility_object_format_the_same_is_read_as_git_dying_unasked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-207's review of round 8: no git reads a repository whose
+    ``compatObjectFormat`` is its object format (git 2.44 and earlier know
+    no such extension, a build without Rust dies on any, and every other
+    stops at repository.c's ``BUG()``, which aborts), so the format is
+    read as one git dies on, and git is not asked: asking it aborted a git
+    at each ask, a crash report or a core each time. The premise is the
+    git on PATH, which dies on such a repository of its own making."""
+    assert not _compat_repository(tmp_path / "bare.git", "sha1")
+
+    def asked() -> bool | None:
+        raise AssertionError("git asked of a pairing no git reads")
+
+    monkeypatch.setattr(gitsystem, "reads_compat", asked)
+    for version in (b"1", b"-2"):
+        for name in (b"sha1", b"sha256"):
+            data = (
+                b"[core]\n\trepositoryformatversion = " + version + b"\n"
+                b"[extensions]\n\tobjectFormat = " + name + b"\n"
+                b"\tcompatObjectFormat = " + name + b"\n"
+            )
+            assert gitfile_rule.object_format(data) is None, (version, name)
+    implied = b"[core]\n\trepositoryformatversion = 1\n"
+    implied += b"[extensions]\n\tcompatObjectFormat = sha1\n"
+    assert gitfile_rule.object_format(implied) is None
+
+
+def _pairing(config: bytes) -> tuple[bytes, bytes | None]:
+    """The object format and the compatibility object format (None where
+    unset) a probe's config sets, by its ``key = value`` lines, the last
+    of each standing as git takes it; sha1 where no object format is
+    set."""
+    found: dict[bytes, bytes] = {}
+    for line in config.splitlines():
+        key, eq, value = line.strip().partition(b"=")
+        if eq:
+            found[key.strip().lower()] = value.strip()
+    return found.get(b"objectformat", b"sha1"), found.get(b"compatobjectformat")
+
+
+def test_no_probe_ask_runs_git_where_the_compat_format_is_the_object_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ENG-207's review of round 8: git asked in a git directory whose
+    ``compatObjectFormat`` is its object format aborts (a ``BUG()`` in a
+    build with Rust, and in git 2.45 to 2.53), so no git directory the
+    probe is built with sets that pairing, and an ask runs git in none:
+    each git directory an ask names holds a config whose compatibility
+    object format, where it sets one, is another than its object format.
+    The probe asked of that pairing once (``compat-same``), every hour
+    and every minute while unsaid."""
+    monkeypatch.setattr(gitsystem, "ASK_SECONDS", 30.0)
+    real = git_runner.run_git
+    asked: list[tuple[str, bytes]] = []
+
+    def recording(args: Sequence[str], **kw: Any) -> Any:
+        git_dir = kw.get("git_dir")
+        if git_dir is not None:
+            asked.append((git_dir, Path(git_dir, "config").read_bytes()))
+        return real(args, **kw)
+
+    monkeypatch.setattr(git_runner, "run_git", recording)
+    answer = gitsystem._ask("key", time.time())
+    assert answer.ok and answer.sources.compat_differ is not None, "premise: asked"
+    probe = gitsystem._probe_repository()
+    assert probe is not None
+    compat_dir = os.path.join(probe[0], gitsystem._COMPAT_PROBE)
+    assert [d for d, _c in asked].count(compat_dir) == 1
+    for git_dir, config in asked:
+        main, compat = _pairing(config)
+        assert compat is None or compat != main, git_dir
+    configs = [
+        data
+        for name, data in gitsystem._PROBE_FILES.items()
+        if name.rsplit("/", 1)[-1] == "config"
+    ]
+    assert len(configs) == 2
+    for data in configs:
+        main, compat = _pairing(data)
+        assert compat is None or compat != main
 
 
 def _ask_probe() -> gitsystem._Probed:
@@ -1132,10 +1225,13 @@ _TAMPERED = [b"URL: bettermemory-probe-a\n", b""]
 #: Another writer's content for the probe's config, which git expands to
 #: another prefix.
 _ELSEWHERE = b"[bettermemory]\n\tprefix = /bettermemory-elsewhere/z\n"
-#: Another writer's content for the config of a git directory of
-#: `gitsystem._COMPAT_PROBES`, which sets no compatibility object format:
-#: git reads it however it was built.
+#: Another writer's content for the config of the git directory
+#: `gitsystem._COMPAT_PROBE`, which git answers the other way for: one
+#: setting no compatibility object format, which every git reads, where
+#: this git dies on the probe's; one of a format version git refuses,
+#: which every git dies on, where it reads the probe's.
 _COMPAT_GONE = b"[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
+_COMPAT_DIES = b"[core]\n\trepositoryformatversion = 2\n\tbare = true\n"
 
 
 @pytest.mark.parametrize(
@@ -1144,12 +1240,12 @@ _COMPAT_GONE = b"[core]\n\trepositoryformatversion = 0\n\tbare = true\n"
         ("remotes/p", _TAMPERED[0]),
         ("remotes/p", _TAMPERED[1]),
         ("config", _ELSEWHERE),
-        ("compat/config", _COMPAT_GONE),
+        ("compat/config", None),
     ],
     ids=["no_reset", "no_legacy", "prefix", "compat"],
 )
 def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
-    monkeypatch: pytest.MonkeyPatch, name: str, content: bytes
+    monkeypatch: pytest.MonkeyPatch, name: str, content: bytes | None
 ) -> None:
     """ENG-207's round 7: another writer rewriting ``remotes/p`` while git
     read it made git answer for its content, and the answer was kept (an
@@ -1163,6 +1259,9 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
     `gitsystem.RETRY_SECONDS`. The next ask, with no writer, rebuilds the
     probe and answers as git does."""
     truth = _this_git()
+    if content is None:
+        content = _COMPAT_GONE if truth[3] is False else _COMPAT_DIES
+    written = content
     real = git_runner.run_git
     question = {"config": gitsystem._PREFIX_ASK, "compat/config": gitsystem._COMPAT_ASK}
     asks = question.get(name, gitsystem._REMOTE_ASK)
@@ -1170,7 +1269,7 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
     def tampered(args: Sequence[str], **kw: Any) -> Any:
         if tuple(args) == asks:
             path = os.path.join(kw["git_dir"], *name.removeprefix("compat/").split("/"))
-            Path(path + ".t").write_bytes(content)
+            Path(path + ".t").write_bytes(written)
             os.replace(path + ".t", path)
         return real(args, **kw)
 
@@ -1180,26 +1279,25 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
     assert _ask_probe() == gitsystem._UNSAID
     root = Path(where[0]).parent / gitsystem.PROBE_FOLDER
     if name.startswith("compat/"):
-        root = root / "compat-same"
+        root = root / gitsystem._COMPAT_PROBE
     asked = subprocess.run(
         ["git", f"--git-dir={root}", *asks],
         capture_output=True,
         text=True,
         env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
-        check=True,
+        check=not name.startswith("compat/"),
     )
     if name == "config":
         wrong = asked.stdout.strip() != f"{truth[2]}/z"
     elif name.startswith("compat/"):
-        # git read the tampered config (`check`), in both git directories.
-        wrong = truth[3:] != (True, True)
+        wrong = (asked.returncode == 0) is not truth[3]
     else:
         wrong = gitsystem._REMOTE_ANSWERS[asked.stdout.strip()] != truth[:2]
     assert wrong, "premise: git answers wrong"
     _caches.clear_all()
     found = gitsystem.sources()
     assert (found.legacy, found.resets, found.prefix) == (None, None, None)
-    assert (found.compat_differ, found.compat_same) == (None, None)
+    assert found.compat_differ is None
     monkeypatch.setattr(git_runner, "run_git", real)
     assert _ask_probe() == truth
 
@@ -1256,8 +1354,8 @@ def test_a_probe_holding_another_entry_is_rebuilt(tmp_path: Path, stray: str) ->
     stayed unknown, and git was asked again every minute. The entry is
     removed (a link unlinked, never followed) and the probe built again,
     and git's answer is kept; another build's probe, of other content,
-    has a folder of its own (`gitsystem._probe_name`). So too in a git
-    directory of `gitsystem._COMPAT_PROBES` (ENG-207's round 8), a
+    has a folder of its own (`gitsystem._probe_name`). So too in the git
+    directory `gitsystem._COMPAT_PROBE` (ENG-207's round 8), a
     ``commondir`` there among them, which names git another config."""
     if "link" in stray and sys.platform == "win32":
         pytest.skip("a symbolic link needs a privilege Windows CI does not hold")
@@ -1279,7 +1377,7 @@ def test_a_probe_holding_another_entry_is_rebuilt(tmp_path: Path, stray: str) ->
     elif stray == "remote":
         (root / "remotes" / "q").write_bytes(b"URL: gh:planted\n")
     elif stray == "compat_file":
-        (root / "compat-same" / "commondir").write_bytes(b"..\n")
+        (root / gitsystem._COMPAT_PROBE / "commondir").write_bytes(b"..\n")
     elif stray == "linked_compat":
         shutil.rmtree(root / "compat-differ")
         (root / "compat-differ").symlink_to(outside, target_is_directory=True)
@@ -1417,7 +1515,7 @@ def test_a_remote_is_read_as_this_git_reads_it(
     _caches.clear_all()
     gitsystem.sources()
     # Asked again: the system file, the listing, the remote and, where git
-    # answered the remote at all, the prefix and the two compatibility
-    # object formats.
-    again = 0 if legacy is not None else 3 if said is None else 6
+    # answered the remote at all, the prefix and the compatibility object
+    # format.
+    again = 0 if legacy is not None else 3 if said is None else 5
     assert len(fake.asked) - asked == again
