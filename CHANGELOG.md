@@ -650,7 +650,11 @@ eighteenth was built.
   so a memory on the author-date basis read fresh on the calendar alone.
   `origin_dates.commit_author_timestamps` now tells the two apart: None
   where no history applies (no repository the files name, no git, a
-  directory that is not there, and, from `HEAD`, git's refusal), and
+  directory that is not there, and, where nothing keys the read and git
+  exits non-zero on `HEAD`, a repository git will not read or a branch
+  with no commit, told by the exit of `git rev-parse --git-dir` and `git
+  rev-parse --verify -q HEAD`, run on that failure alone; where both
+  answer, the log's failure is an error), and
   otherwise why it was not read (`origin_history.HistoryUnread`: a
   timeout, an error, over the budget, shallow; `verify_basis.
   CommitDriftUnread` is that enum). The search hit, the expanded top hit

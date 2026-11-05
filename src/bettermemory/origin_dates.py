@@ -43,11 +43,13 @@ def commit_author_timestamps(
 
     Returns a list of timezone-aware datetimes; None where no history
     applies (cwd is None, git not on PATH, a directory that is not there,
-    no repository the files name, and from ``HEAD``, where no pair names
-    the head, a refusal: not a repository, no commits); and where a history
-    applies and was not read, why (`origin_history.HistoryUnread`): git
-    met its timeout, failed on the head named by its hash or printed a
-    line its format does not print (one such line declines the whole
+    no repository the files name, and, from ``HEAD`` where no pair names
+    the head, a repository git will not read or a branch with no commit,
+    which `_refused_head` tells by the exit of plumbing); and where a
+    history applies and was not read, why (`origin_history.HistoryUnread`):
+    git met its timeout, failed on the head (named by its hash, or HEAD
+    where the plumbing finds both the repository and its head) or printed
+    a line its format does not print (one such line declines the whole
     read), the history is longer than the memo's budget, or the clone is
     shallow. A caller reads the third outcome as neither a count nor a
     leg that does not apply: the row is flagged and never reads fresh.
@@ -156,8 +158,9 @@ def _read_author_timestamps(
     reachable from `revision`, ascending; or why they were not read, or
     None where none applies (`origin_history.unanswered`: a `revision`
     named by its hash is a head the repository holds, so git's refusal of
-    it is an error, where for ``HEAD`` it also answers a folder that is no
-    repository and a branch with no commit)."""
+    it is an error). Git's refusal of ``HEAD`` also answers a folder that
+    is no repository and a branch with no commit, which `_refused_head`
+    tells apart from an error by the exit of two plumbing calls."""
     # timeout=5.0, not the 1.0 default: the default is calibrated for
     # write-path origin capture, where origin is nice-to-have and a
     # hanging git must never stall a memory_write. This log and its two
@@ -170,6 +173,10 @@ def _read_author_timestamps(
     raw = origin._git(cwd, "log", "--format=%at", revision, timeout=5.0)
     if raw is None:
         named = origin.is_full_commit_sha(revision)
+        if not named and origin_history.git_counts() == before:
+            # Git ran and exited non-zero on HEAD, neither timed out nor
+            # missing (ENG-220's review, round F).
+            return _refused_head(cwd)
         return origin_history.unanswered(before, named=named)
     values = origin_history.read_lines(raw, origin_history.seconds)
     if not values:
@@ -177,6 +184,30 @@ def _read_author_timestamps(
         _git_runner.note_failed()
         return HistoryUnread.ERROR
     return origin_history.author_dates(values)
+
+
+#: The plumbing `_refused_head` runs, in order: the first fails where git
+#: finds no repository, the second where the repository's branch has no
+#: commit.
+_HEAD_PROBES = (("rev-parse", "--git-dir"), ("rev-parse", "--verify", "-q", "HEAD"))
+
+
+def _refused_head(cwd: Path) -> HistoryUnread | None:
+    """Why ``git log HEAD`` exited non-zero at `cwd`, told by the exit of
+    plumbing run from the same directory under the same environment, so
+    the variables that move git's discovery apply to it as they did to the
+    log: None where ``git rev-parse --git-dir`` fails (no repository) or
+    ``git rev-parse --verify -q HEAD`` does (a branch with no commit),
+    neither a history that applies; ``ERROR`` where both answer, since git
+    then failed on a head the repository holds; and a probe that met its
+    timeout, ``TIMEOUT`` (`origin_history.unanswered`). Run only on that
+    failure, so a read that answers runs neither; the log's failure is
+    already counted on the calling thread."""
+    for probe in _HEAD_PROBES:
+        before = origin_history.git_counts()
+        if origin._git(cwd, *probe, timeout=5.0) is None:
+            return origin_history.unanswered(before, named=False)
+    return HistoryUnread.ERROR
 
 
 def _extended_author_timestamps(

@@ -2,10 +2,10 @@
 review, round E).
 
 `origin_dates.commit_author_timestamps` tells a history that does not apply
-(None: no repository the files name, no git) from one that applies and was
-not read (`origin_history.HistoryUnread`): git met its timeout, failed on the
-head named by its hash, the history is longer than the memo's budget, or the
-clone is shallow. Each cause reaches every surface. The search hit, the
+(None: no repository the files name, no git, a repository git will not read
+or a branch with no commit) from one that applies and was not read
+(`origin_history.HistoryUnread`): git met its timeout, failed on the head,
+the history is longer than the memo's budget, or the clone is shallow. Each cause reaches every surface. The search hit, the
 expanded top hit and memory_show flag the row (`commit_drift_unread: true`),
 drop it to `spot_check_required` and name the cause and its remedy in the
 recommendation; `verify.compute_commit_drift` returns the cause; the health
@@ -444,6 +444,88 @@ def test_health_recommends_a_spot_check_of_every_unread_memory() -> None:
     for remedy in ("git log", "git fetch --unshallow", "run health again"):
         assert remedy in many.action
     assert "longer than" not in many.action
+
+
+#: What the read from HEAD answers under GIT_DIR, and how many plumbing
+#: probes it ran to tell it: none where the log answers or no repository's
+#: files are there.
+_REFUSED = {
+    "answered": (list, 0),
+    "no repository": (None, 0),
+    "git refuses the repository": (None, 1),
+    "unborn": (None, 2),
+    "error": (CommitDriftUnread.ERROR, 2),
+    "probe timeout": (CommitDriftUnread.TIMEOUT, 1),
+    "log timeout": (CommitDriftUnread.TIMEOUT, 0),
+}
+
+
+@pytest.mark.parametrize("case", list(_REFUSED))
+def test_under_git_dir_a_refused_head_is_told_apart_by_plumbing(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GIT_DIR, here naming another repository, moves git's discovery, so
+    nothing keys the read and the log runs from HEAD; every git the package
+    runs drops GIT_DIR (`_git.SCRUBBED_ENV`), so the log and the probes
+    alike read the directory's own repository. Where git exits non-zero on
+    HEAD, the exit of plumbing run there tells why: a repository git will
+    not read (its config git dies on: `rev-parse --git-dir` fails) and a
+    branch with no commit (`rev-parse --verify -q HEAD` fails) read None, as
+    a folder whose files name no repository does with no git run at all; a
+    repository whose head resolves and whose history git cannot walk (its
+    root commit's object gone) reads `error`, unread; a probe that meets its
+    timeout reads `timeout`. A log that answers, or that meets its own
+    timeout (`timeout`), runs neither probe."""
+    elsewhere = _repo(tmp_path, "elsewhere")
+    _commit(elsewhere, "other", when=_T0, files={"other.md": "o\n"})
+    repo = _repo(tmp_path)
+    if case == "no repository":
+        repo = tmp_path / "plain"
+        repo.mkdir()
+    elif case != "unborn":
+        root = _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
+        _commit(repo, "post", when=_T1, files={"notes0.md": "a1\n"})
+        if case in ("error", "probe timeout"):
+            gone = repo / ".git" / "objects" / root[:2] / root[2:]
+            gone.chmod(0o644)
+            gone.unlink()
+        elif case == "git refuses the repository":
+            config = repo / ".git" / "config"
+            with config.open("a", encoding="utf-8") as handle:
+                handle.write("[include]\n\tpath\n")
+    real_run = subprocess.run
+    probes: list[Any] = []
+
+    def run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if "rev-parse" in argv:
+            probes.append(argv)
+        if (case, "rev-parse" in argv, "--format=%at" in argv) in (
+            ("probe timeout", True, False),
+            ("log timeout", False, True),
+        ):
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setenv("GIT_DIR", str(elsewhere / ".git"))
+    monkeypatch.setattr(subprocess, "run", run)
+    _caches.clear_all()
+    assert origin_history.located_key(repo) is None, "premise: nothing keys it"
+    want, probed = _REFUSED[case]
+    got = origin_dates.commit_author_timestamps(repo)
+    if want is list:
+        assert isinstance(got, list) and len(got) == 2, "the directory's own"
+    else:
+        assert got is want
+    assert len(probes) == probed
+    if case == "error":
+        # Keyed, the log names the head by its hash, which the repository
+        # holds: git's refusal of it is an error with no probe.
+        monkeypatch.delenv("GIT_DIR")
+        _caches.clear_all()
+        probes.clear()
+        assert origin_history.located_key(repo) is not None, "premise: keyed"
+        assert origin_dates.commit_author_timestamps(repo) is want
+        assert probes == []
 
 
 def test_a_walk_given_up_reads_unread_only_where_the_leg_applies(
