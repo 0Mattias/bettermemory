@@ -77,8 +77,10 @@ from .origin_gitfiles import (
     attribute_files_signature,
     capture_files,
     directories_held,
+    files_held,
     first_not_a_directory,
     gitattributes_signature,
+    located_head,
     refused_worktree_root,
     relative_to_root,
     walk_files_signature,
@@ -1157,9 +1159,9 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
 # those files read the same after it as before it and neither the root
 # directory nor the index file moved meanwhile, so a .gitmodules created
 # and removed while git ran is not kept, nor is a walk during which the
-# index was written. Where they cannot be read (`githead` declines: off
-# POSIX, under GIT_DIR; GIT_INDEX_FILE is set; the index is split), no
-# walk is kept. What the stamps do not see
+# index was written. Where they cannot be read (under GIT_DIR and the
+# variables like it; GIT_INDEX_FILE is set; the index is split), no walk
+# is kept. What the stamps do not see
 # (git's configuration outside the repository's own config files, a
 # shallow clone deepened under an unchanged head, and the
 # two changes undone mid-walk `walk_files_signature` names) reads the
@@ -1952,10 +1954,12 @@ __all__ = [
     "commits_since_anchor",
     "directories_held",
     "failed_git_calls",
+    "files_held",
     "follow_unsettled",
     "gitattributes_signature",
     "head_sha",
     "is_full_commit_sha",
+    "located_head",
     "ReachableWalk",
     "repo_toplevel_and_head",
     "repo_toplevel",

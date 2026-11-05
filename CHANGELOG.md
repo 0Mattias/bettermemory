@@ -290,6 +290,31 @@ eighteenth was built.
   git's discovery nothing is kept (`origin_patch._memo_key`).
   (`src/bettermemory/origin_patch.py`, `tests/test_origin_patch.py`)
 
+- **A search's commit drift is kept on Windows too (ENG-220).** The
+  per-hit drift memo keyed a row only where the repository's files
+  settle the root and the head (`origin.toplevel_and_head_from_files`),
+  which `githead` declines off POSIX, so on Windows every hit was
+  resolved again on every search, and a timeout's value, kept a minute
+  elsewhere, was not kept at all. Where the files decline (off POSIX, a
+  repository another account owns), the search's one `git rev-parse
+  --show-toplevel HEAD` now keys its rows wherever `githead.locate`
+  reads the repository at that root and the same head there, as the
+  split's memo keys (`origin_patch._memo_key`); the files beside the
+  history and a governed claim's attribute files are read there the same
+  way, so the walk memo keeps a walk there too. A commit, a checkout, a
+  reset or a rebase moves every key, as on POSIX, and the check at the
+  search's end reads the head and `githead.signature` again as `locate`
+  reads them. Under a variable that moves git's discovery no row is
+  keyed; read that way a governed claim's row is not keyed while neither
+  XDG_CONFIG_HOME nor HOME is set, since Git for Windows then derives a
+  home of its own, whose global attributes file is not read; and the
+  brief's memoised read (`verdict.memoised_verdicts`), which runs no
+  process, still leaves such a row unresolved. A warm search or
+  `memory_show` there runs that one process.
+  (`src/bettermemory/_response.py`,
+  `src/bettermemory/origin_gitfiles.py`, `src/bettermemory/origin.py`,
+  `tests/test_commit_drift_cache.py`, `tests/test_verdict.py`)
+
 #### Fixed
 
 - **Nothing a repository sets makes a changed claim read fresh

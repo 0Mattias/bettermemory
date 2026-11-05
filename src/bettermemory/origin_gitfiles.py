@@ -7,7 +7,9 @@ the paths the capture has warned are no directory (`first_not_a_directory`),
 the decoder of git's C-quoted patch headers, the index's ``.gitmodules``
 entry, and the file signatures the drift memos key on
 (`attribute_files_signature`, `gitattributes_signature`,
-`walk_files_signature`, `directories_held`).
+`walk_files_signature`, `directories_held`, `files_held`) and the head
+they are read under where `githead`'s discovery declines
+(`located_head`).
 
 This module lives apart from `origin.py` to keep each module under the
 package's 2,000-line bound (ENG-96). It imports the standard library,
@@ -885,8 +887,22 @@ def attribute_files_signature(
     or the word in a value or a comment, keys the files like any other
     config. A ``log.follow`` set outside the repository's own files (the
     global and system files, an include, the environment) is not seen.
-    `root` is the root `cwd`'s repository names."""
+    `root` is the root `cwd`'s repository names.
+
+    The repository is the one `githead.find_gitdir` discovers from `cwd`
+    and, where it declines (off POSIX, a repository another account owns),
+    the one whose ``.git`` entry sits at `root`, read by `githead.locate`
+    without its walk, as the split's memo reads it (`origin_patch.
+    _memo_key`); under a variable that moves git's discovery, none. Read
+    that way it is None too while neither XDG_CONFIG_HOME nor HOME is set:
+    Git for Windows then derives a home of its own (from HOMEDRIVE and
+    HOMEPATH, or USERPROFILE), whose global attributes file is not known
+    here."""
     gd = githead.find_gitdir(cwd)
+    if gd is None and not githead.discovery_moved():
+        gd = githead.locate(root, walk=False)
+        if not os.environ.get("XDG_CONFIG_HOME") and "HOME" not in os.environ:
+            return None
     if gd is None:
         return None
     read = _config_facts(gd.commondir / "config")
@@ -1209,6 +1225,19 @@ def _index_gitmodules(gd: githead.GitDir) -> tuple[object, ...] | None:
     return entry
 
 
+def _gitdir_at_root(root: Path) -> githead.GitDir | None:
+    """The repository whose ``.git`` entry sits at `root`: `githead.
+    gitdir_at`'s and, where it declines (off POSIX, a repository another
+    account owns), `githead.locate`'s without its walk, as the split's memo
+    reads it (`origin_patch._memo_key`). None under a variable that moves
+    git's discovery, where git may read another repository than either
+    names."""
+    found = githead.gitdir_at(root)
+    if found is None and not githead.discovery_moved():
+        found = githead.locate(root, walk=False)
+    return found
+
+
 def walk_files_signature(
     root: Path, *, directories: dict[str, tuple[int, int]] | None = None
 ) -> tuple[object, ...] | None:
@@ -1244,12 +1273,14 @@ def walk_files_signature(
     that the index was not written, which leaves nothing kept from a search
     during which the index's entry moved and moved back.
 
-    Read through `githead.gitdir_at`, which reads the repository only when
+    Read through `githead.gitdir_at` and, where it declines (off POSIX, a
+    repository another account owns), `githead.locate` without its walk
+    (`_gitdir_at_root`), both of which read the repository only when
     `root` holds its ``.git`` entry, so a root git names elsewhere
     (``core.worktree``) is never stamped against an enclosing repository.
     None whenever GIT_INDEX_FILE is set (git reads the index it names), where
-    `githead` declines (off POSIX, under GIT_DIR and the other variables
-    that move discovery, a root that holds no ``.git`` entry), where a
+    both decline (under GIT_DIR and the other variables that move
+    discovery, a root that holds no ``.git`` entry), where a
     config cannot be read or is one git refuses, where the index is not one
     `_index_gitmodules` reads exactly (a split index, an unknown version, a
     SHA-256 repository), and where a stat or a read fails for any reason
@@ -1265,7 +1296,7 @@ def walk_files_signature(
     old stamp)."""
     if "GIT_INDEX_FILE" in os.environ:
         return None
-    gd = githead.gitdir_at(root)
+    gd = _gitdir_at_root(root)
     if gd is None:
         return None
     try:
@@ -1287,3 +1318,39 @@ def walk_files_signature(
         return (common[0], worktree[0], gitmodules, index)
     except (OSError, ValueError, _IndexUnsettled):
         return None
+
+
+def located_head(root: Path) -> str | None:
+    """The head `githead.locate` reads in the repository whose ``.git``
+    entry sits at `root`, for a key settled on git's answer where
+    `githead`'s discovery declines (`_response._DriftPass`)."""
+    found = githead.locate(root, walk=False)
+    return None if found is None else githead.head_sha(found)
+
+
+def files_held(
+    cwd: Path,
+    root: Path,
+    repository: object,
+    chains: dict[tuple[str, ...], tuple[object, ...] | None],
+    walk_files: tuple[object, ...] | None,
+    directories: dict[str, tuple[int, int]],
+) -> bool:
+    """Whether the files a search keyed its hits on still read as they did
+    when it keyed them: `repository` is what `attribute_files_signature`
+    gave, `chains` what `gitattributes_signature` gave for each set of
+    governed files, `walk_files` what `walk_files_signature` gave, and
+    `directories` the stamps those three recorded of the directories that
+    hold the files (`directories_held`), which move when a file there was
+    created and removed in between, absent both times. A part that keyed
+    nothing (never read, or None) is not read again."""
+    if repository is not None and attribute_files_signature(cwd, root) != repository:
+        return False
+    if walk_files is not None and walk_files_signature(root) != walk_files:
+        return False
+    if not directories_held(directories):
+        return False
+    return all(
+        chain is None or gitattributes_signature(root, specs) == chain
+        for specs, chain in chains.items()
+    )

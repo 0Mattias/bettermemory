@@ -45,6 +45,7 @@ from bettermemory.search import search as run_search
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from bettermemory.verdict import MemoryVerdict, UnresolvedVerdict, memoised_verdicts
 
 from ._mcp import call_tool as _mcp_call
 from .test_origin_patch import _git_version
@@ -247,6 +248,15 @@ def _attach(
     finally:
         monkeypatch.setattr(subprocess, "run", real_run)
     return out, calls
+
+
+def _keying(repo: Path) -> list[tuple[str, ...]]:
+    """What a search the memo answers whole forks to key its rows: nothing
+    where the files settle the root and the head, and otherwise the pass's
+    one ``git rev-parse`` (`_response._DriftPass._keyed_pair`)."""
+    if origin.toplevel_and_head_from_files(repo) is not None:
+        return []
+    return [("rev-parse", "--show-toplevel", "HEAD")]
 
 
 def _by_id(out: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -575,6 +585,7 @@ def test_the_memo_is_bounded(
     assert len(_response._DRIFT_MEMO) == 2
 
 
+@pytest.mark.usefixtures("discovery")
 @pytest.mark.parametrize("failure", ["timeout", "could-not-run"])
 def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
@@ -585,11 +596,9 @@ def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
     is what the same call meets again on the same history, so its value is
     kept under the row's key for a minute, and the next search forks
     nothing for the row; then the row is resolved again (ENG-220's
-    review). Where the files settle no key for the row (off POSIX, where
-    `origin.toplevel_and_head_from_files` declines), no row is kept, a
-    timeout's neither, and the next search resolves it again: the
-    assertion of the minute held on Windows only for a key the row never
-    had."""
+    review). On every platform: where the files settle no key for the row
+    (off POSIX, where `origin.toplevel_and_head_from_files` declines), the
+    pass's one ``git rev-parse`` keys it (`_keying`)."""
     clock = [1000.0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     repo = _repo(tmp_path)
@@ -622,19 +631,19 @@ def test_a_timeout_is_memoised_for_a_minute_and_no_other_failure(
     monkeypatch.setattr(subprocess, "run", real_run)
     assert _by_id(out)[memory_id]["commit_drift_count"] == 2, "the unfiltered fallback"
 
-    keyed = origin.toplevel_and_head_from_files(repo) is not None
-    assert keyed == (os.name == "posix" and githead._POSIX), "premise: who keys"
+    keying = _keying(repo)
+    assert (keying == []) == (os.name == "posix" and githead._POSIX), "who keys"
     after, calls = _attach(memories, caller, monkeypatch)
-    if failure == "timeout" and keyed:
+    if failure == "timeout":
         assert _by_id(after)[memory_id]["commit_drift_count"] == 2, "kept a minute"
-        assert calls == [], "the row forks nothing"
+        assert calls == keying, "the row forks nothing"
         clock[0] += _response._TIMED_OUT_SECONDS
         after, calls = _attach(memories, caller, monkeypatch)
     assert _by_id(after)[memory_id]["commit_drift_count"] == 1
-    assert calls, "resolved again once git could run"
+    assert len(calls) > len(keying), "resolved again once git could run"
 
 
-@files_only
+@pytest.mark.usefixtures("discovery")
 def test_every_hit_at_an_anchor_whose_names_timed_out_is_kept_a_minute(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -682,20 +691,208 @@ def test_every_hit_at_an_anchor_whose_names_timed_out_is_kept_a_minute(
     assert not _response._DRIFT_MEMO
     assert len(_response._DRIFT_TIMED_OUT) == 2
     out, calls = _attach(memories, caller, monkeypatch)
-    assert calls == [] and len(walks) == 2, "kept a minute"
+    assert calls == _keying(repo) and len(walks) == 2, "kept a minute"
     clock[0] += _response._TIMED_OUT_SECONDS
     out, calls = _attach(memories, caller, monkeypatch)
     assert len(walks) == 4, "each resolved again: one walk for the search"
     assert [_by_id(out)[i]["commit_drift_count"] for i in ids] == [1, 1]
 
 
-def test_a_head_that_moves_during_the_attach_stores_nothing(
+@pytest.mark.usefixtures("discovery")
+@pytest.mark.parametrize(
+    ("event", "moved"),
+    [("commit", [2, 2]), ("checkout", [2, 2]), ("reset", [0, 0]), ("rebase", [3, 3])],
+)
+def test_every_head_move_is_a_new_key_wherever_the_rows_are_keyed(
+    event: str,
+    moved: list[int],
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit, a checkout, a reset and a rebase each move the head and so
+    every row's key, whether the files key the rows or, where they decline
+    (off POSIX, another account's repository), the pass's one ``git
+    rev-parse`` does with `githead.locate` reading the same head: the
+    search after the move reads the moved head's counts, on the walk and on
+    the dates, as one with every memo cleared does, and not the memo's."""
+    lines = "1\n2\n3\n"
+    repo = _repo(tmp_path)
+    anchor = _commit(repo, "seed", when=_T0, files={"notes0.md": f"a\n{lines}z\n"})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    cited = f"widget rule {{}} lives in {repo / 'notes0.md'}"
+    ids = [
+        _write(store, caller, monkeypatch, cited.format("a"), verified_head=anchor),
+        _write(store, caller, monkeypatch, cited.format("b")),
+    ]
+    _commit(repo, "c1", when=_T1, files={"notes0.md": f"a1\n{lines}z\n"})
+    # A side branch from the seed whose two commits edit another line, so a
+    # rebase onto it replays c1 cleanly.
+    _git(repo, "switch", "-q", "-c", "side", anchor)
+    _commit(repo, "s1", when=_T1, files={"notes0.md": f"a\n{lines}z1\n"})
+    _commit(repo, "s2", when=_T2, files={"notes0.md": f"a\n{lines}z2\n"})
+    _git(repo, "switch", "-q", "main")
+    memories = store.load_all()
+
+    def counts(out: list[dict[str, Any]]) -> list[int]:
+        return [_by_id(out)[i]["commit_drift_count"] for i in ids]
+
+    cold, _ = _attach(memories, caller, monkeypatch)
+    assert counts(cold) == [1, 1]
+    assert len(_response._DRIFT_MEMO) == 2, "premise: both rows are keyed"
+    warm, calls = _attach(memories, caller, monkeypatch)
+    assert counts(warm) == [1, 1] and calls == _keying(repo), "the memo answers"
+    head = _git(repo, "rev-parse", "HEAD")
+    if event == "commit":
+        _commit(repo, "c2", when=_T2, files={"notes0.md": f"a2\n{lines}z\n"})
+    elif event == "checkout":
+        _git(repo, "checkout", "-q", "side")
+    elif event == "reset":
+        _git(repo, "reset", "-q", "--hard", anchor)
+    else:
+        _git(repo, "rebase", "-q", "side", when=_NOW)
+    assert _git(repo, "rev-parse", "HEAD") != head, "premise: the head moved"
+    after, calls = _attach(memories, caller, monkeypatch)
+    assert len(calls) > len(_keying(repo)), "resolved again"
+    assert counts(after) == moved
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert counts(cached) == counts(uncached) == moved
+
+
+def _cited_once(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Origin, str, list[Any]]:
+    """A repository, its caller, and one memory citing `notes0.md`, which
+    one commit since the stamp edited: its count is 1."""
+    repo = _repo(tmp_path)
+    _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    memory_id = _write(
+        store, caller, monkeypatch, f"widget rule a lives in {repo / 'notes0.md'}"
+    )
+    _commit(repo, "post", when=_T1, files={"notes0.md": "a1\n"})
+    return repo, caller, memory_id, store.load_all()
+
+
+@pytest.mark.usefixtures("discovery")
+def test_no_row_is_keyed_under_a_variable_that_moves_discovery(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under GIT_DIR, as under every variable that moves git's discovery,
+    git may read another repository than `githead.locate` names, so no row
+    is keyed, by the files or by git's answer: each search resolves the
+    row again and the memo keeps nothing."""
+    repo, caller, memory_id, memories = _cited_once(memory_dir, tmp_path, monkeypatch)
+    root = repo.resolve()
+    monkeypatch.setenv("GIT_DIR", str(root / ".git"))
+    drift = _response._DriftPass(repo, _REMOTE, _counted(memories))
+    assert drift.located() is not None, "premise: git answers"
+    assert drift._keyed_pair(True) is None
+    assert origin.walk_files_signature(root) is None
+    assert origin.attribute_files_signature(repo, root) is None
+    for _ in range(2):
+        out, calls = _attach(memories, caller, monkeypatch)
+        assert _by_id(out)[memory_id]["commit_drift_count"] == 1
+        assert ("log", "--format=%aI", "--stdin") in [c[:3] for c in calls]
+    assert not _response._DRIFT_MEMO
+
+
+@pytest.mark.usefixtures("discovery")
+def test_the_memoised_verdicts_run_no_git_wherever_the_rows_are_keyed(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`verdict.memoised_verdicts` runs no process, on a hook's deadline.
+    Where the files settle the root and the head it reads the row a search
+    resolved; where they do not, the one ``git rev-parse`` that keys the row
+    is a process, so the row is left unresolved, as before."""
+    repo, caller, memory_id, memories = _cited_once(memory_dir, tmp_path, monkeypatch)
+    _attach(memories, caller, monkeypatch)
+    assert len(_response._DRIFT_MEMO) == 1, "premise: the search keyed the row"
+    keyed_by_files = _keying(repo) == []
+    calls: list[tuple[str, ...]] = []
+    real_run = subprocess.run
+
+    def spy(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(_git_args(argv))
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+    (memoised,) = memoised_verdicts(
+        memories,
+        caller_origin=caller,
+        now=_NOW,
+        stale_after_days=30,
+        admission=_counted(memories),
+    )
+    monkeypatch.setattr(subprocess, "run", real_run)
+    assert calls == []
+    assert memoised.id == memory_id
+    assert type(memoised) is (MemoryVerdict if keyed_by_files else UnresolvedVerdict)
+
+
+@pytest.mark.usefixtures("discovery")
+@pytest.mark.parametrize("home", [True, False], ids=["a home", "no home"])
+def test_a_governed_claim_is_keyed_where_its_attribute_files_are_known(
+    home: bool,
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A governed claim's row keys on the attribute files its patch stream
+    reads: the repository's the files discover and, where they decline, the
+    one whose ``.git`` entry `githead.locate` reads at the root. Read that
+    way, the global attributes file is known only under XDG_CONFIG_HOME or
+    HOME, since Git for Windows derives a home of its own where both are
+    unset: there the row is not keyed, and each search resolves it again."""
+    repo = _repo(tmp_path)
+    _commit(repo, "seed", when=_T0, files={"pkg/mod.py": _MODULE})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    memory_id = _write(
+        store,
+        caller,
+        monkeypatch,
+        "widget rule e is anchored in pkg/mod.py",
+        claims=["pkg/mod.py::other"],
+    )
+    _commit(
+        repo,
+        "post",
+        when=_T1,
+        files={"pkg/mod.py": _MODULE.replace("def other():", "def other(flag=False):")},
+    )
+    memories = store.load_all()
+    if not home:
+        monkeypatch.delenv("XDG_CONFIG_HOME")
+        monkeypatch.delenv("HOME", raising=False)
+    keyed = home or _keying(repo) == []
+    for _ in range(2):
+        out, calls = _attach(memories, caller, monkeypatch)
+        assert _by_id(out)[memory_id]["commit_drift_count"] == 1
+    assert len(_response._DRIFT_MEMO) == (1 if keyed else 0)
+    if keyed:
+        assert calls == _keying(repo), "the memo answers"
+    else:
+        assert len(calls) > len(_keying(repo)), "resolved again"
+
+
+@pytest.mark.usefixtures("discovery")
+@pytest.mark.parametrize("blind", [False, True], ids=["signature", "head alone"])
+def test_a_head_that_moves_during_the_attach_stores_nothing(
+    blind: bool, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The path-filtered logs read the head git finds when they run, which
     a commit landing mid-search moves away from the head the key names.
     Nothing from such an attach is kept: back at the first head, the
-    count is that head's own, not the mixed one."""
+    count is that head's own, not the mixed one. The head is read again at
+    the end as it was keyed, from the files or as `githead.locate` reads
+    it, so this holds where `githead.signature` misses the move (`blind`:
+    the writes within one tick of the clock, each inode number reused),
+    for a move that writes no index, which the end's check holds too: the
+    branch's ref moved to a commit made before (``git update-ref``)."""
     repo = _repo(tmp_path)
     _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
     store = Store(memory_dir)
@@ -704,12 +901,19 @@ def test_a_head_that_moves_during_the_attach_stores_nothing(
         store, caller, monkeypatch, f"widget rule a lives in {repo / 'notes0.md'}"
     )
     first_head = _commit(repo, "post 1", when=_T1, files={"notes0.md": "a1\n"})
+    second = _commit(repo, "post 2", when=_T2, files={"notes0.md": "a2\n"})
+    _git(repo, "reset", "-q", "--hard", first_head)
+    if blind:
+        monkeypatch.setattr(githead, "signature", lambda *a, **k: ("blind",))
 
     real_touching = origin.commit_author_timestamps_touching_pathspecs
     moved: list[str] = []
 
     def commit_then_read(*args: Any, **kwargs: Any) -> Any:
-        if not moved:
+        if not moved and blind:
+            _git(repo, "update-ref", "refs/heads/main", second)
+            moved.append(second)
+        elif not moved:
             moved.append(_commit(repo, "post 2", when=_T2, files={"notes0.md": "a2\n"}))
         return real_touching(*args, **kwargs)
 
@@ -726,7 +930,7 @@ def test_a_head_that_moves_during_the_attach_stores_nothing(
     _git(repo, "reset", "-q", "--hard", first_head)
     back, calls = _attach(memories, caller, monkeypatch)
     assert _by_id(back)[memory_id]["commit_drift_count"] == 1
-    assert calls, "resolved again at the first head"
+    assert len(calls) > len(_keying(repo)), "resolved again at the first head"
 
 
 def _age(*paths: Path) -> None:
@@ -954,6 +1158,9 @@ def test_where_the_files_do_not_settle_the_head_git_answers_the_same(
 
     _caches.clear_all()
     monkeypatch.setattr(githead, "head_sha", lambda gd: None)
+    drift = _response._DriftPass(repo, _REMOTE, _counted(memories))
+    assert drift.located() is not None, "premise: git answers"
+    assert drift._keyed_pair(True) is None, "locate reads no head there"
     for _ in range(2):
         from_git, calls = _attach(memories, caller, monkeypatch)
         assert from_git == from_files

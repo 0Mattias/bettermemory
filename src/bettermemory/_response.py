@@ -43,9 +43,10 @@ from .origin import (
     attribute_files_signature,
     commit_author_timestamps,
     commits_since_anchor,
-    directories_held,
     failed_git_calls,
+    files_held,
     gitattributes_signature,
+    located_head,
     repo_toplevel_and_head,
     toplevel_and_head_from_files,
     walk_files_signature,
@@ -109,8 +110,9 @@ SIMILAR_HITS_SHOWN = 5
 # `ResponseBuilder.attach_commit_drift_counts`: one hit's resolution, keyed
 # on every input of it. `memory_show` and the session brief read and fill
 # it too (`verdict`), through the same pass (`_DriftPass`) and so the same
-# key. The key is the repository root and the commit HEAD
-# names as the repository's files give them, the caller's directory, the
+# key. The key is the repository root and the commit HEAD names as the
+# repository's files give them (where they do not, as the search's `git
+# rev-parse` does, `_DriftPass._keyed_pair`), the caller's directory, the
 # memory's anchors (derived from its body and verified_paths) and its
 # declared claims as stored, the verify instant, the stamp's recorded head,
 # for a hit with a governed claim the attribute files its patch stream
@@ -136,7 +138,7 @@ SIMILAR_HITS_SHOWN = 5
 # kept apart for `_TIMED_OUT_SECONDS` (`_DRIFT_TIMED_OUT`), and a search
 # during which the head, a keyed
 # file or the index moved, even to move back, stores nothing
-# (`_files_held`, `githead.signature`). What the key does not see
+# (`origin_gitfiles.files_held`, `githead.signature`). What the key does not see
 # (git's configuration outside the repository's config file, a shallow
 # clone deepened under an unchanged head, a change within one tick of the
 # filesystem's clock that reuses an inode number, and the rest) is listed
@@ -220,35 +222,6 @@ def _remember_drift(
 _UNREAD = object()
 
 
-def _files_held(
-    cwd: Path,
-    root: Path,
-    repository: object,
-    chains: dict[tuple[str, ...], tuple[object, ...] | None],
-    walk_files: tuple[object, ...] | None,
-    directories: dict[str, tuple[int, int]],
-) -> bool:
-    """Whether the files a search keyed its hits on still read as they did
-    when it keyed them: `repository` is what `attribute_files_signature`
-    gave, `chains` what `gitattributes_signature` gave for each set of
-    governed files, `walk_files` what `walk_files_signature` gave, and
-    `directories` the stamps those three recorded of the directories that
-    hold the files (`origin_gitfiles.directories_held`), which move when a file
-    there was created and removed in between, absent both times. A part
-    that keyed nothing (never read, or None) is not read again."""
-    if repository is not _UNREAD and repository is not None:
-        if attribute_files_signature(cwd, root) != repository:
-            return False
-    if walk_files is not None and walk_files_signature(root) != walk_files:
-        return False
-    if not directories_held(directories):
-        return False
-    return all(
-        chain is None or gitattributes_signature(root, specs) == chain
-        for specs, chain in chains.items()
-    )
-
-
 class _DriftPass:
     """One pass of per-hit commit-drift resolution against one caller
     directory: the state a pass over many memories keeps between rows, and
@@ -271,7 +244,9 @@ class _DriftPass:
     pass opens (no process). The head's whole history (`timestamps`) and
     the root and head from git where the files decline (`located`) are
     read on first use, so a pass the memo answers whole runs no git
-    process. What the pass resolves is kept by `store`, at its end (or
+    process where the files settle the root and the head, and the one
+    ``git rev-parse`` that keys its rows where they do not (below). What
+    the pass resolves is kept by `store`, at its end (or
     after each row, for the brief's fill), only while what it was keyed on
     still reads as it did when the pass opened.
 
@@ -281,7 +256,8 @@ class _DriftPass:
     index readers) is too, so passes on several threads, a search's and a
     worker thread's, can run at once.
 
-    WARM, the count is zero for every hit the memo holds. A hit it does
+    WARM, the count is zero for every hit the memo holds, that one
+    ``git rev-parse`` aside. A hit it does
     not hold pays its cold cost on every search: one the key cannot
     settle (below), and one whose git work fails every time (the next
     paragraph). Each hit's resolution is memoised (`_DRIFT_MEMO`) on
@@ -355,11 +331,14 @@ class _DriftPass:
     removed meanwhile moves; and so must the index file, so a search
     during which git wrote the index, which could move its
     ``.gitmodules`` entry and back, keeps nothing. Where the files do
-    not settle the root and the head, ``git rev-parse --show-toplevel
-    HEAD`` answers them and neither memo is used: that shape pays ``2 +
-    ...`` on every search, with the walks memoised as before where
-    `githead` reads the repository at the root, and kept for the one
-    search where it does not (off POSIX, under GIT_DIR).
+    not settle the root and the head (off POSIX, another account's
+    repository), ``git rev-parse --show-toplevel HEAD`` answers them
+    once per search, and the rows key on its answer where `githead.
+    locate` reads the repository at that root and the same head there
+    (`_keyed_pair`), as the split's memo keys (`origin_patch._memo_key`);
+    the head is read there again at the end, with `githead.signature`
+    read as `locate` reads. Under a variable that moves git's discovery
+    (GIT_DIR and the rest) no row is keyed, and neither memo is used.
 
     What the key and the checks do not see, read from the memo until
     the head moves: the working tree's symbolic links on an anchor's
@@ -394,6 +373,9 @@ class _DriftPass:
         self.caller_repo = caller_repo
         self.admission = admission
         self.settled = toplevel_and_head_from_files(cwd)
+        # The root and the head the rows key on (`_keyed_pair`).
+        self._keyed = self.settled
+        self._keyed_read = self.settled is not None
         self._timestamps: list[datetime] | None = None
         self._located: tuple[Path, str] | None = None
         self._located_read = False
@@ -446,6 +428,24 @@ class _DriftPass:
             self._located_read = True
         return self._located
 
+    def _keyed_pair(self, resolve: bool) -> tuple[Path, str] | None:
+        """The root and the head the rows key on: the files' (`settled`),
+        or where they decline, git's (`located`) where `githead.locate`
+        reads the repository at that root and the same head there, under no
+        variable that moves git's discovery. Read once per pass; git is not
+        run for it on a row that may run none (`resolve` False) until a row
+        has run it."""
+        if not self._keyed_read and (resolve or self._located_read):
+            self._keyed_read = True
+            located = self.located()
+            if (
+                located is not None
+                and not githead.discovery_moved()
+                and located_head(located[0]) == located[1]
+            ):
+                self._keyed = located
+        return self._keyed
+
     def lookup(
         self, record: Any, last_verified_at: datetime | None, *, resolve: bool = True
     ) -> tuple[bool, _Drift]:
@@ -489,7 +489,7 @@ class _DriftPass:
         since = last_verified_at
         if since.tzinfo is None:
             since = since.replace(tzinfo=timezone.utc)
-        key = self._key(record, anchors, parsed_claims, since)
+        key = self._key(record, anchors, parsed_claims, since, resolve)
         if key is not None:
             found, resolved = _recall_drift(key)
             if found:
@@ -503,8 +503,8 @@ class _DriftPass:
         # fallback taken on a failure is what the uncached code serves on
         # this call and not on the next. A timeout's is what the same call
         # meets again, and is kept a while (`_DRIFT_TIMED_OUT`).
-        if self.settled is not None and self._signature is None:
-            self._signature = githead.signature(self.cwd)
+        if self._keyed is not None and self._signature is None:
+            self._signature = githead.signature(self.cwd, owner=self._owned)
         failed = failed_git_calls()
         timed_out = timed_out_calls()
         located = self.located()
@@ -533,24 +533,29 @@ class _DriftPass:
         anchors: tuple[str, ...],
         parsed_claims: list[Claim],
         since: datetime,
+        resolve: bool,
     ) -> _DriftKey | None:
-        """The row's `_DRIFT_MEMO` key, from stats of files alone, or None
-        where the files do not settle one and the row runs uncached.
+        """The row's `_DRIFT_MEMO` key, from stats of files alone (and,
+        where they do not settle the root and the head, the pass's one
+        ``git rev-parse``), or None where no key is settled and the row
+        runs uncached.
 
         Keyed on every input `_resolve_hit_drift` reads (the head's
         history, `timestamps`, is read under the same root and head). Only
-        where the files settled the root and the head: `store` reads the
-        head from them again, and the git path runs uncached, as before
-        the memo. A governed claim's patch stream also reads the attribute
+        where the root and the head are keyed (`_keyed_pair`): `store`
+        reads the head again as they were read, and elsewhere the row runs
+        uncached, as before the memo. A governed claim's patch stream also
+        reads the attribute
         files, so its row keys on them, and runs uncached where they do
         not settle it; no other row reads them. Every row keys on the
         files beside the history its git reads: the repository's config
         and the working tree's .gitmodules (what moved a log there is
         pinned, `origin_history.AS_STORED_CONFIG`), read once per pass;
         where they cannot be read, the row runs uncached."""
-        if self.settled is None:
+        keyed = self._keyed_pair(resolve)
+        if keyed is None:
             return None
-        root = self.settled[0]
+        root = keyed[0]
         governed = tuple(governed_claim_paths(parsed_claims))
         attributes: tuple[object, ...] | None = None
         if governed:
@@ -574,7 +579,7 @@ class _DriftPass:
             return None
         return (
             str(root),
-            self.settled[1],
+            keyed[1],
             str(self.cwd),
             anchors,
             tuple(record.claims),
@@ -583,6 +588,12 @@ class _DriftPass:
             attributes,
             self._walk_files,
         )
+
+    @property
+    def _owned(self) -> bool:
+        """Whether the rows key on the files' root and head, which
+        `githead`'s discovery read; else on git's, read as `locate` reads."""
+        return self.settled is not None
 
     @property
     def unstored(self) -> int:
@@ -614,15 +625,22 @@ class _DriftPass:
         pass to go on."""
         if not self._resolved and not self._timed_out:
             return not self._broken
+        keyed = self._keyed
         if (
             not self._broken
-            and self.settled is not None
-            and toplevel_and_head_from_files(self.cwd) == self.settled
-            and githead.signature(self.cwd) == self._signature
-            and _files_held(
+            and keyed is not None
+            and (
+                toplevel_and_head_from_files(self.cwd) == keyed
+                if self._owned
+                else located_head(keyed[0]) == keyed[1]
+            )
+            and githead.signature(self.cwd, owner=self._owned) == self._signature
+            and files_held(
                 self.cwd,
-                self.settled[0],
-                self._repository_attributes,
+                keyed[0],
+                None
+                if self._repository_attributes is _UNREAD
+                else self._repository_attributes,
                 self._attribute_chains,
                 self._walk_files,
                 self._held_directories,
@@ -1772,8 +1790,8 @@ def _open_drift_pass(
         return None
     # The repo root and the head, from the repository's files (the
     # pass reads them as it opens). They key the whole-history log and
-    # the per-hit memo; where the files do not settle them, both run
-    # uncached, from git.
+    # the per-hit memo; where the files do not settle them, git's answer
+    # below does, where `githead.locate` reads the same (`_keyed_pair`).
     admission.prime(h.id for h in hits)
     drift = _DriftPass(Path(caller_origin.cwd), caller_origin.repo, admission)
     if drift.timestamps() is None:
