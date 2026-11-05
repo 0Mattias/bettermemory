@@ -1276,7 +1276,9 @@ git directory through the other machine's view continues the record
 read, which holds the records, where the retired one, first in order
 after an answer joining its project, was continued by it as well and
 brought back holding none. The retired flag alone is no such marker, as
-a checkout retired as quiet is brought back by its next sighting. The
+a checkout retired as quiet is brought back by its next sighting. A
+checkout already retired into another is not retired again: no flow
+reaches it twice, and a second call writes nothing. The
 rows are of kinds 9.0.0rc18 reads: a home's, a checkout's and a
 question's put, a view's deletion, `proposal_answered`, and
 `checkout_retired`, whose extra fields it passes over. Joining its own project or the separate answer

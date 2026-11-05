@@ -1321,6 +1321,34 @@ def test_a_question_the_record_kept_asks_too_is_closed_on_the_one_retired(
 
 @pytest.mark.usefixtures("no_birth")
 @pytest.mark.parametrize("settled", ["heal", "join_first"])
+def test_a_record_retired_into_another_is_retired_once(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, settled: str
+) -> None:
+    """`_retire_into` called again on the record already retired into the
+    one kept (no flow does: rung 2 passes over it) writes nothing, and
+    the path stays where it was settled. Before, it wrote its checkout
+    and ``checkout_retired`` rows again."""
+    line, _box, _kid, kept, idle = _settled(tmp_path, lab, monkeypatch, settled)
+    seen, admitted = lab.view(line)
+    before = len(lab.store.log_rows())
+    model = lab._declaring()
+
+    with model._call():
+        model._retire_into(model.checkout(idle), model.checkout(kept), "again")
+
+    assert len(lab.store.log_rows()) == before
+    retired = [
+        json.loads(r.payload).get("checkout")
+        for r in lab.store.membership_log(["checkout_retired"])
+    ]
+    assert retired == [idle]
+    location.forget()
+    again, still = lab.view(line)
+    assert (again.checkout, still) == (seen.checkout, admitted) == (kept, admitted)
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("settled", ["heal", "join_first"])
 def test_why_and_list_name_the_record_a_moved_one_was_written_in(
     tmp_path: Path,
     lab: Lab,

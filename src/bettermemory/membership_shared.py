@@ -501,7 +501,13 @@ def _retire_into(self: Membership, idle: Checkout, kept: Checkout, by: str) -> N
     settled. The rows are of kinds 9.0.0rc18 reads (a home's, a
     checkout's and a question's put, a view's deletion,
     ``proposal_answered``, ``checkout_retired``). Indexed reads of
-    `idle`'s homes and of `idle`'s and `kept`'s open questions."""
+    `idle`'s homes and of `idle`'s and `kept`'s open questions.
+
+    A record already retired into another (`retired_into`) is left as it
+    is, nothing written: rung 2 passes over it, so no flow retires it
+    twice, and a second call would only repeat its retirement rows."""
+    if idle.retired and retired_into(self, idle.id) is not None:
+        return
     for row in self._store.membership_rows("homes", where={"checkout": idle.id}):
         self._put("home", {**row, "checkout": kept.id, "rule": f"{row['rule']}|{by}"})
     paths = {_norm(v.path) for v in kept.views_on(idle.machine)}
