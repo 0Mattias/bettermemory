@@ -1496,7 +1496,13 @@ eighteenth was built.
   pending` and `bettermemory health` alone; and such a question holds
   no alias clone's join (ENG-207), where it held one shown at no
   sighting (rows of kinds 9.0.0rc18
-  reads: it verifies, opens, reads and writes such a store). `project
+  reads: it verifies, opens, reads and writes such a store). The views
+  of this machine's checkouts such a placing reads, a heal's included,
+  and those the alias rule reads, are read before the sighting's
+  transaction with the others its ladder reads, so none is read with
+  the store's write lock held and a container is asked for them all in
+  one round, where each was read in the transaction, a container asked
+  in a round of its own for each (eight did not settle). `project
   why` of a record moved so names the checkout it was written in and
   the one it went into, with the retired one's rows, where it named the
   one read as the one written in; `project list` says `retired into

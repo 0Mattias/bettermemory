@@ -118,6 +118,21 @@ def _merges(world: World) -> list[str]:
     return [r.payload for r in world.store.log_rows() if r.kind == "project_merged"]
 
 
+def _reads_in_the_transaction(world: World) -> list[str]:
+    """Each view whose liveness the world's model reads from now on while
+    the store's write transaction is open, by path."""
+    seen: list[str] = []
+    real = world.model._liveness
+
+    def spy(checkout: Any, view: Any) -> str:
+        if world.store.in_batch:
+            seen.append(view.path)
+        return real(checkout, view)
+
+    world.model._liveness = spy
+    return seen
+
+
 def _stays_apart(world: World, alias: Repo, second: Resolution) -> None:
     for _ in range(2):
         assert _alias_sighting(world, alias, {ALIAS: FULL}).project == second.project
@@ -638,7 +653,9 @@ def test_a_question_no_sighting_shows_leaves_the_two_to_join(
     checkout; about the third project, it stays, asked at that project's
     next sighting. Where a sighting shows it (``live``), the two stay
     apart while it is open. Before, it held the join, shown at no
-    sighting."""
+    sighting. The second checkout's views, which the rule and the
+    placing of the question read, are read before the sighting's
+    transaction (`membership_alias.planned`, review R8 1)."""
     full, alias, first, second = _split_pair(world)
     twin = world.clone(alias, "/w/alias-twin", remote=ALIAS)
     other = world.see(twin)
@@ -668,9 +685,11 @@ def test_a_question_no_sighting_shows_leaves_the_two_to_join(
     elif holder == "gone":
         del world.disk[(twin.machine, twin.path)]
     _caught_up(full, alias)
+    reads = _reads_in_the_transaction(world)
 
     seen = _alias_sighting(world, alias, {ALIAS: FULL})
 
+    assert reads == []
     q = world.model.proposal(pr.id)
     if holder == "live":
         assert seen.project == second.project and _merges(world) == []
@@ -686,6 +705,46 @@ def test_a_question_no_sighting_shows_leaves_the_two_to_join(
     again = world.see(third)
     assert again.checkout == x.checkout and any(pr.id in line for line in again.lines)
     assert world.model.proposal(pr.id).checkout == x.checkout
+
+
+def test_a_question_the_join_asks_is_placed_by_views_read_before_it(
+    world: World,
+) -> None:
+    """Review R8 1: an import's question offering to join another project
+    to the full-URL clone's, open on a checkout of a third project here
+    whose folder is gone. The alias clone's sighting merges its project
+    into the full-URL clone's, then asks the question at the alias clone,
+    now a checkout of that project (`_asked_here`): the gone checkout's
+    views are read before the transaction, the projects the rule may
+    merge into planned with the alias clone's (`membership_alias.planned`)."""
+    full, alias, first, second = _split_pair(world)
+    third = world.repo("/w/third", remote="example.invalid/third")
+    x = world.see(third)
+    imported = world.see(world.repo("/w/imported", remote="example.invalid/i"))
+    pr = world.model.open_proposal(
+        checkout=str(x.checkout),
+        kind=IMPORT,
+        candidates=[str(first.project)],
+        evidence={
+            "imported_project": str(imported.project),
+            "source": "export.json",
+            "codes": {str(first.project): ["H"]},
+        },
+        reason=IMPORT,
+        line="an import's question",
+        distinct="imported_project",
+    )
+    del world.disk[(third.machine, third.path)]
+    _caught_up(full, alias)
+    reads = _reads_in_the_transaction(world)
+
+    seen = _alias_sighting(world, alias, {ALIAS: FULL})
+
+    assert reads == []
+    assert seen.project == first.project and len(_merges(world)) == 1
+    q = world.model.proposal(pr.id)
+    assert (q.state, q.checkout) == ("open", seen.checkout)
+    assert any(pr.id in line for line in seen.lines)
 
 
 def test_a_project_file_bound_to_either_project_leaves_the_two_apart(

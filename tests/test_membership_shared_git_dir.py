@@ -80,6 +80,7 @@ from bettermemory.membership_shared import _same_file
 from bettermemory.server import main as cli_main
 from bettermemory.store import Store
 
+from . import test_membership_resolution
 from .test_membership_remint import (
     Client,
     _file_token,
@@ -1554,7 +1555,7 @@ def test_a_question_whose_checkout_is_retired_later_is_asked_again(
     ["gone", "retired", "asked_here_too", "live", "other_machine", "its_own"],
 )
 def test_a_question_no_sighting_shows_is_asked_where_one_does(
-    tmp_path: Path, lab: Lab, holder: str
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, holder: str
 ) -> None:
     """An import's question about another project, open on a checkout of
     the project it offers to join that one to, and a sighting of another
@@ -1566,7 +1567,12 @@ def test_a_question_no_sighting_shows_is_asked_where_one_does(
     checkout here (``live``) and on another machine's checkout, whose
     folder is read there alone (``other_machine``); and a question about
     the checkout it is on (a changed remote's), whose folder is gone,
-    stays there, as it asks about that one (``its_own``)."""
+    stays there, as it asks about that one (``its_own``). Each view the
+    sighting reads to place the question is read before its transaction
+    (review R8 1): no `os.stat` runs with the store's write lock held.
+    Before, a steady sighting with the question on a live checkout here
+    read that checkout's views in it, four calls of `os.stat` and one of
+    `os.lstat`."""
     here = make_repo(tmp_path / "host" / "here", commits=1)
     wrote = lab.write("here", here)
     project, sighted_id = wrote.project, wrote.checkout
@@ -1599,9 +1605,11 @@ def test_a_question_no_sighting_shows_is_asked_where_one_does(
     elif holder == "retired":
         _quiet(lab, on)
     location.forget()
+    stats = _stats_in_the_transaction(lab, monkeypatch)
 
     res, _admitted = lab.view(here)
 
+    assert stats == []
     model = lab.model()
     q = model.proposal(qid)
     assert res.checkout == sighted_id
@@ -2358,3 +2366,170 @@ def test_a_windows_stamp_holds_the_change_time_or_is_not_made(
     names = ["info/exclude"] if read == "unread" else ["description", "info/exclude"]
     assert [s[0] for s in stamps] == names
     assert all(s[3] == changed for s in stamps)
+
+
+def _stats_in_the_transaction(
+    lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[str, str]]:
+    """Each call of `os.stat` and `os.lstat` from now on made while the
+    store's write transaction is open, by name and path."""
+    seen: list[tuple[str, str]] = []
+    for name in ("stat", "lstat"):
+
+        def spy(
+            *a: Any, _real: Any = getattr(os, name), _name: str = name, **kw: Any
+        ) -> Any:
+            if lab.store.in_batch:
+                seen.append((_name, str(a[0]) if a else ""))
+            return _real(*a, **kw)
+
+        monkeypatch.setattr(os, name, spy)
+    return seen
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("sibling", ["live", "gone"])
+def test_a_heal_reads_the_views_it_places_a_question_by_before_its_transaction(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, sibling: str
+) -> None:
+    """Review R8 1: the heal of a second record in the container's
+    project (``heal_apart``), an import's question open on it offering to
+    join another project to the container's, and a checkout of the
+    container's project on this host besides the container's own. The
+    heal moves the question to this host's where its folder holds it
+    (``live``), and else to the container's (``gone``): `_asked_at`
+    ranks this machine's first. Its views are read before the heal's
+    transaction (`_asked_plan`): no `os.stat` runs with the store's write
+    lock held. Before, they were read in it."""
+    made: dict[str, Any] = {}
+
+    def ask(line: Path, _kept: str, idle: str) -> None:
+        theirs = str(lab.model().checkout(idle).project)
+        sib = make_repo(tmp_path / "host" / "sib", commits=1)
+        made["sib"] = _joined_to(lab, sib, "sib", theirs)
+        made["q"] = _asked_about_else(lab, line, idle, IMPORT)
+        if sibling == "gone":
+            shutil.rmtree(sib)
+        location.forget()
+        made["stats"] = _stats_in_the_transaction(lab, monkeypatch)
+
+    _line, _box, kid, _kept, _idle = _settled(
+        tmp_path, lab, monkeypatch, "heal_apart", ask
+    )
+
+    assert made["stats"] == []
+    q = lab.model().proposal(made["q"])
+    assert (q.state, q.checkout) == ("open", made["sib"] if sibling == "live" else kid)
+
+
+@dataclass
+class _AtItsFolders(Client):
+    """A container whose other checkouts are registered at folders this
+    test reads: a view there is answered as that folder holds it, and
+    its mount as `Container` answers it."""
+
+    def answer(
+        self,
+        cap: location.Capture,
+        question: Mapping[str, Any],
+        answers: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        out = super().answer(cap, question, answers)
+        states = dict(out.get("views") or {})
+        for v in question.get("views") or ():
+            path = str(v["path"])
+            if path != self.mount and not path.startswith(self.mount + "/"):
+                states[path] = "live" if Path(path).exists() else "gone"
+        out["views"] = states
+        return out
+
+
+def _posts(lab: Lab, box: Client, monkeypatch: pytest.MonkeyPatch) -> int:
+    """The posts of one prompt's exchange (`Container.post`, its probe
+    first), each a call of `location.resolve_hook`."""
+    calls: list[object] = []
+    real = test_membership_resolution.resolve_hook
+
+    def counted(*a: Any, **kw: Any) -> Any:
+        calls.append(a)
+        return real(*a, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(test_membership_resolution, "resolve_hook", counted)
+        box.post(lab)
+    return len(calls)
+
+
+@pytest.mark.usefixtures("no_birth")
+@pytest.mark.parametrize("siblings", [1, 8])
+def test_a_container_prompt_asks_the_views_it_places_questions_by_in_one_round(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch, siblings: int
+) -> None:
+    """Review R8 1: a container with checkouts of one project, `a` through
+    its mount and `siblings` more at folders of its own, each holding an
+    import's question about another project offering to join it to
+    theirs. A prompt at `a` reads their views to place the questions
+    (`_asked_here`), which only the container can read: they are asked
+    of it in one round (`_asked_plan`, one `NeedWitnesses` naming them
+    all), so the exchange takes one post more than with no question
+    (two), whatever their number, and the questions stay where they are.
+    Before, each view was asked in a round of its own from inside the
+    transaction: one question took three posts, and eight did not settle
+    within `EXCHANGE_ROUNDS`."""
+    me = _container_machine(lab, "box")
+    box = _AtItsFolders(
+        make_repo(tmp_path / "box" / "a", commits=1), "/workspaces/a", me
+    )
+    first = box.post(lab)
+    assert first.checkout and first.project
+    holders = []
+    for i in range(siblings):
+        b = make_repo(tmp_path / "box" / f"b{i}", commits=1)
+        holders.append(_joined_to(lab, b, f"b{i}", str(first.project), me))
+    box.post(lab)
+    alone = _posts(lab, box, monkeypatch)
+    qids = [
+        _asked_about_else(lab, tmp_path / "box" / f"b{i}", k, IMPORT)
+        for i, k in enumerate(holders)
+    ]
+    box.post(lab)
+
+    asked = _posts(lab, box, monkeypatch)
+
+    assert (alone, asked) == (2, 3)
+    model = lab.model()
+    assert [model.proposal(q).checkout for q in qids] == holders
+
+
+@pytest.mark.usefixtures("no_birth")
+def test_a_new_checkout_reads_the_views_it_places_a_question_by_before_its_transaction(
+    tmp_path: Path, lab: Lab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review R8 1: a linked worktree of a checkout, sighted for the first
+    time, joins that checkout's project (S), where an import's question
+    about another project is open on another checkout of this host whose
+    folder is gone. The sighting asks it at the new checkout
+    (`_asked_here`), the gone checkout's views read before its
+    transaction (`_asked_plan` of the projects of the checkouts the plan
+    reads): no `os.stat` runs with the store's write lock held."""
+    here = make_repo(tmp_path / "host" / "here", commits=1)
+    wrote = lab.write("here", here)
+    assert wrote.project is not None
+    there = make_repo(tmp_path / "host" / "there", commits=1)
+    on = _joined_to(lab, there, "there", wrote.project)
+    qid = _asked_about_else(lab, there, on, IMPORT)
+    shutil.rmtree(there)
+    wt = tmp_path / "host" / "here-wt"
+    git(here, "worktree", "add", "-q", "-b", "feat", str(wt))
+    location.forget()
+    stats = _stats_in_the_transaction(lab, monkeypatch)
+
+    res, _admitted = lab.view(wt)
+
+    assert stats == []
+    assert res.checkout not in (wrote.checkout, on)
+    assert res.rule == "common_object+pointer"
+    assert lab.model().canonical(res.project) == wrote.project
+    q = lab.model().proposal(qid)
+    assert (q.state, q.checkout) == ("open", res.checkout)
+    assert res.outcome == ASK and any(qid in x for x in res.lines)

@@ -74,7 +74,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import _caches
 from .membership_lines import line_alias_joined
-from .membership_records import H, R, Checkout, Location
+from .membership_records import OPEN, H, R, Checkout, Location
 from .membership_shared import _unseen
 
 if TYPE_CHECKING:
@@ -125,9 +125,8 @@ def rejoin(
     """Merge the project of the known checkout `k`, sighted at `loc`,
     into the project its remotes, as git fetches them, name, under the
     rule of this module; the line that says so, or nothing."""
-    aliases = loc.alias_keys & loc.remote_keys
-    fetched = loc.remote_keys - aliases
-    if not aliases or not fetched or not loc.born or loc.history is None:
+    aliases, fetched = _keys(loc)
+    if not aliases:
         return []
     pid = self._canon(k.project)
     seen = (
@@ -166,6 +165,59 @@ def rejoin(
             loc.root or loc.cwd, self.project(q).name, q, p.name, pid, (H, R)
         )
     ]
+
+
+def _keys(loc: Location) -> tuple[frozenset[str], frozenset[str]]:
+    """The alias keys of a sighting the rule reads (`rejoin`) and the
+    keys its checkout fetches from; no alias key where it reads none (a
+    sighting with no key the fetch rewrites, none it fetches from,
+    unborn, or with no history to read H in)."""
+    aliases = frozenset(loc.alias_keys & loc.remote_keys)
+    fetched = frozenset(loc.remote_keys - aliases)
+    if not aliases or not fetched or not loc.born or loc.history is None:
+        return frozenset(), fetched
+    return aliases, fetched
+
+
+def planned(
+    self: Membership,
+    projects: Collection[str],
+    loc: Location,
+    k: Checkout | None = None,
+) -> tuple[set[str], list[Checkout]]:
+    """For the liveness read before a resolution's transaction
+    (`membership_resolve._liveness_plan`, ENG-156), at a sighting at
+    `loc` of the checkout `k`, or of a new one in one of `projects`, that
+    the rule reads: the projects it may merge one of them into (those
+    holding a key the checkout fetches from), and the checkouts whose
+    views `_target` reads (`membership_shared._unseen`), this machine's
+    of those projects and of `projects`, not retired and other than `k`,
+    where a question is open. Nothing where `loc` names no alias key.
+    One read of the projects holding those keys, their checkouts and the
+    questions open on this machine's."""
+    aliases, fetched = _keys(loc)
+    if not aliases:
+        return set(), []
+    pids = {self._canon(p) for p in projects}
+    qs = {
+        self._canon(str(row["project"]))
+        for row in self._store.membership_rows(
+            "project_remotes", column_in=("remote_key", sorted(fetched))
+        )
+    } - pids
+    held = self._checkouts_by_project([*pids, *qs], machine=self.machine)
+    mine = {
+        c.id: c
+        for cs in held.values()
+        for c in cs
+        if not c.retired and (k is None or c.id != k.id)
+    }
+    if not mine:
+        return qs, []
+    rows = self._store.membership_rows(
+        "proposals", where={"state": OPEN}, column_in=("checkout", sorted(mine))
+    )
+    return qs, [mine[c] for c in sorted({str(r["checkout"]) for r in rows})]
 
 
 def _target(

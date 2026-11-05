@@ -1306,7 +1306,13 @@ The rows are a question's put and `proposal_answered`; the cost, one
 read of the open questions of the two kinds at each sighting, and for
 each one of the checkout's project open on another checkout, that
 checkout's row and, where it is this machine's and not retired, its
-liveness. A question whose project has no live checkout anywhere, and
+liveness. That liveness is read before the sighting's transaction with
+the views the ladder reads (`membership_resolve._liveness_plan`,
+`membership_shared._asked_plan`), as is that of the checkouts a heal's
+`_asked_at` ranks and of those the alias rule reads
+(`membership_alias.planned`): none is read with the store's write lock
+held, and the witness exchange asks a container for them all in one
+round. A question whose project has no live checkout anywhere, and
 one about a checkout no sighting reaches, are named by `bettermemory
 health` (its open questions, with each one's checkout and path) and by
 `project pending`, and `project show` names those of each project.

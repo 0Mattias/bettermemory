@@ -631,6 +631,53 @@ def _unseen(self: Membership, k: Checkout) -> bool:
     return k.retired or (k.machine == self.machine and self.live_view(k) is None)
 
 
+def _asked_plan(
+    self: Membership,
+    projects: Collection[str],
+    k: Checkout | None = None,
+    settled: Checkout | None = None,
+) -> list[Checkout]:
+    """The checkouts whose views a sighting reads to place the questions
+    about another project (`_SUBJECT`), for the liveness read before its
+    transaction (`membership_resolve._liveness_plan`, ENG-156), so none
+    is read with the store's write lock held and the witness exchange
+    asks them in one round: this machine's checkouts, not retired, on
+    which such a question naming one of `projects` is open
+    (`_asked_here` reads whether a sighting shows it there); and where
+    `settled` is retired into `k` (a heal), this machine's checkouts,
+    not retired, of the projects its questions offer to join another to
+    where `k` is in none of them (`_asked_at` ranks them). `k` and
+    `settled` are not read: `_asked_here` passes over `k`'s questions,
+    and `settled` is retired before it runs. One read of the open
+    questions of those kinds and of the checkouts holding them, and for
+    a heal, of `settled`'s open questions and those projects' checkouts."""
+    wanted = {self._canon(p) for p in projects}
+    rows = self._store.membership_rows(
+        "proposals", where={"state": OPEN}, column_in=("kind", sorted(_SUBJECT))
+    )
+    held = {
+        pr.checkout
+        for pr in map(_proposal_from, rows)
+        if pr.checkout and wanted & {self._canon(c) for c in pr.candidates}
+    }
+    out = self._checkouts(column_in=("id", sorted(held))) if held else []
+    if k is not None and settled is not None:
+        named: set[str] = set()
+        for pr in self._open_proposals(settled.id):
+            cs = {self._canon(c) for c in pr.candidates}
+            if pr.kind in _SUBJECT and self._canon(k.project) not in cs:
+                named |= cs
+        if named:
+            got = self._checkouts_by_project(sorted(named), machine=self.machine)
+            out += [c for cs in got.values() for c in cs]
+    skip = {x.id for x in (k, settled) if x is not None}
+    return [
+        c
+        for c in out
+        if c.machine == self.machine and not c.retired and c.id not in skip
+    ]
+
+
 def _asks(pr: Proposal) -> tuple[str, str]:
     """A question's kind and what it asks about (`_SUBJECT`)."""
     return pr.kind, str(pr.evidence.get(_SUBJECT.get(pr.kind, "")) or "")

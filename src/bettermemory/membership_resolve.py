@@ -39,7 +39,7 @@ from .history import quoted
 from .location import view_path
 from .location_git import PROBE_BUDGET, UNANSWERED, bounded_read, bounded_reads
 from .location_witness import NeedWitnesses
-from .membership_alias import rejoin
+from .membership_alias import planned, rejoin
 from .membership_lines import (
     line_across_boundary,
     line_content_crowded,
@@ -114,6 +114,7 @@ from .membership_shared import (
     HEAL,
     _ask_which,
     _asked_here,
+    _asked_plan,
     _healed,
     _restamped,
     _retire_into,
@@ -522,9 +523,16 @@ def _liveness_plan(self: Membership, loc: Location) -> list[tuple[Checkout, View
     read a live view), those at its path (B), those carrying its token
     (T), those of the project its file names (the folder rungs) and, for a
     commit-less caller, every checkout of a project with no witness (C).
-    A view the ladder reads that is not here is read in the transaction,
-    bounded the same way; a question the client must answer first (the
-    witness exchange) ends the plan where it stands."""
+    Either way, the views the sighting reads to place a question (ENG-215)
+    for the known checkout's project, or the projects of those checkouts:
+    those of this machine's checkouts holding a question about another
+    project open on one of them (`membership_shared._asked_plan`, which
+    reads a heal's too), and at an alias clone's sighting, those of the
+    ones of the projects the rule reads holding any question
+    (`membership_alias.planned`). A view the ladder reads that is not
+    here is read in the transaction, bounded the same way; a question the
+    client must answer first (the witness exchange) ends the plan where
+    it stands."""
     if loc.state == UNREADABLE:
         return []
     pairs: dict[tuple[str, str], tuple[Checkout, View]] = {}
@@ -539,10 +547,13 @@ def _liveness_plan(self: Membership, loc: Location) -> list[tuple[Checkout, View
     path = loc.root or loc.cwd
     try:
         self._projects = None
-        k, _how = self._by_object(loc)
+        k, _how, _first, settled = _rung_two(self, loc)
         if k is not None:
             if not any(_same_path(v.path, path) for v in k.views_on(loc.machine)):
                 add([k])
+            also, held = planned(self, [k.project], loc, k)
+            add(held)
+            add(_asked_plan(self, [k.project, *also], k, settled))
             return list(pairs.values())
         common = loc.common_object_key
         if common is not None:
@@ -572,6 +583,12 @@ def _liveness_plan(self: Membership, loc: Location) -> list[tuple[Checkout, View
             bare = [p.id for p in self.projects() if p.id not in witnessed]
             for ks in self._checkouts_by_project(bare, machine=loc.machine).values():
                 add(ks)
+        projects = {k.project for k, _v in pairs.values()}
+        if bound is not None:
+            projects.add(bound)
+        also, held = planned(self, projects, loc)
+        add(held)
+        add(_asked_plan(self, [*projects, *also]))
     except Exception:  # noqa: BLE001 - the ladder reads what the plan missed
         pass
     return list(pairs.values())
