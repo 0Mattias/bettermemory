@@ -340,6 +340,11 @@ jobs:
           tests/test_posture*.py tests/test_commit_drift_cache.py
           tests/test_checkout_token.py tests/test_repository_setting_refusals.py
           tests/test_native_path_end_to_end.py tests/test_native_workspace_transport.py
+          tests/test_home_commit_leg.py tests/test_moved_commit_anchors.py
+          tests/test_remoteless_verified_head.py tests/test_unread_history.py
+          tests/test_sparse_config_spellings.py tests/test_health_rollup_ownership.py
+          tests/test_historical_path_types.py tests/test_ancestry_read_errors.py
+          tests/test_spaced_translated_anchor.py
 
   # The same suites against git's `next` built with its breaking changes, as
   # git 3.0 will be (ENG-227). `next` moves, so its commit is read each run
@@ -419,7 +424,12 @@ jobs:
             tests/test_location*.py tests/test_git*.py tests/test_membership*.py \
             tests/test_posture*.py tests/test_commit_drift_cache.py \
             tests/test_checkout_token.py tests/test_repository_setting_refusals.py \
-            tests/test_native_path_end_to_end.py tests/test_native_workspace_transport.py > "$RUNNER_TEMP/next-suites.txt" 2>&1
+            tests/test_native_path_end_to_end.py tests/test_native_workspace_transport.py \
+            tests/test_home_commit_leg.py tests/test_moved_commit_anchors.py \
+            tests/test_remoteless_verified_head.py tests/test_unread_history.py \
+            tests/test_sparse_config_spellings.py tests/test_health_rollup_ownership.py \
+            tests/test_historical_path_types.py tests/test_ancestry_read_errors.py \
+            tests/test_spaced_translated_anchor.py > "$RUNNER_TEMP/next-suites.txt" 2>&1
           status=$?
           cat "$RUNNER_TEMP/next-suites.txt"
           exit "$status"
