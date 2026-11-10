@@ -33,7 +33,7 @@ from .attestation_paths import (
     path_mode,
     placeholder_spelling,
 )
-from . import _caches, gitfile_rule
+from . import _caches, gitconfig, gitfile_rule
 from ._paths import inside
 from .githead import GitDir, Stamp, locate, stamp
 from .gitobjects import ObjectReader
@@ -537,23 +537,12 @@ def holds_commit(root: str | Path, sha: str) -> bool:
 def _config_switch(text: str, section: str, key: str) -> bool | None:
     """A boolean of a git configuration file's plain `section` (no
     subsection), the last assignment winning, or None when unset."""
-    current = ""
-    value: bool | None = None
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].split(";", 1)[0].strip()
-        if not line:
-            continue
-        if line.startswith("["):
-            current = line.strip("[]").strip().lower()
-            continue
-        if current != section:
-            continue
-        name, eq, setting = line.partition("=")
-        if name.strip().lower() != key:
-            continue
-        word = setting.strip().strip('"').lower() if eq else "true"
-        value = word in ("true", "yes", "on", "1")
-    return value
+    entries = gitconfig.git_entries(text.encode("utf-8", "surrogateescape"))
+    if entries is None:
+        return None
+    variable = f"{section}.{key}".lower().encode("ascii")
+    values = [value for name, value in entries if name == variable]
+    return gitconfig.git_bool(values[-1]) if values else None
 
 
 def _sparse_enabled(found: GitDir) -> bool:

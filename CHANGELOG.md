@@ -32,6 +32,15 @@ eighteenth was built.
 
 #### Fixed
 
+- **Sparse omissions remain unconfirmed under Git's config spellings
+  (ENG-279 candidate #35).** The sparse-checkout boolean uses the shared
+  Git configuration parser and boolean rules. A UTF-8 BOM, a key on its
+  section header's line, nonzero integers, continuations and mixed-case
+  section names no longer turn an intentionally omitted file into a
+  deletion or a refused attestation. A deleted file kept by the sparse
+  cone still reads missing. (`verify_anchoring.py`,
+  `tests/test_sparse_config_spellings.py`)
+
 - **Restore preserves anchors hidden by a shallow-history boundary.**
   A negative ancestry answer is conclusive only after Git confirms the
   repository is not shallow. A cut can hide a true ancestor even when its
