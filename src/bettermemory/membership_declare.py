@@ -139,6 +139,8 @@ def declare(self: Membership, decl: Declaration) -> Declared:
         project = self._declare(decl)
         if not before - {pr.id for pr in self._open_proposals()}:
             self._declared(decl, project)
+        if decl.checkout is not None:
+            self._settle_part_questions(self.checkout(decl.checkout))
         rows = tuple(self._rows)
         remint = self._remint
     return Declared(
@@ -183,6 +185,41 @@ def _declared(self: Membership, decl: Declaration, project: str | None) -> None:
         )
 
 
+def _settle_part_questions(self: Membership, checkout: Checkout) -> None:
+    """A file now inside the checkout's chain no longer contradicts it.
+
+    Use the file's current signed binding, not an old candidate whose
+    project may have changed since the question was opened.
+    """
+    root = self._canon(checkout.project)
+    for question in self._open_proposals(checkout.id):
+        if question.kind != SUBPROJECT_CONTRADICTION:
+            continue
+        file_id = question.evidence.get("file")
+        bound = self._file_binding(file_id) if isinstance(file_id, str) else None
+        if bound is not None and root in self.chain_of(bound):
+            self._close(question, f"join:{bound}", "rule:subproject_joined")
+
+
+def _join_question(
+    self: Membership, opened: Sequence[Proposal], target: str
+) -> Proposal | None:
+    """A join answers an offered target first, else a checkout question.
+
+    A part's question is a legitimate target match, never a fallback.
+    The CLI and a direct model declaration use the same selection.
+    """
+    wanted = self.canonical(target)
+    for question in opened:
+        named = {self.canonical(candidate) for candidate in question.candidates}
+        imported = question.evidence.get("imported_project")
+        if isinstance(imported, str):
+            named.add(self.canonical(imported))
+        if wanted in named:
+            return question
+    return next((q for q in opened if q.kind != SUBPROJECT_CONTRADICTION), None)
+
+
 def _question_of(
     self: Membership, decl: Declaration, k: Checkout, below: bool
 ) -> Proposal | None:
@@ -190,9 +227,12 @@ def _question_of(
     question (L7) is answered in that folder: `project init --new`
     below the root answers only the one about its own folder, and
     neither `project new` nor `project init --new` at the root answers
-    one. With no directory, `init --new` answers the checkout's first."""
+    one. A join can choose a part only when it offers the target.
+    With no directory, `init --new` answers the checkout's first."""
     opened = self._open_proposals(k.id)
-    if decl.action == "new" or (
+    if decl.action == "join" and decl.target is not None:
+        return _join_question(self, opened, decl.target)
+    if decl.action in ("new", "join") or (
         decl.action == "init_new" and decl.directory is not None and not below
     ):
         opened = [x for x in opened if x.kind != SUBPROJECT_CONTRADICTION]

@@ -389,6 +389,14 @@ def anchor(
     return None, "no_live_checkout"
 
 
+def _view_is_live_here(self: Membership, checkout: Checkout, view: View) -> bool:
+    """A matching view this machine can actually read, for equal-path ties."""
+    return (
+        checkout.machine == self.machine
+        and self.view_state(checkout, view) in _LIVE_STATES
+    )
+
+
 def translate(
     self: Membership, path: str, caller: Resolution | None = None
 ) -> tuple[str, str]:
@@ -405,6 +413,12 @@ def translate(
         for v in k.views:
             if _inside(path, v.path):
                 if best is None or len(v.path) > best[0]:
+                    best = (len(v.path), k, v)
+                elif (
+                    len(v.path) == best[0]
+                    and not _view_is_live_here(self, best[1], best[2])
+                    and _view_is_live_here(self, k, v)
+                ):
                     best = (len(v.path), k, v)
     if best is None:
         return path, "absolute"

@@ -804,6 +804,7 @@ def _caller(
     that no sighting showed where they were moved to `k` first
     (`membership_shared._asked_here`, ENG-215)."""
     _asked_here(self, k)
+    self._settle_part_questions(k)
     pid = self._canon(k.project)
     own_file: list[str] = []
     rf = loc.root_file

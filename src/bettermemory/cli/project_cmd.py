@@ -780,19 +780,15 @@ def _question_for(
 ) -> Proposal | None:
     """The open question `project join <target>` answers: one naming the
     target (as a candidate, or as the imported project an ``import``
-    question is about), else the checkout's first."""
-    for pr in asked:
-        named_ids = {model.canonical(c) for c in pr.candidates}
-        imported = pr.evidence.get("imported_project")
-        if isinstance(imported, str):
-            named_ids.add(model.canonical(imported))
-        if target in named_ids:
-            return pr
-    return asked[0] if asked else None
+    question is about), else its first checkout-level question. A part's
+    question can match its offered project but is never the fallback."""
+    from ..membership_declare import _join_question
+
+    return _join_question(model, asked, target)
 
 
 def _join(project_id: str) -> None:
-    from ..membership import FILE_CONTRADICTION, Declaration
+    from ..membership import FILE_CONTRADICTION, SUBPROJECT_CONTRADICTION, Declaration
 
     ctx = context()
     # The resolution first, so the model reads the projects it minted.
@@ -834,9 +830,16 @@ def _join(project_id: str) -> None:
         )
     )
     answered = f"; question {pr.id} answered" if pr is not None else ""
-    print(
-        f"bettermemory: checkout {k.id} is project {named(model, done.project)}{answered}"
-    )
+    current = model.checkout(k.id)
+    actual = model.canonical(current.project) or current.project
+    if pr is not None and pr.kind == SUBPROJECT_CONTRADICTION:
+        print(
+            f"bettermemory: folder {quoted(str(pr.evidence.get('dir') or cwd))} is project {named(model, done.project)}; checkout {k.id} stays project {named(model, actual)}{answered}"
+        )
+    else:
+        print(
+            f"bettermemory: checkout {k.id} is project {named(model, actual)}{answered}"
+        )
     for row in _rows_of(ctx, done, "remote_declared"):
         print(
             f"bettermemory: {quoted(str(row.get('remote')))} is declared "
@@ -905,7 +908,12 @@ def _parts_said(model: Membership, k: Checkout) -> str:
 
 def _new() -> None:
     from .. import location
-    from ..membership import REMOTE_DIVERGED, SUBPROJECT_CONTRADICTION, Declaration
+    from ..membership import (
+        LEGACY,
+        REMOTE_DIVERGED,
+        SUBPROJECT_CONTRADICTION,
+        Declaration,
+    )
 
     ctx = context()
     # The resolution first, so the model reads the projects it minted.
@@ -915,6 +923,11 @@ def _new() -> None:
     # A part's question (L7) is answered `init --new` in that folder.
     asked = [x for x in _open_on(model, k.id) if x.kind != SUBPROJECT_CONTRADICTION]
     pr = asked[0] if asked else None
+    legacy = (
+        pr is not None
+        and pr.kind == LEGACY
+        and isinstance(pr.evidence.get("unresolved_project"), str)
+    )
     name = _folder_name(k, cwd)
     mine = model.canonical(k.project) or k.project
     filed = _filed_root(model, k)
@@ -953,14 +966,16 @@ def _new() -> None:
             principal(),
             checkout=k.id,
             proposal=pr.id if pr is not None else None,
-            name=name,
+            name=None if legacy else name,
         )
     )
     location.forget(cwd)
     answered = f"; question {pr.id} answered" if pr is not None else ""
+    current = model.checkout(k.id)
+    actual = model.canonical(current.project) or current.project
+    records = f"; records stay project {named(model, done.project)}" if legacy else ""
     print(
-        f"bettermemory: checkout {k.id} is project {named(model, done.project)}"
-        f"{answered}{_token_said(ctx, done)}"
+        f"bettermemory: checkout {k.id} is project {named(model, actual)}{records}{answered}{_token_said(ctx, done)}"
     )
 
 

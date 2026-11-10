@@ -32,6 +32,18 @@ eighteenth was built.
 
 #### Fixed
 
+- **Membership questions retain their scope and current evidence
+  (ENG-261, ENG-262, ENG-263, ENG-265, ENG-266).** Equal-length translated
+  views prefer a live local checkout; a longer recorded view still wins.
+  An unrelated checkout join does not consume a part's question, and a
+  part join reports the folder separately from the checkout. A part
+  question closes once its bound project is inside the checkout's chain.
+  Legacy settlement includes the remotes its legacy checkouts preserve,
+  and separating unresolved records keeps their project name and reports
+  the checkout's actual project. (`membership_queries.py`,
+  `membership_declare.py`, `membership_resolve.py`, `membership.py`,
+  `cli/project_cmd.py`)
+
 - **Unknown project IDs are ordinary join refusals (ENG-264).** The
   project lookup runs before merge planning, matching the unjoin path.
   Missing and reserved global IDs return `no project ...` without

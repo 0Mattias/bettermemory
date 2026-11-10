@@ -1506,7 +1506,13 @@ class Membership:
                     lp, cp = self.project(self._canon(legacy)), self.project(candidate)
                 except KeyError:
                     continue
-                mine, theirs = self._remotes_of(lp.id), self._remotes_of(cp.id)
+                mine = self._remotes_of(lp.id) | {
+                    remote
+                    for checkout in self._checkouts_of(lp.id)
+                    if checkout.legacy
+                    for remote in checkout.remotes
+                }
+                theirs = self._remotes_of(cp.id)
                 compatible = not mine or not theirs or bool(mine & theirs)
                 if legacy_asks(
                     rule=str(pr.evidence.get("rule") or ""),
@@ -1524,6 +1530,7 @@ class Membership:
     declare = membership_declare.declare
     _declared = membership_declare._declared
     _question_of = membership_declare._question_of
+    _settle_part_questions = membership_declare._settle_part_questions
     _declare = membership_declare._declare
     _declare_below_root = membership_declare._declare_below_root
     _declare_subproject = membership_declare._declare_subproject
