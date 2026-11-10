@@ -216,6 +216,7 @@ def _declare(self: Membership, decl: Declaration) -> str | None:
             pid,
             evidence=f"{by}: bettermemory project {decl.action}",
             boundary=decl.boundary,
+            directory=decl.directory,
         )
         if decl.action == "init_rebind":
             if not decl.boundary:
@@ -404,6 +405,7 @@ def _answer_new(
                 mine,
                 evidence=f"{by}: bettermemory project init --new",
                 boundary=decl.boundary,
+                directory=decl.directory,
             )
         return mine
     p = self.project(mine)
@@ -413,12 +415,13 @@ def _answer_new(
             mine,
             evidence=f"{by}: bettermemory project init --new",
             boundary=decl.boundary,
+            directory=decl.directory,
         )
     self._close(pr, "new", by)
     if p.provisional is not None:
         # The checkout's provisional project becomes its own, with a
         # token of its own, so it is not asked again (E22 a).
-        self._put_project(dataclasses.replace(p, provisional=None))
+        self._put_project(dataclasses.replace(self.project(mine), provisional=None))
         self._give_token(k)
     return mine
 

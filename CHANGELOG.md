@@ -51,6 +51,19 @@ eighteenth was built.
   Steady reads add no Git process. (`origin_dates.py`,
   `tests/test_shallow_classification.py`)
 
+- **Adding a workspace boundary keeps its repositories' own memories
+  visible (ENG-252).** Repositories already known inside the declaring
+  folder and their subprojects enter its new tenant, as repositories
+  first seen there do. Inner boundaries and projects outside the folder
+  or its previous tenant stay apart. A late flag, a file's first sight
+  and `project init --boundary` use the same transition; clearing a
+  provisional project after `init --new` preserves the boundary just
+  declared. A checkout already bound to the project retains its assigned
+  tenant outside the workspace when no explicit boundary there supplies
+  one; unknown clones still pass the tenant-filtered evidence ladder.
+  (`membership.py`, `membership_resolve.py`,
+  `membership_declare.py`, `tests/test_boundary_creation.py`)
+
 #### Added
 
 - **Health recommends a spot-check of every memory whose history was

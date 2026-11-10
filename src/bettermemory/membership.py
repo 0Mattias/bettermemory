@@ -220,6 +220,7 @@ from .membership_records import (
     _dir_below,
     _dir_key,
     _found_token,
+    _inside,
     _live_key,
     _norm,
     _path_under,
@@ -768,7 +769,7 @@ class Membership:
             **where,
         )
         if boundary:
-            self._make_boundary(pid)
+            self._make_boundary(pid, around=directory)
 
     def _file_flag(self, f: ProjectFileRef, project_id: str) -> list[str]:
         """B12: a sighting of a bound file whose ``boundary`` flag differs
@@ -780,7 +781,7 @@ class Membership:
         pid = self._canon(project_id)
         p = self.project(pid)
         if f.boundary and not p.boundary:
-            self._make_boundary(pid)
+            self._make_boundary(pid, around=f.dir)
             return [line_boundary_added(f.path, p.name, pid)]
         if p.boundary and not f.boundary:
             return [line_boundary_dropped(f.path, p.name, pid, f.dir, f.id)]
@@ -803,23 +804,45 @@ class Membership:
             if q.merged_into is None and q.id != pid and q.tenant == pid:
                 self._put_project(dataclasses.replace(q, tenant=outer))
 
-    def _make_boundary(self, project_id: str) -> None:
+    def _make_boundary(self, project_id: str, *, around: str | None = None) -> None:
         """The project becomes a tenant (B9; design 2.1, a file with
         ``boundary = true``): its records and its sub-projects' sit inside
         it, and nothing crosses it, D13's sharing included. Each changed
-        project row is logged."""
+        project row is logged. A workspace's repositories carry no parent
+        link to its folder project: where `around` declares the boundary,
+        their latest views here place them inside it too, along with
+        their sub-projects. Only projects in the previous tenant move;
+        inner boundaries keep their own tenants (ENG-252)."""
         pid = self._canon(project_id)
         p = self.project(pid)
         if p.boundary:
             return
+        previous_tenant = p.tenant
         self._put_project(dataclasses.replace(p, boundary=True, tenant=pid))
+        enclosed: set[str] = set()
+        if around is not None:
+            for checkout in self.checkouts():
+                views = checkout.views_on(self.machine)
+                if (
+                    checkout.kind != UNRESOLVED
+                    and views
+                    and _inside(views[-1].path, around)
+                ):
+                    enclosed.add(self._canon(checkout.project))
         for q in list(self._all_projects().values()):
             if q.merged_into is not None or q.id == pid:
                 continue
             chain = self.chain_of(q.id)
-            if pid not in chain:
-                continue
-            inner = chain[: chain.index(pid)]
+            if pid in chain:
+                inner = chain[: chain.index(pid)]
+            else:
+                at = next(
+                    (i for i, ancestor in enumerate(chain) if ancestor in enclosed),
+                    None,
+                )
+                if at is None or q.tenant != previous_tenant:
+                    continue
+                inner = chain[: at + 1]
             if any(self.project(x).boundary for x in inner) or q.tenant == pid:
                 continue
             self._put_project(dataclasses.replace(q, tenant=pid))

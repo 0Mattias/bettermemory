@@ -736,11 +736,16 @@ def _enclosing(
                 f.name or _basename(f.dir),
                 reason="folder_file_first_sight",
                 folder=True,
-                boundary=f.boundary,
                 tenant=tenant,
                 parent=chain[-1] if chain else None,
             )
-            self._bind_file(f.id, p.id, evidence=f"first sight of {f.path}")
+            self._bind_file(
+                f.id,
+                p.id,
+                evidence=f"first sight of {f.path}",
+                boundary=f.boundary,
+                directory=f.dir,
+            )
             pid = p.id
             if f.object_key is not None:
                 # The folder is that project's checkout from here on, so
@@ -813,6 +818,12 @@ def _caller(
         if self.project(c).boundary:
             tenant = c
             break
+    if tenant is None and caller != GLOBAL:
+        # A known checkout may lie outside the workspace that assigned
+        # its project a tenant. Keep that affiliation unless a boundary
+        # here explicitly supplies one; an unknown clone still passes
+        # the tenant-filtered evidence ladder before reaching this call.
+        tenant = self.project(caller).tenant
     out = [*lines, *sub_lines]
     for pr in self._open_proposals(k.id):
         shown = self.restated(pr).line
@@ -1371,6 +1382,7 @@ def _observe(
                     evidence=f"checkout {k.id} at {loc.root}"
                     + (" (tracked at HEAD)" if loc.file_tracked else ""),
                     boundary=rf.boundary,
+                    directory=rf.dir,
                 )
         elif bound != pid and not p.provisional:
             if not any(
@@ -1577,10 +1589,15 @@ def _resolve_folder(
             reason="folder_file_first_sight",
             folder=True,
             tenant=tenant,
-            boundary=f.boundary,
             parent=enclosing[0] if enclosing else None,
         )
-        self._bind_file(f.id, p.id, evidence=f"first sight of {f.path}")
+        self._bind_file(
+            f.id,
+            p.id,
+            evidence=f"first sight of {f.path}",
+            boundary=f.boundary,
+            directory=f.dir,
+        )
         k = self._register(loc, p.id, "new_folder")
         self._event("resolution_new", checkout=k.id, project=p.id, reused_path=False)
         return self._caller(
