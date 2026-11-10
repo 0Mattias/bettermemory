@@ -32,6 +32,16 @@ eighteenth was built.
 
 #### Fixed
 
+- **Repository-settings validation follows the supported Git matrix
+  (ENG-271).** File-based discovery declines settings that make Git's
+  repository initialization fail: the negotiation algorithm, commit-graph
+  integer settings, and pack and commit-graph booleans. Coverage includes
+  newer `pack.usePathWalk` and `commitGraph.changedPathsVersion` settings,
+  with each installed Git as the oracle; valid settings keep the file
+  reader's answer. (`origin_gitfiles.py`,
+  `tests/test_repository_setting_refusals.py`,
+  `tests/test_origin_config_dies.py`)
+
 - **A read whose rule changed with a git release reads as the git on
   PATH does (ENG-227).** Each was read as git 2.54 reads it, and an older
   git reads it otherwise. The git on PATH is now asked its version with

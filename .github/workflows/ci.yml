@@ -338,7 +338,7 @@ jobs:
           tests/test_origin*.py tests/test_verify*.py tests/test_claims.py
           tests/test_location*.py tests/test_git*.py tests/test_membership*.py
           tests/test_posture*.py tests/test_commit_drift_cache.py
-          tests/test_checkout_token.py
+          tests/test_checkout_token.py tests/test_repository_setting_refusals.py
 
   # The same suites against git's `next` built with its breaking changes, as
   # git 3.0 will be (ENG-227). `next` moves, so its commit is read each run
@@ -417,7 +417,7 @@ jobs:
             tests/test_origin*.py tests/test_verify*.py tests/test_claims.py \
             tests/test_location*.py tests/test_git*.py tests/test_membership*.py \
             tests/test_posture*.py tests/test_commit_drift_cache.py \
-            tests/test_checkout_token.py > "$RUNNER_TEMP/next-suites.txt" 2>&1
+            tests/test_checkout_token.py tests/test_repository_setting_refusals.py > "$RUNNER_TEMP/next-suites.txt" 2>&1
           status=$?
           cat "$RUNNER_TEMP/next-suites.txt"
           exit "$status"

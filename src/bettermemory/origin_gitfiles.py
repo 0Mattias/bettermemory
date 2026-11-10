@@ -749,6 +749,14 @@ _DIES_UNLESS_BOOL = frozenset(
         b"extensions.preciousobjects",
         b"extensions.worktreeconfig",
         b"feature.manyfiles",
+        # prepare_repo_settings reads these outside git_default_config.
+        b"pack.usesparse",
+        b"pack.usepathwalk",
+        b"pack.readreverseindex",
+        b"pack.usebitmapboundarytraversal",
+        b"commitgraph.readchangedpaths",
+        b"gc.writecommitgraph",
+        b"fetch.writecommitgraph",
         # Git for Windows' own, booleans there and read any way elsewhere:
         # its system config sets core.fscache (ENG-207's round 8).
         b"core.fscache",
@@ -859,6 +867,8 @@ _READ_ANY = frozenset(
 )
 #: Sections of whose variables git reads more than are named here.
 _READ_WHOLE = (b"core.", b"extensions.", b"feature.", b"index.", b"color.advice")
+#: fetch.negotiationAlgorithm's case-insensitive words.
+_NEGOTIATION_ALGORITHMS = frozenset({b"skipping", b"noop", b"consecutive", b"default"})
 #: Variables of other sections git reads by rules not ported here.
 _READ_ELSEWHERE = frozenset({b"pack.packsizelimit", b"pack.compression"})
 
@@ -894,6 +904,13 @@ def _rev_parse_dies(name: bytes, value: bytes | None) -> bool:
     if name == b"core.repositoryformatversion":
         number = gitconfig.git_int(value)
         return number is None or number > 1
+    if name == b"fetch.negotiationalgorithm":
+        return (
+            value is None
+            or value.split(b"\0", 1)[0].lower() not in _NEGOTIATION_ALGORITHMS
+        )
+    if name in (b"commitgraph.generationversion", b"commitgraph.changedpathsversion"):
+        return gitconfig.git_int(value) is None
     if name == b"include.path" or (
         name.startswith(b"includeif.") and name.endswith(b".path")
     ):

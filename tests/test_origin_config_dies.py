@@ -78,6 +78,10 @@ extensions.objectformat extensions.refstorage extensions.bogus index.version
 feature.manyfiles feature.experimental fetch.prune log.follow pull.rebase commit.gpgsign
 credential.helper submodule.recurse remote.origin.promisor
 remote.origin.partialclonefilter
+fetch.negotiationalgorithm pack.usesparse pack.readreverseindex
+pack.usebitmapboundarytraversal commitgraph.readchangedpaths
+commitgraph.generationversion gc.writecommitgraph fetch.writecommitgraph
+pack.usepathwalk commitgraph.changedpathsversion
 """.split()
 #: The values each of `KEYS` is written with: none (a key with no ``=``),
 #: words git refuses as booleans or takes, empty, negative and spaced.
