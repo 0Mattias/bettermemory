@@ -24,6 +24,7 @@ reverse.
 from __future__ import annotations
 
 import enum
+from bisect import bisect_left
 import os
 import threading
 import time
@@ -31,6 +32,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import cached_property
 from pathlib import Path
 from typing import TypeAlias, TypeVar
 
@@ -611,13 +613,19 @@ class ReachableWalk:
     listed: bool = True
     timed_out: bool = False
 
+    @cached_property
+    def _sorted_paths(self) -> tuple[str, ...]:
+        """One range index, shared by all of its file and directory questions."""
+        return tuple(sorted(self.touched))
+
     def shas_touching(self, pathspecs: Sequence[str]) -> set[str]:
         """The commits in the range that changed a file matching any of
         `pathspecs` — repo-root-relative forward-slash specs, the output
         of `resolve_repo_pathspecs`, each a file or a directory prefix.
-        A path is a file or a directory in git, never both, so an exact
-        hit skips the prefix scan. Every commit, for a walk that did not
-        list its names."""
+        A path can change between a file and a directory across the range,
+        so both exact names and descendants contribute. The sorted path index
+        finds descendants without scanning unrelated paths for each file.
+        Every commit, for a walk that did not list its names."""
         if not self.listed:
             return set(self.commits)
         out: set[str] = set()
@@ -625,11 +633,13 @@ class ReachableWalk:
             exact = self.touched.get(spec)
             if exact is not None:
                 out |= exact
-                continue
             prefix = spec.rstrip("/") + "/"
-            for path, shas in self.touched.items():
-                if path.startswith(prefix):
-                    out |= shas
+            paths = self._sorted_paths
+            for index in range(bisect_left(paths, prefix), len(paths)):
+                path = paths[index]
+                if not path.startswith(prefix):
+                    break
+                out |= self.touched[path]
         return out
 
 

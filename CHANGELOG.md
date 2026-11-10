@@ -32,6 +32,12 @@ eighteenth was built.
 
 #### Fixed
 
+- **Historical path type changes retain every matching commit.** A
+  reachability range can hold a file and descendants under the same name.
+  Its count now includes both, using one sorted index per range to avoid
+  scanning unrelated paths for every file. (ENG-279 candidate #44,
+  `origin_history.py`, `tests/test_historical_path_types.py`)
+
 - **The minimum-Git CI build uses its supported C language mode
   (ENG-227).** The source builder selects GNU C11 while keeping Git's
   optimization and warning defaults. Git 2.34's `thread_local` identifier
