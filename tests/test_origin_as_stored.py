@@ -910,13 +910,22 @@ def test_a_file_cited_in_one_spelling_and_claimed_in_another_is_the_claims(
 ) -> None:
     """The body cites the file in either spelling and claims foo on it
     decomposed, as the tree stores it: the file is the claim's, so bar's
-    edit in it escalates nothing, 0 on both bases, as where both are
-    spelled alike. Kept apart by spelling, the cited one stayed in the
-    any-touch leg and counted the edit (`verify._claim_legs`)."""
+    edit in it escalates nothing, 0 on reachability and unconfirmed on
+    dates alone, as where both are spelled alike. Kept apart by spelling,
+    the cited one stayed in the any-touch leg and counted the edit
+    (`verify._claim_legs`)."""
     repo = _repository(tmp_path)
     anchor = _accented(repo, [_SPELLED["NFD"]], "bar")
     claims = [_SPELLED["NFD"] + "::foo"]
-    assert _both(repo, claims, anchor, (_SPELLED[cited],)) == [(0, ())] * 2
+    anchors = (_SPELLED[cited],)
+    assert _seen(_hit(repo, claims, anchor, anchors)) == (
+        0,
+        (),
+        verify.BASIS_REACHABILITY,
+    )
+    assert (
+        _unread_or_hit(repo, claims, None, anchors) is CommitDriftUnread.UNCONFIRMED_CUT
+    )
 
 
 def test_each_spelling_of_a_path_is_looked_for() -> None:
@@ -1391,8 +1400,7 @@ def test_a_walk_whose_names_time_out_keeps_the_conservative_count(
     repo = _repository(tmp_path)
     anchor = _rebased(repo)
     assert _seen(_hit(repo, [_FOO], anchor)) == (1, (_FOO,), verify.BASIS_REACHABILITY)
-    dated = _seen(_hit(repo, [_FOO], None))
-    assert dated == (0, (), verify.BASIS_AUTHOR_DATE), "premise: the dates miss it"
+    assert _unread_or_hit(repo, [_FOO], None) is CommitDriftUnread.UNCONFIRMED_CUT
     met = _timing_out(monkeypatch, "--name-only")
     assert _seen(_hit(repo, [_FOO], anchor)) == (2, (), verify.BASIS_REACHABILITY)
     assert len(met) == 1 and not origin._WALK_MEMO
@@ -1542,7 +1550,7 @@ def test_a_walk_whose_trees_git_cannot_read_lists_its_commits_alone(
     count and the health rollup, where the hit read those dates, 0
     (ENG-220's review, round F). A memory stamped with no head counts on
     the dates on either basis, the claim's narrowing kept where its patch
-    cannot be read either: 1, never below the 0 it reads with the trees."""
+    cannot be read either: 1, while its zero with the trees is unconfirmed."""
     from bettermemory import health_stats, verify_basis
 
     repo, anchor = _unread_trees(tmp_path, shape)
@@ -1550,8 +1558,10 @@ def test_a_walk_whose_trees_git_cannot_read_lists_its_commits_alone(
     read = shape == "read"
     walked = (1, (_FOO,)) if read else (2, ())
     assert _seen(_hit(repo, [_FOO], anchor)) == (*walked, verify.BASIS_REACHABILITY)
-    dated = (0 if read else 1, (), verify.BASIS_AUTHOR_DATE)
-    assert _seen(_hit(repo, [_FOO], None)) == dated
+    if read:
+        assert _unread_or_hit(repo, [_FOO], None) is CommitDriftUnread.UNCONFIRMED_CUT
+    else:
+        assert _seen(_hit(repo, [_FOO], None)) == (1, (), verify.BASIS_AUTHOR_DATE)
     _caches.clear_all()
     counted = verify_basis._count_since_verify(repo, _VERIFIED, anchor)
     assert not isinstance(counted, CommitDriftUnread) and counted is not None
@@ -1728,16 +1738,15 @@ def test_a_listing_that_answers_after_the_names_failed_reads_the_dates(
 ) -> None:
     """Git fails on the walk's names and the listing answers with no walk,
     here an empty one, the head moved back behind the anchor: the dates
-    are the basis, as for a walk whose names were read, and the anchor's
-    presence is not asked."""
+    are the fallback, as for a walk whose names were read, and the anchor's
+    presence is not asked. Their zero is unconfirmed without a usable cut."""
     repo = _repository(tmp_path)
     _rebased(repo)
     anchor = _plain(repo, "rev-parse", "HEAD")
     _plain(repo, "reset", "-q", "--hard", "HEAD~1")
     met = _failing(monkeypatch, "exit 128", "read")
     got = _unread_or_hit(repo, [_FOO], anchor)
-    assert not isinstance(got, CommitDriftUnread) and got is not None
-    assert got.basis == verify.BASIS_AUTHOR_DATE
+    assert got is CommitDriftUnread.UNCONFIRMED_CUT
     assert met == ["names", "listing"]
 
 
@@ -1748,14 +1757,13 @@ def test_a_listing_that_fails_from_an_anchor_not_held_reads_the_dates(
     """The same failures from an anchor the repository does not hold
     (``git cat-file -e`` exits 1) give no walk, and the count reads the
     author dates, as git's own refusal of such an anchor does, with real
-    git and no failure simulated."""
+    git and no failure simulated. Their zero remains unconfirmed."""
     repo = _repository(tmp_path)
     _rebased(repo)
     gone = "f" * 40
-    dated = (0, (), verify.BASIS_AUTHOR_DATE)
-    assert _seen(_hit(repo, [_FOO], gone)) == dated, "git refuses it"
+    assert _unread_or_hit(repo, [_FOO], gone) is CommitDriftUnread.UNCONFIRMED_CUT
     met = _failing(monkeypatch, names, listing)
-    assert _seen(_hit(repo, [_FOO], gone)) == dated
+    assert _unread_or_hit(repo, [_FOO], gone) is CommitDriftUnread.UNCONFIRMED_CUT
     assert met == ["names", "listing", "held"]
     assert not origin._WALK_TIMED_OUT
 
@@ -1772,14 +1780,13 @@ def test_a_held_check_that_does_not_answer_is_no_evidence_the_anchor_is_gone(
     killed by a signal answers nothing either, and reads `error`, unread,
     for the pass alone. Only an exit git gives for an object it does not
     hold, or one that is no commit (128 with the ``^{commit}`` peel),
-    reads as an anchor not held, and the dates."""
+    reads as an anchor not held, and the dates, whose zero is unconfirmed."""
     repo = _repository(tmp_path)
     anchor = _rebased(repo)
     met = _failing(monkeypatch, "exit 128", "exit 128", held)
     got = _unread_or_hit(repo, [_FOO], anchor)
     if why is None:
-        assert not isinstance(got, CommitDriftUnread)
-        assert _seen(got) == (0, (), verify.BASIS_AUTHOR_DATE)
+        assert got is CommitDriftUnread.UNCONFIRMED_CUT
     else:
         assert got is CommitDriftUnread(why)
     assert len(origin._WALK_TIMED_OUT) == (why == "timeout")
