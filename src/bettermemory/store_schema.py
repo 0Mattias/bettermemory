@@ -92,9 +92,9 @@ SCHEMA_VERSION = 1
 # build neither reads nor has to keep up (SQLite keeps it up under that
 # build's writes) and admits as a plain index on columns, so the minimums
 # stay where revision 2 put them.
-SCHEMA_REVISION = 4
+SCHEMA_REVISION = 5
 MIN_READER_REVISION = 1
-MIN_WRITER_REVISION = 2
+MIN_WRITER_REVISION = 5
 
 # Set on a store's first open, before its first table and before WAL mode
 # fixes it. A record row (body, its token stream, the JSON columns) runs
@@ -169,6 +169,7 @@ MEMBERSHIP_TABLES = (
     "proposals",
     "standing",
     "returned",
+    "native_membership_rows",
 )
 _MEMBERSHIP_MUTATION_TABLES = (
     "machine",
@@ -184,6 +185,7 @@ _MEMBERSHIP_MUTATION_TABLES = (
     "proposal",
     "standing",
     "returned",
+    "native_member",
 )
 
 _MUTATION_TABLES = (
@@ -270,6 +272,7 @@ _TABLE_KEYS: dict[str, tuple[str, ...]] = {
     "proposals": ("id",),
     "standing": ("record_id",),
     "returned": ("record_id",),
+    "native_membership_rows": ("member_kind", "key_text"),
 }
 
 
@@ -294,6 +297,12 @@ class _MembershipTable:
 _MEMBERSHIP_SPECS: dict[str, _MembershipTable] = {
     spec.kind: spec
     for spec in (
+        _MembershipTable(
+            "native_membership_rows",
+            "native_member",
+            ("member_kind", "key_text"),
+            ("member_kind", "key_text", "row_text"),
+        ),
         _MembershipTable(
             "machines",
             "machine",
@@ -897,6 +906,13 @@ CREATE INDEX IF NOT EXISTS checkouts_by_common
     ON checkouts(machine, common_device, common_inode);
 CREATE INDEX IF NOT EXISTS checkouts_by_token ON checkouts(token);
 CREATE INDEX IF NOT EXISTS checkouts_by_project ON checkouts(project);
+
+CREATE TABLE IF NOT EXISTS native_membership_rows (
+    member_kind TEXT NOT NULL,
+    key_text TEXT NOT NULL,
+    row_text TEXT NOT NULL,
+    PRIMARY KEY (member_kind, key_text)
+);
 
 CREATE TABLE IF NOT EXISTS checkout_views (
     checkout TEXT NOT NULL,

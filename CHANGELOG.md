@@ -39,6 +39,19 @@ eighteenth was built.
   minimum-version leg reaches its repository-reading tests.
   (`tools/ci/build_git.sh`)
 
+- **Non-UTF-8 checkout names retain their exact identity (ENG-267,
+  ENG-275, ENG-234).** Git path output uses the filesystem codec.
+  Membership stores native rows as ASCII JSON beside conservative legacy
+  rows; paths never alias their printable spellings. Origins survive record
+  lifecycle changes and mirrors, and responses expose native path bytes in
+  base64 when Unicode cannot represent them. The shim forwards exact paths
+  through an ASCII JSON header. Revision 5 keeps reader minimum 1 and raises
+  writer minimum to 5, so older contract-aware writers cannot overlook native
+  views. The upgrade refuses while older connections remain open, and every
+  later write checks the writer minimum within its transaction.
+  (`native_text.py`, `store_native.py`, `origin.py`, `identity.py`,
+  `shim.py`, `tests/test_native_path_end_to_end.py`)
+
 - **Origin capture refuses embedded NUL paths before platform resolution
   (ENG-277).** Windows can return such a path unchanged instead of raising
   as POSIX does. Capture now declines it before any filesystem or Git

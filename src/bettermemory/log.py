@@ -104,6 +104,8 @@ copying, syncing or editing the store never carries the key with it.
 
 from __future__ import annotations
 
+from .native_text import utf8_text
+
 import contextlib
 import dataclasses
 import glob
@@ -282,8 +284,14 @@ def canonical_payload(payload: Mapping[str, Any]) -> str:
     """The one JSON text a payload has: sorted keys, no whitespace,
     unicode kept. The MAC is computed over this text and the text is what
     the row stores, so a verifier never re-serialises anything."""
-    return json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+    return utf8_text(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        )
     )
 
 

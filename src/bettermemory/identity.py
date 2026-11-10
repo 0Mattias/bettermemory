@@ -53,6 +53,8 @@ a cycle and the module stays importable where the SDK is absent.
 
 from __future__ import annotations
 
+import json
+
 import logging
 import os
 import unicodedata
@@ -107,6 +109,7 @@ HEADER_CLIENT = "x-bettermemory-client"
 HEADER_CLIENT_VERSION = "x-bettermemory-client-version"
 HEADER_MODEL = "x-bettermemory-model"
 HEADER_WORKSPACE = "x-bettermemory-workspace"
+HEADER_WORKSPACE_JSON = "x-bettermemory-workspace-json"
 #: The streamable-HTTP transport's session header, per the MCP spec.
 HEADER_MCP_SESSION = "mcp-session-id"
 #: The session a client declares when the transport carries none: the
@@ -384,6 +387,24 @@ def _request_id_of(request_context: Any) -> str | None:
     return str(rid) if rid is not None else None
 
 
+def _json_workspace(value: str | None) -> str | None:
+    """An ASCII JSON header carries an exact native directory, never header syntax."""
+    if not isinstance(value, str) or len(value) > 6 * MAX_DECLARED_LEN + 2:
+        return None
+    try:
+        path = json.loads(value)
+    except (ValueError, RecursionError):
+        return None
+    if (
+        not isinstance(path, str)
+        or not path
+        or len(path) > MAX_DECLARED_LEN
+        or "\x00" in path
+    ):
+        return None
+    return path
+
+
 def _first_file_root(roots: Any) -> str | None:
     """The first usable `file://` root's bounded path, None otherwise."""
     for root in roots or ():
@@ -391,7 +412,7 @@ def _first_file_root(roots: Any) -> str | None:
         parsed = urlparse(uri)
         if parsed.scheme != "file":
             continue
-        path = unquote(parsed.path)
+        path = unquote(parsed.path, errors="surrogateescape")
         # `file:///C:/work` parses to `/C:/work`; strip the leading slash
         # that a drive-lettered path does not want.
         if len(path) >= 3 and path[0] == "/" and path[2] == ":":
@@ -493,6 +514,8 @@ def resolve(
 
     workspace = Workspace()
     declared_path = _clean(headers.get(HEADER_WORKSPACE), strip_format=False)
+    if declared_path is None:
+        declared_path = _json_workspace(headers.get(HEADER_WORKSPACE_JSON))
     if declared_path is not None:
         workspace = Workspace(path=declared_path, source=SOURCE_HEADER)
     else:
@@ -748,6 +771,7 @@ __all__ = [
     "HEADER_CLIENT_VERSION",
     "HEADER_MODEL",
     "HEADER_WORKSPACE",
+    "HEADER_WORKSPACE_JSON",
     "HEADER_MCP_SESSION",
     "HEADER_SESSION",
     "HEADER_HARNESS_SESSION",

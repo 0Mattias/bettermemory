@@ -344,6 +344,24 @@ def _path_targets(row: sqlite3.Row) -> dict[str, Any]:
     return {name: record[name] for name in _PATH_TARGET_FIELDS if name in record}
 
 
+def _row_origin(row: sqlite3.Row) -> Origin | None:
+    legacy = _load_json(row["origin_json"], None)
+    if "attestation_payload" in row.keys() and row["attestation_payload"]:
+        try:
+            signed = json.loads(row["attestation_payload"])
+            record = next(
+                (signed[k] for k in ("memory", "tombstone", "episode") if k in signed),
+                None,
+            )
+            if isinstance(record, dict) and record.get("id") == row["id"]:
+                native = signed.get("native_origin")
+                if isinstance(native, str):
+                    return Origin.model_validate(json.loads(native))
+        except (ValueError, TypeError, RecursionError):
+            pass
+    return None if legacy is None else Origin.model_validate(legacy)
+
+
 def _row_to_memory(row: sqlite3.Row) -> Memory:
     return Memory(
         id=row["id"],
@@ -353,11 +371,7 @@ def _row_to_memory(row: sqlite3.Row) -> Memory:
         confidence=row["confidence"],
         source=row["source"],
         body=row["body"],
-        origin=(
-            Origin.model_validate(_load_json(row["origin_json"], {}))
-            if row["origin_json"] is not None
-            else None
-        ),
+        origin=_row_origin(row),
         actor=(
             Actor.model_validate(_load_json(row["actor_json"], {}))
             if row["actor_json"] is not None
@@ -390,11 +404,7 @@ def _row_to_tombstone(row: sqlite3.Row) -> TombstonedMemory:
         confidence=row["confidence"],
         source=row["source"],
         body=row["body"],
-        origin=(
-            Origin.model_validate(_load_json(row["origin_json"], {}))
-            if row["origin_json"] is not None
-            else None
-        ),
+        origin=_row_origin(row),
         actor=(
             Actor.model_validate(_load_json(row["actor_json"], {}))
             if row["actor_json"] is not None
@@ -450,11 +460,7 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         body=row["body"],
         scopes=_load_json(row["scopes_json"], []),
         takeaway=row["takeaway"],
-        origin=(
-            Origin.model_validate(_load_json(row["origin_json"], {}))
-            if row["origin_json"] is not None
-            else None
-        ),
+        origin=_row_origin(row),
         is_floor=bool(row["is_floor"]),
         swarm_id=row["swarm_id"],
     )

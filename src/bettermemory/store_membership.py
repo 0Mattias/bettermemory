@@ -16,15 +16,19 @@ for type checking.
 from __future__ import annotations
 
 import secrets
+import sqlite3
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from .log import LogRow, canonical_payload
+from . import store_native
+from .native_text import encoded_json, has_surrogates
 from .store_schema import (
     MEMBERSHIP_EVENT_KINDS,
     MEMBERSHIP_MUTATION_KINDS,
     MEMBERSHIP_STORE_ID,
     _MEMBERSHIP_BY_TABLE,
+    _MembershipTable,
     _PROVENANCE_BATCH,
 )
 from .store_rows import (
@@ -52,7 +56,28 @@ def put_membership(
     payload = {spec.kind: dict(row)}
     _membership_values(spec, payload[spec.kind])
     with self._transaction() as tx:
-        return self._mutate(tx, f"{spec.kind}_put", payload, session=session)
+        if has_surrogates(row):
+            store_native.require_native_writer(tx)
+            legacy = store_native.legacy_row(spec, row)
+            if legacy is not None:
+                self._mutate(
+                    tx, f"{spec.kind}_put", {spec.kind: legacy}, session=session
+                )
+            return self._mutate(
+                tx,
+                "native_member_put",
+                {
+                    "native_member": {
+                        "member_kind": spec.kind,
+                        "key_text": store_native.row_key(spec, row),
+                        "row_text": encoded_json(dict(row)),
+                    }
+                },
+                session=session,
+            )
+        written = self._mutate(tx, f"{spec.kind}_put", payload, session=session)
+        _clear_native(self, tx, spec, row, session)
+        return written
 
 
 def delete_membership(
@@ -63,7 +88,41 @@ def delete_membership(
     payload = {column: key[column] for column in spec.key}
     _membership_key(spec, payload)
     with self._transaction() as tx:
-        return self._mutate(tx, f"{spec.kind}_delete", payload, session=session)
+        if has_surrogates(payload):
+            store_native.require_native_writer(tx)
+            return self._mutate(
+                tx,
+                "native_member_delete",
+                {
+                    "member_kind": spec.kind,
+                    "key_text": store_native.row_key(spec, payload),
+                },
+                session=session,
+            )
+        written = self._mutate(tx, f"{spec.kind}_delete", payload, session=session)
+        _clear_native(self, tx, spec, payload, session)
+        return written
+
+
+def _clear_native(
+    self: Store,
+    tx: sqlite3.Connection,
+    spec: _MembershipTable,
+    row: Mapping[str, Any],
+    session: str | None,
+) -> LogRow | None:
+    if spec.kind == "native_member":
+        return None
+    key = {"member_kind": spec.kind, "key_text": store_native.row_key(spec, row)}
+    if (
+        tx.execute(
+            "SELECT 1 FROM native_membership_rows WHERE member_kind = ? AND key_text = ?",
+            tuple(key.values()),
+        ).fetchone()
+        is None
+    ):
+        return None
+    return self._mutate(tx, "native_member_delete", key, session=session)
 
 
 def record_membership(
@@ -94,6 +153,8 @@ def membership_rows(
     spec = _MEMBERSHIP_BY_TABLE.get(table)
     if spec is None:
         raise ValueError(f"{table!r} is not a membership table")
+    native = store_native.native_rows(self._conn, spec)
+    legacy_possible = not has_surrogates(where or {})
     clauses: list[str] = []
     params: list[Any] = []
     for column, value in (where or {}).items():
@@ -116,12 +177,13 @@ def membership_rows(
         wanted = list(dict.fromkeys(values))
         if not wanted:
             return []
+        legacy_wanted = [value for value in wanted if not has_surrogates(value)]
         batches = [
-            wanted[start : start + _PROVENANCE_BATCH]
-            for start in range(0, len(wanted), _PROVENANCE_BATCH)
+            legacy_wanted[start : start + _PROVENANCE_BATCH]
+            for start in range(0, len(legacy_wanted), _PROVENANCE_BATCH)
         ]
     out: list[dict[str, Any]] = []
-    for batch in batches:
+    for batch in batches if legacy_possible else ():
         batch_clauses = list(clauses)
         if column_in is not None:
             batch_clauses.append(f"{column_in[0]} IN ({','.join('?' * len(batch))})")
@@ -140,7 +202,17 @@ def membership_rows(
                     for column in spec.columns
                 }
             )
-    if len(batches) > 1:
+    if native:
+        out = [row for row in out if store_native.row_key(spec, row) not in native]
+        native_filter = (
+            None if column_in is None else (column_in[0], list(column_in[1]))
+        )
+        out.extend(
+            row
+            for row in native.values()
+            if row is not None and store_native.matches(row, where, native_filter)
+        )
+    if native or len(batches) > 1:
         _sort_rows(out, list(order_by or spec.key))
     return out
 
@@ -169,7 +241,9 @@ def next_membership_number(self: Store, table: str, column: str) -> int:
         raise ValueError(f"{table!r} is not a membership table")
     _membership_column(spec, column)
     row = self._conn.execute(f"SELECT MAX({column}) FROM {table}").fetchone()
-    return int(row[0] or 0) + 1
+    native = store_native.native_rows(self._conn, spec)
+    high = max((int(r[column]) for r in native.values() if r is not None), default=0)
+    return max(int(row[0] or 0), high) + 1
 
 
 def committed_seq(self: Store) -> int | None:

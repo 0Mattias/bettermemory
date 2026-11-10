@@ -15,6 +15,8 @@ import, so nothing here imports them: they import these names from here
 
 from __future__ import annotations
 
+from .native_text import origin_projection
+
 import re
 
 from .identity import SOURCE_PROCESS_CWD
@@ -149,7 +151,11 @@ def memory_metadata(memory: Memory) -> dict[str, object]:
         "source": memory.source.value,
     }
     if memory.origin is not None:
-        origin_dict = memory.origin.model_dump(mode="json", exclude_none=True)
+        origin_dict, native = origin_projection(
+            memory.origin.model_dump(mode="json", exclude_none=True)
+        )
+        if native is not None:
+            meta["native_origin"] = native
         if origin_dict.get("source") == SOURCE_PROCESS_CWD:
             del origin_dict["source"]
         if origin_dict:
@@ -211,7 +217,11 @@ def episode_metadata(episode: Episode) -> dict[str, object]:
     if episode.takeaway is not None:
         meta["takeaway"] = episode.takeaway
     if episode.origin is not None:
-        origin_dict = episode.origin.model_dump(mode="json", exclude_none=True)
+        origin_dict, native = origin_projection(
+            episode.origin.model_dump(mode="json", exclude_none=True)
+        )
+        if native is not None:
+            meta["native_origin"] = native
         if origin_dict:
             meta["origin"] = origin_dict
     if episode.is_floor:

@@ -703,7 +703,11 @@ def failed_git_calls() -> int:
 
 
 def _git_result(
-    cwd: Path, *args: str, timeout: float = 1.0, stdin: bytes | None = None
+    cwd: Path,
+    *args: str,
+    timeout: float = 1.0,
+    stdin: bytes | None = None,
+    paths: bool = False,
 ) -> subprocess.CompletedProcess[str] | None:
     """Run a git command from `cwd` and return the completed process, or
     None ONLY when git could not run at all — no binary on PATH, the
@@ -763,6 +767,27 @@ def _git_result(
             stdout="",
             stderr=f"fatal: not a git repository: {why}\n",
         )
+    if paths:
+        # stdout is a path git printed as the filesystem's bytes: decoded
+        # as Python decodes a file name (`os.fsdecode`), so a name that is
+        # not UTF-8 is the one `cwd` spells, not a U+FFFD that names no
+        # folder (`errors="replace"`).
+        done = _git_runner.run_git(
+            (*origin_history.AS_STORED_CONFIG, *args),
+            cwd=cwd,
+            timeout=timeout,
+            stdin=stdin,
+            text=False,
+            env=origin_history.AS_STORED_ENV,
+        )
+        if done is None:
+            return None
+        return subprocess.CompletedProcess(
+            done.args,
+            done.returncode,
+            stdout=os.fsdecode(done.stdout),
+            stderr=done.stderr.decode("utf-8", "replace"),
+        )
     # The history as its objects hold it, whatever the repository sets
     # (`origin_history.AS_STORED_CONFIG`, ENG-220's review).
     return _git_runner.run_git(
@@ -800,6 +825,7 @@ def _git(
     empty_ok: bool = False,
     verbatim: bool = False,
     stdin: bytes | None = None,
+    paths: bool = False,
 ) -> str | None:
     """Run a git command from `cwd`. Returns trimmed stdout on success,
     or with `verbatim` stdout as git wrote it, for a caller that reads
@@ -827,7 +853,10 @@ def _git(
     from a non-repo cwd, which is fully expected (memories written
     outside any repo get `repo=None`).
     """
-    result = _git_result(cwd, *args, timeout=timeout, stdin=stdin)
+    if paths:
+        result = _git_result(cwd, *args, timeout=timeout, stdin=stdin, paths=True)
+    else:
+        result = _git_result(cwd, *args, timeout=timeout, stdin=stdin)
     if result is None:
         _UNANSWERED.count += 1
         return None
@@ -948,7 +977,7 @@ def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool, str | None]:
         )
         _git_runner.note_failed()
         return None, True, None
-    result = _git_result(cwd, "rev-parse", "--show-toplevel")
+    result = _git_result(cwd, "rev-parse", "--show-toplevel", paths=True)
     if result is None:
         return None, True, None
     if result.returncode != 0:
@@ -1021,7 +1050,7 @@ def repo_toplevel(cwd: Path | None) -> Path | None:
     """
     if cwd is None:
         return None
-    raw = _git(cwd, "rev-parse", "--show-toplevel", verbatim=True)
+    raw = _git(cwd, "rev-parse", "--show-toplevel", verbatim=True, paths=True)
     toplevel_raw = None if raw is None else _git_runner.printed_path(raw)
     if not toplevel_raw or not _agreed(cwd, toplevel_raw):
         return None
@@ -1050,7 +1079,7 @@ def repo_toplevel_and_head(cwd: Path | None) -> tuple[Path, str] | None:
     located = toplevel_and_head_from_files(cwd)
     if located is not None:
         return located
-    raw = _git(cwd, "rev-parse", "--show-toplevel", "HEAD", verbatim=True)
+    raw = _git(cwd, "rev-parse", "--show-toplevel", "HEAD", verbatim=True, paths=True)
     if raw is None:
         return None
     # git prints the root, then the hash, each with a newline after it: the

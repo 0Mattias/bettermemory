@@ -65,11 +65,18 @@ naming a process that opens or reads the store. A read refused while a
 restore holds the lock is `RestoreRunningError` (exit 75 from the
 read-only commands).
 
+Writer upgrades use the same opener barrier before excluding legacy
+writers that checked versions only when they opened. They briefly prove
+SQLite exclusivity on their own connection, return it to normal mode,
+and hold the opener barrier until the writer minimum is committed. They
+write no restore marker; a lock file they create stays empty and is
+removed on release. The owning thread can borrow a restore's barrier.
+
 The marker. A restore keeps a JSON record in ``<store>.restore-lock``
 beside the store file (`lock_path`, `RestoreLock.mark`): its process,
 when it began, the bundle and the step it has reached. Only a restore
-makes the file, owner-only, and one that finishes, or fails having
-changed nothing, removes it (`RestoreLock.release`). A marker that is
+writes the marker; a writer upgrade may create the empty owner-only lock
+file. A restore that finishes, or fails having changed nothing, removes it (`RestoreLock.release`). A marker that is
 there while no restore holds the lock is a restore that did not finish:
 it was killed, or it failed after the store file was swapped, and the
 store may be part restored. Every writing open refuses it, naming the
@@ -916,8 +923,8 @@ def reading(store_file: Path) -> _SharedHold | None:
 
 @dataclass
 class RestoreLock:
-    """A restore's exclusive hold on its store's lock (`acquire`), and the
-    marker file it keeps. ``previous`` is the marker a restore that did
+    """A restore or writer upgrade's exclusive hold (`acquire`), and the
+    marker file it may keep. ``previous`` is the marker a restore that did
     not finish left, which this one takes over; None when there was
     none. ``record``: the lock is the record file itself (Windows, or a
     directory ``flock`` cannot lock). ``thread``: the thread that took it,
@@ -975,6 +982,19 @@ class RestoreLock:
                 # restore has open by then stays, empty, and is no marker.
                 with contextlib.suppress(OSError):
                     self.path.unlink()
+
+
+def held_here(store_file: Path) -> bool:
+    """Whether this thread already holds the opener barrier for this store."""
+    target = _take(
+        store_file, create=False, shared=True, wait=0.0, mine=_this_thread_holds
+    )
+    if target is None:
+        return False
+    try:
+        return target.mine
+    finally:
+        os.close(target.fd)
 
 
 def acquire(

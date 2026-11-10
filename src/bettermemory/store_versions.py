@@ -247,6 +247,30 @@ def check_versions(
     return VersionVerdict(writing, False, None, revision, min_reader, min_writer)
 
 
+def require_current_writer(
+    conn: sqlite3.Connection, path: Path, *, refuse: bool = True
+) -> bool:
+    """A connection opened before an upgrade still observes its new minimum."""
+    from .store_schema import SCHEMA_REVISION
+    from ._printable import quoted
+
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (MIN_WRITER_KEY,)
+    ).fetchone()
+    meta = {} if row is None else {MIN_WRITER_KEY: str(row[0])}
+    needed = _stored_revision(meta, MIN_WRITER_KEY, path)
+    if needed > SCHEMA_REVISION:
+        conn.execute("PRAGMA query_only = ON")
+        if refuse:
+            raise sqlite3.OperationalError(
+                f"attempt to write a readonly database: {quoted(str(path))} now needs a writer at "
+                f"schema revision {needed}; this build writes {SCHEMA_REVISION}. "
+                "Upgrade bettermemory and reopen the store."
+            )
+        return False
+    return True
+
+
 class _RolledBack(Exception):
     """Ends `writes_rolled_back`'s transaction, which then rolls back."""
 
@@ -272,13 +296,21 @@ def writes_rolled_back(store: Store) -> Iterator[bool]:
     for the block's length, which another build's writer waits for within
     its busy timeout."""
     conn = store.conn
-    if not conn.execute("PRAGMA query_only").fetchone()[0]:
+    if store._version_readback:
+        yield True
+        return
+    if not conn.execute("PRAGMA query_only").fetchone()[0] and require_current_writer(
+        conn, store.path, refuse=False
+    ):
         yield False
         return
     conn.execute("PRAGMA query_only = OFF")
+    previous = store._version_readback
+    store._version_readback = True
     try:
         with contextlib.suppress(_RolledBack), store.batch():
             yield True
             raise _RolledBack
     finally:
+        store._version_readback = previous
         conn.execute("PRAGMA query_only = ON")

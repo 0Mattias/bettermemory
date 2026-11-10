@@ -223,6 +223,11 @@ _ROWS: dict[str, dict[str, Any]] = {
         "answered_by": "test/test",
         "answered": "t0",
     },
+    "native_member": {
+        "member_kind": "checkout_view",
+        "key_text": '["K999","MACHINE1","/w/native"]',
+        "row_text": '{"checkout":"K999","machine":"MACHINE1","path":"/w/native","first_seen":"t0","last_seen":"t0","seen_order":99}',
+    },
     "returned": {
         "record_id": "01M5K000000000000000000000",
         "via": "01M5K000000000000000000001",
@@ -256,6 +261,7 @@ def test_the_membership_tables_and_kinds() -> None:
         "proposals",
         "standing",
         "returned",
+        "native_membership_rows",
     }
     assert MEMBERSHIP_MUTATION_KINDS <= MUTATION_KINDS
     assert MUTATION_KINDS - MEMBERSHIP_MUTATION_KINDS == _RC3_MUTATION_KINDS
@@ -514,6 +520,7 @@ def _populated(store: Store) -> Membership:
         reason="one_witness",
         line="bettermemory: a question",
     )
+    store.put_membership("native_member", _ROWS["native_member"])
     for table in MEMBERSHIP_TABLES:
         assert store.membership_rows(table), table
     return model
@@ -527,7 +534,10 @@ def test_refold_reproduces_every_membership_table(store: Store) -> None:
     assert set(report["tables"]) == set(FOLDED_TABLES)
     for table, entry in report["membership"].items():
         assert entry["unaccounted"] == [] and entry["missing"] == [], table
-        assert entry["rows"] == len(store.membership_rows(table))
+        assert (
+            entry["rows"]
+            == store.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        )
 
 
 def test_log_verify_reports_a_planted_home(store: Store) -> None:
@@ -751,8 +761,12 @@ def _open_questions_plan(s: Store) -> str:
         "proposals", where={"state": OPEN}, column_in=("kind", sorted(_SUBJECT))
     )
     s.conn.set_trace_callback(None)
-    (select,) = [x for x in ran if x.lstrip().upper().startswith("SELECT")]
-    return " ".join(str(r[-1]) for r in s.conn.execute("EXPLAIN QUERY PLAN " + select))
+    selects = [x for x in ran if x.lstrip().upper().startswith("SELECT")]
+    return " ".join(
+        str(r[-1])
+        for select in selects
+        for r in s.conn.execute("EXPLAIN QUERY PLAN " + select)
+    )
 
 
 def test_the_open_questions_are_read_through_their_index(tmp_path: Path) -> None:
@@ -774,7 +788,7 @@ def test_the_open_questions_are_read_through_their_index(tmp_path: Path) -> None
         made = s.meta()
         rows = len(s.log_rows())
         assert "USING INDEX proposals_by_state" in _open_questions_plan(s)
-    assert made["schema_revision"] == "4"
+    assert made["schema_revision"] == "5"
     assert index in _master(path)
     assert store_admission._PLAIN_INDEX.fullmatch(text)
     conn = sqlite3.connect(str(path))
@@ -798,6 +812,7 @@ def test_the_open_questions_are_read_through_their_index(tmp_path: Path) -> None
     assert [(e["step"], e["backup"]) for e in json.loads(meta["schema_steps"])] == [
         (3, None),
         (4, None),
+        (5, None),
     ]
 
 

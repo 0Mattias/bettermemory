@@ -423,6 +423,7 @@ class Store:
     are the explicit forms, and each takes the directory or the file
     itself."""
 
+    _version_readback: bool = False
     _path: Path
     _conn: sqlite3.Connection
     _keyring: KeyRing
@@ -1206,6 +1207,10 @@ class Store:
         conn.execute("BEGIN IMMEDIATE")
         self._tx_depth = 1
         try:
+            if not self._version_readback:
+                from .store_versions import require_current_writer
+
+                require_current_writer(conn, self._path)
             yield conn
             self._require_open(conn)
             self._flush_returns(conn)
@@ -1390,6 +1395,9 @@ class Store:
         row's MAC. A record put or deleted names each record it may bring
         back into force, and itself when it is removed, for the commit to
         mark or unmark (`_flush_returns`, ENG-200)."""
+        from .store_native import prepare_mutation
+
+        payload = prepare_mutation(conn, kind, payload)
         state = _returned.before(conn, kind, payload)
         row = self._append(conn, kind, payload, session=session)
         _apply_mutation(conn, kind, payload, log_mac=row.mac)

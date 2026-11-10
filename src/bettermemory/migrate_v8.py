@@ -50,6 +50,7 @@ from typing import Any, TypeVar
 
 from . import _frontmatter
 from .log import canonical_payload
+from .origin_model import Origin
 from .mirror_format import (
     EPISODES_DIR,
     TOMBSTONE_DIR,
@@ -171,7 +172,7 @@ def _count_entries(path: Path) -> int:
         return 0
 
 
-_Record = TypeVar("_Record", Memory, TombstonedMemory)
+_Record = TypeVar("_Record", Memory, TombstonedMemory, Episode)
 
 
 def _mirror_targets(path: Path, record: _Record) -> _Record:
@@ -184,10 +185,16 @@ def _mirror_targets(path: Path, record: _Record) -> _Record:
     added = {
         field: metadata[field] for field in PATH_TARGET_FIELDS if field in metadata
     }
+    native = metadata.get("native_origin")
+    if native is not None:
+        if not isinstance(native, str):
+            raise ValueError("native_origin must hold an encoded JSON object")
+        added["origin"] = Origin.model_validate(json.loads(native))
     if not added:
         return record
     restored = type(record).model_validate({**record.model_dump(), **added})
-    validate_path_targets(restored)
+    if not isinstance(restored, Episode):
+        validate_path_targets(restored)
     return restored
 
 
@@ -245,7 +252,12 @@ def inventory(root: Path | str) -> Inventory:
     sessions = sorted(iter_session_ids(root))
     episodes: list[Episode] = []
     for session_id in sessions:
-        episodes.extend(list_by_session(root, session_id))
+        for episode in list_by_session(root, session_id):
+            path = root / EPISODES_DIR / session_id / f"{episode.id}.md"
+            try:
+                episodes.append(_mirror_targets(path, episode) if mirror else episode)
+            except PARSE_SKIP_EXCEPTIONS:
+                continue
 
     conflicts = [candidate.to_dict() for candidate in load_conflicts(root)]
 

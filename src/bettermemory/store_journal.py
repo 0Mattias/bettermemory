@@ -32,6 +32,12 @@ if TYPE_CHECKING:
     from .store import Store
 
 
+_EPISODE_SELECT = (
+    "SELECT episodes.*, (SELECT payload FROM log WHERE mac = episodes.log_mac "
+    "AND kind = 'episode_put' LIMIT 1) AS attestation_payload FROM episodes"
+)
+
+
 # -- episodes -----------------------------------------------------------
 
 
@@ -55,7 +61,7 @@ def put_episode(
 
 def get_episode(self: Store, episode_id: str) -> Episode:
     row = self._conn.execute(
-        "SELECT * FROM episodes WHERE id = ?", (episode_id,)
+        _EPISODE_SELECT + " WHERE id = ?", (episode_id,)
     ).fetchone()
     if row is None:
         raise NotFoundError(episode_id)
@@ -64,10 +70,10 @@ def get_episode(self: Store, episode_id: str) -> Episode:
 
 def iter_episodes(self: Store, *, session_id: str | None = None) -> Iterator[Episode]:
     if session_id is None:
-        cursor = self._conn.execute("SELECT * FROM episodes ORDER BY rowid")
+        cursor = self._conn.execute(_EPISODE_SELECT + " ORDER BY rowid")
     else:
         cursor = self._conn.execute(
-            "SELECT * FROM episodes WHERE session_id = ? ORDER BY rowid",
+            _EPISODE_SELECT + " WHERE session_id = ? ORDER BY rowid",
             (session_id,),
         )
     for row in cursor:
@@ -150,7 +156,7 @@ def episodes_by_swarm(self: Store, swarm_id: str) -> list[Episode]:
     out = [
         _row_to_episode(row)
         for row in self._conn.execute(
-            "SELECT * FROM episodes WHERE swarm_id = ? ORDER BY created, rowid",
+            _EPISODE_SELECT + " WHERE swarm_id = ? ORDER BY created, rowid",
             (swarm_id,),
         )
     ]

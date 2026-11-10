@@ -14,6 +14,8 @@ a single multi-hit response uses one consistent "now" across rows.
 
 from __future__ import annotations
 
+import base64
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -37,6 +39,7 @@ from .models import (
     TombstonedSummary,
 )
 from .identity import SOURCE_PROCESS_CWD, Actor
+from .native_text import has_surrogates
 from .origin import (
     Origin,
     attribute_files_signature,
@@ -1148,6 +1151,13 @@ class ResponseBuilder:
         # infer it: an unlabeled cwd is the silent default this field
         # exists to retire.
         payload.setdefault("source", SOURCE_PROCESS_CWD)
+        for field in ("cwd", "worktree_root"):
+            value = payload.get(field)
+            if isinstance(value, str) and has_surrogates(value):
+                payload[field] = None
+                payload[field + "_bytes_base64"] = base64.b64encode(
+                    os.fsencode(value)
+                ).decode("ascii")
         return payload
 
     def actor_to_dict(self, actor: Actor | None) -> dict[str, Any] | None:

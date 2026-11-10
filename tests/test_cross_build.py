@@ -410,8 +410,13 @@ def test_a_revision_2_build_reads_and_writes_a_store_step_3_indexed(
     store to write, writes and verifies it and the bundle this build took,
     and leaves the revision, the minimums and the index as they were. This
     build's next writing open runs no step."""
-    first = _written_by_this_build(path)
-    assert versions_of(path) == OURS_KEYS
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("bettermemory.store_steps.STEPS", runner().STEPS[:3])
+        patch.setattr("bettermemory.store_schema.SCHEMA_REVISION", 3)
+        patch.setattr("bettermemory.store_schema.MIN_WRITER_REVISION", 2)
+        first = _written_by_this_build(path)
+    indexed_keys = ["3", "1", "2"]
+    assert versions_of(path) == indexed_keys
     assert QUESTIONS_INDEX in indexes_of(path)
     made = backup.create_backup(path)
     with at_revision_2():
@@ -421,13 +426,13 @@ def test_a_revision_2_build_reads_and_writes_a_store_step_3_indexed(
             older.put_memory(_memory("A record the revision 2 build wrote."))
             assert older.log_verify()["status"] == "ok"
         assert backup.verify_bundle(Path(made["bundle"]))["status"] == backup.OK
-    assert versions_of(path) == OURS_KEYS
+    assert versions_of(path) == indexed_keys
     assert QUESTIONS_INDEX in indexes_of(path)
     assert integrity_of(path) == ["ok"]
-    with Store.open(path, allow_rekey=True) as store:
+    with Store.open(path) as store:
         assert store.count_memories() == 2
         assert store.log_verify()["status"] == "ok"
-    assert versions_of(path) == OURS_KEYS
+    assert versions_of(path) == indexed_keys
     assert SCHEMA_STEPS_KEY not in meta_of(path)
 
 
@@ -449,10 +454,17 @@ def test_step_3_indexes_a_store_a_revision_2_build_made(path: Path) -> None:
     assert versions_of(path) == OURS_KEYS
     assert QUESTIONS_INDEX in indexes_of(path)
     steps = json.loads(meta_of(path)[SCHEMA_STEPS_KEY])
-    assert [(e["step"], e["backup"]) for e in steps] == [(3, None), (4, None)]
+    assert [(e["step"], e["backup"]) for e in steps] == [
+        (3, None),
+        (4, None),
+        (5, None),
+    ]
     assert bundles(path) == []
     with at_revision_2(), Store.open(path, allow_rekey=True) as older:
-        older.put_memory(_edited(first, "The revision 2 build still writes it."))
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            older.put_memory(
+                _edited(first, "The revision 2 build cannot write native views.")
+            )
         assert older.log_verify()["status"] == "ok"
 
 

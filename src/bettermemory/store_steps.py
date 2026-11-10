@@ -53,6 +53,7 @@ people: no check reads it.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -117,6 +118,11 @@ class Step:
 #: Step 4 records optional targets in signed payloads, without a physical
 #: schema change: rc3's fold reads every column. The newer older writers'
 #: unknown-field guard protects those records, so both minimums stay put.
+#: Step 5 adds native membership rows as ASCII JSON beside conservative
+#: legacy projections and native origins in signed record envelopes. The
+#: reader minimum stays at 1; writer minimum 5 prevents a writer that sees
+#: no native view from retiring the checkout or dropping its origin.
+
 STEPS: tuple[Step, ...] = (
     Step(
         number=1,
@@ -149,6 +155,14 @@ STEPS: tuple[Step, ...] = (
         reader=1,
         writer=2,
         apply=_add_path_targets,
+    ),
+    Step(
+        number=5,
+        name="the exact native strings of membership rows",
+        additive=True,
+        reader=1,
+        writer=5,
+        apply=_add_membership_tables,
     ),
 )
 
@@ -356,12 +370,20 @@ def run_steps(
             conn.execute("PRAGMA query_only = ON")
         return ()
     keys = Path(keys_dir) if keys_dir is not None else None
+    from .store_upgrade import TRANSACTION_WRITER_REVISION, quiescent
+
+    minimum = _whole(meta.get(MIN_WRITER_KEY))
+    old_writers = minimum < TRANSACTION_WRITER_REVISION and any(
+        s.writer > minimum for s in pending
+    )
+    barrier = quiescent(conn, path) if old_writers else contextlib.nullcontext()
     applied: list[int] = []
-    for step in pending:
-        if step.additive:
-            if not _run_additive(conn, path, meta, step, __version__):
-                break
-        elif not _run_with_backup(conn, path, meta, step, keys, __version__):
-            continue
-        applied.append(step.number)
+    with barrier:
+        for step in pending:
+            if step.additive:
+                if not _run_additive(conn, path, meta, step, __version__):
+                    break
+            elif not _run_with_backup(conn, path, meta, step, keys, __version__):
+                continue
+            applied.append(step.number)
     return tuple(applied)

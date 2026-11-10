@@ -107,6 +107,16 @@ def _forward_headers(ctx: Any) -> dict[str, str]:
             headers[identity.HEADER_WORKSPACE] = os.getcwd()
         except OSError:
             pass
+    workspace = headers.get(identity.HEADER_WORKSPACE)
+    if workspace is not None and (
+        not workspace.isascii()
+        or workspace.strip() != workspace
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in workspace)
+    ):
+        headers.pop(identity.HEADER_WORKSPACE)
+        headers[identity.HEADER_WORKSPACE_JSON] = json.dumps(
+            workspace, ensure_ascii=True
+        )
     return headers
 
 
