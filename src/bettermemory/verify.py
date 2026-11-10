@@ -106,6 +106,8 @@ and `compute_commit_drift`'s count of the commits since a verify.
 
 from __future__ import annotations
 
+from . import git_read_budget
+
 import bisect
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
@@ -1195,6 +1197,7 @@ def applicable_unread(
     return None if specs == [] else why
 
 
+@git_read_budget.unread
 def compute_commit_drift(
     last_verified_at: datetime | None,
     memory_origin_repo: str | None,

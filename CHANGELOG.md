@@ -32,6 +32,16 @@ eighteenth was built.
 
 #### Fixed
 
+- **Commit reads share one deadline (ENG-239).** Search, its top-hit
+  expansion, show and daemon health share a five-second Git-read budget.
+  Exhaustion is explicitly unread and is never retained as a cached
+  failure. Deferred homes receive later turns without changing search
+  ranking; health alternates caller and estate priority and bounds its
+  cursor-lock wait. Offline CLI health still audits every root. Search
+  reads caller history only when a hit needs it. (`git_read_budget.py`,
+  `health_reading.py`, `tests/test_home_read_budget.py`,
+  `tests/test_show_read_budget.py`, `tests/test_health_read_budget.py`)
+
 - **Estate health rotates beyond its root cap (ENG-238).** Daemon
   reports advance through home roots across calls instead of repeatedly
   omitting the smallest group. Checked and skipped roots expose their

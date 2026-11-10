@@ -152,6 +152,8 @@ class HistoryUnread(enum.Enum):
     these, says no history applies: no repository, no git on PATH, no
     commit.
 
+    - ``CALL_BUDGET``: this call exhausted its shared Git-read deadline.
+      No clean count is supplied, and no failure memo retains the cutoff.
     - ``TIMEOUT``: git met its 5 s bound, on the dates' log, or on the walk
       from a stamp's head and the listing of its commits both
       (`origin.commits_since_anchor`, `unwalked`).
@@ -183,6 +185,7 @@ class HistoryUnread(enum.Enum):
     SHALLOW = "shallow"
     ERROR = "error"
     UNCONFIRMED_CUT = "unconfirmed_cut"
+    CALL_BUDGET = "call_budget"
 
 
 def git_counts() -> tuple[int, int]:
@@ -350,6 +353,8 @@ def remember(
 
 def remember_failure(key: Key, guard: Guard | None, why: HistoryUnread) -> None:
     """Remember that a read for `key` failed, now, under `guard`, and why."""
+    if why is HistoryUnread.CALL_BUDGET:
+        return
     with _TIMESTAMPS_MEMO_LOCK:
         _TIMESTAMPS_FAILED[key] = (time.monotonic(), guard, why)
         _TIMESTAMPS_FAILED.move_to_end(key)

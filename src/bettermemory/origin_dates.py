@@ -17,6 +17,8 @@ imports it, and the drift readers (`verify`, `verify_basis`, `_response`,
 
 from __future__ import annotations
 
+from . import git_read_budget
+
 import os
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +39,7 @@ def _instant(stamp: datetime) -> float:
     return stamp.timestamp()
 
 
+@git_read_budget.unread
 def commit_author_timestamps(
     cwd: Path | None, *, located: tuple[Path, str] | None = None
 ) -> list[datetime] | HistoryUnread | None:
@@ -180,6 +183,16 @@ def commit_author_timestamps(
         # but changes the file or its containing directory (ENG-233).
         _git_runner.note_failed()
         return HistoryUnread.SHALLOW
+    return _remember_dates(key, guard, cut, dates)
+
+
+def _remember_dates(
+    key: origin_history.Key,
+    guard: origin_history.Guard | None,
+    cut: frozenset[str],
+    dates: list[datetime] | HistoryUnread | None,
+) -> list[datetime] | HistoryUnread | None:
+    """Keep a completed read or its reusable failure under its history key."""
     if isinstance(dates, HistoryUnread):
         origin_history.remember_failure(key, guard, dates)
     elif dates is not None and not origin_history.remember(key, dates, guard, cut):

@@ -180,6 +180,7 @@ def _recommend_from_drift_and_scopes(report: HealthReport) -> list[Recommendatio
 #: (`origin_history.HistoryUnread`), as the unread recommendation's action
 #: names it, beside the spot-check and re-stamp every cause shares.
 _UNREAD_REMEDIES: dict[str, str] = {
+    "call_budget": "for the shared read deadline, run health again to reach deferred roots",
     "error": "for an error, git log in the checkout shows git's message",
     "over_budget": (
         "for a history longer than bettermemory reads, the re-stamp is the fix"

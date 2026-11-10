@@ -7,6 +7,7 @@ flow has something to commit on the next turn.
 """
 
 from __future__ import annotations
+from .. import git_read_budget
 
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,7 @@ DESC_MEMORY_SHOW = (
 )
 
 
+@git_read_budget.async_call
 async def memory_show(
     deps: ToolHandlers, id: str, ctx: Context | None = None
 ) -> dict[str, Any]:

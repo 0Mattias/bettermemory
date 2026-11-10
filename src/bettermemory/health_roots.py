@@ -9,7 +9,7 @@ This is scheduling state, not an exact cache registered with ``_caches``.
 
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -30,16 +30,22 @@ class EstateProgress:
     cursor: str | None = None
     checked: OrderedDict[str, datetime] = field(default_factory=OrderedDict)
     lock: RLock = field(default_factory=RLock, repr=False)
+    caller_first: bool = True
+    retry_root: str | None = None
 
     def ordered(self, roots: Iterable[str]) -> list[str]:
         """Stable lexical order, starting after the last attempted root."""
         ordered = sorted(set(roots))
-        start = bisect_right(ordered, self.cursor) if self.cursor is not None else 0
+        if self.retry_root is not None and self.retry_root in ordered:
+            start = bisect_left(ordered, self.retry_root)
+        else:
+            start = bisect_right(ordered, self.cursor) if self.cursor is not None else 0
         return ordered[start:] + ordered[:start]
 
     def attempt(self, root: str, when: datetime) -> None:
         """Advance even after an unread attempt, without claiming it succeeded."""
         self.cursor = root
+        self.retry_root = None
         self.checked[root] = when
         self.checked.move_to_end(root)
         while len(self.checked) > _LAST_CHECKED_CAP:

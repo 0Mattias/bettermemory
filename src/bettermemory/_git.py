@@ -58,6 +58,7 @@ import logging
 import os
 import subprocess
 import threading
+from . import git_read_budget
 from pathlib import Path
 from typing import Collection, Literal, Mapping, Sequence, overload
 
@@ -315,6 +316,12 @@ def run_git(
     read; None ONLY when git could not run at all, logged at WARNING and
     counted."""
     global _unanswered
+    try:
+        timeout, shared_limit = git_read_budget.allowance(timeout, cwd, git_dir)
+    except git_read_budget.ReadDeadline:
+        _unanswered += 1
+        _FAILED.count += 1
+        raise
     command = ["git", *PINS]
     if git_dir is not None:
         command.append(f"--git-dir={git_dir}")
@@ -349,6 +356,11 @@ def run_git(
             log.warning("git binary not found on PATH: %s", exc)
         _MISSING.count += 1
     except subprocess.TimeoutExpired:
+        if shared_limit and git_read_budget.expired():
+            _unanswered += 1
+            _FAILED.count += 1
+            _TIMED_OUT.count += 1
+            git_read_budget.exhausted()
         log.warning(
             "git %s timed out after %ss in %s", subcommand(args), timeout, where
         )

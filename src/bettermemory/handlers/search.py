@@ -53,6 +53,7 @@ Description-edit history:
 """
 
 from __future__ import annotations
+from .. import git_read_budget
 
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, cast
 
@@ -390,6 +391,7 @@ def _corpus_stats_provider(
     return _corpus_stats
 
 
+@git_read_budget.async_call
 async def memory_search(
     deps: ToolHandlers,
     query: str,

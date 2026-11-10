@@ -46,6 +46,8 @@ counted it at its home and listed it drifted.
 
 from __future__ import annotations
 
+from . import git_read_budget
+
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -200,8 +202,8 @@ class CommitLegs:
     row read at its home is memoised as one read in the caller's checkout.
 
     `eager` reads the caller's history as the pass opens and drops the
-    pass where none applies, as `memory_search` always has; otherwise it
-    is read where a row that counts there resolved no leg. Either way a
+    pass where none applies; otherwise it is read only when a row that
+    counts there needs it, so deferred homes can receive their turn. Either way a
     record counted at the caller where no history applies is read at its
     home. Not shared between threads, as the passes are not."""
 
@@ -249,6 +251,7 @@ class CommitLegs:
         if self.anchoring is not None:
             self.anchoring.prime(ids)
 
+    @git_read_budget.hit
     def lookup(
         self, record: Any, last_verified_at: datetime | None, *, resolve: bool = True
     ) -> tuple[bool, Leg]:
@@ -316,13 +319,34 @@ class CommitLegs:
             return True, root
         return self._at_root(root, record, last_verified_at, resolve, projected.paths)
 
+    def read_root(self, record: Any) -> str | None:
+        """The root used only to schedule a deferred record's next read."""
+        origin_repo = record.origin.repo if record.origin is not None else None
+        if (
+            self.caller is not None
+            and self.admission is not None
+            and self._caller_applies is not False
+            and counted_at_caller(
+                record.id,
+                origin_repo,
+                caller_origin=self.caller_origin,
+                admission=self.admission,
+            )
+        ):
+            return str(self.caller.cwd)
+        if self.anchoring is None:
+            return None
+        root = self._root_for(record)
+        return root if isinstance(root, str) else None
+
     def _caller_history_applies(self) -> bool:
         """Whether a history applies in the caller's checkout, read once
         (`_DriftPass.history_applies`: the whole history only where the
         root and the head do not settle it)."""
         if self._caller_applies is None:
             assert self.caller is not None
-            self._caller_applies = self.caller.history_applies()
+            with git_read_budget.reading(self.caller.cwd, home=False):
+                self._caller_applies = self.caller.history_applies()
         return self._caller_applies
 
     def _root_for(self, record: Any) -> str | CommitLegUnchecked | None:
@@ -366,7 +390,8 @@ class CommitLegs:
         if not answered or leg is not None or not resolve:
             return answered, leg
         if root not in self._root_applies:
-            self._root_applies[root] = found.history_applies()
+            with git_read_budget.reading(root):
+                self._root_applies[root] = found.history_applies()
         if not self._root_applies[root]:
             return True, CommitLegUnchecked(NO_HISTORY)
         return True, None

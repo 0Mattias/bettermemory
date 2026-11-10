@@ -58,6 +58,11 @@ CommitDriftUnread = HistoryUnread
 # The recommendation such a row carries, on the search hit and memory_show,
 # by cause.
 _UNREAD_RECOMMENDATIONS: dict[HistoryUnread, str] = {
+    HistoryUnread.CALL_BUDGET: (
+        "This call reached its shared Git-read deadline before the memory's "
+        "commit history was checked. Retry the read; later calls give "
+        "deferred home roots a turn. Spot-check the claim before relying on it."
+    ),
     HistoryUnread.UNCONFIRMED_CUT: (
         "No usable verification commit anchors this memory's history. "
         "Author dates cannot rule out older commits integrated after "

@@ -64,17 +64,17 @@ def heads_by(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) ->
     return bool(request.param == "files")
 
 
-def _per_search(files: bool) -> list[tuple[str, ...]]:
+def _per_search(files: bool, *, dates: bool = True) -> list[tuple[str, ...]]:
     """The processes every cold search forks before any hit's: the
     keying rev-parse where the files do not answer (`heads_by`), then the
     history's log, whose argv starts so."""
-    return ([] if files else [_KEYING]) + [("log", "--format=%at")]
+    return ([] if files else [_KEYING]) + ([("log", "--format=%at")] if dates else [])
 
 
-def _opens_as(calls: list[tuple[str, ...]], files: bool) -> None:
+def _opens_as(calls: list[tuple[str, ...]], files: bool, *, dates: bool = True) -> None:
     """`calls`, a cold search's, open with the per-search processes, and
     the rev-parse runs only where the files do not answer."""
-    opening = _per_search(files)
+    opening = _per_search(files, dates=dates)
     assert [call[: len(want)] for call, want in zip(calls, opening)] == opening
     assert (_KEYING in calls) is not files
 
@@ -929,12 +929,15 @@ def test_commit_drift_count_git_cost_shape(
         # The per-search calls: the unfiltered author-date log, after the
         # rev-parse that keys the rows where the files do not answer. The
         # repo root the per-hit narrowing reuses is the pair they keyed on.
-        _opens_as(calls, heads_by)
+        if bodies_cite_paths:
+            _opens_as(calls, heads_by)
+        else:
+            assert calls == [], "claimless hits need no commit reader"
         # Warm: the same search again forks nothing but the keying and
         # reads the same hits.
         warm, warm_calls = attach()
         assert warm == out
-        assert warm_calls == ([] if heads_by else [_KEYING])
+        assert warm_calls == ([] if heads_by or not bodies_cite_paths else [_KEYING])
         return len(calls), annotated
 
     per_search = len(_per_search(heads_by))
@@ -943,10 +946,10 @@ def test_commit_drift_count_git_cost_shape(
     assert forks == per_search + annotated
 
     # Same three hits, no claim anchors: the gate keeps the per-hit path
-    # closed, so the cost falls back to the per-search calls.
+    # closed, so no commit-history or keying process runs.
     forks, annotated = count_git_calls(bodies_cite_paths=False)
     assert annotated == 0
-    assert forks == per_search
+    assert forks == 0
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -2171,8 +2174,8 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     """The reachability sibling of the cost pin: the per-hit fork is the
     walk from the hit's anchor, paid once per DISTINCT anchor, plus the
     phantom classification for a hit whose range touched none of its
-    anchors. Three hits at one anchor, all touched: ``1 + 1``. The same
-    three hits stamped at three anchors: ``1 + 3``. One of them citing a
+    anchors. Three hits at one anchor, all touched: one walk. The same
+    three hits stamped at three anchors: three walks. One of them citing a
     real file the range never touched: one classification log more. The
     walks are keyed on the head the repository's files name, or where they
     do not, the head the keying rev-parse read (`heads_by`); warm, the same
@@ -2232,9 +2235,9 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
             return out, calls
 
         out, calls = attach()
-        # The per-search calls: the unfiltered author-date log, after the
-        # rev-parse that keys the rows where the files do not answer.
-        _opens_as(calls, heads_by)
+        # Reachability reads no author dates; only the keying rev-parse
+        # precedes the walks where the files do not answer.
+        _opens_as(calls, heads_by, dates=False)
         annotated = {
             hit["id"]: (hit["commit_drift_count"], hit["commit_drift_basis"])
             for hit in out
@@ -2245,7 +2248,7 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
         assert warm_calls == ([] if heads_by else [_KEYING])
         return len(calls), annotated
 
-    per_search = len(_per_search(heads_by))
+    per_search = len(_per_search(heads_by, dates=False))
     # One anchor for all three, every cited file touched afterwards.
     ids = []
     for i, path in enumerate(anchors):

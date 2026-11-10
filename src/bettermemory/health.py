@@ -51,17 +51,17 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 from .attestation_paths import commit_paths
 from .models import Category, Memory, first_summary_line
-from . import location
+from . import git_read_budget, location
 from .claims import load_claims
 from .commit_legs import counted_at_caller, names_a_repository
 from .commit_anchors import UNMAPPED_REASON, project_commit_anchors
 from .origin import (
     Origin,
     capture,
-    repo_toplevel_and_head,
+    repo_toplevel_and_head as repo_toplevel_and_head,
     repos_match,
 )
-from .origin_dates import commit_author_timestamps
+from .origin_dates import commit_author_timestamps as commit_author_timestamps
 from .verify_basis import CommitDriftUnread
 from .verify_anchoring import GLOBAL_RECORD
 from .verify import (
@@ -73,6 +73,7 @@ from .time_utils import (
     parse_event_ts,
     isoformat_utc_optional,
 )
+from .health_reading import _defer_caller_homes, _health_history, _read_estate_root
 from .health_model import (
     RECOMMENDATION_KINDS,
     ActorSlice as ActorSlice,
@@ -117,7 +118,7 @@ from .health_stats import (
     _StatsAccumulator as _StatsAccumulator,
     _build_actor_slices,
     _build_recent_silent_misses,
-    _drift_rows_for_candidates,
+    _drift_rows_for_candidates as _drift_rows_for_candidates,
     _edit_distance_within as _edit_distance_within,
     _rare_scopes,
     _silent_miss_stats,
@@ -524,8 +525,8 @@ def _drift_rollups(
             if projected.unmapped:
                 unmapped.add(mid)
         anchor_paths_by_id = projected_paths
-    counted = (
-        _caller_counted(
+    counted = eligible = (
+        _caller_eligible(
             by_id,
             origin_repo_by_id=origin_repo_by_id,
             caller_origin=caller_origin,
@@ -533,33 +534,108 @@ def _drift_rollups(
         )
         - unmapped
     )
-    commit_drift_debt = _compute_commit_drift_debt(
-        by_id=by_id,
-        origin_repo_by_id=origin_repo_by_id,
-        anchor_paths_by_id=anchor_paths_by_id,
-        claims_by_id=claims_by_id,
-        verified_head_by_id=verified_head_by_id,
-        caller_origin=caller_origin,
-        admission=admission,
-        counted=counted,
-    )
 
-    cross_repo_drift = _compute_cross_repo_drift(
-        by_id=by_id,
-        origin_repo_by_id=origin_repo_by_id,
-        origin_worktree_by_id=origin_worktree_by_id,
-        anchor_paths_by_id=anchor_paths_by_id,
-        claims_by_id=claims_by_id,
-        verified_head_by_id=verified_head_by_id,
-        caller_origin=caller_origin,
-        anchoring=anchoring,
-        counted=counted,
-        unmapped=frozenset(unmapped),
-        estate_progress=estate_progress,
-        estate_root_limit=estate_root_limit,
-        checked_at=checked_at,
-    )
+    def caller() -> CommitDriftDebt | None:
+        nonlocal counted
+        root = caller_origin.cwd if caller_origin is not None else ""
+        with git_read_budget.reading(root, home=False):
+            counted = _caller_counted(
+                by_id,
+                origin_repo_by_id=origin_repo_by_id,
+                caller_origin=caller_origin,
+                admission=admission,
+                eligible=eligible,
+            )
+            return _compute_commit_drift_debt(
+                by_id=by_id,
+                origin_repo_by_id=origin_repo_by_id,
+                anchor_paths_by_id=anchor_paths_by_id,
+                claims_by_id=claims_by_id,
+                verified_head_by_id=verified_head_by_id,
+                caller_origin=caller_origin,
+                admission=admission,
+                counted=counted,
+            )
+
+    def estate() -> CrossRepoDrift | None:
+        return _compute_cross_repo_drift(
+            by_id=by_id,
+            origin_repo_by_id=origin_repo_by_id,
+            origin_worktree_by_id=origin_worktree_by_id,
+            anchor_paths_by_id=anchor_paths_by_id,
+            claims_by_id=claims_by_id,
+            verified_head_by_id=verified_head_by_id,
+            caller_origin=caller_origin,
+            anchoring=anchoring,
+            counted=counted,
+            unmapped=frozenset(unmapped),
+            estate_progress=estate_progress,
+            estate_root_limit=estate_root_limit,
+            checked_at=checked_at,
+        )
+
+    caller_first = True
+    if eligible and estate_progress is not None and estate_root_limit is not None:
+        with git_read_budget.wait_for(estate_progress.lock) as held:
+            if held:
+                caller_first = estate_progress.caller_first
+                estate_progress.caller_first = not caller_first
+    if caller_first:
+        commit_drift_debt = caller()
+        cross_repo_drift = estate()
+    else:
+        cross_repo_drift = estate()
+        commit_drift_debt = caller()
+        if eligible != counted:
+            cross_repo_drift = _defer_caller_homes(
+                cross_repo_drift,
+                by_id={mid: by_id[mid] for mid in eligible - counted},
+                origin_repo_by_id=origin_repo_by_id,
+                origin_worktree_by_id=origin_worktree_by_id,
+                anchor_paths_by_id=anchor_paths_by_id,
+                claims_by_id=claims_by_id,
+                verified_head_by_id=verified_head_by_id,
+                caller_origin=caller_origin,
+                anchoring=anchoring,
+            )
     return commit_drift_debt, cross_repo_drift
+
+
+def _caller_eligible(
+    by_id: dict[str, MemoryStats],
+    *,
+    origin_repo_by_id: dict[str, str | None],
+    caller_origin: Origin | None,
+    admission: DriftScope | None,
+) -> frozenset[str]:
+    """Pure caller-admission candidates, before testing whether history applies.
+
+    The caller's scheduled turn establishes applicability. Keeping that
+    read out of grouping lets the estate receive a turn before a slow
+    caller without changing which checkout owns a record's commit leg.
+    """
+    if caller_origin is None or not caller_origin.cwd or not caller_origin.repo:
+        return frozenset()
+    if admission is None:
+        eligible = frozenset(
+            mid
+            for mid in by_id
+            if (repo := origin_repo_by_id.get(mid)) is not None
+            and repos_match(repo, caller_origin.repo)
+        )
+    else:
+        admission.prime(list(by_id))
+        eligible = frozenset(
+            mid
+            for mid in by_id
+            if counted_at_caller(
+                mid,
+                origin_repo_by_id.get(mid),
+                caller_origin=caller_origin,
+                admission=admission,
+            )
+        )
+    return eligible
 
 
 def _caller_counted(
@@ -568,36 +644,22 @@ def _caller_counted(
     origin_repo_by_id: dict[str, str | None],
     caller_origin: Origin | None,
     admission: DriftScope | None,
+    eligible: frozenset[str] | None = None,
 ) -> frozenset[str]:
-    """The records whose commit leg the caller's checkout counts: where a
-    history applies there, those `memory_show` and `memory_search` count
-    there (`commit_legs.counted_at_caller`); without an admission
-    (`bettermemory health`, which resolves no caller), those whose
-    recorded repository is the caller's. None of them where no history
-    applies in the caller's checkout: the estate check then reads every
-    record where the per-memory surfaces read it, at its home."""
-    if caller_origin is None or not caller_origin.cwd or not caller_origin.repo:
-        return frozenset()
-    if commit_author_timestamps(Path(caller_origin.cwd)) is None:
-        return frozenset()
-    if admission is None:
-        return frozenset(
-            mid
-            for mid in by_id
-            if (repo := origin_repo_by_id.get(mid)) is not None
-            and repos_match(repo, caller_origin.repo)
-        )
-    admission.prime(list(by_id))
-    return frozenset(
-        mid
-        for mid in by_id
-        if counted_at_caller(
-            mid,
-            origin_repo_by_id.get(mid),
+    """The eligible records where the caller has an applicable history."""
+    if eligible is None:
+        eligible = _caller_eligible(
+            by_id,
+            origin_repo_by_id=origin_repo_by_id,
             caller_origin=caller_origin,
             admission=admission,
         )
-    )
+    if not eligible:
+        return frozenset()
+    assert caller_origin is not None and caller_origin.cwd is not None
+    if commit_author_timestamps(Path(caller_origin.cwd)) is None:
+        return frozenset()
+    return eligible
 
 
 def _cold_endorsement_bucket(
@@ -799,6 +861,7 @@ def _health_report(
     return report
 
 
+@git_read_budget.health_call
 def compute_health(
     memories: Iterable[Memory],
     events: Iterable[dict[str, Any]],
@@ -1251,9 +1314,10 @@ def _walk_cross_repo_roots(
 ) -> tuple[list[CrossRepoDriftGroup], list[dict[str, Any]]]:
     """Rotate bounded daemon reads; an offline CLI audit visits all roots.
 
-    With a stable set of N live roots, ceil(N / limit) consecutive calls
-    on one progress object attempt every root. Missing directories take no
-    place; a failed Git attempt does. Labels for one root share its place.
+    Reads attempt up to the root cap while the shared deadline permits.
+    Only an attempted root advances the cursor; a deferred root keeps its
+    prior check time. Missing directories take no place, and labels for
+    one root share a place.
     """
     progress = estate_progress if estate_progress is not None else EstateProgress()
     checked_at = checked_at or datetime.now(timezone.utc)
@@ -1271,7 +1335,20 @@ def _walk_cross_repo_roots(
     ]
     walked = 0
     # Serialize progress on this Store, never on another Store's Git reads.
-    with progress.lock:
+    with git_read_budget.wait_for(progress.lock) as held:
+        if not held:
+            skipped.extend(
+                {
+                    "repo": repo,
+                    "worktree_root": worktree,
+                    "reason": "shared Git-read deadline reached while waiting for health progress",
+                }
+                for entries in buckets.values()
+                for repo, worktree, _candidates, _live in entries
+            )
+            for skip in skipped:
+                skip["last_checked_at"] = None
+            return out_groups, skipped
         for key in progress.ordered(buckets):
             reachable = [
                 entry
@@ -1291,38 +1368,35 @@ def _walk_cross_repo_roots(
                     for repo, worktree, _candidates, _live in reachable
                 )
                 continue
+            if git_read_budget.expired():
+                skipped.extend(
+                    {
+                        "repo": repo,
+                        "worktree_root": worktree,
+                        "reason": "shared Git-read deadline reached before this root",
+                    }
+                    for repo, worktree, _candidates, _live in reachable
+                )
+                continue
             walked += 1
             progress.attempt(key, checked_at)
             for repo, worktree, candidates, live in reachable:
-                if live:
-                    group = _cross_repo_group(
-                        repo,
-                        worktree,
-                        candidates,
-                        anchor_paths_by_id=anchor_paths_by_id,
-                        claims_by_id=claims_by_id,
-                        verified_head_by_id=verified_head_by_id,
-                    )
-                    if group is None:
-                        skipped.append(
-                            {
-                                "repo": repo,
-                                "worktree_root": worktree,
-                                "reason": "git unreachable in the home checkout",
-                            }
-                        )
-                else:
-                    group = _recorded_root_group(
-                        repo,
-                        worktree,
-                        Path(worktree),
-                        candidates,
-                        skipped,
-                        anchor_paths_by_id=anchor_paths_by_id,
-                        claims_by_id=claims_by_id,
-                        verified_head_by_id=verified_head_by_id,
-                    )
+                group = _read_estate_root(
+                    repo,
+                    worktree,
+                    candidates,
+                    live,
+                    skipped,
+                    anchor_paths_by_id=anchor_paths_by_id,
+                    claims_by_id=claims_by_id,
+                    verified_head_by_id=verified_head_by_id,
+                )
                 if group is not None:
+                    if walked > 1 and "call_budget" in group.unread_causes:
+                        # A later root received only the remaining slice.
+                        # Give it a full turn next time. A first root that
+                        # spends the whole call must let its peers proceed.
+                        progress.retry_root = key
                     group.last_checked_at = checked_at
                     out_groups.append(group)
         for skip in skipped:
@@ -1542,17 +1616,6 @@ def _compute_commit_drift_debt(
         return None
     if not caller_origin.repo or not caller_origin.cwd:
         return None
-    cwd_path = Path(caller_origin.cwd)
-    timestamps = commit_author_timestamps(cwd_path)
-    if timestamps is None:
-        return None
-    # Resolve the repo root once for the whole rollup — the per-memory
-    # anchor resolution below would otherwise pay a `git rev-parse`
-    # fork+exec per drifting memory — and the head beside it, which the
-    # reachable walks are keyed on.
-    located = repo_toplevel_and_head(cwd_path)
-    toplevel = located[0] if located is not None else None
-    head = located[1] if located is not None else None
 
     # Two-pass: filter by repo match first, then run the bisect. Lets us
     # short-circuit the "no matching memories" case before any per-row
@@ -1586,6 +1649,12 @@ def _compute_commit_drift_debt(
         candidates.append(stats)
     if not candidates:
         return None
+
+    cwd_path = Path(caller_origin.cwd)
+    history = _health_history(cwd_path)
+    if history is None:
+        return None
+    timestamps, toplevel, head = history
 
     rows, unconfirmed, unread = _drift_rows_by_root(
         candidates,

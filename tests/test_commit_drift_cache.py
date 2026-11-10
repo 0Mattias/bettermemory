@@ -1378,26 +1378,37 @@ def test_a_commit_after_the_history_is_read_is_never_kept_under_its_head(
         verified_head=None if dated else anchor,
     )
     memories = store.load_all()
-    real = origin_dates.commit_author_timestamps
+    reader = "commit_author_timestamps" if dated else "resolve_hit_drift"
+    real = getattr(_response, reader)
     landed: list[str] = []
 
     def read_then_commit(*args: Any, **kwargs: Any) -> Any:
+        if not dated:
+            assert kwargs["head"] == anchor, "resolve at the head its row is keyed on"
         got = real(*args, **kwargs)
         if not landed:
             post = {"notes0.md": "a1\n1\n2\n3\nz\n"}
             landed.append(_commit(repo, "post", when=_T1, files=post))
         return got
 
-    monkeypatch.setattr(_response, "commit_author_timestamps", read_then_commit)
+    monkeypatch.setattr(_response, reader, read_then_commit)
     _caches.clear_all()
     _, racing = _attach(memories, caller, monkeypatch)
-    monkeypatch.setattr(_response, "commit_author_timestamps", real)
+    monkeypatch.setattr(_response, reader, real)
     assert landed, "premise: the commit landed mid-pass"
     keying = ("rev-parse", "--show-toplevel", "HEAD")
     history = [c for c in racing if c[:2] == _WHOLE_HISTORY]
-    assert history == [(*_WHOLE_HISTORY, anchor)], "read at the head it is keyed on"
+    if dated:
+        assert history == [(*_WHOLE_HISTORY, anchor)], "read at the head it is keyed on"
+        history_call = history[0]
+    else:
+        assert not history, "a reachable anchor needs no eager author dates"
+        assert not _walks(racing), "an empty reachable range needs no walk"
+        classifications = [call for call in racing if "log" in call]
+        assert classifications, "premise: the quiescent anchor was classified"
+        history_call = classifications[0]
     if keyed_by != "posix":
-        assert racing.index(keying) < racing.index(history[0]), "the key read first"
+        assert racing.index(keying) < racing.index(history_call), "the key read first"
     assert not _response._DRIFT_MEMO
 
     def row(out: list[dict[str, Any]]) -> tuple[object, object]:

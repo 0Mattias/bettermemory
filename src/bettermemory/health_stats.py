@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from . import git_read_budget
 from .durability import canonical_marker
 from .control_tokens import named_tokens
 from .events import _event_id_list, is_audit_row
@@ -775,113 +776,139 @@ def _drift_rows_for_candidates(
     # anchor where the walk memo cannot key the walk.
     walked: Walked = {}
     for stats in candidates:
-        since = stats.last_verified_at
-        assert since is not None  # callers filter on this
-        if since.tzinfo is None:
-            since = since.replace(tzinfo=timezone.utc)
-        stored_claims = claims_by_id.get(stats.id, ()) if claims_by_id else ()
-        parsed_claims = load_claims(list(stored_claims)) if stored_claims else []
-        anchors = anchor_paths_by_id.get(stats.id, ())
-        # The basis, per memory: the reachable walk from the stamp's
-        # recorded HEAD when the record carries one and the anchor is
-        # still an ancestor of this root's HEAD (memoised per anchor,
-        # so a store verified at one commit walks once for the whole
-        # rollup); the author-date bisect otherwise — the rule
-        # `verify.compute_commit_drift` applies on memory_show.
-        walk = None
-        anchor = verified_head_by_id.get(stats.id) if verified_head_by_id else None
-        if anchor is not None and head is not None:
-            given_up = unwalked()
-            walk = commits_since_anchor(
-                root, anchor, toplevel=toplevel, head=head, walked=walked
-            )
-            given_up_why = None if walk is not None else given_up_since(given_up)
-            if given_up_why is not None:
-                # The walk and its listing met their timeout, or git failed
-                # on both from an anchor the repository holds: no row, as
-                # the per-memory surfaces omit the count, never one counted
-                # off the author dates (`origin_history.unwalked`), and
-                # counted apart, not read as caught up.
-                why = applicable_unread(
-                    given_up_why,
-                    root,
-                    anchors,
-                    parsed_claims,
-                    toplevel=toplevel,
-                )
-                if why is not None:
-                    unread[stats.id] = why
-                continue
-        if walk is not None:
-            count = len(walk.commits)
-            basis = BASIS_REACHABILITY
-        else:
-            # bisect_right gives us the first index strictly greater than
-            # `since`; len - idx is then the count of timestamps after that
-            # cut. Equal timestamps fall before the cut on bisect_right
-            # semantics, which is what we want — a verify call that lands
-            # at the same instant as a commit doesn't count as drift. Dates
-            # not read leave the row unread, as the walk given up does.
-            counted = dates_since(timestamps, since)
-            if counted is None or isinstance(counted, CommitDriftUnread):
-                why = None
-                if counted is not None:
-                    why = applicable_unread(
-                        counted, root, anchors, parsed_claims, toplevel=toplevel
-                    )
-                if why is not None:
-                    unread[stats.id] = why
-                continue
-            count = counted
-            basis = BASIS_AUTHOR_DATE
-        # Narrow to commits that actually touched the memory's claim
-        # anchors — mirrors memory_show and the memory_search top-hit
-        # surface (_response.py). Without this the rollup nagged on
-        # memories the user deliberately attested as stable and disagreed
-        # with the per-hit verdict. None means every anchor escapes this
-        # repo: the claims live elsewhere, drift is not applicable, drop
-        # the row. Falls back to the unfiltered count only when git can't
-        # answer the filtered query. Guarded on count > 0 so a caught-up
-        # memory never pays the extra git call — and, unlike the
-        # per-memory surfaces (memory_show, the search hit), this loop
-        # needs no quiescent applicability classification: it emits
-        # rows for `count > 0` only, so a caught-up memory contributes
-        # nothing whether or not the signal applies to it, and there is
-        # no affirmative 0 here for the escape/phantom rules to correct.
-        # The richer entry point over the same core as
-        # `resolve_commit_drift_count`, so the row can carry the basis
-        # the narrowing settled on.
-        if count > 0:
-            resolved = resolve_commit_drift(
-                cwd=root,
-                since=since,
-                unfiltered=count,
-                anchors=anchors,
-                claims=parsed_claims,
-                toplevel=toplevel,
-                walk=walk,
-            )
-            if resolved is None:
-                continue
-            count = resolved.count
-            basis = resolved.basis
-        if (why := date_count_uncertainty(count, basis)) is not None and (
-            _quiescent_drift_applicable(root, anchors, parsed_claims, toplevel=toplevel)
-        ):
-            unread[stats.id] = why
-        if count > 0:
-            rows.append(
-                CommitDriftRow(
-                    id=stats.id,
-                    scopes=list(stats.scopes),
-                    summary=stats.summary,
-                    last_verified_at=stats.last_verified_at,
-                    commits_since_verify=count,
-                    basis=basis,
-                )
-            )
+        result = _candidate_drift(
+            stats,
+            root=root,
+            timestamps=timestamps,
+            toplevel=toplevel,
+            anchor_paths_by_id=anchor_paths_by_id,
+            claims_by_id=claims_by_id,
+            verified_head_by_id=verified_head_by_id,
+            head=head,
+            walked=walked,
+        )
+        if isinstance(result, CommitDriftUnread):
+            unread[stats.id] = result
+        elif result is not None:
+            rows.append(result)
     rows.sort(key=lambda r: r.commits_since_verify, reverse=True)
     return rows, unread
+
+
+@git_read_budget.unread
+def _candidate_drift(
+    stats: MemoryStats,
+    *,
+    root: Path,
+    timestamps: list[datetime] | CommitDriftUnread,
+    toplevel: Path | None,
+    anchor_paths_by_id: dict[str, tuple[str, ...]],
+    claims_by_id: dict[str, tuple[str, ...]] | None,
+    verified_head_by_id: dict[str, str | None] | None,
+    head: str | None,
+    walked: Walked,
+) -> CommitDriftRow | CommitDriftUnread | None:
+    """Resolve one candidate; a deadline supplies no affirmative clean count."""
+    since = stats.last_verified_at
+    assert since is not None  # callers filter on this
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    stored_claims = claims_by_id.get(stats.id, ()) if claims_by_id else ()
+    parsed_claims = load_claims(list(stored_claims)) if stored_claims else []
+    anchors = anchor_paths_by_id.get(stats.id, ())
+    # The basis, per memory: the reachable walk from the stamp's
+    # recorded HEAD when the record carries one and the anchor is
+    # still an ancestor of this root's HEAD (memoised per anchor,
+    # so a store verified at one commit walks once for the whole
+    # rollup); the author-date bisect otherwise — the rule
+    # `verify.compute_commit_drift` applies on memory_show.
+    walk = None
+    anchor = verified_head_by_id.get(stats.id) if verified_head_by_id else None
+    if anchor is not None and head is not None:
+        given_up = unwalked()
+        walk = commits_since_anchor(
+            root, anchor, toplevel=toplevel, head=head, walked=walked
+        )
+        given_up_why = None if walk is not None else given_up_since(given_up)
+        if given_up_why is not None:
+            # The walk and its listing met their timeout, or git failed
+            # on both from an anchor the repository holds: no row, as
+            # the per-memory surfaces omit the count, never one counted
+            # off the author dates (`origin_history.unwalked`), and
+            # counted apart, not read as caught up.
+            why = applicable_unread(
+                given_up_why,
+                root,
+                anchors,
+                parsed_claims,
+                toplevel=toplevel,
+            )
+            return why
+    if walk is not None:
+        count = len(walk.commits)
+        basis = BASIS_REACHABILITY
+    else:
+        # bisect_right gives us the first index strictly greater than
+        # `since`; len - idx is then the count of timestamps after that
+        # cut. Equal timestamps fall before the cut on bisect_right
+        # semantics, which is what we want — a verify call that lands
+        # at the same instant as a commit doesn't count as drift. Dates
+        # not read leave the row unread, as the walk given up does.
+        counted = dates_since(timestamps, since)
+        if counted is None or isinstance(counted, CommitDriftUnread):
+            why = None
+            if counted is not None:
+                why = applicable_unread(
+                    counted, root, anchors, parsed_claims, toplevel=toplevel
+                )
+            return why
+        count = counted
+        basis = BASIS_AUTHOR_DATE
+    # Narrow to commits that actually touched the memory's claim
+    # anchors — mirrors memory_show and the memory_search top-hit
+    # surface (_response.py). Without this the rollup nagged on
+    # memories the user deliberately attested as stable and disagreed
+    # with the per-hit verdict. None means every anchor escapes this
+    # repo: the claims live elsewhere, drift is not applicable, drop
+    # the row. Falls back to the unfiltered count only when git can't
+    # answer the filtered query. Guarded on count > 0 so a caught-up
+    # memory never pays the extra git call — and, unlike the
+    # per-memory surfaces (memory_show, the search hit), this loop
+    # needs no quiescent applicability classification: it emits
+    # rows for `count > 0` only, so a caught-up memory contributes
+    # nothing whether or not the signal applies to it, and there is
+    # no affirmative 0 here for the escape/phantom rules to correct.
+    # The richer entry point over the same core as
+    # `resolve_commit_drift_count`, so the row can carry the basis
+    # the narrowing settled on.
+    if count > 0:
+        resolved = resolve_commit_drift(
+            cwd=root,
+            since=since,
+            unfiltered=count,
+            anchors=anchors,
+            claims=parsed_claims,
+            toplevel=toplevel,
+            walk=walk,
+        )
+        if resolved is None:
+            return None
+        count = resolved.count
+        basis = resolved.basis
+    if (why := date_count_uncertainty(count, basis)) is not None and (
+        _quiescent_drift_applicable(root, anchors, parsed_claims, toplevel=toplevel)
+    ):
+        return why
+    if count > 0:
+        return CommitDriftRow(
+            id=stats.id,
+            scopes=list(stats.scopes),
+            summary=stats.summary,
+            last_verified_at=stats.last_verified_at,
+            commits_since_verify=count,
+            basis=basis,
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------

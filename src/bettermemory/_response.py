@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from .attestation_paths import commit_paths
 from . import _caches, githead
 from ._git import timed_out_calls
+from . import git_read_budget
+from ._response_commit_counts import count_hits as _count_hits
 from ._response_depends import _load_depends_targets, _resolve_depends
 from .credentials import CredentialMatch
 from .durability import TransientMatch
@@ -61,7 +63,7 @@ from .claims import Claim, governed_claim_paths, load_claims
 
 if TYPE_CHECKING:
     from .admission import Admission, DriftScope
-    from .commit_legs import CommitLegs, CommitLegUnchecked
+    from .commit_legs import CommitLegUnchecked
     from .verify_anchoring import Anchoring
 from .verify import (
     ResolvedCommitDrift,
@@ -428,6 +430,7 @@ class _DriftPass:
         # is stored after that.
         self._broken = False
 
+    @git_read_budget.unread
     def timestamps(self) -> list[datetime] | CommitDriftUnread | None:
         """The head's whole history (`commit_author_timestamps`, memoised
         per root and head), read on first use and kept for the pass once it
@@ -507,6 +510,7 @@ class _DriftPass:
             return None
         return self._keyed
 
+    @git_read_budget.hit
     def lookup(
         self,
         record: Any,
@@ -587,7 +591,11 @@ class _DriftPass:
             verified_head=record.verified_head,
             walked=self._walked,
         )
-        if key is not None and self._history_at(key[1]):
+        if (
+            key is not None
+            and resolved is not CommitDriftUnread.CALL_BUDGET
+            and self._history_at(key[1])
+        ):
             moved = failed_git_calls() - failed
             if not moved:
                 self._resolved[key] = resolved
@@ -1350,10 +1358,10 @@ class ResponseBuilder:
         COST, cold, scales with the result count: do NOT add per-hit work
         here believing the loop is free. The repo root and the commit HEAD
         names come from the repository's files
-        (`origin.toplevel_and_head_from_files`), with no process. Paid once
-        per search regardless of how many hits there are, and memoised per
-        (root, head): `commit_author_timestamps` (``git log --format=%at
-        <head>``). Paid per hit: a `bisect_right` against the
+        (`origin.toplevel_and_head_from_files`), with no process. Read once
+        per root when a hit needs author dates, and memoised per (root,
+        head): `commit_author_timestamps` (``git log --format=%at <head>``).
+        Paid per hit: a `bisect_right` against the
         sorted timestamp list and `commit_drift_anchor_paths` (both pure
         CPU), and a handful of stats of the attribute files for a hit with a
         governed claim (its memo key). Once per search, about a dozen stats
@@ -1453,14 +1461,12 @@ class ResponseBuilder:
         # pass reads them as it opens). They key the whole-history log and
         # the per-hit memo; where the files do not settle them, git's
         # answer does, where `githead.locate` reads the same (`_keyed_pair`).
-        # The caller's history is read as the search opens (`eager`), at
-        # the root and the head resolved ONCE for the whole search
-        # (`located`: the per-hit anchor resolution would otherwise pay a
-        # `git rev-parse` fork+exec per hit); where none applies there, no
-        # hit is counted in the caller's checkout. A history that applies
-        # and was not read opens the pass all the same: a hit on the walk
-        # counts, and one on the dates reads unread.
-        drift = CommitLegs(caller_origin, admission, anchoring, eager=True)
+        # Resolve a caller's history only when a hit counts there. Reading
+        # it before the scheduled hits would let one slow caller consume
+        # every call's budget before any deferred home receives a turn.
+        # The root and head still resolve once per pass, and a caller
+        # where no history applies still falls back to the record's home.
+        drift = CommitLegs(caller_origin, admission, anchoring)
         if not drift.active:
             return
         drift.prime(h.id for h in hits)
@@ -1890,42 +1896,6 @@ class ResponseBuilder:
 
             if entries:
                 hit_dict["recent_negative_outcomes"] = entries
-
-
-def _count_hits(
-    out: list[dict[str, Any]],
-    hits: list[MemoryHit],
-    memories: Sequence[Any],
-    drift: CommitLegs,
-) -> None:
-    """Take the search's rows and its commit legs; stamp each hit's leg."""
-    # Build the id → memory side-map from the in-memory `memories`
-    # list (already loaded by the caller for the search itself),
-    # avoiding a second store round-trip per hit. The full record is
-    # needed (not just origin/verified_paths): the claim-anchored
-    # narrowing derives anchors from the BODY's citations too,
-    # matching what memory_show does. Without surface parity here,
-    # the loud search surface would nag spot_check_recommended on a
-    # memory memory_show reads as fresh — defeating the policy on
-    # its highest-traffic surface.
-    memory_by_id = {m.id: m for m in memories}
-    for hit_dict, hit in zip(out, hits):
-        if hit.last_verified_at is None:
-            continue
-        record = memory_by_id.get(hit.id)
-        if record is None:
-            continue
-        # The gates, the key, the memo and the resolution are the
-        # passes' (`_DriftPass.lookup`, through `commit_legs.
-        # CommitLegs`), shared with `memory_show` through
-        # `verdict.resolve_verdicts`.
-        _, resolved = drift.lookup(record, hit.last_verified_at)
-        if resolved is None:
-            # Not applicable: no repository, no anchor, or the anchors
-            # all escape the repository or are phantoms. Omit the
-            # field entirely.
-            continue
-        _stamp_hit_drift(hit_dict, hit, resolved)
 
 
 def _stamp_hit_drift(
