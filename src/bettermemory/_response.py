@@ -1528,7 +1528,9 @@ class ResponseBuilder:
         referenced by any hit are loaded directly via `store.load_one`
         and merged into the side-map, capped at `max_total` loads
         per call so the targeted path can't dominate the response
-        budget. Tombstoned or missing targets are absorbed silently
+        budget. Load rounds reserve at most each hit's display cap before
+        later hits get a turn; failed reservations may be backfilled within
+        that same hard load limit. Tombstoned or missing targets are absorbed silently
         (same as the pre-existing prefilter-miss branch). The same
         `admission` + `excluded_scopes` filter is re-applied to
         the loaded targets at the same place as side-map hits, so
@@ -1537,10 +1539,21 @@ class ResponseBuilder:
         Default `None` for back-compat: when omitted, behaviour is
         identical to before (silent prefilter-miss skip).
         """
+        if not out or not hits or max_per_hit <= 0 or max_total <= 0:
+            return
         # Build the id → memory side-map once. The caller (`search.py`)
         # has already paid the load cost for ranking; reuse it here.
         memory_by_id = {m.id: m for m in memories}
         excluded = excluded_scopes or set()
+
+        if admission is not None:
+            admission.prime(
+                link.target_id
+                for hit in hits
+                if (source := memory_by_id.get(hit.id)) is not None
+                for link in source.links
+                if link.type.value == "depends_on"
+            )
 
         # Targeted-load fallback. Without this, a `depends_on` target
         # whose text doesn't match the query is never in the FTS
@@ -1562,19 +1575,12 @@ class ResponseBuilder:
                 hits,
                 memory_by_id,
                 store,
+                max_per_hit=max_per_hit,
                 max_total=max_total,
                 admission=admission,
                 excluded=excluded,
             )
 
-        if admission is not None:
-            admission.prime(
-                link.target_id
-                for hit in hits
-                if (source := memory_by_id.get(hit.id)) is not None
-                for link in source.links
-                if link.type.value == "depends_on"
-            )
         total = 0
         for hit_dict, hit in zip(out, hits):
             if total >= max_total:

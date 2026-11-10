@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Dependency loads respect per-hit display capacity (ENG-279 candidate
+  #11).** An oversized first dependency list no longer spends the entire
+  targeted-load budget on entries beyond its display cap, starving later
+  hits. Bounded rounds backfill failed targets after later hits get a turn,
+  retaining the existing hard load and response caps and scope admission.
+  Zero caps load nothing. (`_response_depends.py`, `_response.py`,
+  `tests/test_dependency_load_budget.py`)
+
 - **Sparse omissions remain unconfirmed under Git's config spellings
   (ENG-279 candidate #35).** The sparse-checkout boolean uses the shared
   Git configuration parser and boolean rules. A UTF-8 BOM, a key on its
