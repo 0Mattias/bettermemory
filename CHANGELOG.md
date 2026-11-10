@@ -32,6 +32,17 @@ eighteenth was built.
 
 #### Fixed
 
+- **Multiline literal claims keep their file's any-touch coverage
+  (ENG-258).** Narrowing checks the first supported assignment in every
+  source version of the scored window, including a multiline assignment
+  that is single-line again at HEAD. A binding the column-zero detector
+  cannot address keeps its exact file-touch count without inventing a
+  named claim verdict. The source comes from bounded immutable blobs in
+  one byte-preserving batch; dirty worktrees cannot change the result,
+  and unavailable or oversized sources degrade conservatively.
+  (`verify_layout.py`, `verify.py`, `claims.py`,
+  `tests/test_multiline_literal_drift.py`, `tests/test_verify_layout.py`)
+
 - **A project merge keeps its affiliated subprojects in the target
   tenant (ENG-281).** Joining into an existing boundary transfers the
   descendants that belonged to the source's tenant; merging a boundary
@@ -40,6 +51,13 @@ eighteenth was built.
   outer boundary still applies. Homes and historical records are left
   intact. (`membership.py`, `membership_declare.py`,
   `tests/test_boundary_merge.py`)
+
+- **Directory absence claims notice descendant files (ENG-257).** A
+  commit adding a file under an attested absent directory now contributes
+  to claim drift, including an empty file recorded only by its header.
+  Overlapping directory and file claims count a commit once; siblings
+  with a common text prefix stay unrelated. (`claims.py`, `verify.py`,
+  `tests/test_directory_absence_drift.py`)
 
 - **Absolute citations preserve relative attestations (ENG-256).** When
   prose cites the same file absolutely, a relative attestation still

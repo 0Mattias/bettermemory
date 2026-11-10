@@ -140,6 +140,7 @@ from .origin_dates import (
 )
 from .origin_history import HistoryUnread, Walked, given_up_since, unwalked
 from .origin_patch import local_patch_window, too_large
+from .verify_layout import literal_floor
 from .verify_basis import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
@@ -496,6 +497,8 @@ def _weak_tier_evaluation(
         if split is None:
             return [], None
         stream = split.stream
+    if not stream.strip() and split is None:
+        return [], set()
     index = build_binding_index(stream)
     # A stream the parser could not read is an infrastructure failure,
     # not a clean window. `build_binding_index` COUNTS a malformed hunk
@@ -514,6 +517,13 @@ def _weak_tier_evaluation(
         return [], None
     if split is not None:
         split.mark(index)
+    # Every selected commit touched a governed path. A merge can print
+    # its mark but no ordinary diff, even beside other parsed commits.
+    # Keep its per-file floor without inventing a named binding verdict.
+    unindexed = index["unindexed_commits"]
+    floor = literal_floor(cwd, shas, specs, pathspecs, claims, spell, toplevel=toplevel)
+    if floor is None or (set(index["files"]) & floor.paths) - floor.listed:
+        return [], None
     window = set(shas)
     drifted: list[str] = []
     implicated: set[str] = set()
@@ -521,7 +531,15 @@ def _weak_tier_evaluation(
     named = _index_paths(index)
     for claim in claims:
         paths = [p for p in spell.of(claim.rel_path) if p in named] or [claim.rel_path]
+        if claim.kind == "absent":
+            paths = list(spell.of(claim.rel_path))
         results = [claim_level_drift(replace(claim, rel_path=p), index) for p in paths]
+        if claim.kind == "absent":
+            # A directory is absent only while none of its descendants
+            # exists. Read the indexed leaves so their actual commits,
+            # including header-only additions, supply the count.
+            prefixes = tuple(p.rstrip("/") + "/" for p in spell.of(claim.rel_path))
+            paths = sorted(set(paths) | {p for p in named if p.startswith(prefixes)})
         if not any(result["weak"] for result in results):
             continue
         drifted.append(claim.render())
@@ -540,6 +558,10 @@ def _weak_tier_evaluation(
         implicated = set(window)
     if split is not None:
         implicated |= split.counted
+    # A file's floor adds coverage without changing which claims the
+    # patch actually implicates, or suppressing the whole-window rule.
+    implicated |= floor.commits
+    implicated |= unindexed
     return drifted, implicated & window
 
 

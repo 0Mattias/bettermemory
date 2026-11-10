@@ -468,11 +468,12 @@ def claim_is_addressable(claim: Claim) -> bool:
     multi-line dict and the detector reports `strict=False, weak=False`
     while `check_claim` calls the same claim false.
 
-    Scalars are addressable and stay narrowed: an int, float, bool, None
-    or plain string has nowhere to live but the assignment line itself,
-    so any edit to the value edits a column-0 binding line. A `str` is
-    addressable even multi-line, which is exactly what
-    `anchors_from_value` and `string_fragment` were built for.
+    Non-container literals remain candidates for narrowing here. Their
+    source layout is not in the claim record: even an integer can span
+    physical lines, and a short string continuation can miss the content
+    anchor floor. `verify_layout.literal_floor` checks every source blob
+    in the scored commit window. A binding not on one column-zero line
+    throughout that window keeps its file's any-touch floor (ENG-258).
 
     The cost of the conservative direction is bounded and known: a
     container that happens to occupy a single source line is addressable
@@ -481,9 +482,8 @@ def claim_is_addressable(claim: Claim) -> bool:
     to any-touch and pays the incumbent alert rate. That is a precision
     cost on a file the caller already cited; the alternative is a
     silent false-fresh on the trust surface, which is not a trade this
-    project makes. Recovering that precision needs the assignment's line
-    span read from the worktree at scoring time (an open item, tracked
-    outside this repository).
+    project makes. The layout check reads immutable objects, not the
+    worktree: a dirty edit cannot change a HEAD-keyed drift result.
 
     Deliberately NOT a `claim_level_drift` change: the bench imports
     that function and `docs/api.md` publishes its measured alert rate,
@@ -885,6 +885,27 @@ def hunk_lines(line: str) -> int | None:
     return int(match.group(2) or 1) + int(match.group(4) or 1)
 
 
+def _patch_header_path(
+    line: str, path: str, files: set[str], deleted: set[str]
+) -> str | None:
+    """Read a file header into the path sets; None for another record."""
+    if line.startswith("+++ "):
+        target = line[4:].strip()
+        if target == "/dev/null":
+            if path:
+                deleted.add(path)
+        else:
+            path = target[2:] if target.startswith("b/") else target
+            files.add(path)
+        return path
+    if line.startswith("--- "):
+        if line.startswith("--- a/"):
+            path = line[6:].strip()
+            files.add(path)
+        return path
+    return None
+
+
 def build_binding_index(diff_text: str) -> dict[str, Any]:
     """Parse one `git log -p -U0` stream into a claim-agnostic index.
 
@@ -906,6 +927,8 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
     path all the same (`_Headers`), and `header_only` names the commit. A
     record mark is read only with the full hash ``%H`` prints; any other
     is a mismatch, and names no commit (ENG-220's re-review).
+    `unindexed_commits` preserves records with no ordinary diff, such as
+    a merge, beside records whose files were indexed (ENG-260).
     """
     bindings: dict[tuple[str, str, str], dict[str, Any]] = {}
     changed_text: dict[str, dict[str, set[str]]] = {}
@@ -913,6 +936,7 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
     deleted: set[str] = set()
     files: set[str] = set()
     commits: set[str] = set()
+    file_commits: set[str] = set()
     hunks = 0
     mismatches = 0
 
@@ -936,28 +960,16 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
             continue
         if line.startswith("diff --git "):
             headers.start(line, sha)
+            file_commits.add(sha)
             path = ""
             continue
         if headers.read(line, files, deleted):
             continue
         if line.startswith(("--- ", "+++ ", "@@")):
             headers.body()
-        if line.startswith("--- ") and not line.startswith("--- a/"):
-            continue
-        if line.startswith("+++ "):
-            target = line[4:].strip()
-            if target == "/dev/null":
-                # Deletion: the authoritative path is the a/ side, which
-                # we already recorded when we saw it.
-                if path:
-                    deleted.add(path)
-            else:
-                path = target[2:] if target.startswith("b/") else target
-                files.add(path)
-            continue
-        if line.startswith("--- a/"):
-            path = line[6:].strip()
-            files.add(path)
+        header_path = _patch_header_path(line, path, files, deleted)
+        if header_path is not None:
+            path = header_path
             continue
         if not line.startswith("@@"):
             continue
@@ -1031,6 +1043,7 @@ def build_binding_index(diff_text: str) -> dict[str, Any]:
         "files": files,
         "header_only": headers.only,
         "commits": len(commits),
+        "unindexed_commits": commits - file_commits,
         "hunks": hunks,
         "parse_mismatches": mismatches,
     }
@@ -1092,9 +1105,13 @@ def claim_level_drift(cite: Claim, index: dict[str, Any]) -> dict[str, Any]:
         # single window reads weak-only) is caught by the verify gate
         # on the next stamp attempt.
         entry = empty
-        touched = cite.rel_path in index["files"]
-        strict = touched and not path_gone
-        weak = touched
+        touched = [
+            path
+            for path in index["files"]
+            if path == cite.rel_path or path.startswith(cite.rel_path.rstrip("/") + "/")
+        ]
+        strict = any(path not in index["deleted"] for path in touched)
+        weak = bool(touched)
     elif cite.kind == "symbol":
         entry = index["bindings"].get((cite.rel_path, "def", cite.name), empty)
         strict = path_gone or (entry["removes"] - entry["adds"]) > 0
