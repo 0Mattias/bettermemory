@@ -55,6 +55,11 @@ eighteenth was built.
   containing `this checkout` or `this repository`. (ENG-279 candidate #41,
   `membership_lines.py`, `tests/test_restated_folder_words.py`)
 
+- **Later answered part questions supersede the directory's older join.**
+  Replacing a nested project file and answering its question no longer asks
+  again on every sighting. Monotone question IDs retain their ordering past
+  Q999 without depending on wall-clock timestamps. (ENG-279 candidate #15,
+  `membership_resolve.py`, `tests/test_latest_part_answer.py`)
 - **The minimum-Git CI build uses its supported C language mode
   (ENG-227).** The source builder selects GNU C11 while keeping Git's
   optimization and warning defaults. Git 2.34's `thread_local` identifier

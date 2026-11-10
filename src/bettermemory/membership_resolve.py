@@ -1476,6 +1476,7 @@ def _subproject_line(
 
 
 def _nested_answer(self: Membership, checkout_id: str, directory: str) -> str | None:
+    latest: tuple[tuple[int, str], str] | None = None
     for row in self._store.membership_rows(
         "proposals",
         where={"checkout": checkout_id, "kind": SUBPROJECT_CONTRADICTION},
@@ -1487,8 +1488,13 @@ def _nested_answer(self: Membership, checkout_id: str, directory: str) -> str | 
             and pr.answer.startswith("join:")
             and _same_path(str(pr.evidence.get("dir", "")), directory)
         ):
-            return pr.answer[len("join:") :]
-    return None
+            # Question IDs are monotone, with at least three digits. Their
+            # length breaks the lexical Q999/Q1000 tie without relying on
+            # clocks or on the order SQLite returns the older answers.
+            order = (len(pr.id), pr.id)
+            if latest is None or order > latest[0]:
+                latest = (order, pr.answer[len("join:") :])
+    return None if latest is None else latest[1]
 
 
 def _subproject(
