@@ -52,7 +52,7 @@ _REMOTE = "git@github.com:example/repo.git"
 _PROBES = [
     ("rev-parse", "--show-toplevel"),
     ("remote", "get-url", "origin"),
-    ("config", "--get-all", "remote.origin.url"),
+    ("config", "--null", "--get-all", "remote.origin.url"),
     ("symbolic-ref", "--short", "HEAD"),
 ]
 

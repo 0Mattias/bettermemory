@@ -320,11 +320,12 @@ Every request resolves one caller, `bettermemory.identity.Caller`, before its ha
 - `actor {client, client_version, model, principal, session, sources}`. `principal` is **attested**: it comes only from the SDK's `authenticated_principal`, the `(client, issuer, subject)` triple of a verified OAuth token, and is `null` on every unauthenticated transport, stdio included. Everything else is **declared** and forgeable; `sources` maps each declared field that is set to the channel that supplied it. A declared value can never populate `principal`.
 - `workspace {path, source}`. The directory `origin.capture` then describes (`cwd`, `repo`, `branch`, `worktree_root`), and the channel that named it.
 
-An origin response preserves Unicode `cwd` and `worktree_root` normally.
-When either contains a native filesystem name that UTF-8 cannot represent,
-that field is `null` and its corresponding `cwd_bytes_base64` or
-`worktree_root_bytes_base64` field carries the exact filesystem bytes. The
-stored origin retains the original native path for identity and drift reads.
+An origin response preserves Unicode `cwd`, `worktree_root`, `repo` and
+`branch` normally. When a field contains native bytes that UTF-8 cannot represent,
+that field is `null` and its corresponding `cwd_bytes_base64`,
+`worktree_root_bytes_base64`, `repo_bytes_base64` or `branch_bytes_base64`
+field carries the exact bytes from the filesystem codec. The
+stored origin retains the original native text for identity and drift reads.
 The shim forwards a directory which HTTP header syntax cannot represent in
 `x-bettermemory-workspace-json`, an ASCII JSON string. It preserves native
 bytes and embedded or trailing whitespace; decoding rejects NUL and paths

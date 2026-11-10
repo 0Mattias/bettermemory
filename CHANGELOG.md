@@ -72,6 +72,14 @@ eighteenth was built.
   whose punctuation is part of their name retain their exact identity.
   (ENG-279 candidate #36, `attestation_paths.py`, `verify_anchoring.py`,
   `tests/test_placeholder_attestation_aliases.py`)
+- **An unread canonical remote cannot select a different repository
+  (ENG-279).** A failed `origin` URL probe permits a fallback only after
+  Git successfully lists the remotes and confirms `origin` is absent.
+  A timeout remains indeterminate and is retried on the next capture.
+  Remote URLs and branch names retain native bytes and trailing whitespace;
+  URL aliases use NUL-delimited config output. Responses carry opaque repo
+  and branch bytes in base64, and signed records and mirrors preserve them.
+  (`origin.py`, `_response.py`, `tests/test_origin_remote_answers.py`)
 
 - **The minimum-Git CI build uses its supported C language mode
   (ENG-227).** The source builder selects GNU C11 while keeping Git's

@@ -1151,7 +1151,7 @@ class ResponseBuilder:
         # infer it: an unlabeled cwd is the silent default this field
         # exists to retire.
         payload.setdefault("source", SOURCE_PROCESS_CWD)
-        for field in ("cwd", "worktree_root"):
+        for field in ("cwd", "worktree_root", "repo", "branch"):
             value = payload.get(field)
             if isinstance(value, str) and has_surrogates(value):
                 payload[field] = None

@@ -219,7 +219,10 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
         # indeterminate: git refuses the remote and the branch there too.
         answered = worktree_root is not None and not indeterminate
         if answered:
-            repo_url, repo_url_alternates = _git_remote_url_and_alternates(resolved)
+            repo_url, repo_url_alternates, remote_unread = (
+                _git_remote_url_and_alternates(resolved)
+            )
+            indeterminate = indeterminate or remote_unread
         branch = _git_branch(resolved) if answered else None
         # Kept only when every probe ran and nothing the signature covers
         # moved while they ran. A probe git could not run for may answer on
@@ -238,8 +241,8 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
         worktree_root=worktree_root,
         source=source,
     )
-    # The first probe is the one that decides whether git ran; the two
-    # gated on it cannot fail differently once it has answered.
+    # Root and canonical remote probes can be unanswered independently.
+    # Optional branch and alternate reads do not replace a verified identity.
     origin._git_indeterminate = indeterminate
     origin._git_refusal = refusal
     if repo_url is not None:
@@ -460,11 +463,10 @@ def _remember(key: str, entry: _OriginEntry) -> None:
 
 
 class _Unanswered(threading.local):
-    """The number of git calls through `_git` on the current thread that
-    git could not run for: no binary, a timeout, a failed spawn. `_git`
-    folds such a failure into the same None as an answer of "no", and the
-    probes after the first go through it; `capture` compares the count
-    before and after its probes and keeps no capture in which it moved."""
+    """Git calls on this thread that could not run: no binary, timeout
+    or failed spawn. `_git` and `_identity_result` count such failures;
+    capture compares the count before and after its probes and keeps no
+    capture in which it moved."""
 
     count = 0
 
@@ -768,7 +770,7 @@ def _git_result(
             stderr=f"fatal: not a git repository: {why}\n",
         )
     if paths:
-        # stdout is a path git printed as the filesystem's bytes: decoded
+        # stdout is native identity text git printed as filesystem bytes: decoded
         # as Python decodes a file name (`os.fsdecode`), so a name that is
         # not UTF-8 is the one `cwd` spells, not a U+FFFD that names no
         # folder (`errors="replace"`).
@@ -871,67 +873,70 @@ def _git(
     return None
 
 
-def _git_remote_url_and_alternates(cwd: Path) -> tuple[str | None, tuple[str, ...]]:
-    # `git remote get-url origin`, NOT `git config --get remote.origin.url`:
-    # `config --get` on a multi-valued key returns the LAST value, so the
-    # canonical push-mirror recipe (`git remote set-url --add origin
-    # <mirror>`) would flip every subsequent capture to the mirror URL and
-    # hide all previously written memories for the repo. `get-url` returns
-    # the FIRST configured URL — the canonical fetch URL — and also expands
-    # `url.<base>.insteadOf` aliases to the URL git actually fetches
-    # from. It exits non-zero when the remote doesn't
-    # exist, so `_git` maps that to None.
-    #
-    # The alternates are every RAW configured URL for the SAME remote
-    # (`git config --get-all remote.<name>.url`) other than the captured
-    # one. That covers exactly the two spellings the pre-3.10 capture
-    # idiom (`config --get`) produced and `get-url` doesn't: the last URL
-    # of a multi-valued remote, and the unexpanded insteadOf alias.
-    # They're official spellings of this remote per the caller's own git
-    # config — never persisted, only registered process-locally so
-    # `repos_match` keeps old-idiom stored origins visible. Failure to
-    # read them degrades to no alternates (the forward capture is
-    # unaffected).
+def _identity_result(cwd: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
+    """A Git identity probe with its native text and result status intact."""
+    result = _git_result(cwd, *args, paths=True)
+    if result is None:
+        _UNANSWERED.count += 1
+    elif result.returncode:
+        _git_runner.log_nonzero_exit(args, result, cwd)
+        _git_runner.note_failed()
+    return result
+
+
+def _git_remote_url_and_alternates(
+    cwd: Path,
+) -> tuple[str | None, tuple[str, ...], bool]:
+    """Canonical fetch URL, its raw aliases, and whether the identity was unread.
+
+    get-url selects the first URL and expands insteadOf. A failed origin
+    probe is not evidence that origin is absent: only a successful remote
+    listing that omits it permits selecting the first other remote.
+    """
     name = "origin"
-    url = _git(cwd, "remote", "get-url", "origin")
-    if url is None:
-        # No remote named 'origin' (`git clone -o <name>`, the
-        # clone.defaultRemoteName config, `git remote rename`, upstream-only
-        # fork workflows). Fall back to the first remote `git remote` lists so
-        # the checkout keeps a repo identity instead of writing global
-        # memories. A repo with no remotes at all yields empty output, which
-        # `_git` already maps to None.
-        remotes = _git(cwd, "remote")
-        if remotes is None:
-            return None, ()
-        first = remotes.splitlines()[0].strip()
-        if not first:
-            return None, ()
-        name = first
-        url = _git(cwd, "remote", "get-url", name)
-        if url is None:
-            return None, ()
-    raw = _git(cwd, "config", "--get-all", f"remote.{name}.url")
-    if raw is None:
-        return url, ()
+    result = _identity_result(cwd, "remote", "get-url", name)
+    if result is None:
+        return None, (), True
+    if result.returncode:
+        listed = _identity_result(cwd, "remote")
+        if listed is None or listed.returncode:
+            return None, (), True
+        names = listed.stdout.removesuffix("\n").split("\n")
+        if not names[0]:
+            return None, (), False
+        if name in names:
+            return None, (), True
+        name = names[0]
+        result = _identity_result(cwd, "remote", "get-url", name)
+        if result is None or result.returncode:
+            return None, (), True
+    # get-url adds one LF; spaces and other bytes belong to the URL.
+    url = result.stdout.removesuffix("\n")
+    if not url:
+        return None, (), False
+    raw = _identity_result(cwd, "config", "--null", "--get-all", f"remote.{name}.url")
+    if raw is None or raw.returncode:
+        return url, (), False
     seen: set[str] = {url}
     alternates: list[str] = []
-    for line in raw.splitlines():
-        candidate = line.strip()
+    for candidate in raw.stdout.split("\0"):
         if candidate and candidate not in seen:
             seen.add(candidate)
             alternates.append(candidate)
-    return url, tuple(alternates)
+    return url, tuple(alternates), False
 
 
 def _git_branch(cwd: Path) -> str | None:
     # `symbolic-ref --short HEAD` returns the branch name (e.g. "main") on
     # any branch, including a freshly-initialised repo before its first
-    # commit. It exits non-zero on a detached HEAD — `_git` returns None
-    # in that case, which is what we want. `rev-parse --abbrev-ref HEAD`
+    # commit. It exits non-zero on a detached HEAD, whose branch is None.
+    # `rev-parse --abbrev-ref HEAD`
     # is the more common idiom but it returns the literal "HEAD" before
     # the first commit, which we'd incorrectly interpret as detached.
-    return _git(cwd, "symbolic-ref", "--short", "HEAD")
+    result = _identity_result(cwd, "symbolic-ref", "--short", "HEAD")
+    if result is None or result.returncode:
+        return None
+    return result.stdout.removesuffix("\n") or None
 
 
 def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool, str | None]:

@@ -56,7 +56,7 @@ class Origin(BaseModel):
     source: str | None = None
 
     # Other official spellings of the remote `repo` was read from — every
-    # raw `git config --get-all remote.<name>.url` value other than the
+    # raw `git config --null --get-all remote.<name>.url` value other than the
     # captured URL itself. Populated by `capture()` on the CALLER-side
     # Origin only; a PRIVATE attribute, so it is never serialized into
     # memory frontmatter or event payloads (the on-disk format and event
@@ -77,9 +77,11 @@ class Origin(BaseModel):
     # the second is a caller standing somewhere this process cannot see.
     # A repository git refuses to read (dubious ownership, an extension it
     # does not know) is the second kind too, though its `worktree_root` is
-    # read from the files (`origin_gitfiles.refused_worktree_root`): git
-    # named no remote and no branch there, so `repo` and `branch` are null
-    # for want of an answer, not for want of a remote.
+    # read from the files (`origin_gitfiles.refused_worktree_root`).
+    # A canonical remote probe can also fail after the root was read; that
+    # null repo is unknown, never evidence for selecting another remote.
+    # Git names no remote or branch in a refused repository, so those nulls
+    # also mean no answer rather than an absent remote or branch.
     # PRIVATE like the alternates above: never serialized into frontmatter
     # or an event payload; a fact about this capture, not about a memory.
     _git_indeterminate: bool = PrivateAttr(default=False)

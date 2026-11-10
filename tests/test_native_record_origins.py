@@ -23,7 +23,7 @@ RAW = "/w/bytes-" + chr(0xDCFF)
 def test_native_origins_survive_all_record_readers_and_lifecycle(
     tmp_path: Path,
 ) -> None:
-    source = Origin(cwd=RAW, worktree_root=RAW, repo="example.invalid/app")
+    source = Origin(cwd=RAW, worktree_root=RAW, repo=RAW, branch=RAW)
     with Store.create(tmp_path / "store.sqlite") as store:
         record = store.put_memory(_memory("native origin", origin=source))
         reads = [
@@ -46,7 +46,7 @@ def test_native_origins_survive_all_record_readers_and_lifecycle(
 def test_native_origins_survive_mirror_import_on_every_record_kind(
     tmp_path: Path,
 ) -> None:
-    source = Origin(cwd=RAW, worktree_root=RAW)
+    source = Origin(cwd=RAW, worktree_root=RAW, repo=RAW, branch=RAW)
     keys = tmp_path / "keys"
     with Store.create(tmp_path / "first.sqlite", keys_dir=keys) as store:
         active = store.put_memory(_memory("active origin", origin=source))
@@ -79,10 +79,10 @@ def test_native_origins_survive_mirror_import_on_every_record_kind(
 
 
 def test_origin_response_carries_exact_bytes_without_invalid_unicode() -> None:
-    origin = Origin(cwd=RAW, worktree_root=RAW, repo="example.invalid/app")
+    origin = Origin(cwd=RAW, worktree_root=RAW, repo=RAW, branch=RAW)
     result = ResponseBuilder(stale_after_days=30).origin_to_dict(origin)
     assert result is not None
-    assert result["cwd"] is None and result["worktree_root"] is None
-    assert base64.b64decode(result["cwd_bytes_base64"]) == os.fsencode(RAW)
-    assert base64.b64decode(result["worktree_root_bytes_base64"]) == os.fsencode(RAW)
+    for field in ("cwd", "worktree_root", "repo", "branch"):
+        assert result[field] is None
+        assert base64.b64decode(result[f"{field}_bytes_base64"]) == os.fsencode(RAW)
     json.dumps(result, ensure_ascii=False).encode("utf-8")
