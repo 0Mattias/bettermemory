@@ -46,6 +46,10 @@ deny = ["GPL", "LGPL", "AGPL"]
 license = "PSF-2.0"
 reason = "Windows only (sys_platform == 'win32', through mcp), so the Linux runner never installs it. pywin32 312 declares License: PSF and the Python Software Foundation License classifier on PyPI."
 
+[packages.winloop]
+license = "MIT"
+reason = "Windows only (sys_platform == 'win32'), so the Linux runner never installs it. winloop 0.8.2 declares License: MIT License on PyPI (https://pypi.org/project/winloop/0.8.2/)."
+
 [packages.httpx2-jsfetch]
 license = "BSD-3-Clause"
 reason = "Emscripten only (sys_platform == 'emscripten', through httpx2), so no runner installs it. httpx2-jsfetch 1.0 declares License-Expression: BSD-3-Clause on PyPI."

@@ -539,7 +539,7 @@ def test_the_repositorys_policy_records_the_platform_only_packages() -> None:
     """The runtime packages no Linux runner installs are recorded, each with
     a license the policy allows, so the check has nothing unchecked."""
     policy = sbom.load_policy(POLICY)
-    for name in ("pywin32", "httpx2-jsfetch", "colorama"):
+    for name in ("pywin32", "winloop", "httpx2-jsfetch", "colorama"):
         rule = policy.packages[name]
         assert rule.reason
         assert rule.license is not None
