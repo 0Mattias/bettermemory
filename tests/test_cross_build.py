@@ -449,7 +449,7 @@ def test_step_3_indexes_a_store_a_revision_2_build_made(path: Path) -> None:
     assert versions_of(path) == OURS_KEYS
     assert QUESTIONS_INDEX in indexes_of(path)
     steps = json.loads(meta_of(path)[SCHEMA_STEPS_KEY])
-    assert [(e["step"], e["backup"]) for e in steps] == [(3, None)]
+    assert [(e["step"], e["backup"]) for e in steps] == [(3, None), (4, None)]
     assert bundles(path) == []
     with at_revision_2(), Store.open(path, allow_rekey=True) as older:
         older.put_memory(_edited(first, "The revision 2 build still writes it."))

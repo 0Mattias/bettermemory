@@ -32,6 +32,22 @@ eighteenth was built.
 
 #### Fixed
 
+- **Explicit path attestations retain the target that was checked
+  (ENG-253, ENG-280).** Relative code locations share the same reference
+  grammar across admission and both drift bases. Literal route folders,
+  final dots, commas and colon filenames keep their punctuation after
+  deletion. `path_mode` selects a literal or reference when both exist.
+  Optional target maps preserve the checked interpretation; legacy
+  fields carry only compatible references. Revision 4 reads targets from
+  signed payloads so rc3's rollback fold still verifies the store. Reader
+  minimum 1 and writer minimum 2 stay in force, with the existing
+  unknown-field guard protecting affected records from older writes. Targets survive
+  refolding, restoration and mirror migration, clear on body edits, and
+  intentional absences remain visible when a path appears.
+  (`attestation_paths.py`, `verify_anchoring.py`, `handlers/verify.py`,
+  `store_steps.py`, `tests/test_literal_attestation_mcp.py`,
+  `tests/test_attestation_target_storage.py`)
+
 - **Shallow cut hashes use the repository's storage format (ENG-270).**
   Git's ignored suffix after each hash no longer hides a cut from the
   complete-history guard. The parser sizes SHA-1 and SHA-256 names from

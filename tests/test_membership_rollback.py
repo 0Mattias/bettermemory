@@ -339,7 +339,13 @@ def test_rc3_reads_a_migrated_store_and_this_build_reopens_it(
     path = store_dir / STORE_FILENAME
     identity = open_machine(tmp / "state")
     with Store(store_dir) as store:
-        store.put_memory(_memory("the release runs from the tag", repo, head))
+        checked = store.put_memory(_memory("the release runs from the tag", repo, head))
+        (repo / "README.md,").write_text("literal attestation\n")
+        store.mark_verified(
+            checked.id,
+            verified_paths=[],
+            verified_path_targets={"README.md,": "README.md,"},
+        )
         store.put_memory(_memory("the docs build with mkdocs", repo))
         store.put_memory(_memory("written outside any repository", None))
         store.write_episode(
@@ -413,6 +419,12 @@ def test_rc3_reads_a_migrated_store_and_this_build_reopens_it(
     assert _membership_state(path) == membership
     with Store.open(path) as store:
         assert ensure_migrated(store, identity, config=Config()) is None
+        assert store.load_one(checked.id).verified_path_targets == {
+            "README.md,": "README.md,"
+        }
+        assert store.verifications_for([checked.id])[checked.id][0][
+            "verified_path_targets"
+        ] == {"README.md,": "README.md,"}
         verified = store.log_verify()
         assert verified["status"] == "ok", verified
     assert _membership_state(path) == membership

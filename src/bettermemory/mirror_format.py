@@ -103,6 +103,9 @@ MEMORY_METADATA_KEYS: tuple[str, ...] = (
     "verified_head",
     "links",
 )
+# Optional v9 mirror extensions; the v8 key set above stays frozen.
+PATH_TARGET_METADATA_KEYS = ("verified_path_targets", "verified_absent_path_targets")
+
 # A tombstone appends these to the active record's keys.
 TOMBSTONE_METADATA_KEYS: tuple[str, ...] = (
     "removed",
@@ -127,7 +130,8 @@ EPISODE_METADATA_KEYS: tuple[str, ...] = (
 
 def memory_metadata(memory: Memory) -> dict[str, object]:
     """The frontmatter mapping `Store._write_path` persisted for `memory`
-    (its keys are `MEMORY_METADATA_KEYS`). Optional fields are left out
+    (its v8 keys are `MEMORY_METADATA_KEYS`, with optional v9 target metadata).
+    Optional fields are left out
     while unset: no `last_verified_at: null`, no empty lists, no zero
     rollup, so a plain record's file is the pre-field shape. The
     process-cwd origin `source` stays implicit, being the only channel
@@ -170,6 +174,10 @@ def memory_metadata(memory: Memory) -> dict[str, object]:
         meta["verified_versions"] = list(memory.verified_versions)
     if memory.verified_absent_paths:
         meta["verified_absent_paths"] = list(memory.verified_absent_paths)
+    for field in PATH_TARGET_METADATA_KEYS:
+        targets = getattr(memory, field)
+        if targets is not None:
+            meta[field] = dict(targets)
     if memory.claims:
         meta["claims"] = list(memory.claims)
     if memory.verified_head:

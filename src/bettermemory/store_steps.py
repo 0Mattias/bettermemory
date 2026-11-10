@@ -69,6 +69,7 @@ from .store_schema import (
     StoreVersionError,
     _add_membership_tables,
     _add_proposals_index,
+    _add_path_targets,
     _add_returned_marks,
 )
 from .time_utils import isoformat_utc
@@ -113,6 +114,9 @@ class Step:
 #: Step 3 (ENG-215) adds the index of the questions by state and kind every
 #: sighting reads (`_add_proposals_index`), which a revision 2 build
 #: neither reads nor has to keep up, so the minimums stay at 1 and 2.
+#: Step 4 records optional targets in signed payloads, without a physical
+#: schema change: rc3's fold reads every column. The newer older writers'
+#: unknown-field guard protects those records, so both minimums stay put.
 STEPS: tuple[Step, ...] = (
     Step(
         number=1,
@@ -137,6 +141,14 @@ STEPS: tuple[Step, ...] = (
         reader=1,
         writer=2,
         apply=_add_proposals_index,
+    ),
+    Step(
+        number=4,
+        name="the canonical targets of explicit path attestations",
+        additive=True,
+        reader=1,
+        writer=2,
+        apply=_add_path_targets,
     ),
 )
 

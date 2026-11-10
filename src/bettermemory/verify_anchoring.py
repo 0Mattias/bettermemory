@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .attestation_paths import PathMode, interpret_path, joined_path, path_mode
 from . import _caches, gitfile_rule
 from ._paths import inside
 from .githead import GitDir, Stamp, locate, stamp
@@ -226,6 +227,16 @@ class PathDriftReport:
         exactly one answer here.
         """
         return bool(self.claim_anchored_missing)
+
+    @property
+    def should_report(self) -> bool:
+        """Whether a response has path evidence to show, including a false absence."""
+        return bool(
+            self.missing
+            or self.verified
+            or self.expected_absent
+            or self.present_but_attested_absent
+        )
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -1177,13 +1188,14 @@ def _relative_attestation_keys(
     so it retains the caller's present/absent claim and its provenance.
     """
     out: set[str] = set()
-    for raw in (*verified_paths, *absent_paths):
-        spelled = raw.strip() if raw else ""
-        if not spelled or _is_absolute_attestation(spelled):
-            continue
-        joined = _join_under(root, spelled)
-        if joined is not None:
-            out.add(keys(joined))
+    for paths in (verified_paths, absent_paths):
+        for raw in paths:
+            spelled = interpret_path(raw, mode=path_mode(paths), root=str(root))
+            if not spelled or _is_absolute_attestation(spelled):
+                continue
+            joined = joined_path(root, spelled, mode="literal")
+            if joined is not None:
+                out.add(keys(joined))
     out.discard("")
     return out
 
@@ -1208,7 +1220,7 @@ def _read_attestations(
     reads: list[tuple[_AttestationRead, bool]] = []
     for listed_absent, paths in ((False, verified_paths), (True, absent_paths)):
         for raw in paths:
-            found = _attestation_read(anchor, root, raw)
+            found = _attestation_read(anchor, root, raw, mode=path_mode(paths))
             if found is not None:
                 reads.append((found, listed_absent))
     absent = {
@@ -1252,7 +1264,7 @@ class _AttestationRead:
 
 
 def _attestation_read(
-    anchor: ClaimAnchor, root: Path | None, raw: str
+    anchor: ClaimAnchor, root: Path | None, raw: str, *, mode: PathMode = "auto"
 ) -> _AttestationRead | None:
     """Where `_read_attestations` reads the attestation `raw`, or None when
     it reads nothing there (an empty or refused spelling, or an absolute
@@ -1261,11 +1273,13 @@ def _attestation_read(
     relative attestation reads unconfirmed under its own spelling, keyed
     by `_claim_key`, so a refused one would be reported and, on Windows,
     resolved (ENG-164)."""
-    spelled = raw.strip() if raw else ""
+    spelled = interpret_path(
+        raw, mode=mode, root=str(root) if root is not None else None
+    )
     if not spelled or _refused_spelling(spelled):
         return None
     if _is_absolute_attestation(spelled):
-        normalized = _normalize_candidate(spelled)
+        normalized = spelled
         if normalized is None:
             return None
         target, rule = anchor.absolute(normalized)
@@ -1278,7 +1292,7 @@ def _attestation_read(
         return None
     if root is None:
         return _AttestationRead(spelled, anchor.rule, False, readable=False)
-    joined = _join_under(root, spelled)
+    joined = joined_path(root, spelled, mode="literal")
     if joined is None:
         return None
     return _AttestationRead(joined, anchor.rule, anchor.convicting)
@@ -1360,7 +1374,7 @@ def _check_anchored_attestations(
         return
     root = Path(worktree_root)
 
-    def _anchored(raw: str) -> str | None:
+    def _anchored(raw: str, paths: tuple[str, ...] | list[str]) -> str | None:
         # Delegate the absolute/relative split to `_is_absolute_attestation`
         # — the ONE predicate whose docstring mandates mirroring
         # `_normalize_candidate`'s accepted anchors — rather than testing
@@ -1386,15 +1400,15 @@ def _check_anchored_attestations(
         # `detect_path_drift` loop already existence-checks it via
         # `_normalize_attestations` set-membership when the body cites
         # it.
-        rel = raw.strip() if raw else ""
+        rel = interpret_path(raw, mode=path_mode(paths), root=str(root))
         if not rel:
             return None
         if _is_absolute_attestation(rel):
-            normalized = _normalize_candidate(rel)
+            normalized = rel
             if normalized is None or not _resolves_under(normalized, root):
                 return None
             return normalized
-        return _join_under(root, rel)
+        return joined_path(root, rel, mode="literal")
 
     # Built from the ANCHORED form, not from `_normalize_attestations`:
     # that helper runs the bare relative path through `_normalize_candidate`,
@@ -1403,7 +1417,7 @@ def _check_anchored_attestations(
     # drift — the escape hatch inverted into a permanent false alarm.
     absent_set = {
         keys(anchored)
-        for anchored in (_anchored(raw) for raw in absent_paths)
+        for anchored in (_anchored(raw, absent_paths) for raw in absent_paths)
         if anchored is not None
     }
     # Anchor BEFORE validating (see `_anchored`): `_normalize_candidate` is
@@ -1413,8 +1427,10 @@ def _check_anchored_attestations(
     # absolute form the validator is built for, which is also the honest
     # object of the check — the file as it stands in the tree the author
     # attested in.
-    for raw in (*verified_paths, *absent_paths):
-        resolved = _anchored(raw)
+    for paths, raw in (
+        (paths, raw) for paths in (verified_paths, absent_paths) for raw in paths
+    ):
+        resolved = _anchored(raw, paths)
         if resolved is None:
             continue
         norm = keys(resolved)
@@ -1734,7 +1750,7 @@ def unverifiable_attestations(
     root = Path(worktree_root) if worktree_root is not None else None
     bad: list[str] = []
     for raw in verified_paths:
-        stripped = raw.strip() if raw else ""
+        stripped = raw if path_mode(verified_paths) != "reference" else raw.strip()
         if not stripped:
             continue
         # Documentation placeholders (`/etc/foo`, `/path/to/thing`) are
@@ -1749,11 +1765,11 @@ def unverifiable_attestations(
             bad.append(stripped)
             continue
         if _is_absolute_attestation(stripped):
-            resolved = _normalize_candidate(stripped)
+            resolved = interpret_path(stripped, mode=path_mode(verified_paths))
         elif root is not None:
             # Anchor before validating, for the reason `_anchored` gives:
             # `_normalize_candidate` is itself the relative-path gate.
-            resolved = _join_under(root, stripped)
+            resolved = joined_path(root, stripped, mode=path_mode(verified_paths))
         else:
             continue
         if resolved is None:
@@ -1791,14 +1807,14 @@ def _unverifiable_at(
     a sparse checkout leaves out of its working tree."""
     bad: list[str] = []
     for raw in verified_paths:
-        spelled = raw.strip() if raw else ""
+        spelled = raw if path_mode(verified_paths) != "reference" else raw.strip()
         if not spelled:
             continue
         if _is_placeholder_path(spelled):
             bad.append(spelled)
             continue
         if _is_absolute_attestation(spelled):
-            normalized = _normalize_candidate(spelled)
+            normalized = interpret_path(spelled, mode=path_mode(verified_paths))
             if normalized is None:
                 continue
             if stored:
@@ -1811,7 +1827,7 @@ def _unverifiable_at(
         else:
             if anchor.root is None:
                 continue
-            joined = _join_under(anchor.root, spelled)
+            joined = joined_path(anchor.root, spelled, mode=path_mode(verified_paths))
             if joined is None:
                 continue
             target = joined
@@ -1837,8 +1853,8 @@ def _normalize_attestations(
     for raw in paths:
         if not raw:
             continue
-        candidate = _normalize_candidate(raw)
-        if candidate is None:
+        candidate = interpret_path(raw, mode=path_mode(paths))
+        if candidate is None or not _is_absolute_attestation(candidate):
             continue
         out.add(keys(candidate))
     out.discard("")

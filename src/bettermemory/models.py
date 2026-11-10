@@ -368,6 +368,13 @@ class Memory(BaseModel):
     NOT the real one). Path-drift excludes them from `missing` into an
     `expected_absent` bucket instead of raising a phantom drift signal.
 
+    Optional `verified_path_targets` and `verified_absent_path_targets`
+    freeze the literal targets selected for a new stamp, keyed by the
+    supplied spelling. None means the legacy reference interpretation.
+    Existing path lists keep only compatible reference inputs, while
+    the target maps can also name literal punctuation those lists could
+    not carry. A null target is inert. Both maps clear on body edits.
+
     `claims` are the STRUCTURED claims declared at write time (or added
     by a later `memory_verify`) — `path`, `path::symbol`, or
     `path::NAME=literal` strings, checked against the origin worktree at
@@ -423,6 +430,8 @@ class Memory(BaseModel):
     verified_commits: list[str] = Field(default_factory=list)
     verified_versions: list[str] = Field(default_factory=list)
     verified_absent_paths: list[str] = Field(default_factory=list)
+    verified_path_targets: dict[str, str | None] | None = None
+    verified_absent_path_targets: dict[str, str | None] | None = None
     claims: list[str] = Field(default_factory=list)
     verified_head: str | None = None
     links: list[MemoryLink] = Field(default_factory=list)
@@ -440,6 +449,15 @@ class Memory(BaseModel):
         if not is_valid_ulid(v):
             raise ValueError(f"invalid ULID: {v!r}")
         return v
+
+    @field_validator("verified_path_targets", "verified_absent_path_targets")
+    @classmethod
+    def _cap_path_targets(
+        cls, value: dict[str, str | None] | None
+    ) -> dict[str, str | None] | None:
+        if value is not None and len(value) > 64:
+            raise ValueError(f"path-target map capped at 64 entries (got {len(value)})")
+        return value
 
     @field_validator("verified_head")
     @classmethod
@@ -573,6 +591,7 @@ class MemoryHit(BaseModel):
     path_drift_missing_paths: list[str] = []
     path_drift_verified_paths: list[str] = []
     path_drift_expected_absent_paths: list[str] = []
+    path_drift_present_but_attested_absent: list[str] = []
     path_drift_dropped_as_route_paths: list[str] = []
     path_drift_claim_anchored_missing_paths: list[str] = []
     category: Category | None = None
@@ -628,6 +647,8 @@ class TombstonedMemory(BaseModel):
     verified_commits: list[str] = Field(default_factory=list)
     verified_versions: list[str] = Field(default_factory=list)
     verified_absent_paths: list[str] = Field(default_factory=list)
+    verified_path_targets: dict[str, str | None] | None = None
+    verified_absent_path_targets: dict[str, str | None] | None = None
     claims: list[str] = Field(default_factory=list)
     verified_head: str | None = None
 
@@ -648,6 +669,15 @@ class TombstonedMemory(BaseModel):
         if not is_valid_ulid(v):
             raise ValueError(f"invalid ULID: {v!r}")
         return v
+
+    @field_validator("verified_path_targets", "verified_absent_path_targets")
+    @classmethod
+    def _cap_path_targets(
+        cls, value: dict[str, str | None] | None
+    ) -> dict[str, str | None] | None:
+        if value is not None and len(value) > 64:
+            raise ValueError(f"path-target map capped at 64 entries (got {len(value)})")
+        return value
 
     @field_validator("verified_head")
     @classmethod
@@ -1119,3 +1149,42 @@ __all__ = [
     "snippet_for",
     "snippet_window",
 ]
+
+
+PATH_TARGET_FIELDS = ("verified_path_targets", "verified_absent_path_targets")
+
+
+def validate_path_targets(record: Memory | TombstonedMemory) -> None:
+    """A target map covers its legacy input subset; None means legacy.
+
+    A null value records an input that names no concrete local target.
+    The map also holds new literal inputs the legacy grammar cannot carry.
+    Those inputs must stay out of the old list instead of asserting a
+    different reference there. Both representations stay associated by
+    the request's input keys through restores and partial clearing.
+    """
+    for field, inputs in (
+        ("verified_path_targets", record.verified_paths),
+        ("verified_absent_path_targets", record.verified_absent_paths),
+    ):
+        targets = getattr(record, field)
+        if targets is not None:
+            if len(targets) > 64:
+                raise ValueError(f"{field} capped at 64 entries (got {len(targets)})")
+            if not set(inputs) <= set(targets):
+                raise ValueError(f"{field} must cover every legacy attestation")
+
+
+def record_payload(record: Memory | TombstonedMemory) -> dict[str, Any]:
+    """The signed record, omitting optional target metadata while unset.
+
+    Ordinary records remain writable by an older build. A record carrying
+    targets uses the existing unknown-field guard on that build instead
+    of allowing it to discard the stamp's interpretation on a later edit.
+    """
+    validate_path_targets(record)
+    payload = record.model_dump(mode="json")
+    for field in PATH_TARGET_FIELDS:
+        if payload[field] is None:
+            del payload[field]
+    return payload

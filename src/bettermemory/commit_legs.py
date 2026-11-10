@@ -49,6 +49,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
+from .attestation_paths import commit_paths
 from ._response import _Drift, _DriftPass
 from .claims import load_claims
 from .verify import commit_drift_anchor_paths
@@ -251,7 +252,7 @@ class CommitLegs:
             return True, None
         # The claim-anchored gate every pass applies (`_DriftPass.lookup`),
         # read first so a record it exempts reads no history anywhere.
-        if not commit_drift_anchor_paths(record.body, record.verified_paths) and not (
+        if not commit_drift_anchor_paths(record.body, commit_paths(record)) and not (
             record.claims and load_claims(record.claims)
         ):
             return True, None

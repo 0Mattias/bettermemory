@@ -774,7 +774,7 @@ def test_the_open_questions_are_read_through_their_index(tmp_path: Path) -> None
         made = s.meta()
         rows = len(s.log_rows())
         assert "USING INDEX proposals_by_state" in _open_questions_plan(s)
-    assert made["schema_revision"] == "3"
+    assert made["schema_revision"] == "4"
     assert index in _master(path)
     assert store_admission._PLAIN_INDEX.fullmatch(text)
     conn = sqlite3.connect(str(path))
@@ -796,7 +796,8 @@ def test_the_open_questions_are_read_through_their_index(tmp_path: Path) -> None
     keys_of = ("schema_revision", "min_reader_revision", "min_writer_revision")
     assert [meta[k] for k in keys_of] == [made[k] for k in keys_of]
     assert [(e["step"], e["backup"]) for e in json.loads(meta["schema_steps"])] == [
-        (3, None)
+        (3, None),
+        (4, None),
     ]
 
 

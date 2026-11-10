@@ -21,9 +21,10 @@ from .store_schema import (
     _IMPORT_COLUMNS,
     _PROVENANCE_BATCH,
     _QUARANTINE_COLUMNS,
+    _PATH_TARGET_FIELDS,
     NotFoundError,
 )
-from .store_rows import _iso, _verification_row
+from .store_rows import _iso, _load_json, _verification_row
 
 if TYPE_CHECKING:
     from .store import Store
@@ -43,12 +44,14 @@ def put_verification(
     verified_commits: Sequence[str] = (),
     verified_versions: Sequence[str] = (),
     verified_absent_paths: Sequence[str] = (),
+    verified_path_targets: Mapping[str, str | None] | None = None,
+    verified_absent_path_targets: Mapping[str, str | None] | None = None,
     session: str | None = None,
 ) -> None:
     """This host's stamp on a record (``machine_id`` None until the
     per-machine identity of phase 3 fills it). One row per memory and
     machine; a later stamp replaces the earlier."""
-    payload = {
+    payload: dict[str, Any] = {
         "memory_id": memory_id,
         "machine_id": machine_id,
         "verified_at": _iso(verified_at),
@@ -58,6 +61,13 @@ def put_verification(
         "verified_versions": list(verified_versions),
         "verified_absent_paths": list(verified_absent_paths),
     }
+    for field, targets in zip(
+        _PATH_TARGET_FIELDS,
+        (verified_path_targets, verified_absent_path_targets),
+        strict=True,
+    ):
+        if targets is not None:
+            payload[field] = dict(targets)
     with self._transaction() as tx:
         self._mutate(tx, "verification_put", payload, session=session)
 
@@ -75,7 +85,26 @@ def verifications_for(
             f"WHERE memory_id IN ({placeholders}) ORDER BY memory_id, machine_id",
             batch,
         ):
-            out.setdefault(str(row["memory_id"]), []).append(_verification_row(row))
+            stamp = _verification_row(row)
+            signed = self._conn.execute(
+                "SELECT payload FROM log WHERE kind = 'verification_put' "
+                "AND json_valid(payload) "
+                "AND json_extract(payload, '$.memory_id') = ? "
+                "AND COALESCE(json_extract(payload, '$.machine_id'), '') = COALESCE(?, '') "
+                "ORDER BY seq DESC LIMIT 1",
+                (row["memory_id"], row["machine_id"]),
+            ).fetchone()
+            if signed is not None:
+                payload = _load_json(signed["payload"], {})
+                if all(payload.get(key) == value for key, value in stamp.items()):
+                    stamp.update(
+                        {
+                            key: payload[key]
+                            for key in _PATH_TARGET_FIELDS
+                            if key in payload
+                        }
+                    )
+            out.setdefault(str(row["memory_id"]), []).append(stamp)
     return out
 
 

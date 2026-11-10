@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from .attestation_paths import commit_paths
 from . import _caches, githead
 from ._git import timed_out_calls
 from ._response_depends import _load_depends_targets, _resolve_depends
@@ -539,7 +540,7 @@ class _DriftPass:
         # `verify.compute_commit_drift` and both health rollups apply.
         # Anchor derivation and stored-claim parsing are pure CPU
         # (bounded regex; lenient parse).
-        anchors = commit_drift_anchor_paths(record.body, record.verified_paths)
+        anchors = commit_drift_anchor_paths(record.body, commit_paths(record))
         parsed_claims = load_claims(record.claims) if record.claims else []
         if not anchors and not parsed_claims:
             return True, None
@@ -817,6 +818,7 @@ class ResponseBuilder:
             hit.path_drift_missing_paths
             or hit.path_drift_verified_paths
             or hit.path_drift_expected_absent_paths
+            or hit.path_drift_present_but_attested_absent
         ):
             out["path_drift"] = {
                 "checked": list(hit.path_drift_checked_paths),
@@ -830,6 +832,11 @@ class ResponseBuilder:
                 out["path_drift"]["expected_absent"] = list(
                     hit.path_drift_expected_absent_paths
                 )
+            if hit.path_drift_present_but_attested_absent:
+                out["path_drift"]["present_but_attested_absent"] = list(
+                    hit.path_drift_present_but_attested_absent
+                )
+
             # Additive for the same reason: the route-suppressed set
             # folds in only when the route rule actually ate a
             # candidate. Value-parity with what `memory_show` and the

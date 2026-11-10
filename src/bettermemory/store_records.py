@@ -29,6 +29,8 @@ from .identity import Actor
 from .log import canonical_payload
 from .models import (
     Category,
+    record_payload,
+    PATH_TARGET_FIELDS,
     Confidence,
     Memory,
     MemoryLink,
@@ -90,6 +92,19 @@ CORROBORATION_MARK = "corroboration"
 CORROBORATION_CHECK_SQL = (
     "SELECT 1 FROM log WHERE kind = 'memory_put' AND session = ? "
     "AND instr(payload, ?) > 0 LIMIT 1"
+)
+
+
+# Read the optional extension from the signed row using log_by_mac. rc3
+# compares all physical columns of a folded table, so new fields cannot
+# be projected into its record tables even as nullable columns.
+_MEMORY_SELECT = (
+    "SELECT memories.*, (SELECT payload FROM log WHERE mac = memories.log_mac "
+    "AND kind = 'memory_put' LIMIT 1) AS attestation_payload FROM memories"
+)
+_TOMBSTONE_SELECT = (
+    "SELECT tombstones.*, (SELECT payload FROM log WHERE mac = tombstones.log_mac "
+    "AND kind = 'tombstone_put' LIMIT 1) AS attestation_payload FROM tombstones"
 )
 
 
@@ -170,7 +185,7 @@ def _put_memory(
         filename = filename if filename is not None else existing["filename"]
     payload = {
         **(marks or {}),
-        "memory": memory.model_dump(mode="json"),
+        "memory": record_payload(memory),
         "provenance": provenance or LOCAL,
         "filename": filename,
     }
@@ -296,9 +311,7 @@ def body_of(self: Store, record_id: str) -> str | None:
 
 
 def get_memory(self: Store, memory_id: str) -> Memory:
-    row = self._conn.execute(
-        "SELECT * FROM memories WHERE id = ?", (memory_id,)
-    ).fetchone()
+    row = self._conn.execute(_MEMORY_SELECT + " WHERE id = ?", (memory_id,)).fetchone()
     if row is None:
         raise NotFoundError(memory_id)
     return _row_to_memory(row)
@@ -318,7 +331,7 @@ def get_many(self: Store, ids: Sequence[str]) -> list[Memory]:
     out: list[Memory] = []
     for memory_id in ids:
         row = self._conn.execute(
-            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+            _MEMORY_SELECT + " WHERE id = ?", (memory_id,)
         ).fetchone()
         if row is not None:
             out.append(_row_to_memory(row))
@@ -326,14 +339,14 @@ def get_many(self: Store, ids: Sequence[str]) -> list[Memory]:
 
 
 def iter_memories(self: Store) -> Iterator[Memory]:
-    for row in self._conn.execute("SELECT * FROM memories ORDER BY rowid"):
+    for row in self._conn.execute(_MEMORY_SELECT + " ORDER BY rowid"):
         yield _row_to_memory(row)
 
 
 def iter_memory_rows(self: Store) -> Iterator[MemoryRow]:
     """Every active record with its provenance and filename, in
     rowid order: what the mirror writes."""
-    for row in self._conn.execute("SELECT * FROM memories ORDER BY rowid"):
+    for row in self._conn.execute(_MEMORY_SELECT + " ORDER BY rowid"):
         yield MemoryRow(
             memory=_row_to_memory(row),
             provenance=str(row["provenance"]),
@@ -379,7 +392,7 @@ def tombstone(
     first raises TombstonedError with its reason; one the store does
     not hold, NotFoundError."""
     with self._transaction() as tx:
-        row = tx.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        row = tx.execute(_MEMORY_SELECT + " WHERE id = ?", (memory_id,)).fetchone()
         if row is None:
             gone = tx.execute(
                 "SELECT removed_reason FROM tombstones WHERE id = ?", (memory_id,)
@@ -402,7 +415,7 @@ def tombstone(
             removed_session=session,
         )
         payload = {
-            "tombstone": dead.model_dump(mode="json"),
+            "tombstone": record_payload(dead),
             "provenance": str(row["provenance"]),
             "filename": row["filename"],
             "links": json.loads(row["links_json"]),
@@ -450,7 +463,7 @@ def put_tombstone(
             provenance = provenance or str(existing["provenance"])
             filename = filename if filename is not None else existing["filename"]
         payload = {
-            "tombstone": dead.model_dump(mode="json"),
+            "tombstone": record_payload(dead),
             "provenance": provenance or LOCAL,
             "filename": filename,
             "links": link_rows,
@@ -463,7 +476,7 @@ def put_tombstone(
 
 def get_tombstone(self: Store, memory_id: str) -> TombstonedMemory:
     row = self._conn.execute(
-        "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+        _TOMBSTONE_SELECT + " WHERE id = ?", (memory_id,)
     ).fetchone()
     if row is None:
         raise NotFoundError(memory_id)
@@ -484,14 +497,14 @@ def tombstone_links(self: Store, memory_id: str) -> list[MemoryLink]:
 
 
 def iter_tombstones(self: Store) -> Iterator[TombstonedMemory]:
-    for row in self._conn.execute("SELECT * FROM tombstones ORDER BY removed, rowid"):
+    for row in self._conn.execute(_TOMBSTONE_SELECT + " ORDER BY removed, rowid"):
         yield _row_to_tombstone(row)
 
 
 def iter_tombstone_rows(self: Store) -> Iterator[TombstoneRow]:
     """Every tombstone with what its row keeps beside the record, in
     removal order: what the mirror writes."""
-    for row in self._conn.execute("SELECT * FROM tombstones ORDER BY removed, rowid"):
+    for row in self._conn.execute(_TOMBSTONE_SELECT + " ORDER BY removed, rowid"):
         yield TombstoneRow(
             tombstone=_row_to_tombstone(row),
             provenance=str(row["provenance"]),
@@ -512,9 +525,7 @@ def restore(self: Store, memory_id: str, *, session: str | None = None) -> Memor
     is read under the write lock, so a restore never brings back a
     record another writer pruned or restored meanwhile."""
     with self._transaction() as tx:
-        row = tx.execute(
-            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
-        ).fetchone()
+        row = tx.execute(_TOMBSTONE_SELECT + " WHERE id = ?", (memory_id,)).fetchone()
         if row is None:
             raise NotFoundError(memory_id)
         dead = _row_to_tombstone(row)
@@ -552,7 +563,7 @@ def _put_restored(
     record's put follows its tombstone's delete directly, which is how the
     history reads a restore."""
     payload = {
-        "memory": memory.model_dump(mode="json"),
+        "memory": record_payload(memory),
         "provenance": LOCAL,
         "filename": filename,
     }
@@ -595,9 +606,7 @@ def _put_relinked(
             tx, source_id
         ):
             continue
-        source = tx.execute(
-            "SELECT * FROM memories WHERE id = ?", (source_id,)
-        ).fetchone()
+        source = tx.execute(_MEMORY_SELECT + " WHERE id = ?", (source_id,)).fetchone()
         if source is None:
             continue
         self._put_memory(
@@ -720,6 +729,7 @@ def update(
                     "verified_commits": list(current.verified_commits),
                     "verified_versions": list(current.verified_versions),
                     "verified_absent_paths": list(current.verified_absent_paths),
+                    **{field: getattr(current, field) for field in PATH_TARGET_FIELDS},
                     "claims": list(current.claims),
                     "verified_head": current.verified_head,
                 }
@@ -737,6 +747,8 @@ def mark_verified(
     verified_commits: list[str] | None = None,
     verified_versions: list[str] | None = None,
     verified_absent_paths: list[str] | None = None,
+    verified_path_targets: dict[str, str | None] | None = None,
+    verified_absent_path_targets: dict[str, str | None] | None = None,
     claims: list[str] | None = None,
     verified_head: str | None = None,
     expected_last_verified_at: datetime | None = None,
@@ -776,6 +788,16 @@ def mark_verified(
             changes["verified_versions"] = list(verified_versions)
         if verified_absent_paths is not None:
             changes["verified_absent_paths"] = list(verified_absent_paths)
+        for field, targets, inputs in (
+            ("verified_path_targets", verified_path_targets, verified_paths),
+            (
+                "verified_absent_path_targets",
+                verified_absent_path_targets,
+                verified_absent_paths,
+            ),
+        ):
+            if targets is not None or inputs is not None:
+                changes[field] = dict(targets) if targets is not None else None
         if claims is not None:
             changes["claims"] = list(claims)
         changes["verified_head"] = verified_head
@@ -785,7 +807,7 @@ def mark_verified(
             "SELECT provenance, filename FROM memories WHERE id = ?", (memory_id,)
         ).fetchone()
         payload = {
-            "memory": new_memory.model_dump(mode="json"),
+            "memory": record_payload(new_memory),
             "provenance": str(row["provenance"]),
             "filename": row["filename"],
         }
@@ -798,6 +820,11 @@ def mark_verified(
             "verified_commits": list(new_memory.verified_commits),
             "verified_versions": list(new_memory.verified_versions),
             "verified_absent_paths": list(new_memory.verified_absent_paths),
+            **{
+                field: targets
+                for field in PATH_TARGET_FIELDS
+                if (targets := getattr(new_memory, field)) is not None
+            },
         }
         self._mutate(tx, "memory_put", payload, session=session)
         self._mutate(tx, "verification_put", stamp, session=session)
@@ -866,9 +893,7 @@ def _active_or_raise(self: Store, memory_id: str) -> Memory:
     removed id, MemoryNotFoundError otherwise."""
     if not is_valid_ulid(memory_id):
         raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
-    row = self._conn.execute(
-        "SELECT * FROM memories WHERE id = ?", (memory_id,)
-    ).fetchone()
+    row = self._conn.execute(_MEMORY_SELECT + " WHERE id = ?", (memory_id,)).fetchone()
     if row is not None:
         return _row_to_memory(row)
     dead = self._conn.execute(
@@ -934,7 +959,7 @@ def load_tombstones(self: Store) -> list[TombstonedMemory]:
     return [
         _row_to_tombstone(row)
         for row in self._conn.execute(
-            "SELECT * FROM tombstones ORDER BY removed DESC, rowid DESC"
+            _TOMBSTONE_SELECT + " ORDER BY removed DESC, rowid DESC"
         )
     ]
 
@@ -969,7 +994,7 @@ def load_tombstone(self: Store, memory_id: str) -> TombstonedMemory:
     if not is_valid_ulid(memory_id):
         raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
     row = self._conn.execute(
-        "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+        _TOMBSTONE_SELECT + " WHERE id = ?", (memory_id,)
     ).fetchone()
     if row is None:
         raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
@@ -997,9 +1022,7 @@ def restore_trimmed(
             raise NotTombstonedError(
                 f"memory {memory_id} is active; nothing to restore"
             )
-        row = tx.execute(
-            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
-        ).fetchone()
+        row = tx.execute(_TOMBSTONE_SELECT + " WHERE id = ?", (memory_id,)).fetchone()
         if row is None:
             raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
         dead = _row_to_tombstone(row)
@@ -1016,6 +1039,12 @@ def restore_trimmed(
             fields["verified_paths"] = [
                 v for v in dead.verified_paths if v not in gone_paths
             ]
+            if dead.verified_path_targets is not None:
+                fields["verified_path_targets"] = {
+                    raw: target
+                    for raw, target in dead.verified_path_targets.items()
+                    if raw not in gone_paths
+                }
         if clear_verification:
             fields["last_verified_at"] = None
         if drop_verified_head:
@@ -1060,7 +1089,7 @@ def rename_scope(
 
     def rename_active(memory_id: str) -> None:
         row = self._conn.execute(
-            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+            _MEMORY_SELECT + " WHERE id = ?", (memory_id,)
         ).fetchone()
         if row is None:
             return
@@ -1078,7 +1107,7 @@ def rename_scope(
 
     def rename_removed(memory_id: str) -> None:
         raw = self._conn.execute(
-            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+            _TOMBSTONE_SELECT + " WHERE id = ?", (memory_id,)
         ).fetchone()
         if raw is None:
             return
@@ -1087,9 +1116,7 @@ def rename_scope(
         if renamed is None:
             return
         payload = {
-            "tombstone": dead.model_copy(update={"scopes": renamed}).model_dump(
-                mode="json"
-            ),
+            "tombstone": record_payload(dead.model_copy(update={"scopes": renamed})),
             "provenance": str(raw["provenance"]),
             "filename": raw["filename"],
             "links": list(_load_json(raw["links_json"], [])),
@@ -1158,7 +1185,7 @@ def prune_tombstones(
 
     def prune(memory_id: str) -> None:
         raw = self._conn.execute(
-            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+            _TOMBSTONE_SELECT + " WHERE id = ?", (memory_id,)
         ).fetchone()
         if raw is None or _row_to_tombstone(raw).removed >= cutoff:
             return

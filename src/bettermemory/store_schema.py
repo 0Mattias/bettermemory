@@ -92,7 +92,7 @@ SCHEMA_VERSION = 1
 # build neither reads nor has to keep up (SQLite keeps it up under that
 # build's writes) and admits as a plain index on columns, so the minimums
 # stay where revision 2 put them.
-SCHEMA_REVISION = 3
+SCHEMA_REVISION = 4
 MIN_READER_REVISION = 1
 MIN_WRITER_REVISION = 2
 
@@ -449,6 +449,8 @@ _OPTIONAL_COLUMNS: dict[str, frozenset[str]] = {
     for spec in _MEMBERSHIP_SPECS.values()
     if spec.optional
 }
+
+_PATH_TARGET_FIELDS = ("verified_path_targets", "verified_absent_path_targets")
 
 # The meta key of the store id of design 8.7 (decision D16): minted with
 # the store, carried by exports, replaced when an import shows the store
@@ -1332,6 +1334,18 @@ def _add_proposals_index(
         if "readonly" not in str(exc).replace(" ", "").lower():
             raise
         log.warning("store %s is read-only; not added: %s", path, ", ".join(wanted))
+
+
+def _add_path_targets(
+    conn: sqlite3.Connection, path: Path, meta: dict[str, str]
+) -> None:
+    """Step 4 names optional target fields in signed payloads.
+
+    No physical column is added: rc3 compares every column in a folded
+    table. Readers recover targets from the payload that produced each
+    record, and older writers' existing unknown-field guard protects it.
+    The revision records the new write format; both minimums stay put.
+    """
 
 
 # ---------------------------------------------------------------------------

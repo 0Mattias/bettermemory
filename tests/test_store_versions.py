@@ -135,8 +135,8 @@ def test_a_new_store_carries_this_builds_revision_minimums_and_version(
     assert meta.get(MIN_WRITER_KEY) == str(_WRITER)
     # Step 2 (ENG-200) is additive, and every write keeps its marks up;
     # step 3 (ENG-215), an index a revision 2 writer need not keep up,
-    # leaves the minimums.
-    assert (OURS, _READER, _WRITER) == (3, 1, 2)
+    # leaves the minimums. Step 4 records optional signed targets only.
+    assert (OURS, _READER, _WRITER) == (4, 1, 2)
     assert meta[ENGINE_VERSION_KEY] == bettermemory.__version__
 
 

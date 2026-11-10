@@ -134,7 +134,7 @@ Within a major, all changes to the store schema are **additive only**: new nulla
 Two builds of one major meet on one store: the daemon keeps a newer daemon running beside an older client, and an older CLI writes the store directly. So a store records which builds may read it and which may write it, and every open checks (`store_versions.check_versions`). The vocabulary is two integers and a package version, each with one job; all four live in the store's `meta`:
 
 - `schema_version` (`SCHEMA_VERSION`): the major line's format. It moves only with a major release, and every build refuses a store whose value is above its own, including the builds from before this contract.
-- `schema_revision` (`SCHEMA_REVISION`, 3 since 9.0.0rc19): what the store holds within that format. A change to what a build writes raises it.
+- `schema_revision` (`SCHEMA_REVISION`, 4 since 9.0.0rc19): what the store holds within that format. A change to what a build writes raises it.
 - `min_reader_revision` and `min_writer_revision`: the lowest revision that may read the store, and the lowest that may write it. `MIN_READER_REVISION` and `MIN_WRITER_REVISION` are what a store a build creates carries.
 - `engine_version`: the package version of the newest build that opened the store to write, in release order (`_daemon_client.version_key`, a local `+...` part left off). It names a build in messages; nothing gates on it.
 
@@ -173,7 +173,19 @@ A change to the schema ships as a numbered step in `store_steps.STEPS`: the next
 
 `tests/test_cross_build.py` opens a store a later build changed with this build, and a store this build or one from before the contract wrote with a later build, simulating the other build by patching `SCHEMA_REVISION`, the minimums, `store_steps.STEPS` and `bettermemory.__version__`: the other build is this one patched, not a release's code. A step that changes what one build may do with another's store adds its case there. CI's `cross-release` job runs a release's code: the newest release of the major on PyPI at or below the checkout's version (`tools/ci/previous_release.py`), installed as of its wheel's upload, against the checkout built as the next candidate when the two carry one version (`tools/ci/cross_release_builds.py`). `tests/test_cross_release.py` has each build search, write and verify the other's store and backup bundles, the release's shim, `status` and session-start hook work against the checkout's daemon, and the checkout's `up` replace the release's daemon under an open shim, which follows it and asks for a client restart.
 
-A field a later build adds to a record (`Memory`, `TombstonedMemory`) travels in the payload of the record's put, is optional like every field added within a major, and raises no minimum: an older reader reads the record without it, and an older writer refuses every change to a record whose last put carries a field its model does not define (`UnknownFieldsError`, a `ValueError` naming the fields) rather than write the record back without it. Round-tripping the field would keep its bytes and lose whatever the later build ties to the fields the older one edits (a body edit clears the verification it vouched for), so the older writer leaves such a record to the build that understands it. The same holds for a removal, a restore and a purge; a prune and a scope rename leave such a record and go on to the rest. In the store such a field gets a column of its own, which an older build's fold leaves out (`store_rows._table_rows` compares the columns that build knows), never a place inside a column an older build compares, where that build's `log verify` would read every such row as tampered.
+Step 4 (ENG-253, ENG-280) records optional `verified_path_targets` and
+`verified_absent_path_targets` fields in signed payloads. Record reads
+recover them through the row's `log_mac`; per-machine stamps read the
+latest matching verification payload. The physical record and stamp
+tables retain the shape rc3's fold compares in full. The step raises the
+revision alone, keeping reader minimum 1 and writer minimum 2. Unset
+fields are omitted from signed record payloads so ordinary records remain
+writable by an older build. Builds with the unknown-field guard refuse
+rewriting affected records; a pre-contract writer's replacement has its
+own signed payload, so it cannot inherit stale target metadata.
+
+
+A field a later build adds to a record (`Memory`, `TombstonedMemory`) travels in the payload of the record's put, is optional like every field added within a major, and raises no minimum: an older reader reads the record without it, and an older writer refuses every change to a record whose last put carries a field its model does not define (`UnknownFieldsError`, a `ValueError` naming the fields) rather than write the record back without it. Round-tripping the field would keep its bytes and lose whatever the later build ties to the fields the older one edits (a body edit clears the verification it vouched for), so the older writer leaves such a record to the build that understands it. The same holds for a removal, a restore and a purge; a prune and a scope rename leave such a record and go on to the rest. Such a field may be read from its signed payload, or get a column of its own only when every supported reader's fold leaves unknown columns out (`store_rows._table_rows` compares the columns that build knows). It never occupies part of a column an older build compares, where that build's `log verify` would read every such row as tampered. The rc3 rollback contract requires the signed-payload form because its fold compares every physical column.
 
 The builds from before this contract read none of the three revision keys: they open and write a store whatever its minimums say, and only `schema_version` keeps them out. They also drop a field they do not define when they write its record back.
 

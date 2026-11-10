@@ -69,6 +69,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from .attestation_paths import record_paths
 from .commit_legs import CommitLegs, CommitLegUnchecked, unchecked_verdict
 from .models import Memory
 from .origin import Origin
@@ -287,8 +288,8 @@ def _verdict(
     anchor = anchoring.for_record(memory.id) if anchoring is not None else None
     path_drift = detect_path_drift(
         memory.body,
-        verified_paths=memory.verified_paths,
-        absent_paths=memory.verified_absent_paths,
+        verified_paths=record_paths(memory),
+        absent_paths=record_paths(memory, absent=True),
         worktree_root=(
             memory.origin.worktree_root
             if anchor is None and memory.origin is not None

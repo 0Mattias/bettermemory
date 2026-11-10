@@ -43,6 +43,7 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Literal, NamedTuple
 
+from .attestation_paths import record_paths
 from . import _caches
 from . import search_lexicon as _lexicon
 from .expansion import expansion_terms as _expansion_terms_impl
@@ -1031,8 +1032,8 @@ def _build_hit(
     drift = (
         detect_path_drift(
             memory.body,
-            verified_paths=memory.verified_paths,
-            absent_paths=memory.verified_absent_paths,
+            verified_paths=record_paths(memory),
+            absent_paths=record_paths(memory, absent=True),
             worktree_root=(
                 memory.origin.worktree_root
                 if anchor is None and memory.origin is not None
@@ -1062,6 +1063,7 @@ def _build_hit(
         path_drift_missing_paths=list(drift.missing),
         path_drift_verified_paths=list(drift.verified),
         path_drift_expected_absent_paths=list(drift.expected_absent),
+        path_drift_present_but_attested_absent=list(drift.present_but_attested_absent),
         path_drift_dropped_as_route_paths=list(drift.dropped_as_route),
         # The counts and the full path list stay full-set — every
         # absence the caller could see before is still on the hit. This

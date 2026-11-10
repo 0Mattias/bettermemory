@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..attestation_paths import PathMode, LiteralPaths, compile_targets, record_paths
 from .._response import isoformat, isoformat_optional
 from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
 from ..control_tokens import refuse_control_tokens
@@ -127,7 +128,7 @@ def _refuse_stale_stored_claims(
 
 
 def _refuse_unverifiable_stored_attestations(
-    stored: list[str],
+    stored: tuple[str, ...] | list[str],
     origin_root: str | None,
     *,
     anchor: ClaimAnchor | None = None,
@@ -329,6 +330,8 @@ def _stamp(
     verified_commits: list[str] | None,
     verified_versions: list[str] | None,
     verified_absent_paths: list[str] | None,
+    verified_path_targets: dict[str, str | None] | None,
+    verified_absent_path_targets: dict[str, str | None] | None,
     claims: list[str] | None,
     verified_head: str | None,
 ) -> Memory:
@@ -348,6 +351,8 @@ def _stamp(
             verified_commits=verified_commits,
             verified_versions=verified_versions,
             verified_absent_paths=verified_absent_paths,
+            verified_path_targets=verified_path_targets,
+            verified_absent_path_targets=verified_absent_path_targets,
             claims=claims,
             verified_head=verified_head,
             expected_last_verified_at=snapshot.last_verified_at,
@@ -476,7 +481,7 @@ def _verify_read_site(
 
 
 def _refuse_unseen_attestations(
-    verified_paths: list[str] | None,
+    verified_paths: tuple[str, ...] | list[str] | None,
     snapshot: Memory,
     origin_root: str | None,
     anchor: ClaimAnchor | None,
@@ -531,7 +536,7 @@ def _refuse_unseen_attestations(
                 "checked here; if a path is intentionally absent, pass it as "
                 "verified_absent_paths instead."
             )
-    elif verified_paths is None and snapshot.verified_paths:
+    elif verified_paths is None and record_paths(snapshot):
         # A PRESERVING re-verify (`None` carries the stored list forward)
         # gets the same existence discipline as a fresh list — stored
         # attestations are part of the record the stamp re-asserts, the
@@ -539,7 +544,7 @@ def _refuse_unseen_attestations(
         # (the explicit clear) needs no check. Scoped leniently for the
         # synced-store case: see `_refuse_unverifiable_stored_attestations`.
         _refuse_unverifiable_stored_attestations(
-            list(snapshot.verified_paths), origin_root, anchor=anchor
+            record_paths(snapshot), origin_root, anchor=anchor
         )
 
 
@@ -633,6 +638,8 @@ def _stamp_or_stale(
     verified_commits: list[str] | None,
     verified_versions: list[str] | None,
     verified_absent_paths: list[str] | None,
+    verified_path_targets: dict[str, str | None] | None,
+    verified_absent_path_targets: dict[str, str | None] | None,
     claims: list[str] | None,
     verified_head: str | None,
 ) -> tuple[Memory, None] | tuple[None, dict[str, Any]]:
@@ -652,6 +659,8 @@ def _stamp_or_stale(
             verified_commits=verified_commits,
             verified_versions=verified_versions,
             verified_absent_paths=verified_absent_paths,
+            verified_path_targets=verified_path_targets,
+            verified_absent_path_targets=verified_absent_path_targets,
             claims=claims,
             verified_head=verified_head,
         )
@@ -725,6 +734,11 @@ def _verify_response(
         "verified_commits": list(memory.verified_commits),
         "verified_versions": list(memory.verified_versions),
         "verified_absent_paths": list(memory.verified_absent_paths),
+        **{
+            field: value
+            for field in ("verified_path_targets", "verified_absent_path_targets")
+            if (value := getattr(memory, field)) is not None
+        },
         "claims": list(memory.claims),
         "verified_head": memory.verified_head,
     }
@@ -745,11 +759,9 @@ def _verify_response(
 
 
 DESC_MEMORY_VERIFY = (
-    "Attest a memory after checking a claim against ground truth; resets "
-    "last_verified_at. `verified_paths` resolve now and are anchored for "
-    "drift; `verified_absent_paths` are absent on purpose; `claims` "
-    "replaces the checked bindings. "
-    "Refused without evidence when nothing cited resolves."
+    "Attest ground-truth checks; reset last_verified_at. verified_paths anchor "
+    "drift; verified_absent_paths assert absence; claims replace bindings. "
+    "path_mode: auto/literal/reference. Evidence required."
 )
 
 
@@ -763,6 +775,7 @@ async def memory_verify(
     verified_absent_paths: list[str] | None = None,
     claims: list[str] | None = None,
     ctx: Context | None = None,
+    path_mode: PathMode = "auto",
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
@@ -773,9 +786,27 @@ async def memory_verify(
     origin_root, anchoring, caller, anchor, live_root = _verify_read_site(
         deps, id, snapshot
     )
-    _refuse_unseen_attestations(
-        verified_paths, snapshot, origin_root, anchor, live_root
+    if path_mode not in ("auto", "literal", "reference"):
+        raise ValueError("path_mode must be auto, literal or reference")
+    target_root = anchor.root if anchor is not None else live_root
+    legacy_paths, path_targets = (
+        compile_targets(verified_paths, root=target_root, mode=path_mode)
+        if verified_paths is not None
+        else (None, None)
     )
+    legacy_absent, absent_targets = (
+        compile_targets(
+            verified_absent_paths, root=target_root, mode=path_mode, absent=True
+        )
+        if verified_absent_paths is not None
+        else (None, None)
+    )
+    checked_paths = (
+        LiteralPaths(target for target in path_targets.values() if target is not None)
+        if path_targets is not None
+        else None
+    )
+    _refuse_unseen_attestations(checked_paths, snapshot, origin_root, anchor, live_root)
     normalized_claims = _verify_claims(claims, snapshot, origin_root, anchor)
 
     # The stamp has to name something it checked when there is something
@@ -786,9 +817,11 @@ async def memory_verify(
         snapshot.body,
         origin_root,
         attests_paths=bool(verified_paths)
-        or (verified_paths is None and bool(snapshot.verified_paths)),
+        or (verified_paths is None and bool(record_paths(snapshot))),
         attests_absence=bool(verified_absent_paths)
-        or (verified_absent_paths is None and bool(snapshot.verified_absent_paths)),
+        or (
+            verified_absent_paths is None and bool(record_paths(snapshot, absent=True))
+        ),
         declares_claims=bool(claims) or (claims is None and bool(snapshot.claims)),
         anchor=anchor,
     )
@@ -823,10 +856,12 @@ async def memory_verify(
         anchoring=anchoring,
         anchor=anchor,
         live_root=live_root,
-        verified_paths=verified_paths,
+        verified_paths=legacy_paths,
         verified_commits=verified_commits,
         verified_versions=verified_versions,
-        verified_absent_paths=verified_absent_paths,
+        verified_absent_paths=legacy_absent,
+        verified_path_targets=path_targets,
+        verified_absent_path_targets=absent_targets,
         claims=normalized_claims,
         verified_head=verified_head,
     )

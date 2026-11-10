@@ -178,11 +178,7 @@ def _show_response(
             if (actor_dict := deps.responses.actor_to_dict(memory.actor)) is not None
             else {}
         ),
-        "path_drift": (
-            drift.to_dict()
-            if (drift.has_drift or drift.verified or drift.expected_absent)
-            else None
-        ),
+        "path_drift": (drift.to_dict() if (drift.should_report) else None),
         "commit_drift": (commit_drift.to_dict() if commit_drift is not None else None),
         "use_token": use_token,
         # Corroboration rollup — omitted while zero (absence-as-signal,
@@ -199,6 +195,11 @@ def _show_response(
         "verified_commits": list(memory.verified_commits),
         "verified_versions": list(memory.verified_versions),
         "verified_absent_paths": list(memory.verified_absent_paths),
+        **{
+            field: value
+            for field in ("verified_path_targets", "verified_absent_path_targets")
+            if (value := getattr(memory, field)) is not None
+        },
         "claims": list(memory.claims),
         # The stamp's commit anchor, beside the attestations it was
         # stamped with; `null` on a record verified without a checkout

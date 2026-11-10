@@ -113,6 +113,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .attestation_paths import LiteralPaths, ReferencePaths, interpret_path, path_mode
 from .claims import (
     Claim,
     build_binding_index,
@@ -354,10 +355,15 @@ def commit_drift_anchor_paths(
     Served through the body parse memo (`_ANCHORS`), keyed on the body
     and the attestations that count (the non-empty strings, in order).
     """
-    attested = tuple(raw for raw in verified_paths if isinstance(raw, str) and raw)
+    values = tuple(raw for raw in verified_paths if isinstance(raw, str) and raw)
+    attested = (
+        LiteralPaths(values)
+        if isinstance(verified_paths, LiteralPaths)
+        else ReferencePaths(values)
+    )
     if not body:
         return _anchor_paths(body, attested)
-    key = _body_key(body, attested)
+    key = _body_key(body, ("\x00" + path_mode(attested), *attested))
     found: tuple[str, ...] | None = _recall_parse(_ANCHORS, key)
     if found is None:
         found = _anchor_paths(body, attested)
@@ -379,7 +385,11 @@ def _anchor_paths(body: str, attested: tuple[str, ...]) -> tuple[str, ...]:
         anchors.append(candidate)
 
     for raw in attested:
-        anchor = _attested_anchor(raw)
+        anchor = (
+            _attested_anchor(raw)
+            if isinstance(attested, ReferencePaths)
+            else interpret_path(raw, mode="literal")
+        )
         if anchor is not None:
             _add(anchor)
     if body:
@@ -412,14 +422,10 @@ def _attested_anchor(raw: str) -> str | None:
     resolver as a relative path, was joined onto the repository root and
     became a pathspec no commit touches, so a record whose attested file
     changed read not-applicable, where ``~/proj/src/x.py`` counted the
-    commit (ENG-167). A relative spelling is a repository path as it
-    stands, unless it climbs out of the root (`_escapes_root`)."""
-    spelled = raw.strip()
-    if not spelled:
-        return None
-    if _is_absolute_attestation(spelled):
-        return _normalize_candidate(spelled)
-    return None if _escapes_root(spelled) else spelled
+    commit (ENG-167). Relative references take the same grammar through
+    a lexical stand-in root, without consulting the caller's cwd. Stored
+    literal targets bypass this reference parser."""
+    return interpret_path(raw, mode="reference")
 
 
 @dataclass(frozen=True)

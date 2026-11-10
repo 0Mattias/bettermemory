@@ -1007,7 +1007,7 @@ def _expand_top_hit(
                 admission=links,
             )
             drift = shown.path_drift
-            if drift.has_drift or drift.verified or drift.expected_absent:
+            if drift.should_report:
                 out[0]["path_drift"] = drift.to_dict()
             expanded_drift_missing = len(drift.missing)
             commit_drift = shown.commit_drift

@@ -1069,6 +1069,8 @@ def _update_fields(
         update_fields["verified_commits"] = []
         update_fields["verified_versions"] = []
         update_fields["verified_absent_paths"] = []
+        update_fields["verified_path_targets"] = None
+        update_fields["verified_absent_path_targets"] = None
         # `claims` clear on the same trigger and for the same reason: a
         # claim declares what the BODY asserts, and this is a different
         # body. The declare-time oracle only ever checked them against

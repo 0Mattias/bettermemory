@@ -30,6 +30,7 @@ from pydantic import Field
 from pydantic.fields import FieldInfo
 
 from . import handlers as _handlers_pkg
+from .attestation_paths import PathMode
 from ._response import ResponseBuilder
 from .config import Config
 from .control_tokens import defang_control_tokens, named_tokens
@@ -610,6 +611,7 @@ class ToolHandlers:
         verified_absent_paths: list[str] | None = None,
         claims: list[str] | None = None,
         ctx: Context | None = None,
+        path_mode: PathMode = "auto",
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
         return await deps._run(
@@ -622,6 +624,7 @@ class ToolHandlers:
                 verified_versions=verified_versions,
                 verified_absent_paths=verified_absent_paths,
                 claims=claims,
+                path_mode=path_mode,
                 ctx=ctx,
             )
         )

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..attestation_paths import unverifiable_inputs
 from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
 from ..models import LinkType, Memory, TombstonedMemory
 from ..origin import commit_reachable
@@ -119,8 +120,11 @@ def trust_strip_for(
             if reason is not None and not claim_reason_is_indeterminate(reason):
                 dropped_claims.append(raw)
     dropped_paths = (
-        unverifiable_attestations(tombstone.verified_paths, worktree_root=live_root)
-        if tombstone.verified_paths
+        unverifiable_inputs(
+            tombstone,
+            lambda paths: unverifiable_attestations(paths, worktree_root=live_root),
+        )
+        if tombstone.verified_paths or tombstone.verified_path_targets
         else []
     )
     # The stamp's commit anchor is judged only against a live origin
@@ -161,8 +165,11 @@ def _anchored_strip(tombstone: TombstonedMemory, anchor: ClaimAnchor) -> TrustSt
             if reason is not None and not claim_reason_is_indeterminate(reason):
                 dropped_claims.append(raw)
     dropped_paths = (
-        unverifiable_attestations(tombstone.verified_paths, anchor=anchor, stored=True)
-        if tombstone.verified_paths
+        unverifiable_inputs(
+            tombstone,
+            lambda paths: unverifiable_attestations(paths, anchor=anchor, stored=True),
+        )
+        if tombstone.verified_paths or tombstone.verified_path_targets
         else []
     )
     dropped_head = False

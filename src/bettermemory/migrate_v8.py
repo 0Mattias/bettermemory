@@ -39,13 +39,16 @@ new rows.
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
+from . import _frontmatter
 from .log import canonical_payload
 from .mirror_format import (
     EPISODES_DIR,
@@ -53,7 +56,13 @@ from .mirror_format import (
     active_filename_for_tombstone,
     is_legacy_tombstone_name,
 )
-from .models import Episode, Memory, TombstonedMemory
+from .models import (
+    Episode,
+    Memory,
+    TombstonedMemory,
+    PATH_TARGET_FIELDS,
+    validate_path_targets,
+)
 from .store import (
     IMPORTED,
     IMPORTED_FROM_V8,
@@ -162,6 +171,34 @@ def _count_entries(path: Path) -> int:
         return 0
 
 
+_Record = TypeVar("_Record", Memory, TombstonedMemory)
+
+
+def _mirror_targets(path: Path, record: _Record) -> _Record:
+    """Read v9 mirror extensions without changing the frozen v8 parser.
+
+    Only v9 mirrors take this extra read. Malformed target metadata makes
+    that file unparseable instead of silently discarding its stamp.
+    """
+    metadata = _frontmatter.load(path).metadata
+    added = {
+        field: metadata[field] for field in PATH_TARGET_FIELDS if field in metadata
+    }
+    if not added:
+        return record
+    restored = type(record).model_validate({**record.model_dump(), **added})
+    validate_path_targets(restored)
+    return restored
+
+
+def _active_sources(root: Path, *, mirror: bool) -> Iterator[tuple[Path, Memory]]:
+    for path, record in iter_active(root):
+        try:
+            yield path, _mirror_targets(path, record) if mirror else record
+        except PARSE_SKIP_EXCEPTIONS:
+            continue
+
+
 def inventory(root: Path | str) -> Inventory:
     """Read a v8 directory. Raises FileNotFoundError when it is not a
     directory; reads nothing else and writes nothing."""
@@ -169,8 +206,11 @@ def inventory(root: Path | str) -> Inventory:
     if not root.is_dir():
         raise FileNotFoundError(f"no v8 store directory at {root}")
 
+    from .mirror import MIRROR_MARKER
+
+    mirror = os.path.isfile(root / MIRROR_MARKER)
     active_paths = list(iter_active_memory_paths(root))
-    memories = list(iter_active(root))
+    memories = list(_active_sources(root, mirror=mirror))
     unparseable_memories = len(active_paths) - len(memories)
 
     tombstones: list[TombstoneSource] = []
@@ -178,6 +218,8 @@ def inventory(root: Path | str) -> Inventory:
     for path in sorted(iter_tombstone_paths(root)):
         try:
             dead = parse_tombstone_file(path)
+            if mirror:
+                dead = _mirror_targets(path, dead)
             # The tombstone model drops the links and the corroboration
             # rollup; the memory reader keeps them and ignores the
             # removal keys, so the same file read twice gives both.

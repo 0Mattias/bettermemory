@@ -27,7 +27,7 @@ from typing import Any
 
 from .events import _redact_event_fields
 from .identity import Actor
-from .models import Episode, Memory, MemoryLink, TombstonedMemory
+from .models import Episode, Memory, MemoryLink, TombstonedMemory, validate_path_targets
 from .origin import Origin, is_full_commit_sha
 from .search import fts_index_text
 from .store_schema import (
@@ -41,6 +41,7 @@ from .store_schema import (
     _QUARANTINE_COLUMNS,
     _TABLE_KEYS,
     _VERIFICATION_LISTS,
+    _PATH_TARGET_FIELDS,
     _WRITABLE_PROVENANCE,
     UnknownFieldsError,
     _MembershipTable,
@@ -114,6 +115,7 @@ def _record_columns(
     record: Memory | TombstonedMemory,
 ) -> dict[str, Any]:
     """The columns a memory and a tombstone share, straight off the record."""
+    validate_path_targets(record)
     origin = record.origin
     actor = record.actor
     return {
@@ -320,6 +322,28 @@ def _anchor_or_none(value: Any) -> str | None:
     return candidate if is_full_commit_sha(candidate) else None
 
 
+def _path_targets(row: sqlite3.Row) -> dict[str, Any]:
+    """Optional targets from the signed payload selected beside a row.
+
+    The SQLite record keeps rc3's column shape. A raw row from an older
+    store, or a payload with no target extension, retains legacy grammar.
+    """
+    if "attestation_payload" not in row.keys() or row["attestation_payload"] is None:
+        return {}
+    try:
+        payload = json.loads(row["attestation_payload"])
+    except (ValueError, RecursionError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    record = payload.get("memory", payload.get("tombstone", payload))
+    if not isinstance(record, dict):
+        return {}
+    if "id" in row.keys() and record.get("id") != row["id"]:
+        return {}
+    return {name: record[name] for name in _PATH_TARGET_FIELDS if name in record}
+
+
 def _row_to_memory(row: sqlite3.Row) -> Memory:
     return Memory(
         id=row["id"],
@@ -345,6 +369,7 @@ def _row_to_memory(row: sqlite3.Row) -> Memory:
         verified_commits=_load_json(row["verified_commits_json"], []),
         verified_versions=_load_json(row["verified_versions_json"], []),
         verified_absent_paths=_load_json(row["verified_absent_paths_json"], []),
+        **_path_targets(row),
         claims=_load_json(row["claims_json"], []),
         verified_head=_anchor_or_none(row["verified_head"]),
         links=[
@@ -381,6 +406,7 @@ def _row_to_tombstone(row: sqlite3.Row) -> TombstonedMemory:
         verified_commits=_load_json(row["verified_commits_json"], []),
         verified_versions=_load_json(row["verified_versions_json"], []),
         verified_absent_paths=_load_json(row["verified_absent_paths_json"], []),
+        **_path_targets(row),
         claims=_load_json(row["claims_json"], []),
         verified_head=_anchor_or_none(row["verified_head"]),
         removed=_dt(row["removed"]),
@@ -441,6 +467,7 @@ def _verification_row(row: sqlite3.Row) -> dict[str, Any]:
         "verified_at": row["verified_at"],
         "verified_head": row["verified_head"],
         **{name: _load_json(row[f"{name}_json"], []) for name in _VERIFICATION_LISTS},
+        **_path_targets(row),
     }
 
 
