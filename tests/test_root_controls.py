@@ -9,6 +9,7 @@ channel hands it to `origin.capture`, which must not raise for it.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from pathlib import Path
 from types import SimpleNamespace
@@ -113,6 +114,18 @@ def test_explicit_nul_cwd_declines_without_probing_git(
         pytest.fail("invalid cwd must decline before a Git probe")
 
     monkeypatch.setattr(origin, "_git_result", probe)
+    got = origin.capture(Path("/tmp/x\x00y"), source=SOURCE_ROOTS)
+    assert got.cwd is None and got.repo is None and got.worktree_root is None
+    assert got.source == SOURCE_ROOTS
+
+
+def test_nul_cwd_is_refused_before_platform_path_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def resolve(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("a NUL path must be refused before platform resolution")
+
+    monkeypatch.setattr(os.path, "realpath", resolve)
     got = origin.capture(Path("/tmp/x\x00y"), source=SOURCE_ROOTS)
     assert got.cwd is None and got.repo is None and got.worktree_root is None
     assert got.source == SOURCE_ROOTS

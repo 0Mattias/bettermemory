@@ -276,7 +276,12 @@ def _resolved(cwd: Path | None) -> Path | None:
     on 3.11 and 3.12 than on 3.13 (tests/test_membership_cost.py).
     """
     try:
-        return Path(os.path.realpath(cwd if cwd is not None else Path.cwd()))
+        path = str(cwd if cwd is not None else Path.cwd())
+        # Windows realpath can return an embedded NUL unchanged instead of
+        # raising as POSIX does. It cannot name a filesystem entry anywhere.
+        if "\x00" in path:
+            return None
+        return Path(os.path.realpath(path))
     except (OSError, ValueError):
         return None
 

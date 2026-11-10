@@ -32,6 +32,13 @@ eighteenth was built.
 
 #### Fixed
 
+- **Origin capture refuses embedded NUL paths before platform resolution
+  (ENG-277).** Windows can return such a path unchanged instead of raising
+  as POSIX does. Capture now declines it before any filesystem or Git
+  read. Synthetic malformed-date commits are sent to Git as bytes,
+  preserving LF headers on Windows. (`origin.py`,
+  `tests/test_root_controls.py`, `tests/test_overflow_author_dates.py`)
+
 - **Repository-settings validation follows the supported Git matrix
   (ENG-271).** File-based discovery declines settings that make Git's
   repository initialization fail: the negotiation algorithm, commit-graph

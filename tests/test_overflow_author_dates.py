@@ -24,13 +24,12 @@ def _git(repo: Path, *args: str, stdin: str | None = None) -> str:
     done = subprocess.run(
         ["git", *args],
         cwd=repo,
-        input=stdin,
+        input=stdin.encode() if stdin is not None else None,
         capture_output=True,
-        text=True,
         timeout=30,
         check=True,
     )
-    return done.stdout.strip()
+    return done.stdout.decode().strip()
 
 
 def _repo(tmp_path: Path) -> tuple[Path, datetime]:
