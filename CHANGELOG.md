@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Absolute citations preserve relative attestations (ENG-256).** When
+  prose cites the same file absolutely, a relative attestation still
+  supplies its verified or intentionally absent meaning and its claim
+  provenance. The attestation takes precedence in recorded worktrees and
+  through moved checkout views; a miss in a stand-in checkout remains
+  unconfirmed. (`verify_anchoring.py`,
+  `tests/test_relative_attestation_priority.py`)
+
 - **A shallow clone classifies untouched and phantom paths without
   inventing drift (ENG-251).** When the clone holds the verified range,
   an untouched real anchor reads clean with zero commits, while a path

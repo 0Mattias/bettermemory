@@ -962,6 +962,11 @@ def _detect_unanchored(
     # one claim and land once. Every pass below dedupes against this one
     # set, and every key comes from the read's one `_ClaimKeys`.
     seen: set[str] = set()
+    if anchor_root is not None:
+        deferred = _relative_attestation_keys(
+            anchor_root, verified_paths, absent_paths, keys
+        )
+        candidates = [c for c in candidates if keys(c[0]) not in deferred]
     _check_body_candidates(
         candidates,
         verified_set,
@@ -1093,11 +1098,18 @@ def _detect_anchored(
     out = _AnchoredRead()
     verified_set = _normalize_attestations(verified_paths, out.keys)
     absent_set = _normalize_attestations(absent_paths, out.keys)
+    deferred = (
+        _relative_attestation_keys(anchor.root, verified_paths, absent_paths, out.keys)
+        if anchor.root is not None
+        else set()
+    )
 
     for path, drop_if_missing, bare_spaced in _extract_candidates(body):
         norm = out.keys(path)
         attested = norm in verified_set or norm in absent_set
         target, rule = anchor.absolute(path)
+        if target is not None and out.keys(target) in deferred:
+            continue
         if target is None:
             # Recorded under a checkout of a project with no live view here.
             # An attestation is a claim and reads unconfirmed; a path the
@@ -1150,6 +1162,30 @@ def _detect_anchored(
     if anchor.root is not None:
         _read_citations(anchor, body, out)
     return out.report(anchor.rule)
+
+
+def _relative_attestation_keys(
+    root: str | Path,
+    verified_paths: tuple[str, ...] | list[str],
+    absent_paths: tuple[str, ...] | list[str],
+    keys: Callable[[str], str],
+) -> set[str]:
+    """Reserve explicit relative claims before the body reads their aliases.
+
+    The absolute-only attestation sets cannot identify these claims. A
+    body citation of the same target must defer to the attestation pass
+    so it retains the caller's present/absent claim and its provenance.
+    """
+    out: set[str] = set()
+    for raw in (*verified_paths, *absent_paths):
+        spelled = raw.strip() if raw else ""
+        if not spelled or _is_absolute_attestation(spelled):
+            continue
+        joined = _join_under(root, spelled)
+        if joined is not None:
+            out.add(keys(joined))
+    out.discard("")
+    return out
 
 
 def _read_attestations(
