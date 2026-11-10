@@ -2,9 +2,9 @@
 
 Recorded paths cross machines: a record written on Windows is read on
 macOS and the reverse, and a view recorded on one machine is compared with
-a path recorded on another. So whether a path lies at or below a root is
-read off the two spellings, never off the platform this runs on: either
-slash separates, whichever separator the two are spelled with. `inside`
+a path recorded on another. So separators are read off the spelling,
+never off the host: a POSIX root uses `/`, while a Windows spelling can
+use either slash. A backslash in a POSIX name is data (ENG-254). `inside`
 is that one rule (`norm` the trailing-separator trim it compares under).
 
 The membership family reads it (`membership_records`), and so does
@@ -20,15 +20,22 @@ from __future__ import annotations
 
 
 def norm(path: str) -> str:
-    """`path` without its trailing separators of either slash; a path of
-    separators alone is kept as spelled."""
-    stripped = path.rstrip("/\\")
+    """Trim the spelling's trailing separators, keeping filesystem roots."""
+    separators = "/" if path.startswith("/") else "/\\"
+    stripped = path.rstrip(separators)
+    if (
+        len(stripped) == 2
+        and stripped[0].isalpha()
+        and stripped[1] == ":"
+        and len(path) > 2
+        and path[2] in "/\\"
+    ):
+        return path[:3]
     return stripped or path
 
 
 def inside(path: str, root: str) -> bool:
-    """`path` is `root` or below it, whichever separator the two are
-    spelled with: recorded paths cross machines.
+    """`path` is `root` or below it, in the root spelling's separators.
 
     Compared as spelled, after `norm`: no case is folded, no ``..`` is
     resolved and no link is followed, since a recorded path may name a
@@ -36,4 +43,16 @@ def inside(path: str, root: str) -> bool:
     separators (``C:\\w/app``) does not meet its uniform twin
     (``C:\\w\\app``)."""
     path, root = norm(path), norm(root)
-    return path == root or any(path.startswith(root + sep) for sep in ("/", "\\"))
+    separators = "/" if root.startswith("/") else "/\\"
+    return path == root or any(
+        path.startswith(root if root.endswith(sep) else root + sep)
+        for sep in separators
+    )
+
+
+def basename(path: str) -> str:
+    """The last recorded component, preserving POSIX backslashes."""
+    spelled = norm(path)
+    if not spelled.startswith("/"):
+        spelled = spelled.replace("\\", "/")
+    return spelled.rstrip("/").rsplit("/", 1)[-1] or path

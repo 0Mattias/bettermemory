@@ -36,10 +36,12 @@ import os
 import sqlite3
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, TypeVar
 
 from .._printable import printable, quoted
+from .._paths import basename
 
 _T = TypeVar("_T")
 
@@ -51,6 +53,7 @@ if TYPE_CHECKING:
         Project,
         Proposal,
         Resolution,
+        View,
     )
     from ..project_file import ProjectFile, ProjectFileError
     from ._common import CliContext
@@ -678,7 +681,71 @@ def _question_folder(model: Membership, qid: str) -> str:
         if isinstance(part, str) and part:
             return part
         refuse(f"question {pr.id} records no part folder; nothing printed")
-    return views[-1].path
+    return _checkout_folder(model, k, views[-1])
+
+
+def _checkout_folder(model: Membership, checkout: Checkout, view: View) -> str:
+    """A folder that still identifies the recorded checkout (ENG-254).
+
+    Older POSIX views lost final backslashes and can name a different,
+    existing sibling. A bounded directory read finds only spellings the
+    old trim could have produced; the checkout's identity, never the
+    similar name, decides whether one can be returned. The read-only
+    lookup leaves signed history alone; the next normal sighting records
+    the recovered spelling.
+    """
+    from .. import location
+    from ..membership import LIVE
+
+    if not os.path.isabs(view.path) or "\0" in view.path:
+        return view.path  # `_folder` refuses it before printing.
+    if model.view_state(checkout, view) == LIVE:
+        return view.path
+    found: set[str] = set()
+    if os.name != "nt" and checkout.object_key is not None:
+        candidates = location.bounded_read(
+            view.path,
+            "legacy_backslash_folders",
+            lambda: _backslash_folders(view.path),
+            location.PROBE_BUDGET,
+        )
+        if isinstance(candidates, list):
+            for path in candidates:
+                if model.view_state(checkout, replace(view, path=path)) == LIVE:
+                    found.add(location.view_path(path))
+    if len(found) == 1:
+        return found.pop()
+    refuse(
+        f"checkout {checkout.id}'s stored folder {quoted(view.path)} does not "
+        "identify one local checkout; nothing printed"
+    )
+
+
+def _backslash_folders(path: str) -> list[str]:
+    """The local names whose old trailing-separator trim produced `path`.
+
+    A final component containing only backslashes disappeared completely,
+    so inspect `path`'s children as well as its siblings. No recursion or
+    guessed suffix length: directory entries supply the exact bytes.
+    """
+    parent, name = os.path.dirname(path), os.path.basename(path)
+    found: set[str] = set()
+    for directory, child in ((parent, False), (path, True)):
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if child:
+                        matches = bool(entry.name) and not entry.name.strip("\\")
+                    else:
+                        matches = (
+                            entry.name.endswith("\\")
+                            and entry.name.rstrip("\\") == name
+                        )
+                    if matches:
+                        found.add(entry.path)
+        except (OSError, ValueError):
+            continue
+    return sorted(found)
 
 
 def _file_folder(file_id: str) -> str:
@@ -781,7 +848,7 @@ def _join(project_id: str) -> None:
 def _folder_name(k: Checkout, cwd: str) -> str:
     newest = k.newest_view
     path = newest.path if newest is not None else cwd
-    return os.path.basename(path.rstrip("/\\")) or path
+    return basename(path)
 
 
 def _token_said(ctx: CliContext, done: Declared) -> str:

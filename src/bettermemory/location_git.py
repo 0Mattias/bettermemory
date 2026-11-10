@@ -42,6 +42,7 @@ from typing import Any
 
 from . import _caches, githead, gitobjects, gitsystem, project_file
 from . import _git as _git_runner
+from ._paths import basename
 from ._location_probe import INDETERMINATE, TOKEN_VERSION
 from .gitconfig import (
     _LEGACY_FOLDERS as _LEGACY_FOLDERS,
@@ -1512,7 +1513,7 @@ def _manifest(root: str) -> tuple[str, tuple[tuple[str, int], ...]]:
             if len(entries) >= MANIFEST_LIMIT:
                 break
         todo.extend(reversed(subdirs))
-    name = os.path.basename(root.rstrip("/\\")) or root
+    name = basename(root)
     return name, tuple(sorted(entries))
 
 

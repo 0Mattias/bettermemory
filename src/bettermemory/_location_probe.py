@@ -147,7 +147,9 @@ def view_path(path: str) -> str:
             real = str(paths.normpath(paths.abspath(path)))
         except (OSError, ValueError):
             real = path
-    stripped = real.rstrip("/\\")
+    stripped = real.rstrip(paths.sep + (paths.altsep or ""))
+    if paths.splitdrive(real)[0] and not paths.splitdrive(stripped)[1]:
+        return str(paths.normpath(real))
     return stripped or real
 
 

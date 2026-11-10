@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, runtime_checkable
 
 from . import checkout_token
-from ._paths import inside, norm
+from ._paths import basename, inside, norm
 from .store import RecordHome
 
 if TYPE_CHECKING:
@@ -1130,7 +1130,7 @@ def _rebase(path: str, root: str, target: str) -> str:
 
 
 def _basename(path: str) -> str:
-    return os.path.basename(_norm(path).replace("\\", "/").rstrip("/")) or path
+    return basename(path)
 
 
 def _same_number(a: ObjectKey | None, b: ObjectKey | None) -> bool:

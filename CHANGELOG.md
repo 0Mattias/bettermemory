@@ -70,6 +70,19 @@ eighteenth was built.
   invalid one still counts. Health parses the claims once for all its
   buckets. (`health.py`, `tests/test_health_claim_admission.py`)
 
+- **POSIX folder names keep their final backslashes (ENG-254).** Views,
+  containment, local remote keys, project labels and folder manifests
+  read separators from the path's spelling, so a literal backslash does
+  not turn a checkout into its sibling. Windows spellings keep Windows
+  separators, including drive roots. `project folder` returns an older
+  stripped view only through a unique local folder whose checkout
+  identity matches; missing, ambiguous and unreadable targets produce no
+  path. The lookup remains read-only, and ordinary use in the recovered
+  checkout records its exact view without rewriting history.
+  (`_paths.py`, `_location_probe.py`, `location.py`, `location_git.py`,
+  `membership_records.py`, `cli/project_cmd.py`,
+  `tests/test_project_folder_backslashes.py`)
+
 #### Added
 
 - **Health recommends a spot-check of every memory whose history was

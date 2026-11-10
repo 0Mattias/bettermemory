@@ -75,6 +75,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _caches, checkout_token, githead, gitdir_pin, gitobjects, project_file
+from ._paths import norm as normalize_path
 from ._location_probe import (
     INDETERMINATE,
     TOKEN_VERSION,
@@ -402,7 +403,7 @@ def remote_key(url: str | None, base: str | None = None) -> str | None:
 def _local(path: str, base: str | None) -> str:
     joined = path if _PATH.isabs(path) or base is None else _PATH.join(base, path)
     resolved = _PATH.realpath(joined)
-    return resolved.rstrip("/\\") or resolved
+    return normalize_path(resolved)
 
 
 def _url_path(path: str) -> str:
