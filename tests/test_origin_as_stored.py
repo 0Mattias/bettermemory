@@ -298,7 +298,7 @@ def test_the_cut_is_read_from_the_common_directory(tmp_path: Path) -> None:
     repo.mkdir()
     _plain(repo, "init", "-q")
     assert origin_history.cuts(repo) == frozenset()
-    (repo / ".git" / "shallow").write_text("A" * 40 + "\n\n" + "b" * 40 + "\n")
+    (repo / ".git" / "shallow").write_text("A" * 40 + "\n" + "b" * 40 + "\n")
     assert origin_history.cuts(repo) == frozenset({"a" * 40, "b" * 40})
     assert origin_history.cuts(tmp_path / "nowhere") is None
 

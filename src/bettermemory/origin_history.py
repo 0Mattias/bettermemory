@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypeAlias, TypeVar
 
-from . import _caches, githead
+from . import _caches, gitfile_rule, githead
 from . import _git as _git_runner
 
 # What every git `origin` runs is set to, so that it reads the history as
@@ -520,7 +520,10 @@ def shallow_file(start: Path, *, walk: bool = False) -> Path | None:
 def cuts_in(path: Path) -> frozenset[str] | None:
     """The commits the ``shallow`` file at `path` lists (`cuts`): empty
     where it is not there, None where it cannot be read or is longer than
-    `_CUTS_MAX` bytes."""
+    `_CUTS_MAX` bytes. Git reads the first full object name of each LF
+    record and ignores its suffix, even more hex digits. Its width comes
+    from the common config's object format, never from that suffix.
+    """
     try:
         with open(path, "rb") as handle:
             raw = handle.read(_CUTS_MAX + 1)
@@ -530,11 +533,22 @@ def cuts_in(path: Path) -> frozenset[str] | None:
         return None
     if len(raw) > _CUTS_MAX:
         return None
-    return frozenset(
-        line.strip().decode("ascii", "replace").lower()
-        for line in raw.splitlines()
-        if line.strip()
-    )
+    if not raw:
+        return frozenset()
+    name = gitfile_rule.object_format_at(str(path.parent))
+    if name is None:
+        return None
+    width = 64 if name == b"sha256" else 40
+    records = raw.split(b"\n")
+    if records[-1] == b"":
+        records.pop()
+    out: set[str] = set()
+    for record in records:
+        oid = record[:width].lower()
+        if len(oid) != width or any(ch not in b"0123456789abcdef" for ch in oid):
+            return None
+        out.add(oid.decode("ascii"))
+    return frozenset(out)
 
 
 def log_stdin(revisions: Sequence[str], pathspecs: Sequence[str]) -> bytes | None:

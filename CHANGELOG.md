@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Shallow cut hashes use the repository's storage format (ENG-270).**
+  Git's ignored suffix after each hash no longer hides a cut from the
+  complete-history guard. The parser sizes SHA-1 and SHA-256 names from
+  the existing bounded common-config reader, including linked worktrees;
+  it declines malformed records and indeterminate formats. A longer hex
+  suffix never changes the storage algorithm. (`origin_history.py`,
+  `gitfile_rule.py`, `tests/test_shallow_suffixes.py`)
+
 - **Unusable workspace roots and citation paths decline safely
   (ENG-274, ENG-277).** Root paths use the same bounded control-character
   checks as other workspace declarations, skipping a bad root for the

@@ -352,6 +352,19 @@ def _common_format(common_dir: str) -> _Format | str:
     return _judge_format(path, read.entries)
 
 
+def object_format_at(common_dir: str) -> bytes | None:
+    """The object format in `common_dir`'s bounded config (`object_format`).
+
+    This uses the same format judgment and no includes, global config or
+    worktree config: those do not set the repository's storage algorithm.
+    None where that file or its declared format cannot be read.
+    """
+    read = _common_format(common_dir)
+    if isinstance(read, str) or read.version > 1:
+        return None
+    return b"sha1" if read.version == -1 else read.object_format
+
+
 def object_format(data: bytes) -> bytes | None:
     """The object format git 2.54 reads a repository in, from the bytes
     `data` of its common directory's ``config`` (setup.c's
