@@ -128,7 +128,11 @@ def commit_author_timestamps(
     --depth`` or ``--unshallow`` while the log ran, which may have stopped
     it at a cut the first read did not list), the read answers
     ``SHALLOW``, counted as a failure, and nothing is kept: the next call
-    reads the history under the cuts the file lists then (ENG-233).
+    reads the history under the cuts the file lists then (ENG-233). The
+    shallow file, or its directory while absent, is held across the read
+    too: a depth fetch undone before the log returns leaves the cut sets
+    equal but still invalidates a truncated read, including extensions
+    and the uncached HEAD entry path.
     """
     if cwd is None:
         return None
@@ -149,7 +153,8 @@ def commit_author_timestamps(
             # No repository the files read: none applies only where no
             # entry may hold one that nothing reads (`_unread_entry`).
             return _unread_entry(cwd)
-        return _cut_held(cwd, cut, _read_author_timestamps(cwd, "HEAD", cut))
+        held = _hold_shallow(cwd, walk=True)
+        return _cut_held(cwd, cut, _read_author_timestamps(cwd, "HEAD", cut), held)
     guard = origin_history.history_guard(Path(key[0]))
     cut = origin_history.cuts(Path(key[0]))
     stored, failure = origin_history.recall(key, guard, cut)
@@ -162,6 +167,7 @@ def commit_author_timestamps(
             origin_history.remember_failure(key, guard, failure)
         origin_history.note_unread(failure)
         return failure
+    held = _hold_shallow(Path(key[0]))
     base = None if guard is None else origin_history.base_for(key[0], guard, cut)
     dates: list[datetime] | HistoryUnread | None = None
     if base is not None:
@@ -169,8 +175,9 @@ def commit_author_timestamps(
         dates = _extended_author_timestamps(cwd, base_head, base_dates, key[1], cut)
     if dates is None:
         dates = _read_author_timestamps(cwd, key[1], cut)
-    if isinstance(dates, list) and origin_history.cuts(Path(key[0])) != cut:
-        # The shallow file moved while the log ran (ENG-233).
+    if isinstance(dates, list) and not _shallow_held(Path(key[0]), cut, held):
+        # A depth fetch undone during the log leaves the cut sets equal,
+        # but changes the file or its containing directory (ENG-233).
         _git_runner.note_failed()
         return HistoryUnread.SHALLOW
     if isinstance(dates, HistoryUnread):
@@ -182,16 +189,50 @@ def commit_author_timestamps(
     return dates
 
 
+def _hold_shallow(
+    start: Path, *, walk: bool = False
+) -> dict[str, tuple[int, int]] | None:
+    """Hold the shallow file, or its nearest existing directory, across
+    a history read. None when its stamp cannot be read; an empty hold
+    where the repository files name no shallow-file location."""
+    shallow = origin_history.shallow_file(start, walk=walk)
+    held: dict[str, tuple[int, int]] = {}
+    if shallow is not None:
+        try:
+            origin._hold_directory(shallow, held)
+        except (OSError, ValueError):
+            return None
+    return held
+
+
 def _cut_held(
-    cwd: Path, cut: frozenset[str], dates: list[datetime] | HistoryUnread | None
+    cwd: Path,
+    cut: frozenset[str],
+    dates: list[datetime] | HistoryUnread | None,
+    held: dict[str, tuple[int, int]] | None,
 ) -> list[datetime] | HistoryUnread | None:
     """`dates`, read from HEAD at `cwd` under `cut`, where the shallow file
     still lists `cut` after the log; ``SHALLOW``, counted as a failure,
     where it moved while the log ran (ENG-233)."""
-    if isinstance(dates, list) and origin_history.cuts(cwd, walk=True) != cut:
+    if isinstance(dates, list) and not _shallow_held(cwd, cut, held, walk=True):
         _git_runner.note_failed()
         return HistoryUnread.SHALLOW
     return dates
+
+
+def _shallow_held(
+    start: Path,
+    cut: frozenset[str],
+    held: dict[str, tuple[int, int]] | None,
+    *,
+    walk: bool = False,
+) -> bool:
+    """The same cuts and the same file/directory evidence after a log."""
+    return (
+        held is not None
+        and origin_history.cuts(start, walk=walk) == cut
+        and origin.directories_held(held)
+    )
 
 
 def _read_author_timestamps(
@@ -503,7 +544,42 @@ def commit_author_sha_pairs_touching_pathspecs(
     return out
 
 
-def _touching_log(toplevel: Path, form: str, pathspecs: list[str]) -> str | None:
+def paths_in_history(
+    cwd: Path | None, pathspecs: list[str], *, toplevel: Path | None = None
+) -> bool | None:
+    """Whether HEAD's visible history touches a pathspec; None if unread.
+
+    Classification needs no complete-history count. A shallow boundary
+    lists every path in its tree, so a real, untouched anchor can still
+    be distinguished from a phantom when the stamp's range is held.
+    Dates are irrelevant to this question, including malformed dates.
+    The shallow-file hold still declines a log whose cuts moved during
+    the read. Counting readers retain the stricter complete-history gate.
+    """
+    if cwd is None or not pathspecs:
+        return None
+    if toplevel is None:
+        toplevel = origin.repo_toplevel(cwd)
+        if toplevel is None:
+            return None
+    raw = _touching_log(toplevel, "%H", pathspecs, require_complete=False)
+    if raw is None:
+        return None
+    if not raw:
+        return False
+    if not all(origin.is_full_commit_sha(line) for line in raw.splitlines()):
+        _git_runner.note_failed()
+        return None
+    return True
+
+
+def _touching_log(
+    toplevel: Path,
+    form: str,
+    pathspecs: list[str],
+    *,
+    require_complete: bool = True,
+) -> str | None:
     """``git log --format=<form> HEAD -- <pathspecs>``, the head and the
     pathspecs on git's standard input (`origin_history.log_stdin`), so no
     count of them passes a command line's bound; None where git did not
@@ -527,6 +603,8 @@ def _touching_log(toplevel: Path, form: str, pathspecs: list[str]) -> str | None
     unrelated entry (a ``git status`` taking the index's lock), but it
     cannot prove that the log saw no temporary cut: the caller keeps its
     conservative unnarrowed count for this call and caches nothing.
+    `paths_in_history` alone sets `require_complete=False`: it classifies
+    paths without counting commits, so needs no cached complete history.
     Where the files read no repository at `toplevel` nothing is checked,
     as before."""
     stdin = origin_history.log_stdin(["HEAD"], pathspecs)
@@ -534,13 +612,7 @@ def _touching_log(toplevel: Path, form: str, pathspecs: list[str]) -> str | None
         return None
     shallow = origin_history.shallow_file(toplevel)
     cut = None if shallow is None else origin_history.cuts_in(shallow)
-    held: dict[str, tuple[int, int]] = {}
-    holding = shallow is not None
-    if shallow is not None:
-        try:
-            origin._hold_directory(shallow, held)
-        except (OSError, ValueError):
-            holding = False
+    held = _hold_shallow(toplevel)
     out = origin._git(
         toplevel,
         *origin_history.AS_STORED_PATHS,
@@ -556,11 +628,15 @@ def _touching_log(toplevel: Path, form: str, pathspecs: list[str]) -> str | None
     if (
         cut is None
         or origin_history.cuts_in(shallow) != cut
-        or (cut and not cut <= (_checked_cut(toplevel) or frozenset()))
+        or (
+            require_complete
+            and cut
+            and not cut <= (_checked_cut(toplevel) or frozenset())
+        )
     ):
         _git_runner.note_failed()
         return None
-    if not holding or not origin.directories_held(held):
+    if held is None or not origin.directories_held(held):
         _git_runner.note_failed()
         return None
     return out
@@ -590,4 +666,5 @@ __all__ = [
     "commit_author_sha_pairs_touching_pathspecs",
     "commit_author_timestamps",
     "commit_author_timestamps_touching_pathspecs",
+    "paths_in_history",
 ]

@@ -136,6 +136,7 @@ from .origin import (
 from .origin_dates import (
     commit_author_sha_pairs_touching_pathspecs,
     commit_author_timestamps_touching_pathspecs,
+    paths_in_history,
 )
 from .origin_history import HistoryUnread, Walked, given_up_since, unwalked
 from .origin_patch import local_patch_window, too_large
@@ -738,8 +739,8 @@ def _resolve_reachable(
     untouched real file reads clean/0, a PHANTOM spec (a citation that
     resolves to a path no commit ever touched) is not applicable, and
     clean/0 is what stands the calendar backstop down — so that case
-    pays the author-date readers' phantom classification, the same
-    full-history log `_quiescent_drift_applicable` runs, and keeps the
+    pays `paths_in_history`'s phantom classification, the same
+    history log `_quiescent_drift_applicable` runs, and keeps the
     conservative count when that log cannot run.
     """
     unfiltered = len(walk.commits)
@@ -791,9 +792,7 @@ def _resolve_reachable(
             len(escalating), checked, tuple(drifted), BASIS_REACHABILITY
         )
     combined = spell.names([*ungoverned, *governed])
-    touching = commit_author_timestamps_touching_pathspecs(
-        cwd, _literal_pathspecs(combined), toplevel=toplevel
-    )
+    touching = paths_in_history(cwd, _literal_pathspecs(combined), toplevel=toplevel)
     if touching is None:
         # Git couldn't run the classification log — never under-count on
         # infrastructure failure.
@@ -1111,7 +1110,7 @@ def _quiescent_drift_applicable(
         # A path past the spellings bound the tree holds in no whole form:
         # never read as not applicable.
         return True
-    touching = commit_author_timestamps_touching_pathspecs(
+    touching = paths_in_history(
         cwd, _literal_pathspecs(spell.names(combined)), toplevel=toplevel
     )
     if touching is None:

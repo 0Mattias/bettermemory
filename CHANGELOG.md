@@ -30,6 +30,27 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 The nineteenth candidate closes the residuals filed while the
 eighteenth was built.
 
+#### Fixed
+
+- **A shallow clone classifies untouched and phantom paths without
+  inventing drift (ENG-251).** When the clone holds the verified range,
+  an untouched real anchor reads clean with zero commits, while a path
+  no visible commit touched stays not applicable and keeps the calendar
+  backstop. Classification reads commit identities independently of
+  author dates and complete-history counts; counting still declines an
+  unchecked shallow cut. A cut changed during classification declines
+  that read too. (`origin_dates.py`, `verify.py`,
+  `tests/test_shallow_classification.py`)
+
+- **A depth fetch undone during a history read cannot cache a truncated
+  count (ENG-233).** Whole-history reads, extensions and uncached HEAD
+  reads hold the shallow file, or its directory while the file is
+  absent, across the log. A temporary cut leaves that evidence changed
+  even if the before and after cut sets match: the read reports shallow
+  history, keeps no truncated count, and retries on the next call.
+  Steady reads add no Git process. (`origin_dates.py`,
+  `tests/test_shallow_classification.py`)
+
 #### Added
 
 - **Health recommends a spot-check of every memory whose history was
