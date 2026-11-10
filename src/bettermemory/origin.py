@@ -1168,7 +1168,17 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
     loaders guarantee that — so the only argv it can form is a revision."""
     if cwd is None or not is_full_commit_sha(sha):
         return None
-    result = _git_result(cwd, "merge-base", "--is-ancestor", sha, "HEAD")
+    # GIT_GRAFT_FILE disables grafts, but recent Git emits deprecation
+    # advice even for the null device. A quiet negative must exclude it.
+    result = _git_result(
+        cwd,
+        "-c",
+        "advice.graftFileDeprecated=false",
+        "merge-base",
+        "--is-ancestor",
+        sha,
+        "HEAD",
+    )
     if result is None:
         # Git could not be asked — no binary, a timeout, a failed spawn.
         # That is no answer, and the restore re-check reads False as
@@ -1181,10 +1191,20 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
     if result.returncode == 0:
         return True
     _git_runner.log_nonzero_exit(("merge-base", "--is-ancestor"), result, cwd)
-    # A non-zero exit is "not an ancestor", "no such commit" and "not a
-    # repository" alike. Tell the last apart with the cheapest question
-    # that answers differently for it: can git see a HEAD here at all?
-    return False if head_sha(cwd) is not None else None
+    # Only a quiet status 1 establishes a negative ancestry answer. A
+    # corrupt parent can also yield 1, with an error, and a signalled
+    # process establishes nothing. Neither permits stripping the anchor.
+    if result.returncode == 1:
+        return False if not result.stderr.strip() else None
+    if result.returncode < 0 or head_sha(cwd) is None:
+        return None
+    # A well-formed hash the repository never held is still a measured
+    # negative. Quiet revision verification distinguishes that absence
+    # from an existing anchor whose intervening graph cannot be read.
+    present = _git_result(cwd, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
+    if present is not None and present.returncode == 1 and not present.stderr.strip():
+        return False
+    return None
 
 
 # The reachable walk is memoised per process, keyed on (root, anchor,

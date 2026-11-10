@@ -38,6 +38,12 @@ eighteenth was built.
   scanning unrelated paths for every file. (ENG-279 candidate #44,
   `origin_history.py`, `tests/test_historical_path_types.py`)
 
+- **Restore anchors survive incomplete ancestry reads.** A missing parent
+  object or a signalled Git process is no longer interpreted as a proven
+  history rewrite. Quiet negative ancestry and absent-anchor checks still
+  distinguish commits the current history does not descend from. (ENG-279
+  candidate #46, `origin.py`, `tests/test_ancestry_read_errors.py`)
+
 - **The minimum-Git CI build uses its supported C language mode
   (ENG-227).** The source builder selects GNU C11 while keeping Git's
   optimization and warning defaults. Git 2.34's `thread_local` identifier
