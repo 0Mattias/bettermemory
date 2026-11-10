@@ -32,6 +32,12 @@ eighteenth was built.
 
 #### Fixed
 
+- **Unknown project IDs are ordinary join refusals (ENG-264).** The
+  project lookup runs before merge planning, matching the unjoin path.
+  Missing and reserved global IDs return `no project ...` without
+  recording a merge. (`handlers/questions.py`,
+  `tests/test_join_unknown_projects.py`)
+
 - **Explicit path attestations retain the target that was checked
   (ENG-253, ENG-280).** Relative code locations share the same reference
   grammar across admission and both drift bases. Literal route folders,

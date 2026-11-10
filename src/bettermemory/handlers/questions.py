@@ -256,9 +256,11 @@ async def join_project(
     model, mine = _caller(deps)
     if mine is None:
         raise ValueError("the caller stands in no checkout; nothing to merge into")
-    src = model.canonical(id)
-    if src is None:
-        raise ValueError(f"no project {id}")
+    try:
+        project = model.project(id)
+    except KeyError:
+        raise ValueError(f"no project {id}") from None
+    src = model.canonical(project.id) or project.id
     k = model.checkout(mine)
     into = model.canonical(k.project) or k.project
     if src == into:
