@@ -1,7 +1,7 @@
 """The event window memo behind `Store.events_since(since, memoised=True)`.
 
 `memory_search` reads the telemetry rows of the last
-`ATTRIBUTION_LOOKBACK_SECONDS` on every search that returns a hit, and the
+30-day negative-outcome window on every search that returns a hit, and the
 uncached read decodes every row in the window on each call (the cut itself
 is served by the `log_by_ts` index since 9.0.0rc10). The log only grows, one row at a time, each
 row chained to the one before it, so the rows of a window whose cut only

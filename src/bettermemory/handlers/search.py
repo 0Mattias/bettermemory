@@ -806,11 +806,11 @@ def _attach_hit_relations(
     if out:
         from datetime import timedelta
 
-        from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
+        from .._response import NEGATIVE_OUTCOME_WINDOW_DAYS
 
         recent_events = list(
             deps.store.events_since(
-                now - timedelta(seconds=ATTRIBUTION_LOOKBACK_SECONDS), memoised=True
+                now - timedelta(days=NEGATIVE_OUTCOME_WINDOW_DAYS), memoised=True
             )
         )
         deps.responses.attach_recent_negative_outcomes(

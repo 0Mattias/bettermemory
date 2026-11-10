@@ -44,6 +44,12 @@ eighteenth was built.
   distinguish commits the current history does not descend from. (ENG-279
   candidate #46, `origin.py`, `tests/test_ancestry_read_errors.py`)
 
+- **Search retains rejection annotations for their full 30-day window.**
+  The event read uses the annotation's window rather than the ten-minute
+  attribution window; later applied events still clear the warning.
+  (ENG-279 candidate #12, `handlers/search.py`,
+  `tests/test_old_negative_outcomes.py`)
+
 - **The minimum-Git CI build uses its supported C language mode
   (ENG-227).** The source builder selects GNU C11 while keeping Git's
   optimization and warning defaults. Git 2.34's `thread_local` identifier
