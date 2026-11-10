@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -84,15 +85,18 @@ def test_a_workspace_boundary_takes_known_repositories_but_preserves_inner_tenan
 
 def test_init_new_answer_preserves_the_boundary_when_clearing_provisional_state(
     world: World,
+    tmp_path: Path,
 ) -> None:
-    source = world.repo("/upstream/app", remote="example.invalid/app")
+    source = world.repo(
+        str((tmp_path / "upstream" / "app").resolve()), remote="example.invalid/app"
+    )
     world.see(source)
-    app = world.clone(source, "/workspace/app")
+    app = world.clone(source, str((tmp_path / "workspace" / "app").resolve()))
     app.remotes.clear()
     asked = world.see(app)
     assert asked.outcome == ASK and asked.project is not None
     assert world.model.project(asked.project).provisional is not None
-    boundary = _file(app.path, boundary=True)
+    boundary = _file(app.path, name="app", boundary=True)
     done = world.model.declare(
         Declaration(
             "init_new",

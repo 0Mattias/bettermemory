@@ -47,9 +47,9 @@ def test_control_no_body_citation_relative_attestation(mode, tmp_path):
     root = _root(tmp_path)
     gone = f"{root}/src/gone.py"
     report = _read(mode, "No paths here.", root, verified_paths=["src/gone.py"])
-    assert report.claim_anchored_missing == (gone,)
+    assert report.claim_anchored_missing == (str(Path(gone)),)
     report = _read(mode, "No paths here.", root, absent_paths=["src/gone.py"])
-    assert report.expected_absent == (gone,)
+    assert report.expected_absent == (str(Path(gone)),)
     assert report.missing == ()
 
 
@@ -60,8 +60,8 @@ def test_verified_then_deleted_relative_attestation_escalates(mode, tmp_path):
     report = _read(
         mode, f"The config lives at `{gone}`.", root, verified_paths=["src/gone.py"]
     )
-    assert report.missing == (gone,)
-    assert report.claim_anchored_missing == (gone,)
+    assert report.missing == (str(Path(gone)),)
+    assert report.claim_anchored_missing == (str(Path(gone)),)
     assert report.has_claim_anchored_drift
 
 
@@ -72,7 +72,7 @@ def test_attested_absent_relative_is_expected_absent(mode, tmp_path):
     report = _read(
         mode, f"The config lives at `{gone}`.", root, absent_paths=["src/gone.py"]
     )
-    assert report.expected_absent == (gone,)
+    assert report.expected_absent == (str(Path(gone)),)
     assert report.missing == ()
 
 
@@ -83,8 +83,8 @@ def test_existing_relative_attestation_is_verified(mode, tmp_path):
     report = _read(
         mode, f"The config lives at `{here}`.", root, verified_paths=["src/here.py"]
     )
-    assert report.checked == (here,)
-    assert report.verified == (here,)
+    assert report.checked == (str(Path(here)),)
+    assert report.verified == (str(Path(here)),)
 
 
 def test_present_but_attested_absent_relative_under_anchor(tmp_path):
@@ -93,7 +93,7 @@ def test_present_but_attested_absent_relative_under_anchor(tmp_path):
     report = _read(
         "anchor", f"The config lives at `{here}`.", root, absent_paths=["src/here.py"]
     )
-    assert report.present_but_attested_absent == (here,)
+    assert report.present_but_attested_absent == (str(Path(here)),)
 
 
 @pytest.mark.parametrize("home", [True, False])
@@ -124,14 +124,14 @@ def test_a_translated_absolute_citation_defers_to_the_relative_claim(
         absent_paths=paths if absent else [],
     )
     if absent:
-        assert report.expected_absent == (gone,)
+        assert report.expected_absent == (str(Path(gone)),)
         assert report.missing == report.unconfirmed == ()
     elif home:
-        assert report.claim_anchored_missing == (gone,)
+        assert report.claim_anchored_missing == (str(Path(gone)),)
         assert report.unconfirmed == ()
     else:
         assert report.missing == report.claim_anchored_missing == ()
-        assert report.unconfirmed == (gone,)
+        assert report.unconfirmed == (str(Path(gone)),)
         assert report.unconfirmed_reasons == ("project_checkout",)
 
 
@@ -146,5 +146,5 @@ def test_an_unrelated_citation_is_still_advisory(mode, tmp_path: Path) -> None:
         root,
         verified_paths=["src/gone.py:2"],
     )
-    assert set(report.missing) == {other, gone}
-    assert report.claim_anchored_missing == (gone,)
+    assert set(report.missing) == {other, str(Path(gone))}
+    assert report.claim_anchored_missing == (str(Path(gone)),)
