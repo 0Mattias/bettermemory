@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Caller-checked records are not also estate coverage gaps (ENG-279
+  candidate #29).** Health applies the caller rollup's ownership before
+  counting legacy origins without a working-tree root as unanchorable.
+  A record already counted for commit drift no longer appears as unchecked
+  in the estate summary. Foreign and origin-less verified records retain
+  their documented coverage counts. (`health.py`,
+  `tests/test_health_rollup_ownership.py`)
+
 - **Dependency loads respect per-hit display capacity (ENG-279 candidate
   #11).** An oversized first dependency list no longer spends the entire
   targeted-load budget on entries beyond its display cap, starving later

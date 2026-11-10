@@ -948,11 +948,13 @@ def _group_cross_repo_candidates(
     for stats in by_id.values():
         origin_repo = origin_repo_by_id.get(stats.id)
         worktree = origin_worktree_by_id.get(stats.id)
+        # The caller's checked record is no gap in estate coverage, even
+        # when its legacy origin did not record a working-tree root.
+        if owned(stats.id, origin_repo):
+            continue
         anchor = anchoring.for_record(stats.id) if anchoring is not None else None
         cited = verified_head_by_id.get(stats.id) if verified_head_by_id else None
         if anchor is not None:
-            if owned(stats.id, origin_repo):
-                continue
             if stats.last_verified_at is None:
                 continue
             if not anchor_paths_by_id.get(stats.id) and not (
@@ -988,8 +990,7 @@ def _group_cross_repo_candidates(
             # recorded worktree and listed what they left not checked
             # (ENG-229's review). The gates are theirs.
             if (
-                not owned(stats.id, origin_repo)
-                and stats.last_verified_at is not None
+                stats.last_verified_at is not None
                 and (
                     anchor_paths_by_id.get(stats.id)
                     or (claims_by_id and claims_by_id.get(stats.id))
@@ -1015,9 +1016,6 @@ def _group_cross_repo_candidates(
             # an unverified record is out of scope for every drift leg.
             if stats.last_verified_at is not None:
                 unanchorable += 1
-            continue
-        if owned(stats.id, origin_repo):
-            # The caller-repo rollup owns these.
             continue
         if stats.last_verified_at is None:
             continue
