@@ -864,7 +864,17 @@ def test_a_refusal_is_told_from_no_repository_on_every_platform(
         ("/home/a/dropboxes/bm", None),
     ],
 )
-def test_synced_root(path: str, service: str | None) -> None:
+def test_synced_root(
+    path: str, service: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The name fallback reads synthetic paths without probing the host.
+
+    A macOS automount can block getxattr on /home indefinitely. Real
+    markers and symlink resolution have separate filesystem tests below.
+    """
+    monkeypatch.setattr(posture, "_resolved", lambda value: value)
+    monkeypatch.setattr(posture, "_sync_marker", lambda value: None)
+    monkeypatch.setattr(posture, "_icloud_linked_root", lambda value: None)
     assert synced_root(Path(path)) == service
 
 
