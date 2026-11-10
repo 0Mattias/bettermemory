@@ -329,7 +329,8 @@ def _drift_lines(report: HealthReport) -> list[str]:
                 state = f"{group.total_drifted} drifted, {group.unread} unread"
             lines.append(
                 f"  {printable(group.repo)} [{printable(group.worktree_root)}]: "
-                f"{state} of {group.candidates} candidate(s)"
+                f"{state} of {group.candidates} candidate(s), "
+                f"last checked={_iso(group.last_checked_at) or 'unknown'}"
             )
             for row in group.rows:
                 verified = _iso(row.last_verified_at) or "?"
@@ -346,7 +347,8 @@ def _drift_lines(report: HealthReport) -> list[str]:
             lines.append(
                 f"  (skipped {printable(str(skip['repo']))} "
                 f"[{printable(str(skip['worktree_root']))}]: "
-                f"{printable(str(skip['reason']))})"
+                f"{printable(str(skip['reason']))}; "
+                f"last checked={printable(str(skip.get('last_checked_at') or 'unknown'))})"
             )
     return lines
 

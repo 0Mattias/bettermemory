@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Estate health rotates beyond its root cap (ENG-238).** Daemon
+  reports advance through home roots across calls instead of repeatedly
+  omitting the smallest group. Checked and skipped roots expose their
+  last known attempt time; unknown times never assert freshness. The
+  offline CLI scans all roots without writing a cursor or membership.
+  Timestamp history is bounded independently of coverage progress.
+  (`health_roots.py`, `health.py`, `tests/test_health_root_rotation.py`)
+
 - **Linux daemons reserve distinct ports before serving (ENG-279 candidate
   #13).** A successful bind now reserves a listener before its port enters
   the state file. If simultaneous reusable binds collide at listen, the

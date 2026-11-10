@@ -983,19 +983,18 @@ def _unread_dict(unread: int, causes: dict[str, int], ids: list[str]) -> dict[st
     }
 
 
-# Cap on distinct foreign worktrees a single health run walks git in.
-# Each walked root costs one full `git log --format=%at` plus the
-# per-drifting-row narrowing calls, each under the drift legs' 5 s
-# timeout — an unbounded estate would turn the deep report into a
-# multi-second git crawl. Cheap skips (missing directory, moved repo)
-# never consume the cap; groups past it are listed as skipped rather
-# than silently dropped, so "covered everything" is never implied.
+# Cap on distinct estate root paths one daemon health call walks Git in.
+# Missing directories take no place; a failed Git identification does.
+# A per-open-Store cursor rotates stable lexical root order, so every root
+# in a stable set of N is attempted within ceil(N / 8) consecutive calls.
+# Labels sharing an identical root path share one place. Offline CLI
+# audits attempt all roots instead: a fresh process cannot keep a cursor
+# without writing, and the CLI remains read-only.
 #
 # Evidence: none for 8 itself; no estate's root count was measured.
-# What it buys is a bound on the base walks: at most 8 base `git log`
-# calls per report, 40 s if every one ran to its timeout. It does not
-# bound a walked root's per-row narrowing calls, nor the
-# `origin.capture` each foreign group runs before the cap is consulted.
+# It bounds the base walks to 8 per daemon report, 40 s if each reaches
+# the drift reader's 5 s timeout. It does not bound per-row narrowing;
+# the shared per-call deadline is a separate requirement (ENG-239).
 # Measured on 2026-10-28, the base call over this repository's 2,006
 # commits took 0.03 s (median of 7), so 8 roots of that size cost about
 # 0.24 s.
@@ -1020,6 +1019,7 @@ class CrossRepoDriftGroup:
     unread: int = 0
     unread_causes: dict[str, int] = field(default_factory=dict)
     unread_ids: list[str] = field(default_factory=list)
+    last_checked_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -1028,6 +1028,7 @@ class CrossRepoDriftGroup:
             "total_drifted": self.total_drifted,
             "candidates": self.candidates,
             "rows": [r.to_dict() for r in self.rows],
+            "last_checked_at": isoformat_utc_optional(self.last_checked_at),
         }
         out.update(_unread_dict(self.unread, self.unread_causes, self.unread_ids))
         return out
@@ -1047,7 +1048,7 @@ class CrossRepoDrift:
     """
 
     groups: list[CrossRepoDriftGroup] = field(default_factory=list)
-    skipped: list[dict[str, str]] = field(default_factory=list)
+    skipped: list[dict[str, Any]] = field(default_factory=list)
     total_drifted: int = 0
     # Verified memories this check could not judge because their origin
     # records no repo or no worktree_root, so there is nothing to resolve

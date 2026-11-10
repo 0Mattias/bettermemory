@@ -71,6 +71,7 @@ from .verify import (
 from .time_utils import (
     ensure_utc,
     parse_event_ts,
+    isoformat_utc_optional,
 )
 from .health_model import (
     RECOMMENDATION_KINDS,
@@ -110,6 +111,7 @@ from .health_model import (
     endorsement_tier as endorsement_tier,
     is_hook_telemetry_event,
 )
+from .health_roots import EstateProgress, progress_for_store
 from .health_stats import (
     _AccumulatorRollups,
     _StatsAccumulator as _StatsAccumulator,
@@ -492,6 +494,9 @@ def _drift_rollups(
     caller_origin: Origin | None,
     anchoring: Anchoring | None,
     admission: DriftScope | None,
+    estate_progress: EstateProgress | None,
+    estate_root_limit: int | None,
+    checked_at: datetime,
 ) -> tuple[CommitDriftDebt | None, CrossRepoDrift | None]:
     """Take the caller's-repo and the cross-repo drift rollups; returns both.
 
@@ -550,6 +555,9 @@ def _drift_rollups(
         anchoring=anchoring,
         counted=counted,
         unmapped=frozenset(unmapped),
+        estate_progress=estate_progress,
+        estate_root_limit=estate_root_limit,
+        checked_at=checked_at,
     )
     return commit_drift_debt, cross_repo_drift
 
@@ -670,6 +678,8 @@ def _health_report(
     typo_scope_exceptions: Iterable[str] | None,
     anchoring: Anchoring | None,
     admission: DriftScope | None,
+    estate_progress: EstateProgress | None,
+    estate_root_limit: int | None,
 ) -> HealthReport:
     """Build every bucket of the report from the census and the event rollups; returns the report."""
     by_id = census.by_id
@@ -739,6 +749,9 @@ def _health_report(
         caller_origin=caller_origin,
         anchoring=anchoring,
         admission=admission,
+        estate_progress=estate_progress,
+        estate_root_limit=estate_root_limit,
+        checked_at=now,
     )
 
     cold_endorsement_memories = _cold_endorsement_bucket(
@@ -803,6 +816,8 @@ def compute_health(
     typo_scope_exceptions: Iterable[str] | None = None,
     anchoring: Anchoring | None = None,
     admission: DriftScope | None = None,
+    estate_progress: EstateProgress | None = None,
+    estate_root_limit: int | None = _CROSS_REPO_MAX_ROOTS,
 ) -> HealthReport:
     """Build a `HealthReport` from active memories + the event stream.
 
@@ -815,9 +830,11 @@ def compute_health(
     `cross_repo_drift`'s homed groups where design 3.6 resolves their
     cited commit (`verify_anchoring.ClaimAnchor.commit_root`); a record with no
     home row, and every record without it, is read as before.
-    `memory_admin(health)` passes both, resolved for the request's
-    caller; `bettermemory health` passes neither, since resolving the
-    caller registers the checkout and the CLI report writes nothing.
+    `memory_admin(health)` passes both, resolved for the request's caller.
+    The CLI reads existing anchoring without resolving a caller. Store
+    reports share `estate_progress`; capped calls rotate their root paths.
+    The offline CLI passes `estate_root_limit=None` to attempt every root
+    without a persistent cursor or a write.
 
     `events` is expected to be in chronological order — the function
     relies on that for "last_*" timestamps. `iter_all_events` returns
@@ -916,6 +933,8 @@ def compute_health(
         typo_scope_exceptions=typo_scope_exceptions,
         anchoring=anchoring,
         admission=admission,
+        estate_progress=estate_progress,
+        estate_root_limit=estate_root_limit,
     )
     # Recommendations are distilled from the buckets, so the honesty
     # gate in `_dead_weight_bucket` reaches them for free: an emptied
@@ -1074,7 +1093,7 @@ _NO_HOME = "no home: no checkout's commits are counted until it is homed"
 
 
 def _recorded_root_reachable(
-    repo: str, worktree: str, root: Path, skipped: list[dict[str, str]]
+    repo: str, worktree: str, root: Path, skipped: list[dict[str, Any]]
 ) -> bool:
     """Stat a recorded worktree before git runs there, adding to ``skipped`` when it cannot; returns whether it can."""
     # Liveness in THREE states, not two, because the two-state read
@@ -1138,7 +1157,7 @@ def _recorded_root_group(
     worktree: str,
     root: Path,
     candidates: list[MemoryStats],
-    skipped: list[dict[str, str]],
+    skipped: list[dict[str, Any]],
     *,
     anchor_paths_by_id: dict[str, tuple[str, ...]],
     claims_by_id: dict[str, tuple[str, ...]] | None,
@@ -1226,71 +1245,89 @@ def _walk_cross_repo_roots(
     anchor_paths_by_id: dict[str, tuple[str, ...]],
     claims_by_id: dict[str, tuple[str, ...]] | None,
     verified_head_by_id: dict[str, str | None] | None,
-) -> tuple[list[CrossRepoDriftGroup], list[dict[str, str]]]:
-    """Walk the grouped roots, largest first, within the per-run cap; returns the groups judged and the roots skipped, with why."""
-    ordered = sorted(
-        [(key, members, False) for key, members in groups.items()]
-        + [(key, members, True) for key, members in homed.items()],
-        key=lambda entry: len(entry[1]),
-        reverse=True,
-    )
+    estate_progress: EstateProgress | None = None,
+    estate_root_limit: int | None = _CROSS_REPO_MAX_ROOTS,
+    checked_at: datetime | None = None,
+) -> tuple[list[CrossRepoDriftGroup], list[dict[str, Any]]]:
+    """Rotate bounded daemon reads; an offline CLI audit visits all roots.
+
+    With a stable set of N live roots, ceil(N / limit) consecutive calls
+    on one progress object attempt every root. Missing directories take no
+    place; a failed Git attempt does. Labels for one root share its place.
+    """
+    progress = estate_progress if estate_progress is not None else EstateProgress()
+    checked_at = checked_at or datetime.now(timezone.utc)
+    buckets: dict[str, list[tuple[str, str, list[MemoryStats], bool]]] = {}
+    for entries, live in ((groups, False), (homed, True)):
+        for (repo, worktree), candidates in entries.items():
+            # Preserve the view's spelling: lexically collapsing a path
+            # through a symlink and '..' can identify another directory.
+            key = worktree
+            buckets.setdefault(key, []).append((repo, worktree, candidates, live))
     out_groups: list[CrossRepoDriftGroup] = []
-    skipped: list[dict[str, str]] = [
-        {
-            "repo": repo,
-            "worktree_root": worktree,
-            "reason": reason,
-        }
+    skipped: list[dict[str, Any]] = [
+        {"repo": repo, "worktree_root": worktree, "reason": reason}
         for (repo, worktree), reason in unchecked.items()
     ]
     walked = 0
-    for (repo, worktree), candidates, is_live_view in ordered:
-        if walked >= _CROSS_REPO_MAX_ROOTS:
-            skipped.append(
-                {
-                    "repo": repo,
-                    "worktree_root": worktree,
-                    "reason": "past the per-run root cap",
-                }
-            )
-            continue
-        root = Path(worktree)
-        if is_live_view:
-            walked += 1
-            group = _cross_repo_group(
-                repo,
-                worktree,
-                candidates,
-                anchor_paths_by_id=anchor_paths_by_id,
-                claims_by_id=claims_by_id,
-                verified_head_by_id=verified_head_by_id,
-            )
-            if group is None:
-                skipped.append(
+    # Serialize progress on this Store, never on another Store's Git reads.
+    with progress.lock:
+        for key in progress.ordered(buckets):
+            reachable = [
+                entry
+                for entry in buckets[key]
+                if entry[3]
+                or _recorded_root_reachable(entry[0], entry[1], Path(entry[1]), skipped)
+            ]
+            if not reachable:
+                continue
+            if estate_root_limit is not None and walked >= estate_root_limit:
+                skipped.extend(
                     {
                         "repo": repo,
                         "worktree_root": worktree,
-                        "reason": "git unreachable in the home checkout",
+                        "reason": "past the per-run root cap",
                     }
+                    for repo, worktree, _candidates, _live in reachable
                 )
-            else:
-                out_groups.append(group)
-            continue
-        if not _recorded_root_reachable(repo, worktree, root, skipped):
-            continue
-        walked += 1
-        group = _recorded_root_group(
-            repo,
-            worktree,
-            root,
-            candidates,
-            skipped,
-            anchor_paths_by_id=anchor_paths_by_id,
-            claims_by_id=claims_by_id,
-            verified_head_by_id=verified_head_by_id,
-        )
-        if group is not None:
-            out_groups.append(group)
+                continue
+            walked += 1
+            progress.attempt(key, checked_at)
+            for repo, worktree, candidates, live in reachable:
+                if live:
+                    group = _cross_repo_group(
+                        repo,
+                        worktree,
+                        candidates,
+                        anchor_paths_by_id=anchor_paths_by_id,
+                        claims_by_id=claims_by_id,
+                        verified_head_by_id=verified_head_by_id,
+                    )
+                    if group is None:
+                        skipped.append(
+                            {
+                                "repo": repo,
+                                "worktree_root": worktree,
+                                "reason": "git unreachable in the home checkout",
+                            }
+                        )
+                else:
+                    group = _recorded_root_group(
+                        repo,
+                        worktree,
+                        Path(worktree),
+                        candidates,
+                        skipped,
+                        anchor_paths_by_id=anchor_paths_by_id,
+                        claims_by_id=claims_by_id,
+                        verified_head_by_id=verified_head_by_id,
+                    )
+                if group is not None:
+                    group.last_checked_at = checked_at
+                    out_groups.append(group)
+        for skip in skipped:
+            text = skip["worktree_root"]
+            skip["last_checked_at"] = isoformat_utc_optional(progress.checked.get(text))
     return out_groups, skipped
 
 
@@ -1306,6 +1343,9 @@ def _compute_cross_repo_drift(
     anchoring: Anchoring | None = None,
     counted: frozenset[str] | None = None,
     unmapped: frozenset[str] = frozenset(),
+    estate_progress: EstateProgress | None = None,
+    estate_root_limit: int | None = _CROSS_REPO_MAX_ROOTS,
+    checked_at: datetime | None = None,
 ) -> CrossRepoDrift | None:
     """The estate check: drift for memories anchored in repos the
     caller is NOT standing in.
@@ -1391,6 +1431,9 @@ def _compute_cross_repo_drift(
         anchor_paths_by_id=anchor_paths_by_id,
         claims_by_id=claims_by_id,
         verified_head_by_id=verified_head_by_id,
+        estate_progress=estate_progress,
+        estate_root_limit=estate_root_limit,
+        checked_at=checked_at,
     )
     if not out_groups and not skipped:
         return None
@@ -1686,6 +1729,7 @@ def report_for_store(
     typo_scope_exceptions: Iterable[str] | None = None,
     anchoring: Anchoring | None = None,
     admission: DriftScope | None = None,
+    estate_root_limit: int | None = _CROSS_REPO_MAX_ROOTS,
 ) -> HealthReport:
     """Load the store's memories, walk its log, return the report. The
     entry point both production surfaces use: `memory_admin(health)` and
@@ -1699,8 +1743,10 @@ def report_for_store(
     as `memory_show` reads it), makes that rollup count a record's commit
     drift only where `memory_show` counts it; `anchoring`, the same
     caller's, reads `cross_repo_drift`'s homed groups where design 3.6
-    reads their cited commit. `memory_admin(health)` passes both;
-    `bettermemory health` passes neither, so it writes nothing.
+    reads their cited commit. `memory_admin(health)` passes both; the CLI
+    reads existing anchoring without caller admission and passes
+    `estate_root_limit=None` to scan every root without writing. Capped
+    reports share the open Store's process-local rotation and check times.
 
     The dead-weight honesty gate is armed here rather than in
     `compute_health`'s default: every caller looking at a real store goes
@@ -1731,6 +1777,8 @@ def report_for_store(
         typo_scope_exceptions=typo_scope_exceptions,
         anchoring=anchoring,
         admission=admission,
+        estate_progress=progress_for_store(store),
+        estate_root_limit=estate_root_limit,
     )
     report.provenance = provenance_debt(store, memories)
     report.recommendations = _compute_recommendations(report)

@@ -114,6 +114,9 @@ def _cli_health(
         # memories live in this store.
         caller_origin=capture_origin(),
         anchoring=_existing_anchoring(ctx.store),
+        # A new CLI process cannot retain a rotation cursor without a
+        # write. Offline audits therefore attempt every estate root.
+        estate_root_limit=None,
     )
     section = _membership_section(ctx.store)
     if json_out:
