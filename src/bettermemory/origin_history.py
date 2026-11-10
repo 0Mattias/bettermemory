@@ -358,12 +358,26 @@ def remember_failure(key: Key, guard: Guard | None, why: HistoryUnread) -> None:
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _LATEST = datetime.max.replace(tzinfo=timezone.utc)
 _EARLIEST = datetime.min.replace(tzinfo=timezone.utc)
+# One second beyond datetime's range is the existing latest-date stand-in.
+# Compare decimal text against this natural bound before any int conversion.
+_LAST_SECOND = (_LATEST - _EPOCH) // timedelta(seconds=1)
+_LAST_SECOND_TEXT = str(_LAST_SECOND)
 
 
 def seconds(text: str) -> int | None:
-    """The decimal seconds ``%at`` prints, or None for any other line."""
+    """Decimal ``%at`` seconds, saturated past datetime's range, or None.
+
+    The date reader already clamps an overflowing instant to the latest
+    date. Apply its bound before converting arbitrary-length digits to
+    int: Python's digit limit must neither raise nor change the count.
+    """
     text = text.strip()
-    return int(text) if text.isascii() and text.isdigit() else None
+    if not text.isascii() or not text.isdigit():
+        return None
+    digits = text.lstrip("0") or "0"
+    if (len(digits), digits) > (len(_LAST_SECOND_TEXT), _LAST_SECOND_TEXT):
+        return _LAST_SECOND + 1
+    return int(digits)
 
 
 def instant(text: str) -> datetime | None:
@@ -380,15 +394,16 @@ _Read = TypeVar("_Read")
 
 
 def read_lines(raw: str, read: Callable[[str], _Read | None]) -> list[_Read] | None:
-    """`read` of each line of `raw` that is not blank, or None where any
+    """`read` of each record of `raw`, or None where any
     reads as None. Git prints every line of a log's format, so a line that
     reads as none (a date a re-encoding spelled otherwise, a mark it
     garbled) declines the whole read, never drops out of the count
     (ENG-220's review). The lines are split on line feeds alone."""
     out: list[_Read] = []
-    for line in raw.split("\n"):
-        if not line.strip():
-            continue
+    lines = raw.split("\n")
+    if lines[-1] == "":
+        lines.pop()  # the final line feed terminates, rather than adds, a record
+    for line in lines:
         value = read(line)
         if value is None:
             return None
@@ -400,13 +415,15 @@ def author_dates(values: list[int]) -> list[datetime]:
     """`values`, author dates in ``%at`` seconds, as ascending UTC
     datetimes; a value past what a datetime holds reads as the latest
     (or the earliest) one, so a commit is never dropped from a count."""
-    out: list[datetime] = []
-    for value in sorted(values):
-        try:
-            out.append(_EPOCH + timedelta(seconds=value))
-        except OverflowError:
-            out.append(_LATEST if value > 0 else _EARLIEST)
-    return out
+    return [author_instant(value) for value in sorted(values)]
+
+
+def author_instant(value: int) -> datetime:
+    """One UTC author instant, clamped as a whole-history read clamps it."""
+    try:
+        return _EPOCH + timedelta(seconds=value)
+    except OverflowError:
+        return _LATEST if value > 0 else _EARLIEST
 
 
 def located_key(cwd: Path) -> Key | None:
@@ -659,6 +676,7 @@ __all__ = [
     "ReachableWalk",
     "Walked",
     "author_dates",
+    "author_instant",
     "base_for",
     "checked_cut",
     "cuts",

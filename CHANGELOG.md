@@ -32,6 +32,17 @@ eighteenth was built.
 
 #### Fixed
 
+- **Every author-date reader preserves malformed-date evidence
+  (ENG-272, ENG-273, ENG-278).** A blank date record declines the read
+  instead of dropping a commit. Filtered and whole histories share raw
+  author seconds and UTC conversion, so an overflowing date cannot read
+  as the epoch on one leg. Values past datetime's range saturate before
+  integer conversion; thousands of digits cannot raise, and long zero
+  padding keeps a representable instant. (`origin_history.py`,
+  `origin_dates.py`, `tests/test_dateless_history.py`,
+  `tests/test_overflow_author_dates.py`,
+  `tests/test_long_author_timestamps.py`)
+
 - **Multiline literal claims keep their file's any-touch coverage
   (ENG-258).** Narrowing checks the first supported assignment in every
   source version of the scored window, including a multiline assignment

@@ -261,7 +261,7 @@ def _read_author_timestamps(
     # ceiling `commit_patch_stream` already runs at.
     before = origin_history.git_counts()
     form = "--format=%H %at" if cut else "--format=%at"
-    raw = origin._git(cwd, "log", form, revision, timeout=5.0)
+    raw = origin._git(cwd, "log", form, revision, timeout=5.0, verbatim=True)
     if raw is None:
         named = origin.is_full_commit_sha(revision)
         if not named and origin_history.git_counts() == before:
@@ -436,8 +436,8 @@ def commit_author_timestamps_touching_pathspecs(
 
     `pathspecs` must already be repo-root-relative forward-slash specs (the
     output of `origin.resolve_repo_pathspecs`). The path-filtered analogue of
-    `commit_author_timestamps`: the same author dates (``%aI`` here, ``%at``
-    there: one instant either way), so a caller can `bisect_right` the
+    `commit_author_timestamps`: the same raw author seconds (``%at``),
+    converted to UTC by the same bounded reader, so a caller can `bisect_right` the
     result against a `since` instant and get a count that lives in the SAME
     date space as the unfiltered bisect — no
     committer-vs-author mismatch. That is the whole point: `commits_touching_
@@ -478,15 +478,15 @@ def commit_author_timestamps_touching_pathspecs(
         toplevel = origin.repo_toplevel(cwd)
         if toplevel is None:
             return None
-    raw = _touching_log(toplevel, "%aI", pathspecs)
+    raw = _touching_log(toplevel, "%at", pathspecs)
     if raw is None:
         # Git could not answer (non-zero exit, missing binary, timeout).
         return None
     if not raw:
         # Clean exit, empty log — no commit touches any spec (phantom).
         return []
-    out = origin_history.read_lines(raw, origin_history.instant)
-    if not out:
+    values = origin_history.read_lines(raw, origin_history.seconds)
+    if not values:
         # A line that reads as no date declines the read (dropped, it
         # shrank the count, ENG-220's review), and so does non-empty stdout
         # that parsed to nothing: `None` (not `[]`) keeps it from minting
@@ -494,8 +494,7 @@ def commit_author_timestamps_touching_pathspecs(
         # already returned `[]` above, off `empty_ok`.
         _git_runner.note_failed()
         return None
-    out.sort(key=_instant)
-    return out
+    return origin_history.author_dates(values)
 
 
 def commit_author_sha_pairs_touching_pathspecs(
@@ -528,7 +527,7 @@ def commit_author_sha_pairs_touching_pathspecs(
         toplevel = origin.repo_toplevel(cwd)
         if toplevel is None:
             return None
-    raw = _touching_log(toplevel, "%aI %H", pathspecs)
+    raw = _touching_log(toplevel, "%at %H", pathspecs)
     if raw is None:
         return None
     if not raw:
@@ -700,8 +699,12 @@ def _checked_cut(toplevel: Path) -> frozenset[str] | None:
 
 def _dated_sha(line: str) -> tuple[datetime, str] | None:
     stamp, _, sha = line.strip().partition(" ")
-    when = origin_history.instant(stamp)
-    return None if when is None or not origin.is_full_commit_sha(sha) else (when, sha)
+    value = origin_history.seconds(stamp)
+    return (
+        None
+        if value is None or not origin.is_full_commit_sha(sha)
+        else (origin_history.author_instant(value), sha)
+    )
 
 
 __all__ = [
