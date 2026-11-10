@@ -56,6 +56,8 @@ from bettermemory.verify_basis import (
     unread_recommendation,
 )
 
+from .test_origin_patch import _git_version
+
 from .test_commit_drift_cache import (
     _EXTENSION,
     _NAMED_HISTORY,
@@ -570,7 +572,10 @@ _HEADS = {
     "packed-refs git dies on, a directory at the ref": (CommitDriftUnread.ERROR, 0),
     "chained to a missing ref": (None, 0),
     "chained to a garbage ref": (CommitDriftUnread.ERROR, 0),
-    "unborn, files unsettled": (None, 2),
+    "unborn, files unsettled": (
+        None if _git_version() >= (2, 43) else CommitDriftUnread.ERROR,
+        2,
+    ),
     "garbage ref, files unsettled": (CommitDriftUnread.ERROR, 1),
     "unborn, files unsettled, a git with no --exists": (CommitDriftUnread.ERROR, 2),
     "reftable unborn": (None, 2),
