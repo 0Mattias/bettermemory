@@ -1782,3 +1782,43 @@ def test_git_maintenance_leaves_the_token_as_it_was(tmp_path: Path) -> None:
     _git(git_dir.parent, "update-server-info")
     assert path.read_bytes() == before
     assert stat.S_IMODE(path.stat().st_mode) == mode_before
+
+
+def test_release_rechecks_after_a_windows_unlink_retry_loses_its_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused retry predicate is unknown ownership, not successful cleanup."""
+    from types import SimpleNamespace
+
+    from bettermemory import _fsutil
+
+    claim = tmp_path / "claim"
+    claim.write_text("our-nonce")
+    real_read = checkout_token._claim_read
+    real_unlink = os.unlink
+    reads = unlinks = 0
+
+    def read(path: Path) -> Any:
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            return checkout_token.TokenRead(
+                "unreadable", detail="open: sharing violation"
+            )
+        return real_read(path)
+
+    def unlink(path: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal unlinks
+        unlinks += 1
+        if unlinks == 1:
+            raise PermissionError(errno.EACCES, "sharing violation")
+        real_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_fsutil, "sys", SimpleNamespace(platform="win32"))
+        patch.setattr(_fsutil, "time", SimpleNamespace(sleep=lambda _seconds: None))
+        patch.setattr(checkout_token, "_claim_read", read)
+        patch.setattr(os, "unlink", unlink)
+        checkout_token._release(claim, "our-nonce")
+    assert not claim.exists()
+    assert unlinks >= 2

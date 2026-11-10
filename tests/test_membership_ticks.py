@@ -219,6 +219,7 @@ def test_an_earlier_releases_second_checkout_yields_with_stamps_on_ticks_by_chan
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("ticks")
 @pytest.mark.parametrize("record", ["said", "unsaid"])
 @pytest.mark.parametrize("files", ["ntfs", "chance"])
 def test_a_view_that_rounds_the_times_reads_the_other_record_as_it_says(
@@ -406,7 +407,8 @@ def test_the_capture_decides_over_all_it_reads_in_the_git_directory(
         st = os.stat(p)
         want |= {st.st_mtime_ns, st.st_ctime_ns}
     assert want <= times
-    assert device == (os.stat(gd).st_dev if birth == "no_birth" else None)
+    assert cap.object_key is not None
+    assert device == (os.stat(gd).st_dev if cap.object_key[2] is None else None)
 
 
 def _st(dev: int, mtime: int, ctime: int) -> Any:

@@ -730,7 +730,13 @@ def _remove_holding(claim: Path, held: str) -> None:
                 return
             try:
                 unlink_retrying(claim, lambda: _holder(claim) == held)
-                return
+                # Windows can end its retry after an unreadable predicate.
+                # Re-read the claim rather than treating that as removal.
+                after = _claim_read(claim)
+                if (isinstance(after, str) and after != held) or (
+                    isinstance(after, TokenRead) and after.state == "absent"
+                ):
+                    return
             except FileNotFoundError:
                 return
             except OSError:
