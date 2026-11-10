@@ -1849,7 +1849,9 @@ def test_a_depth_fetch_undone_inside_the_path_log_never_reads_fresh(
     cut: list[bool] = []
 
     def cut_inside(cwd: Path, *args: str, **kwargs: Any) -> Any:
-        if not cut and any(a.startswith("--format=%aI") for a in args):
+        if not cut and any(
+            a.startswith(f"--format={origin._WALK_MARK}%aI") for a in args
+        ):
             cut.append(True)
             shallow.write_text(head + "\n", encoding="utf-8")
             try:

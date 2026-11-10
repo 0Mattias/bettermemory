@@ -559,9 +559,10 @@ class ReachableWalk:
     top of the verified tree state: a branch authored before the stamp
     and merged after it is in here, which is what the author-date count
     cannot say. `touched` maps a repo-relative path to the commits in
-    the range whose diff carried it; a merge commit contributes nothing
-    there, as `git log --name-only` shows no diff for one, so its
-    branch's own commits carry the paths.
+    the range whose diff carried it. A combined merge diff contributes
+    paths the merge changed against every parent, including edits made
+    while committing the merge; changes carried unchanged from one
+    parent remain represented by that branch's own commits (ENG-260).
 
     `listed` is False for a walk whose names were not read and whose
     commits were listed alone: it names no path (`touched` is empty), every

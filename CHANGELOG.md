@@ -59,6 +59,19 @@ eighteenth was built.
   with a common text prefix stay unrelated. (`claims.py`, `verify.py`,
   `tests/test_directory_absence_drift.py`)
 
+- **Both drift bases retain changes made around merges (ENG-259,
+  ENG-260).** Full-history traversal keeps post-stamp touches hidden by
+  default merge simplification. Combined path records distinguish a
+  merge's own edits from changes already carried by its parents; a
+  merge cannot disappear from the reachable path count, and an ordinary
+  integration cannot inflate the author-date count. A selected merge
+  whose ordinary patch supplies no diff keeps its file-touch floor even
+  beside other parsed commits, without inventing a binding verdict.
+  The stdin path transport and shallow-history guards stay in force.
+  (`origin.py`, `origin_dates.py`, `origin_history.py`, `claims.py`,
+  `verify.py`, `tests/test_treesame_author_dates.py`,
+  `tests/test_merge_commit_drift.py`, `tests/test_merge_claim_drift.py`)
+
 - **Absolute citations preserve relative attestations (ENG-256).** When
   prose cites the same file absolutely, a relative attestation still
   supplies its verified or intentionally absent meaning and its claim

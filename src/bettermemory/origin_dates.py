@@ -580,8 +580,12 @@ def _touching_log(
     *,
     require_complete: bool = True,
 ) -> str | None:
-    """``git log --format=<form> HEAD -- <pathspecs>``, the head and the
-    pathspecs on git's standard input (`origin_history.log_stdin`), so no
+    """The full-history path log's values, after its combined-diff check.
+
+    Each framed value is read only where its record names a changed path
+    (`_touching_records`), so branch history stays complete without
+    counting an ordinary merge as its parents' changes again. The head
+    and pathspecs go on standard input (`origin_history.log_stdin`), so no
     count of them passes a command line's bound; None where git did not
     answer or a pathspec cannot be put on a line.
 
@@ -617,14 +621,23 @@ def _touching_log(
         toplevel,
         *origin_history.AS_STORED_PATHS,
         "log",
-        f"--format={form}",
+        f"--format={origin._WALK_MARK}{form}",
         "--stdin",
+        "--full-history",
+        *origin_history.AS_STORED_DIFF,
+        "--no-renames",
+        "-c",
+        "--name-only",
         timeout=5.0,
         empty_ok=True,
+        verbatim=True,
         stdin=stdin,
     )
-    if out is None or shallow is None:
-        return out
+    if out is None:
+        return None
+    records = _touching_records(out)
+    if records is None or shallow is None:
+        return records
     if (
         cut is None
         or origin_history.cuts_in(shallow) != cut
@@ -639,7 +652,36 @@ def _touching_log(
     if held is None or not origin.directories_held(held):
         _git_runner.note_failed()
         return None
-    return out
+    return records
+
+
+def _touching_records(raw: str) -> str | None:
+    """Values from records with a real path diff, including merge edits.
+
+    Full-history traversal visits both sides of a TREESAME merge, but
+    prints its merge record even when the combined diff is empty. Its
+    branch commits supply those touches. The combined names below each
+    record settle whether that record itself touched a path, as in the
+    reachable walk; a filename's control characters are C-quoted by git.
+    """
+    out: list[str] = []
+    current: str | None = None
+    touched = False
+    for line in (*raw.split("\n"), origin._WALK_MARK):
+        if line.startswith(origin._WALK_MARK):
+            if current is not None and touched:
+                if not current:
+                    _git_runner.note_failed()
+                    return None
+                out.append(current)
+            current = line[len(origin._WALK_MARK) :]
+            touched = False
+        elif line:
+            if current is None:
+                _git_runner.note_failed()
+                return None
+            touched = True
+    return "\n".join(out)
 
 
 def _checked_cut(toplevel: Path) -> frozenset[str] | None:

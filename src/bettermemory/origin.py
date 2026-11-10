@@ -1453,7 +1453,7 @@ def _walk_reachable(
     # is decoded below. A rename is a change to BOTH paths: the cited old
     # path stops existing, which is exactly what a memory about it should
     # see.
-    named = (*origin_history.AS_STORED_DIFF, "--no-renames", "--name-only")
+    named = (*origin_history.AS_STORED_DIFF, "--no-renames", "-c", "--name-only")
     raw = _git(
         toplevel,
         *(("-c", "core.quotePath=false") if names else ()),

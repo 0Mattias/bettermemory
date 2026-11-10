@@ -712,7 +712,7 @@ def test_the_memo_is_bounded(
     warm, calls = _attach(memories, caller, monkeypatch)
     assert warm == cold
     assert len(calls) == 1, "one evicted hit: its one path-filtered log"
-    assert calls[0][:3] == ("log", "--format=%aI", "--stdin")
+    assert calls[0][:3] == ("log", f"--format={origin._WALK_MARK}%aI", "--stdin")
     assert len(_response._DRIFT_MEMO) == 2
 
 
@@ -932,7 +932,9 @@ def test_no_row_is_keyed_under_a_variable_that_moves_discovery(
     for _ in range(2):
         out, calls = _attach(memories, caller, monkeypatch)
         assert _by_id(out)[memory_id]["commit_drift_count"] == 1
-        assert ("log", "--format=%aI", "--stdin") in [c[:3] for c in calls]
+        assert ("log", f"--format={origin._WALK_MARK}%aI", "--stdin") in [
+            c[:3] for c in calls
+        ]
     assert not _response._DRIFT_MEMO
 
 
