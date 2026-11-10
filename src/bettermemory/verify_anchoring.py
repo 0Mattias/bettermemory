@@ -26,7 +26,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .attestation_paths import PathMode, interpret_path, joined_path, path_mode
+from .attestation_paths import (
+    PathMode,
+    interpret_path,
+    joined_path,
+    path_mode,
+    placeholder_spelling,
+)
 from . import _caches, gitfile_rule
 from ._paths import inside
 from .githead import GitDir, Stamp, locate, stamp
@@ -1764,7 +1770,11 @@ def unverifiable_attestations(
         # attesting one is definitionally the fabricated attestation this
         # function exists to catch. Checked before `_normalize_candidate`
         # gets a chance to silently drop them.
-        if _is_placeholder_path(stripped):
+        if placeholder_spelling(
+            stripped,
+            mode=path_mode(verified_paths),
+            root=str(root) if root is not None else None,
+        ):
             bad.append(stripped)
             continue
         if _is_absolute_attestation(stripped):
@@ -1813,7 +1823,9 @@ def _unverifiable_at(
         spelled = raw if path_mode(verified_paths) != "reference" else raw.strip()
         if not spelled:
             continue
-        if _is_placeholder_path(spelled):
+        if placeholder_spelling(
+            spelled, mode=path_mode(verified_paths), root=anchor.root
+        ):
             bad.append(spelled)
             continue
         if _is_absolute_attestation(spelled):

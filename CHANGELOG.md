@@ -60,6 +60,13 @@ eighteenth was built.
   again on every sighting. Monotone question IDs retain their ordering past
   Q999 without depending on wall-clock timestamps. (ENG-279 candidate #15,
   `membership_resolve.py`, `tests/test_latest_part_answer.py`)
+- **Explicit placeholder aliases cannot become inert attestations.**
+  Home-variable spellings, trailing separators and reference punctuation
+  preserve the refusal for known documentation placeholders. Literal files
+  whose punctuation is part of their name retain their exact identity.
+  (ENG-279 candidate #36, `attestation_paths.py`, `verify_anchoring.py`,
+  `tests/test_placeholder_attestation_aliases.py`)
+
 - **The minimum-Git CI build uses its supported C language mode
   (ENG-227).** The source builder selects GNU C11 while keeping Git's
   optimization and warning defaults. Git 2.34's `thread_local` identifier

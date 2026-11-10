@@ -19,6 +19,8 @@ from .verify_candidates import (
     _normalize_candidate,
     _refused_spelling,
     _is_placeholder_path,
+    _trim_candidate,
+    _MAX_PATH_LENGTH,
 )
 
 PathMode = Literal["auto", "literal", "reference"]
@@ -142,6 +144,32 @@ def reference_path(raw: str) -> str | None:
     )
 
 
+def placeholder_spelling(
+    raw: str, *, mode: PathMode = "auto", root: str | None = None
+) -> bool:
+    """A refused placeholder, including its bounded reference aliases.
+
+    A real literal punctuation name keeps its identity. A reference that
+    normalization would drop must instead reach the explicit refusal gate.
+    """
+    if _is_placeholder_path(raw.strip()):
+        return True
+    if mode == "literal" or len(raw) > _MAX_PATH_LENGTH + 64:
+        return False
+    canonical = _trim_candidate(raw)
+    if not _is_placeholder_path(canonical):
+        return False
+    if mode == "reference":
+        return True
+    literal = literal_path(raw)
+    if literal is None or posixpath.normpath(literal) == posixpath.normpath(canonical):
+        return True
+    try:
+        return not _may_be_literal(target_path(literal, root))
+    except (OSError, ValueError, RuntimeError):
+        return True
+
+
 def target_path(spelled: str, root: str | None) -> str:
     """Resolve a spelling in its declared root, refusing relative escapes.
 
@@ -224,7 +252,7 @@ def compile_targets(
             if absent and mode != "reference"
             else interpret_path(raw, mode=mode, root=root)
         )
-        if not absent and _is_placeholder_path(raw.strip()):
+        if not absent and placeholder_spelling(raw, mode=mode, root=root):
             # The admission gate explicitly refuses placeholders. Its
             # lexical evidence must survive reference normalization.
             chosen = literal_path(raw)
