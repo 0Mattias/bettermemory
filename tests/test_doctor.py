@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 
 import bettermemory
-from bettermemory import _daemon_client, claude_paths, doctor
+from bettermemory import _daemon_client, claude_paths, doctor, gitversion
 from bettermemory import config as _config
 from bettermemory.cli import _build_parser
 from bettermemory.cli import main as cli_main
@@ -39,6 +39,12 @@ from bettermemory.store import STORE_FILENAME, Store
 
 _Usage = namedtuple("_Usage", "total used free")
 _GiB = 1024**3
+#: The git the faked PATH's git check reads: `gitversion.MINIMUM` itself.
+_SUPPORTED_GIT = gitversion.Installed(
+    "/usr/bin/git",
+    f"git version {gitversion.text(gitversion.MINIMUM)}.0",
+    (*gitversion.MINIMUM, 0),
+)
 _MiB = 1024**2
 #: Above any pid a POSIX kernel hands out (Linux caps at 2**22, macOS at
 #: 99999), so `pid_alive` reads it as gone without a monkeypatch.
@@ -130,6 +136,9 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Env]:
 
     monkeypatch.setattr(shutil, "which", which)
     monkeypatch.setattr(doctor, "this_install_binary", lambda: None)
+    # The faked PATH holds no git: the git check reads a supported one
+    # (tests/test_doctor_git.py asks the real `installed`).
+    monkeypatch.setattr(gitversion, "installed", lambda: _SUPPORTED_GIT)
     monkeypatch.setattr(
         shutil,
         "disk_usage",

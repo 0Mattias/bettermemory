@@ -38,6 +38,7 @@ from bettermemory import _caches, gitconfig, githead, location_git, origin
 from .test_location_git_include_conditions import _git, _repo
 from .test_location_git_include_conditions import leg as leg
 from .test_membership_security import neutral_git
+from .test_origin_patch import _git_version
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
@@ -281,7 +282,9 @@ def test_a_machine_s_include_git_dies_on_declines(
 
 #: What a machine's config commonly holds: an identity, an editor, line
 #: ends, a pager, push and pull and branch defaults, aliases, colours, a
-#: credential helper, LFS, Git for Windows' system settings, and includes.
+#: credential helper, LFS, Git for Windows' system settings, and includes;
+#: ``{merge}`` is ``simple`` where this git takes it (git 2.37 and later,
+#: ENG-227), else ``always``.
 MACHINE_COMMON = """[user]
 \tname = A Person
 \temail = a@example.invalid
@@ -299,7 +302,7 @@ MACHINE_COMMON = """[user]
 [pull]
 \trebase = true
 [branch]
-\tautoSetupMerge = simple
+\tautoSetupMerge = {merge}
 \tautoSetupRebase = always
 [init]
 \tdefaultBranch = main
@@ -319,6 +322,7 @@ MACHINE_COMMON = """[user]
 """
 
 
+@pytest.mark.usefixtures("git_answered")
 def test_a_machine_s_common_settings_keep_the_files_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leg: str
 ) -> None:
@@ -329,7 +333,10 @@ def test_a_machine_s_common_settings_keep_the_files_answer(
     booleans too."""
     machine = _machine(tmp_path, monkeypatch)
     (tmp_path / "work.inc").write_text("[user]\n\temail = w@example.invalid\n")
-    machine.write_text(MACHINE_COMMON.format(dir=tmp_path.as_posix()), encoding="utf-8")
+    merge = "simple" if _git_version() >= (2, 37) else "always"
+    machine.write_text(
+        MACHINE_COMMON.format(dir=tmp_path.as_posix(), merge=merge), encoding="utf-8"
+    )
     repo = _repo(tmp_path / "repo")
     assert _answers(repo) == (True, leg == "posix")
 
@@ -347,6 +354,7 @@ WORDS = [
 
 
 @pytest.mark.parametrize(("name", "value"), WORDS)
+@pytest.mark.usefixtures("git_answered")
 def test_a_word_is_read_as_git_reads_it(
     tmp_path: Path, name: str, value: str | None, leg: str
 ) -> None:

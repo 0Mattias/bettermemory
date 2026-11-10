@@ -561,6 +561,7 @@ def test_symlinked_head_declines(tmp_path: Path) -> None:
 
 
 @posix_only
+@pytest.mark.usefixtures("git_answered")
 def test_reftable_repository_declines(tmp_path: Path) -> None:
     """A reftable repository keeps its refs in reftable/ and a stub HEAD
     naming refs/heads/.invalid, so neither HEAD's bytes nor the loose

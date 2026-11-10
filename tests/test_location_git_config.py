@@ -48,6 +48,7 @@ from bettermemory import (
 from bettermemory.location import remote_key
 
 from .test_membership_security import neutral_git
+from .test_origin_patch import _git_version
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
@@ -271,6 +272,7 @@ _WORKTREE_SPELLINGS = {
 
 
 @pytest.mark.parametrize("spelled", sorted(_WORKTREE_SPELLINGS))
+@pytest.mark.usefixtures("git_answered")
 def test_config_worktree_is_read_where_the_common_config_itself_says(
     tmp_path: Path, spelled: str
 ) -> None:
@@ -296,6 +298,9 @@ def test_config_worktree_is_read_where_the_common_config_itself_says(
     inc = tmp_path / "ext.inc"
     inc.write_text("[extensions]\n\tworktreeConfig = true\n", encoding="utf-8")
     _append(config, text.format(inc=inc.as_posix()))
+    if spelled == "negative":
+        # git before 2.42 reads no config.worktree below version -1 (ENG-227).
+        read = _git_version() >= (2, 42)
     listed = _git_remotes(repo)
     assert ("wt" in listed) is read, "premise: git 2.54 reads it so"
     keys = _keys(repo)
@@ -586,24 +591,42 @@ def _listing(*entries: tuple[str, str]) -> bytes:
     )
 
 
+def _variables(prefix: str | bool, hasconfig: bool) -> str:
+    """What `gitsystem._PREFIX_ASK` prints in the probe: the probe's
+    ``bettermemory`` variables, each a name, a newline and its value,
+    ended by a NUL, the include's first where git took it; no prefix
+    where `prefix` is False."""
+    took = "bettermemory.hasconfig\nyes\0" if hasconfig else ""
+    return took + ("" if prefix is False else f"bettermemory.prefix\n{prefix}\0")
+
+
 class _FakeGit:
     """`_git.run_git` answering `gitsystem`'s questions with `named`,
-    `own`, `remotes`, `prefix` and `compat` (None: git does not answer;
-    `remotes` is what ``ls-remote --get-url`` prints in the probe's git
-    directory, by default as git 2.54 prints it, `prefix` what ``config
-    --type=path`` prints there, `_PREFIX` and ``/z``, and `compat` the
+    `own`, `version`, `remotes`, `prefix`, `hasconfig` and `compat`
+    (None: git does not answer; `version` is what ``git version``
+    prints, by default 2.54's; `remotes` is what ``ls-remote --get-url``
+    prints in the probe's git directory, by default as git 2.54 prints
+    it, `prefix` the value of ``bettermemory.prefix`` ``config
+    --type=path`` lists there, `_PREFIX` and ``/z`` (False: the listing
+    names none), with the hasconfig include's variable where `hasconfig`,
+    and `compat` the
     status ``rev-parse --git-dir`` exits with in the git directory
     `gitsystem._COMPAT_PROBE`, by default as git 2.54 built without Rust
     exits, 128), every other call run by git;
     the calls asked, each (args, keywords), are kept in `asked`, and
     `during` (where set) runs as the first is asked: another process's
-    turn."""
+    turn. Where `older` is set, git is one before 2.42: ``git var
+    GIT_CONFIG_SYSTEM`` exits 129 with its usage, and ``config --system
+    --list --show-origin -z`` prints `older` (None: no answer)."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, binary: Path) -> None:
+        self.older: bytes | None | bool = False
         self.named: str | None = ""
         self.own: list[str] | None = []
         self.remotes: str | None = "bettermemory-probe-b\n"
-        self.prefix: str | None = f"{_PREFIX}/z\n"
+        self.prefix: str | bool | None = f"{_PREFIX}/z"
+        self.hasconfig = True
+        self.version: str | None = "git version 2.54.0\n"
         self.compat: int | None = 128
         self.asked: list[tuple[tuple[str, ...], dict[str, Any]]] = []
         self.during: Callable[[], None] | None = None
@@ -626,7 +649,13 @@ class _FakeGit:
             if args == gitsystem._VAR:
                 if self.during is not None:
                     self.during()
+                if self.older is not False:
+                    self.asked.append((args, kw))
+                    return subprocess.CompletedProcess(args, 129, "", "usage: git var")
                 said: Any = self.named
+            elif args == gitsystem._SYSTEM_LIST:
+                assert self.older is not False and kw["text"] is False
+                said = self.older
             elif args == gitsystem._LIST:
                 said = (
                     None
@@ -636,7 +665,13 @@ class _FakeGit:
             elif args == gitsystem._REMOTE_ASK:
                 said = self.remotes
             elif args == gitsystem._PREFIX_ASK:
-                said = self.prefix
+                said = (
+                    None
+                    if self.prefix is None
+                    else _variables(self.prefix, self.hasconfig)
+                )
+            elif args == gitsystem._VERSION_ASK:
+                said = self.version
             elif args == gitsystem._COMPAT_ASK:
                 self.asked.append((args, kw))
                 assert os.path.basename(kw["git_dir"]) == gitsystem._COMPAT_PROBE
@@ -718,23 +753,23 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
     assert "vendor.example.invalid/acme/lib" in keys
     assert "system.example.invalid/acme/lib" not in keys
     assert location_git._system_configs() == [str(own), str(named)]
-    (var, var_kw), (listing, list_kw), (remote, remote_kw), (prefix, prefix_kw) = (
-        fake.asked[:4]
-    )
-    assert (var, listing, remote, prefix) == (
+    (var, var_kw), (listing, list_kw), (version, version_kw) = fake.asked[:3]
+    (remote, remote_kw), (prefix, prefix_kw) = fake.asked[3:5]
+    assert (var, listing, version, remote, prefix) == (
         gitsystem._VAR,
         gitsystem._LIST,
+        gitsystem._VERSION_ASK,
         gitsystem._REMOTE_ASK,
         gitsystem._PREFIX_ASK,
     )
-    assert [args for args, _kw in fake.asked[4:]] == [gitsystem._COMPAT_ASK]
+    assert [args for args, _kw in fake.asked[5:]] == [gitsystem._COMPAT_ASK]
     where = gitsystem._where()
     assert where is not None
     folder, ceiling = where
-    for kw in (var_kw, list_kw, remote_kw, prefix_kw):
+    for kw in (var_kw, list_kw, version_kw, remote_kw, prefix_kw):
         assert kw["cwd"] == folder
         assert "GIT_CONFIG_SYSTEM" in kw["unset"]
-    assert var_kw["env"] == ceiling
+    assert var_kw["env"] == version_kw["env"] == ceiling
     assert list_kw["env"] == {
         "GIT_CONFIG_SYSTEM": os.devnull,
         "GIT_CONFIG_GLOBAL": os.devnull,
@@ -751,15 +786,16 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
         **ceiling,
     }
     assert set(gitsystem._PROBE_UNSET) <= set(remote_kw["unset"])
-    # So is how it expands %(prefix), from the probe's own config, and
-    # whether it reads a compatibility object format, in the probe's git
-    # directory of one (ENG-207's round 8).
+    # So is how it expands %(prefix) and whether it takes a hasconfig
+    # include (ENG-227), from the probe's own config, and whether it reads
+    # a compatibility object format, in the probe's git directory of one
+    # (ENG-207's round 8).
     assert (prefix_kw["git_dir"], prefix_kw["env"], prefix_kw["unset"]) == (
         remote_kw["git_dir"],
         remote_kw["env"],
         remote_kw["unset"],
     )
-    compat_kw = fake.asked[4][1]
+    compat_kw = fake.asked[5][1]
     assert (compat_kw["git_dir"], compat_kw["env"], compat_kw["unset"]) == (
         os.path.join(probe[0], gitsystem._COMPAT_PROBE),
         remote_kw["env"],
@@ -783,7 +819,7 @@ def test_the_files_a_git_build_reads_of_its_own_are_read_first(
         monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", value)
         expected = [str(own), str(other)] if read else []
         assert location_git._system_configs() == expected, value
-    assert len(fake.asked) == 5
+    assert len(fake.asked) == 6
 
 
 def _record(state: Path) -> dict[str, Any]:
@@ -805,7 +841,9 @@ def test_git_is_asked_once_for_a_path_and_the_answer_kept_in_the_state_directory
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     fake = _FakeGit(monkeypatch, tmp_path / "git")
     fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
-    answer = gitsystem.Sources((_VENDOR,), _ETC, True, True, _PREFIX, False)
+    answer = gitsystem.Sources(
+        (_VENDOR,), _ETC, True, True, _PREFIX, False, True, (2, 54, 0)
+    )
 
     def asks() -> int:
         before = len(fake.asked)
@@ -813,7 +851,7 @@ def test_git_is_asked_once_for_a_path_and_the_answer_kept_in_the_state_directory
         assert gitsystem.sources() == answer
         return len(fake.asked) - before
 
-    assert asks() == 5
+    assert asks() == 6
     for _ in range(2):
         assert gitsystem.sources() == answer
     assert asks() == 0
@@ -823,17 +861,17 @@ def test_git_is_asked_once_for_a_path_and_the_answer_kept_in_the_state_directory
     assert os.environ["PATH"] not in record
 
     fake.binary.write_text("another git")
-    assert asks() == 5
+    assert asks() == 6
     assert asks() == 0
     raw = _record(state)
     raw["entries"][0]["asked"] -= gitsystem.REASK_SECONDS
     (state / gitsystem.RECORD).write_text(json.dumps(raw))
-    assert asks() == 5
+    assert asks() == 6
     monkeypatch.setenv("PATH", os.environ["PATH"] + os.pathsep + str(tmp_path))
-    assert asks() == 5
+    assert asks() == 6
     assert len(_record(state)["entries"]) == 2
     (state / gitsystem.RECORD).write_text("not a record")
-    assert asks() == 5
+    assert asks() == 6
     assert asks() == 0
 
 
@@ -845,16 +883,18 @@ def test_records_of_two_formats_in_one_state_directory_each_stand(
     the other's whole record as they wrote their own, and each asked git
     again at its next process (4, 0, 6, 0, 4, 6 spawns, alternating). Each
     format has a file of its own: processes of this build alternating with
-    ones of other formats (format 3's ``git-config-sources.json``, and a
-    later format's by this build's rule) each ask once, then stand on
-    their own record. The sweep of other probes leaves every record,
-    however old."""
+    ones of other formats (format 3's ``git-config-sources.json``, format
+    4's ``git-config-sources-v4.json``, which ENG-227's format 5 left
+    beside its own, and a later format's by this build's rule) each ask
+    once, then stand on their own record. The sweep of other probes
+    leaves every record, however old."""
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     fake = _FakeGit(monkeypatch, tmp_path / "git")
     later = gitsystem.RECORD_FORMAT + 1
     builds = {
         "this": (gitsystem.RECORD_FORMAT, gitsystem.RECORD),
         "format_3": (3, "git-config-sources.json"),
+        "format_4": (4, "git-config-sources-v4.json"),
         "later": (later, f"git-config-sources-v{later}.json"),
     }
 
@@ -869,8 +909,9 @@ def test_records_of_two_formats_in_one_state_directory_each_stand(
             gitsystem.sources()
         return len(fake.asked) - before
 
-    order = ["this", "format_3", "this", "later", "format_3", "this", "later", "this"]
-    assert [turn(b) for b in order] == [5, 5, 0, 5, 0, 0, 0, 0]
+    order = ["this", "format_3", "this", "format_4", "later", "format_3"]
+    order += ["this", "format_4", "later", "this"]
+    assert [turn(b) for b in order] == [6, 6, 0, 6, 6, 0, 0, 0, 0, 0]
     names = sorted(name for _v, name in builds.values())
     assert sorted(p.name for p in state.glob("git-config-sources*")) == names
     for version, name in builds.values():
@@ -880,7 +921,7 @@ def test_records_of_two_formats_in_one_state_directory_each_stand(
         os.utime(state / name, (old, old))
     gitsystem._sweep_probes(state)
     assert all((state / name).is_file() for name in names)
-    assert [turn(b) for b in builds] == [0, 0, 0]
+    assert [turn(b) for b in builds] == [0, 0, 0, 0]
 
 
 def test_a_git_that_does_not_answer_reads_as_the_fallback_until_asked_again(
@@ -933,7 +974,9 @@ def test_a_failed_ask_keeps_the_answer_git_gave(
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     fake = _FakeGit(monkeypatch, tmp_path / "git")
     fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
-    good = gitsystem.Sources((_VENDOR,), _ETC, True, True, _PREFIX, False)
+    good = gitsystem.Sources(
+        (_VENDOR,), _ETC, True, True, _PREFIX, False, True, (2, 54, 0)
+    )
     assert gitsystem.sources() == good
     asked = len(fake.asked)
 
@@ -962,7 +1005,7 @@ def test_a_failed_ask_keeps_the_answer_git_gave(
     _aged(state, "tried", gitsystem.RETRY_SECONDS)
     _caches.clear_all()
     assert gitsystem.sources() == gitsystem.Sources(
-        (), _OTHER, True, True, _PREFIX, False
+        (), _OTHER, True, True, _PREFIX, False, True, (2, 54, 0)
     )
     assert _record(state)["entries"][0]["tried"] is None
 
@@ -989,7 +1032,8 @@ def test_probe_setup_exhausting_the_budget_keeps_capabilities_unknown(
 
     Probe-file setup consumes the same budget as the questions. When it
     exhausts that budget, known config paths remain usable, capabilities
-    stay unknown, and the next retry can establish them.
+    stay unknown, and the next retry can establish them. The version was
+    answered before probe setup and remains known.
     """
     state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
     fake = _FakeGit(monkeypatch, tmp_path / "git")
@@ -1002,19 +1046,27 @@ def test_probe_setup_exhausting_the_budget_keeps_capabilities_unknown(
         return probe
 
     monkeypatch.setattr(gitsystem, "_probe_repository", exhausted)
-    assert gitsystem.sources() == gitsystem.Sources((_VENDOR,), _ETC)
-    assert [args for args, _kw in fake.asked] == [gitsystem._VAR, gitsystem._LIST]
+    assert gitsystem.sources() == gitsystem.Sources(
+        (_VENDOR,), _ETC, version=(2, 54, 0)
+    )
+    assert [args for args, _kw in fake.asked] == [
+        gitsystem._VAR,
+        gitsystem._LIST,
+        gitsystem._VERSION_ASK,
+    ]
     _caches.clear_all()
-    assert gitsystem.sources() == gitsystem.Sources((_VENDOR,), _ETC)
-    assert len(fake.asked) == 2, "an incomplete answer waits for its retry"
+    assert gitsystem.sources() == gitsystem.Sources(
+        (_VENDOR,), _ETC, version=(2, 54, 0)
+    )
+    assert len(fake.asked) == 3, "an incomplete answer waits for its retry"
 
     monkeypatch.setattr(gitsystem, "_probe_repository", real)
     _aged(state, "asked", gitsystem.RETRY_SECONDS)
     _caches.clear_all()
     assert gitsystem.sources() == gitsystem.Sources(
-        (_VENDOR,), _ETC, True, True, _PREFIX, False
+        (_VENDOR,), _ETC, True, True, _PREFIX, False, True, (2, 54, 0)
     )
-    assert len(fake.asked) == 7
+    assert len(fake.asked) == 9
 
 
 def test_a_capture_taken_under_the_fallback_is_read_again_once_git_answers(
@@ -1086,6 +1138,94 @@ def test_whether_git_reads_a_compatibility_object_format_is_asked_and_recorded(
     assert (len(fake.asked) > asked) is (said is None)
 
 
+@pytest.mark.parametrize(
+    ("version", "hasconfig", "prefix", "said"),
+    [
+        ("git version 2.54.0\n", True, True, (True, (2, 54, 0))),
+        ("git version 2.34.8\n", False, True, (False, (2, 34, 8))),
+        ("git version 2.39.5 (Apple Git-154)\n", True, True, (True, (2, 39, 5))),
+        (None, True, True, (True, None)),
+        ("git version x\n", True, True, (True, None)),
+        ("git version 2.54.0\n", True, False, (None, (2, 54, 0))),
+        ("git version 2.34.8\n", False, False, (None, (2, 34, 8))),
+    ],
+    ids=["new", "older", "vendor", "no_version", "no_number", "no_prefix", "no_either"],
+)
+def test_the_version_and_the_hasconfig_include_are_git_s_answers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    version: str | None,
+    hasconfig: bool,
+    prefix: bool,
+    said: tuple[bool | None, tuple[int, int, int] | None],
+) -> None:
+    """ENG-227: the version the git on PATH names (``git version``) and
+    whether it takes a hasconfig include, from whether its listing of the
+    probe's ``bettermemory`` variables holds the one the include sets, are
+    kept in the record (format 5) with the rest and read from it by the
+    next process. Where git names no version in time, or the listing no
+    prefix, that one is unsaid, and the PATH is asked again after
+    `RETRY_SECONDS`."""
+    state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
+    fake = _FakeGit(monkeypatch, tmp_path / "git")
+    fake.version = version
+    fake.hasconfig = hasconfig
+    if not prefix:
+        fake.prefix = False
+    found = gitsystem.sources()
+    assert (found.hasconfig, found.version) == said
+    assert gitsystem.is_at_least((2, 35)) is (
+        None if said[1] is None else said[1] >= (2, 35, 0)
+    )
+    entry = _record(state)["entries"][0]
+    recorded = entry["version"]
+    assert (entry["hasconfig"], None if recorded is None else tuple(recorded)) == said
+    asked = len(fake.asked)
+    _caches.clear_all()
+    assert gitsystem.sources() == found
+    assert len(fake.asked) == asked
+    _aged(state, "asked", gitsystem.RETRY_SECONDS)
+    _caches.clear_all()
+    assert gitsystem.sources() == found
+    assert (len(fake.asked) > asked) is (None in said)
+
+
+@pytest.mark.parametrize(
+    ("listing", "system"),
+    [
+        (b"file:/opt/git/etc/gitconfig\0core.x\nv\0", "/opt/git/etc/gitconfig"),
+        (b"", gitsystem._FALLBACK),
+        (b"file:etc/gitconfig\0core.x\nv\0", gitsystem._FALLBACK),
+        (b"command line:\0core.x\nv\0", gitsystem._FALLBACK),
+        (None, None),
+    ],
+    ids=["named", "empty", "relative", "not_a_file", "no_answer"],
+)
+def test_a_git_before_2_42_names_its_system_file_by_its_first_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    listing: bytes | None,
+    system: str | None,
+) -> None:
+    """ENG-227: git before 2.42 has no ``GIT_CONFIG_SYSTEM`` variable
+    (``git var`` exits with its usage), and its system file is the one its
+    system config's first entry comes from (``config --system --list
+    --show-origin -z``), a seventh question; where it names none (no entry,
+    or no file), the fallback stands, and where it does not answer, git is
+    taken as not answering at all."""
+    fake = _FakeGit(monkeypatch, tmp_path / "git")
+    fake.older = listing
+    found = gitsystem.sources()
+    asked = [a for a, _kw in fake.asked]
+    assert asked[:2] == [gitsystem._VAR, gitsystem._SYSTEM_LIST]
+    if system is None:
+        assert found == gitsystem.Sources((), gitsystem._FALLBACK)
+        assert len(asked) == 2
+        return
+    assert found.system == system
+    assert len(asked) == 7
+
+
 def test_the_developer_directory_names_the_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1107,13 +1247,13 @@ def test_the_developer_directory_names_the_answer(
         gitsystem.sources()
         return len(fake.asked) - before
 
-    assert asks() == 5
+    assert asks() == 6
     assert asks() == 0
     link.unlink()
     link.symlink_to(tmp_path / "CommandLineTools")
-    assert asks() == 5
+    assert asks() == 6
     monkeypatch.setenv("DEVELOPER_DIR", str(tmp_path / "Beta"))
-    assert asks() == 5
+    assert asks() == 6
     monkeypatch.delenv("DEVELOPER_DIR")
     link.unlink()
     link.symlink_to(tmp_path / "Xcode")
@@ -1122,7 +1262,7 @@ def test_the_developer_directory_names_the_answer(
 
     monkeypatch.setattr(gitsystem, "_MACOS", False)
     assert gitsystem._developer() == ""
-    assert asks() == 5
+    assert asks() == 6
     link.unlink()
     assert asks() == 0
 
@@ -1261,12 +1401,12 @@ def test_git_is_asked_where_it_finds_no_repository(
     fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
     monkeypatch.chdir(repo)
     assert gitsystem._ask("key", 0.0).ok
-    assert [kw["cwd"] for _args, kw in fake.asked] == [folder] * 5
+    assert [kw["cwd"] for _args, kw in fake.asked] == [folder] * 6
     assert all(kw["env"].items() >= ceiling.items() for _args, kw in fake.asked)
     (Path(folder) / ".git").mkdir()
     assert gitsystem._where() is None
     assert not gitsystem._ask("key", 0.0).ok
-    assert len(fake.asked) == 5
+    assert len(fake.asked) == 6
 
 
 def test_a_config_file_is_named_one_way(

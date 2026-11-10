@@ -693,6 +693,7 @@ print(json.dumps(sorted(sys.modules)))
         "bettermemory.gitdir_pin",
         "bettermemory.gitobjects",
         "bettermemory.gitsystem",
+        "bettermemory.gitversion",
         "bettermemory.location",
         "bettermemory.location_git",
         "bettermemory.location_reads",

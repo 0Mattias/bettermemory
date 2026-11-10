@@ -614,6 +614,7 @@ def _break_head(repo: Path, case: str) -> None:
 
 @pytest.mark.parametrize("moved", [False, True], ids=["files", "GIT_DIR"])
 @pytest.mark.parametrize("case", list(_HEADS))
+@pytest.mark.usefixtures("git_answered")
 def test_a_ref_git_cannot_read_is_told_from_an_unborn_branch(
     case: str, moved: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

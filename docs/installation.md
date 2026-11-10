@@ -13,6 +13,12 @@ deterministic lexical code. Python 3.11 to 3.14. From a development
 clone: `uv tool install .` (or `uv pip install -e .` for editable).
 Either path puts a `bettermemory` script on `$PATH`.
 
+Repositories are read through the `git` first on `$PATH`, which must be
+git 2.34 or later (Ubuntu 22.04 LTS ships 2.34.1); `bettermemory doctor`
+fails its `git` check, naming both versions, on an older one. What
+changes with the release, and how 2.34 was chosen:
+[operations.md](operations.md#supported-git).
+
 ## 2. Register with your MCP client
 
 ```sh
@@ -63,7 +69,7 @@ failed to start: run `bettermemory doctor`, then
 prints any start error.
 
 ```sh
-bettermemory doctor        # the install, config, store, key, daemon, client wiring and disk
+bettermemory doctor        # the install, git, config, store, key, daemon, client wiring and disk
 bettermemory config path   # which config, store, keys and state directories are in use
 ```
 

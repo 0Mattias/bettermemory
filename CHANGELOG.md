@@ -32,6 +32,42 @@ eighteenth was built.
 
 #### Fixed
 
+- **A read whose rule changed with a git release reads as the git on
+  PATH does (ENG-227).** Each was read as git 2.54 reads it, and an older
+  git reads it otherwise. The git on PATH is now asked its version with
+  the other questions about it, and whether it takes a hasconfig include
+  in the question that lists the probe's variables, no process more: six
+  processes per PATH, seven before 2.42, measured within 160 ms against
+  the 0.3 s bound, and kept in the state directory's record, whose
+  format 5 has a file of its own beside format 4's. A read whose answer
+  turns on the release declines where git has not said:
+  - an `includeIf "hasconfig:remote.*.url:..."`, which git before 2.36
+    ignores, was taken; it is now read as this git reads it;
+  - `branch.autoSetupMerge = inherit` (from 2.35) and `simple` (from
+    2.37) let the files answer where an older git dies, and `ALWAYS`,
+    which 2.34 reads, was read as dying;
+  - `extensions.refStorage`, `relativeWorktrees` and
+    `submodulePathConfig` under format 1, which git dies on before 2.44,
+    2.48 and 2.54, were read; both readers now refuse them there;
+  - `config.worktree` under a format version below -1, which git reads
+    from 2.42 alone, was read for every git;
+  - a tab or a CR inside a value, outside quotes, which git before 2.45
+    reads as a space: a remote URL, an insteadOf prefix or a
+    `core.worktree` holding one now declines there, and an include path
+    holding one declines on every git;
+  - the system config file of a git before 2.42, which has no `git var
+    GIT_CONFIG_SYSTEM`, was the fallback; it is now the file git's own
+    system listing names first;
+  - `core.notesRef`, `core.hooksPath` and `mailmap.file` with no value,
+    `core.preloadIndex` that is no boolean and `core.bigFileThreshold`
+    that is no size, which git dies on before 2.48 to 2.54, let the files
+    answer; they now decline on every git, and the origin asks git.
+  (`src/bettermemory/gitsystem.py`, `src/bettermemory/gitconfig.py`,
+  `src/bettermemory/gitfile_rule.py`, `src/bettermemory/location_git.py`,
+  `src/bettermemory/origin_gitfiles.py`, `tests/test_git_releases.py`,
+  `tests/test_location_git_config.py`, `tests/test_location_git_parse.py`,
+  `tests/test_location_git_include_conditions.py`)
+
 - **Translated prose paths keep spaces in the live checkout root
   (ENG-268).** The spaced bare-path fallback cuts the original citation
   before translating its prefix. It now checks the cited file rather
@@ -216,6 +252,40 @@ eighteenth was built.
   `tests/test_project_folder_backslashes.py`)
 
 #### Added
+
+- **bettermemory supports git 2.34 and later, and `bettermemory doctor`
+  checks the git on PATH (ENG-227).** Repositories are read through the
+  git first on PATH, and nothing said which git that had to be. 2.34 is
+  the oldest release a maintained distribution ships (Ubuntu 22.04 LTS
+  ships 2.34.1), and every read there and later gives git's answer or
+  declines, found by running the git-reading suites against git built
+  from each release's source, from 2.30.9 to 2.56.0 and git's `next`
+  built with its breaking changes. 2.30 to 2.33 are not supported: before
+  2.32 git reads neither `GIT_CONFIG_GLOBAL` nor `GIT_CONFIG_SYSTEM`
+  (Debian 11 ships 2.30.2); no maintained distribution ships 2.32 or
+  2.33 and CI pins neither, and both die by SIGSEGV in `git log -p` under
+  `diff.submodule=diff`. `doctor` has a `git` check
+  that runs `git version` once and reads no repository: it fails, naming
+  both versions, on a git older than 2.34, and warns where there is no
+  git on PATH or its version cannot be read. A test whose premise is what
+  only a newer git does is gated on that release, or on what the git on
+  PATH does, never by skipping its file. In a partial clone git 2.39 to
+  2.44 ends `cat-file --batch-check` at the first object the clone lacks,
+  2.44 too though it fetches nothing: a claim drift window whose blobs are
+  not all local keeps the per-file count there, and a claimed path is
+  read under every spelling of its name; `docs/operations.md` lists this
+  and the two other costs that remain on a supported git, none a wrong
+  answer. CI runs the git-reading suites
+  on 2.34.8 and 2.56.0, each built from its source with its archive's
+  SHA-256 pinned and kept in the cache, and on git's `next` built with
+  breaking changes, a job that may fail and reports its failures as a
+  warning. The bench note in `docs/operations.md` that named git 2.54
+  now says it is the git the numbers were taken with, not one the read
+  needs. (`src/bettermemory/gitversion.py`, `src/bettermemory/doctor.py`,
+  `src/bettermemory/origin_patch.py`,
+  `tools/ci/build_git.sh`, `.github/workflows/ci.yml`,
+  `docs/installation.md`, `docs/operations.md`, `tests/test_doctor.py`,
+  `tests/test_doctor_git.py`)
 
 - **Health recommends a spot-check of every memory whose history was
   not read (ENG-220).** The new `spot_check_unread` recommendation counts
@@ -406,9 +476,9 @@ eighteenth was built.
   reads a blob it lacks, as before), and the same clone with half the
   window's blobs local 3, naming the claim. A window whose blobs the check
   finds all local failed for another reason and keeps the per-file count;
-  so does every window on git before 2.44, which ignores
-  `GIT_NO_LAZY_FETCH` and ends the check at the first blob the clone
-  lacks. A treeless clone (`--filter=tree:0`) keeps the unfiltered count:
+  so does every window on git 2.39 to 2.44, which ends the check at the
+  first blob the clone lacks, 2.44 too though it reads `GIT_NO_LAZY_FETCH`
+  (ENG-227). A treeless clone (`--filter=tree:0`) keeps the unfiltered count:
   it holds the trees of the commits it checked out and none of their
   parents', so a split by local trees would recover nearly no commit. A
   window that took the split is not memoised, as no value computed after a

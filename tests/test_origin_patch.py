@@ -50,11 +50,15 @@ def _git_version() -> tuple[int, ...]:
     return tuple(int(d) for d in digits if d.isdigit())
 
 
-#: A git before 2.44 ignores ``GIT_NO_LAZY_FETCH``: held by the empty
-#: ``GIT_ALLOW_PROTOCOL`` alone, its blob check ends at the first blob the
-#: clone lacks, and the window keeps the per-file count.
+#: A git before 2.45 ends its blob check at the first blob the clone lacks,
+#: and the window keeps the per-file count: one before 2.44 ignores
+#: ``GIT_NO_LAZY_FETCH`` and is held by the empty ``GIT_ALLOW_PROTOCOL``
+#: alone, and 2.44 reads the pin and fetches nothing, but still ends there
+#: ("could not fetch ... from promisor remote"; ENG-227: 2.44.4 does,
+#: 2.45.4 names the blob missing and goes on).
 needs_lazy_fetch_pin = pytest.mark.skipif(
-    _git_version() < (2, 44), reason="GIT_NO_LAZY_FETCH is read from git 2.44"
+    _git_version() < (2, 45),
+    reason="git names a blob the clone lacks missing, under the pin, from 2.45",
 )
 needs_reftable = pytest.mark.skipif(
     _git_version() < (2, 45), reason="git clones into a reftable from 2.45"
@@ -925,6 +929,7 @@ def test_each_replace_pin_alone_holds_the_window(
     [pytest.param(True, marks=needs_reftable), False],
     ids=["reftable", "files"],
 )
+@pytest.mark.usefixtures("git_answered")
 def test_a_replace_ref_after_the_split_is_kept_moves_no_count(
     tmp_path: Path, basis: str, reftable: bool
 ) -> None:

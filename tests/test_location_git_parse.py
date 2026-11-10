@@ -66,6 +66,8 @@ from .test_location_git_include_conditions import (
 )
 from .test_location_git_include_conditions import _neutral as _neutral
 from .test_location_git_include_conditions import leg as leg
+from .test_location_git_include_conditions import needs_hasconfig
+from .test_origin_patch import _git_version
 
 
 def _global() -> Path:
@@ -240,11 +242,18 @@ def test_where_only_git_s_reader_of_remotes_dies_the_capture_declines(
 def test_where_git_dies_the_capture_declines(tmp_path: Path, case: str) -> None:
     """git dies at each of `DIES` (``git ls-remote --get-url`` exits
     non-zero), and the capture declines there, with no key and nothing
-    kept, and the origin records no repository."""
+    kept, and the origin records no repository. git before 2.37 reads on
+    past a ``branch.remote`` of an empty branch name (ENG-227: 2.36.6
+    reads it, 2.37.7 dies), where the capture declines still, which fails
+    closed."""
     repo = _repo(tmp_path / "repo")
     where, text = DIES[case]
     _write(repo, where, text.format(tmp=tmp_path.as_posix()))
     done = _git(repo, "ls-remote", "--get-url", "origin", check=False)
+    if case == "branch_unnamed" and _git_version() < (2, 37):
+        assert done.returncode == 0, f"premise: this git reads on ({done.stderr!r})"
+        _declines(repo, git_dies=False)
+        return
     assert done.returncode != 0, f"premise: git dies ({done.stdout!r})"
     _declines(repo)
 
@@ -502,7 +511,9 @@ def test_a_corpus_of_configs_is_keyed_as_git_lists_its_remotes(
     capture's keys are the keys of every URL ``git remote get-url --all``
     gives for every remote ``git remote`` names, quoting, escapes,
     comments, continued lines, case, old-style sections, an empty URL,
-    CRLF, a byte order mark and includes read as git reads them."""
+    CRLF, a byte order mark and includes read as git reads them. A URL
+    holding a tab declines on git before 2.45, which reads an unquoted
+    one as a space (ENG-227), whatever wrote it."""
     repo = _repo(tmp_path / "repo", remote=None)
     text, included = CORPUS[case]
     if included is not None:
@@ -511,6 +522,10 @@ def test_a_corpus_of_configs_is_keyed_as_git_lists_its_remotes(
         fh.write(text.encode("utf-8"))
     listed = _listed_urls(repo)
     assert listed, "premise: git names a remote"
+    spaced = any("\t" in url for urls in listed.values() for url in urls)
+    if spaced and _git_version() < (2, 45):
+        _declines(repo, git_dies=False)
+        return
     base = os.path.realpath(repo)
     wanted = {remote_key(u, base) for urls in listed.values() for u in urls} - {None}
     assert _keys(repo) == wanted, listed
@@ -608,6 +623,7 @@ def _escaped(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
+@needs_hasconfig
 def test_wildmatch_matches_as_git_matches(tmp_path: Path) -> None:
     """`gitconfig.wildmatch` against git's own matching of
     ``hasconfig:remote.*.url:`` (``WM_PATHNAME``): each of `PATTERNS`
@@ -693,6 +709,7 @@ _LONG_URL = "https://x.invalid/" + "a" * 700
 
 
 @pytest.mark.parametrize("matters", [True, False], ids=["rule_matches", "neutral"])
+@needs_hasconfig
 def test_a_pattern_git_settles_and_the_port_does_not_reads_as_unsettled(
     tmp_path: Path, matters: bool
 ) -> None:
@@ -727,7 +744,10 @@ def test_a_slow_pattern_is_given_up_within_a_bound(
     within its steps (`gitconfig._WM_STEPS`, about 40 ms), well inside a
     second for the capture's every read, and the condition reads as not
     settled: the capture declines where the include could change what is
-    keyed and keys git's URL where it could not."""
+    keyed and keys git's URL where it could not. git before 2.41 matches
+    the pattern in time exponential in its stars (ENG-227: 2.40.4 runs past
+    two minutes, 2.41.3 does not), and it is not asked there; the capture
+    reads as it does on any git, starting none."""
     repo = _repo(tmp_path / "repo")
     _git(repo, "switch", "-q", "-c", "a/" * 22 + "y")
     rules = tmp_path / "rules.inc"
@@ -735,9 +755,10 @@ def test_a_slow_pattern_is_given_up_within_a_bound(
         _RULES if matters else _RULES.replace("gh:", "zz:"), encoding="utf-8"
     )
     _include(_global(), "onbranch:" + "**/" * 22 + "z", rules)
-    assert _fetched(repo) == "gh:acme/lib", (
-        "premise: git settles it, and it does not hold"
-    )
+    if _git_version() >= (2, 41):
+        assert _fetched(repo) == "gh:acme/lib", (
+            "premise: git settles it, and it does not hold"
+        )
     started = time.perf_counter()
     if matters:
         _declines(repo, git_dies=False)
@@ -764,6 +785,7 @@ def test_a_slow_pattern_is_given_up_within_a_bound(
     ],
 )
 @pytest.mark.parametrize("backend", ["files", "reftable"])
+@pytest.mark.usefixtures("git_answered")
 def test_a_global_include_is_read_as_git_reads_it_on_any_ref_backend(
     tmp_path: Path, backend: str, condition: str, branch: str, prefix: str
 ) -> None:
@@ -780,6 +802,9 @@ def test_a_global_include_is_read_as_git_reads_it_on_any_ref_backend(
     made = _git(
         repo, "init", "-q", "-b", "main", f"--ref-format={backend}", check=False
     )
+    # git before 2.45 knows no --ref-format, and makes a files repository.
+    if made.returncode != 0 and backend == "files" and _git_version() < (2, 45):
+        made = _git(repo, "init", "-q", "-b", "main", check=False)
     if made.returncode != 0:
         pytest.skip(f"this git makes no {backend} repository")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "first")
@@ -911,7 +936,11 @@ def test_a_prefix_path_is_read_as_this_git_expands_it(
         real = Path(os.path.realpath(repo)).as_posix()
         where = real if case == "gitdir_holds" else "bettermemory-nowhere"
         _include(_global(), f"gitdir:%(prefix)/{where}/", rules)
-    fetched = "gh:acme/lib" if case == "gitdir_not" else _MIRRORED
+    # ENG-227: a git that leaves %(prefix) as written (before 2.34) reads
+    # only the literal include.
+    expands = gitsystem.sources().prefix != gitconfig.AS_WRITTEN
+    taken = case == "include_literal" or (case != "gitdir_not" and expands)
+    fetched = _MIRRORED if taken else "gh:acme/lib"
     assert _fetched(repo) == fetched, "premise: git's reading"
     keys = _keys(repo)
     assert _key(repo, fetched) in keys
@@ -1080,7 +1109,7 @@ def test_how_git_reads_a_remote_is_asked_of_git_and_recorded() -> None:
     entry = _record(state)["entries"][0]
     assert (entry["legacy"], entry["resets"]) == said
     assert entry["prefix"] == found.prefix == _prefix()
-    assert _record(state)["format"] == gitsystem.RECORD_FORMAT == 4
+    assert _record(state)["format"] == gitsystem.RECORD_FORMAT == 5
 
 
 def _compat_repository(path: Path, compat: str) -> bool:
@@ -1247,8 +1276,11 @@ def _this_git() -> gitsystem._Probed:
 
 #: What another writer puts in ``remotes/p``: the content git answers
 #: "reads no reset" for (its first URL alone) and "reads no legacy file"
-#: for (an empty file, which names no URL).
+#: for (an empty file, which names no URL), and the content a git that
+#: reads no reset (git 2.39 and before, ENG-227) answers "resets" for (its
+#: last URL alone).
 _TAMPERED = [b"URL: bettermemory-probe-a\n", b""]
+_TAMPERED_RESETS = b"URL: bettermemory-probe-b\n"
 
 
 #: Another writer's content for the probe's config, which git expands to
@@ -1286,10 +1318,17 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
     format, ENG-207's round 8) in the middle of each ask, git answers for
     its content, and the ask says nothing, so it is asked again after
     `gitsystem.RETRY_SECONDS`. The next ask, with no writer, rebuilds the
-    probe and answers as git does."""
+    probe and answers as git does. A git that reads no legacy file (one
+    built with breaking changes) answers the same for any ``remotes/p``,
+    and the stamps alone leave the ask unsaid."""
     truth = _this_git()
     if content is None:
         content = _COMPAT_GONE if truth[3] is False else _COMPAT_DIES
+    elif (
+        content == _TAMPERED[0]
+        and truth[:2] == gitsystem._REMOTE_ANSWERS["bettermemory-probe-a"]
+    ):
+        content = _TAMPERED_RESETS
     written = content
     real = git_runner.run_git
     question = {"config": gitsystem._PREFIX_ASK, "compat/config": gitsystem._COMPAT_ASK}
@@ -1317,9 +1356,12 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
         check=not name.startswith("compat/"),
     )
     if name == "config":
-        wrong = asked.stdout.strip() != f"{truth[2]}/z"
+        expanded = gitsystem._variables(asked.stdout).get(gitsystem._PREFIX_NAME)
+        wrong = expanded != f"{truth[2]}{gitsystem._PREFIX_TAIL}"
     elif name.startswith("compat/"):
         wrong = (asked.returncode == 0) is not truth[3]
+    elif truth[0] is False:
+        wrong = True
     else:
         wrong = gitsystem._REMOTE_ANSWERS[asked.stdout.strip()] != truth[:2]
     assert wrong, "premise: git answers wrong"
@@ -1327,6 +1369,7 @@ def test_a_probe_another_writes_while_git_reads_it_is_not_kept(
     found = gitsystem.sources()
     assert (found.legacy, found.resets, found.prefix) == (None, None, None)
     assert found.compat_differ is None
+    assert found.hasconfig is None
     monkeypatch.setattr(git_runner, "run_git", real)
     assert _ask_probe() == truth
 
@@ -1549,8 +1592,8 @@ def test_a_remote_is_read_as_this_git_reads_it(
     _aged(state, "asked", gitsystem.RETRY_SECONDS)
     _caches.clear_all()
     gitsystem.sources()
-    # Asked again: the system file, the listing, the remote and, where git
-    # answered the remote at all, the prefix and the compatibility object
-    # format.
-    again = 0 if legacy is not None else 3 if said is None else 5
+    # Asked again: the system file, the listing, the version, the remote
+    # and, where git answered the remote at all, the prefix (with the
+    # hasconfig include) and the compatibility object format.
+    again = 0 if legacy is not None else 4 if said is None else 6
     assert len(fake.asked) - asked == again

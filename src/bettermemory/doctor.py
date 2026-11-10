@@ -26,6 +26,8 @@ would hide the fault it was run for, so this module reads only:
   read-only open never meets, and fails the `restore` check;
 - the daemon is asked `GET /health` and nothing else; its state file is
   read, never removed, and no daemon is started or stopped;
+- the git on PATH is asked ``git version`` and nothing else, which reads
+  no repository (`check_git`, ENG-227);
 - client and Claude Code settings files are read, never patched;
 - the keys directory is listed and each key ring's binding read, and
   nothing in it changes unless `--clear-orphan-keys --yes` is given,
@@ -109,6 +111,7 @@ if TYPE_CHECKING:
 #: The order the checks run and report in.
 CHECK_IDS: tuple[str, ...] = (
     "install",
+    "git",
     "config",
     "store_location",
     "restore",
@@ -353,6 +356,59 @@ def check_install() -> Check:
     if on_path is None:
         summary += "; no `bettermemory` on PATH"
     return _from_findings("install", findings, ok_summary=summary, details=details)
+
+
+# ---------------------------------------------------------------------------
+# git
+# ---------------------------------------------------------------------------
+
+
+def check_git() -> Check:
+    """The git on PATH, which every read of a repository runs, and whether
+    it is `gitversion.MINIMUM` or later (ENG-227): one ``git version``,
+    which reads no repository and writes nothing. An older git fails the
+    check, naming both versions; no git, or one whose version cannot be
+    read, warns."""
+    from . import gitversion
+
+    found = gitversion.installed()
+    minimum = gitversion.text(gitversion.MINIMUM)
+    details: dict[str, Any] = {
+        "path": found.path,
+        "output": found.output,
+        "version": None if found.version is None else gitversion.text(found.version),
+        "minimum": minimum,
+    }
+    install = f"install git {minimum} or later and put it first on PATH"
+    if found.path is None:
+        return Check(
+            "git",
+            WARN,
+            "no `git` on PATH: the reads of a repository that run git get no answer",
+            install,
+            details,
+        )
+    if found.version is None:
+        said = "it did not answer" if found.output is None else repr(found.output)
+        return Check(
+            "git",
+            WARN,
+            f"the version of the git on PATH ({found.path}) could not be read: {said}",
+            f"check that `{found.path} version` runs and names git {minimum} or later",
+            details,
+        )
+    version = details["version"]
+    if not found.supported:
+        return Check(
+            "git",
+            FAIL,
+            f"git {version} on PATH ({found.path}) is older than {minimum}, the "
+            "oldest bettermemory supports: its reads of a repository can differ "
+            "from git's",
+            install,
+            details,
+        )
+    return Check("git", OK, f"git {version} ({found.path})", None, details)
 
 
 # ---------------------------------------------------------------------------
@@ -1388,6 +1444,7 @@ def run_checks(
     ctx = _Context(cwd=_safe_cwd() if cwd is None else cwd)
     checks: list[Check] = []
     checks += _guarded(("install",), lambda: [check_install()])
+    checks += _guarded(("git",), lambda: [check_git()])
     checks += _guarded(("config",), lambda: [check_config(ctx)])
     checks += _guarded(("store_location",), lambda: [check_store_location(ctx)])
     checks += _guarded(("restore",), lambda: [check_restore(ctx)])

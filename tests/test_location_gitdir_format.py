@@ -246,17 +246,29 @@ def test_the_parse_is_git_s(tmp_path: Path, text: bytes) -> None:
         for item in done.stdout.split(b"\0")[:-1]
     ]
     assert ours is not None
-    assert [
+    got = [
         (name, None if value is None else value.split(b"\0", 1)[0])
         for name, value in ours
-    ] == listed
+    ]
+    if _git_version() < (2, 45) and len(got) == len(listed):
+        # git before 2.45 reads a tab or a CR in a value, outside quotes, as
+        # a space (ENG-227); the readers refuse a path or a URL holding one.
+        got = [
+            mine
+            if mine == theirs or mine[1] is None
+            else (mine[0], mine[1].replace(b"\t", b" ").replace(b"\r", b" "))
+            for mine, theirs in zip(got, listed, strict=True)
+        ]
+    assert got == listed
 
 
 @pytest.mark.parametrize("how", list(WINDOWS_VALUES))
+@pytest.mark.usefixtures("git_answered")
 def test_a_windows_path_is_the_working_tree_git_reads(tmp_path: Path, how: str) -> None:
     """A Windows user's ``core.worktree``: `gitfile_rule.tree_format` takes
     the value git takes (``git config --get``), escapes undone as git
-    undoes them, and refuses the config where git dies on an escape."""
+    undoes them, and refuses the config where git dies on an escape, or
+    where a git before 2.45 may read its tab as a space (ENG-227)."""
     value, expected = WINDOWS_VALUES[how]
     git_dir = tmp_path / "dot_git"
     git_dir.mkdir()
@@ -267,6 +279,10 @@ def test_a_windows_path_is_the_working_tree_git_reads(tmp_path: Path, how: str) 
         capture_output=True,
     )
     got = gitfile_rule.tree_format(str(git_dir))
+    if expected is not None and "\t" in expected and _git_version() < (2, 45):
+        assert done.returncode == 0, done.stderr
+        assert got.why is not None and got.worktree is None, got
+        return
     if expected is None:
         assert b"bad config" in done.stderr, done.stderr
         assert got.why is not None and got.worktree is None, got
@@ -394,6 +410,16 @@ EXTENSION_DIES = {
     "unset_compat_twice": b"[extensions]\n\tcompatObjectFormat = sha256\n"
     + b"[extensions]\n\tcompatObjectFormat = sha256\n",
 }
+#: The release from which git dies on each of `EXTENSION_DIES` it did not
+#: always die on (ENG-227): an older git knows no such extension and reads
+#: on, and both readers refuse it still.
+EXTENSION_DIES_SINCE = {
+    "v1_only_in_v0": (2, 44),
+    "compat_in_v0": (2, 45),
+    "unset_compat_unknown": (2, 45),
+    "unset_compat_no_value": (2, 45),
+    "unset_compat_twice": (2, 45),
+}
 
 #: Extensions git reads on however it was built: one it does not know
 #: under format 0, a value each reader takes, and one of format 1 with no
@@ -415,6 +441,10 @@ EXTENSION_READS = {
     "unset_compat_same": b"[extensions]\n\tobjectFormat = sha256\n"
     + b"\tcompatObjectFormat = sha256\n",
 }
+#: The release from which git reads each of `EXTENSION_READS` it did not
+#: always read (ENG-227: ``submodulePathConfig`` from 2.54): an older git
+#: dies on it, and both readers refuse it.
+EXTENSION_READS_SINCE = {"v1_known": (2, 54)}
 
 
 def _extend(app: Path, case: str, tail: bytes) -> None:
@@ -433,10 +463,12 @@ def test_an_extension_git_dies_on_is_refused_by_both_readers(
     refuses, a format-1 extension under format 0 and one git does not know
     under format 1 make git die (``git rev-parse``), and neither reader
     names a root. The rule read none but ``worktreeConfig``, and rooted the
-    checkout at the folder git names no toplevel of (ENG-207's round 7)."""
+    checkout at the folder git names no toplevel of (ENG-207's round 7).
+    A git older than the extension reads on (`EXTENSION_DIES_SINCE`)."""
     app, _other = _apps(tmp_path)
     _extend(app, case, EXTENSION_DIES[case])
-    assert _toplevel(app).returncode != 0
+    dies = _git_version() >= EXTENSION_DIES_SINCE.get(case, (0,))
+    assert (_toplevel(app).returncode != 0) is dies
     runs.clear()
 
     cap = _membership(app)
@@ -447,12 +479,21 @@ def test_an_extension_git_dies_on_is_refused_by_both_readers(
 
 
 @pytest.mark.parametrize("case", sorted(EXTENSION_READS))
+@pytest.mark.usefixtures("git_answered")
 def test_an_extension_git_reads_keeps_the_root(tmp_path: Path, case: str) -> None:
     """Where git reads the extensions and names the folder its toplevel,
     both readers root the checkout there (no extension read as fatal that
-    git reads on)."""
+    git reads on). Where this git dies on it (`EXTENSION_READS_SINCE`),
+    both refuse it."""
     app, _other = _apps(tmp_path)
     _extend(app, case, EXTENSION_READS[case])
+    if _git_version() < EXTENSION_READS_SINCE.get(case, (0,)):
+        assert _toplevel(app).returncode != 0, "premise: this git dies"
+        cap = _membership(app)
+        assert cap.state == location.INDETERMINATE
+        assert cap.detail.startswith("repository format: "), cap.detail
+        _no_origin(app)
+        return
     _git_names(app, app)
 
     cap = _membership(app)

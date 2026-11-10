@@ -753,6 +753,9 @@ _DIES_UNLESS_BOOL = frozenset(
         # its system config sets core.fscache (ENG-207's round 8).
         b"core.fscache",
         b"core.longpaths",
+        # Read as a boolean by an older git, which dies on any other value
+        # (`_OLDER_DIES`).
+        b"core.preloadindex",
     }
 )
 #: The variables it dies on with no value, and reads any value of.
@@ -777,8 +780,44 @@ _DIES_UNSET = frozenset(
         b"i18n.logoutputencoding",
         b"attr.tree",
         b"extensions.partialclone",
+        # Read by an older git's default config, which dies on no value
+        # (`_OLDER_DIES`): core.notesref to 2.46, core.hookspath to 2.48,
+        # mailmap.file to 2.52.
+        b"core.notesref",
+        b"core.hookspath",
+        b"mailmap.file",
     }
 )
+#: The variables git 2.54 reads any value of, or none, where an older git
+#: dies (ENG-227, ``git rev-parse --show-toplevel HEAD`` against git built
+#: from each release): ``core.notesref`` and ``core.hookspath`` with no
+#: value, ``core.bigFileThreshold`` that is no size, ``core.preloadIndex``
+#: that is no boolean, ``mailmap.file`` with no value, which git through
+#: 2.46.4, 2.48.2, 2.48.2, 2.50.1 and 2.52.0 dies on and 2.54 reads past.
+#: The files decline on each whatever git is on PATH, a process where
+#: they answered for 2.54, on a value no checkout sets on purpose: they
+#: are read with `_DIES_UNSET`, `_DIES_UNLESS_BOOL` and `_DIES_UNLESS_SIZE`.
+_OLDER_DIES = frozenset(
+    {
+        b"core.notesref",
+        b"core.hookspath",
+        b"core.bigfilethreshold",
+        b"core.preloadindex",
+        b"mailmap.file",
+    }
+)
+#: The variables an older git dies on where they hold no size: none, a
+#: sign, or what is no number with a unit (``git_config_ulong``; a size
+#: past an int, which git reads, declines too, fail closed).
+_DIES_UNLESS_SIZE = frozenset({b"core.bigfilethreshold"})
+#: The words ``branch.autoSetupMerge`` takes besides a boolean, each with
+#: the first release that takes it (ENG-227, against git built from each
+#: release): ``inherit`` from 2.35.8 (2.34.8 dies), ``simple`` from 2.37.7
+#: (2.36.6 dies). git before 2.35 compares ``always`` in any case
+#: (``strcasecmp``), and from 2.35 as written, so ``ALWAYS`` reads on
+#: 2.34.8 and dies on 2.35.8.
+_MERGE_WORDS_SINCE = {b"always": (0, 0), b"inherit": (2, 35), b"simple": (2, 37)}
+_MERGE_EXACT_SINCE = (2, 35)
 #: The variables that take a boolean or one word more (any case), and
 #: whether no value dies.
 _DIES_UNLESS_WORD = {
@@ -796,9 +835,10 @@ _DIES_UNLESS_NAMED = {
     b"branch.autosetuprebase": frozenset({b"never", b"local", b"remote", b"always"}),
 }
 #: The variables that take one of a set of words, as written, or a
-#: boolean (no value is true).
+#: boolean (no value is true): the words the git on PATH takes
+#: (`_merge_word_dies`).
 _DIES_UNLESS_BOOL_OR_NAMED = {
-    b"branch.autosetupmerge": frozenset({b"always", b"inherit", b"simple"}),
+    b"branch.autosetupmerge": _MERGE_WORDS_SINCE,
 }
 #: The variables of the sections git reads whole that it reads any value
 #: of; any other variable there (`_READ_WHOLE`) is one whose reading is
@@ -807,15 +847,11 @@ _READ_ANY = frozenset(
     {
         b"core.bare",
         b"core.worktree",
-        b"core.hookspath",
         b"core.pager",
         b"core.sshcommand",
         b"core.eol",
         b"core.fsmonitor",
         b"core.splitindex",
-        b"core.bigfilethreshold",
-        b"core.notesref",
-        b"core.preloadindex",
         b"core.alternaterefscommand",
         b"core.alternaterefsprefixes",
         b"extensions.noop",
@@ -832,8 +868,9 @@ def _rev_parse_dies(name: bytes, value: bytes | None) -> bool:
     repository's config setting `name` (as `gitconfig.git_entries` names
     it) to `value`: a value of a variable git reads that it refuses
     (`_DIES_UNLESS_BOOL`, `_DIES_UNSET`, `_DIES_UNLESS_WORD`,
-    `_DIES_UNLESS_NAMED`, `_DIES_UNLESS_BOOL_OR_NAMED`, a
-    ``core.repositoryformatversion`` that is no int or is above 1), a
+    `_DIES_UNLESS_NAMED`, `_DIES_UNLESS_BOOL_OR_NAMED`, `_DIES_UNLESS_SIZE`,
+    a ``core.repositoryformatversion`` that is no int or is above 1), one
+    an older git dies on (`_OLDER_DIES`, ENG-227), a
     variable git reads by a rule not ported here (`_READ_WHOLE`,
     `_READ_ELSEWHERE`), and an include, whose file is not read here (git
     dies on one with no value, an empty one and one of a folder). A false
@@ -842,6 +879,8 @@ def _rev_parse_dies(name: bytes, value: bytes | None) -> bool:
         return gitconfig.git_bool(value) is None
     if name in _DIES_UNSET:
         return value is None
+    if name in _DIES_UNLESS_SIZE:
+        return value is None or b"-" in value or gitconfig.git_int(value) is None
     if name in _DIES_UNLESS_WORD:
         word, unset_dies = _DIES_UNLESS_WORD[name]
         if value is None:
@@ -851,12 +890,7 @@ def _rev_parse_dies(name: bytes, value: bytes | None) -> bool:
     if name in _DIES_UNLESS_NAMED:
         return value is None or value.split(b"\0", 1)[0] not in _DIES_UNLESS_NAMED[name]
     if name in _DIES_UNLESS_BOOL_OR_NAMED:
-        if (
-            value is not None
-            and value.split(b"\0", 1)[0] in _DIES_UNLESS_BOOL_OR_NAMED[name]
-        ):
-            return False
-        return gitconfig.git_bool(value) is None
+        return _merge_word_dies(value, _DIES_UNLESS_BOOL_OR_NAMED[name])
     if name == b"core.repositoryformatversion":
         number = gitconfig.git_int(value)
         return number is None or number > 1
@@ -867,6 +901,34 @@ def _rev_parse_dies(name: bytes, value: bytes | None) -> bool:
     if name in _READ_ANY:
         return False
     return name in _READ_ELSEWHERE or name.startswith(_READ_WHOLE)
+
+
+def _merge_word_dies(
+    value: bytes | None, words: Mapping[bytes, tuple[int, int]]
+) -> bool:
+    """Whether the git on PATH dies on ``branch.autoSetupMerge`` set to
+    `value` (config.c's ``git_default_branch_config``): a boolean reads,
+    and of `words` (`_MERGE_WORDS_SINCE`) each from the release that first
+    takes it; ``always`` in another case before 2.35 alone. Where the
+    answer turns on a version the git on PATH has not named
+    (`gitsystem.is_at_least`), it may die (ENG-227)."""
+    if value is not None:
+        word = value.split(b"\0", 1)[0]
+        since = words.get(word)
+        if since is not None:
+            return since != (0, 0) and _git_is_at_least(since) is not True
+        if word.lower() in words and words[word.lower()] == (0, 0):
+            return _git_is_at_least(_MERGE_EXACT_SINCE) is not False
+    return gitconfig.git_bool(value) is None
+
+
+def _git_is_at_least(release: tuple[int, int]) -> bool | None:
+    """`gitsystem.is_at_least`, imported here, where the repository's or
+    the machine's config sets a word whose reading turns on the version of
+    the git on PATH (ENG-227)."""
+    from . import gitsystem
+
+    return gitsystem.is_at_least(release)
 
 
 def _machine_config_dies(
