@@ -32,6 +32,15 @@ eighteenth was built.
 
 #### Fixed
 
+- **Unusable workspace roots and citation paths decline safely
+  (ENG-274, ENG-277).** Root paths use the same bounded control-character
+  checks as other workspace declarations, skipping a bad root for the
+  next usable one. Capture declines invalid explicit paths before probing
+  Git. Unresolvable citations, including symlink loops and unknown home
+  users, are dropped independently; missing files remain history anchors.
+  (`identity.py`, `origin.py`, `tests/test_root_controls.py`,
+  `tests/test_unresolvable_pathspecs.py`)
+
 - **Quoted patch labels retain their actual filenames (ENG-269).** Git's
   optional formatting TAB after a complete quoted `---` or `+++` label
   is removed before decoding. A quoted name containing a space now

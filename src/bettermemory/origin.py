@@ -275,11 +275,9 @@ def _resolved(cwd: Path | None) -> Path | None:
     RuntimeError out of `capture` for one), so a cache hit cost a stat more
     on 3.11 and 3.12 than on 3.13 (tests/test_membership_cost.py).
     """
-    if cwd is not None:
-        return Path(os.path.realpath(cwd))
     try:
-        return Path(os.path.realpath(Path.cwd()))
-    except (FileNotFoundError, OSError):
+        return Path(os.path.realpath(cwd if cwd is not None else Path.cwd()))
+    except (OSError, ValueError):
         return None
 
 
@@ -1587,11 +1585,17 @@ def resolve_repo_pathspecs(
             candidate = Path(raw).expanduser()
             if not candidate.is_absolute():
                 candidate = toplevel / candidate
-            candidate = candidate.resolve()
+            try:
+                candidate = candidate.resolve(strict=True)
+            except FileNotFoundError:
+                # Missing claims still anchor history. Resolve strictly
+                # first so symlink loops decline on every Python version;
+                # 3.13+ leaves them unresolved in non-strict mode.
+                candidate = candidate.resolve()
             # Anchored by the directory, not only the spelling: a path
             # spelled in another case on macOS still names this tree.
             rel = relative_to_root(candidate, toplevel)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RuntimeError):
             # Unresolvable, or escapes the repo — git can't filter on
             # something outside its working tree.
             continue

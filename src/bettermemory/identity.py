@@ -385,7 +385,7 @@ def _request_id_of(request_context: Any) -> str | None:
 
 
 def _first_file_root(roots: Any) -> str | None:
-    """The filesystem path of the first `file://` root, None otherwise."""
+    """The first usable `file://` root's bounded path, None otherwise."""
     for root in roots or ():
         uri = str(getattr(root, "uri", "") or "")
         parsed = urlparse(uri)
@@ -399,8 +399,9 @@ def _first_file_root(roots: Any) -> str | None:
         if parsed.netloc and parsed.netloc != "localhost":
             # A UNC host: `file://server/share/dir`.
             path = f"//{parsed.netloc}{path}"
-        if path:
-            return path
+        cleaned = _clean(path, strip_format=False)
+        if cleaned is not None:
+            return cleaned
     return None
 
 
