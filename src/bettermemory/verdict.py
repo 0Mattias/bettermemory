@@ -53,6 +53,13 @@ record's path claims at its home checkout's live view, translated across
 its recorded views, or in a stand-in that confirms by presence and never
 convicts (`verify_anchoring.Anchoring`). A record with no home row, and every
 record when no anchoring is passed, is read at its recorded root as before.
+
+The anchoring also reads the commit leg of every record the caller's
+admission does not count in the caller's checkout (`commit_legs.
+CommitLegs`, ENG-229): at its home checkout's live view, or its recorded
+worktree, where health's estate check reads it; a leg that applies and
+that nothing here reads is not checked, and the verdict is never
+``fresh``. Without anchoring such a record has no commit leg, as before.
 """
 
 from __future__ import annotations
@@ -60,10 +67,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ._response import _DriftPass
+from .commit_legs import CommitLegs, CommitLegUnchecked, unchecked_verdict
 from .models import Memory
 from .origin import Origin
 from .verify_basis import CommitDriftUnread
@@ -95,14 +101,18 @@ class MemoryVerdict:
     """One memory's staleness parts, as `memory_show` emits them.
 
     `commit_drift` is None where the leg does not apply (never verified,
-    no repository, the caller elsewhere, no anchor, or every anchor
-    escaping the repository or a phantom); `staleness_verdict` is one of
-    ``fresh`` / ``spot_check_recommended`` / ``spot_check_required``,
-    before the trust rule. `commit_drift_unread` is why the history was
+    no repository named, no anchoring to read it away from the caller,
+    no anchor, or every anchor escaping the repository or a phantom);
+    `staleness_verdict` is one of ``fresh`` / ``spot_check_recommended``
+    / ``spot_check_required``, before the trust rule. `commit_drift_unread` is why the history was
     not read where the leg applies (`verify_basis.CommitDriftUnread`), and
     None elsewhere: `commit_drift` is None there too, the verdict is
     ``spot_check_required``, and the surface flags the row
-    (`ResponseBuilder.apply_commit_drift_unread`)."""
+    (`ResponseBuilder.apply_commit_drift_unread`). `commit_drift_unchecked`
+    is why nothing here read a leg that applies (`commit_legs.
+    CommitLegUnchecked`, ENG-229), and None elsewhere: `commit_drift` is
+    None there too, the verdict is never ``fresh``, and the surface flags
+    the row (`ResponseBuilder.apply_commit_drift_unchecked`)."""
 
     id: str
     verification: VerificationStatus
@@ -110,6 +120,7 @@ class MemoryVerdict:
     commit_drift: CommitDriftStatus | None
     staleness_verdict: str
     commit_drift_unread: CommitDriftUnread | None = None
+    commit_drift_unchecked: CommitLegUnchecked | None = None
 
 
 @dataclass(frozen=True)
@@ -136,12 +147,14 @@ def resolve_verdicts(
     """Every memory's verdict, in order, resolving each commit leg the memo
     does not hold and keeping what the pass resolved in `_DRIFT_MEMO`.
 
-    `admission` is what the commit legs are read under
-    (`admission.DriftScope`: the surface's admission for the caller, or
-    the records one decided); a record it does not count, and every
-    record when it is None, has no commit leg (`_open_pass`).
+    `admission` is what the commit legs are read under in the caller's
+    checkout (`admission.DriftScope`: the surface's admission for the
+    caller, or the records one decided); a record it does not count, and
+    every record when it is None, is read where `anchoring` reads it
+    (`commit_legs.CommitLegs`), and has no commit leg with neither.
 
-    One pass over the batch (`_response._DriftPass`), so the rows share
+    One pass over the batch at each root (`_response._DriftPass`), so the
+    rows share
     what a search's hits share: the head's history read once, a walk
     forked once per anchor, the files beside the history stamped once.
     The memo is filled at the end, while the head and every keyed file
@@ -149,8 +162,10 @@ def resolve_verdicts(
     commit landed keeps nothing and the next call resolves again.
 
     `memory_show` calls it with one memory (`memory_verdict`)."""
-    drift = _open_pass(caller_origin, admission)
-    if anchoring is not None:
+    drift = _open_legs(caller_origin, admission, anchoring)
+    if drift is not None:
+        drift.prime([memory.id for memory in memories])
+    elif anchoring is not None:
         anchoring.prime([memory.id for memory in memories])
     out: list[MemoryVerdict] = []
     for memory in memories:
@@ -181,10 +196,10 @@ def memoised_verdicts(
     process runs.
 
     A row reads a full `MemoryVerdict` when its commit leg needs no git
-    (never verified, no repository, the caller outside the memory's
-    repository or in none, no anchor and no declared claim) or the memo
-    holds its key; the result is then equal to what `resolve_verdicts`
-    returns for it. Every other row is an `UnresolvedVerdict`: after a
+    (never verified, no repository named, no anchor and no declared
+    claim, no home row, a cited commit no live checkout here holds) or
+    the memo holds its key; the result is then equal to what
+    `resolve_verdicts` returns for it. Every other row is an `UnresolvedVerdict`: after a
     commit (every key moves with the head), for a row never resolved, and
     wherever the repository's files do not settle a key at all (off
     POSIX, a reftable repository, a `config` that moves the working
@@ -192,8 +207,10 @@ def memoised_verdicts(
     files only (the head, the attribute files a governed claim reads, the
     files beside the history), so the call is safe on a hook's deadline.
     `admission` as for `resolve_verdicts`."""
-    drift = _open_pass(caller_origin, admission)
-    if anchoring is not None:
+    drift = _open_legs(caller_origin, admission, anchoring)
+    if drift is not None:
+        drift.prime([memory.id for memory in memories])
+    elif anchoring is not None:
         anchoring.prime([memory.id for memory in memories])
     return [
         _verdict(
@@ -229,24 +246,23 @@ def memory_verdict(
     return verdict
 
 
-def _open_pass(
-    caller_origin: Origin | None, admission: DriftScope | None
-) -> _DriftPass | None:
-    """The pass a call's commit legs run through, under `admission`, or
-    None when there is none to read under (a pass never counts a record
-    no admission admitted) or the caller is in no repository (no
-    directory, or no remote), where no memory's leg applies, as
-    `verify.compute_commit_drift` returns None there."""
-    if caller_origin is None or admission is None:
-        return None
-    if caller_origin.cwd is None or caller_origin.repo is None:
-        return None
-    return _DriftPass(Path(caller_origin.cwd), caller_origin.repo, admission)
+def _open_legs(
+    caller_origin: Origin | None,
+    admission: DriftScope | None,
+    anchoring: Anchoring | None,
+) -> CommitLegs | None:
+    """Where a call's commit legs are read (`commit_legs.CommitLegs`): in
+    the caller's checkout under `admission`, and with `anchoring` where
+    the estate check reads every other record's; None when neither reads
+    any (no admission or no repository at the caller, and no anchoring),
+    where no memory's leg applies."""
+    legs = CommitLegs(caller_origin, admission, anchoring)
+    return legs if legs.active else None
 
 
 def _verdict(
     memory: Memory,
-    drift: _DriftPass | None,
+    drift: CommitLegs | None,
     *,
     now: datetime,
     stale_after_days: int,
@@ -282,10 +298,12 @@ def _verdict(
     )
     commit_drift: CommitDriftStatus | None = None
     unread: CommitDriftUnread | None = None
+    unchecked: CommitLegUnchecked | None = None
     if drift is not None:
-        # The cwd-aware commit leg, claim-anchored and memoised exactly as
-        # the search's per-hit count is (`_DriftPass.lookup`), counted from
-        # the record's own stamp.
+        # The commit leg, claim-anchored and memoised exactly as the
+        # search's per-hit count is (`_DriftPass.lookup`), counted from the
+        # record's own stamp where `CommitLegs` reads it: in the caller's
+        # checkout, or at the record's home or recorded worktree.
         answered, resolved = drift.lookup(
             memory, memory.last_verified_at, resolve=resolve
         )
@@ -295,6 +313,8 @@ def _verdict(
             )
         if isinstance(resolved, CommitDriftUnread):
             unread = resolved
+        elif isinstance(resolved, CommitLegUnchecked):
+            unchecked = resolved
         elif resolved is not None:
             commit_drift = commit_drift_status(resolved)
     staleness_verdict = compute_staleness_verdict(
@@ -316,9 +336,15 @@ def _verdict(
         path_drift=path_drift,
         commit_drift=commit_drift,
         # A history not read never reads fresh: the row's standing could
-        # not be established, as under `apply_trust_unavailable`.
+        # not be established, as under `apply_trust_unavailable`. Nor does
+        # a leg nothing here read (ENG-229).
         staleness_verdict=(
-            "spot_check_required" if unread is not None else staleness_verdict
+            "spot_check_required"
+            if unread is not None
+            else unchecked_verdict(staleness_verdict)
+            if unchecked is not None
+            else staleness_verdict
         ),
         commit_drift_unread=unread,
+        commit_drift_unchecked=unchecked,
     )

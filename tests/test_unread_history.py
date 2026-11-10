@@ -1688,3 +1688,204 @@ def test_an_entry_checked_against_other_cuts_is_no_base() -> None:
     found = origin_history.base_for("/r", ("g",), frozenset({"a" * 40}))
     assert found is not None and found[:2] == ("1" * 40, [_T0])
     assert found[2] is cut
+
+
+@pytest.mark.usefixtures("discovery")
+@pytest.mark.parametrize("keyed", [True, False], ids=["keyed", "from-head"])
+def test_a_fetch_that_cuts_the_history_while_it_is_read_keeps_nothing(
+    keyed: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cuts are read before the log. A `git fetch --depth=2` landing
+    in between cut the history the log read to 2 of its 5 commits, and
+    the 2 dates were kept as the head's whole history, so the next read
+    answered 2 as well (ENG-233). The cuts are read again after the log:
+    where they moved, the read answers `shallow`, counted as a failure,
+    and nothing is kept; the next read finds the clone cut and answers
+    `shallow` too, until an unshallow reads all 5."""
+    source = _repo(tmp_path, "source")
+    for index in range(5):
+        _commit(
+            source,
+            f"c{index}",
+            when=_T0 + timedelta(days=index),
+            files={f"notes{index}.md": "a\n"},
+        )
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", source.as_uri(), str(clone))
+    assert _git(clone, "rev-list", "--count", "HEAD") == "5", "premise: whole"
+    if not keyed:
+        monkeypatch.setattr(origin_history, "located_key", lambda cwd: None)
+        monkeypatch.setattr(origin, "toplevel_and_head_from_files", lambda cwd: None)
+    real = origin_dates._read_author_timestamps
+    fetched: list[str] = []
+
+    def cut_meanwhile(*args: Any, **kwargs: Any) -> Any:
+        if not fetched:
+            fetched.append(_git(clone, "fetch", "-q", "--depth=2", "origin"))
+        return real(*args, **kwargs)
+
+    _caches.clear_all()
+    monkeypatch.setattr(origin_dates, "_read_author_timestamps", cut_meanwhile)
+    failed = origin.failed_git_calls()
+    assert origin_dates.commit_author_timestamps(clone) is CommitDriftUnread.SHALLOW
+    assert origin.failed_git_calls() > failed
+    assert (clone / ".git" / "shallow").exists(), "premise: the fetch cut it"
+    assert not origin_history._TIMESTAMPS_MEMO, "nothing kept"
+    monkeypatch.setattr(origin_dates, "_read_author_timestamps", real)
+    assert origin_dates.commit_author_timestamps(clone) is CommitDriftUnread.SHALLOW
+    _git(clone, "fetch", "-q", "--unshallow", "origin")
+    history = origin_dates.commit_author_timestamps(clone)
+    assert isinstance(history, list) and len(history) == 5
+
+
+def _old_dated_head(
+    tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Origin, str, str, list[Any]]:
+    """A repository whose cited file one commit since the stamp edited (1 on
+    the dates), under a head authored before the stamp that edits another
+    file, as a rebased or cherry-picked commit is: a cut at the head hides
+    the edit from every log, and the path-filtered one then lists nothing
+    (ENG-233's review)."""
+    repo = _repo(tmp_path)
+    _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    cited = _write(
+        store, caller, monkeypatch, f"widget rule a lives in {repo / 'notes0.md'}"
+    )
+    _commit(repo, "post", when=_T1, files={"notes0.md": "a1\n"})
+    head = _commit(
+        repo, "old-dated", when=_T0 + timedelta(days=1), files={"other.md": "o\n"}
+    )
+    return repo, caller, cited, head, store.load_all()
+
+
+@pytest.mark.usefixtures("keyed_by")
+def test_a_cut_written_after_the_history_was_read_narrows_no_count(
+    tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``fetch --depth`` lands after the pass read the whole history (no
+    cut) and before the path-filtered log a row narrows on: git stopped
+    that log at the cut, listed nothing, and the count narrowed to none,
+    `fresh`, kept until the head moved (ENG-233's review, finding 1). The
+    log is checked against the cuts the whole history was: the cut is not
+    among them, so the narrowing is declined, the unnarrowed count stands
+    (1) and nothing is kept. The next search, the cut still there, reads
+    the whole history again under it and answers `shallow`, as one with
+    every memo emptied does."""
+    repo, caller, cited, head, memories = _old_dated_head(
+        tmp_path, memory_dir, monkeypatch
+    )
+    shallow = repo / ".git" / "shallow"
+    real = origin_dates._touching_log
+
+    def cut_then_log(toplevel: Path, form: str, pathspecs: list[str]) -> Any:
+        if not shallow.exists():
+            shallow.write_text(head + "\n", encoding="utf-8")
+        return real(toplevel, form, pathspecs)
+
+    monkeypatch.setattr(origin_dates, "_touching_log", cut_then_log)
+    failed = origin.failed_git_calls()
+    out, _ = _attach(memories, caller, monkeypatch)
+    assert shallow.exists(), "premise: the cut landed mid-pass"
+    hit = _by_id(out)[cited]
+    assert hit["commit_drift_count"] == 1 and "commit_drift_unread" not in hit
+    assert hit["staleness_verdict"] != "fresh"
+    assert origin.failed_git_calls() > failed
+    assert not _response._DRIFT_MEMO, f"nothing kept ({_STORES})"
+    for emptied in (False, True):
+        if emptied:
+            _caches.clear_all()
+        out, _ = _attach(memories, caller, monkeypatch)
+        hit = _by_id(out)[cited]
+        assert hit["commit_drift_unread"] is True, emptied
+        assert hit["verification"]["recommendation"] == unread_recommendation(
+            CommitDriftUnread.SHALLOW
+        )
+
+
+@pytest.mark.usefixtures("keyed_by")
+def test_a_row_kept_before_a_cut_is_read_again_under_it(
+    tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The memo keys every row on the shallow file's stamp: a row kept
+    before a ``fetch --depth`` cut the head is read again after it,
+    `shallow`, as a read with every memo emptied answers, where the memo
+    served the count kept before the cut. A cut the head never reaches
+    re-keys the row too, and counts it as before."""
+    repo, caller, cited, head, memories = _old_dated_head(
+        tmp_path, memory_dir, monkeypatch
+    )
+    out, _ = _attach(memories, caller, monkeypatch)
+    assert _by_id(out)[cited]["commit_drift_count"] == 1
+    assert len(_response._DRIFT_MEMO) == 1, f"premise: kept ({_STORES})"
+    shallow = repo / ".git" / "shallow"
+    shallow.write_text(head + "\n", encoding="utf-8")
+    out, _ = _attach(memories, caller, monkeypatch)
+    hit = _by_id(out)[cited]
+    assert hit["commit_drift_unread"] is True
+    assert "commit_drift_count" not in hit
+    shallow.write_text("f" * 40 + "\n", encoding="utf-8")
+    out, calls = _attach(memories, caller, monkeypatch)
+    assert _by_id(out)[cited]["commit_drift_count"] == 1
+    assert any("log" in call for call in calls), "read again, not served"
+
+
+@pytest.mark.usefixtures("keyed_by")
+def test_a_depth_fetch_undone_inside_the_path_log_never_reads_fresh(
+    tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``fetch --depth`` and an ``--unshallow`` both inside the
+    path-filtered log: git read the cut and stopped the log at it, and the
+    cuts read before and after the log are the same, none. The shallow
+    file's directory, held across the log, moved, so the narrowing is
+    declined: the current call keeps the unnarrowed count, never reads
+    fresh and caches nothing. The next search counts 1 and keeps it."""
+    repo, caller, cited, head, memories = _old_dated_head(
+        tmp_path, memory_dir, monkeypatch
+    )
+    shallow = repo / ".git" / "shallow"
+    real = origin._git
+    cut: list[bool] = []
+
+    def cut_inside(cwd: Path, *args: str, **kwargs: Any) -> Any:
+        if not cut and any(a.startswith("--format=%aI") for a in args):
+            cut.append(True)
+            shallow.write_text(head + "\n", encoding="utf-8")
+            try:
+                return real(cwd, *args, **kwargs)
+            finally:
+                shallow.unlink()
+        return real(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin, "_git", cut_inside)
+    failed = origin.failed_git_calls()
+    out, _ = _attach(memories, caller, monkeypatch)
+    assert cut, "premise: the path log ran under the cut"
+    hit = _by_id(out)[cited]
+    assert (hit["commit_drift_count"], hit["staleness_verdict"]) == (
+        1,
+        "spot_check_required",
+    ), "a transient cut must not suppress drift even for the current call"
+    assert origin.failed_git_calls() > failed
+    assert not _response._DRIFT_MEMO, f"nothing kept ({_STORES})"
+    out, _ = _attach(memories, caller, monkeypatch)
+    assert _by_id(out)[cited]["commit_drift_count"] == 1
+    assert len(_response._DRIFT_MEMO) == 1, f"kept ({_STORES})"
+
+
+def test_a_kept_history_is_served_only_under_the_cuts_it_was_checked_against() -> None:
+    """`origin_history.recall` returns kept dates while the cuts read now
+    are among those they were checked against, none where another is
+    listed or the file cannot be read; `checked_cut` names them."""
+    key = ("/r", "1" * 40)
+    assert origin_history.checked_cut(key) is None
+    cut = frozenset({"a" * 40})
+    assert origin_history.remember(key, [_T0], ("g",), cut)
+    assert origin_history.recall(key, ("g",), cut) == ([_T0], None)
+    assert origin_history.recall(key, ("g",), frozenset()) == ([_T0], None)
+    assert origin_history.recall(key, ("h",), cut) == ([_T0], None)
+    assert origin_history.recall(key, ("g",), frozenset({"b" * 40})) == (None, None)
+    assert origin_history.recall(key, ("g",), cut | {"b" * 40}) == (None, None)
+    assert origin_history.recall(key, ("g",), None) == (None, None)
+    assert origin_history.checked_cut(key) == cut

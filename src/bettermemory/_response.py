@@ -57,6 +57,8 @@ from .claims import Claim, governed_claim_paths, load_claims
 
 if TYPE_CHECKING:
     from .admission import Admission, DriftScope
+    from .commit_legs import CommitLegs, CommitLegUnchecked
+    from .verify_anchoring import Anchoring
 from .verify import (
     ResolvedCommitDrift,
     commit_drift_anchor_paths,
@@ -133,9 +135,9 @@ SIMILAR_HITS_SHOWN = 5
 # during which the head, a keyed
 # file or the index moved, even to move back, stores nothing
 # (`origin_gitfiles.files_held`, `githead.signature`). What the key does not see
-# (git's configuration outside the repository's config file, a shallow
-# clone deepened under an unchanged head, a change within one tick of the
-# filesystem's clock that reuses an inode number, and the rest) is listed
+# (git's configuration outside the repository's config file, a change
+# within one tick of the filesystem's clock that reuses an inode number,
+# and the rest) is listed
 # on `_DriftPass`. The values are frozen,
 # so a hit can share one without a later hit's edit reaching it. Bounded
 # LRU; the lock makes each look-up-and-touch and each merge-and-evict
@@ -346,9 +348,10 @@ class _DriftPass:
     environment, and what they set: a ``core.attributesFile`` naming a
     file other than
     the default, a diff driver, the program a textconv runs); the system
-    attributes file; a shallow clone deepened under an unchanged head
-    (replace refs and grafts move no answer:
-    `origin_history.AS_STORED_ENV`); and a change that leaves every
+    attributes file (replace refs and grafts move no answer:
+    `origin_history.AS_STORED_ENV`; a shallow file made, deepened or
+    removed under an unchanged head is a new key, as the walk files
+    stamp it); and a change that leaves every
     stamped field
     and every held directory as it was: a file rewritten, or a head
     moved and moved back, within one tick of the filesystem's clock
@@ -366,10 +369,22 @@ class _DriftPass:
     cost (`origin_gitfiles._hold_directory`).
     """
 
-    def __init__(self, cwd: Path, caller_repo: str, admission: DriftScope) -> None:
+    def __init__(
+        self,
+        cwd: Path,
+        caller_repo: str,
+        admission: DriftScope,
+        *,
+        at_home: bool = False,
+    ) -> None:
         self.cwd = cwd
         self.caller_repo = caller_repo
         self.admission = admission
+        # A pass at the root a record's leg resolves to away from the
+        # caller (`commit_legs.CommitLegs`): its records need name no
+        # remote, since the root was read from their home or recorded
+        # worktree, not matched by URL.
+        self.at_home = at_home
         self.settled = toplevel_and_head_from_files(cwd)
         # The root and the head the rows key on (`_keyed_pair`).
         self._keyed = self.settled
@@ -435,6 +450,21 @@ class _DriftPass:
             note_unread(self._timestamps)
         return self._timestamps
 
+    def history_applies(self) -> bool:
+        """Whether a history applies at the pass's root, for a row whose leg
+        resolved to None (`commit_legs.CommitLegs`): the whole history's
+        answer where the pass read it; else yes where the root and the head
+        resolved (`located`: a repository whose branch has a commit, which
+        git reads a history at), with no log; and the whole history read
+        only where neither settles it. A leg on the walk from a stamp's head
+        reads no dates, and reading them to answer this cost a cold show 2 s
+        on a home of 400,000 commits (ENG-229's review)."""
+        if self._history_read:
+            return self._timestamps is not None
+        if self.located() is not None:
+            return True
+        return self.timestamps() is not None
+
     def _history_at(self, head: str) -> bool:
         """Whether the whole history this pass read, if it read one, was
         read at `head`: a row keyed under another head than the history's is
@@ -494,7 +524,7 @@ class _DriftPass:
         if last_verified_at is None:
             return True, None
         origin_repo = record.origin.repo if record.origin else None
-        if origin_repo is None:
+        if origin_repo is None and not self.at_home:
             return True, None
         if not self.admission.drift_counts(record.id):
             return True, None
@@ -711,9 +741,9 @@ class ResponseBuilder:
         path_drift only; the commit-drift contribution is folded in by
         `attach_commit_drift_counts` once the per-search timestamp list
         has been read. Initial verdict is correct for hits where commit
-        drift isn't applicable (caller not in a repo, hit from a
-        different repo, hit never verified) — those verdicts never get
-        revisited.
+        drift isn't applicable (hit never verified, naming no
+        repository, citing nothing a commit could move) — those verdicts
+        never get revisited.
 
         `path_drift_checked` / `path_drift_missing` stay around as cheap
         triage counts on every hit. `path_drift` is the rich shape that
@@ -1207,6 +1237,28 @@ class ResponseBuilder:
         ):
             verification["recommendation"] = unread_recommendation(why)
 
+    @staticmethod
+    def apply_commit_drift_unchecked(
+        row: dict[str, Any], why: CommitLegUnchecked
+    ) -> None:
+        """Mutate one stamped row whose commit leg applies and that nothing
+        here read (`commit_legs.CommitLegUnchecked`, ENG-229): the count
+        stays omitted, `commit_drift_unchecked: true` says it was not
+        checked, the verdict is never ``fresh`` (at least
+        ``spot_check_recommended``), and the recommendation names the cause,
+        unless the trust rule's names its own."""
+        from .commit_legs import unchecked_recommendation, unchecked_verdict
+
+        row["commit_drift_unchecked"] = True
+        row["staleness_verdict"] = unchecked_verdict(row["staleness_verdict"])
+        verification = row.get("verification")
+        if (
+            isinstance(verification, dict)
+            and verification.get("status") != "remote"
+            and not row.get("trust_unavailable")
+        ):
+            verification["recommendation"] = unchecked_recommendation(why)
+
     def apply_trust(
         self,
         row: dict[str, Any],
@@ -1249,14 +1301,20 @@ class ResponseBuilder:
         *,
         caller_origin: Origin,
         admission: DriftScope | None = None,
+        anchoring: Anchoring | None = None,
     ) -> None:
         """Mutate `out` in-place, adding `commit_drift_count` to each hit
-        whose memory is anchored to the caller's current repo and has been
-        verified at some point. `admission` is what the counts are read
-        under (`admission.DriftScope`; the request's LINKS admission on
-        `memory_search`): a hit whose home it does not count in the
-        caller's repository (`drift_counts`) carries no count, and with no
-        admission no hit does.
+        whose memory has been verified and whose commit leg applies, where
+        `commit_legs.CommitLegs` reads it. `admission` is what the counts
+        are read under in the caller's checkout (`admission.DriftScope`;
+        the request's LINKS admission on `memory_search`): a hit whose
+        home it counts there (`commit_legs.counted_at_caller`) is counted
+        in the caller's checkout, with no admission none is. With
+        `anchoring` every other hit is counted where health's estate check
+        counts it, at its home's live view (`ClaimAnchor.commit_root`) or
+        its recorded worktree, or carries `commit_drift_unchecked: true`
+        where nothing here reads it (`apply_commit_drift_unchecked`,
+        ENG-229); without it, such a hit carries no count, as before.
 
         The signal mirrors `path_drift_checked` / `path_drift_missing` in
         KIND — a cheap integer the model self-triages on, picking which hit
@@ -1322,13 +1380,17 @@ class ResponseBuilder:
         a zero knows whether it could be hiding a merged branch that
         predates the stamp.
 
+        Each further root a hit's leg resolves to away from the caller
+        pays what the caller's checkout pays: its history once per search,
+        and each hit there its narrowing, so a search over hits homed in
+        `r` other repositories forks at most `r` more history reads.
+
         Omitted (key absent from the dict, not set to null) when:
 
-        - caller is not currently in any repo (`caller_origin.repo` is None),
-        - git was unreachable in the caller's cwd,
-        - the hit's memory has no `origin.repo` (legacy / global memory),
-        - the hit's memory is not of the caller's project (its home, by
-          `admission`),
+        - the hit's memory names no repository (written outside any git
+          working tree and stamped at no commit),
+        - the hit's memory is counted nowhere here: not in the caller's
+          checkout (by `admission`), and no `anchoring` was passed,
         - the hit's memory has never been verified (no anchor to count from),
         - the hit's memory makes no claims this repo's commits could
           invalidate — no cited/attested path anchors AND no declared
@@ -1337,7 +1399,12 @@ class ResponseBuilder:
           `verify.resolve_commit_drift_count`),
         - the history was not read (a timeout, an error, a history past
           the memo's budget, a shallow clone); the hit then carries
-          `commit_drift_unread: true` (`apply_commit_drift_unread`).
+          `commit_drift_unread: true` (`apply_commit_drift_unread`),
+        - nothing here read the leg (its home checkout has no live view
+          here and the caller's checkout does not hold the cited commit,
+          no history applies where it resolves, the recorded worktree is
+          gone); the hit then carries
+          `commit_drift_unchecked: true` (`apply_commit_drift_unchecked`).
 
         Absence-as-signal IS the right analogy to `path_drift` here — but
         only once the surface is named, because `path_drift` answers to two
@@ -1356,35 +1423,24 @@ class ResponseBuilder:
         accurate about their own surface; don't reconcile this paragraph
         into the other's wording.
         """
-        drift = _open_drift_pass(caller_origin, admission, hits)
-        if drift is None:
+        from .commit_legs import CommitLegs
+
+        # The repo root and the head, from the repository's files (the
+        # pass reads them as it opens). They key the whole-history log and
+        # the per-hit memo; where the files do not settle them, git's
+        # answer does, where `githead.locate` reads the same (`_keyed_pair`).
+        # The caller's history is read as the search opens (`eager`), at
+        # the root and the head resolved ONCE for the whole search
+        # (`located`: the per-hit anchor resolution would otherwise pay a
+        # `git rev-parse` fork+exec per hit); where none applies there, no
+        # hit is counted in the caller's checkout. A history that applies
+        # and was not read opens the pass all the same: a hit on the walk
+        # counts, and one on the dates reads unread.
+        drift = CommitLegs(caller_origin, admission, anchoring, eager=True)
+        if not drift.active:
             return
-        # Build the id → memory side-map from the in-memory `memories`
-        # list (already loaded by the caller for the search itself),
-        # avoiding a second store round-trip per hit. The full record is
-        # needed (not just origin/verified_paths): the claim-anchored
-        # narrowing derives anchors from the BODY's citations too,
-        # matching what memory_show does. Without surface parity here,
-        # the loud search surface would nag spot_check_recommended on a
-        # memory memory_show reads as fresh — defeating the policy on
-        # its highest-traffic surface.
-        memory_by_id = {m.id: m for m in memories}
-        for hit_dict, hit in zip(out, hits):
-            if hit.last_verified_at is None:
-                continue
-            record = memory_by_id.get(hit.id)
-            if record is None:
-                continue
-            # The gates, the key, the memo and the resolution are the
-            # pass's (`_DriftPass.lookup`), shared with `memory_show`
-            # through `verdict.resolve_verdicts`.
-            _, resolved = drift.lookup(record, hit.last_verified_at)
-            if resolved is None:
-                # Not applicable: no repo, another repo, no anchor, or the
-                # anchors all escape this repo or are phantoms. Omit the
-                # field entirely.
-                continue
-            _stamp_hit_drift(hit_dict, hit, resolved)
+        drift.prime(h.id for h in hits)
+        _count_hits(out, hits, memories, drift)
         drift.store()
 
     def attach_depends_on_resolved(  # type: ignore[no-untyped-def]
@@ -1806,43 +1862,53 @@ class ResponseBuilder:
                 hit_dict["recent_negative_outcomes"] = entries
 
 
-def _open_drift_pass(
-    caller_origin: Origin, admission: DriftScope | None, hits: list[MemoryHit]
-) -> _DriftPass | None:
-    """Take the caller and admission; return the search's opened drift pass, or None."""
-    if caller_origin.repo is None or caller_origin.cwd is None:
-        return None
-    if admission is None:
-        # No admission, no pass: no record's drift is counted for a
-        # caller that admitted none.
-        return None
-    # The repo root and the head, from the repository's files (the
-    # pass reads them as it opens). They key the whole-history log and
-    # the per-hit memo; where the files do not settle them, git's answer
-    # below does, where `githead.locate` reads the same (`_keyed_pair`).
-    admission.prime(h.id for h in hits)
-    drift = _DriftPass(Path(caller_origin.cwd), caller_origin.repo, admission)
-    # The history is read at the repo root and the head resolved ONCE for
-    # the whole search (`located`: the per-hit anchor resolution would
-    # otherwise pay a `git rev-parse` fork+exec per hit), from git where
-    # the files did not settle them; the reachable walks are keyed on the
-    # same head. A None pair is tolerated (the resolver re-derives; a hit
-    # with an anchor then counts in author-date space). A history that
-    # applies and was not read opens the pass all the same: a hit on the
-    # walk counts, and one on the dates reads unread.
-    if drift.timestamps() is None:
-        return None
-    return drift
+def _count_hits(
+    out: list[dict[str, Any]],
+    hits: list[MemoryHit],
+    memories: Sequence[Any],
+    drift: CommitLegs,
+) -> None:
+    """Take the search's rows and its commit legs; stamp each hit's leg."""
+    # Build the id → memory side-map from the in-memory `memories`
+    # list (already loaded by the caller for the search itself),
+    # avoiding a second store round-trip per hit. The full record is
+    # needed (not just origin/verified_paths): the claim-anchored
+    # narrowing derives anchors from the BODY's citations too,
+    # matching what memory_show does. Without surface parity here,
+    # the loud search surface would nag spot_check_recommended on a
+    # memory memory_show reads as fresh — defeating the policy on
+    # its highest-traffic surface.
+    memory_by_id = {m.id: m for m in memories}
+    for hit_dict, hit in zip(out, hits):
+        if hit.last_verified_at is None:
+            continue
+        record = memory_by_id.get(hit.id)
+        if record is None:
+            continue
+        # The gates, the key, the memo and the resolution are the
+        # passes' (`_DriftPass.lookup`, through `commit_legs.
+        # CommitLegs`), shared with `memory_show` through
+        # `verdict.resolve_verdicts`.
+        _, resolved = drift.lookup(record, hit.last_verified_at)
+        if resolved is None:
+            # Not applicable: no repository, no anchor, or the anchors
+            # all escape the repository or are phantoms. Omit the
+            # field entirely.
+            continue
+        _stamp_hit_drift(hit_dict, hit, resolved)
 
 
 def _stamp_hit_drift(
     hit_dict: dict[str, Any],
     hit: MemoryHit,
-    resolved: ResolvedCommitDrift | CommitDriftUnread,
+    resolved: ResolvedCommitDrift | CommitDriftUnread | CommitLegUnchecked,
 ) -> None:
     """Take one hit and its resolved drift; stamp `hit_dict` with them, return None."""
     if isinstance(resolved, CommitDriftUnread):
         ResponseBuilder.apply_commit_drift_unread(hit_dict, resolved)
+        return
+    if not isinstance(resolved, ResolvedCommitDrift):
+        ResponseBuilder.apply_commit_drift_unchecked(hit_dict, resolved)
         return
     # Additive, claim-carrying hits only; mirrors
     # `CommitDriftStatus.to_dict`'s claim_drift block so both

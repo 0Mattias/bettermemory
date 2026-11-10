@@ -259,14 +259,24 @@ def _clear_timestamps_memo() -> None:
 
 
 def recall(
-    key: Key, guard: Guard | None
+    key: Key, guard: Guard | None, cut: frozenset[str] | None
 ) -> tuple[list[datetime] | None, HistoryUnread | None]:
     """``(dates, failure)`` for `key`: the dates kept for it (the stored
     list itself), or None; and why a read for it failed less than
-    `_FAILURE_SECONDS` ago under `guard`, where none is kept, or None."""
+    `_FAILURE_SECONDS` ago under `guard`, where none is kept, or None.
+
+    The dates are returned only while `cut`, the commits the ``shallow``
+    file lists now (`cuts`), are among those they were checked against:
+    their history reaches none of them, so git reads it whole under them.
+    A shallow file that lists another commit (a ``fetch --depth`` since
+    they were kept), or that cannot be read, may cut the history, and the
+    caller reads it again under the file as it is (ENG-233's review: the
+    path-filtered log a row narrows on is read under it, and narrowed a
+    count against a history the cut would have hidden). A clone
+    unshallowed since lists none, and keeps them."""
     with _TIMESTAMPS_MEMO_LOCK:
         entry = _TIMESTAMPS_MEMO.get(key)
-        if entry is not None:
+        if entry is not None and cut is not None and cut <= entry.cut:
             _TIMESTAMPS_MEMO.move_to_end(key)
             return entry.dates, None
         failed = _TIMESTAMPS_FAILED.get(key)
@@ -278,6 +288,15 @@ def recall(
                 return None, why
             del _TIMESTAMPS_FAILED[key]
     return None, None
+
+
+def checked_cut(key: Key) -> frozenset[str] | None:
+    """The commits the ``shallow`` file listed when the history kept for
+    `key` was checked against it, none of which that history reaches; None
+    where none is kept. Read without touching the entry's place."""
+    with _TIMESTAMPS_MEMO_LOCK:
+        entry = _TIMESTAMPS_MEMO.get(key)
+    return None if entry is None else entry.cut
 
 
 def base_for(
@@ -469,11 +488,24 @@ def cuts(start: Path, *, walk: bool = False) -> frozenset[str] | None:
     cut hid the commit that changed a claim, and the count read 0). Empty
     where there is no such file; None where the repository's files or the
     file cannot be read, or the file is longer than `_CUTS_MAX` bytes."""
+    path = shallow_file(start, walk=walk)
+    return None if path is None else cuts_in(path)
+
+
+def shallow_file(start: Path, *, walk: bool = False) -> Path | None:
+    """The ``shallow`` file of the repository at `start`, in its common
+    directory, found as `cuts` finds it; None where the files read no
+    repository there."""
     gd = githead.gitdir_at(start) or githead.locate(start, walk=walk)
-    if gd is None:
-        return None
+    return None if gd is None else gd.commondir / "shallow"
+
+
+def cuts_in(path: Path) -> frozenset[str] | None:
+    """The commits the ``shallow`` file at `path` lists (`cuts`): empty
+    where it is not there, None where it cannot be read or is longer than
+    `_CUTS_MAX` bytes."""
     try:
-        with open(gd.commondir / "shallow", "rb") as handle:
+        with open(path, "rb") as handle:
             raw = handle.read(_CUTS_MAX + 1)
     except FileNotFoundError:
         return frozenset()
@@ -627,7 +659,9 @@ __all__ = [
     "Walked",
     "author_dates",
     "base_for",
+    "checked_cut",
     "cuts",
+    "cuts_in",
     "git_counts",
     "given_up_since",
     "history_guard",
@@ -640,6 +674,7 @@ __all__ = [
     "recall",
     "remember",
     "remember_failure",
+    "shallow_file",
     "seconds",
     "unanswered",
     "unwalked",

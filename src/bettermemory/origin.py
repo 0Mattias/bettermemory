@@ -1175,10 +1175,11 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
 # and removed while git ran is not kept, nor is a walk during which the
 # index was written. Where they cannot be read (under GIT_DIR and the
 # variables like it; GIT_INDEX_FILE is set; the index is split), no walk
-# is kept. What the stamps do not see
-# (git's configuration outside the repository's own config files, a
-# shallow clone deepened under an unchanged head, and the
-# two changes undone mid-walk `walk_files_signature` names) reads the
+# is kept. The shallow file is stamped too, so a clone made shallow,
+# deepened or unshallowed under an unchanged head keys a new walk. What
+# the stamps do not see (git's configuration outside the repository's
+# own config files, and the changes undone mid-walk
+# `walk_files_signature` names) reads the
 # memoised walk until the head moves; while files are created and removed
 # in the root steadily, no walk is kept (`_hold_directory`). Bounded so a
 # store with many distinct anchors cannot grow it without limit. Only a

@@ -30,6 +30,7 @@ from typing import Any
 import pytest
 
 from bettermemory import githead, location
+from bettermemory.commit_legs import CommitLegUnchecked
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.machine import MachineIdentity, open_machine
@@ -744,7 +745,13 @@ def test_a_project_with_no_live_checkout_reads_every_path_claim_unconfirmed(
         {"path": f"{old}/src/b.py", "reason": UNANCHORED},
         {"path": "src/a.py", "reason": "no_live_checkout"},
     ]
-    assert anchored.staleness_verdict == "fresh"
+    # No path claim convicts, and no checkout here holds the commit the
+    # leg would count from: the commit leg is not checked, so the verdict
+    # is never fresh (ENG-229).
+    assert anchored.commit_drift_unchecked == CommitLegUnchecked(
+        "unconfirmed", "no_live_checkout"
+    )
+    assert anchored.staleness_verdict == "spot_check_recommended"
     assert rc3.path_drift.claim_anchored_missing
 
 

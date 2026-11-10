@@ -103,11 +103,15 @@ def _show_verdict(deps: ToolHandlers, memory: Memory) -> MemoryVerdict:
     # Commit-drift is the cwd-aware sibling of verification: when the
     # caller's project is the memory's (its home, through the LINKS
     # admission: `Admission.drift_counts`, design 3.5), count commits
-    # authored since the last verify in the caller's checkout.
-    # Stays null when the memory is another project's or the
-    # memory has no anchor to count from — emitting an "unknown"
-    # branch every consumer would have to filter is worse than
-    # silence, mirroring path_drift's null-when-clean contract.
+    # authored since the last verify in the caller's checkout; for any
+    # other memory, where health's estate check counts them, at its home
+    # checkout's live view or its recorded worktree (`commit_legs`,
+    # ENG-229), and where nothing here reads them, say so
+    # (`commit_drift_unchecked`) and never read fresh.
+    # Stays null when the memory names no repository or has no anchor to
+    # count from — emitting an "unknown" branch every consumer would have
+    # to filter is worse than silence, mirroring path_drift's
+    # null-when-clean contract.
     # The count is claim-anchored: narrowed to commits that touched
     # the memory's cited/attested paths (a memory anchored to
     # `[/etc/foo]` reads as `clean` when the project moved but
@@ -123,7 +127,8 @@ def _show_verdict(deps: ToolHandlers, memory: Memory) -> MemoryVerdict:
     # and the 15-vs-3 measurement live on `verdict_from_signals`.
     # The caller is resolved once (design 3.1): its anchoring reads the
     # record's claims where design 3.6 reads them, and its LINKS admission
-    # decides whether the commit leg is counted here at all.
+    # decides whether the commit leg is counted in the caller's checkout
+    # or where the anchoring reads it.
     from ..admission import Admission
     from ..membership import LINKS
 
@@ -131,7 +136,7 @@ def _show_verdict(deps: ToolHandlers, memory: Memory) -> MemoryVerdict:
     links = Admission.of(LINKS, caller)
     return memory_verdict(
         memory,
-        caller_origin=_h.capture_origin() if links.drift_counts(memory.id) else None,
+        caller_origin=_h.capture_origin(),
         now=utcnow(),
         stale_after_days=deps.config.behavior.verification_stale_days,
         anchoring=anchoring,
@@ -206,6 +211,11 @@ def _show_response(
         # The commit leg applies and its history was not read: `commit_drift`
         # stays null, the row says why and is not fresh.
         deps.responses.apply_commit_drift_unread(response, shown.commit_drift_unread)
+    elif shown.commit_drift_unchecked is not None:
+        # The commit leg applies and nothing here read it (ENG-229).
+        deps.responses.apply_commit_drift_unchecked(
+            response, shown.commit_drift_unchecked
+        )
     return response
 
 

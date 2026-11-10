@@ -68,6 +68,7 @@ from ..search import (
 )
 from ..store import MemoryNotFoundError, Store, TombstonedError
 from ..verdict import memory_verdict
+from ..commit_legs import UNCHECKED_RECOMMENDATIONS
 from ..verify_basis import UNREAD_RECOMMENDATIONS
 from ._shared import Context, _advance_turn, _attach_use_tokens, caller_anchoring
 
@@ -483,6 +484,7 @@ async def memory_search(
         matched_leg,
         current_origin=current_origin,
         links=links,
+        anchoring=anchoring,
     )
     _attach_hit_relations(
         deps, out, hits, memories, links=links, excluded=excluded, now=now
@@ -724,6 +726,7 @@ def _attach_hit_signals(
     *,
     current_origin: Origin,
     links: Admission,
+    anchoring: Anchoring,
 ) -> None:
     """Take the response rows; stamp each hit's leg, commit drift and provenance."""
     # `matched_leg`: which ranker surfaced each hit. Additive and
@@ -744,19 +747,27 @@ def _attach_hit_signals(
     # `path_drift_missing`) so the model can self-triage which hit to
     # expand without a memory_show round-trip. Cold, one git call up
     # front (`commit_author_timestamps`; the repo root and the head come
-    # from the repository's files) and one more (the path-filtered log
-    # inside `resolve_commit_drift_count`) for each hit that has drift
-    # to narrow, so the cold cost scales with `max_results`; warm, the
-    # memoised resolutions answer with no process. The COST paragraph on
-    # `attach_commit_drift_counts` carries the arithmetic. Omitted from
-    # the hit JSON when the signal isn't applicable (caller not in a
-    # repo, hit's memory from a different repo, hit's memory never
-    # verified) rather than emitting a noisy "unknown" branch every
-    # consumer would have to filter. The full `commit_drift` block (with
-    # status / recommendation) is still attached to the expanded top
-    # hit below; the count here is the lightweight triage signal.
+    # from the repository's files), one per other root a hit is counted
+    # at (its home's live view, `commit_legs`), and one more (the
+    # path-filtered log inside `resolve_commit_drift_count`) for each hit
+    # that has drift to narrow, so the cold cost scales with
+    # `max_results`; warm, the memoised resolutions answer with no
+    # process. The COST paragraph on `attach_commit_drift_counts` carries
+    # the arithmetic. Omitted from the hit JSON when the signal isn't
+    # applicable (hit's memory never verified, naming no repository, or
+    # citing nothing a commit could move) rather than emitting a noisy
+    # "unknown" branch every consumer would have to filter; a hit whose
+    # leg nothing here read says so (`commit_drift_unchecked`). The full
+    # `commit_drift` block (with status / recommendation) is still
+    # attached to the expanded top hit below; the count here is the
+    # lightweight triage signal.
     deps.responses.attach_commit_drift_counts(
-        out, hits, memories, caller_origin=current_origin, admission=links
+        out,
+        hits,
+        memories,
+        caller_origin=current_origin,
+        admission=links,
+        anchoring=anchoring,
     )
     # Per-hit `provenance` (schema v7): how the record entered the store,
     # read from the index in one batched query. Omitted while the index
@@ -875,19 +886,30 @@ def _expand_unread(
     deps: ToolHandlers, row: dict[str, Any], shown: MemoryVerdict
 ) -> None:
     """Take the top hit and its expanded verdict; make the hit's
-    `commit_drift_unread` the verdict's. The hit's pass and the expansion
-    read one memo, so they agree save where the expansion resolved the leg
-    again (a key the files do not settle, a head moved in between); the
-    later read is the one the response keeps, as for the count."""
-    if shown.commit_drift_unread is not None:
+    `commit_drift_unread` and `commit_drift_unchecked` the verdict's. The
+    hit's pass and the expansion read one memo, so they agree save where
+    the expansion resolved the leg again (a key the files do not settle, a
+    head moved in between); the later read is the one the response keeps,
+    as for the count."""
+    flagged = (
+        row.pop("commit_drift_unread", None),
+        row.pop("commit_drift_unchecked", None),
+    )
+    if (
+        shown.commit_drift_unread is not None
+        or shown.commit_drift_unchecked is not None
+    ):
         for key in ("commit_drift_count", "commit_drift_basis", "claim_drift"):
             row.pop(key, None)
+    if shown.commit_drift_unread is not None:
         deps.responses.apply_commit_drift_unread(row, shown.commit_drift_unread)
-    elif row.pop("commit_drift_unread", None):
+    elif shown.commit_drift_unchecked is not None:
+        deps.responses.apply_commit_drift_unchecked(row, shown.commit_drift_unchecked)
+    elif any(flagged):
         verification = row.get("verification")
-        if (
-            isinstance(verification, dict)
-            and verification.get("recommendation") in UNREAD_RECOMMENDATIONS
+        if isinstance(verification, dict) and (
+            verification.get("recommendation") in UNREAD_RECOMMENDATIONS
+            or verification.get("recommendation") in UNCHECKED_RECOMMENDATIONS
         ):
             verification["recommendation"] = shown.verification.recommendation
 
@@ -978,9 +1000,7 @@ def _expand_top_hit(
             # turn — see `resolve_commit_drift_count`'s docstring.
             shown = memory_verdict(
                 memory,
-                caller_origin=(
-                    current_origin if links.drift_counts(memory.id) else None
-                ),
+                caller_origin=current_origin,
                 now=now,
                 stale_after_days=deps.config.behavior.verification_stale_days,
                 anchoring=anchoring,

@@ -1673,9 +1673,11 @@ def _commit_leg_escalates(commit_drift_count: int | None) -> bool:
     proof that no successor signal could ever want the seam.
 
     `None` never escalates and never has: it means the leg could not ask
-    (no origin repo, caller elsewhere, git unreachable, no anchor landing
-    in this repo), and absence of evidence is not evidence of drift. The
-    guard is kept explicit here rather than relying on `None > 0` raising.
+    (no origin repo, nothing read the leg, git unreachable, no anchor
+    landing in this repo), and absence of evidence is not evidence of
+    drift; a surface that read nothing caps the row itself
+    (`commit_legs.unchecked_verdict`). The guard is kept explicit here
+    rather than relying on `None > 0` raising.
     """
     if not _COMMIT_DRIFT_ESCALATES:
         return False
@@ -1765,10 +1767,11 @@ def compute_staleness_verdict(
       is available to stand the calendar leg down.
 
     `commit_drift_count` is `None` when the signal isn't applicable
-    (caller not in a repo, hit from a different repo, hit never
-    verified, memory makes no claims this repo's commits could
-    invalidate). None never elevates the verdict on a fresh memory; it
-    behaves the same as 0 there.
+    (hit never verified, naming no repository, read nowhere, memory
+    makes no claims this repo's commits could invalidate). None never
+    elevates the verdict on a fresh memory; it behaves the same as 0
+    there, and a surface that read the leg nowhere caps the row itself
+    (`commit_legs.unchecked_verdict`, ENG-229).
 
     **Why a calendar-stale memory can still read "fresh".** Until
     3.30.0 ``verification.status in {"never", "stale"}`` pre-empted
@@ -1803,7 +1806,7 @@ def compute_staleness_verdict(
       belt-and-braces, but it is the load-bearing carve-out: a memory
       nobody ever checked has no anchor for "since when".
     - ``commit_drift_count is None`` does not demote. None means the
-      leg could not ask — no origin repo, caller elsewhere, git
+      leg could not ask — no origin repo, nothing read the leg, git
       unreachable, or no anchor landing in this repo. Absence of
       evidence is not evidence of freshness, and this is the branch
       that keeps preference/lesson/reflection memories (the ~36% of

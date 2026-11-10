@@ -737,13 +737,34 @@ eighteenth was built.
   check reaches this reader at a live view of the home checkout
   (`cross_repo_drift`): the memories homed in such a checkout now count
   under `unread`, as `error`, where the estate check skipped the root as
-  git unreachable in the home checkout (the review's round G). The
-  per-memory surfaces reach it only where the caller's location
-  resolved into a project: a caller whose own checkout is the
-  unreadable one is resolved outside any repository by the location's
-  discovery, which reads as git does, so no commit leg runs there.
+  git unreachable in the home checkout (the review's round G). A caller
+  whose own checkout is the unreadable one is resolved outside any
+  repository by the location's discovery, which reads as git does; the
+  per-memory surfaces reach this reader there at the memory's home
+  (ENG-229, below).
   (`src/bettermemory/githead.py`, `src/bettermemory/origin_dates.py`,
   `tests/test_unread_history.py`)
+
+- **Read a memory's commit drift at home when the caller cannot count it
+  locally (ENG-229).** Show and search previously reported a verified
+  memory as `fresh` from another repository, a plain folder, a bare clone
+  or `.git`, even when health found changes at its home. They now use
+  the same home checkout as health. An unreadable history is flagged;
+  a missing home or checkout, or a home with no applicable history,
+  carries `commit_drift_unchecked: true`, a cause-specific recommendation
+  and a verdict of at least `spot_check_recommended`. Health lists these
+  unchecked roots as skipped instead of treating them as clean.
+
+  Records written outside a repository and global records keep having
+  no commit leg. A leg with no applicable path no longer reads the
+  home's whole history merely to check that history exists. Hooks keep
+  delivering pointers without verdicts or commit-history reads.
+  (`src/bettermemory/commit_legs.py`, `src/bettermemory/verdict.py`,
+  `src/bettermemory/_response.py`, `src/bettermemory/health.py`,
+  `src/bettermemory/handlers/show.py`,
+  `src/bettermemory/handlers/search.py`, `docs/api.md`,
+  `tests/test_home_commit_leg.py`, `tests/test_verdict.py`,
+  `tests/test_membership_anchoring.py`, `tests/test_symbol_existence.py`)
 
 - **A ref git cannot read is no unborn branch (ENG-220).** `git
   rev-parse --verify -q HEAD` fails on a branch with no commit and on one
@@ -857,6 +878,37 @@ eighteenth was built.
   takes 15 ms. (`src/bettermemory/origin_dates.py`,
   `src/bettermemory/origin_history.py`, `tests/test_unread_history.py`,
   `tests/test_commit_drift_cache.py`)
+
+- **A fetch that cuts the history while it is read keeps nothing
+  (ENG-233).** The dates' read took the `shallow` file's cuts before its
+  log, so a `git fetch --depth` landing in between stopped the log at a
+  cut the read had not listed: a clone of 5 commits read 2 dates, and
+  they were kept as the head's whole history, so every later read of
+  that head answered 2 as well. The cuts are now read again after the
+  log, from the head and under a key alike, and where the file lists
+  others the read answers `shallow`, unread and counted as a failure,
+  and nothing is kept: the next read takes the clone as the file then
+  cuts it (`shallow`, until an unshallow reads all 5). The walk from a
+  stamp's head already read the cuts after its log.
+  The path-filtered log a row narrows on read no cuts at all, so a cut
+  landing after the whole history was read stopped it short: a drifted
+  memory under a head authored before its stamp narrowed to 0 and was
+  kept `fresh` until the head moved, though a read with every memo
+  emptied answered `shallow` (the review's finding 1). That log is now
+  checked as the whole history is: the cuts read after it must be those
+  read before it and among those the head's whole history was checked
+  against, or the narrowing is declined, the unnarrowed count stands
+  and nothing is kept. A kept whole history is served only while the
+  file lists none but the cuts it was checked against, so the next read
+  under a new cut answers `shallow`; every row's key stamps the shallow
+  file, so a row kept before the cut is read again. A `fetch --depth`
+  and an `--unshallow` both inside one path log leave the cuts as they
+  were: the shallow file's directory, held across the log, then declines
+  that call's narrowing too. The current call keeps its conservative
+  unnarrowed count instead of reporting `fresh`, and caches nothing.
+  (`src/bettermemory/origin_dates.py`, `src/bettermemory/origin_history.py`,
+  `src/bettermemory/origin_gitfiles.py`, `src/bettermemory/_response.py`,
+  `tests/test_unread_history.py`)
 
 - **A walk git fails on from an anchor the repository holds reads unread
   (ENG-220).** Where git failed on the walk from a stamp's head with its

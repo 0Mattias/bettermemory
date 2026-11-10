@@ -16,7 +16,8 @@ straddle a clause boundary all live in it.
 load-bearing half: nothing outside the verify handler may import the
 checker, so the check cannot reach a staleness verdict without that pin
 failing first. The behavioural pin is that a memory whose body cites a
-symbol bound nowhere still reads `fresh` right after verification.
+symbol bound nowhere reads, right after verification, what the same
+memory citing a bound symbol reads.
 
 **Reach, re-derived rather than asserted.** The measurement that
 decides how much this feature is worth is "how many real citations does
@@ -479,15 +480,29 @@ async def test_a_symbol_miss_does_not_move_the_staleness_verdict(
     server: Any, memory_dir: Path, tree: Path
 ) -> None:
     """AC: advisory only. The memory was verified a moment ago and cites
-    a symbol bound nowhere; it still reads `fresh`, because no verdict
-    input reads this check."""
+    a symbol bound nowhere; it reads what the same memory citing a bound
+    symbol reads, verified the same way, because no verdict input reads
+    this check.
+
+    Not `fresh`: the recorded worktree names a checkout no remote
+    identifies, and `tree` is no checkout now, so no surface counts the
+    commits since the verification and both rows read "not checked"
+    (`commit_legs`, ENG-229). The pin is the pair agreeing."""
     mid = _plant(memory_dir, "`vanished_helper` in `pkg/mod.py` does the work.", tree)
+    bound = _plant(memory_dir, "`top_function` in `pkg/mod.py` does the work.", tree)
     verified = await _call(
         server, "memory_verify", id=mid, verified_paths=["pkg/mod.py"]
     )
+    control = await _call(
+        server, "memory_verify", id=bound, verified_paths=["pkg/mod.py"]
+    )
     assert verified["symbol_drift"]["missing"]
+    assert not control["symbol_drift"]["missing"]
     shown = await _call(server, "memory_show", id=mid)
-    assert shown["staleness_verdict"] == "fresh"
+    expected = await _call(server, "memory_show", id=bound)
+    assert shown["staleness_verdict"] == expected["staleness_verdict"]
+    for key in ("status", "recommendation"):
+        assert shown["verification"].get(key) == expected["verification"].get(key)
 
 
 async def test_the_advisory_does_not_reach_the_persisted_record(

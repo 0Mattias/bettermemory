@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 from .models import Category, Memory, first_summary_line
 from . import location
+from .commit_legs import counted_at_caller, names_a_repository
 from .origin import (
     Origin,
     capture,
@@ -59,6 +60,7 @@ from .origin import (
 )
 from .origin_dates import commit_author_timestamps
 from .verify_basis import CommitDriftUnread
+from .verify_anchoring import GLOBAL_RECORD
 from .verify import (
     Anchoring,
     commit_drift_anchor_paths,
@@ -485,9 +487,20 @@ def _drift_rollups(
     anchoring: Anchoring | None,
     admission: DriftScope | None,
 ) -> tuple[CommitDriftDebt | None, CrossRepoDrift | None]:
-    """Take the caller's-repo and the cross-repo drift rollups; returns both."""
+    """Take the caller's-repo and the cross-repo drift rollups; returns both.
+
+    One set decides which records the caller's checkout counts
+    (`_caller_counted`): `commit_drift_debt` counts exactly those, and the
+    estate check every other one, where `memory_show` and `memory_search`
+    read each record's commit leg (`commit_legs.CommitLegs`, ENG-229)."""
     if anchoring is not None:
         anchoring.prime(list(by_id))
+    counted = _caller_counted(
+        by_id,
+        origin_repo_by_id=origin_repo_by_id,
+        caller_origin=caller_origin,
+        admission=admission,
+    )
     commit_drift_debt = _compute_commit_drift_debt(
         by_id=by_id,
         origin_repo_by_id=origin_repo_by_id,
@@ -496,6 +509,7 @@ def _drift_rollups(
         verified_head_by_id=verified_head_by_id,
         caller_origin=caller_origin,
         admission=admission,
+        counted=counted,
     )
 
     cross_repo_drift = _compute_cross_repo_drift(
@@ -507,8 +521,47 @@ def _drift_rollups(
         verified_head_by_id=verified_head_by_id,
         caller_origin=caller_origin,
         anchoring=anchoring,
+        counted=counted,
     )
     return commit_drift_debt, cross_repo_drift
+
+
+def _caller_counted(
+    by_id: dict[str, MemoryStats],
+    *,
+    origin_repo_by_id: dict[str, str | None],
+    caller_origin: Origin | None,
+    admission: DriftScope | None,
+) -> frozenset[str]:
+    """The records whose commit leg the caller's checkout counts: where a
+    history applies there, those `memory_show` and `memory_search` count
+    there (`commit_legs.counted_at_caller`); without an admission
+    (`bettermemory health`, which resolves no caller), those whose
+    recorded repository is the caller's. None of them where no history
+    applies in the caller's checkout: the estate check then reads every
+    record where the per-memory surfaces read it, at its home."""
+    if caller_origin is None or not caller_origin.cwd or not caller_origin.repo:
+        return frozenset()
+    if commit_author_timestamps(Path(caller_origin.cwd)) is None:
+        return frozenset()
+    if admission is None:
+        return frozenset(
+            mid
+            for mid in by_id
+            if (repo := origin_repo_by_id.get(mid)) is not None
+            and repos_match(repo, caller_origin.repo)
+        )
+    admission.prime(list(by_id))
+    return frozenset(
+        mid
+        for mid in by_id
+        if counted_at_caller(
+            mid,
+            origin_repo_by_id.get(mid),
+            caller_origin=caller_origin,
+            admission=admission,
+        )
+    )
 
 
 def _cold_endorsement_bucket(
@@ -855,31 +908,45 @@ def _group_cross_repo_candidates(
     verified_head_by_id: dict[str, str | None] | None,
     caller_origin: Origin | None,
     anchoring: Anchoring | None,
+    counted: frozenset[str] | None = None,
 ) -> tuple[
     dict[tuple[str, str], list[MemoryStats]],
     dict[tuple[str, str], list[MemoryStats]],
     dict[tuple[str, str], str],
     int,
 ]:
-    """Group the foreign candidates; returns both group maps, the unconfirmed and the unanchorable count."""
+    """Group the foreign candidates; returns both group maps, the roots not checked with why, and the unanchorable count.
+
+    `counted` names the records the caller's checkout counts
+    (`_caller_counted`), which `commit_drift_debt` owns; None reads them
+    as before, by the recorded repository alone."""
+
+    def owned(mid: str, origin_repo: str | None) -> bool:
+        if counted is not None:
+            return mid in counted
+        return bool(
+            origin_repo
+            and caller_origin is not None
+            and caller_origin.repo
+            and repos_match(origin_repo, caller_origin.repo)
+        )
+
     groups: dict[tuple[str, str], list[MemoryStats]] = {}
     # Homed groups, keyed by (the repo or project they are listed under,
     # the live view they are read at); the membership model has already
     # read that view as the checkout itself.
     homed: dict[tuple[str, str], list[MemoryStats]] = {}
-    unconfirmed: dict[tuple[str, str], str] = {}
+    # The (label, worktree) of each record no surface reads a commit leg
+    # for, with the reason health lists it skipped under.
+    unchecked: dict[tuple[str, str], str] = {}
     unanchorable = 0
     for stats in by_id.values():
         origin_repo = origin_repo_by_id.get(stats.id)
         worktree = origin_worktree_by_id.get(stats.id)
         anchor = anchoring.for_record(stats.id) if anchoring is not None else None
+        cited = verified_head_by_id.get(stats.id) if verified_head_by_id else None
         if anchor is not None:
-            if (
-                origin_repo
-                and caller_origin is not None
-                and caller_origin.repo
-                and repos_match(origin_repo, caller_origin.repo)
-            ):
+            if owned(stats.id, origin_repo):
                 continue
             if stats.last_verified_at is None:
                 continue
@@ -887,14 +954,50 @@ def _group_cross_repo_candidates(
                 claims_by_id and claims_by_id.get(stats.id)
             ):
                 continue
+            if not names_a_repository(origin_repo, worktree, cited):
+                # Written outside any repository and stamped at no commit:
+                # no repository's commits speak for it, wherever it is
+                # homed, and no surface reads a commit leg for it
+                # (`commit_legs.names_a_repository`).
+                continue
+            if anchor.rule == GLOBAL_RECORD:
+                # Homed in no project: no repository's commits speak for
+                # it, and no surface reads a commit leg for it
+                # (`verify_anchoring.GLOBAL_RECORD`).
+                continue
             home = anchoring.home(stats.id) if anchoring is not None else None
             label = origin_repo or (home.project if home is not None else stats.id)
-            cited = verified_head_by_id.get(stats.id) if verified_head_by_id else None
             commit_root, _rule = anchor.commit_root(cited)
             if commit_root is None:
-                unconfirmed.setdefault((label, worktree or ""), anchor.rule)
+                unchecked.setdefault(
+                    (label, worktree or ""), _UNCONFIRMED_REASON.format(anchor.rule)
+                )
                 continue
             homed.setdefault((label, commit_root), []).append(stats)
+            continue
+        if anchoring is not None:
+            # No home row: it anchors nowhere until the migration homes it
+            # (decision B23), and `memory_show` and `memory_search` read it
+            # not checked (`commit_legs.NO_HOME`); listed skipped, so the
+            # three agree, where the estate check once read it at its
+            # recorded worktree and listed what they left not checked
+            # (ENG-229's review). The gates are theirs.
+            if (
+                not owned(stats.id, origin_repo)
+                and stats.last_verified_at is not None
+                and (
+                    anchor_paths_by_id.get(stats.id)
+                    or (claims_by_id and claims_by_id.get(stats.id))
+                )
+                and names_a_repository(origin_repo, worktree, cited)
+            ):
+                unchecked.setdefault(
+                    (origin_repo or stats.id, worktree or ""), _NO_HOME
+                )
+            elif stats.last_verified_at is not None and (
+                not origin_repo or not worktree
+            ):
+                unanchorable += 1
             continue
         if not origin_repo or not worktree:
             # COUNTED, not dropped. With no recorded repo or worktree
@@ -908,11 +1011,7 @@ def _group_cross_repo_candidates(
             if stats.last_verified_at is not None:
                 unanchorable += 1
             continue
-        if (
-            caller_origin is not None
-            and caller_origin.repo
-            and repos_match(origin_repo, caller_origin.repo)
-        ):
+        if owned(stats.id, origin_repo):
             # The caller-repo rollup owns these.
             continue
         if stats.last_verified_at is None:
@@ -922,7 +1021,20 @@ def _group_cross_repo_candidates(
         ):
             continue
         groups.setdefault((origin_repo, worktree), []).append(stats)
-    return groups, homed, unconfirmed, unanchorable
+    return groups, homed, unchecked, unanchorable
+
+
+#: The reason health lists a homed record skipped where its cited commit
+#: resolves nowhere here, with the anchor's rule: its home checkout has no
+#: live view here, and the caller stands in no checkout that holds the
+#: commit (`ClaimAnchor.commit_root`; a bare clone is none).
+_UNCONFIRMED_REASON = (
+    "unconfirmed: its home checkout has no live view here and the caller "
+    "stands in no checkout holding its cited commit ({})"
+)
+#: The reason health lists a record with no home row skipped, as the
+#: per-memory surfaces read it not checked (`commit_legs.NO_HOME`).
+_NO_HOME = "no home: no checkout's commits are counted until it is homed"
 
 
 def _recorded_root_reachable(
@@ -951,8 +1063,8 @@ def _recorded_root_reachable(
     # unclassified default is "unreachable", so a new error class
     # holds the boundary instead of opening it. `verify` and
     # `symbols` already route their root probes through their own
-    # guards for the same reason. Only a record with no home row
-    # still reaches this recorded-root path.
+    # guards for the same reason. Only a record read without the
+    # membership's anchoring still reaches this recorded-root path.
     #
     # So: positively absent is a finding, unreadable is a separate
     # finding, and only a directory we could actually stat is
@@ -1074,7 +1186,7 @@ def _walk_cross_repo_roots(
     *,
     groups: dict[tuple[str, str], list[MemoryStats]],
     homed: dict[tuple[str, str], list[MemoryStats]],
-    unconfirmed: dict[tuple[str, str], str],
+    unchecked: dict[tuple[str, str], str],
     anchor_paths_by_id: dict[str, tuple[str, ...]],
     claims_by_id: dict[str, tuple[str, ...]] | None,
     verified_head_by_id: dict[str, str | None] | None,
@@ -1091,9 +1203,9 @@ def _walk_cross_repo_roots(
         {
             "repo": repo,
             "worktree_root": worktree,
-            "reason": f"unconfirmed: no live checkout holds its cited commit ({rule})",
+            "reason": reason,
         }
-        for (repo, worktree), rule in unconfirmed.items()
+        for (repo, worktree), reason in unchecked.items()
     ]
     walked = 0
     for (repo, worktree), candidates, is_live_view in ordered:
@@ -1156,13 +1268,14 @@ def _compute_cross_repo_drift(
     verified_head_by_id: dict[str, str | None] | None = None,
     caller_origin: Origin | None,
     anchoring: Anchoring | None = None,
+    counted: frozenset[str] | None = None,
 ) -> CrossRepoDrift | None:
     """The estate check: drift for memories anchored in repos the
     caller is NOT standing in.
 
     The blind spot this closes (2026-08-30): every commit-drift
-    surface — show, search, `commit_drift_debt` —
-    is gated on the caller being inside the memory's origin repo, so
+    surface — show, search, `commit_drift_debt` — was gated on the
+    caller being inside the memory's origin repo, so
     records anchored in other projects rot invisibly for as long as
     health runs from here; the motivating find was a foreign record
     pinning a HEAD twenty commits gone, on a branch that no longer
@@ -1198,9 +1311,22 @@ def _compute_cross_repo_drift(
     checkout's live view, which the membership model recognised by its
     object, so no re-identification runs; else the caller's checkout when
     it holds the commit. With neither, the record is listed in `skipped`
-    with the anchor's rule as the reason, unconfirmed, never counted.
+    with the anchor's rule as the reason, unconfirmed, never counted. A
+    record with no home row is listed skipped, no home, as `memory_show`
+    reads it not checked; only without `anchoring` is one read at its
+    recorded worktree.
+
+    `counted` names the records `commit_drift_debt` owns (`_caller_
+    counted`), which this check leaves out; every other record is read
+    where `memory_show` and `memory_search` read its commit leg too
+    (`commit_legs.CommitLegs`, ENG-229), so the three agree: drifted,
+    unread, or skipped where the per-memory surfaces read it not
+    checked. Without it, a record is left out where its recorded
+    repository is the caller's. A homed record that names no repository
+    (`commit_legs.names_a_repository`) has no commit leg on any surface
+    and is left out.
     """
-    groups, homed, unconfirmed, unanchorable = _group_cross_repo_candidates(
+    groups, homed, unchecked, unanchorable = _group_cross_repo_candidates(
         by_id,
         origin_repo_by_id=origin_repo_by_id,
         origin_worktree_by_id=origin_worktree_by_id,
@@ -1209,8 +1335,9 @@ def _compute_cross_repo_drift(
         verified_head_by_id=verified_head_by_id,
         caller_origin=caller_origin,
         anchoring=anchoring,
+        counted=counted,
     )
-    if not groups and not homed and not unconfirmed:
+    if not groups and not homed and not unchecked:
         # `unanchorable` alone still earns a payload. Returning None here
         # would say "no foreign records to check", when what happened is
         # "N foreign-or-unknown records could not be checked" — the same
@@ -1222,7 +1349,7 @@ def _compute_cross_repo_drift(
     out_groups, skipped = _walk_cross_repo_roots(
         groups=groups,
         homed=homed,
-        unconfirmed=unconfirmed,
+        unchecked=unchecked,
         anchor_paths_by_id=anchor_paths_by_id,
         claims_by_id=claims_by_id,
         verified_head_by_id=verified_head_by_id,
@@ -1286,6 +1413,7 @@ def _compute_commit_drift_debt(
     verified_head_by_id: dict[str, str | None] | None = None,
     caller_origin: Origin | None,
     admission: DriftScope | None = None,
+    counted: frozenset[str] | None = None,
 ) -> CommitDriftDebt | None:
     """Build the optional commit-drift rollup, or None when not applicable.
 
@@ -1311,21 +1439,23 @@ def _compute_commit_drift_debt(
     of memory count.
 
     Every candidate is counted in the caller's checkout, where
-    `memory_show` counts a record's commit leg (`_response._DriftPass.
-    lookup`). `_drift_rows_by_root` can count a homed one at its home
-    checkout's `commit_root` (design 3.6), but `memory_show` does not, so
+    `memory_show` counts a record's commit leg when the caller's admission
+    counts it there (`commit_legs.CommitLegs`). `_drift_rows_by_root` can
+    count a homed one at its home checkout's `commit_root` (design 3.6),
+    but `memory_show` counts such a record in the caller's checkout, so
     from a linked worktree the two would disagree both ways: a commit
     made in the home checkout only would be listed here and not shown
     there, and one made in the caller's only would be shown and not
-    listed. It runs without the anchoring until the show path reads the
-    commit leg at the home too.
+    listed. It runs without the anchoring for that reason.
 
-    With `admission`, a record is a candidate only where the caller's
-    admission counts its commit drift (`DriftScope.drift_counts`), the
-    gate `memory_show` and `memory_search` read their commit leg under
-    (`_response._DriftPass.lookup`): a record with no home row, a home
-    the caller's surface does not admit, or a global one has no commit
-    leg there, so it is not listed here as drifted either.
+    `counted`, from `_drift_rollups`, names the candidates: the records
+    `memory_show` and `memory_search` count in the caller's checkout
+    (`commit_legs.counted_at_caller`), where a history applies there. The
+    estate check reads every other record, at its home (ENG-229). Without
+    it, with `admission`, a record is a candidate only where its recorded
+    repository is the caller's and the caller's admission counts its
+    commit drift (`DriftScope.drift_counts`); with neither, wherever its
+    recorded repository is the caller's.
     """
     if caller_origin is None:
         return None
@@ -1355,14 +1485,18 @@ def _compute_commit_drift_debt(
     if admission is not None:
         admission.prime(list(by_id))
     for stats in by_id.values():
-        origin_repo = origin_repo_by_id.get(stats.id)
-        if origin_repo is None:
-            continue
-        if not repos_match(origin_repo, caller_origin.repo):
-            continue
+        if counted is not None:
+            if stats.id not in counted:
+                continue
+        else:
+            origin_repo = origin_repo_by_id.get(stats.id)
+            if origin_repo is None:
+                continue
+            if not repos_match(origin_repo, caller_origin.repo):
+                continue
+            if admission is not None and not admission.drift_counts(stats.id):
+                continue
         if stats.last_verified_at is None:
-            continue
-        if admission is not None and not admission.drift_counts(stats.id):
             continue
         if not anchor_paths_by_id.get(stats.id) and not (
             claims_by_id and claims_by_id.get(stats.id)

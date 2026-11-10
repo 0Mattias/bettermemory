@@ -291,6 +291,12 @@ SPARSE_CHECKOUT = "sparse_checkout"
 #: The rule of a cited commit no live store here holds (design 3.6).
 UNCONFIRMED_COMMIT = "unconfirmed"
 
+#: `Membership.anchor`'s rule for a record homed in no project
+#: (``global``): its claims resolve nowhere, and no repository's commits
+#: speak for it (`admission.Admission.drift_counts`), so it has no commit
+#: leg on any surface (`commit_legs.CommitLegs`, `health`'s estate check).
+GLOBAL_RECORD = "global_record"
+
 
 @dataclass(frozen=True)
 class ClaimAnchor:

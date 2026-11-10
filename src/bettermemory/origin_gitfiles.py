@@ -1350,8 +1350,12 @@ def walk_files_signature(
     common directory and, where it sets ``extensions.worktreeConfig``, the
     ``config.worktree`` git then reads after it in the git directory
     (`_worktree_config_facts`), the working tree's ``.gitmodules`` at the
-    root, and what the index holds for ``.gitmodules`` where git reads it
-    (`_index_gitmodules`). What moved a log there (``log.showRoot``
+    root, what the index holds for ``.gitmodules`` where git reads it
+    (`_index_gitmodules`), and the ``shallow`` file in the common
+    directory, whose cuts stop every log git runs there: a clone made
+    shallow, deepened or unshallowed under an unchanged head is a new key,
+    and a check at the end that reads it moved keeps nothing (ENG-233's
+    review). What moved a log there (``log.showRoot``
     dropped a root commit's paths from the reachable walk's
     ``--name-only``, ``diff.ignoreSubmodules`` and
     ``submodule.<name>.ignore`` a gitlink's, and ``log.follow`` made a
@@ -1367,9 +1371,12 @@ def walk_files_signature(
     slot, None where the index has none and git reads HEAD's copy, which
     the key's head names. A write to the index that leaves ``.gitmodules``
     as it was (``git add`` of another file, a ``git status`` that refreshes
-    the index) is no new key. The configs and the working tree's file are
-    each their `_stamp`, or None while they do not exist (config.worktree
-    also None where git does not read it). The walk memo
+    the index) is no new key. The configs, the working tree's file and
+    the shallow file are each their `_stamp`, or None while they do not
+    exist (config.worktree also None where git does not read it). A
+    shallow file created and removed while one search runs is not seen
+    here, as a config is not; the path-filtered log holds its directory
+    across the log (`origin_dates._touching_log`). The walk memo
     (`commits_since_anchor`) and the per-hit drift memo key on it.
     `directories`, when given, receives the stamps of the root and of the
     index file (`_hold_directory`), for a caller that checks at the end of
@@ -1414,12 +1421,13 @@ def walk_files_signature(
         if worktree is None:
             return None
         gitmodules = _stamp(root / ".gitmodules")
+        shallow = _stamp(gd.commondir / "shallow")
         entry = _index_gitmodules(gd)
         if entry == _INDEX_UNMERGED or gitmodules is None:
             index = entry
         else:
             index = None
-        return (common[0], worktree[0], gitmodules, index)
+        return (common[0], worktree[0], gitmodules, index, shallow)
     except (OSError, ValueError, _IndexUnsettled):
         return None
 

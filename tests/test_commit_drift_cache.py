@@ -2052,9 +2052,19 @@ def test_the_top_hit_keeps_the_expansion_s_read_of_the_history() -> None:
     assert calendar.recommendation, "premise: a stale stamp names its remedy"
     shallow = CommitDriftUnread.SHALLOW
     unread = cast(
-        Any, SimpleNamespace(commit_drift_unread=shallow, verification=calendar)
+        Any,
+        SimpleNamespace(
+            commit_drift_unread=shallow,
+            commit_drift_unchecked=None,
+            verification=calendar,
+        ),
     )
-    read = cast(Any, SimpleNamespace(commit_drift_unread=None, verification=calendar))
+    read = cast(
+        Any,
+        SimpleNamespace(
+            commit_drift_unread=None, commit_drift_unchecked=None, verification=calendar
+        ),
+    )
     row: dict[str, Any] = {
         "verification": calendar.to_dict(),
         "staleness_verdict": "spot_check_required",

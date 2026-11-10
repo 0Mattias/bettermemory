@@ -150,9 +150,10 @@ def _memoised(
 def _shown_verdict(memory_dir: Path, memory: Memory, caller: Origin) -> MemoryVerdict:
     """The verdict as `memory_show` computes it for a caller standing at
     `caller.cwd`: its claims anchored for the caller resolved there
-    (`verify_anchoring.Anchoring`, design 3.6), and its commit leg counted only
-    where the LINKS surface admits the record's home and that home is a
-    project's (`Admission.drift_counts`, design 3.5)."""
+    (`verify_anchoring.Anchoring`, design 3.6), and its commit leg counted
+    in the caller's checkout where the LINKS surface admits the record's
+    home and that home is a project's (`Admission.drift_counts`, design
+    3.5), and at its home's live view otherwise (`commit_legs`, ENG-229)."""
     assert caller.cwd is not None
     store = Store(memory_dir)
     config = Config(storage=StorageConfig(directory=str(memory_dir)))
@@ -160,7 +161,7 @@ def _shown_verdict(memory_dir: Path, memory: Memory, caller: Origin) -> MemoryVe
     links = Admission.of(LINKS, resolved)
     (verdict,) = resolve_verdicts(
         [memory],
-        caller_origin=caller if links.drift_counts(memory.id) else None,
+        caller_origin=caller,
         now=datetime.now(timezone.utc),
         stale_after_days=_STALE_AFTER_DAYS,
         anchoring=Anchoring(resolved.model, resolved.resolution),
@@ -268,9 +269,11 @@ async def test_verdict_agrees_with_show_and_search(
         assert await _search_verdict(server, memory_id, "widget rule") == expected
     if case == "commit_drift":
         assert shown["commit_drift"]["status"] == "drift"
-    if case in ("fresh", "path_drift"):
+    if case in ("fresh", "path_drift", "caller_elsewhere"):
+        # From another repository the leg is read at the memory's home, as
+        # health's estate check reads it (ENG-229): no commit there since.
         assert shown["commit_drift"]["status"] == "clean"
-    if case in ("never_verified", "caller_elsewhere"):
+    if case == "never_verified":
         assert shown["commit_drift"] is None
 
 
