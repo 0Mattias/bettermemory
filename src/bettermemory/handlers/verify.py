@@ -465,7 +465,14 @@ def _verify_read_site(
     caller: Caller | None = None
     if homed or _within(request_cwd(), origin_root):
         anchoring, caller = caller_anchoring(deps.store, deps.config)
-    anchor = anchoring.for_record(memory_id) if anchoring is not None else None
+    anchor = (
+        anchoring.for_record(
+            memory_id,
+            origin_root=snapshot.origin.worktree_root if snapshot.origin else None,
+        )
+        if anchoring is not None
+        else None
+    )
     # The root relative claims are read at, live: the anchor's, else the
     # recorded worktree when it is a directory here.
     live_root = (

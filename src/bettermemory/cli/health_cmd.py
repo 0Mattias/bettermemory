@@ -6,12 +6,15 @@ import argparse
 import json
 import sqlite3
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..health import report_for_store
 from ..origin import capture as capture_origin
 from ..store import Store
 from ._common import cli_context
+
+if TYPE_CHECKING:
+    from ..verify_anchoring import Anchoring
 
 
 def add_subparser(
@@ -77,10 +80,9 @@ def _cli_health(
     It writes nothing. Resolving the caller the way `memory_admin(health)`
     does (`handlers._shared.caller_anchoring`) registers the checkout: a
     token under `.git/info`, a provisional project and their log rows. So
-    the CLI passes no anchoring and no admission, and its
-    `commit_drift_debt` keeps the origin-repo reading: every verified,
-    claim-anchored record whose origin repo matches the caller's, a record
-    with no home row included."""
+    the CLI reads existing membership views without resolving or observing
+    the caller. It passes no admission, so the caller's rollup keeps its
+    origin-repo reading, while existing homes translate absolute anchors."""
     from ..health import render_text
 
     ctx = cli_context()
@@ -111,6 +113,7 @@ def _cli_health(
         # commit-drift bucket when run from inside a project whose
         # memories live in this store.
         caller_origin=capture_origin(),
+        anchoring=_existing_anchoring(ctx.store),
     )
     section = _membership_section(ctx.store)
     if json_out:
@@ -122,6 +125,19 @@ def _cli_health(
     if section is not None:
         text += "\n" + "\n".join(section[1]) + "\n"
     sys.stdout.write(text)
+
+
+def _existing_anchoring(store: Store) -> Anchoring | None:
+    """Read existing views without registering a caller, checkout or token."""
+    from ..verify_anchoring import Anchoring
+    from .membership_cmd import health_model
+
+    try:
+        model = health_model(store)
+        model.checkouts()  # Older stores can lack the membership tables.
+    except (sqlite3.Error, RuntimeError, OSError):
+        return None
+    return Anchoring(model, None)
 
 
 def _membership_section(store: Store) -> tuple[dict[str, Any], list[str]] | None:

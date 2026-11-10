@@ -8,7 +8,9 @@ else it is read where health's estate check (`health.cross_repo_drift`)
 reads a homed record, so `memory_show`, `memory_search` and health give
 one memory one verdict for one caller: at `ClaimAnchor.commit_root` of
 the commit its stamp names (design 3.6), its home checkout's live view
-here, else the caller's checkout when it holds that commit.
+here, else the caller's checkout when it holds that commit, else a proven
+project checkout. Absolute anchors retain their repository-relative
+meaning through the recorded views before narrowing and memoization.
 
 Where the leg applies and nothing reads it, the row is not checked
 (`CommitLegUnchecked`): no live checkout here holds the cited commit, no
@@ -52,6 +54,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 from .attestation_paths import commit_paths
 from ._response import _Drift, _DriftPass
 from .claims import load_claims
+from .commit_anchors import UNMAPPED_ANCHOR, project_commit_anchors
 from .verify import commit_drift_anchor_paths
 from .verify_anchoring import GLOBAL_RECORD
 
@@ -90,6 +93,12 @@ NO_HISTORY = "no_history"
 NO_HOME = "no_home"
 
 _UNCHECKED_RECOMMENDATIONS: dict[str, str] = {
+    UNMAPPED_ANCHOR: (
+        "A recorded path anchor could not be placed in this memory's home "
+        "repository, so the commits since verification were not counted. "
+        "Spot-check the claim or restore its recorded checkout view before "
+        "relying on the memory."
+    ),
     UNCONFIRMED: (
         "This memory's home checkout has no live view on this machine, and "
         "the checkout you are in does not hold the commit it was verified at "
@@ -118,7 +127,7 @@ _RECOMMENDED = "spot_check_recommended"
 @dataclass(frozen=True)
 class CommitLegUnchecked:
     """A commit leg that applies and that nothing read: `why` is one of
-    `UNCONFIRMED`, `NO_HISTORY`, `NO_HOME`; `rule` the anchor's rule, as
+    `UNCONFIRMED`, `NO_HISTORY`, `NO_HOME`, `UNMAPPED_ANCHOR`; `rule` the anchor's rule, as
     health's estate check lists it skipped."""
 
     why: str
@@ -252,12 +261,28 @@ class CommitLegs:
             return True, None
         # The claim-anchored gate every pass applies (`_DriftPass.lookup`),
         # read first so a record it exempts reads no history anywhere.
-        if not commit_drift_anchor_paths(record.body, commit_paths(record)) and not (
-            record.claims and load_claims(record.claims)
-        ):
+        anchors = commit_drift_anchor_paths(record.body, commit_paths(record))
+        if not anchors and not (record.claims and load_claims(record.claims)):
             return True, None
         origin = record.origin
         origin_repo = origin.repo if origin is not None else None
+        if not names_a_repository(
+            origin_repo,
+            origin.worktree_root if origin is not None else None,
+            record.verified_head,
+        ):
+            return True, None
+        anchor = (
+            self.anchoring.for_record(
+                record.id,
+                origin_root=origin.worktree_root if origin is not None else None,
+            )
+            if self.anchoring is not None
+            else None
+        )
+        projected = project_commit_anchors(anchors, anchor)
+        if projected.unmapped:
+            return True, CommitLegUnchecked(UNMAPPED_ANCHOR)
         if (
             self.caller is not None
             and self.admission is not None
@@ -270,7 +295,7 @@ class CommitLegs:
             )
         ):
             answered, leg = self.caller.lookup(
-                record, last_verified_at, resolve=resolve
+                record, last_verified_at, resolve=resolve, anchor_paths=projected.paths
             )
             if not answered or leg is not None or not resolve:
                 return answered, leg
@@ -289,7 +314,7 @@ class CommitLegs:
             return True, None
         if isinstance(root, CommitLegUnchecked):
             return True, root
-        return self._at_root(root, record, last_verified_at, resolve)
+        return self._at_root(root, record, last_verified_at, resolve, projected.paths)
 
     def _caller_history_applies(self) -> bool:
         """Whether a history applies in the caller's checkout, read once
@@ -306,7 +331,10 @@ class CommitLegs:
         no leg (`GLOBAL_RECORD`). Reads the object store a cited commit is
         looked up in, and runs no git."""
         assert self.anchoring is not None
-        anchor = self.anchoring.for_record(record.id)
+        anchor = self.anchoring.for_record(
+            record.id,
+            origin_root=record.origin.worktree_root if record.origin else None,
+        )
         if anchor is None:
             return CommitLegUnchecked(NO_HOME)
         if anchor.rule == GLOBAL_RECORD:
@@ -317,7 +345,12 @@ class CommitLegs:
         return root
 
     def _at_root(
-        self, root: str, record: Any, last_verified_at: datetime, resolve: bool
+        self,
+        root: str,
+        record: Any,
+        last_verified_at: datetime,
+        resolve: bool,
+        anchors: tuple[str, ...],
     ) -> tuple[bool, Leg]:
         """The row's leg through the pass at `root`, opened once per call;
         not checked where no history applies there (`_DriftPass.
@@ -327,7 +360,9 @@ class CommitLegs:
         if found is None:
             found = _DriftPass(Path(root), "", _AT_HOME, at_home=True)
             self._roots[root] = found
-        answered, leg = found.lookup(record, last_verified_at, resolve=resolve)
+        answered, leg = found.lookup(
+            record, last_verified_at, resolve=resolve, anchor_paths=anchors
+        )
         if not answered or leg is not None or not resolve:
             return answered, leg
         if root not in self._root_applies:

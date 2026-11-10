@@ -34,6 +34,7 @@ from .attestation_paths import (
     placeholder_spelling,
 )
 from . import _caches, gitconfig, gitfile_rule
+from .commit_anchors import expected_home, relative_under
 from ._paths import inside
 from .githead import GitDir, Stamp, locate, stamp
 from .gitobjects import ObjectReader
@@ -327,7 +328,7 @@ class ClaimAnchor:
     ``global_record`` read nothing. `translate` maps an absolute path to
     the live view of the checkout it was recorded under and names the
     rule (`Membership.translate`). `caller_root` is the live view of the
-    caller's checkout, where a cited commit is resolved when the home
+    caller's checkout, preferred over a project stand-in when the home
     checkout has no live view here (`commit_root`). `holds` answers
     whether a root's object store holds a commit: the request's memo
     (`Anchoring.holds`), or `holds_commit` itself when None."""
@@ -337,6 +338,9 @@ class ClaimAnchor:
     translate: Callable[[str], tuple[str, str]] | None = None
     caller_root: str | None = None
     holds: Callable[[str, str], bool] | None = None
+    origin_root: str | None = None
+    recorded_roots: tuple[str, ...] = ()
+    commit_standin: bool = False
 
     @property
     def convicting(self) -> bool:
@@ -364,28 +368,42 @@ class ClaimAnchor:
         target, rule = self.translate(path)
         if rule == UNANCHORED:
             return None, rule
+        roots = self.recorded_roots + ((self.origin_root,) if self.origin_root else ())
+        if (
+            rule == "absolute"
+            and expected_home(path, roots)
+            and relative_under(path, self.root) is None
+        ):
+            return None, UNANCHORED
         return target, rule
 
     def commit_root(self, commit: str | None) -> tuple[str | None, str]:
         """Where a cited commit is resolved (design 3.6): the home
         checkout's object store when its live view is here; else the
-        caller's, when it holds the commit; else nowhere, and the commit
-        reads unconfirmed."""
+        caller's, when it holds the commit; else a live project stand-in
+        that holds it. A legacy author-date stamp needs a shared recorded
+        repository witness (`commit_standin`). Otherwise unconfirmed."""
         if self.root is not None and self.rule == "home_checkout":
             return self.root, "home_checkout"
         held = self.holds if self.holds is not None else holds_commit
         if commit and self.caller_root is not None and held(self.caller_root, commit):
             return self.caller_root, "caller_checkout"
+        if self.root is not None and (
+            (
+                commit is not None
+                and self.root != self.caller_root
+                and held(self.root, commit)
+            )
+            or (commit is None and self.commit_standin)
+        ):
+            return self.root, self.rule
         return None, UNCONFIRMED_COMMIT
 
 
 #: How many (root, commit) answers one request's `Anchoring.holds` keeps,
 #: the least recently asked dropped first past it (ENG-192). A request
-#: reads one caller root, so its keys are the distinct commits its records
-#: cite, at most one a record (`verified_head`, the HEAD a verify stamped):
-#: the owner's store held 1,447 memories on 2026-11-02, under 9.0.0rc16
-#: (the count `verify_candidates`' cap comments also cite), so 4,096
-#: holds every commit of a store near three times that size. Measured
+#: can read caller and project stand-in roots; every key names one root
+#: and one cited commit. The cap covers both roots and commits. Measured
 #: with tracemalloc (Python 3.11, macOS), an entry keeps about 84 bytes
 #: beyond the strings the records already hold, so a full memo is about
 #: 344 KB; one read it saves cost about 0.42 ms on this repository
@@ -413,7 +431,8 @@ class Anchoring:
         self.model = model
         self.caller = caller
         self._homes: dict[str, Home | None] = {}
-        self._anchors: dict[tuple[str, str | None], ClaimAnchor] = {}
+        self._anchors: dict[tuple[str, str | None, str | None], ClaimAnchor] = {}
+        self._checkout_roots: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
         self._translated: dict[str, tuple[str, str]] = {}
         self._views: tuple[str, ...] | None = None
         self._caller_root: str | None = None
@@ -449,24 +468,66 @@ class Anchoring:
                     self._caller_root = None
         return self._caller_root
 
-    def for_record(self, record_id: str) -> ClaimAnchor | None:
+    def for_record(
+        self, record_id: str, *, origin_root: str | None = None
+    ) -> ClaimAnchor | None:
         """The record's anchor, or None when it has no home row."""
         home = self.home(record_id)
         if home is None:
             return None
-        key = (home.project, home.checkout)
+        key = (home.project, home.checkout, origin_root)
         found = self._anchors.get(key)
         if found is None:
             root, rule = self.model.anchor(record_id, self.caller)
+            roots, remotes = self._recorded_checkout(home.checkout)
             found = ClaimAnchor(
                 root=root,
                 rule=rule,
                 translate=self.translate,
                 caller_root=self.caller_root,
                 holds=self.holds,
+                origin_root=origin_root,
+                recorded_roots=roots,
+                commit_standin=self._commit_standin(root, rule, home.project, remotes),
             )
             self._anchors[key] = found
         return found
+
+    def _recorded_checkout(
+        self, checkout: str | None
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        if checkout is None:
+            return (), ()
+        if checkout not in self._checkout_roots:
+            try:
+                known = self.model.checkout(checkout)
+            except KeyError:
+                self._checkout_roots[checkout] = (), ()
+            else:
+                self._checkout_roots[checkout] = (
+                    tuple(view.path for view in known.views),
+                    known.remotes,
+                )
+        return self._checkout_roots[checkout]
+
+    def _commit_standin(
+        self, root: str | None, rule: str, project: str, remotes: tuple[str, ...]
+    ) -> bool:
+        """A legacy stamp's project stand-in must share its home's repository witness."""
+        if root is None or rule == "home_checkout" or not remotes:
+            return False
+        for checkout in self.model.checkouts():
+            if self.model.canonical(checkout.project) != project:
+                continue
+            if not set(remotes).intersection(checkout.remotes):
+                continue
+            if any(
+                v.machine == self.model.machine and v.path == root
+                for v in checkout.views
+            ):
+                if self.model.live_view(checkout) == root:
+                    return True
+        return False
 
     def holds(self, root: str, sha: str) -> bool:
         """`holds_commit(root, sha)`, read once per (root, commit) in this

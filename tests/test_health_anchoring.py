@@ -325,10 +325,10 @@ class _StandInModel:
     def anchor(self, record_id: str, caller: Any) -> tuple[str | None, str]:
         return None, "no_live_checkout"
 
-    def checkout(self, checkout_id: str) -> str:
-        return checkout_id
+    def checkout(self, checkout_id: str) -> SimpleNamespace:
+        return SimpleNamespace(id=checkout_id, views=(), remotes=())
 
-    def live_view(self, checkout: str) -> str:
+    def live_view(self, checkout: Any) -> str:
         return self.root
 
 

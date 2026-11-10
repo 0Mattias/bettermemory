@@ -610,7 +610,7 @@ def test_not_checked_is_never_fresh_and_never_lowers_a_verdict() -> None:
     assert unchecked_verdict("fresh") == "spot_check_recommended"
     assert unchecked_verdict("spot_check_recommended") == "spot_check_recommended"
     assert unchecked_verdict("spot_check_required") == "spot_check_required"
-    assert len(UNCHECKED_RECOMMENDATIONS) == 3
+    assert len(UNCHECKED_RECOMMENDATIONS) == 4
 
 
 async def test_a_record_the_callers_checkout_counts_is_the_caller_rollups(

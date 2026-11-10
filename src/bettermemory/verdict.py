@@ -285,7 +285,14 @@ def _verdict(
     # 3.6 reads them (its anchor); a record with no home row at its
     # recorded worktree. Stats only, and never memoised: a file can vanish
     # without anything the commit memo keys on moving.
-    anchor = anchoring.for_record(memory.id) if anchoring is not None else None
+    anchor = (
+        anchoring.for_record(
+            memory.id,
+            origin_root=memory.origin.worktree_root if memory.origin else None,
+        )
+        if anchoring is not None
+        else None
+    )
     path_drift = detect_path_drift(
         memory.body,
         verified_paths=record_paths(memory),

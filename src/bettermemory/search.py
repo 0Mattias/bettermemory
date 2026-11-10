@@ -1857,4 +1857,10 @@ def _claim_anchors(
     if anchoring is None:
         return [None] * len(memories)
     anchoring.prime([memory.id for memory in memories])
-    return [anchoring.for_record(memory.id) for memory in memories]
+    return [
+        anchoring.for_record(
+            memory.id,
+            origin_root=memory.origin.worktree_root if memory.origin else None,
+        )
+        for memory in memories
+    ]

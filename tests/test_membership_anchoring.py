@@ -45,7 +45,6 @@ from bettermemory.verdict import memory_verdict
 from bettermemory.verify import (
     SPARSE_CHECKOUT,
     UNANCHORED,
-    UNCONFIRMED_COMMIT,
     Anchoring,
     ClaimAnchor,
     PathDriftReport,
@@ -699,18 +698,19 @@ def test_cited_commit_resolves_in_the_callers_store_when_the_home_is_not_live(
 
 
 @pytest.mark.usefixtures("discovery")
-def test_cited_commit_no_live_store_holding_it_reads_unconfirmed(
+def test_cited_commit_resolves_in_a_proven_project_standin(
     bench: Bench,
 ) -> None:
     home, head, rid = _cited(bench)
     _clone_then_move(bench, home)
     other = _repo(bench.fx / "other" / "tool", "u.py")
     anchor = bench.anchor(rid, caller=other)
-    # A stand-in of the project is live and holds the commit; it is not
-    # where a cited commit resolves.
+    # ENG-236: a stand-in that holds the cited commit can count history
+    # even when the caller's unrelated checkout does not hold it.
     assert anchor.rule == "project_checkout"
-    assert anchor.commit_root(head) == (None, UNCONFIRMED_COMMIT)
-    assert _commit_leg(anchor, head) is None
+    root, rule = anchor.commit_root(head)
+    assert root is not None and rule == "project_checkout"
+    assert _commit_leg(anchor, head) is not None
 
 
 # ---------------------------------------------------------------------------

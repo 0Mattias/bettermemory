@@ -114,6 +114,7 @@ from pathlib import Path
 from typing import Any
 
 from .attestation_paths import LiteralPaths, ReferencePaths, interpret_path, path_mode
+from .commit_anchors import project_commit_anchors
 from .claims import (
     Claim,
     build_binding_index,
@@ -1302,6 +1303,10 @@ def compute_commit_drift(
     # governed: the declaration is the anchor.
     anchors = commit_drift_anchor_paths(body, verified_paths)
     parsed_claims = load_claims(list(claims)) if claims else []
+    projected = project_commit_anchors(anchors, anchor)
+    if projected.unmapped:
+        return None
+    anchors = projected.paths
     if not anchors and not parsed_claims:
         return None
     if last_verified_at.tzinfo is None:

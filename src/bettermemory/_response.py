@@ -508,7 +508,12 @@ class _DriftPass:
         return self._keyed
 
     def lookup(
-        self, record: Any, last_verified_at: datetime | None, *, resolve: bool = True
+        self,
+        record: Any,
+        last_verified_at: datetime | None,
+        *,
+        resolve: bool = True,
+        anchor_paths: tuple[str, ...] | None = None,
     ) -> tuple[bool, _Drift]:
         """One row's commit drift: whether it is answered, and the
         resolution (None where the count is omitted, `CommitDriftUnread`
@@ -544,6 +549,8 @@ class _DriftPass:
         # Anchor derivation and stored-claim parsing are pure CPU
         # (bounded regex; lenient parse).
         anchors = commit_drift_anchor_paths(record.body, commit_paths(record))
+        if anchor_paths is not None:
+            anchors = anchor_paths
         parsed_claims = load_claims(record.claims) if record.claims else []
         if not anchors and not parsed_claims:
             return True, None

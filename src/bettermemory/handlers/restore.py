@@ -98,7 +98,14 @@ def trust_strip_for(
     reads them (`_anchored_strip`); a record with no home row, and every
     record without `anchoring`, at its recorded worktree as above.
     """
-    anchor = anchoring.for_record(tombstone.id) if anchoring is not None else None
+    anchor = (
+        anchoring.for_record(
+            tombstone.id,
+            origin_root=tombstone.origin.worktree_root if tombstone.origin else None,
+        )
+        if anchoring is not None
+        else None
+    )
     if anchor is not None:
         return _anchored_strip(tombstone, anchor)
     root = tombstone.origin.worktree_root if tombstone.origin else None

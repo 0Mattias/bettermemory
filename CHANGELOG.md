@@ -32,6 +32,18 @@ eighteenth was built.
 
 #### Fixed
 
+- **Absolute commit anchors retain their repository meaning after a move
+  (ENG-236).** Show, search and both health readers project stored home
+  paths through recorded checkout views before counting or memoising
+  drift. Renames, cross-filesystem moves, linked worktrees and re-clones
+  no longer lose the commits touching those files. A project stand-in
+  must hold the stamped commit, or share the recorded repository witness
+  for a legacy author-date stamp. An expected-home path without a usable
+  recorded view is explicitly unchecked and never fresh. CLI health uses
+  existing views without registering a caller or writing membership.
+  (`commit_anchors.py`, `commit_legs.py`, `health.py`, `verify_anchoring.py`,
+  `cli/health_cmd.py`, `tests/test_moved_commit_anchors.py`)
+
 - **Caller-checked records are not also estate coverage gaps (ENG-279
   candidate #29).** Health applies the caller rollup's ownership before
   counting legacy origins without a working-tree root as unanchorable.

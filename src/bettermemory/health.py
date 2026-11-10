@@ -54,6 +54,7 @@ from .models import Category, Memory, first_summary_line
 from . import location
 from .claims import load_claims
 from .commit_legs import counted_at_caller, names_a_repository
+from .commit_anchors import UNMAPPED_REASON, project_commit_anchors
 from .origin import (
     Origin,
     capture,
@@ -500,11 +501,32 @@ def _drift_rollups(
     read each record's commit leg (`commit_legs.CommitLegs`, ENG-229)."""
     if anchoring is not None:
         anchoring.prime(list(by_id))
-    counted = _caller_counted(
-        by_id,
-        origin_repo_by_id=origin_repo_by_id,
-        caller_origin=caller_origin,
-        admission=admission,
+    unmapped: set[str] = set()
+    if anchoring is not None:
+        projected_paths = dict(anchor_paths_by_id)
+        for mid, paths in anchor_paths_by_id.items():
+            if by_id[mid].last_verified_at is None or not names_a_repository(
+                origin_repo_by_id.get(mid),
+                origin_worktree_by_id.get(mid),
+                verified_head_by_id.get(mid),
+            ):
+                continue
+            anchor = anchoring.for_record(
+                mid, origin_root=origin_worktree_by_id.get(mid)
+            )
+            projected = project_commit_anchors(paths, anchor)
+            projected_paths[mid] = projected.paths
+            if projected.unmapped:
+                unmapped.add(mid)
+        anchor_paths_by_id = projected_paths
+    counted = (
+        _caller_counted(
+            by_id,
+            origin_repo_by_id=origin_repo_by_id,
+            caller_origin=caller_origin,
+            admission=admission,
+        )
+        - unmapped
     )
     commit_drift_debt = _compute_commit_drift_debt(
         by_id=by_id,
@@ -527,6 +549,7 @@ def _drift_rollups(
         caller_origin=caller_origin,
         anchoring=anchoring,
         counted=counted,
+        unmapped=frozenset(unmapped),
     )
     return commit_drift_debt, cross_repo_drift
 
@@ -914,6 +937,7 @@ def _group_cross_repo_candidates(
     caller_origin: Origin | None,
     anchoring: Anchoring | None,
     counted: frozenset[str] | None = None,
+    unmapped: frozenset[str] = frozenset(),
 ) -> tuple[
     dict[tuple[str, str], list[MemoryStats]],
     dict[tuple[str, str], list[MemoryStats]],
@@ -948,11 +972,20 @@ def _group_cross_repo_candidates(
     for stats in by_id.values():
         origin_repo = origin_repo_by_id.get(stats.id)
         worktree = origin_worktree_by_id.get(stats.id)
+        if stats.id in unmapped:
+            unchecked.setdefault(
+                (origin_repo or stats.id, worktree or ""), UNMAPPED_REASON
+            )
+            continue
         # The caller's checked record is no gap in estate coverage, even
         # when its legacy origin did not record a working-tree root.
         if owned(stats.id, origin_repo):
             continue
-        anchor = anchoring.for_record(stats.id) if anchoring is not None else None
+        anchor = (
+            anchoring.for_record(stats.id, origin_root=worktree)
+            if anchoring is not None
+            else None
+        )
         cited = verified_head_by_id.get(stats.id) if verified_head_by_id else None
         if anchor is not None:
             if stats.last_verified_at is None:
@@ -1272,6 +1305,7 @@ def _compute_cross_repo_drift(
     caller_origin: Origin | None,
     anchoring: Anchoring | None = None,
     counted: frozenset[str] | None = None,
+    unmapped: frozenset[str] = frozenset(),
 ) -> CrossRepoDrift | None:
     """The estate check: drift for memories anchored in repos the
     caller is NOT standing in.
@@ -1339,6 +1373,7 @@ def _compute_cross_repo_drift(
         caller_origin=caller_origin,
         anchoring=anchoring,
         counted=counted,
+        unmapped=unmapped,
     )
     if not groups and not homed and not unchecked:
         # `unanchorable` alone still earns a payload. Returning None here
