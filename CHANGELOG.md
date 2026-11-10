@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Linux daemons reserve distinct ports before serving (ENG-279 candidate
+  #13).** A successful bind now reserves a listener before its port enters
+  the state file. If simultaneous reusable binds collide at listen, the
+  loser closes its socket and retries a fresh ephemeral one. Setup failures
+  close their sockets, including an ephemeral listen failure. Windows keeps
+  exclusive address use and POSIX keeps TIME_WAIT reuse. (`daemon.py`,
+  `tests/test_port_reservation.py`)
+
 - **A home Git checkout records its verification cut without a remote
   (ENG-237).** Fast-forward merges, rebases and cherry-picks of commits
   authored before the stamp remain visible through reachability, including

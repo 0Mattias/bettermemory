@@ -1379,31 +1379,37 @@ def _tell_successor(
 
 
 def bind(host: str, port: int) -> socket.socket:
-    """A bound, non-listening socket on `host`: `port` when it is free,
+    """A nonblocking listener on `host`: `port` when it is free,
     else an ephemeral one. The caller reads the port it got.
 
-    On POSIX, SO_REUSEADDR only lets the daemon rebind a port whose last
-    connections sit in TIME_WAIT. On Windows it also lets a socket bind a
-    port another socket holds, so a daemon started on the stale port of a
-    state file shared it with whatever held it (and a client reached that
-    listener instead), and another process could bind the daemon's own
-    port beside it. SO_EXCLUSIVEADDRUSE, where the platform has it, refuses
-    both: a held port fails to bind, and the daemon takes an ephemeral one
-    and records it in its state file."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
-    if exclusive is not None:
-        sock.setsockopt(socket.SOL_SOCKET, exclusive, 1)
-    else:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    Linux SO_REUSEADDR permits two binds before either socket listens.
+    Reserve the listener before publishing its port, retrying a listen
+    collision on a fresh ephemeral socket. SO_EXCLUSIVEADDRUSE keeps
+    Windows from sharing a held port; POSIX keeps TIME_WAIT reuse.
+    """
     try:
-        sock.bind((host, port))
+        return _listen_socket(host, port)
     except OSError:
         if port == 0:
-            sock.close()
             raise
-        sock.bind((host, 0))
-    sock.setblocking(False)
+        return _listen_socket(host, 0)
+
+
+def _listen_socket(host: str, port: int) -> socket.socket:
+    """Bind and reserve one listener, closing it if any setup step fails."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            sock.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, port))
+        sock.listen()
+        sock.setblocking(False)
+    except BaseException:
+        sock.close()
+        raise
     return sock
 
 

@@ -104,6 +104,12 @@ store's lock (a daemon starting, busy or hung) and none answered within
 start, so a config change takes effect after `bettermemory down` and the
 next start.
 
+The daemon reserves a listening socket before publishing its port. If
+another store takes the preferred port during startup, it retries a fresh
+ephemeral port and records that one. On Linux this includes a collision
+after both sockets bind but before either listens; a failed attempt closes
+its socket before retrying.
+
 ```sh
 bettermemory up            # start one, or report the one running
 bettermemory status        # is it running, on which port, for which store
