@@ -50,6 +50,11 @@ eighteenth was built.
   (ENG-279 candidate #12, `handlers/search.py`,
   `tests/test_old_negative_outcomes.py`)
 
+- **Restated question paths retain their literal directory names.**
+  The wording changes run before the folder is inserted, preserving names
+  containing `this checkout` or `this repository`. (ENG-279 candidate #41,
+  `membership_lines.py`, `tests/test_restated_folder_words.py`)
+
 - **The minimum-Git CI build uses its supported C language mode
   (ENG-227).** The source builder selects GNU C11 while keeping Git's
   optimization and warning defaults. Git 2.34's `thread_local` identifier

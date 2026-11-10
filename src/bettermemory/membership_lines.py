@@ -524,9 +524,9 @@ def line_restated(
         # The sentences are this module's own: each "here" and "this" is
         # the question's checkout.
         said = (
-            said.replace(" here", f" {here}")
-            .replace("this checkout", "that checkout")
+            said.replace("this checkout", "that checkout")
             .replace("this repository", "that repository")
+            .replace(" here", f" {here}")
         )
     if kind == FILE_CONTRADICTION:
         options = (
