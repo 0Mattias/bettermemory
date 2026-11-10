@@ -11,6 +11,7 @@ import pytest
 from bettermemory.origin import Origin
 from bettermemory.store import Store
 
+from .test_commit_drift_cache import _assert_unconfirmed_cut
 from .test_relative_attestation_suffixes import _T0, _commit, _git, _repo, home
 from .test_server_commit_drift import _REMOTE, _call, server_with_fake_origin
 
@@ -183,10 +184,15 @@ async def test_path_mode_fixes_the_choice_between_a_literal_and_a_reference_twin
     _git(repo, "rm", "--", name)
     _git(repo, "commit", "-q", "-m", "remove literal twin", when=_LATER)
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["commit_drift"]["basis"] == basis
-    assert shown["commit_drift"]["commits_since_verify"] == (
-        0 if mode == "reference" else 1
-    )
+    if mode == "reference" and basis == "author-date":
+        assert shown["commit_drift"] is None
+        _assert_unconfirmed_cut(shown)
+        assert shown["staleness_verdict"] == "spot_check_required"
+    else:
+        assert shown["commit_drift"]["basis"] == basis
+        assert shown["commit_drift"]["commits_since_verify"] == (
+            0 if mode == "reference" else 1
+        )
     if mode == "reference":
         assert shown["path_drift"]["missing"] == []
     else:

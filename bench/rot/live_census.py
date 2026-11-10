@@ -150,6 +150,7 @@ def _load_memories(store: Store) -> list[dict[str, Any]]:
                 "absent_paths": list(memory.verified_absent_paths),
                 "created": _parse_ts(memory.created),
                 "last_verified_at": _parse_ts(memory.last_verified_at),
+                "verified_head": memory.verified_head,
             }
         )
     return rows
@@ -261,6 +262,7 @@ def _verdict_from_own_worktree(
         verified_paths=row["verified_paths"],
         body=row["body"],
         claims=row["claims_raw"],
+        verified_head=row.get("verified_head"),
         anchor=_home_checkout(Path(worktree)) if worktree else None,
     )
     if isinstance(commit_drift, CommitDriftUnread):

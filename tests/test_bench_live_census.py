@@ -21,6 +21,9 @@ from typing import Any
 
 import pytest
 
+from bettermemory.origin import head_sha
+from bettermemory.store import Store
+
 from .test_membership_security import neutral_git
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
@@ -74,6 +77,7 @@ def _row(repo: Path) -> dict[str, Any]:
         "absent_paths": [],
         "claims_raw": [],
         "last_verified_at": datetime.fromtimestamp(_BASE + 3_600, tz=timezone.utc),
+        "verified_head": head_sha(repo),
     }
 
 
@@ -105,3 +109,22 @@ def test_the_commit_leg_counts_a_commit_after_the_verify(
 def test_the_census_anchor_is_the_home_checkout(repo: Path) -> None:
     anchor = census._home_checkout(repo)
     assert anchor.commit_root(None) == (str(repo), "home_checkout")
+
+
+def test_the_census_retains_the_records_verification_commit(
+    repo: Path, tmp_path: Path
+) -> None:
+    cut = head_sha(repo)
+    assert cut is not None
+    with Store(tmp_path / "store") as store:
+        written = store.write(content="The checklist is in notes.md.", scopes=["tools"])
+        store.mark_verified(written.id, verified_head=cut)
+        rows = census._load_memories(store)
+    assert len(rows) == 1 and rows[0]["verified_head"] == cut
+
+
+def test_a_census_row_without_a_verification_cut_is_not_fresh(repo: Path) -> None:
+    row = _row(repo)
+    row["verified_head"] = None
+    now = row["last_verified_at"] + timedelta(days=1)
+    assert census._verdict_from_own_worktree(row, 30, now) == "spot_check_required"

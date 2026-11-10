@@ -48,7 +48,8 @@ eighteenth was built.
   longer asserts freshness: per-memory reads and both health readers
   report `unconfirmed_cut` and recommend verification in the home checkout.
   Complete reachability zeros remain clean, and external or phantom
-  anchors retain their applicability rules. (`handlers/verify.py`,
+  anchors retain their applicability rules. The census reader retains
+  each record's stored cut. (`handlers/verify.py`,
   `verify_basis.py`, `verify.py`, `health_stats.py`,
   `tests/test_remoteless_verified_head.py`)
 

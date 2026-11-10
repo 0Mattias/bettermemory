@@ -1000,10 +1000,10 @@ def test_the_basis_arms_part_on_a_branch_authored_before_t0(tmp_path: Path) -> N
     moves on; the branch is merged inside the window. At t1 the literal
     claim is false. The author-date arm — the shipped count through
     7.3.0, the memory stamped at t0's commit instant — bisects author
-    dates and finds no commit touching the file after the stamp: zero,
-    unflagged, a served stale claim. The reachability arm counts
-    ``t0..t1`` and finds the branch commit: one, flagged. Every other
-    claim in the window is still true, and neither arm flags it.
+    dates and finds no commit touching the file after the stamp. With no
+    usable verification cut that zero is uncertain and flagged, while
+    the row keeps its integer placeholder. The reachability arm counts
+    ``t0..t1`` and finds the branch commit: one, flagged.
     """
     _git_repo(tmp_path)
     _commit_dated(
@@ -1069,16 +1069,15 @@ def test_the_basis_arms_part_on_a_branch_authored_before_t0(tmp_path: Path) -> N
     stale_reach = [r for r in reach if r["truth"] == "false"]
     assert len(stale_author) == 1 and len(stale_reach) == 1
     assert stale_author[0]["kind"] == "literal"
-    assert stale_author[0]["commit_drift"] == 0 and not stale_author[0]["flagged"], (
-        "the author-date arm saw the branch commit as drift — the fixture "
-        "no longer reproduces the defect"
+    assert stale_author[0]["commit_drift"] == 0 and stale_author[0]["flagged"], (
+        "an author-date zero without a usable cut must not certify freshness"
     )
     assert stale_reach[0]["commit_drift"] == 1 and stale_reach[0]["flagged"]
 
     # Claim order is extraction order: src/mod.py's path claim and X,
     # then src/other.py's path claim and Y. The branch commit is the only
     # touch on src/mod.py and predates t0, so the author-date arm reads
-    # zero on both of its claims; the `after` commit touches
+    # zero on both of its claims, now flagged as uncertain; the `after` commit touches
     # src/other.py inside the window on both axes, a file-level alert on
     # two still-true claims, which is the cost the claim-level tier
     # exists to remove and is the same on both arms.
@@ -1090,5 +1089,5 @@ def test_the_basis_arms_part_on_a_branch_authored_before_t0(tmp_path: Path) -> N
     ]
     assert [r["commit_drift"] for r in author] == [0, 0, 1, 1]
     assert [r["commit_drift"] for r in reach] == [1, 1, 1, 1]
-    assert [r["flagged"] for r in author] == [False, False, True, True]
+    assert [r["flagged"] for r in author] == [True, True, True, True]
     assert [r["flagged"] for r in reach] == [True, True, True, True]
