@@ -32,6 +32,13 @@ eighteenth was built.
 
 #### Fixed
 
+- **Translated prose paths keep spaces in the live checkout root
+  (ENG-268).** The spaced bare-path fallback cuts the original citation
+  before translating its prefix. It now checks the cited file rather
+  than an unrelated prefix of the live directory, while an existing
+  complete spaced filename keeps priority. (`verify_anchoring.py`,
+  `tests/test_spaced_translated_anchor.py`)
+
 - **Membership questions retain their scope and current evidence
   (ENG-261, ENG-262, ENG-263, ENG-265, ENG-266).** Equal-length translated
   views prefer a live local checkout; a longer recorded view still wins.

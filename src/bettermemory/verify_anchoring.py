@@ -1133,10 +1133,13 @@ def _detect_anchored(
         exists = _path_exists(target)
         if not exists and not attested:
             if bare_spaced:
-                prefix = target.split(" ", 1)[0]
-                if _path_exists(prefix) and out.first(prefix):
+                # Split the citation before translating: a live checkout
+                # can have spaces that were absent in its recorded root.
+                cited_prefix = path.split(" ", 1)[0]
+                prefix, _prefix_rule = anchor.absolute(cited_prefix)
+                if prefix is not None and _path_exists(prefix) and out.first(prefix):
                     out.checked.append(prefix)
-                    if out.keys(path.split(" ", 1)[0]) in verified_set:
+                    if out.keys(cited_prefix) in verified_set:
                         out.verified.append(prefix)
                 continue
             if drop_if_missing:
