@@ -586,7 +586,8 @@ def _dequote_patch_headers(stream: str) -> str:
     ``--- a/<another path>`` line, read as the stream's own: foo's hunk went
     to a commit outside the window or to another file, and the count read
     0 on both bases (ENG-220's re-review). A header is rewritten where its
-    whole remainder decodes as one complete quoted string, naming no line
+    remainder, apart from one file-label TAB, decodes as one complete
+    quoted string, naming no line
     break (`_quoted_header_path`), whose path starts with the pinned ``a/`` (old
     side) or ``b/`` (new side) prefix. The fast path keeps the
     zero-quoted-header case, i.e. essentially every real stream,
@@ -624,7 +625,12 @@ def _dequote_patch_headers(stream: str) -> str:
             continue
         if not line.startswith(('--- "', '+++ "')):
             continue
-        decoded = _quoted_header_path(line[4:])
+        quoted = line[4:]
+        # A file label containing whitespace ends with one formatting
+        # TAB outside its C-quoted name. It is not part of that name.
+        if quoted.endswith('"\t'):
+            quoted = quoted[:-1]
+        decoded = _quoted_header_path(quoted)
         if decoded is None:
             continue
         prefix = "a/" if line.startswith("--- ") else "b/"

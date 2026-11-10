@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Quoted patch labels retain their actual filenames (ENG-269).** Git's
+  optional formatting TAB after a complete quoted `---` or `+++` label
+  is removed before decoding. A quoted name containing a space now
+  reaches the claim index as that name, including edits and deletions.
+  Other trailing text stays refused, escaped name bytes stay intact,
+  and hunk contents are never rewritten as headers.
+  (`origin_gitfiles.py`, `tests/test_quoted_header_tabs.py`)
+
 - **Every author-date reader preserves malformed-date evidence
   (ENG-272, ENG-273, ENG-278).** A blank date record declines the read
   instead of dropping a commit. Filtered and whole histories share raw
