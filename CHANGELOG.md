@@ -64,6 +64,12 @@ eighteenth was built.
   (`membership.py`, `membership_resolve.py`,
   `membership_declare.py`, `tests/test_boundary_creation.py`)
 
+- **Health admits the same stored claims as show and search (ENG-255).**
+  Claims that no longer parse contribute no drift candidate, no skipped
+  home row and no checkable verification debt. A valid claim beside an
+  invalid one still counts. Health parses the claims once for all its
+  buckets. (`health.py`, `tests/test_health_claim_admission.py`)
+
 #### Added
 
 - **Health recommends a spot-check of every memory whose history was

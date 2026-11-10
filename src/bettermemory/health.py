@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 from .models import Category, Memory, first_summary_line
 from . import location
+from .claims import load_claims
 from .commit_legs import counted_at_caller, names_a_repository
 from .origin import (
     Origin,
@@ -208,7 +209,10 @@ def _census_memories(memories: Iterable[Memory], cutoff: datetime) -> _HealthCen
         origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
         origin_worktree_by_id[m.id] = m.origin.worktree_root if m.origin else None
         anchor_paths_by_id[m.id] = commit_drift_anchor_paths(m.body, m.verified_paths)
-        claims_by_id[m.id] = tuple(m.claims)
+        # Share show/search's stored-claim gate: malformed legacy claims
+        # create neither a drift candidate nor a checkable verification
+        # debt entry (ENG-255). Parse once for all health buckets.
+        claims_by_id[m.id] = tuple(claim.render() for claim in load_claims(m.claims))
         verified_head_by_id[m.id] = m.verified_head
     return _HealthCensus(
         by_id=by_id,
