@@ -61,6 +61,9 @@ tar -xzf "$archive" -C "$work/src" --strip-components=1
 # shellcheck disable=SC2086 # BUILD_GIT_MAKEFLAGS is a list of words
 flags=(
   "prefix=$prefix"
+  # Git 2.34 uses thread_local as an identifier, a keyword in C23.
+  # Keep the upstream optimization/warning defaults in GNU C11 mode.
+  "CFLAGS=-g -O2 -Wall -std=gnu11"
   NO_GETTEXT=YesPlease
   NO_TCLTK=YesPlease
   NO_PERL=YesPlease

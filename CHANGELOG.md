@@ -32,6 +32,13 @@ eighteenth was built.
 
 #### Fixed
 
+- **The minimum-Git CI build uses its supported C language mode
+  (ENG-227).** The source builder selects GNU C11 while keeping Git's
+  optimization and warning defaults. Git 2.34's `thread_local` identifier
+  is no longer parsed as a C23 keyword on newer Ubuntu compilers, so the
+  minimum-version leg reaches its repository-reading tests.
+  (`tools/ci/build_git.sh`)
+
 - **Origin capture refuses embedded NUL paths before platform resolution
   (ENG-277).** Windows can return such a path unchanged instead of raising
   as POSIX does. Capture now declines it before any filesystem or Git

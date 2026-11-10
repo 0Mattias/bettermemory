@@ -292,7 +292,9 @@ Three costs remain on a supported git, and none gives a wrong answer:
   name. Ubuntu 24.04 LTS ships 2.43.
 
 CI runs the git-reading suites on 2.34.8 and on the newest release, both
-built from source and cached. It also runs them on git's `next` built with
+built from source and cached. The builder selects GNU C11 explicitly,
+so an older Git's identifiers retain their meaning when the runner's compiler
+defaults to C23. It also runs them on git's `next` built with
 its breaking changes. That job may fail, and its failures are reported.
 
 ## Monitoring
