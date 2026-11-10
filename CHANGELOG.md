@@ -32,6 +32,13 @@ eighteenth was built.
 
 #### Fixed
 
+- **Restore preserves anchors hidden by a shallow-history boundary.**
+  A negative ancestry answer is conclusive only after Git confirms the
+  repository is not shallow. A cut can hide a true ancestor even when its
+  object remains present, or omit its object entirely. Positive ancestry
+  still succeeds in a shallow clone, and an unread shallow-status probe
+  leaves the anchor intact. (`origin.py`, `tests/test_ancestry_read_errors.py`)
+
 - **Expanded home attestations use the host's separator spelling.** On
   Windows, `~/...` targets no longer retain a mixture of slash styles after
   expansion, so their stored targets and drift fields match the native

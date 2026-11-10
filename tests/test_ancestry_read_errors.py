@@ -59,3 +59,39 @@ def test_a_signalled_ancestry_process_is_an_unanswered_read(
 
     monkeypatch.setattr(origin, "_git_result", result)
     assert origin.commit_reachable(repo, shas[0]) is None
+
+
+def test_a_shallow_cut_cannot_disprove_an_anchor_beyond_it(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    shas = _history(repo)
+    assert origin.commit_reachable(repo, shas[0]) is True
+    shallow = repo / ".git" / "shallow"
+    shallow.write_text(shas[2] + "\n")
+    try:
+        assert origin.commit_reachable(repo, shas[-1]) is True
+        assert origin.commit_reachable(repo, shas[2]) is True
+        assert origin.commit_reachable(repo, shas[0]) is None
+        assert origin.commit_reachable(repo, "a" * 40) is None
+    finally:
+        shallow.unlink()
+    assert origin.commit_reachable(repo, shas[0]) is True
+    assert origin.commit_reachable(repo, "a" * 40) is False
+
+
+def test_an_unread_shallow_status_does_not_disprove_an_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    shas = _history(repo)
+    _plain(repo, "checkout", "--orphan", "unrelated")
+    _plain(repo, "commit", "-qm", "unrelated history", "--allow-empty")
+    assert origin.commit_reachable(repo, shas[0]) is False
+    real = origin._git_result
+
+    def result(cwd: Path, *args: str, **kwargs: Any) -> Any:
+        if args == ("rev-parse", "--is-shallow-repository"):
+            return None
+        return real(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin, "_git_result", result)
+    assert origin.commit_reachable(repo, shas[0]) is None

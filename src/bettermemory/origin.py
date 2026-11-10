@@ -1199,9 +1199,17 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
     # Only a quiet status 1 establishes a negative ancestry answer. A
     # corrupt parent can also yield 1, with an error, and a signalled
     # process establishes nothing. Neither permits stripping the anchor.
+    if result.returncode < 0 or (result.returncode == 1 and result.stderr.strip()):
+        return None
+    # A shallow frontier can hide an ancestor while merge-base quietly
+    # returns 1, or hide its object entirely. Neither is proof of a rewrite.
+    # A positive ancestry answer above needs no complete-history proof.
+    complete = _git_result(cwd, "rev-parse", "--is-shallow-repository")
+    if complete is None or complete.returncode or complete.stdout.strip() != "false":
+        return None
     if result.returncode == 1:
-        return False if not result.stderr.strip() else None
-    if result.returncode < 0 or head_sha(cwd) is None:
+        return False
+    if head_sha(cwd) is None:
         return None
     # A well-formed hash the repository never held is still a measured
     # negative. Quiet revision verification distinguishes that absence
