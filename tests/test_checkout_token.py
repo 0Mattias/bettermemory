@@ -676,6 +676,341 @@ def test_a_claim_taken_while_its_removal_waits_is_left(
     assert claim.read_bytes() == b"ANOTHERHOLDR"
 
 
+def _remove_as(by: str, info: Path, claim: Path) -> None:
+    """A holder's release of its claim, or a breaker's removal of the claim
+    it found stale, of a claim holding ``HOLDERNONCE0``."""
+    if by == "holder":
+        checkout_token._release(claim, "HOLDERNONCE0")
+    else:
+        checkout_token._break(info, "HOLDERNONCE0", None)
+
+
+@pytest.mark.parametrize("code", ["EINVAL", "ESTALE", "EBUSY", "EIO"])
+@pytest.mark.parametrize("by", ["holder", "breaker"])
+def test_a_claim_a_removal_cannot_read_is_read_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, by: str, code: str
+) -> None:
+    """ENG-228: an open of the claim the filesystem refuses says nothing of
+    whose claim it is: on SMB the server refuses the client's lease key
+    while it holds it for the claim's other name (``EINVAL``), a handle
+    goes stale as the name is replaced (``ESTALE``), an open meets the
+    share mode of a removal in hand (``EBUSY``). A holder's release that
+    met one read the claim as another's and left it, as did a breaker's
+    removal: the claim is read again, and removed."""
+    git_dir = _repo(tmp_path / "proj")
+    info = git_dir / "info"
+    claim = info / checkout_token._CLAIM_NAME
+    claim.write_bytes(b"HOLDERNONCE0")
+    err = getattr(errno, code, errno.EIO)
+    real_open = os.open
+    refused: list[int] = []
+
+    def open_refused(path: Any, flags: int, mode: int = 0o777) -> int:
+        if Path(path) == claim and len(refused) < 2:
+            refused.append(1)
+            raise OSError(err, os.strerror(err))
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", open_refused)
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    _remove_as(by, info, claim)
+
+    assert len(refused) == 2
+    assert _info_listing(git_dir) == ["exclude"]
+
+
+@pytest.mark.parametrize("code", ["EIO", "EBUSY", "ESTALE"])
+@pytest.mark.parametrize("by", ["holder", "breaker"])
+def test_a_removal_the_filesystem_refuses_is_tried_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, by: str, code: str
+) -> None:
+    """ENG-228: the SMB client removes a name another thread has in hand
+    (a waiter's read or lookup of the claim) by renaming it away, and a
+    rename the server refuses fails the removal as ``EIO``. A holder's
+    release swallowed that and left its claim, as did a breaker's removal
+    of a stale one: the claim is read again and its removal tried again
+    while it holds the nonce."""
+    git_dir = _repo(tmp_path / "proj")
+    info = git_dir / "info"
+    claim = info / checkout_token._CLAIM_NAME
+    claim.write_bytes(b"HOLDERNONCE0")
+    err = getattr(errno, code, errno.EIO)
+    real_unlink = os.unlink
+    refused: list[int] = []
+
+    def unlink_refused(path: Any, *args: Any, **kwargs: Any) -> None:
+        if Path(path) == claim and not refused:
+            refused.append(1)
+            raise OSError(err, os.strerror(err))
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", unlink_refused)
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    _remove_as(by, info, claim)
+
+    assert refused == [1]
+    assert _info_listing(git_dir) == ["exclude"]
+
+
+@pytest.mark.parametrize("refused", ["read", "removal"])
+@pytest.mark.parametrize("by", ["holder", "breaker"])
+def test_a_claim_taken_while_a_refused_removal_pauses_is_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, by: str, refused: str
+) -> None:
+    """ENG-228: a removal read or tried again reads the claim first: a
+    claim broken and taken by another re-mint during the pause is that
+    one's, and is left, whether a holder releases or a waiter breaks."""
+    git_dir = _repo(tmp_path / "proj")
+    info = git_dir / "info"
+    claim = info / checkout_token._CLAIM_NAME
+    claim.write_bytes(b"HOLDERNONCE0")
+    real_open, real_unlink = os.open, os.unlink
+    once: list[int] = []
+
+    def open_refused(path: Any, flags: int, mode: int = 0o777) -> int:
+        if refused == "read" and Path(path) == claim and not once:
+            once.append(1)
+            raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
+        return real_open(path, flags, mode)
+
+    def unlink_refused(path: Any, *args: Any, **kwargs: Any) -> None:
+        if refused == "removal" and Path(path) == claim and not once:
+            once.append(1)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        real_unlink(path, *args, **kwargs)
+
+    def taken_meanwhile(_s: float) -> None:
+        real_unlink(claim)
+        claim.write_bytes(b"ANOTHERHOLDR")
+
+    monkeypatch.setattr(os, "open", open_refused)
+    monkeypatch.setattr(os, "unlink", unlink_refused)
+    monkeypatch.setattr(time, "sleep", taken_meanwhile)
+    _remove_as(by, info, claim)
+
+    assert once == [1]
+    assert claim.read_bytes() == b"ANOTHERHOLDR"
+
+
+def test_a_claim_no_read_can_name_is_never_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-228: a waiter whose every read of the claim the filesystem
+    refuses alike has not found one claim through its wait: the error
+    names no holder. It broke the claim for it, a live holder's on SMB
+    (a lease key the server holds for the claim's other name, a share
+    mode), and both wrote; it gives way (`CONTENDED`) and the claim is
+    left."""
+    monkeypatch.setattr(checkout_token, "_CLAIM_WAIT_SECONDS", 0.05)
+    git_dir = _repo(tmp_path / "proj")
+    was = _lineage_of(git_dir)
+    claim = git_dir / "info" / checkout_token._CLAIM_NAME
+    claim.write_bytes(b"LIVEHOLDER00")
+    real_open = os.open
+
+    def open_refused(path: Any, flags: int, mode: int = 0o777) -> int:
+        if Path(path) == claim:
+            raise OSError(errno.EINVAL, os.strerror(errno.EINVAL))
+        return real_open(path, flags, mode)
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "open", open_refused)
+        held = remint(git_dir, policy=True, bare=False, replacing=was)
+
+    assert held.status == checkout_token.CONTENDED and held.token is None
+    assert claim.read_bytes() == b"LIVEHOLDER00"
+    assert read(git_dir).token == was.token
+
+
+class _ClaimInHand:
+    """The SMB client's view of the claim's name, for two re-mints, a
+    holder `H` and a waiter `W` (thread names): each open, stat and link of
+    the claim's name has it in hand until it returns (an open until its
+    descriptor is closed). The waiter's first read of the claim stays in
+    hand until the holder's release has met it; the holder's release
+    waits for that read (`_meet`). Where `refused` is ``removal``, a removal of the
+    name another thread has in hand fails as ``EIO`` (the client's rename
+    of it, refused); where ``read``, the holder's first read at its
+    release is refused as ``EINVAL`` (its lease key, held for the
+    claim's other name). Each claim taken and removed is checked against
+    one holder at a time, removed by the one holding it."""
+
+    def __init__(self, claim: Path, refused: str) -> None:
+        self.claim = os.fspath(claim)
+        self.refused = refused
+        self.lock = threading.Lock()
+        self.hands: dict[str, int] = {}
+        self.fds: dict[int, str] = {}
+        self.waiter_in_hand = threading.Event()
+        self.release_met = threading.Event()
+        self.holder: str | None = None
+        self.violations: list[str] = []
+        self.met: list[str] = []
+        self.real = (os.open, os.close, os.unlink, os.link, os.lstat, os.stat)
+
+    def _meet(self) -> None:
+        """The holder's release waits for the waiter's read of the claim,
+        and past the waiter's wait, so the waiter, once its read returns,
+        takes the claim or gives way, and breaks nothing."""
+        if not self.met:
+            self.waiter_in_hand.wait(5)
+            time.sleep(4 * checkout_token._CLAIM_WAIT_SECONDS)
+
+    def _is_claim(self, path: Any) -> bool:
+        return isinstance(path, (str, os.PathLike)) and os.fspath(path) == self.claim
+
+    def _hand(self, delta: int) -> None:
+        me = threading.current_thread().name
+        with self.lock:
+            self.hands[me] = self.hands.get(me, 0) + delta
+
+    def _others(self) -> bool:
+        me = threading.current_thread().name
+        with self.lock:
+            return any(n > 0 for name, n in self.hands.items() if name != me)
+
+    def open(self, path: Any, flags: int, mode: int = 0o777) -> int:
+        real_open = self.real[0]
+        if not self._is_claim(path):
+            return real_open(path, flags, mode)
+        me = threading.current_thread().name
+        if me == "H" and self.refused == "read" and len(self.met) < 2:
+            self._meet()
+            self.met.append("read")
+            if len(self.met) == 2:
+                self.release_met.set()
+            raise OSError(errno.EINVAL, os.strerror(errno.EINVAL))
+        self._hand(1)
+        try:
+            fd = real_open(path, flags, mode)
+        except BaseException:
+            self._hand(-1)
+            raise
+        with self.lock:
+            self.fds[fd] = me
+        if me == "W" and not self.waiter_in_hand.is_set():
+            self.waiter_in_hand.set()
+            self.release_met.wait(5)
+        return fd
+
+    def close(self, fd: int) -> None:
+        with self.lock:
+            mine = self.fds.pop(fd, None)
+        self.real[1](fd)
+        if mine is not None:
+            self._hand(-1)
+
+    def unlink(self, path: Any, *args: Any, **kwargs: Any) -> None:
+        if not self._is_claim(path):
+            self.real[2](path, *args, **kwargs)
+            return
+        me = threading.current_thread().name
+        if me == "H" and self.refused == "removal" and not self.met:
+            self._meet()
+        if self.refused == "removal" and self._others():
+            if me == "H" and not self.met:
+                self.met.append("removal")
+                self.release_met.set()
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        self.real[2](path, *args, **kwargs)
+        with self.lock:
+            if self.holder != me:
+                self.violations.append(f"{me} removed {self.holder}'s claim")
+            self.holder = None
+
+    def link(self, src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+        if not self._is_claim(dst):
+            self.real[3](src, dst, *args, **kwargs)
+            return
+        self._hand(1)
+        try:
+            self.real[3](src, dst, *args, **kwargs)
+        finally:
+            self._hand(-1)
+        me = threading.current_thread().name
+        with self.lock:
+            if self.holder is not None:
+                self.violations.append(f"{me} took {self.holder}'s claim")
+            self.holder = me
+
+    def lstat(self, path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        return self._stat(self.real[4], path, *args, **kwargs)
+
+    def stat(self, path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        return self._stat(self.real[5], path, *args, **kwargs)
+
+    def _stat(self, real: Any, path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if not self._is_claim(path):
+            return real(path, *args, **kwargs)
+        self._hand(1)
+        try:
+            return real(path, *args, **kwargs)
+        finally:
+            self._hand(-1)
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for name in ("open", "close", "unlink", "link", "lstat", "stat"):
+            monkeypatch.setattr(os, name, getattr(self, name))
+
+
+@pytest.mark.parametrize("refused", ["read", "removal"])
+def test_a_release_meeting_a_waiters_read_of_the_claim_removes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refused: str
+) -> None:
+    """ENG-228, the interleaving of CI run 41965490499's SMB leg: a holder
+    releases its claim while a waiter, at the end of its wait, has the
+    claim's name in hand (`_ClaimInHand`). The SMB client's removal of
+    that name fails (``EIO``), or the holder's read of its claim is
+    refused (``EINVAL``); the waiter, finding the claim still there, gives
+    way, and no re-mint was left to break it: the claim stayed in
+    `info/`. The holder reads its claim again and removes it; one
+    re-mint writes, the claim is held by one at a time and removed by its
+    holder, and none is left."""
+    monkeypatch.setattr(checkout_token, "_CLAIM_WAIT_SECONDS", 0.05)
+    git_dir = _repo(tmp_path / "proj")
+    was = _lineage_of(git_dir)
+    claim = git_dir / "info" / checkout_token._CLAIM_NAME
+    hand = _ClaimInHand(claim, refused)
+    out: dict[str, TokenWrite] = {}
+
+    def re_mint() -> None:
+        name = threading.current_thread().name
+        out[name] = remint(git_dir, policy=True, bare=False, replacing=was)
+
+    with monkeypatch.context() as m:
+        hand.install(m)
+        holder = threading.Thread(target=re_mint, name="H")
+        waiter = threading.Thread(target=re_mint, name="W")
+        taken = threading.Event()
+
+        def link_then_tell(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+            hand.link(src, dst, *args, **kwargs)
+            if hand._is_claim(dst):
+                taken.set()
+
+        m.setattr(os, "link", link_then_tell)
+        holder.start()
+        assert taken.wait(5)
+        waiter.start()
+        holder.join(10)
+        waiter.join(10)
+
+    assert hand.met and hand.met[0] == refused
+    assert out["H"].status == "written"
+    assert out["W"].status in ("exists", checkout_token.CONTENDED)
+    assert read(git_dir).token == out["H"].token
+    assert hand.violations == []
+    ours = [n for n in _info_listing(git_dir) if n.startswith(TOKEN_NAME)]
+    assert ours == [TOKEN_NAME]
+
+
+def _rounds() -> int:
+    """The rounds of the concurrent re-mints test: 30, or as many as
+    ``BETTERMEMORY_TEST_REMINT_ROUNDS`` names (the SMB and NFS legs run
+    many more, ENG-228)."""
+    return int(os.environ.get("BETTERMEMORY_TEST_REMINT_ROUNDS") or 30)
+
+
 @pytest.mark.parametrize("stale", [False, True], ids=["live", "stale"])
 def test_one_of_concurrent_re_mints_of_a_lineage_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stale: bool
@@ -688,7 +1023,7 @@ def test_one_of_concurrent_re_mints_of_a_lineage_writes(
     (`_break`), and none removes a claim another took; no claim or break
     mark is left in `info/`."""
     monkeypatch.setattr(checkout_token, "_CLAIM_WAIT_SECONDS", 0.05)
-    for run in range(30):
+    for run in range(_rounds()):
         git_dir = _repo(tmp_path / f"proj{run}")
         was = _lineage_of(git_dir)
         if stale:

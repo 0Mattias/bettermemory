@@ -999,23 +999,6 @@ class _Git:
     kind: str
 
 
-def _ceiling(path: str) -> str | None:
-    """The longest ``GIT_CEILING_DIRECTORIES`` entry that is a strict
-    ancestor of `path`: git probes nothing at or above it."""
-    raw = os.environ.get("GIT_CEILING_DIRECTORIES")
-    if not raw:
-        return None
-    best: str | None = None
-    for entry in raw.split(os.pathsep):
-        if not entry or not os.path.isabs(entry):
-            continue
-        ceiling = os.path.normpath(entry)
-        if path != ceiling and _inside(path, ceiling):
-            if best is None or len(ceiling) > len(best):
-                best = ceiling
-    return best
-
-
 def _inside(path: str, root: str) -> bool:
     path, root = os.path.normpath(path), os.path.normpath(root)
     if path == root:
@@ -1035,6 +1018,14 @@ class GitDies(Exception):
     value it dies on), or that format is not known here: git reads no
     repository there and goes no further, and the capture declines
     (INDETERMINATE), never reading the folder as outside one."""
+
+
+class DiscoveryDies(GitDies):
+    """git dies before its discovery walks: ``GIT_DISCOVERY_ACROSS_FILESYSTEM``
+    holds a value that is no boolean git reads (``git_env_bool``), so git
+    reads no repository anywhere, and the capture declines (INDETERMINATE),
+    never placing the folder in the repository a walk past the value would
+    reach, nor outside one (ENG-232)."""
 
 
 def _from_env(
@@ -1084,9 +1075,16 @@ def _discover(
 ) -> _Git | None:
     """The repository git would find from `start` (``setup.c``'s walk):
     at each directory a ``.git`` entry first, then the directory itself as
-    a git directory (a bare repository, or the inside of one); stopping
-    below a ceiling and at a filesystem boundary (unless
-    GIT_DISCOVERY_ACROSS_FILESYSTEM). Each ``.git`` file passed over as
+    a git directory (a bare repository, or the inside of one). The
+    directories are git's (`githead.probed`, which `githead.entry_above`
+    walks too): from `start`, a resolved path, below each
+    ``GIT_CEILING_DIRECTORIES`` entry as git resolves it through its
+    links, and up to a filesystem boundary unless
+    ``GIT_DISCOVERY_ACROSS_FILESYSTEM`` reads true as git reads a boolean
+    (``0`` and ``false`` do not); `DiscoveryDies` where git dies on that
+    value (ENG-232: a ceiling was compared as written, so a symbolic
+    spelling of it was walked past, and any value that was not empty read
+    as true). Each ``.git`` file passed over as
     not followed (`gitfile_refusal`) goes to `refused` as (the file, the
     git directory it names, why), and so does a directory holding ``HEAD``
     and a ``commondir`` that names a repository it is not registered under
@@ -1104,13 +1102,13 @@ def _discover(
     refusal to `refused` first: git stops there, reading nothing."""
     if os.environ.get("GIT_DIR"):
         return _from_env(start, refused)
-    ceiling = _ceiling(start)
-    across = bool(os.environ.get("GIT_DISCOVERY_ACROSS_FILESYSTEM"))
-    device: int | None = None
-    d = os.path.normpath(start)
-    if not across:
-        device = os.stat(d).st_dev
-    while True:
+    across = githead.across_filesystems()
+    if across is None:
+        raise DiscoveryDies(
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM holds no boolean git reads: git dies on it"
+        )
+    here = os.path.normpath(start)
+    for d in githead.probed(here, None if across else os.stat(here).st_dev):
         dotgit = os.path.join(d, ".git")
         try:
             # The entry itself: a link is read as a pointer (`_at_dotgit`).
@@ -1142,18 +1140,7 @@ def _discover(
             named = _foreign_commondir(d)
             if named is not None:
                 refused.append((d, named, _not_registered(d, named)))
-        parent = os.path.dirname(d)
-        if parent == d:
-            return None
-        if ceiling is not None and len(parent) <= len(ceiling):
-            return None
-        if device is not None:
-            try:
-                if os.stat(parent).st_dev != device:
-                    return None
-            except OSError:
-                return None
-        d = parent
+    return None
 
 
 def _at_dotgit(
@@ -1226,6 +1213,10 @@ class Capture:
     daemon tell whether it reads the same object at ``cwd``.
     ``alias_keys`` are the remote keys spelled with an ``insteadOf``
     prefix of the system or the global config (`read_remotes`, ENG-207).
+    ``ticks`` is whether the git directory's file system keeps its times
+    in FILETIME's 100 ns ticks, as this capture's reads decide it
+    (`location._ticks`, ENG-235), or None where it was not decided (no
+    git directory read, or a client from before it).
     ``kept_apart`` is set where the repository was reached through a
     ``.git`` entry naming a git directory kept apart (`kept_apart`),
     ``tree_recorded`` where this capture made the first record of its
@@ -1255,6 +1246,7 @@ class Capture:
     token_written: str | None = None
     token_status: str = "n/a"
     stamps: tuple[tuple[str, int, int, int, int], ...] = ()
+    ticks: bool | None = None
     files: tuple[FileSeen, ...] = ()
     file_errors: tuple[str, ...] = ()
     file_tracked: bool | None = None
@@ -1302,6 +1294,7 @@ class Capture:
             "token_written": self.token_written,
             "token_status": self.token_status,
             "stamps": [list(s) for s in self.stamps],
+            "ticks": self.ticks,
             "files": [
                 {
                     "id": f.id,
@@ -1363,6 +1356,7 @@ class Capture:
                     (_text(s[0]), int(s[1]), int(s[2]), int(s[3]), int(s[4]))
                     for s in _bounded(raw.get("stamps"), 8)
                 ),
+                ticks=_opt_bool(raw.get("ticks")),
                 files=tuple(
                     FileSeen(
                         id=_text(f["id"]),
@@ -1399,6 +1393,12 @@ def _text(value: Any) -> str:
 
 def _opt_text(value: Any) -> str | None:
     return None if value is None else _text(value)
+
+
+def _opt_bool(value: Any) -> bool | None:
+    if value is not None and not isinstance(value, bool):
+        raise TypeError("not a boolean")
+    return value
 
 
 def _choice(value: Any, allowed: Sequence[str]) -> str:

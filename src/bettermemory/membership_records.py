@@ -462,7 +462,11 @@ class Location:
     remote keys spelled with an ``insteadOf`` prefix of the system or
     the global config that git rewrites to another key, so
     ``remote_keys`` less them are the remotes git fetches from
-    (`location_git.read_remotes`, `membership_alias`, ENG-207)."""
+    (`location_git.read_remotes`, `membership_alias`, ENG-207).
+    ``ticks`` is whether the git directory's file system keeps its times
+    in FILETIME's 100 ns ticks, as the capture decided it over all it
+    read there (`location_stamps.kept_in_ticks`, ENG-235), or None where
+    its client did not say."""
 
     machine: str
     cwd: str
@@ -483,6 +487,7 @@ class Location:
     token_written: str | None = None
     token_status: str = "n/a"
     stamps: tuple[InitStamp, ...] = ()
+    ticks: bool | None = None
     files: tuple[ProjectFileRef, ...] = ()
     file_tracked: bool | None = None
     evicted: bool = False
@@ -560,7 +565,9 @@ class Checkout:
     """One git directory (or folder with a project file) on one machine,
     or (kind ``unresolved``, decision B6) a path written at while nothing
     could be read there: ``sessions`` are the sessions that wrote there,
-    ``replaced_by`` the checkout whose resolution at that path settled it."""
+    ``replaced_by`` the checkout whose resolution at that path settled it.
+    ``ticks`` is the ``ticks`` of the sighting that last took its init
+    stamps (`Location`), None where no such sighting said (ENG-235)."""
 
     id: str
     project: str
@@ -582,6 +589,7 @@ class Checkout:
     views: tuple[View, ...] = ()
     sessions: tuple[str, ...] = ()
     replaced_by: str | None = None
+    ticks: bool | None = None
 
     @property
     def token_superseded(self) -> bool:

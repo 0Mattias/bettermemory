@@ -1,7 +1,9 @@
 """A git directory's init stamps (amendment A2, ENG-215): the name,
 inode number, mtime, change time and size of the files ``git init``
 writes and no git command rewrites (`_init_stamps`), and on Windows the
-change time as NTFS keeps it (`basic_info_ns`).
+change time as NTFS keeps it (`basic_info_ns`); and whether the git
+directory's file system keeps its times in FILETIME's 100 ns ticks
+(`kept_in_ticks`, ENG-235).
 
 A capture stamps its git directory with them, and the model compares a
 record's stamps with the ones read at a sighting, and with another
@@ -15,8 +17,10 @@ function), as the hook client loads it with `location_git`.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
+from collections.abc import Collection, Iterable, Sequence
 from typing import Any
 
 #: The files `_init_stamps` stamps: `description` and `info/exclude`,
@@ -32,8 +36,128 @@ _STAMPED_LINKED = ("commondir",)
 _FILETIME_UNIX = 116_444_736_000_000_000
 _BASIC_INFO_LOCK = threading.Lock()
 _BASIC_INFO: list[Any] = []
-#: Whether a stamp's change time is NTFS's ChangeTime (`_init_stamps`).
+#: Whether a stamp's change time is NTFS's ChangeTime (`_init_stamps`),
+#: and every time a capture reads is kept in ticks (`kept_in_ticks`).
 _WINDOWS = sys.platform == "win32"
+#: FILETIME's tick, 100 ns: the grain NTFS and ReFS keep a file's times
+#: in, and a view of them carries them in (`in_ticks`).
+TICK_NS = 100
+#: Nanoseconds in a second: a share that keeps times to the second.
+SECOND_NS = 1_000_000_000
+#: Where a Linux process reads its mounts (`_drvfs`), and whether it is
+#: read: a module constant, so a test can stand another table in.
+_MOUNTINFO = "/proc/self/mountinfo"
+_LINUX = sys.platform.startswith("linux")
+#: WSL2's drvfs in a mount's superblock options: a 9p mount of a Windows
+#: drive names it as ``aname=drvfs;path=C:\;...`` (`_drvfs`).
+_DRVFS_ANAME = re.compile(r"(?:^|[,;])aname=drvfs(?:[,;]|$)")
+
+
+def in_ticks(times: Collection[int]) -> bool:
+    """Whether `times` read as kept in FILETIME's 100 ns ticks: every one
+    a whole tick, and not every one a whole second (a share that rounds
+    them to the second keeps no ticks). None is not."""
+    if not times or any(t % TICK_NS for t in times):
+        return False
+    return any(t % SECOND_NS for t in times)
+
+
+def kept_in_ticks(times: Iterable[int], device: int | None = None) -> bool:
+    """Whether a git directory's file system keeps its times in
+    FILETIME's 100 ns ticks, as a capture reads it (ENG-235): on Windows
+    always (NTFS, ReFS, FAT and SMB alike keep FILETIMEs); on Linux where
+    `device`, given where the capture read no birth time, is a WSL drvfs
+    mount (`_drvfs`), whatever its times; else where `times`, the mtimes
+    and ctimes of the objects the capture read on the git directory's
+    device, read as ticks (`in_ticks`). A file system keeping nanoseconds
+    gives such times by chance, the rarer the more of them differ."""
+    if _WINDOWS:
+        return True
+    if device is not None and _drvfs(device):
+        return True
+    return in_ticks(set(times))
+
+
+def stat_each(paths: Iterable[str | None]) -> list[os.stat_result | None]:
+    """Each of `paths` stat'ed, None where there is no path or it cannot
+    be stat'ed."""
+    out: list[os.stat_result | None] = []
+    for path in paths:
+        try:
+            out.append(None if path is None else os.stat(path))
+        except (OSError, ValueError):
+            out.append(None)
+    return out
+
+
+def capture_ticks(
+    git_st: os.stat_result | None,
+    git_key: Sequence[object] | None,
+    read: Iterable[os.stat_result | None],
+    stamps: Iterable[Sequence[Any]],
+) -> bool | None:
+    """Whether a capture's git directory's file system keeps its times in
+    FILETIME's ticks (`kept_in_ticks`, ENG-235), decided over the mtimes
+    and ctimes of what the capture read on the git directory's device
+    (`read`: the cwd, the common and the git directory, the root, HEAD
+    and config) and of its init stamps: a checkout's one or two stamps
+    alone fall on ticks by chance far more often
+    (`membership_shared._ticked`). The mount table is read where the git
+    directory's key (`git_key`) holds no birth time, as a view without it
+    (WSL2's drvfs) does. None where the git directory was not read
+    (`git_st`)."""
+    if git_st is None:
+        return None
+    dev = git_st.st_dev
+    times = [
+        t
+        for s in read
+        if s is not None and s.st_dev == dev
+        for t in (s.st_mtime_ns, s.st_ctime_ns)
+    ]
+    times += [int(t) for s in stamps for t in (s[2], s[3])]
+    unborn = git_key is not None and git_key[2] is None
+    return kept_in_ticks(times, dev if unborn else None)
+
+
+def _device_name(device: int) -> str:
+    """`device` as /proc/self/mountinfo names it, ``major:minor`` (none
+    on Windows, which keeps no such numbers)."""
+    if sys.platform == "win32":
+        return ""
+    return f"{os.major(device)}:{os.minor(device)}"
+
+
+def _drvfs(device: int) -> bool:
+    """Whether `device` is a WSL drvfs mount of a Windows drive, as
+    /proc/self/mountinfo names it: a ``9p`` mount whose superblock options
+    hold ``aname=drvfs`` (WSL2, and a container's bind mount of one), a
+    ``virtiofs`` one whose tag names it drvfs (WSL2's opt-in virtiofs, as
+    2.7 tags it, ``drvfsC0``; later releases tag it by a GUID, which the
+    times decide), or a ``drvfs`` one (WSL1). False off Linux, or where
+    the table cannot be read."""
+    if not _LINUX:
+        return False
+    want = _device_name(device)
+    try:
+        with open(_MOUNTINFO, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                fields = line.split()
+                if len(fields) < 7 or fields[2] != want or "-" not in fields[6:]:
+                    continue
+                tail = fields[fields.index("-", 6) + 1 :]
+                fstype = tail[0] if tail else ""
+                source = tail[1] if len(tail) > 1 else ""
+                options = tail[2] if len(tail) > 2 else ""
+                if (
+                    fstype == "drvfs"
+                    or (fstype == "9p" and _DRVFS_ANAME.search(options))
+                    or (fstype == "virtiofs" and source.startswith("drvfs"))
+                ):
+                    return True
+    except (OSError, ValueError):
+        return False
+    return False
 
 
 def _init_stamps(

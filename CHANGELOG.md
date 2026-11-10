@@ -659,6 +659,41 @@ eighteenth was built.
   the production fetch budget is unchanged.
   (`tests/test_location_git_config.py`)
 
+- **A session is placed in a repository only where git finds it
+  (ENG-232).** Membership's discovery walked past two of git's stops. It
+  compared a `GIT_CEILING_DIRECTORIES` entry as written, where git
+  resolves it through its links. And it read any non-empty
+  `GIT_DISCOVERY_ACROSS_FILESYSTEM` as true, where git reads `0`,
+  `false`, `no` and `off` as false and dies on a value that is no
+  boolean (`maybe`). The real-world case is a dotfiles repository at a
+  home named through a link, with `GIT_CEILING_DIRECTORIES=$HOME`. There
+  a session in a folder below home, where git finds no repository, was
+  placed in the dotfiles project. Its brief and search's auto scope
+  delivered that project's records as the caller's own, search and
+  `memory_show` read them fresh with no drift count, and a write from
+  there was homed to that project. The walk is now git's
+  (`githead.probed`, shared with ENG-220's `entry_above`). A value git
+  dies on leaves the capture INDETERMINATE.
+
+- **A re-mint removes its claim on SMB (ENG-228).** A re-mint naming its
+  lineage reads and renames under a claim in `info/` and removes it
+  only while it holds its nonce. On SMB a read of the claim can be
+  refused for a moment: the server refuses the client's lease key while
+  it holds it for the claim's other name, a handle goes stale as the
+  name is replaced, an open meets the share mode of a removal in hand.
+  And the client removes a name another thread has in hand (a waiter
+  reading the claim) by renaming it away, a rename the server can refuse
+  (`EIO`). The holder took either for another's claim, or swallowed it,
+  and left its claim in `info/`, for the next re-mint to wait out and
+  break (CI run 41965490499's SMB leg). A removal, the holder's or a
+  breaker's, now reads such a claim again and tries a refused removal
+  again, in growing pauses for up to 1.5 s, each after a read that
+  found its nonce, so a claim another took meanwhile is still left.
+  A waiter whose reads of the claim are refused alike through its wait
+  no longer breaks it, where on SMB that was a live holder's and both
+  wrote. The concurrent re-mints test runs 300 rounds on the SMB and
+  NFS legs (`BETTERMEMORY_TEST_REMINT_ROUNDS`).
+
 - **Nothing a repository sets makes a changed claim read fresh
   (ENG-220).** Claim drift reads a window's commits and their patches
   with `git log`, and the repository's own config, `config.worktree`,
@@ -1894,19 +1929,55 @@ eighteenth was built.
   file's attributes sets it (MS-FSA 2.1.5.15.2), and a CopyFile2 copy
   (`shutil.copy2` on Windows, Explorer, `copy`) keeps the source's, so
   on the Windows runner such a copy's re-mint was read as the host's.
-  Rung 2 reads no re-mint from stamps kept in FILETIME's 100 ns ticks
-  (every mtime and ctime a whole tick, not every one a whole second: NTFS
-  as Windows reads it, and SMB, whose Linux client reads ChangeTime as
-  the ctime), the checkout's, the sighting's or the other machine's,
-  and the sighting is read as without the rule (fail closed). A Windows
-  host reads birth time, so its own sightings are as before; a container
-  without birth time reading a Windows host's files over a share
-  registers a second checkout as in 9.0.0rc18. B still reads them, as a
-  view's token keeps B standing, which asks. A file system keeping
-  microseconds reads as ticks, and one keeping nanoseconds does by
-  chance (a linked worktree's one stamp once in 100, a checkout's two
-  once in 10,000). A snapshot, an overlay's
-  lower layer or a block-level clone keeps the ctimes, but the rule
+  Rung 2 reads no re-mint from files kept in FILETIME's 100 ns ticks
+  (NTFS as Windows reads it, and a view of it without birth time, WSL2's
+  9p, drvfs, which Docker Desktop's WSL2 bind mounts go through), and the
+  sighting is read as without the rule (fail closed). The capture
+  decides that once, over the mtimes and ctimes of all it reads on the
+  git directory's device, not the stamps alone (ENG-235): the cwd, the
+  git and common directories, the root, HEAD, config and the stamped
+  files, eight distinct times for a fresh checkout or linked worktree on
+  APFS. Every one a whole tick and not every one a whole second; on
+  Windows always; and on Linux, where it reads no birth time, wherever
+  the mount table names the device drvfs (a `9p` mount with
+  `aname=drvfs`, a container's bind mount of one, a `virtiofs` one
+  tagged `drvfs` as WSL 2.7's opt-in virtiofs tags it, or WSL1's
+  `drvfs`), whatever its times; later WSL releases tag that virtiofs by
+  a GUID, which its times decide. The location token posts it (`ticks`,
+  which an earlier daemon ignores) and the checkout row keeps it inside
+  `stamps_json`, an object beside the stamps that every release since
+  9.0.0rc15 reads past: no schema step, where a column would need one
+  and the log's fold in 9.0.0rc15 to rc18 refuses a put naming a column
+  it does not know. Another machine's record is passed over where it
+  says it read the files in ticks, or, written by an earlier release,
+  shares no stamp with this machine's to the nanosecond and its stamps
+  read as ticks; a client or a record that does not say reads by its
+  stamps. A Windows host reads birth time, so its own sightings are as
+  before, and so does an SMB view (the Linux client reads the server's
+  CreationTime as the birth time), which never reaches the rule; a
+  container without birth time reading a Windows host's files over
+  drvfs registers a second checkout as in 9.0.0rc18. A drvfs `stat`
+  reported in microsoft/WSL#14301 gives its times in 100 ns, no birth
+  time, and a change time equal to the modify time, so not the creation
+  time; whether it is ChangeTime is not measured, and the mount table
+  decides drvfs either way. B still reads them, as a view's token keeps B
+  standing, which asks. A file system keeping microseconds reads as
+  ticks, and one keeping nanoseconds by chance, which the stamps alone
+  met often: on APFS (Apple Silicon) a linked worktree's one stamp 41
+  times in 3,000, a fresh checkout's two 2 in 6,000, where the capture
+  decided ticks for none of the 9,000. Its eight times read as ticks
+  under once in four million: files written back to back share the
+  24 MHz clock's offset, so each after the first is a whole tick about
+  once in 15 given those before it (680,000 runs measured: 6,854, 400,
+  27 and 4 for the first one to four), and taking each of the last five
+  at one in three still gives that. On a coarse-clock Linux file system
+  such as ext4, which reaches the rule only behind a share without birth
+  time, files written within one clock tick share one time: about one
+  in 10,000 to a million for a fresh checkout where NTP disciplines the
+  clock, fewer as its git directory changes, and about once in 100
+  until the clock is next set where nothing does (inferred, not
+  measured). Each fails closed. A snapshot, an overlay's lower layer or
+  a block-level clone keeps the ctimes, but the rule
   reads only a token found in the checkout's own git directory, which
   with birth time the checkout takes anyway, so it takes no token a
   checkout with birth time would not. A copy landed on the checkout's
@@ -2029,10 +2100,12 @@ eighteenth was built.
   `src/bettermemory/store_schema.py`, `src/bettermemory/store_steps.py`,
   `src/bettermemory/store.py`, `src/bettermemory/store_admission.py`,
   `src/bettermemory/location_git.py`,
-  `src/bettermemory/location_stamps.py`,
+  `src/bettermemory/location_stamps.py`, `src/bettermemory/location.py`,
+  `src/bettermemory/membership_rows.py`,
   `src/bettermemory/membership_alias.py`, `docs/internals.md`,
   `docs/api.md`, `docs/operations.md`, `CONTRIBUTING.md`,
   `tests/test_membership_shared_git_dir.py`,
+  `tests/test_membership_ticks.py`,
   `tests/test_membership_restated.py`, `tests/test_membership_alias.py`,
   `tests/test_membership_store.py`, `tests/test_store_steps.py`,
   `tests/test_store_versions.py`, `tests/test_cross_build.py`)

@@ -179,16 +179,22 @@ def windows_chmod(monkeypatch: pytest.MonkeyPatch) -> None:
 def posix_times(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The init stamps as a POSIX file system keeps them, as `no_birth`
+    """The git directory as a POSIX file system keeps it, as `no_birth`
     plays a platform without birth time. Rung 2 reads no re-mint from
-    stamps kept in FILETIME's 100 ns ticks (`membership_shared._ticked`),
-    as NTFS keeps a file's times on Windows and SMB carries them; the
-    tests here are of files whose ctime no call sets. So where this
-    host's file system keeps ticks, each stamp's ctime is read off the
-    tick by its file's own number: it moves with the change time, and a
-    copy, which Windows' CopyFile2 leaves the source's change time, reads
-    one of its own, as a POSIX copy does. A test that takes `ticks` reads
-    them as they are."""
+    files kept in FILETIME's 100 ns ticks (`membership_shared._in_ticks`),
+    as NTFS keeps a file's times on Windows and WSL2's drvfs carries
+    them; the tests here are of files whose ctime no call sets. So every
+    capture decides its file system keeps no ticks
+    (`location_stamps.kept_in_ticks`), as one keeping nanoseconds does but by a
+    chance this suite would meet (ENG-235); and where this host's file
+    system keeps ticks, each stamp's ctime is read off the tick by its
+    file's own number: it moves with the change time, and a copy, which
+    Windows' CopyFile2 leaves the source's change time, reads one of its
+    own, as a POSIX copy does. A test that takes `ticks` reads the stamps
+    as they are, and one that takes `ntfs` the file system as NTFS."""
+    monkeypatch.setattr(
+        location_stamps, "kept_in_ticks", lambda times, device=None: False
+    )
     if "ticks" in request.fixturenames:
         return
     real = location._init_stamps
@@ -208,12 +214,15 @@ def posix_times(
 
 @pytest.fixture
 def ticks(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path, Path], Path]:
-    """The init stamps as NTFS keeps them: on Windows as read; elsewhere
+    """The init stamps in FILETIME's ticks: on Windows as read; elsewhere
     each stamp's mtime and ctime cut to FILETIME's 100 ns tick, and a copy
     made by the call returned reading its source's stamped times as they
     were, as a CopyFile2 copy (`shutil.copy2` on Windows, Explorer,
     `copy`) keeps the source's write and change times. Returns that
-    call: `copy` on Windows, where `shutil.copy2` is CopyFile2."""
+    call: `copy` on Windows, where `shutil.copy2` is CopyFile2. The
+    capture still decides its file system keeps no ticks (`posix_times`):
+    alone, this is a file system keeping nanoseconds whose stamps fell on
+    whole ticks by chance; with `ntfs`, NTFS."""
     if sys.platform == "win32":
         return copy
     real = location._init_stamps
@@ -235,6 +244,20 @@ def ticks(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path, Path], Path]:
 
     monkeypatch.setattr(location, "_init_stamps", read)
     return copied
+
+
+@pytest.fixture
+def ntfs(
+    monkeypatch: pytest.MonkeyPatch, ticks: Callable[[Path, Path], Path]
+) -> Callable[[Path, Path], Path]:
+    """Files NTFS keeps, read without birth time: the init stamps in
+    ticks (`ticks`), and every capture deciding its file system keeps
+    them (`location_stamps.kept_in_ticks`), as a capture on Windows does, and
+    one on WSL2's drvfs (ENG-235). Returns `ticks`' copy."""
+    monkeypatch.setattr(
+        location_stamps, "kept_in_ticks", lambda times, device=None: True
+    )
+    return ticks
 
 
 @dataclass
@@ -832,7 +855,9 @@ def test_b_reads_the_other_sides_re_mint_as_over_a_bind_mount(
 @dataclass
 class Rounding(Shared):
     """A container over a share that keeps its files' times to the whole
-    second, of files whose host keeps them in ticks."""
+    second, of files whose host keeps them in ticks: its capture reads
+    every time in whole seconds, so it decides its file system keeps no
+    ticks (`location_stamps.in_ticks`)."""
 
     def posted(self, raw: dict[str, Any]) -> dict[str, Any]:
         raw = super().posted(raw)
@@ -841,6 +866,7 @@ class Rounding(Shared):
             [s[0], s[1], s[2] - s[2] % sec, s[3] - s[3] % sec, s[4]]
             for s in raw["stamps"]
         ]
+        raw["ticks"] = False
         return raw
 
 
@@ -855,19 +881,21 @@ class Rounding(Shared):
         "container_over_a_rounding_share",
     ],
 )
-def test_stamps_in_ticks_read_no_re_mint_of_another_machine(
-    tmp_path: Path, lab: Lab, ticks: Callable[[Path, Path], Path], reader: str
+def test_files_kept_in_ticks_read_no_re_mint_of_another_machine(
+    tmp_path: Path, lab: Lab, ntfs: Callable[[Path, Path], Path], reader: str
 ) -> None:
-    """Where the stamped files' times are kept in FILETIME's ticks (NTFS,
-    or SMB), rung 2 reads no token as the checkout's re-mint by another
-    machine: any caller sets a file's change time there, and a CopyFile2
-    copy keeps the source's, so the stamps cannot tell a view from a
-    copy. The host reading the container's re-mint over a share
-    (``host_over_the_share``, or one keeping whole seconds), or from a
+    """Where the git directory's file system keeps its times in
+    FILETIME's ticks (NTFS, read through WSL2's drvfs), rung 2 reads no
+    token as the checkout's re-mint by another machine: any caller sets a
+    file's change time there, and a CopyFile2 copy keeps the source's, so
+    the stamps cannot tell a view from a copy. The host reading the
+    container's re-mint over a share (``host_over_the_share``, or one
+    keeping whole seconds, whose own record says no ticks), or from a
     copy (``host_from_a_copy``, the copy's token carried into the host's
     git directory), and the container reading the host's
-    (``container``, or over a share keeping whole seconds): none is read
-    as that machine's own checkout, failing closed. Before, each was
+    (``container``, or over a share keeping whole seconds, its own files
+    read as no ticks and the host's record as ticks): none is read as
+    that machine's own checkout, failing closed. Before, each was
     (``object+remint``), the copy's re-mint taken as the host's on
     Windows."""
     line = make_repo(tmp_path / "host" / "line", commits=2)
@@ -875,7 +903,7 @@ def test_stamps_in_ticks_read_no_re_mint_of_another_machine(
     assert hid is not None
     kind = Rounding if reader.endswith("rounding_share") else Shared
     if reader == "host_from_a_copy":
-        seen = ticks(line, tmp_path / "box" / "copy")
+        seen = ntfs(line, tmp_path / "box" / "copy")
         box: Shared = Shared(seen, "/workspaces/copy", _container_machine(lab, "copy"))
     else:
         box = kind(line, "/workspaces/line", _container_machine(lab, "line"))
@@ -905,9 +933,9 @@ def test_stamps_in_ticks_read_no_re_mint_of_another_machine(
     assert lab.model().checkout(hid).token != found
 
 
-@pytest.mark.usefixtures("no_birth", "ticks")
-def test_b_reads_stamps_in_ticks_as_before(tmp_path: Path, lab: Lab) -> None:
-    """B still reads stamps kept in ticks (`_view_made`): there a view's
+@pytest.mark.usefixtures("no_birth", "ntfs")
+def test_b_reads_files_kept_in_ticks_as_before(tmp_path: Path, lab: Lab) -> None:
+    """B still reads files kept in ticks (`_view_made`): there a view's
     token keeps B standing, which asks where T names another project, as
     `test_b_reads_the_other_sides_re_mint_as_over_a_bind_mount` does."""
     line = make_repo(tmp_path / "host" / "line", commits=2)

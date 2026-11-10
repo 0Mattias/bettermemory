@@ -38,17 +38,19 @@ inode its own way. No call sets a POSIX file's ctime, so a file-level copy
 has ctimes of its own; a filesystem snapshot, an overlay's lower layer or a
 block-level clone of a VM's disk keeps them. NTFS's change time is set by
 any caller and kept by a CopyFile2 copy, so rung 2 reads no re-mint from
-stamps kept in FILETIME's ticks (`_ticked`). None of the rules reads a
-token that is not in the checkout's own git directory: whatever writes
+files kept in FILETIME's ticks, as the sighting's capture decides it over
+all it read in the git directory (`_in_ticks`, ENG-235). None of the
+rules reads a token that is not in the checkout's own git directory:
+whatever writes
 there can already make a token the checkout takes
 (`checkout_token.succeeds`), and with birth time the checkout takes any
 token found at its object.
 
 Each function takes the model as `self: Membership`, as the ladder's do
 (`membership_resolve`); the class binds `_shared_remint` by name. This
-module imports the standard library, `checkout_token`, `time_utils` and
-the records, rows and lines modules, and `membership` only under
-TYPE_CHECKING.
+module imports the standard library, `checkout_token`, `location_stamps`,
+`time_utils` and the records, rows and lines modules, and `membership`
+only under TYPE_CHECKING.
 """
 
 from __future__ import annotations
@@ -59,6 +61,7 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from . import checkout_token
+from .location_stamps import in_ticks
 from .membership_lines import line_restated
 from .membership_records import (
     ANSWERED,
@@ -90,9 +93,6 @@ RESTAMPED_BY = frozenset({"birth", "token", "remint"})
 #: Nanoseconds in a second: a share that keeps times to the second
 #: (`_same_file`).
 _SECOND_NS = 1_000_000_000
-#: FILETIME's tick, 100 ns: the grain NTFS and ReFS keep a file's times
-#: in, and SMB carries them in (`_ticked`).
-_TICK_NS = 100
 #: What `_healed` reads of two records of one git directory: the earlier
 #: one, silently (``HEAL``); the later one, with a question naming both
 #: projects (``ASK_WHICH``); or the later one as ENG-205's order has it
@@ -164,51 +164,90 @@ def _continues(
     k: Checkout, loc: Location, found: str, carriers: Collection[Checkout]
 ) -> bool:
     """The rule over `carriers`, the checkouts recording `k`'s token or
-    `found`. Never where `k`'s stamps or the sighting's are kept in
-    FILETIME's ticks, and over the carriers whose stamps are not
-    (`_ticked`: there the stamps cannot tell a view from a copy). Either
-    one of `k`'s init stamps is read here, inode number included (A2: the
+    `found`. Never where the files are kept in FILETIME's ticks
+    (`_in_ticks`: there the stamps cannot tell a view from a copy), and
+    over the carriers that read them otherwise (`_carried_in_ticks`).
+    Either one of `k`'s init stamps is read here, inode number included (A2: the
     object is the recorded git directory), and another machine's view of
     the same files made or recorded `found` (`_made_by`); or every one of
     `k`'s stamps is read here but for its ctime (`_moved_under`: a mode,
     an owner or an extended attribute set on the files since `k` last
     took them) and a record of another machine holding `found` read
     every stamp here exactly, ctime included (`_read_as_now`)."""
-    if _ticked(k.stamps) or _ticked(loc.stamps):
+    if _in_ticks(k, loc):
         return False
-    carriers = [c for c in carriers if not _ticked(c.stamps)]
+    carriers = [c for c in carriers if not _carried_in_ticks(c, k, loc)]
     if _read_here(k, loc):
         return _made_by(k, found, carriers)
     return _moved_under(k, loc) and _read_as_now(k, loc, found, carriers)
 
 
-def _ticked(stamps: Collection[Sequence[object]]) -> bool:
-    """Whether `stamps` hold times kept in FILETIME's 100 ns ticks: every
-    mtime and ctime a whole tick, not every one a whole second (a share
-    that rounds them, which `_same_file` reads within the second). NTFS
-    and ReFS keep a file's times so, and SMB carries them so (the Linux
-    client's ctime is the server's ChangeTime). There a change time is no
+def _in_ticks(k: Checkout, loc: Location) -> bool:
+    """Whether the files the rule reads at the sighting are kept in
+    FILETIME's 100 ns ticks: NTFS and ReFS keep a file's times so, and a
+    view of them without birth time carries them so (WSL2's 9p, drvfs,
+    which Docker Desktop's WSL2 bind mounts go through; whether it reads
+    ChangeTime as the ctime is not measured). There a change time is no
     ctime: any caller that may write a file's attributes sets it (MS-FSA
     2.1.5.15.2, FileBasicInformation; CPython's `os.chmod` on Windows
     writes back the one it read), and a CopyFile2 copy (Explorer, `copy`,
-    `shutil.copy2`) keeps the source's. Such stamps cannot tell a view of
-    the files from a copy, so rung 2 reads no re-mint from them, failing
-    closed: the sighting is read as without the rule. B still reads them
-    (`_view_made`), as there a view's token keeps B standing, which asks
-    where T names another project. A file system keeping microseconds
-    gives such stamps too, and one keeping nanoseconds by chance: one
-    time in 100 is a whole tick, and a file written once has one time for
-    both, so a linked worktree's one stamp reads so once in 100 and a
-    checkout's two once in 10,000. Each fails closed."""
+    `shutil.copy2`) keeps the source's, so the stamps cannot tell a view
+    of the files from a copy, and rung 2 reads no re-mint from them,
+    failing closed: the sighting is read as without the rule. B still
+    reads them (`_view_made`), as there a view's token keeps B standing,
+    which asks where T names another project.
+
+    As the sighting's capture decided it (`Location.ticks`, ENG-235): over
+    the mtimes and ctimes of all it read on the git directory's device,
+    the stamped files among them, and from the mount table where it read
+    no birth time (`location_stamps.kept_in_ticks`). `k`'s stamps are of
+    the same files on this machine, as the rule reads them only where
+    they are read here (`_read_here`, `_moved_under`). Where the
+    sighting's client did not say, as `k`'s record last did; where
+    neither did, as either one's stamps read (`_ticked`)."""
+    if loc.ticks is not None:
+        return loc.ticks
+    if k.ticks is not None:
+        return k.ticks
+    return _ticked(k.stamps) or _ticked(loc.stamps)
+
+
+def _carried_in_ticks(c: Checkout, k: Checkout, loc: Location) -> bool:
+    """Whether another machine's record `c` read the files in ticks, so
+    that the rule passes it over: as the sighting that last stamped it
+    decided (`Checkout.ticks`); where none did (a record an earlier
+    release wrote), not where it holds one of `k`'s stamps or the
+    sighting's to the nanosecond, ctime included, since then it read the
+    same files' times as this machine, which does not keep them in ticks
+    (`_in_ticks`, read first); else as its stamps read (`_ticked`)."""
+    if c.ticks is not None:
+        return c.ticks
+    if _exact(c.stamps) & (_exact(k.stamps) | _exact(loc.stamps)):
+        return False
+    return _ticked(c.stamps)
+
+
+def _ticked(stamps: Collection[Sequence[object]]) -> bool:
+    """Whether `stamps` read as kept in FILETIME's 100 ns ticks
+    (`location_stamps.in_ticks`): every mtime and ctime a whole tick, not
+    every one a whole second (a share that rounds them, which
+    `_same_file` reads within the second). What `_in_ticks` reads where
+    neither the sighting nor the record says what the capture decided
+    over all it read. A file system keeping microseconds gives such
+    stamps too, and one keeping nanoseconds by chance, as a file written
+    once has one time for both: on APFS (Apple Silicon) a linked
+    worktree's one stamp 41 times in 3,000, a fresh checkout's two 2 in
+    6,000 (ENG-235's measure; the review's, 3 in 5,000); and on a
+    coarse-clock Linux file system such as ext4 a checkout's two about
+    once in 100, its two files given one time (inferred). Each fails
+    closed."""
     times: list[int] = []
     for s in stamps:
         for t in (s[2], s[3]) if len(s) == 5 else ():
             if not isinstance(t, int) or isinstance(t, bool):
                 return False
             times.append(t)
-    if not times or any(t % _TICK_NS for t in times):
-        return False
-    return any(t % _SECOND_NS for t in times)
+    return in_ticks(times)
 
 
 def _read_here(k: Checkout, loc: Location) -> bool:
@@ -340,12 +379,18 @@ def _restamped(self: Membership, k: Checkout, loc: Location, how: str) -> Checko
     read no stamps leaves the recorded ones. One checkout row where they
     changed; a kept capture posts the stamps of the read it keeps, so a
     change is taken at the next capture read afresh (a token re-minted
-    since is one: the token is in the capture's signature)."""
+    since is one: the token is in the capture's signature). The
+    sighting's ``ticks`` goes with them (`_in_ticks`), and alone where
+    the stamps read as recorded and it says otherwise than the record,
+    as at a record's first sighting by a client that says it."""
     if how not in RESTAMPED_BY or not loc.stamps:
         return k
-    if {tuple(s) for s in loc.stamps} == {tuple(s) for s in k.stamps}:
+    same = {tuple(s) for s in loc.stamps} == {tuple(s) for s in k.stamps}
+    if same and loc.ticks in (None, k.ticks):
         return k
-    return self._put_checkout(dataclasses.replace(k, stamps=tuple(loc.stamps)))
+    return self._put_checkout(
+        dataclasses.replace(k, stamps=tuple(loc.stamps), ticks=loc.ticks)
+    )
 
 
 def _healed(self: Membership, kept: Checkout, later: Checkout, loc: Location) -> str:

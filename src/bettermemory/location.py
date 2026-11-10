@@ -131,6 +131,7 @@ from .location_git import (
     UNANSWERED,
     WALK_LIMIT,
     Capture,
+    DiscoveryDies,
     GitDies,
     Key,
     RepositoryHistory,
@@ -160,6 +161,10 @@ from .location_git import (
     _init_stamps as _init_stamps,
     walk as walk,
 )
+
+# What a capture reads of whether its git directory's file system keeps
+# FILETIME's ticks (ENG-235) lives in `location_stamps`.
+from .location_stamps import capture_ticks, stat_each
 
 # The witness exchange's messages live in `location_witness`, which
 # imports nothing from here. The names both modules read are not patch
@@ -554,6 +559,9 @@ def _capture_uncached(
         git = _discover(real)
     except OSError as exc:
         return _indeterminate(real, f"unreadable: {exc}", cwd_key)
+    except DiscoveryDies as exc:
+        # git dies before it walks (ENG-232): no repository anywhere.
+        return _indeterminate(real, f"discovery: {exc}", cwd_key)
     except GitDies as exc:
         # git dies on the format of the repository its walk reaches, and
         # reads nothing there, or that format is not known here: never a
@@ -586,16 +594,18 @@ def _capture_uncached(
         )
     kept = kept_apart(git)
     git = _real_git(git)
-    object_dir = git.git_dir
-    common_key = object_key(git.common_dir)
-    own_key = object_key(object_dir)
-    root_key = object_key(git.root) if git.root is not None else None
+    common_st, own_st, root_st = stat_each((git.common_dir, git.git_dir, git.root))
+    common_key = object_key(git.common_dir, common_st) if common_st else None
+    own_key = object_key(git.git_dir, own_st) if own_st else None
+    root_key = object_key(git.root, root_st) if git.root and root_st else None
+    read = [st, common_st, own_st, root_st]
     for name in ("HEAD", "config"):
         path = os.path.join(git.git_dir if name == "HEAD" else git.common_dir, name)
         try:
             fst = os.stat(path)
         except OSError:
             continue
+        read.append(fst)
         if _evicted(fst) and not _fetch(path, budget):
             # Not on this disk and not fetched within the budget: what stat
             # gives is kept and nothing is read (design 3.1, D19).
@@ -604,8 +614,7 @@ def _capture_uncached(
             tpath = str(checkout_token.token_path(git.git_dir))
             try:
                 if not _evicted(os.stat(tpath)):
-                    read = checkout_token.read(git.git_dir)
-                    token = read.token
+                    token = checkout_token.read(git.git_dir).token
                     status = "present" if token else status
             except OSError:
                 pass
@@ -643,14 +652,12 @@ def _capture_uncached(
     # to its tree, so `capture` records the folder followed in the state
     # directory (ENG-206), whatever the token's policy: nothing is written
     # into the repository.
-    walk_root = git.root if git.root is not None else git.git_dir
-    walk, files, errors = _walk_files(real, walk_root)
-    born = head is not None or bool(tips)
+    walk, files, errors = _walk_files(real, git.root or git.git_dir)
     tracked: bool | None = None
-    root_file = walk.root
-    if root_file is not None and head is not None:
+    if walk.root is not None and head is not None:
         tracked = _file_tracked(git.common_dir, head)
-    keep_manifest = manifest and not born and git.root is not None
+    keep_manifest = manifest and head is None and not tips and git.root is not None
+    stamps = _init_stamps(git.git_dir, linked=git.kind == LINKED)
     return Capture(
         cwd=real,
         state=REPO,
@@ -673,7 +680,8 @@ def _capture_uncached(
         token=token,
         token_written=written,
         token_status=status,
-        stamps=_init_stamps(git.git_dir, linked=git.kind == LINKED),
+        stamps=stamps,
+        ticks=capture_ticks(own_st, own_key, read, stamps),
         files=files,
         file_errors=errors,
         file_tracked=tracked,
@@ -1378,6 +1386,7 @@ def to_location(
         token_written=cap.token_written,
         token_status=cap.token_status,
         stamps=tuple(mb.InitStamp(*s) for s in cap.stamps),
+        ticks=cap.ticks,
         files=tuple(
             mb.ProjectFileRef(
                 id=f.id,

@@ -945,6 +945,7 @@ class Membership:
             token=token,
             token_status=loc.token_status,
             stamps=loc.stamps,
+            ticks=loc.ticks,
             last_head=loc.head,
             branch=loc.branch,
             remotes=tuple(sorted(loc.remote_keys)),

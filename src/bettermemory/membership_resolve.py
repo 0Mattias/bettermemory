@@ -928,6 +928,7 @@ def _folder_became_repository(self: Membership, loc: Location) -> Checkout | Non
                 common_object_key=loc.common_object_key,
                 git_dir=loc.git_dir,
                 stamps=loc.stamps,
+                ticks=loc.ticks,
                 remotes=tuple(sorted(loc.remote_keys)),
             )
         )

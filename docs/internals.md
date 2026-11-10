@@ -1206,23 +1206,95 @@ CPython's `os.chmod` on Windows writes back the change time it read, so
 it moves none), and a CopyFile2 copy (`shutil.copy2` on Windows,
 Explorer, `copy`) keeps the source's: on the Windows runner a copy made
 so read as the host's files, and its re-mint carried into the host's git
-directory was read as the host's (`object+remint`). The Linux SMB client
-reads the server's ChangeTime as a file's ctime (`cifs_NTtimeToUnix(...
-ChangeTime)` in fs/smb/client/inode.c), so a share's view of such files
-carries the same. Rung 2 therefore reads no re-mint from stamps kept in
-FILETIME's 100 ns ticks (`_ticked`: every mtime and ctime a whole tick,
-not every one a whole second), the checkout's, the sighting's or the
-other machine's record's, and the sighting is read as without the rule:
-a second checkout is registered as in 9.0.0rc18 (fail closed). A Windows
-host reads birth time, so its own sightings take any token found at its
-object anyway; what this closes is a container without birth time
-reading a Windows host's files over a share. B still reads such stamps
-(`_view_made`), as there a view's token keeps B standing, which asks
-where T names another project. A file system keeping microseconds reads
-as ticks, and one keeping nanoseconds does by chance: one time in 100 is
-a whole tick, and a file written once has one time for both, so a linked
-worktree's one stamp reads so once in 100 and a checkout's two once in
-10,000. Each fails closed.
+directory was read as the host's (`object+remint`). A view of such files
+without birth time carries the same grain: WSL2's 9p (drvfs), which
+Docker Desktop's WSL2 bind mounts go through, keeps times to the 100 ns
+(whether it reads ChangeTime as the ctime is not measured). An SMB view
+reaches no rung 2: the Linux client reads the server's CreationTime as
+the birth time (`cifs_getattr` sets `STATX_BTIME`, fs/smb/client/inode.c),
+though it reads ChangeTime as the ctime. Rung 2 therefore reads no
+re-mint from files kept in FILETIME's 100 ns ticks, and the sighting is
+read as without the rule: a second checkout is registered as in
+9.0.0rc18 (fail closed). A Windows host reads birth time, so its own
+sightings take any token found at its object anyway; what this closes
+is a container without birth time reading a Windows host's files over
+drvfs. B still reads such files (`_view_made`), as there a view's token
+keeps B standing, which asks where T names another project.
+
+Whether the files keep ticks is the capture's to decide, once, and not
+the stamps' (ENG-235). A checkout's one or two stamps fall on whole
+ticks by chance on a file system keeping nanoseconds, as a file written
+once has one time for mtime and ctime: of 3,000 linked worktrees made on
+APFS (Apple Silicon) 41 had their one stamp so, about once in 75, and of
+6,000 fresh checkouts 2 had both, where the review measured 3 in 5,000.
+The capture reads more than the stamps on the git directory's device:
+the cwd, the git and common directories, the root, HEAD and config, each
+for its mtime and ctime (`location_stamps.capture_ticks`). They give a
+fresh checkout eight distinct times on APFS (the stamped files' two,
+HEAD's and config's two each, as git writes each and renames it into
+place, the root's and the git directory's), as they gave each of those
+9,000 captures, and none of them decided ticks. On the 24 MHz clock the
+times are not independent: those written within microseconds share one
+offset, so given one on a whole tick the next is one more often than
+one in 100. Of 680,000 runs of four or six files written back to back,
+the first was a whole tick in 6,854 (one in 100), the first two
+in 400, three in 27 and four in 4: each after the first about once in
+15 given those before it, where independent times would be once in 100.
+Taking each of the last five of the eight at one in three, past the
+worst the four allow, still gives under one in four million.
+So the capture decides ticks where every time is a whole tick and not
+every one a whole second (`in_ticks`); on Windows always; and on Linux,
+where its git directory holds no birth time, wherever /proc/self/mountinfo
+names the device drvfs (a `9p` mount whose options hold `aname=drvfs`,
+a container's bind mount of one included, a `virtiofs` one tagged
+`drvfs` as WSL 2.7's opt-in virtiofs tags it, `drvfsC0`, or WSL1's
+`drvfs`), whatever its times, as WSL2's grain and its ctime are not
+measured here (`kept_in_ticks`). Later WSL releases tag that virtiofs by
+a GUID, which the times decide. A drvfs `stat` reported in
+microsoft/WSL#14301 gives its times in 100 ns, no birth time, and a
+change time equal to the modify time, so not the creation time; whether
+it is ChangeTime is not known. A coarse-clock Linux file system such as ext4 reads
+birth time where it is mounted, and reaches the rule only behind a share
+without it (Docker Desktop's or podman's VM on a Linux host, NFS); there
+files written within one clock tick share one time, so a fresh
+checkout's times fall on a few ticks, two or three, and on a clock NTP
+disciplines each tick's time is a whole 100 ns about once in 100
+independently, about one in 10,000 to a million for a fresh checkout,
+fewer as its git directory changes at other times; on a clock nothing
+disciplines, which advances by a whole number of 100 ns a tick, all its
+times share one remainder and read as ticks together about once in 100
+until the clock is next set (inferred, not measured: OrbStack's Linux
+VM was not started for this). Each fails closed.
+
+The location token posts the decision (`ticks`, which a daemon before
+it ignores), and the checkout row keeps it as an object beside the
+stamps in `stamps_json` (`membership_rows.TICKS_KEY`), which every
+release since 9.0.0rc15 reads past, as it reads five-element stamps
+alone. No schema step is needed. A column of its own would need one,
+and more: the log folds the checkouts table, and the fold of 9.0.0rc15
+to rc18 refuses a put naming a column it does not know
+(`_membership_values`), so their `log verify` would read every new row
+as invalid, a change older readers misread, which a major release
+alone may make; and they would drop it at every write of the row. Inside
+the column they read the stamps as before and drop the object when they
+write the row back, which then reads as not said. A record takes its
+sighting's decision where the stamps are taken (`_restamped`), and alone
+at its first sighting by a client that says it.
+
+The rule reads the sighting's decision for the files it reads there,
+`k`'s stamps among them, as it reads `k`'s stamps only where they are
+the files read here (`_in_ticks`). Where the sighting's client does not
+say (one before it), it reads what `k`'s record last said, and where
+neither says, the stamps, as before. Another machine's record is passed
+over where it says it read the files in ticks, so a container over a
+share that rounds the times to the second, which decides no ticks, does
+not take a Windows host's re-mint; one that does not say (a record an
+earlier release wrote) is read as the sighting says where it holds one
+of `k`'s stamps or the sighting's to the nanosecond, ctime included,
+having read the same times as this machine, and as its stamps read
+where it does not (`_carried_in_ticks`). So a second checkout 9.0.0rc18
+registered heals at the first sighting by this release's client,
+whatever the stamps.
 
 A copy landed on the checkout's freed inode number is the one object
 the rule's reading of the stamps cannot tell from the checkout's own,
@@ -1459,12 +1531,10 @@ their ctimes, so the second checkout is registered as before. A chain of
 re-mints
 whose last step the store missed, after steps the checkout never saw,
 ends in a token no record holds: finding the record that held it two
-writes back would need an index of every token a record held. Over SMB
-a Linux view reads ChangeTime as the ctime (from the client's source);
-whether Docker Desktop's share of a Windows folder does is not measured.
-Stamps kept to the whole second on both sides are not read as ticks
-either, so two machines viewing NTFS files over shares that round to
-the second can take a CopyFile2 copy for a view. On a share that keeps
+writes back would need an index of every token a record held. Files
+whose times both machines read to the whole second are not read as
+ticks either, so two machines viewing NTFS files over shares that round
+to the second can take a CopyFile2 copy for a view. On a share that keeps
 times to the second, a copy made
 within the second of the stamped files' last change matches them. A
 view's liveness (the daemon's read and the client's answer) still reads
@@ -1493,7 +1563,18 @@ and renames under a claim, `info/bettermemory.tmp-claim`: a file already
 holding the holder's nonce, hard-linked to that name, so no waiter reads
 a claim empty while it is made (where links are refused, an exclusive
 create and a write), removed by the holder only while it holds that
-nonce. A re-mint finding it waits up to 1.5 s. A claim holding one nonce
+nonce. A read of the claim the filesystem refuses names no holder: on
+SMB the server refuses the client's lease key while it holds it for the
+claim's other name, a handle goes stale as the name is replaced, an open
+meets the share mode of a removal in hand, and the client removes a name
+another thread has in hand by renaming it away, a rename the server can
+refuse (`EIO`). A removal, the holder's or a breaker's, reads such a
+claim again and tries a refused removal again, in growing pauses for up
+to 1.5 s, each removal after a read that found the nonce it is removed
+for, so a claim another took meanwhile is left (ENG-228: either left the
+holder's claim, for the next re-mint to wait out and break); and a
+waiter whose reads are refused alike through its wait has found no
+claim, and breaks none. A re-mint finding it waits up to 1.5 s. A claim holding one nonce
 through the whole wait was left by a re-mint killed holding it: of the
 waiters that found it so, the one that creates
 `info/bettermemory.tmp-break-`, a digest of that nonce and a generation,
@@ -2175,7 +2256,19 @@ pointer above it; at a refused entry the origin is that of a folder
 outside any repository. Membership's discovery stops by the same test
 (`gitfile_rule.judge`, and the folder itself in `location_git._discover`),
 so the two walks stop at one entry, and they part only where membership
-refuses what it stops at. Membership passes over a refused entry and
+refuses what it stops at. Both probe the directories git's discovery
+does (`githead.probed`): below each `GIT_CEILING_DIRECTORIES` entry as git
+resolves it through its links (unless it follows an empty entry), and up
+to a filesystem boundary unless `GIT_DISCOVERY_ACROSS_FILESYSTEM` reads
+true as git reads a boolean (`githead.across_filesystems`); a value git
+dies on leaves the capture INDETERMINATE, as git then reads no repository
+anywhere (ENG-232: membership compared a ceiling as written and read any
+value but the empty one as true, so a session below a dotfiles
+repository at a home a link names, `GIT_CEILING_DIRECTORIES=$HOME`, was
+placed in that repository's project, its brief and search delivering its
+records and its writes homed there, where git found no repository). With
+the variable set the per-prompt signature resolves each entry, an
+`lstat` per component of its path. Membership passes over a refused entry and
 goes on upward, so at a plant inside the user's own checkout (a
 vendored folder whose `.git` file names another checkout) it places the
 folder in the enclosing checkout, while git's walk, and the origin with
