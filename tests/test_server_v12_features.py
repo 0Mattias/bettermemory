@@ -33,7 +33,7 @@ import pytest
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.health import report_for_store
-from bettermemory.origin import Origin
+from bettermemory.origin import Origin, head_sha
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -1853,7 +1853,7 @@ async def test_commit_drift_recompute_does_not_re_broaden_the_path_leg(
     # An unattested stamp, the shape the recompute has to read as prose
     # evidence; the tool refuses to land one on this body, so the store
     # primitive stamps it (see `_write_citing_a_vanished_file`).
-    Store(memory_dir).mark_verified(written["id"])
+    Store(memory_dir).mark_verified(written["id"], verified_head=head_sha(repo))
     cited.unlink()
 
     hits = _unwrap(

@@ -29,10 +29,12 @@ from bettermemory import githead
 from bettermemory.admission import CountedRecords
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
-from bettermemory.origin import Origin
+from bettermemory.origin import Origin, head_sha
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+
+from .test_commit_drift_cache import _assert_unconfirmed_cut
 
 
 _GIT_AVAILABLE = shutil.which("git") is not None
@@ -992,7 +994,7 @@ def test_commit_drift_count_omitted_when_anchors_escape_and_repo_quiescent(
     # Verified AFTER the only commit: zero repo-wide commits since, for
     # both memories.
     store.mark_verified(escaping.id)
-    store.mark_verified(anchored.id)
+    store.mark_verified(anchored.id, verified_head=head_sha(repo))
 
     memories = store.load_all()
     hits = run_search(memories, "widget rule", max_results=50)
@@ -1007,6 +1009,7 @@ def test_commit_drift_count_omitted_when_anchors_escape_and_repo_quiescent(
     assert "commit_drift_count" not in by_id[escaping.id], (
         "all-escaping anchors in a quiescent repo minted an affirmative 0"
     )
+    assert not by_id[escaping.id].get("commit_drift_unread")
     assert by_id[anchored.id]["commit_drift_count"] == 0
 
 
@@ -1014,7 +1017,7 @@ def test_commit_drift_count_omitted_when_anchors_escape_and_repo_quiescent(
 def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
     heads_by: bool, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The quiescent half of the cost contract: a caught-up hit with an
+    """The quiescent half of the cost contract: a date-only zero with an
     in-repo anchor forks exactly one path-filtered log (the phantom
     check), so three such hits cost ``1 + 3`` git processes cold, the same
     bound the drifting shape pays and never more, and none warm."""
@@ -1069,8 +1072,9 @@ def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
 
     _caches.clear_all()
     out, calls = attach()
-    counts = [hit["commit_drift_count"] for hit in out if "commit_drift_count" in hit]
-    assert counts == [0, 0, 0]
+    assert len(out) == 3
+    for hit in out:
+        _assert_unconfirmed_cut(hit)
     _opens_as(calls, heads_by)
     assert len(calls) == len(_per_search(heads_by)) + 3
     warm, warm_calls = attach()
@@ -1314,8 +1318,9 @@ async def _drift_counts_for(
     when that surface omits the signal entirely (which is itself a form of
     agreement to assert on). `health_count` reads the row out of
     `commit_drift_debt`: a row exists only for a drifted memory, so a
-    caught-up memory (no row) reports 0, mirroring how the per-hit
-    search count and `memory_show.commit_drift` report 0 on `clean`.
+    memory with no drifting row reports 0. An unread record also has no
+    row; those tests must inspect `unread_ids` to distinguish uncertainty
+    from a complete clean measurement.
     """
     shown = await _call(server, "memory_show", id=memory_id)
     show_count: int | None = (
@@ -1470,8 +1475,9 @@ async def test_memory_search_verified_paths_does_not_resurrect_same_second_commi
     INCLUSIVE whole-second `commits_since_touching_paths` (removed in
     7.0.0), which DID count exactly this commit:
     pre-guard this hit read commit_drift_count=1. With the guard — and the
-    author-date unification beneath it — it reads 0 / fresh, in lockstep
-    with memory_show. The record's stamp carries no HEAD
+    author-date unification beneath it — no positive count is resurrected.
+    A zero without a usable cut is unconfirmed, in lockstep with show.
+    The record's stamp carries no HEAD
     (`_stamp_without_head`), so the count is on the author-date basis.
     """
     repo = tmp_path / "repo"
@@ -1530,9 +1536,9 @@ async def test_memory_search_verified_paths_does_not_resurrect_same_second_commi
     hits = _unwrap(raw)
     target = next(h for h in hits if h["id"] == written["id"])
     # The narrowing must not resurrect the same-second commit the bisect
-    # already excluded — stays 0 / fresh, in lockstep with memory_show.
-    assert target["commit_drift_count"] == 0
-    assert target["staleness_verdict"] == "fresh"
+    # already excluded. A date-only zero cannot establish freshness.
+    _assert_unconfirmed_cut(target)
+    assert target["staleness_verdict"] == "spot_check_required"
 
 
 # ---------------------------------------------------------------------------
@@ -1902,8 +1908,8 @@ async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
     ``anchor..HEAD`` and touches the cited file, so the anchored memory
     reads drift 1 on memory_show, on the search hit, in the health
     rollup — every block naming the basis.
-    The unanchored memory reads the author-date count, zero, and says so:
-    the fallback is labelled, never silent.
+    The unanchored memory cannot infer a clean cut from author dates:
+    every surface reports the uncertainty, never freshness.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1950,24 +1956,28 @@ async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
     show_count, search_count, health_count = await _drift_counts_for(
         server, unanchored["id"]
     )
-    assert (show_count, search_count, health_count) == (0, 0, 0)
+    assert (show_count, search_count, health_count) == (None, None, 0)
     shown = await _call(server, "memory_show", id=unanchored["id"])
-    assert shown["commit_drift"]["status"] == "clean"
-    assert shown["commit_drift"]["basis"] == "author-date"
+    assert shown["commit_drift"] is None
+    _assert_unconfirmed_cut(shown)
+    assert shown["staleness_verdict"] == "spot_check_required"
 
     raw = await _call(
         server, "memory_search", query="widgets durable", expand_top=False
     )
     by_id = {hit["id"]: hit for hit in _unwrap(raw)}
     assert by_id[anchored["id"]]["commit_drift_basis"] == "reachability"
-    assert by_id[unanchored["id"]]["commit_drift_basis"] == "author-date"
+    _assert_unconfirmed_cut(by_id[unanchored["id"]])
     assert "commit_drift_count" not in by_id[untethered["id"]]
     assert "commit_drift_basis" not in by_id[untethered["id"]]
+    assert not by_id[untethered["id"]].get("commit_drift_unread")
 
     report = await _call(server, "memory_admin", action="health")
     rows = {r["id"]: r for r in report["commit_drift_debt"]["rows"]}
     assert set(rows) == {anchored["id"]}
     assert rows[anchored["id"]]["basis"] == "reachability"
+    assert report["commit_drift_debt"]["unread_ids"] == [unanchored["id"]]
+    assert report["commit_drift_debt"]["unread_causes"] == {"unconfirmed_cut": 1}
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
