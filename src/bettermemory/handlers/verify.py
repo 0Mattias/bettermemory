@@ -608,7 +608,8 @@ def _verified_head(
     # commit-drift leg can count from there in reachability space. None
     # when no checkout answers (a memory written outside git, a synced
     # replica whose tree is not here, a record with no repository), and
-    # the leg keeps the author-date count for it, labelled as such.
+    # positive author-date counts remain drift evidence, while a date-only
+    # zero cannot establish a verification cut and reads unconfirmed.
     # The basis stays the record's: under an anchor, a record whose origin
     # names a repository and a tree is stamped at the home checkout's live
     # view, and a read that does not convict stamps nothing.
@@ -618,7 +619,10 @@ def _verified_head(
             if anchor.convicting
             and anchor.root is not None
             and snapshot.origin is not None
-            and snapshot.origin.repo is not None
+            and (
+                snapshot.origin.repo is not None
+                or snapshot.origin.worktree_root is not None
+            )
             and _record_root(snapshot, anchoring) is not None
             else None
         )
@@ -626,7 +630,10 @@ def _verified_head(
         head_sha(Path(origin_root))
         if origin_root is not None
         and snapshot.origin is not None
-        and snapshot.origin.repo is not None
+        and (
+            snapshot.origin.repo is not None
+            or snapshot.origin.worktree_root is not None
+        )
         and _worktree_root_is_live(origin_root)
         else None
     )

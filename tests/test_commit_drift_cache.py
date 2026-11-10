@@ -391,6 +391,17 @@ def _by_id(out: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {hit["id"]: hit for hit in out}
 
 
+def _assert_unconfirmed_cut(hit: dict[str, Any]) -> None:
+    from bettermemory.verify_basis import unread_recommendation
+
+    assert "commit_drift_count" not in hit
+    assert "commit_drift_basis" not in hit
+    assert hit["commit_drift_unread"] is True
+    assert hit["verification"]["recommendation"] == unread_recommendation(
+        verify.CommitDriftUnread.UNCONFIRMED_CUT
+    )
+
+
 #: The log that reads a head's whole history, the one that reads it where a
 #: shallow file lists commits, naming each, and the one that reads what a
 #: head adds to an earlier head's (`origin_dates._extended_author_timestamps`).
@@ -484,10 +495,9 @@ def test_a_warm_attach_forks_nothing_and_answers_the_same(
         1,
         "reachability",
     )
-    assert hits[quiet]["commit_drift_count"] == 0
+    _assert_unconfirmed_cut(hits[quiet])
     assert "commit_drift_count" not in hits[escape]
-    assert hits[claimed]["commit_drift_count"] == 0
-    assert hits[claimed]["claim_drift"] == {"checked": 1, "drifted": []}
+    _assert_unconfirmed_cut(hits[claimed])
     assert cold_calls, "the cold attach resolves through git"
 
     warm, warm_calls = _attach(memories, caller, monkeypatch)
@@ -541,7 +551,7 @@ def test_a_new_stamp_is_a_new_key(
     _stamp(store, monkeypatch, memory_id, at=_V2)
     second, calls = _attach(store.load_all(), caller, monkeypatch)
     assert _git(repo, "rev-parse", "HEAD") == head, "premise: the head did not move"
-    assert _by_id(second)[memory_id]["commit_drift_count"] == 0
+    _assert_unconfirmed_cut(_by_id(second)[memory_id])
     assert calls, "the new stamp resolved through git"
     if _FILES:
         assert _whole_history_logs(calls) == [], "the head's history is memoised"
@@ -561,7 +571,7 @@ def test_a_rewritten_body_with_other_anchors_is_a_new_key(
 
     memories = store.load_all()
     first, _ = _attach(memories, caller, monkeypatch)
-    assert _by_id(first)[memory_id]["commit_drift_count"] == 0
+    _assert_unconfirmed_cut(_by_id(first)[memory_id])
 
     rewritten = [
         m.model_copy(update={"body": f"widget rule a lives in {repo / 'notes1.md'}\n"})
@@ -598,10 +608,7 @@ def test_a_changed_claim_is_a_new_key(
     memories = store.load_all()
     first, _ = _attach(memories, caller, monkeypatch)
     hit = _by_id(first)[memory_id]
-    assert (hit["commit_drift_count"], hit["claim_drift"]) == (
-        0,
-        {"checked": 1, "drifted": []},
-    )
+    _assert_unconfirmed_cut(hit)
 
     reclaimed = [
         m.model_copy(update={"claims": ["pkg/mod.py::other"]})
@@ -838,11 +845,16 @@ def test_every_hit_at_an_anchor_whose_names_timed_out_is_kept_a_minute(
 @pytest.mark.usefixtures("discovery")
 @pytest.mark.parametrize(
     ("event", "moved"),
-    [("commit", [2, 2]), ("checkout", [2, 2]), ("reset", [0, 0]), ("rebase", [3, 3])],
+    [
+        ("commit", [2, 2]),
+        ("checkout", [2, 2]),
+        ("reset", [0, None]),
+        ("rebase", [3, 3]),
+    ],
 )
 def test_every_head_move_is_a_new_key_wherever_the_rows_are_keyed(
     event: str,
-    moved: list[int],
+    moved: list[int | None],
     memory_dir: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -872,8 +884,8 @@ def test_every_head_move_is_a_new_key_wherever_the_rows_are_keyed(
     _git(repo, "switch", "-q", "main")
     memories = store.load_all()
 
-    def counts(out: list[dict[str, Any]]) -> list[int]:
-        return [_by_id(out)[i]["commit_drift_count"] for i in ids]
+    def counts(out: list[dict[str, Any]]) -> list[int | None]:
+        return [_by_id(out)[i].get("commit_drift_count") for i in ids]
 
     cold, _ = _attach(memories, caller, monkeypatch)
     assert counts(cold) == [1, 1]
@@ -1195,9 +1207,10 @@ def test_a_head_that_leaves_and_returns_during_the_attach_stores_nothing(
         during, calls = _attach(memories, caller, monkeypatch, first=first)
     assert moved, "premise: the head left during the attach"
     assert _git(repo, "rev-parse", "HEAD") == head, "premise: and came back"
-    assert _drift(during, author) == (0, "author-date"), (
-        "premise: the log read the other head's history"
-    )
+    # The other head has no later author dates, but that cannot certify
+    # freshness without a verification cut. The result must still not be
+    # stored under the head that left and returned.
+    _assert_unconfirmed_cut(_by_id(during)[author])
     if dead:
         # Its names, then its commits alone, both refused (round F).
         assert len(_walks(calls)) == 2, "premise: one dead walk, remembered"
@@ -2227,8 +2240,9 @@ def test_a_git_process_that_exited_non_zero_is_not_memoised(
     assert [_drift(uncached, i) for i in order] == [
         (1, "author-date"),
         (1, "reachability"),
-        (0, "author-date"),
+        (None, None),
     ]
+    _assert_unconfirmed_cut(_by_id(uncached)[quiet])
     assert cached == uncached
 
 
@@ -2378,8 +2392,9 @@ def _claimed(
     """A repository whose two later commits rearrange the functions around
     `handler` in the claimed module, its text left as it was, and two
     memories claiming `claim`, one counted from an anchor and one on author
-    date. Git's default algorithm diffs each rearrangement without touching
-    `handler`'s lines, so both count 0; where an attribute names the
+    date. Git's default algorithm leaves `handler`'s lines untouched: the
+    known cut counts 0, while the legacy date-only zero is unconfirmed.
+    Where an attribute names the
     `lever` driver, whose algorithm the config sets to patience, the hunks
     move `handler`'s lines and both count the 2 commits."""
     repo = _repo(tmp_path)
@@ -2460,7 +2475,7 @@ def test_an_attribute_file_the_patch_stream_reads_is_in_the_key(
     }[source]
     for _ in range(2):
         before, calls = _attach(memories, caller, monkeypatch)
-    assert _counts(before, ids) == [0, 0]
+    assert _counts(before, ids) == [0, None]
     if _FILES:
         assert calls == [], "premise: the memo answers"
 
@@ -2472,7 +2487,7 @@ def test_an_attribute_file_the_patch_stream_reads_is_in_the_key(
 
     attributes.unlink()
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _counts(uncached, ids) == [0, 0]
+    assert _counts(uncached, ids) == [0, None]
     assert cached == uncached
 
 
@@ -2511,13 +2526,13 @@ def test_attributes_the_files_cannot_settle_are_never_memoised(
         _git(repo, "config", "core.attributesFile", str(attributes))
     for _ in range(2):
         before, calls = _attach(memories, caller, monkeypatch)
-    assert _counts(before, ids) == [0, 0]
+    assert _counts(before, ids) == [0, None]
     assert calls, "resolved through git again"
     assert len(_response._DRIFT_MEMO) == 0
 
     if shape == "directory claim":
         attributes.write_text("*.py -diff\n", encoding="utf-8")
-        expected = [0, 0]
+        expected = [0, None]
     else:
         attributes.write_text(_LEVER, encoding="utf-8")
         expected = [2, 2]
@@ -2555,7 +2570,7 @@ def test_an_attribute_file_that_moves_during_the_attach_stores_nothing(
 
     attributes.unlink()
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _counts(uncached, ids) == [0, 0]
+    assert _counts(uncached, ids) == [0, None]
     assert cached == uncached
 
 
@@ -2609,12 +2624,12 @@ def test_an_attribute_file_created_and_removed_during_the_attach_stores_nothing(
         patch.setattr(verify, "commit_patch_stream", create_read_remove)
         during, _ = _attach(memories, caller, monkeypatch)
     assert created and not attributes.exists(), "premise: created and removed"
-    assert sorted(_counts(during, ids)) == [0, 2], (
+    assert _counts(during, ids) in ([2, None], [0, 2]), (
         "premise: one hit's stream read the attribute, the other's did not"
     )
 
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _counts(uncached, ids) == [0, 0]
+    assert _counts(uncached, ids) == [0, None]
     assert cached == uncached
 
 
@@ -2663,13 +2678,13 @@ def test_a_later_chain_through_a_changed_directory_stores_nothing(
         patch.setattr(verify, "commit_patch_stream", create_read_remove)
         during, _ = _attach(memories, caller, monkeypatch, first=ids)
     assert created and not attributes.exists(), "premise: created and removed"
-    assert "commit_drift_count" in _by_id(during)[later], "premise: keyed after"
-    assert sorted(_counts(during, ids)) == [0, 2], (
+    _assert_unconfirmed_cut(_by_id(during)[later])
+    assert _counts(during, ids) in ([2, None], [0, 2]), (
         "premise: one hit's stream read the attribute"
     )
 
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _counts(uncached, ids) == [0, 0]
+    assert _counts(uncached, ids) == [0, None]
     assert cached == uncached
 
 
@@ -2740,7 +2755,7 @@ def test_a_permission_change_to_an_attribute_file_is_a_new_key(
     try:
         for _ in range(2):
             before, calls = _attach(memories, caller, monkeypatch)
-        assert _counts(before, ids) == ([2, 2] if readable_first else [0, 0])
+        assert _counts(before, ids) == ([2, 2] if readable_first else [0, None])
         if _FILES:
             assert calls == [], "premise: the memo answers"
 
@@ -2753,7 +2768,7 @@ def test_a_permission_change_to_an_attribute_file_is_a_new_key(
             status.st_ino,
         ), "premise: only the mode moved"
         cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-        assert _counts(uncached, ids) == ([0, 0] if readable_first else [2, 2]), (
+        assert _counts(uncached, ids) == ([0, None] if readable_first else [2, 2]), (
             "premise: git reads the unreadable file as absent"
         )
         assert cached == uncached
@@ -2971,7 +2986,7 @@ def test_a_config_that_names_follow_without_log_follow_keeps_the_memo(
         _git(repo, *command)
     for _ in range(2):
         before, calls = _attach(memories, caller, monkeypatch)
-    assert _counts(before, ids) == [0, 0]
+    assert _counts(before, ids) == [0, None]
     assert calls == [], "the memo answers"
 
     (repo / ".gitattributes").write_text(_LEVER, encoding="utf-8")
@@ -3110,7 +3125,7 @@ def test_the_repository_config_is_parsed_once_per_stamp(
     monkeypatch.setattr(origin_gitfiles, "_config_entries", counted)
     for _ in range(3):
         out, _ = _attach(memories, caller, monkeypatch)
-    assert _counts(out, ids) == [0, 0]
+    assert _counts(out, ids) == [0, None]
     config_size = (repo / ".git" / "config").stat().st_size
     assert parsed.count(config_size) == 1, parsed
 
@@ -3236,7 +3251,7 @@ def test_core_attributesfile_in_config_worktree_keeps_the_hit_out_of_the_memo(
     assert origin.attribute_files_signature(repo, repo) is None
     for _ in range(2):
         before, _ = _attach(memories, caller, monkeypatch)
-    assert _counts(before, ids) == [0, 0]
+    assert _counts(before, ids) == [0, None]
 
     attributes.write_text(_LEVER, encoding="utf-8")
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
@@ -3288,7 +3303,7 @@ def test_a_diff_driver_an_included_file_sets_keeps_the_hit_out_of_the_memo(
     assert origin.attribute_files_signature(repo, repo) is None
     for _ in range(2):
         before, _ = _attach(memories, caller, monkeypatch)
-    assert _counts(before, ids) == [0, 0]
+    assert _counts(before, ids) == [0, None]
 
     included.write_text('[diff "lever"]\n\talgorithm = patience\n', encoding="utf-8")
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
@@ -3429,12 +3444,12 @@ def test_an_attributes_file_created_with_its_directory_during_the_attach_stores_
         patch.setattr(verify, "commit_patch_stream", create_read_remove)
         during, _ = _attach(memories, caller, monkeypatch)
     assert created and not attributes.parent.exists(), "premise: created and removed"
-    assert sorted(_counts(during, ids)) == [0, 2], (
+    assert _counts(during, ids) in ([2, None], [0, 2]), (
         "premise: one hit's stream read the attribute, the other's did not"
     )
 
     cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
-    assert _counts(uncached, ids) == [0, 0]
+    assert _counts(uncached, ids) == [0, None]
     assert cached == uncached
 
 

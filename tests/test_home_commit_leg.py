@@ -643,14 +643,14 @@ async def test_a_home_with_no_remote_is_counted_there(world: World) -> None:
     _git(bare_home, "remote", "remove", "origin")
     world.home = bare_home
     rid = await world.homed("commit")
-    # The stamp of a checkout with no remote names no head, so the leg is
-    # counted on the author dates: the commit since is authored after it.
+    # A remote is no prerequisite for recording a commit cut. The home's
+    # history is counted from the stamped head even without a URL.
     for role in ("AUTHOR", "COMMITTER"):
         world.monkeypatch.setenv(f"GIT_{role}_DATE", "@4000000000 +0000")
     _since(bare_home, "commit")
 
     read = await _surfaces(world, rid, "B")
-    assert read.show["commit_drift"]["basis"] == "author-date"
+    assert read.show["commit_drift"]["basis"] == "reachability"
     _agree(rid, read)
     assert read.show["commit_drift"]["commits_since_verify"] == 1
     assert rid in _estate(read.health)["drifted"]

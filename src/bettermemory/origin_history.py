@@ -144,8 +144,8 @@ _TIMESTAMPS_MEMO_SLOTS = 2_000_000
 
 
 class HistoryUnread(enum.Enum):
-    """Why the history of a repository that holds one was not read, so no
-    count is read off it: the row it would count reads neither fresh nor
+    """Why a repository's history supplies no usable verification count:
+    the row it would count reads neither fresh nor
     not applicable. The per-memory surfaces flag it and stop it reading
     fresh, and the health rollups count it under `unread`
     (`verify_basis.CommitDriftUnread` is this enum). None, apart from
@@ -173,12 +173,16 @@ class HistoryUnread(enum.Enum):
       could not be spawned for another reason than a binary or a directory
       that is not there; or it failed on the walk from a stamp's head and
       the listing of its commits both, where the repository holds that
-      head (`origin.commits_since_anchor`, `unwalked`)."""
+      head (`origin.commits_since_anchor`, `unwalked`).
+    - ``UNCONFIRMED_CUT``: no usable verification commit establishes the
+      range, and an author-date zero cannot exclude commits authored
+      before verification but integrated afterwards."""
 
     TIMEOUT = "timeout"
     OVER_BUDGET = "over_budget"
     SHALLOW = "shallow"
     ERROR = "error"
+    UNCONFIRMED_CUT = "unconfirmed_cut"
 
 
 def git_counts() -> tuple[int, int]:

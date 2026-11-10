@@ -32,6 +32,18 @@ eighteenth was built.
 
 #### Fixed
 
+- **A home Git checkout records its verification cut without a remote
+  (ENG-237).** Fast-forward merges, rebases and cherry-picks of commits
+  authored before the stamp remain visible through reachability, including
+  reads from another repository or a plain folder. Legacy or unusable cuts
+  retain positive author-date drift evidence, but a date-only zero no
+  longer asserts freshness: per-memory reads and both health readers
+  report `unconfirmed_cut` and recommend verification in the home checkout.
+  Complete reachability zeros remain clean, and external or phantom
+  anchors retain their applicability rules. (`handlers/verify.py`,
+  `verify_basis.py`, `verify.py`, `health_stats.py`,
+  `tests/test_remoteless_verified_head.py`)
+
 - **Absolute commit anchors retain their repository meaning after a move
   (ENG-236).** Show, search and both health readers project stored home
   paths through recorded checkout views before counting or memoising

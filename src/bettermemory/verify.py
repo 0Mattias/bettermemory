@@ -148,6 +148,7 @@ from .verify_basis import (
     BASIS_REACHABILITY,
     CommitDriftUnread,
     _count_since_verify,
+    date_count_uncertainty,
     dates_since,
 )
 from .verify_spelling import Spelled, spelled
@@ -1324,7 +1325,9 @@ def compute_commit_drift(
     )
     if resolved is None:
         return None
-    return commit_drift_status(resolved)
+    return date_count_uncertainty(
+        resolved.count, resolved.basis
+    ) or commit_drift_status(resolved)
 
 
 def _narrow_commit_drift(
@@ -1495,7 +1498,7 @@ def resolve_hit_drift(
         # the weak-tier narrowing here too, or this surface would
         # nag `spot_check_recommended` on a memory `memory_show`
         # reads as fresh.
-        return resolve_commit_drift(
+        resolved = resolve_commit_drift(
             cwd=cwd,
             since=since,
             unfiltered=count,
@@ -1504,6 +1507,9 @@ def resolve_hit_drift(
             toplevel=toplevel,
             walk=walk,
         )
+        if resolved is None:
+            return None
+        return date_count_uncertainty(resolved.count, resolved.basis) or resolved
     if not _quiescent_drift_applicable(cwd, anchors, claims, toplevel=toplevel):
         # Zero repo-wide commits since the verify. Classify
         # applicability BEFORE minting the affirmative 0 the model
@@ -1518,7 +1524,9 @@ def resolve_hit_drift(
         # the threaded toplevel; only a memory with at least one
         # in-repo anchor pays the phantom check's filtered log.
         return None
-    return ResolvedCommitDrift(count, basis=basis)
+    return date_count_uncertainty(count, basis) or ResolvedCommitDrift(
+        count, basis=basis
+    )
 
 
 def commit_drift_status(resolved: ResolvedCommitDrift) -> CommitDriftStatus:

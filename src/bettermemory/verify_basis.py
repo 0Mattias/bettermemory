@@ -43,7 +43,7 @@ BASIS_REACHABILITY = "reachability"
 BASIS_AUTHOR_DATE = "author-date"
 
 
-#: A commit leg whose history was not read, and why
+#: A commit leg whose history supplied no usable verification count, and why
 #: (`origin_history.HistoryUnread`): the walk from the stamp's head and the
 #: listing of its commits both met their timeout, or git failed on both
 #: from an anchor the repository holds (`origin_history.unwalked`),
@@ -58,6 +58,12 @@ CommitDriftUnread = HistoryUnread
 # The recommendation such a row carries, on the search hit and memory_show,
 # by cause.
 _UNREAD_RECOMMENDATIONS: dict[HistoryUnread, str] = {
+    HistoryUnread.UNCONFIRMED_CUT: (
+        "No usable verification commit anchors this memory's history. "
+        "Author dates cannot rule out older commits integrated after "
+        "verification. Spot-check the claim and verify it again in its "
+        "home checkout to record the current commit."
+    ),
     HistoryUnread.TIMEOUT: (
         "The repository's commit history could not be read in time, so the "
         "commits since this memory was verified were not counted. Spot-check "
@@ -100,6 +106,20 @@ def dates_since(
     if history is None or isinstance(history, HistoryUnread):
         return history
     return len(history) - bisect.bisect_right(history, since)
+
+
+def date_count_uncertainty(count: int, basis: str) -> HistoryUnread | None:
+    """A zero on author dates alone cannot prove a verification cut.
+
+    The caller first establishes that the memory's commit leg applies.
+    Positive date counts remain useful drift evidence; a reachability
+    zero measures the complete range from a known cut.
+    """
+    return (
+        HistoryUnread.UNCONFIRMED_CUT
+        if count == 0 and basis == BASIS_AUTHOR_DATE
+        else None
+    )
 
 
 def _count_since_verify(

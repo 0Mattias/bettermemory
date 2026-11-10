@@ -294,11 +294,10 @@ async def test_second_memory_show_spawns_no_git(
     basis: str,
 ) -> None:
     """The measured defect: every show forked git for its commit leg, the
-    memo the search fills never consulted. A clean row (the quiescent
-    applicability log) and a drifting one (the narrowing; a path-filtered
-    log on the author-date basis) both run nothing the second time, on
-    either basis. A record whose stamp carries no head counts in
-    author-date space (`_stamp_without_head`)."""
+    memo the search fills never consulted. A complete clean cut, an
+    uncertain legacy zero and a drifting row all run nothing the second
+    time. A record whose stamp carries no head uses author dates
+    (`_stamp_without_head`), which cannot establish freshness at zero."""
     repo = _repo(tmp_path)
     origin = (
         _origin(repo)
@@ -319,8 +318,13 @@ async def test_second_memory_show_spawns_no_git(
     with _git_calls(monkeypatch) as cold_calls:
         cold = await _call(server, "memory_show", id=written["id"])
     assert cold_calls, "the cold show must resolve the commit leg from git"
-    assert cold["commit_drift"]["status"] == ("drift" if drifted else "clean")
-    assert cold["commit_drift"]["basis"] == basis
+    if not drifted and basis == "author-date":
+        assert cold["commit_drift"] is None
+        assert cold["commit_drift_unread"] is True
+        assert cold["staleness_verdict"] == "spot_check_required"
+    else:
+        assert cold["commit_drift"]["status"] == ("drift" if drifted else "clean")
+        assert cold["commit_drift"]["basis"] == basis
 
     with _git_calls(monkeypatch) as warm_calls:
         warm = await _call(server, "memory_show", id=written["id"])

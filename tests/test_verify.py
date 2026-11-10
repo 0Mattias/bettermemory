@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
-from bettermemory.origin import Origin
+from bettermemory.origin import Origin, head_sha
 from bettermemory.verify import (
     DEFAULT_VERIFICATION_STALE_DAYS,
     ClaimAnchor,
@@ -1763,6 +1763,7 @@ def test_commit_drift_status_clean_when_no_commits_after_verify(
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
         anchor=_home_checkout(tmp_path),
+        verified_head=head_sha(tmp_path),
         body="claims about notes.md hold",
     )
     assert isinstance(result, CommitDriftStatus)
@@ -1844,6 +1845,7 @@ def test_commit_drift_to_dict_shape_clean(tmp_path: Path) -> None:
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
         anchor=_home_checkout(tmp_path),
+        verified_head=head_sha(tmp_path),
         body="claims about notes.md hold",
     )
     assert isinstance(result, CommitDriftStatus)
@@ -1852,8 +1854,8 @@ def test_commit_drift_to_dict_shape_clean(tmp_path: Path) -> None:
         "status": "clean",
         "commits_since_verify": 0,
         "recommendation": None,
-        # No `verified_head` on the call: the author-date axis, named.
-        "basis": "author-date",
+        # A complete clean count is measured from a known commit cut.
+        "basis": "reachability",
     }
 
 
@@ -2108,6 +2110,7 @@ def test_commit_drift_clean_when_cited_path_untouched(tmp_path: Path) -> None:
         when=datetime(2026, 1, 2, tzinfo=timezone.utc),
         filename="notes.md",
     )
+    cut = head_sha(tmp_path)
     _commit_touching(
         tmp_path,
         "unrelated-churn",
@@ -2119,6 +2122,7 @@ def test_commit_drift_clean_when_cited_path_untouched(tmp_path: Path) -> None:
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
         anchor=_home_checkout(tmp_path),
+        verified_head=cut,
         body="claims about notes.md hold",
     )
     assert isinstance(result, CommitDriftStatus)
@@ -2189,6 +2193,7 @@ def test_commit_drift_clean_when_quiescent_and_governed_claim_real(
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
         anchor=_home_checkout(tmp_path),
+        verified_head=head_sha(tmp_path),
         body="a workflow note that cites nothing path-shaped",
         claims=["notes.md"],
     )
@@ -2225,6 +2230,7 @@ def test_commit_drift_quiescent_deleted_but_real_anchor_stays_clean(
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
         anchor=_home_checkout(tmp_path),
+        verified_head=head_sha(tmp_path),
         body="gone.py was removed on purpose; see its final revision",
     )
     assert isinstance(result, CommitDriftStatus)
@@ -2307,6 +2313,7 @@ def test_commit_drift_root_citation_does_not_drag_in_unrelated_churn(
         when=datetime(2026, 1, 2, tzinfo=timezone.utc),
         filename="notes.md",
     )
+    cut = head_sha(tmp_path)
     _commit_touching(
         tmp_path,
         "unrelated-churn",
@@ -2318,6 +2325,7 @@ def test_commit_drift_root_citation_does_not_drag_in_unrelated_churn(
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
         anchor=_home_checkout(tmp_path),
+        verified_head=cut,
         body=f"the project lives at {tmp_path} and claims about notes.md hold",
     )
     assert isinstance(result, CommitDriftStatus)

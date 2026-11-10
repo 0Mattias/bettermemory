@@ -33,10 +33,11 @@ from .claims import load_claims
 from .verify import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
+    _quiescent_drift_applicable,
     applicable_unread,
     resolve_commit_drift,
 )
-from .verify_basis import CommitDriftUnread, dates_since
+from .verify_basis import CommitDriftUnread, date_count_uncertainty, dates_since
 from .time_utils import ensure_utc, parse_event_ts
 from .health_model import (
     ActorSlice,
@@ -864,6 +865,10 @@ def _drift_rows_for_candidates(
                 continue
             count = resolved.count
             basis = resolved.basis
+        if (why := date_count_uncertainty(count, basis)) is not None and (
+            _quiescent_drift_applicable(root, anchors, parsed_claims, toplevel=toplevel)
+        ):
+            unread[stats.id] = why
         if count > 0:
             rows.append(
                 CommitDriftRow(
