@@ -238,7 +238,9 @@ _WRITERS: dict[str, Callable[[str], str]] = {
         h, h, h, h, h, question=h
     ),
     "legacy": lambda h: membership_lines.line_legacy(h, 1, 2, h, 3, h, h, question=h),
-    "subproject": lambda h: membership_lines.line_subproject(h, h, h, h, h, question=h),
+    "subproject": lambda h: membership_lines.line_subproject(
+        h, h, h, h, h, folder=h, question=h
+    ),
     "unreadable": lambda h: membership_lines.line_unreadable(h, h),
     "deferred": lambda h: membership_lines.line_deferred(h, h),
     "import": lambda h: membership_lines.line_import(h, h, [(h, h, [h])], question=h),
@@ -248,7 +250,7 @@ _WRITERS: dict[str, Callable[[str], str]] = {
     ),
     "new_folder": lambda h: membership_lines.line_new_folder(h, h, h),
     "boundary_added": lambda h: membership_lines.line_boundary_added(h, h, h),
-    "boundary_dropped": lambda h: membership_lines.line_boundary_dropped(h, h, h, h),
+    "boundary_dropped": lambda h: membership_lines.line_boundary_dropped(h, h, h, h, h),
     "across_boundary": lambda h: membership_lines.line_across_boundary(h, [h]),
     "content_crowded": lambda h: membership_lines.line_content_crowded(h, 4, 3),
     "restated": lambda h: membership_lines.line_restated(
@@ -311,7 +313,7 @@ _VALUED: dict[str, Callable[[str], str]] = {
         v, 1, 2, v, 3, v, "P002", question="Q001"
     ),
     "subproject": lambda v: membership_lines.line_subproject(
-        v, v, "P002", v, v, question="Q001"
+        v, v, "P002", v, v, folder=v, question="Q001"
     ),
     "unreadable": lambda v: membership_lines.line_unreadable(v, v),
     "deferred": lambda v: membership_lines.line_deferred(v, v),
@@ -327,7 +329,7 @@ _VALUED: dict[str, Callable[[str], str]] = {
     "new_folder": lambda v: membership_lines.line_new_folder(v, v, "P002"),
     "boundary_added": lambda v: membership_lines.line_boundary_added(v, v, "P002"),
     "boundary_dropped": lambda v: membership_lines.line_boundary_dropped(
-        v, v, "P002", v
+        v, v, "P002", v, "bmp_0123456789ABCDEFGHJKMNPQRS"
     ),
     "across_boundary": lambda v: membership_lines.line_across_boundary(
         v, [_spelled(v)]

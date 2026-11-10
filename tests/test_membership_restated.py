@@ -188,7 +188,7 @@ _DUPLICATE_SAID = (
 )
 _FILED_ANSWERS = (
     f" Same project, when the user says so: {_JOIN}; separate: bettermemory "
-    "project init --new (a fresh project file)"
+    f"project init --new ({membership_lines.run_in(None, _Q)}, a fresh project file)"
 )
 
 #: (kind, reason, the sentence it says, the answers it offers).
@@ -243,7 +243,7 @@ _PINNED: list[tuple[str, str, str, str]] = [
         FILE_CONTRADICTION,
         FILE_CONTRADICTION,
         "its project file names another project than the checkout's own",
-        " Keep: bettermemory project init --rebind; move this checkout, when the "
+        f" Keep: bettermemory project init --rebind, run {membership_lines.run_in(None, _Q)}; move this checkout, when the "
         f"user says so: {_JOIN}",
     ),
     (
@@ -260,7 +260,8 @@ _PINNED: list[tuple[str, str, str, str]] = [
         "part of the project around that folder, and the folder is treated as "
         "the project around it until answered",
         f" That folder is that project, when the user says so: {_JOIN}; a part "
-        'with an id of its own: bettermemory project init --new (in "/w/app/web")',
+        "with an id of its own: bettermemory project init --new "
+        f"({membership_lines.run_in('/w/app/web', _Q)})",
     ),
     (
         DUPLICATE_CHECKOUT,
@@ -505,14 +506,12 @@ def test_a_restated_first_sight_on_a_bound_file_offers_init_new_as_the_handler_r
     res = lab.caller(copy).resolution
     assert res.rule == "ask:file_names_other_history" and res.proposal is not None
     old = _as_rc17(lab.store, res.proposal)
-    assert "init --new (a fresh project file)" in old
+    assert "init --new" in old and "a fresh project file)" in old
 
     model = lab.caller(copy).model
     [shown] = [pr for pr in model.pending() if pr.id == res.proposal]
 
-    assert shown.line.endswith(
-        "separate: bettermemory project init --new (a fresh project file)"
-    )
+    assert shown.line.endswith("a fresh project file)")
     assert 'answer="separate"' not in shown.line
     assert "none of the named one's" in shown.line
     assert model.filed_elsewhere(model.proposal(res.proposal))
@@ -540,7 +539,8 @@ async def test_answer_question_refuses_separate_where_the_restatement_offers_ini
     assert res.outcome == ASK and res.proposal is not None
     _as_rc17(bench.store, res.proposal)
     [shown] = [pr for pr in bench.model().pending() if pr.id == res.proposal]
-    assert shown.line.endswith("init --new (a fresh project file)")
+    assert shown.line.endswith("a fresh project file)")
+    assert f"bettermemory project folder {res.proposal}" in shown.line
 
     with pytest.raises(Exception, match="writes a fresh file"):
         await bench.admin(action="answer_question", id=res.proposal, answer="separate")

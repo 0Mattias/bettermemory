@@ -36,6 +36,7 @@ import pytest
 
 from bettermemory import checkout_token, location, project_file
 from bettermemory import membership as mb
+from bettermemory import membership_lines
 from bettermemory.config import load_config
 from bettermemory.history import quoted
 from bettermemory.membership import (
@@ -739,9 +740,7 @@ def test_t10a_use_this_template_asks_and_init_new_answers(
     )
     asked = scene.see(product)
     assert asked.outcome == ASK
-    assert asked.lines[-1].endswith(
-        "separate: bettermemory project init --new (a fresh project file)"
-    )
+    assert asked.lines[-1].endswith("a fresh project file)")
     capsys.readouterr()
     typed(monkeypatch, "product")
     bm(monkeypatch, "project", "init", "--new")
@@ -1313,6 +1312,13 @@ def _flag(folder: Path, boundary: bool) -> None:
     path.write_bytes(project_file.render(replace(found, boundary=boundary)))
 
 
+def _file_id(folder: Path) -> str:
+    """The id of the folder's project file."""
+    found = project_file.parse(folder / project_file.PROJECT_FILE_NAME)
+    assert isinstance(found, project_file.ProjectFile)
+    return found.id
+
+
 def _reparented(scene: Scene) -> list[dict[str, Any]]:
     return scene.rows("project_reparented")
 
@@ -1398,7 +1404,8 @@ def test_b10_a_part_first_bound_in_another_clone_asks_once_after_new(
     assert (asked.outcome, asked.project) == (ASK, mine.project)
     line = asked.lines[-1]
     assert f'id="{asked.proposal}", answer="join", target="{part.project}"' in line
-    assert "bettermemory project init --new (in that folder)" in line
+    in_part = membership_lines.run_in(str(b.at), asked.proposal)
+    assert f"bettermemory project init --new ({in_part})" in line
     again = scene.see(b)
     assert again.proposal == asked.proposal
     assert len(scene.model.pending()) == 1
@@ -1462,7 +1469,9 @@ def test_b12_a_root_files_boundary_follows_the_file_and_rebind_lifts_it(
     still = scene.see(app)
     assert any(
         "no longer declares a boundary" in line
-        and f"bettermemory project init --rebind (in {quoted(str(app.path))})" in line
+        and "bettermemory project init --rebind "
+        f"({membership_lines.run_in(str(app.path), _file_id(app.path))})"
+        in line
         for line in still.lines
     )
     assert scene.model.project(root.project).boundary
@@ -1497,7 +1506,8 @@ def test_b12_a_parts_boundary_follows_its_file_and_rebind_keeps_the_part(
     _flag(vault_dir, False)
     still = scene.see(mono)
     assert any(
-        f"bettermemory project init --rebind (in {quoted(str(vault_dir))})" in line
+        "bettermemory project init --rebind "
+        f"({membership_lines.run_in(str(vault_dir), _file_id(vault_dir))})" in line
         for line in still.lines
     )
     typed(monkeypatch, "vault")
@@ -1533,7 +1543,8 @@ def test_x06_e35_a_nested_file_of_another_repository_answered_both_ways(
     mono.at = mono.path / "packages" / "tools"
     asked = scene.see(mono)
     assert (asked.outcome, asked.project) == (ASK, root.project)
-    assert "bettermemory project init --new (in that folder)" in asked.lines[-1]
+    in_tools = membership_lines.run_in(str(mono.at), asked.proposal)
+    assert f"bettermemory project init --new ({in_tools})" in asked.lines[-1]
     typed(monkeypatch, "other")
     bm(monkeypatch, "project", "join", str(theirs.project))
     assert scene.see(mono).project == theirs.project

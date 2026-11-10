@@ -37,6 +37,7 @@ from bettermemory import (
     location,
     location_git,
     membership,
+    membership_lines,
     project_file,
 )
 from bettermemory.config import Config, MembershipConfig
@@ -3081,9 +3082,10 @@ def test_x06_nested_file_of_another_repository_asks_until_answered(
     shutil.copy(o / "bettermemory.toml", tools / "bettermemory.toml")
     rt, bt = lab.view(tools)
     assert rt.outcome == ASK and "other_note" not in bt and "root_note" in bt
+    in_tools = membership_lines.run_in(str(tools), rt.proposal)
     assert any(
-        "which is not part of" in line
-        and "bettermemory project init --new (in that folder)" in line
+        "not part of" in line
+        and f"bettermemory project init --new ({in_tools})" in line
         for line in rt.lines
     )
     asked = [

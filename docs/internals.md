@@ -1044,6 +1044,18 @@ records of a gone folder that may belong here, L7 a sub-project file
 naming a project outside its repository, L8 unreadable, L9 deferred, L10
 an imported project that may be one here.
 
+A command's directory is stored data, never shell text (ENG-234).
+`membership_lines.run_in` marks the quoted folder as display-only and
+names `bettermemory project folder ID`, whose JSON supplies a tool's
+working-directory argument. Line breaks and filesystem bytes survive
+the lookup; a displayed path is never pasted into a shell. The command
+reads a question's local checkout view and, for a subproject, its recorded
+part folder. A boundary line uses its project file's id instead, found
+at or above the caller's directory. Question lookups open the store
+read-only and resolve no caller. Previously stored question lines that
+offer project-file commands are restated with these instructions even
+when their values were already JSON-quoted; the stored log is unchanged.
+
 ### The surfaces
 
 `relation(home, caller)` answers `same_project` (the home's project is on

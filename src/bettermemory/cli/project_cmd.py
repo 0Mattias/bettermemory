@@ -3,7 +3,7 @@ declarations that settle them (RS-F6; design 2.1, 3.4, 8.8 and 8.10;
 decisions D14 and D18; the owner's ruling of 2026-10-21, which retired
 decision D6's terminal: nothing in the product waits on a human).
 
-`list`, `show`, `why` and `pending` read. `join`, `new` and `init` are
+`list`, `show`, `why`, `pending` and `folder` read. `join`, `new` and `init` are
 declarations: each prints what it is about to do and calls
 `Membership.declare` with the OS user as the principal, from any stdin
 (an agent's shell included); a refusal exits 2 with one line and changes
@@ -29,6 +29,7 @@ which `project init --new` answers with a fresh file (B11).
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
 import json
 import os
@@ -60,7 +61,7 @@ def add_subparser(
 ) -> argparse.ArgumentParser:
     """Register ``project`` and its commands."""
     help_text = (
-        "The projects membership knows (list, show, why, pending) and the "
+        "The projects membership knows (list, show, why, pending, folder) and the "
         "declarations that settle a checkout's project (join, new, init)."
     )
     parser = sub.add_parser("project", help=help_text, description=help_text)
@@ -91,6 +92,21 @@ def add_subparser(
         "it, and the checkout it is about."
     )
     project_sub.add_parser("pending", help=text, description=text)
+
+    text = (
+        "Read a membership command's stored working directory as JSON, never "
+        "shell text. For an open question, its part's folder or its checkout's "
+        "latest folder on this machine; for a project file id, the nearest "
+        "ancestor holding that file. Set a tool's working directory from path, "
+        "or decode path_bytes_base64 with the filesystem codec when path is null. "
+        "Does not resolve a checkout or change the store or project files."
+    )
+    folder = project_sub.add_parser("folder", help=text, description=text)
+    folder.add_argument(
+        "id",
+        metavar="ID",
+        help="An open question's id (Q12) or a project file's id (bmp_...).",
+    )
 
     text = (
         "Declare this checkout part of project ID: answers the checkout's open "
@@ -162,6 +178,8 @@ def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> Non
         _why(args.record)
     elif command == "pending":
         _pending()
+    elif command == "folder":
+        _folder(args.id, sub_parser)
     elif command == "join":
         _join(args.id)
     elif command == "new":
@@ -588,6 +606,101 @@ def _pending() -> None:
             where = "in no checkout"
         print(f"{pr.id} {where} ({pr.kind}: {pr.reason}), opened {pr.opened}")
         print(f"  {pr.line}")
+
+
+def _folder(ref: str, parser: argparse.ArgumentParser) -> None:
+    """Return a stored working directory as ASCII JSON (ENG-234).
+
+    The display convention is not shell quoting. JSON keeps newlines and
+    quotes as data instead of relying on command substitution, which loses
+    trailing newlines in POSIX shells and splits lines in PowerShell.
+    `path` is null for a name that is not Unicode text; `path_bytes_base64`
+    always preserves `os.fsencode`'s exact bytes for a filesystem-aware
+    caller. The lookup opens the store read-only and resolves no checkout.
+    """
+    from .. import location, project_file
+    from ..membership import Membership
+    from ._common import open_read_only, read_only_store_path
+
+    if ref.startswith(project_file.ID_PREFIX):
+        folder = _file_folder(ref)
+    else:
+        with open_read_only(parser, read_only_store_path(parser)) as store:
+            folder = _question_folder(
+                Membership(store, location.process_machine().id), ref
+            )
+    if not os.path.isabs(folder) or "\0" in folder:
+        refuse(f"the stored folder {quoted(folder)} is not an absolute directory path")
+    try:
+        raw = os.fsencode(folder)
+    except UnicodeEncodeError:
+        refuse(f"the stored folder {quoted(folder)} is not a filesystem path")
+    path: str | None = folder
+    try:
+        folder.encode("utf-8")
+    except UnicodeEncodeError:
+        path = None
+    print(
+        json.dumps(
+            {"path": path, "path_bytes_base64": base64.b64encode(raw).decode("ascii")}
+        )
+    )
+
+
+def _question_folder(model: Membership, qid: str) -> str:
+    """The folder an open question's command runs in: a part's folder as
+    its row stores it, else its checkout's newest folder on this machine,
+    as `answer_question` and the restated line name them."""
+    from ..membership import OPEN, SUBPROJECT_CONTRADICTION
+
+    try:
+        pr = model.proposal(qid)
+    except KeyError:
+        refuse(f"no question {quoted(qid)}: it is gone; nothing printed")
+    if pr.state != OPEN:
+        refuse(f"question {pr.id} is answered ({pr.state}); nothing printed")
+    if pr.checkout is None:
+        refuse(f"question {pr.id} is on no checkout; nothing printed")
+    try:
+        k = model.checkout(pr.checkout)
+    except KeyError:
+        refuse(f"question {pr.id}'s checkout {pr.checkout} is gone; nothing printed")
+    if k.retired:
+        refuse(f"question {pr.id}'s checkout {k.id} is retired; nothing printed")
+    views = k.views_on(model.machine)
+    if not views:
+        refuse(
+            f"question {pr.id}'s checkout {k.id} has no folder on this machine "
+            f"(last seen at {_where(k)}); nothing printed"
+        )
+    if pr.kind == SUBPROJECT_CONTRADICTION:
+        part = pr.evidence.get("dir")
+        if isinstance(part, str) and part:
+            return part
+        refuse(f"question {pr.id} records no part folder; nothing printed")
+    return views[-1].path
+
+
+def _file_folder(file_id: str) -> str:
+    """The folder at or above the working directory that holds the
+    project file `file_id`, the nearest: the folder a boundary's line names
+    (`membership_lines.line_boundary_dropped`), which a sighting there
+    found the file in."""
+    from .. import project_file
+
+    try:
+        here = Path(os.getcwd())
+    except OSError as exc:
+        refuse(
+            f"the working directory cannot be read ({exc.strerror}); nothing printed"
+        )
+    for directory in (here, *here.parents):
+        found = project_file.parse(directory / project_file.PROJECT_FILE_NAME)
+        if isinstance(found, project_file.ProjectFile) and found.id == file_id:
+            return str(directory)
+    refuse(
+        f"no project file {quoted(file_id)} at or above {quoted(str(here))}; nothing printed"
+    )
 
 
 # ---------------------------------------------------------------------------

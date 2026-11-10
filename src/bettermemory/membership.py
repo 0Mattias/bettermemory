@@ -783,7 +783,7 @@ class Membership:
             self._make_boundary(pid)
             return [line_boundary_added(f.path, p.name, pid)]
         if p.boundary and not f.boundary:
-            return [line_boundary_dropped(f.path, p.name, pid, f.dir)]
+            return [line_boundary_dropped(f.path, p.name, pid, f.dir, f.id)]
         return []
 
     def _lift_boundary(self, project_id: str, outer: str | None) -> None:

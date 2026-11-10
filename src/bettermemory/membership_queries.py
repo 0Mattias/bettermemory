@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 from . import project_file
 from .membership_lines import line_import, line_legacy, line_restated, line_unresolved
 from .membership_records import (
+    FILE_CONTRADICTION,
     FIRST_SIGHT,
     GLOBAL,
     IMPORT,
@@ -153,9 +154,12 @@ def restated(self: Membership, pr: Proposal) -> Proposal:
     (L7) do not: the sighting's root, a contradiction's own words, the
     token file it could not write and the project a part was weighed
     against are in the line alone. Such a line is shown as stored when it
-    begins with its quoted path (`_QUOTED_LINE`); one stored before the
-    quoting, and any question whose line cannot be written afresh (its
-    project gone, its evidence short), is restated (`_restatement`)."""
+    begins with its quoted path (`_QUOTED_LINE`), except a file-command
+    suggestion whose old display quoting was not shell-safe (ENG-234).
+    Such suggestions are restated too; detecting the old first-sight
+    wording reads no file. One stored before the quoting, and any question
+    whose line cannot be written afresh (its project gone, its evidence
+    short), is restated (`_restatement`)."""
     if pr.state != OPEN:
         return pr
     line: str | None = None
@@ -164,7 +168,16 @@ def restated(self: Membership, pr: Proposal) -> Proposal:
             line = _written_afresh(self, pr)
         except (KeyError, ValueError, TypeError, IndexError, AttributeError):
             line = None
-    elif pr.line.startswith(_QUOTED_LINE):
+    elif (
+        pr.line.startswith(_QUOTED_LINE)
+        and pr.kind not in (FILE_CONTRADICTION, SUBPROJECT_CONTRADICTION)
+        and not (
+            pr.kind == FIRST_SIGHT
+            and pr.line.endswith(
+                "separate: bettermemory project init --new (a fresh project file)"
+            )
+        )
+    ):
         return pr
     if line is None:
         line = _restatement(self, pr)

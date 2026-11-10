@@ -1429,9 +1429,8 @@ def test_t10a_use_this_template_asks_offering_init_new(world: World) -> None:
     product.files = (replace(template.files[0], dir="/w/product"),)
     asked = world.see(product)
     assert (asked.outcome, asked.rule) == (ASK, "ask:one_witness")
-    assert asked.lines[-1].endswith(
-        "separate: bettermemory project init --new (a fresh project file)"
-    )
+    assert asked.lines[-1].endswith("a fresh project file)")
+    assert f"bettermemory project folder {asked.proposal}" in asked.lines[-1]
     fid = _file_id()
     world.model.declare(
         Declaration("init_new", "os:tester", checkout=asked.checkout, file_id=fid)
@@ -1669,7 +1668,8 @@ def test_x06_a_nested_file_of_another_repository_asks_l7(world: World) -> None:
     )
     res = world.see(repo, cwd="/m/vendor/y", files=(nested, root))
     assert res.outcome == ASK and res.project == at_root.project
-    assert '"/m/vendor/y/bettermemory.toml" names' in res.lines[-1]
+    assert 'display only: "/m/vendor/y"' in res.lines[-1]
+    assert f"bettermemory project folder {res.proposal}" in res.lines[-1]
     world.model.declare(
         Declaration("join", "os:tester", checkout=res.checkout, proposal=res.proposal)
     )

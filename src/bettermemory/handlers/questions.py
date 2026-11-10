@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any
 from .. import identity, location, membership_lines
 from ..control_tokens import folded_quote
 from ..declare import declaring_model
-from ..history import quoted
 from ..membership import (
     FILE_CONTRADICTION,
     FIRST_SIGHT,
@@ -165,24 +164,26 @@ async def answer_question(
         raise ValueError(f"question {pr.id} is on no checkout")
     principal = _principal()
     if answer == "separate":
+        where = membership_lines.run_in(None, pr.id)
         if pr.kind == SUBPROJECT_CONTRADICTION:
+            folder = pr.evidence.get("dir")
             raise ValueError(
                 f"question {pr.id} is about a folder's project file; a part of "
-                f"its own writes a file: bettermemory project init --new in "
-                f"{quoted(str(pr.evidence.get('dir')))}"
+                f"its own writes a file: bettermemory project init --new "
+                f"{membership_lines.run_in(folder if isinstance(folder, str) else None, pr.id)}"
             )
         if pr.kind == FILE_CONTRADICTION:
             raise ValueError(
                 f"question {pr.id} is about the checkout's project file; keep "
                 "the checkout's project with a fresh file: bettermemory project "
-                "init --rebind; a project of its own: bettermemory project init "
-                "--new"
+                f"init --rebind ({where}); a project of its own: bettermemory project init "
+                f"--new ({where})"
             )
         if pr.kind == FIRST_SIGHT and model.filed_elsewhere(pr):
             raise ValueError(
                 f"question {pr.id}: the checkout's project file is bound to "
                 "another project; a project of its own writes a fresh file: "
-                "bettermemory project init --new"
+                f"bettermemory project init --new ({where})"
             )
         done = model.declare(
             Declaration("new", principal, checkout=pr.checkout, proposal=pr.id)

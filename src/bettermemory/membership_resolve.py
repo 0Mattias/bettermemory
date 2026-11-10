@@ -92,6 +92,7 @@ from .membership_records import (
     IndependentReader,
     Location,
     NeedIndependent,
+    ProjectFileRef,
     R,
     Resolution,
     S,
@@ -1442,17 +1443,18 @@ def _observe(
 
 
 def _subproject_line(
-    self: Membership, file_path: str, bound: str, base: str, parent: str
+    self: Membership, f: ProjectFileRef, bound: str, base: str, parent: str
 ) -> Callable[[str], str]:
     """A part's question's line (L7), built from the question's id."""
 
     def line(q: str) -> str:
         return line_subproject(
-            file_path,
+            f.path,
             self.project(bound).name,
             bound,
             self.project(base).name,
             self.project(parent).name,
+            folder=f.dir,
             question=q,
         )
 
@@ -1534,7 +1536,7 @@ def _subproject(
                     "name": f.name,
                 },
                 reason=SUBPROJECT_CONTRADICTION,
-                line=self._subproject_line(f.path, bound, base, parent),
+                line=self._subproject_line(f, bound, base, parent),
                 signature=None,
             )
         break

@@ -335,6 +335,16 @@ eighteenth was built.
 
 #### Fixed
 
+- **Keep membership folder names out of shell commands (ENG-234).**
+  A JSON-quoted path could still expand `$()` or backticks when copied
+  into a shell, and escaped newlines did not name the original folder.
+  Command suggestions now mark paths as display-only and use the stored
+  path as a tool's working directory. The read-only `project folder ID`
+  lookup returns JSON and preserves exact filesystem bytes, including
+  names containing newlines or non-UTF-8 bytes. Older stored questions
+  receive the same instructions when shown; their stored rows are kept.
+  (`membership_lines.py`, `membership_queries.py`, `cli/project_cmd.py`)
+
 - **Keep the Windows daemon listening after aborted connections.** The
   standard Proactor event loop could close its listening socket on
   `WinError 64` while leaving the daemon process alive: concurrent

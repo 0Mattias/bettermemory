@@ -862,10 +862,12 @@ def test_a_held_line_runs_no_command_in_the_alias_clone(
     (held,) = [line for line in seen.lines if qid in line]
     assert stored not in held and "restated from what it stores" in held
     shown = held[held.index("it is closed: ") :]
-    commands = shown.split("bettermemory project ")[1:]
+    commands = shown.split("bettermemory project init ")[1:]
     for command in commands:
         clause = command.split(";")[0]
-        assert ', run in "/w/alias-twin"' in clause or '(in "/w/alias-twin' in clause
+        assert 'in the stored folder (display only: "/w/alias-twin' in clause
+        assert f"bettermemory project folder {qid}" in command
+        assert "never paste the displayed name into a shell" in command
     assert len(commands) == {
         "file_contradiction": 1,
         "subproject_contradiction": 1,

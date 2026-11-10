@@ -43,6 +43,7 @@ a question is opened with) and `history` (for
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 
 from .history import printable, quoted
@@ -60,6 +61,40 @@ from .membership_records import (
     UNRESOLVED_LOCATION,
     WORDS,
 )
+
+
+# ---------------------------------------------------------------------------
+# The folder a command runs in (ENG-234)
+# ---------------------------------------------------------------------------
+
+#: Only these characters may be copied into the lookup command. Malformed
+#: question or file ids are never offered as shell words.
+_REFERENCE = re.compile(r"[A-Za-z0-9_]+")
+
+
+def folder_said(folder: str | None, ref: str | None) -> str:
+    """A command's directory, taken from stored data rather than pasted
+    shell text (ENG-234). `quoted` is a display convention, not a shell
+    literal: ordinary names and hostile names take the same path. The
+    lookup returns JSON, preserving line breaks and filesystem bytes;
+    callers set their tool's working directory from that data.
+    """
+    lookup = (
+        f"read bettermemory project folder {ref} and use its JSON path"
+        if ref is not None and _REFERENCE.fullmatch(ref) is not None
+        else "use its stored path"
+    )
+    shown = f"display only: {quoted(folder)}; " if folder is not None else ""
+    return (
+        f"the stored folder ({shown}{lookup} "
+        "as the command's working directory, never paste the displayed "
+        "name into a shell)"
+    )
+
+
+def run_in(folder: str | None, ref: str | None) -> str:
+    """``in`` and the folder (`folder_said`)."""
+    return f"in {folder_said(folder, ref)}"
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +143,7 @@ def line_first_sight(
     names = " or ".join(_named(n, p) for n, p in candidates)
     join = " | ".join(_answer(question, "join", p, said=True) for _n, p in candidates)
     separate = (
-        "bettermemory project init --new (a fresh project file)"
+        f"bettermemory project init --new ({run_in(root, question)}, a fresh project file)"
         if filed
         else _answer(question, "separate")
     )
@@ -164,7 +199,7 @@ def line_file_contradiction(
     return (
         f"bettermemory: {quoted(root)} is project {_named(name, project_id)} "
         f"but its project file names {_named(file_name, file_project)}. Keep: bettermemory "
-        f"project init --rebind; move this checkout, when the user says so: "
+        f"project init --rebind ({run_in(root, question)}); move this checkout, when the user says so: "
         f"{_answer(question, 'join', file_project, said=True)}"
     )
 
@@ -290,9 +325,11 @@ def line_subproject(
     repository_name: str,
     parent_name: str,
     *,
+    folder: str,
     question: str | None = None,
 ) -> str:
-    """L7."""
+    """L7. `folder` is the file's folder, where ``project init --new``
+    runs (`run_in`)."""
     return (
         f"bettermemory: {quoted(file_path)} names {_named(name, project_id)}, "
         f"which is not part of {quoted(repository_name)}; treated as "
@@ -300,8 +337,7 @@ def line_subproject(
         f"answered. That folder is {_named(name, project_id)}, when the user says "
         f"so: {_answer(question, 'join', project_id, said=True)}; a part of "
         f"{quoted(parent_name)} with an id of its own: bettermemory project "
-        "init --new "
-        "(in that folder)"
+        f"init --new ({run_in(folder, question)})"
     )
 
 
@@ -462,12 +498,13 @@ def line_restated(
     `folder` the folder a part's question (L7) is about. `at`, the folder
     of the question's checkout, where the question is shown at another
     checkout (the held L4 line, `line_alias_held`): each command it offers
-    names the folder it must run in, as a value and not as a shell
-    command, a first sight's separate answer is its call with the command
-    it takes where that folder's project file is bound elsewhere (`filed`
-    is not read then), and what it says of "here" it says of that folder.
-    Its ``answer_question`` calls name the question, so they answer it
-    from any checkout."""
+    names the folder it must run in (`run_in`: its stored path, read through
+    ``bettermemory project folder``, never shell text), a first sight's separate
+    answer is its call with the command it takes where that folder's
+    project file is bound elsewhere (`filed` is not read then), and what it
+    says of "here" it says of that folder. A part's ``init --new`` names
+    `folder` the same way. Its ``answer_question`` calls name the question,
+    so they answer it from any checkout."""
     names = (
         " or ".join(
             _named(n, p) if n is not None else printable(p) for n, p in candidates
@@ -481,7 +518,7 @@ def line_restated(
     )
     separate = _answer(question, "separate")
     here = f"in {quoted(at)}" if at is not None else "here"
-    there = f", run in {quoted(at)}" if at is not None else ""
+    there = f", run {run_in(at, question)}"
     this = "that" if at is not None else "this"
     if at is not None:
         # The sentences are this module's own: each "here" and "this" is
@@ -497,13 +534,7 @@ def line_restated(
             f"checkout, when the user says so: {joins}"
         )
     elif kind == SUBPROJECT_CONTRADICTION:
-        where = (
-            quoted(folder)
-            if folder
-            else f"its folder below {quoted(at)}"
-            if at is not None
-            else "that folder"
-        )
+        where = folder_said(folder, question) if folder else folder_said(None, question)
         options = (
             f"That folder is that project, when the user says so: {joins}; a part "
             "with an id of its own: bettermemory project init --new (in "
@@ -543,7 +574,10 @@ def line_restated(
                 f"{there}, a fresh project file)"
             )
         elif kind == FIRST_SIGHT and filed:
-            separate = "bettermemory project init --new (a fresh project file)"
+            separate = (
+                f"bettermemory project init --new ({run_in(None, question)}, "
+                "a fresh project file)"
+            )
         options = f"Same project, when the user says so: {joins}; separate: {separate}"
     held = (
         f" Until answered, nothing from other projects is shown {here} and what "
@@ -591,12 +625,16 @@ def line_boundary_added(path: str, name: str, project_id: str) -> str:
     )
 
 
-def line_boundary_dropped(path: str, name: str, project_id: str, folder: str) -> str:
-    """B12: a bound file no longer carries the flag its project has."""
+def line_boundary_dropped(
+    path: str, name: str, project_id: str, folder: str, file_id: str
+) -> str:
+    """B12: a bound file no longer carries the flag its project has. The
+    command that lifts it runs in the file's `folder` (`run_in`), whose path
+    ``bettermemory project folder`` finds by the file's id, `file_id`."""
     return (
         f"bettermemory: {quoted(path)} no longer declares a boundary; "
         f"{_named(name, project_id)} stays one until it is lifted: bettermemory "
-        f"project init --rebind (in {quoted(folder)}) binds a fresh file "
+        f"project init --rebind ({run_in(folder, file_id)}) binds a fresh file "
         "without it"
     )
 
