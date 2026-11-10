@@ -335,6 +335,28 @@ eighteenth was built.
 
 #### Fixed
 
+- **Keep the Windows daemon listening after aborted connections.** The
+  standard Proactor event loop could close its listening socket on
+  `WinError 64` while leaving the daemon process alive: concurrent
+  clients then timed out, and shutdown could not reach it. The Windows
+  HTTP server now uses Uvicorn's supported Winloop factory, backed by
+  libuv; `winloop>=0.8.2,<0.9` and Uvicorn's custom-factory API floor are
+  required on Windows. The regression
+  keeps more sockets open than the standard selector loop supports,
+  aborts them and checks that the same daemon still answers. Other
+  platforms retain Uvicorn's automatic loop selection.
+  (`src/bettermemory/daemon.py`, `pyproject.toml`,
+  `tests/test_daemon_loop.py`, `tests/test_daemon_lifecycle.py`)
+
+- **Make mocked Git-capability checks independent of host disk speed.**
+  Their setup could consume the real fetch budget before the mocked
+  answers ran, so a test of retaining successful answers instead began
+  with unknown capabilities on a loaded Windows runner. The fake now
+  controls its module's monotonic clock. An explicit budget-exhaustion
+  test still checks unknown capabilities and the later successful retry;
+  the production fetch budget is unchanged.
+  (`tests/test_location_git_config.py`)
+
 - **Nothing a repository sets makes a changed claim read fresh
   (ENG-220).** Claim drift reads a window's commits and their patches
   with `git log`, and the repository's own config, `config.worktree`,

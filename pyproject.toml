@@ -80,6 +80,12 @@ dependencies = [
     "httpx2>=2.16,<3",
     "httpcore2>=2.16,<3",
     "h11>=0.16",
+    # libuv accepts survive Windows connection resets; the stdlib
+    # Proactor accept path can close the listening socket on WinError 64.
+    "winloop>=0.8.2,<0.9; sys_platform == 'win32'",
+    # Importable loop factories were added in Uvicorn 0.36. MCP's lower
+    # floor alone also permits builds that cannot load Winloop this way.
+    "uvicorn>=0.36,<1.0; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

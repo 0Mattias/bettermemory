@@ -1994,6 +1994,14 @@ The Python files under `src/bettermemory/`, its `handlers/` and
 `cli/`. A tool call crosses them in one order, and the map is that
 order.
 
+On Windows the daemon's HTTP server uses Winloop through Uvicorn's custom
+event-loop factory. This libuv backend keeps accepting after aborted
+connections, avoiding CPython's Proactor listener failure on `WinError 64`
+without the standard Windows selector loop's socket-count limit. Winloop
+is a Windows-only runtime dependency; other platforms keep Uvicorn's
+automatic loop selection. The daemon does not change the process-wide
+asyncio policy.
+
 **Entry.** `cli/` is the `bettermemory` command, entered through
 `_entry.py`, which imports nothing it does not need so a hook process
 stays small. With no arguments it runs the stdio shim (`shim.py`): a

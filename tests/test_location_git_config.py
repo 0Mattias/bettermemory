@@ -31,6 +31,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -606,6 +607,16 @@ class _FakeGit:
         self.compat: int | None = 128
         self.asked: list[tuple[tuple[str, ...], dict[str, Any]]] = []
         self.during: Callable[[], None] | None = None
+        # These replies are synchronous fakes. Probe-file creation on a
+        # loaded Windows disk can consume the real 300 ms fetch budget
+        # before the fake answers run. Only this module's monotonic clock
+        # is controlled; cache ages and all other modules keep real time.
+        self.elapsed = 0.0
+        monkeypatch.setattr(
+            gitsystem,
+            "time",
+            SimpleNamespace(time=time.time, monotonic=lambda: self.elapsed),
+        )
         self.binary = binary
         binary.write_text("a git")
         real = git_runner.run_git
@@ -969,6 +980,41 @@ def test_a_failed_ask_keeps_the_answer_git_gave(
     fake.during = lambda: gitsystem._record(racer)
     assert gitsystem.sources() == good
     assert _record(state)["entries"][0]["system"] == _ETC
+
+
+def test_probe_setup_exhausting_the_budget_keeps_capabilities_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A controlled clock in the fake does not remove the real deadline.
+
+    Probe-file setup consumes the same budget as the questions. When it
+    exhausts that budget, known config paths remain usable, capabilities
+    stay unknown, and the next retry can establish them.
+    """
+    state = Path(os.environ["BETTERMEMORY_STATE_DIR"])
+    fake = _FakeGit(monkeypatch, tmp_path / "git")
+    fake.named, fake.own = f"{_ETC}\n", [_VENDOR]
+    real = gitsystem._probe_repository
+
+    def exhausted() -> Any:
+        probe = real()
+        fake.elapsed += gitsystem.ASK_SECONDS
+        return probe
+
+    monkeypatch.setattr(gitsystem, "_probe_repository", exhausted)
+    assert gitsystem.sources() == gitsystem.Sources((_VENDOR,), _ETC)
+    assert [args for args, _kw in fake.asked] == [gitsystem._VAR, gitsystem._LIST]
+    _caches.clear_all()
+    assert gitsystem.sources() == gitsystem.Sources((_VENDOR,), _ETC)
+    assert len(fake.asked) == 2, "an incomplete answer waits for its retry"
+
+    monkeypatch.setattr(gitsystem, "_probe_repository", real)
+    _aged(state, "asked", gitsystem.RETRY_SECONDS)
+    _caches.clear_all()
+    assert gitsystem.sources() == gitsystem.Sources(
+        (_VENDOR,), _ETC, True, True, _PREFIX, False
+    )
+    assert len(fake.asked) == 7
 
 
 def test_a_capture_taken_under_the_fallback_is_read_again_once_git_answers(

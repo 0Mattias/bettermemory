@@ -123,6 +123,7 @@ from .time_utils import parse_event_ts
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
+    from uvicorn import Config as UvicornConfig
 
     from .recall import RecallState
 
@@ -1635,6 +1636,29 @@ def _stop_serving(
             sock.close()
 
 
+def _uvicorn_config(app: Starlette, host: str, port: int) -> UvicornConfig:
+    """The daemon's HTTP loop: libuv on Windows, uvicorn's auto elsewhere.
+
+    CPython's Proactor accept callback closes the listener on WinError 64
+    (python/cpython#93821, #156365), leaving a live daemon that no longer
+    accepts clients. Winloop is uvicorn's supported Windows loop backend;
+    unlike Windows' SelectSelector it has no 512-socket select limit.
+    The loop factory is local to the server, not a process-wide policy.
+    """
+    import uvicorn
+
+    return uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        loop="winloop:new_event_loop" if sys.platform == "win32" else "auto",
+        log_level="warning",
+        access_log=False,
+        lifespan="on",
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
+    )
+
+
 def _serve_locked(
     *,
     config: Config,
@@ -1736,15 +1760,7 @@ def _serve_locked(
     )
     _watch_lifespan(app, holder, watch, optimize, settle)
     _write_daemon_state(state_dir, store, token, bound_port, host)
-    uv_config = uvicorn.Config(
-        app,
-        host=host,
-        port=bound_port,
-        log_level="warning",
-        access_log=False,
-        lifespan="on",
-        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
-    )
+    uv_config = _uvicorn_config(app, host, bound_port)
     server = uvicorn.Server(uv_config)
     holder["server"] = server
     if threading.current_thread() is threading.main_thread():

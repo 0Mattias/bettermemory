@@ -12,6 +12,8 @@ import json
 import os
 import re
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import time
@@ -470,6 +472,40 @@ def test_concurrent_clients_on_a_fresh_store_start_one_daemon(
         for pid in pids - ({state["pid"]} if state else set()):
             if pid_alive(pid):
                 os.kill(pid, signal.SIGTERM)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows accept-reset regression")
+def test_windows_listener_survives_aborts_above_the_selector_socket_limit(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    """Keep the listener usable with 513 idle clients, then abort them.
+
+    CPython's Windows SelectSelector is limited to 512 sockets, so using
+    it instead of the failing Proactor listener would impose a capacity
+    limit. libuv handles this many clients and the reset completions
+    that previously closed the listener with WinError 64.
+    """
+    started = _cli(["up", "--port", "0"], daemon_env)
+    assert started.returncode == 0, started.stderr
+    before = _wait_running(tmp_path)
+    clients: list[socket.socket] = []
+    try:
+        for _ in range(513):
+            clients.append(socket.create_connection(("127.0.0.1", before["port"]), 5))
+        assert _wait_running(tmp_path)["pid"] == before["pid"]
+        for client in clients:
+            # Windows' linger structure contains two unsigned shorts;
+            # a zero linger sends RST rather than a graceful FIN.
+            client.setsockopt(
+                socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("HH", 1, 0)
+            )
+            client.close()
+        clients.clear()
+        assert _wait_running(tmp_path)["pid"] == before["pid"]
+        assert "Accept failed on a socket" not in _daemon_log(tmp_path)
+    finally:
+        for client in clients:
+            client.close()
 
 
 def test_a_second_foreground_daemon_on_a_served_store_exits(
