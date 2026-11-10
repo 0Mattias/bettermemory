@@ -32,6 +32,12 @@ eighteenth was built.
 
 #### Fixed
 
+- **Expanded home attestations use the host's separator spelling.** On
+  Windows, `~/...` targets no longer retain a mixture of slash styles after
+  expansion, so their stored targets and drift fields match the native
+  absolute spelling. (`attestation_paths.py`,
+  `tests/test_home_attestation_spelling.py`)
+
 - **Historical path type changes retain every matching commit.** A
   reachability range can hold a file and descendants under the same name.
   Its count now includes both, using one sorted index per range to avoid

@@ -177,7 +177,11 @@ def target_path(spelled: str, root: str | None) -> str:
     roots preserve literal backslashes. This is path arithmetic alone.
     """
     if absolute_spelling(spelled):
-        return os.path.expanduser(spelled) if spelled.startswith("~") else spelled
+        return (
+            os.path.normpath(os.path.expanduser(spelled))
+            if spelled.startswith("~")
+            else spelled
+        )
     if root is None:
         raise ValueError("a relative path attestation needs a declared root")
     if _escapes_root(spelled):
@@ -257,7 +261,7 @@ def compile_targets(
             # lexical evidence must survive reference normalization.
             chosen = literal_path(raw)
         if chosen is not None and chosen.startswith("~"):
-            chosen = os.path.expanduser(chosen)
+            chosen = os.path.normpath(os.path.expanduser(chosen))
         targets[raw] = chosen
         reference = reference_path(raw)
         if chosen is None:
