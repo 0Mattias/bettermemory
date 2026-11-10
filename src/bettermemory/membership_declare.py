@@ -70,6 +70,54 @@ if TYPE_CHECKING:
 # -- declarations (design 8.8) -------------------------------------------------------------
 
 
+def _merge(self: Membership, source: str, target: str, *, evidence: str) -> None:
+    """Merge project identities and carry their tenant-affiliated children.
+
+    Select before following the merge: afterwards the source's parent
+    chain names the destination, and an already-boundary destination has
+    no boundary-creation transition left to move the children (ENG-281).
+    """
+    src, dst = self._canon(source), self._canon(target)
+    if src == dst:
+        return
+    project = self.project(src)
+    moving = _merging_projects(self, project)
+    self._put_project(dataclasses.replace(project, merged_into=dst, provisional=None))
+    self._event("project_merged", project=src, into=dst, evidence=evidence)
+    if project.boundary:
+        # The file that made it a tenant names the merged project now.
+        self._make_boundary(dst)
+    tenant = self.project(dst).tenant
+    for pid in moving:
+        current = self.project(pid)
+        if current.tenant != tenant:
+            self._put_project(dataclasses.replace(current, tenant=tenant))
+
+
+def _merging_projects(self: Membership, source: Project) -> list[str]:
+    """Children in the source's tenant, excluding independent boundaries.
+
+    A tenant also owns repository projects with no parent link to its
+    folder project, so merging that boundary transfers its tenant rows
+    rather than just its parent-linked descendants.
+    """
+    out: list[str] = []
+    previous = source.id if source.boundary else self.canonical(source.tenant)
+    for project in self._all_projects().values():
+        if project.merged_into is not None or project.id == source.id:
+            continue
+        if self.canonical(project.tenant) != previous:
+            continue
+        chain = self.chain_of(project.id)
+        if source.boundary:
+            out.append(project.id)
+        elif source.id in chain and not any(
+            self.project(pid).boundary for pid in chain[: chain.index(source.id)]
+        ):
+            out.append(project.id)
+    return out
+
+
 def declare(self: Membership, decl: Declaration) -> Declared:
     """Apply a declaration (design 8.8). ``join`` and ``new`` answer
     the open proposal named (or the checkout's first open one) or,

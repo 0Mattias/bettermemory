@@ -582,16 +582,7 @@ class Membership:
         with self._call():
             self._merge(source, target, evidence=evidence)
 
-    def _merge(self, source: str, target: str, *, evidence: str) -> None:
-        src, dst = self._canon(source), self._canon(target)
-        if src == dst:
-            return
-        p = self.project(src)
-        self._put_project(dataclasses.replace(p, merged_into=dst, provisional=None))
-        self._event("project_merged", project=src, into=dst, evidence=evidence)
-        if p.boundary:
-            # The file that made it a tenant names the merged project now.
-            self._make_boundary(dst)
+    _merge = membership_declare._merge
 
     # -- evidence rows -----------------------------------------------------------
 

@@ -32,6 +32,15 @@ eighteenth was built.
 
 #### Fixed
 
+- **A project merge keeps its affiliated subprojects in the target
+  tenant (ENG-281).** Joining into an existing boundary transfers the
+  descendants that belonged to the source's tenant; merging a boundary
+  also transfers its standalone repository projects. Nested boundaries
+  and unrelated tenant projects stay isolated, and a folder's explicit
+  outer boundary still applies. Homes and historical records are left
+  intact. (`membership.py`, `membership_declare.py`,
+  `tests/test_boundary_merge.py`)
+
 - **Absolute citations preserve relative attestations (ENG-256).** When
   prose cites the same file absolutely, a relative attestation still
   supplies its verified or intentionally absent meaning and its claim
