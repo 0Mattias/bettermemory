@@ -38,6 +38,13 @@ eighteenth was built.
   recording a merge. (`handlers/questions.py`,
   `tests/test_join_unknown_projects.py`)
 
+- **Malformed orphan metadata cannot interrupt health or recovery
+  (ENG-276).** Deep JSON nesting reads as an empty orphan-name list,
+  like other malformed values. Health remains available, and saving an
+  old connection can notify its successor without leaving an unreported
+  backup or duplicating one during shutdown. (`store_schema.py`,
+  `tests/test_orphan_metadata_depth.py`)
+
 - **Explicit path attestations retain the target that was checked
   (ENG-253, ENG-280).** Relative code locations share the same reference
   grammar across admission and both drift bases. Literal route folders,

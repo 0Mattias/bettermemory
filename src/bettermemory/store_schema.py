@@ -1104,7 +1104,7 @@ def orphan_names(value: str | None) -> list[str]:
         return []
     try:
         names = json.loads(value)
-    except ValueError:
+    except (ValueError, RecursionError):
         return []
     if not isinstance(names, list):
         return []
