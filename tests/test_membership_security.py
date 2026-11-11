@@ -563,8 +563,9 @@ def test_b9_a_boundary_sub_project_shares_nothing_with_its_root(lab: Lab) -> Non
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("bulk_unavailable", [False, True])
 async def test_links_omit_a_target_the_caller_is_not_admitted_to(
-    lab: Lab, monkeypatch: pytest.MonkeyPatch
+    lab: Lab, monkeypatch: pytest.MonkeyPatch, bulk_unavailable: bool
 ) -> None:
     """A hit in the root whose superseding, contradicting and depended-on
     records sit in the client (a tenant) shows none of them; the same
@@ -575,6 +576,14 @@ async def test_links_omit_a_target_the_caller_is_not_admitted_to(
         MemoryLink(type="contradicts", target_id=target),
     ]
     hidden = lab.write("client", "a tenant's private replacement", links=tenant_links)
+    original = lab.store.load_one(target)
+    lab.store.update(
+        original.model_copy(
+            update={
+                "links": [MemoryLink(type="contradicts", target_id=hidden)],
+            }
+        )
+    )
     shown = lab.write(
         "plain",
         "a global replacement",
@@ -589,6 +598,12 @@ async def test_links_omit_a_target_the_caller_is_not_admitted_to(
         ],
     )
     monkeypatch.chdir(lab.places["root"])
+    if bulk_unavailable:
+
+        def failed(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("synthetic bulk link read failure")
+
+        monkeypatch.setattr(Store, "links_for_many", failed)
     server = build_server(config=lab.config, store=lab.store, state=SessionState())
     for auto_scope in (True, False):
         res = await call_tool(

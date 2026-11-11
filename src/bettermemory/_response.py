@@ -1,10 +1,11 @@
 """Response-shape helpers for the MCP tool surface.
 
-Pure serialisation: takes domain objects (`MemoryHit`, `MemorySummary`,
+Serialisation takes domain objects (`MemoryHit`, `MemorySummary`,
 `Memory`, `Origin`, `SimilarHit`, `TransientMatch`) and the per-request
 inputs they need (a pinned `now`, the caller's origin, etc.) and returns
-JSON-serializable dicts. No I/O, no event recording, no session state
-— that lives on `ToolHandlers`.
+JSON-serializable dicts. Post-rank annotations reuse candidate snapshots
+and make bounded, best-effort store reads. Event recording and session
+state live on `ToolHandlers`.
 
 `ResponseBuilder` captures the one piece of config every method needs
 (`verification_stale_days`) so handlers don't have to thread it through
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import os
+import sqlite3
 import threading
 import time
 from collections import OrderedDict
@@ -30,6 +32,7 @@ from ._git import timed_out_calls
 from . import git_read_budget
 from ._response_commit_counts import count_hits as _count_hits
 from ._response_depends import _load_depends_targets, _resolve_depends
+from ._response_links import candidate_link_rows
 from .credentials import CredentialMatch
 from .durability import TransientMatch
 from .control_tokens import named_tokens
@@ -1651,22 +1654,13 @@ class ResponseBuilder:
         (absent, not null) when empty — the same absence-as-signal contract
         as `depends_on_resolved`. Bounded by `max_per_hit` / `max_total`.
 
-        Inbound edges come from the links index (`index.links_for_many`).
-        The index answer is trusted only when the index can provably
-        answer; every unusable state — absent file, present-but-empty
-        (`indexed_count == 0` with the flag clear), rebuild-pending
-        (`meta.needs_rebuild` — a schema migration dropped the link rows
-        and only touched memories are back, so the answer may be silently
-        missing edges), unreadable (corruption, a newer-version schema —
-        raises out of `links_for_many`) — is merged with a scan of the
-        already-loaded `memories` candidates instead of being trusted
-        alone (see `_links_map_with_candidate_scan`). That is the same
-        truth table every sibling surface applies:
-        `_handlers.load_search_candidates` routes all four states to
-        `load_all` (so the candidates here carry the edges the index can't
-        serve, at zero extra file I/O) and `_links_payload`'s reverse_links
-        treats a zero count / set flag as no-usable-index. Resolution reuses
-        the `depends_on` discipline: a side-map over the loaded candidates, a
+        Edges come from the store's canonical `memory_links` table. A
+        successful answer, including an empty one, wins over the older
+        candidate snapshot. If the bulk query raises, recover the edges
+        already named by loaded candidates (`candidate_link_rows`), without
+        loading another candidate pool or repeating the query. An inbound
+        source outside that snapshot cannot be recovered without the query. Resolution
+        reuses the `depends_on` discipline: a side-map over the candidates, a
         targeted `store.load_one` for targets outside the FTS prefilter,
         tombstoned / missing skipped silently, and the caller's scope filter
         and LINKS admission (`admission`, design 3.5) re-applied so a link
@@ -1684,7 +1678,7 @@ class ResponseBuilder:
             if target is None:
                 try:
                     target = store.load_one(other_id)
-                except (MemoryNotFoundError, TombstonedError, OSError):
+                except (MemoryNotFoundError, TombstonedError, OSError, sqlite3.Error):
                     return None
                 memory_by_id[other_id] = target
             if excluded and (set(target.scopes) & excluded):
@@ -1705,7 +1699,7 @@ class ResponseBuilder:
         try:
             links_map = store.links_for_many(hit_ids)
         except Exception:  # noqa: BLE001 - the annotation is best-effort
-            links_map = {}
+            links_map = candidate_link_rows(memory_by_id.values(), hit_ids)
         if admission is not None:
             admission.prime(
                 oid

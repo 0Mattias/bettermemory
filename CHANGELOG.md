@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Known link annotations survive a failed bulk read (ENG-279).** Search
+  recovers edges from its already-loaded candidate snapshot when the store's
+  bulk link query fails. Successful empty answers remain authoritative;
+  recovered targets still pass scope and admission filters, and unreadable
+  or removed targets are skipped without losing other known annotations.
+  (`_response.py`, `_response_links.py`,
+  `tests/test_link_annotation_fallback.py`)
+
 - **Search annotations honor one cap and one event per memory (ENG-279).**
   Superseding and contradicting edges share the per-hit limit rather than
   receiving separate budgets. A use event that repeats an ID contributes
