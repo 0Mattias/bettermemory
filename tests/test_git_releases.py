@@ -269,7 +269,10 @@ def test_an_include_path_holding_a_tab_is_not_read_whole(
     before 2.45 reads as a space and names another file by, is a config
     not read whole, on every git: the capture declines."""
     repo = _repo(tmp_path / "repo", remote=None)
-    (repo / ".git" / "a\tb.inc").write_text(
+    # A literal tab cannot be created in a Windows filename. The refusal
+    # precedes opening the target, whether that name exists or not. Keep
+    # the alternate file an older git may name available on every OS.
+    (repo / ".git" / "a b.inc").write_text(
         '[remote "origin"]\n\turl = gh:acme/lib\n', encoding="utf-8"
     )
     with (repo / ".git" / "config").open("a", encoding="utf-8") as fh:

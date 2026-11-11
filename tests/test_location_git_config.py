@@ -1193,7 +1193,7 @@ def test_the_version_and_the_hasconfig_include_are_git_s_answers(
 @pytest.mark.parametrize(
     ("listing", "system"),
     [
-        (b"file:/opt/git/etc/gitconfig\0core.x\nv\0", "/opt/git/etc/gitconfig"),
+        (b"file:" + os.fsencode(_ETC) + b"\0core.x\nv\0", _ETC),
         (b"", gitsystem._FALLBACK),
         (b"file:etc/gitconfig\0core.x\nv\0", gitsystem._FALLBACK),
         (b"command line:\0core.x\nv\0", gitsystem._FALLBACK),
@@ -1218,7 +1218,9 @@ def test_a_git_before_2_42_names_its_system_file_by_its_first_entry(
     found = gitsystem.sources()
     asked = [a for a, _kw in fake.asked]
     assert asked[:2] == [gitsystem._VAR, gitsystem._SYSTEM_LIST]
-    if system is None:
+    # On Windows a successful empty listing also has system=None: there
+    # is no fallback path. Only no reply stops the remaining questions.
+    if listing is None:
         assert found == gitsystem.Sources((), gitsystem._FALLBACK)
         assert len(asked) == 2
         return

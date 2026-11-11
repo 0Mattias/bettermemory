@@ -32,7 +32,7 @@ def test_control_live_root_without_space(tmp_path: Path) -> None:
         f"The file {old}/hosts TCP/IP keepalive overrides today",
         anchor=_anchor(old, str(live)),
     )
-    assert report.checked == (str(live / "hosts"),)
+    assert tuple(map(Path, report.checked)) == (live / "hosts",)
 
 
 def test_cited_file_is_checked_when_live_root_has_a_space(tmp_path: Path) -> None:
@@ -44,7 +44,7 @@ def test_cited_file_is_checked_when_live_root_has_a_space(tmp_path: Path) -> Non
         f"The file {old}/hosts TCP/IP keepalive overrides today",
         anchor=_anchor(old, str(live)),
     )
-    assert report.checked == (str(live / "hosts"),)
+    assert tuple(map(Path, report.checked)) == (live / "hosts",)
 
 
 def test_uncited_directory_is_not_reported(tmp_path: Path) -> None:
@@ -57,8 +57,8 @@ def test_uncited_directory_is_not_reported(tmp_path: Path) -> None:
         f"The file {old}/hosts TCP/IP keepalive overrides today",
         anchor=_anchor(old, str(live)),
     )
-    assert str(tmp_path / "x" / "My") not in report.checked
-    assert report.checked == (str(live / "hosts"),)
+    assert tmp_path / "x" / "My" not in map(Path, report.checked)
+    assert tuple(map(Path, report.checked)) == (live / "hosts",)
 
 
 def test_existing_complete_spaced_filename_is_kept(tmp_path: Path) -> None:
@@ -72,7 +72,7 @@ def test_existing_complete_spaced_filename_is_kept(tmp_path: Path) -> None:
     report = detect_path_drift(
         f"The file {old}/hosts TCP/IP", anchor=_anchor(old, str(live))
     )
-    assert report.checked == (str(whole),)
+    assert tuple(map(Path, report.checked)) == (whole,)
 
 
 def test_unanchored_prefix_does_not_probe_a_shortened_live_root(
