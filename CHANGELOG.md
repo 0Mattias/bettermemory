@@ -32,6 +32,13 @@ eighteenth was built.
 
 #### Fixed
 
+- **Project audits include joins and their reversals (ENG-279).**
+  `project why` lists the absorption and undo rows for both sides of a
+  project join, alongside the merge rows it already showed. A migrated
+  project home without a checkout says `no checkout recorded`. The audit
+  retains the existing order of rows and the checkout where a homed record
+  was written. (`membership.py`, `tests/test_why_project_history_proof.py`,
+  `tests/test_why_missing_checkout_proof.py`)
 - **A conversation's hooks preserve its memory delta (ENG-279).**
   `memory_search(since_prior_session=True)` recognizes the caller's
   declared harness session id alongside its tool session id. A prompt,
