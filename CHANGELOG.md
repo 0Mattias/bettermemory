@@ -32,6 +32,13 @@ eighteenth was built.
 
 #### Fixed
 
+- **A conversation's hooks preserve its memory delta (ENG-279).**
+  `memory_search(since_prior_session=True)` recognizes the caller's
+  declared harness session id alongside its tool session id. A prompt,
+  session-start or stop hook from that conversation no longer moves the
+  prior-session boundary past memories it just wrote. Other conversations'
+  events still establish the boundary, and an undeclared harness id is
+  not guessed.
 - **Health retains distinct reasons for skipped records (ENG-279).**
   Records sharing a repository label and recorded path can lack usable
   commit history for different reasons. Health lists each distinct cause

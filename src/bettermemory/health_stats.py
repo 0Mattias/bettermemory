@@ -1703,6 +1703,8 @@ def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
 def find_prior_session_boundary(
     events: Iterable[dict[str, Any]],
     current_session_id: str | None,
+    *,
+    current_harness_session_id: str | None = None,
 ) -> datetime | None:
     """Latest event timestamp belonging to a session other than the current one.
 
@@ -1715,9 +1717,12 @@ def find_prior_session_boundary(
 
     Walks events forward and tracks the max ts among entries whose
     `session` (or legacy `session_id`) field differs from
-    `current_session_id`. Both legacy and canonical event-shape
-    field names are accepted to stay compatible with archives
-    written before the field-name unification.
+    `current_session_id`. When the caller declares its harness session,
+    rows under that id belong to this conversation too: hooks record
+    under the transcript id rather than the tool server's session id.
+    Other conversations' hooks still establish a boundary. Both legacy
+    and canonical event-shape field names are accepted to stay
+    compatible with archives written before the field-name unification.
     """
     if not current_session_id:
         return None
@@ -1726,7 +1731,10 @@ def find_prior_session_boundary(
         if not isinstance(ev, dict):
             continue
         session_id = ev.get("session") or ev.get("session_id")
-        if not isinstance(session_id, str) or session_id == current_session_id:
+        if not isinstance(session_id, str) or session_id in (
+            current_session_id,
+            current_harness_session_id,
+        ):
             continue
         ts = _parse_event_ts(ev.get("ts"))
         if ts is None:
