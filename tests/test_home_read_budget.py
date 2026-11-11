@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-import time
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +120,6 @@ async def test_home_history_reads_share_one_call_deadline(
     world.stand_at(world.other)
     real = subprocess.run
     elapsed = 0.0
-    started = time.monotonic()
     timeouts: list[float] = []
     completed: set[Path] = set()
     bad_root: Path | None = None
@@ -149,7 +147,8 @@ async def test_home_history_reads_share_one_call_deadline(
         return real(argv, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(git_read_budget, "_clock", lambda: started + elapsed)
+    # A zero origin keeps the integral fake costs exact across clock epochs.
+    monkeypatch.setattr(git_read_budget, "_clock", lambda: elapsed)
     _caches.clear_all()
     first_order: list[str] | None = None
     for _ in range(count + 1):
