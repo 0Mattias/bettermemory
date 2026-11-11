@@ -32,6 +32,12 @@ eighteenth was built.
 
 #### Fixed
 
+- **Health counts premeasured hook telemetry once (ENG-279).** A caller
+  that already counted a stream no longer has those rows added again by
+  health's own walk. Delegated counting and the unmeasured gate retain
+  their existing behavior. (`health.py`,
+  `tests/test_health_telemetry_count.py`)
+
 - **Deeply nested hook JSON keeps a structured reply (ENG-279).** The
   session-start, prompt and stop routes treat a JSON decoder depth refusal
   as an empty payload, as they already treat malformed or non-object JSON.

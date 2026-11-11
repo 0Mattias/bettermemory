@@ -283,7 +283,9 @@ def _dead_weight_bucket(
         telemetry_coverage: TelemetryCoverage | None = None
         telemetry_covered = True
     else:
-        total_hook_telemetry = hook_telemetry_events + observed_hook_telemetry
+        # Both measurements describe the same stream, so adding them
+        # would count rows seen by both twice.
+        total_hook_telemetry = max(hook_telemetry_events, observed_hook_telemetry)
         telemetry_covered = total_hook_telemetry > 0
         telemetry_coverage = TelemetryCoverage(
             hook_telemetry_events=total_hook_telemetry,
@@ -956,7 +958,9 @@ def compute_health(
       coverage is that count OR-ed with what this walk sees for itself,
       so a caller that cannot cheaply pre-measure (an `iter_all_events`
       generator it is handing straight in) passes `0` and delegates the
-      measurement here. With coverage at zero the `dead_weight` bucket
+      measurement here. The published count is the larger measurement
+      of that same stream, without adding overlapping rows twice.
+      With coverage at zero the `dead_weight` bucket
       is emptied and `telemetry_coverage.dead_weight_suppressed` says
       why — see `is_hook_telemetry_event` for the full rationale.
 
