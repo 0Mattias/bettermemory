@@ -42,7 +42,10 @@ def add_subparser(
         "--top-k",
         type=int,
         default=10,
-        help="How many heavily-used memories to list. Default: 10.",
+        help=(
+            "How many heavily-used memories to list; zero or negative values list none. "
+            "Default: 10."
+        ),
     )
     parser.add_argument(
         "--min-applied",

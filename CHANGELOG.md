@@ -32,6 +32,13 @@ eighteenth was built.
 
 #### Fixed
 
+- **Health handles large windows and nonpositive list caps (ENG-279).**
+  Day cutoffs saturate at representable dates, so very large dead-weight
+  or verification windows still produce a report. Nonpositive heavily-used
+  limits return an empty list. Ordinary day boundaries and ranking retain
+  their existing meaning. (`health.py`, `cli/health_cmd.py`,
+  `tests/test_health_input_bounds.py`)
+
 - **Optional SQLite body reads preserve search results.** An unreadable
   dependency target or top-hit expansion no longer aborts an otherwise
   successful search. The failed enrichment is omitted while healthy,

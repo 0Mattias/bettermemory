@@ -161,6 +161,15 @@ class _HealthCensus:
     actor_principals: defaultdict[str | None, Counter[str]]
 
 
+def _days_before(now: datetime, days: int) -> datetime:
+    """Subtract whole days within datetime's representable range."""
+    try:
+        return now - timedelta(days=days)
+    except OverflowError:
+        boundary = datetime.min if days >= 0 else datetime.max
+        return boundary.replace(tzinfo=now.tzinfo)
+
+
 def _census_memories(memories: Iterable[Memory], cutoff: datetime) -> _HealthCensus:
     """Walk the memories once; returns their stats and the per-id maps the buckets read."""
     by_id: dict[str, MemoryStats] = {}
@@ -276,7 +285,7 @@ def _dead_weight_bucket(
     # the bucket rather than reporting an unwired Stop hook as rot;
     # `telemetry_coverage` below carries the explanation so the empty
     # bucket is never mistaken for a clean store.
-    grace_cutoff = now - timedelta(days=_ENDORSEMENT_GRACE_DAYS)
+    grace_cutoff = _days_before(now, _ENDORSEMENT_GRACE_DAYS)
     observed_hook_telemetry = rollups.hook_telemetry_events
     if hook_telemetry_events is None:
         # Caller didn't measure — assume covered, pre-3.32 behaviour.
@@ -348,7 +357,7 @@ def _usage_buckets(
         (s for s in by_id.values() if s.applied_count >= heavily_used_min_applied),
         key=lambda s: (s.applied_count, s.last_used_at or s.updated),
         reverse=True,
-    )[:heavily_used_top_k]
+    )[: max(0, heavily_used_top_k)]
 
     contradicted = [s for s in by_id.values() if s.has_unresolved_contradiction]
     contradicted.sort(key=lambda s: s.last_contradicted_at or s.updated, reverse=True)
@@ -921,6 +930,9 @@ def compute_health(
     recently-maintained) memories from being flagged before they've had
     a chance to accumulate use signal.
 
+    Day cutoffs saturate at datetime's bounds for oversized windows.
+    Nonpositive `heavily_used_top_k` caps omit the heavily-used list.
+
     `heavily_used_min_applied` is the floor on `applied_count` for inclusion
     in `heavily_used`. Default 3: a single acknowledgement is acknowledgement,
     not a usage pattern, and the bucket is meant to surface memories that are
@@ -971,8 +983,8 @@ def compute_health(
     if heavily_used_min_applied < 1:
         heavily_used_min_applied = 1
     now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=window_days)
-    verification_cutoff = now - timedelta(days=verification_stale_days)
+    cutoff = _days_before(now, window_days)
+    verification_cutoff = _days_before(now, verification_stale_days)
     tombstoned_ids = tombstoned_ids or set()
 
     census = _census_memories(memories, cutoff)
