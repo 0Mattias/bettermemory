@@ -55,6 +55,7 @@ Description-edit history:
 from __future__ import annotations
 from .. import git_read_budget
 
+import sqlite3
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, cast
 
 from ..models import utcnow, validate_scope
@@ -978,14 +979,9 @@ def _expand_top_hit(
             # Race: memory was tombstoned between search and show.
             # Drop the body silently, the snippet still got returned.
             pass
-        except OSError:
-            # Transient IO error reading the top hit's body (8.x read it
-            # from a file that could vanish mid-flight or sit on a flaky
-            # network mount; the store reads a row, and the guard stays
-            # for an OSError the read raises). The body expansion is a
-            # best-effort enrichment — skip the inline body but still return the
-            # ranked hits the caller already has, rather than aborting the
-            # whole search on one unreadable body.
+        except (OSError, sqlite3.Error):
+            # Body expansion is best effort. An unreadable optional body
+            # leaves the already-ranked hits available without inline text.
             pass
         else:
             out[0]["body"] = memory.body

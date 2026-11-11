@@ -34,6 +34,8 @@ def _load_depends_targets(
     excluded: set[str],
 ) -> dict[str, Memory]:
     """Take the side-map; return it with the admitted depends_on targets it lacked."""
+    import sqlite3
+
     from .store import MemoryNotFoundError, TombstonedError
 
     if max_per_hit <= 0 or max_total <= 0:
@@ -58,7 +60,7 @@ def _load_depends_targets(
         for tid in batch:
             try:
                 target = store.load_one(tid)
-            except (MemoryNotFoundError, TombstonedError, OSError):
+            except (MemoryNotFoundError, TombstonedError, OSError, sqlite3.Error):
                 # Absent, tombstoned and unreadable targets are best effort;
                 # their links remain available for explicit memory_show reads.
                 continue

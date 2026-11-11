@@ -32,6 +32,13 @@ eighteenth was built.
 
 #### Fixed
 
+- **Optional SQLite body reads preserve search results.** An unreadable
+  dependency target or top-hit expansion no longer aborts an otherwise
+  successful search. The failed enrichment is omitted while healthy,
+  admitted dependencies remain available under the existing caps.
+  (`_response_depends.py`, `handlers/search.py`,
+  `tests/test_optional_search_reads.py`)
+
 - **Health counts premeasured hook telemetry once (ENG-279).** A caller
   that already counted a stream no longer has those rows added again by
   health's own walk. Delegated counting and the unmeasured gate retain
