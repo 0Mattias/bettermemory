@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Search annotations honor one cap and one event per memory (ENG-279).**
+  Superseding and contradicting edges share the per-hit limit rather than
+  receiving separate budgets. A use event that repeats an ID contributes
+  once to its rejection count and retains the first valid occurrence's
+  original claim excerpt. Distinct events still count separately; automatic
+  applies leave warnings intact and later explicit endorsements clear them.
+  (`_response.py`, `tests/test_response_annotation_bounds.py`)
+
 - **Commit reads share one deadline (ENG-239).** Search, its top-hit
   expansion, show and daemon health share a five-second Git-read budget.
   Exhaustion is explicitly unread and is never retained as a cached

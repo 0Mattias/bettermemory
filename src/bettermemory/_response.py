@@ -1733,17 +1733,19 @@ class ResponseBuilder:
                     seen_c.add(oid)
                     contradicts.append((oid, note))
 
+            emitted = 0
             for key, pairs in (
                 ("superseded_by", superseded_by),
                 ("contradicts", contradicts),
             ):
                 resolved: list[dict[str, Any]] = []
                 for oid, note in pairs:
-                    if len(resolved) >= max_per_hit or total >= max_total:
+                    if emitted >= max_per_hit or total >= max_total:
                         break
                     entry = _resolve(oid, note)
                     if entry is not None:
                         resolved.append(entry)
+                        emitted += 1
                         total += 1
                 if resolved:
                     hit_dict[key] = resolved
@@ -1831,9 +1833,11 @@ class ResponseBuilder:
             # so `claim_excerpts` — recorded parallel to the raw list —
             # still attributes to the right slot when malformed elements
             # are dropped.
+            seen_ids: set[str] = set()
             for i, mid in _event_id_items(event.get("ids") or event.get("memory_ids")):
-                if mid not in hit_ids:
+                if mid not in hit_ids or mid in seen_ids:
                     continue
+                seen_ids.add(mid)
                 # A row written before 9.0.0rc18 can hold a token in its
                 # note or excerpt, read here as its bare name (ENG-189).
                 per_id_events.setdefault(mid, []).append(
