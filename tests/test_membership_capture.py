@@ -687,6 +687,7 @@ print(json.dumps(sorted(sys.modules)))
         "bettermemory._paths",
         "bettermemory._printable",
         "bettermemory.checkout_token",
+        "bettermemory.git_read_budget",
         "bettermemory.gitconfig",
         "bettermemory.gitfile_rule",
         "bettermemory.githead",
