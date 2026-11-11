@@ -43,6 +43,7 @@ reads lives in its child alone.
 from __future__ import annotations
 
 import os
+import stat
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -902,8 +903,8 @@ def compute_health(
     checkout as `memory_show` takes it; without it every record whose
     origin repo matches the caller's is a candidate. `anchoring` reads
     `cross_repo_drift`'s homed groups where design 3.6 resolves their
-    cited commit (`verify_anchoring.ClaimAnchor.commit_root`); a record with no
-    home row, and every record without it, is read as before.
+    cited commit (`ClaimAnchor.commit_root`). Without anchoring, it reads recorded
+    roots; under anchoring, remaining records with no home row are listed skipped.
     `memory_admin(health)` passes both, resolved for the request's caller.
     The CLI reads existing anchoring without resolving a caller. Store
     reports share `estate_progress`; capped calls rotate their root paths.
@@ -1039,7 +1040,7 @@ def _group_cross_repo_candidates(
 ) -> tuple[
     dict[tuple[str, str], list[MemoryStats]],
     dict[tuple[str, str], list[MemoryStats]],
-    dict[tuple[str, str], str],
+    dict[tuple[str, str, str], None],
     int,
 ]:
     """Group the foreign candidates; returns both group maps, the roots not checked with why, and the unanchorable count.
@@ -1063,17 +1064,15 @@ def _group_cross_repo_candidates(
     # the live view they are read at); the membership model has already
     # read that view as the checkout itself.
     homed: dict[tuple[str, str], list[MemoryStats]] = {}
-    # The (label, worktree) of each record no surface reads a commit leg
-    # for, with the reason health lists it skipped under.
-    unchecked: dict[tuple[str, str], str] = {}
+    # Ordered distinct skip causes: one label and root can describe
+    # records with different causes, while identical causes stay one group.
+    unchecked: dict[tuple[str, str, str], None] = {}
     unanchorable = 0
     for stats in by_id.values():
         origin_repo = origin_repo_by_id.get(stats.id)
         worktree = origin_worktree_by_id.get(stats.id)
         if stats.id in unmapped:
-            unchecked.setdefault(
-                (origin_repo or stats.id, worktree or ""), UNMAPPED_REASON
-            )
+            unchecked[(origin_repo or stats.id, worktree or "", UNMAPPED_REASON)] = None
             continue
         # The caller's checked record is no gap in estate coverage, even
         # when its legacy origin did not record a working-tree root.
@@ -1107,9 +1106,9 @@ def _group_cross_repo_candidates(
             label = origin_repo or (home.project if home is not None else stats.id)
             commit_root, _rule = anchor.commit_root(cited)
             if commit_root is None:
-                unchecked.setdefault(
-                    (label, worktree or ""), _UNCONFIRMED_REASON.format(anchor.rule)
-                )
+                unchecked[
+                    (label, worktree or "", _UNCONFIRMED_REASON.format(anchor.rule))
+                ] = None
                 continue
             homed.setdefault((label, commit_root), []).append(stats)
             continue
@@ -1128,9 +1127,7 @@ def _group_cross_repo_candidates(
                 )
                 and names_a_repository(origin_repo, worktree, cited)
             ):
-                unchecked.setdefault(
-                    (origin_repo or stats.id, worktree or ""), _NO_HOME
-                )
+                unchecked[(origin_repo or stats.id, worktree or "", _NO_HOME)] = None
             elif stats.last_verified_at is not None and (
                 not origin_repo or not worktree
             ):
@@ -1200,35 +1197,22 @@ def _recorded_root_reachable(
     # guards for the same reason. Only a record read without the
     # membership's anchoring still reaches this recorded-root path.
     #
-    # So: positively absent is a finding, unreadable is a separate
-    # finding, and only a directory we could actually stat is
-    # handed to git — asking git to work inside a directory we
-    # could not stat is how the mislabel happened that
-    # `_recorded_root_group`'s `repo is None` comment describes.
+    # After membership's absence classification, a successful stat can
+    # identify a readable non-directory. A refused stat is unreadable;
+    # only a confirmed directory reaches Git's checkout identification.
     if location.view_state(worktree, location.PRIMARY, None, None) == "gone":
-        skipped.append(
-            {
-                "repo": repo,
-                "worktree_root": worktree,
-                "reason": "worktree missing on disk",
-            }
-        )
-        return False
-    if not os.path.isdir(root):
-        # Not positively gone, and still not stattable as a
-        # directory: unreachable rather than absent. `os.path.isdir`
-        # swallows the OSError that `Path.is_dir()` would re-raise
-        # — the same choice, for the same reason, that
-        # `verify_anchoring._worktree_root_is_live` writes down.
-        skipped.append(
-            {
-                "repo": repo,
-                "worktree_root": worktree,
-                "reason": "worktree unreadable",
-            }
-        )
-        return False
-    return True
+        reason = "worktree missing on disk"
+    else:
+        try:
+            is_directory = stat.S_ISDIR(os.stat(root).st_mode)
+        except (OSError, ValueError):
+            reason = "worktree unreadable"
+        else:
+            if is_directory:
+                return True
+            reason = "worktree path is not a directory"
+    skipped.append({"repo": repo, "worktree_root": worktree, "reason": reason})
+    return False
 
 
 def _recorded_root_group(
@@ -1320,7 +1304,7 @@ def _walk_cross_repo_roots(
     *,
     groups: dict[tuple[str, str], list[MemoryStats]],
     homed: dict[tuple[str, str], list[MemoryStats]],
-    unchecked: dict[tuple[str, str], str],
+    unchecked: dict[tuple[str, str, str], None],
     anchor_paths_by_id: dict[str, tuple[str, ...]],
     claims_by_id: dict[str, tuple[str, ...]] | None,
     verified_head_by_id: dict[str, str | None] | None,
@@ -1347,7 +1331,7 @@ def _walk_cross_repo_roots(
     out_groups: list[CrossRepoDriftGroup] = []
     skipped: list[dict[str, Any]] = [
         {"repo": repo, "worktree_root": worktree, "reason": reason}
-        for (repo, worktree), reason in unchecked.items()
+        for repo, worktree, reason in unchecked
     ]
     walked = 0
     # Serialize progress on this Store, never on another Store's Git reads.

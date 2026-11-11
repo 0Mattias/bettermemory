@@ -32,6 +32,15 @@ eighteenth was built.
 
 #### Fixed
 
+- **Health retains distinct reasons for skipped records (ENG-279).**
+  Records sharing a repository label and recorded path can lack usable
+  commit history for different reasons. Health lists each distinct cause
+  while keeping identical causes in one group. A readable regular file at
+  an old checkout path is reported as a non-directory, with stat refusals
+  reported as unreadable. (`health.py`,
+  `tests/test_health_skip_reason_proof.py`,
+  `tests/test_health_skip_membership_proof.py`)
+
 - **Expanded search drift fields reflect one read (ENG-279).** If a file
   or verification stamp changes between the initial hit read and expansion,
   the expanded hit refreshes its path counts and report, commit count and

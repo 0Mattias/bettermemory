@@ -56,10 +56,12 @@ record when no anchoring is passed, is read at its recorded root as before.
 
 The anchoring also reads the commit leg of every record the caller's
 admission does not count in the caller's checkout (`commit_legs.
-CommitLegs`, ENG-229): at its home checkout's live view, or its recorded
-worktree, where health's estate check reads it; a leg that applies and
-that nothing here reads is not checked, and the verdict is never
-``fresh``. Without anchoring such a record has no commit leg, as before.
+CommitLegs`, ENG-229): at its home checkout's live view, else a caller or
+project stand-in that holds its cited commit. A record with no home row
+is not checked until it is homed; its recorded worktree supplies no
+commit fallback. A leg that applies and that nothing here reads is not
+checked, and the verdict is never ``fresh``. Without anchoring such a
+record has no commit leg, as before.
 """
 
 from __future__ import annotations
