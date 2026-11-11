@@ -32,6 +32,15 @@ eighteenth was built.
 
 #### Fixed
 
+- **Expanded search drift fields reflect one read (ENG-279).** If a file
+  or verification stamp changes between the initial hit read and expansion,
+  the expanded hit refreshes its path counts and report, commit count and
+  basis, and claim detail together. A later inapplicable commit leg clears
+  the earlier count. The API description also documents the existing
+  decisive-score-lead expansion gate. (`handlers/search.py`, `docs/api.md`,
+  `tests/test_expanded_path_snapshot.py`,
+  `tests/test_expanded_commit_snapshot.py`)
+
 - **Health handles large windows and nonpositive list caps (ENG-279).**
   Day cutoffs saturate at representable dates, so very large dead-weight
   or verification windows still produce a report. Nonpositive heavily-used

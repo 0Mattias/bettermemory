@@ -917,6 +917,38 @@ def _expand_unread(
             verification["recommendation"] = shown.verification.recommendation
 
 
+def _apply_expanded_drift(
+    deps: ToolHandlers, row: dict[str, Any], shown: MemoryVerdict
+) -> None:
+    """Replace the hit pass's drift fields with one expansion verdict."""
+    drift = shown.path_drift
+    row["path_drift_checked"] = len(drift.checked)
+    row["path_drift_missing"] = len(drift.missing)
+    if drift.should_report:
+        row["path_drift"] = drift.to_dict()
+    else:
+        row.pop("path_drift", None)
+
+    # An inapplicable or unread later leg must not retain an earlier
+    # count. A changed basis also replaces its associated claim detail.
+    for key in (
+        "commit_drift",
+        "commit_drift_count",
+        "commit_drift_basis",
+        "claim_drift",
+    ):
+        row.pop(key, None)
+    _expand_unread(deps, row, shown)
+    commit = shown.commit_drift
+    if commit is not None:
+        block = commit.to_dict()
+        row["commit_drift"] = block
+        row["commit_drift_count"] = commit.commits_since_verify
+        row["commit_drift_basis"] = commit.basis
+        if "claim_drift" in block:
+            row["claim_drift"] = block["claim_drift"]
+
+
 def _expand_top_hit(
     deps: ToolHandlers,
     out: list[dict[str, Any]],
@@ -1005,24 +1037,12 @@ def _expand_top_hit(
                 admission=links,
             )
             drift = shown.path_drift
-            if drift.should_report:
-                out[0]["path_drift"] = drift.to_dict()
+            _apply_expanded_drift(deps, out[0], shown)
             expanded_drift_missing = len(drift.missing)
             commit_drift = shown.commit_drift
-            _expand_unread(deps, out[0], shown)
             if commit_drift is not None:
-                out[0]["commit_drift"] = commit_drift.to_dict()
                 expanded_commit_drift_status = commit_drift.status
                 expanded_commits_since_verify = commit_drift.commits_since_verify
-                # Overwrite the cheap per-hit `commit_drift_count` that
-                # `attach_commit_drift_counts` stamped from the pre-expansion
-                # bisect, so a single response never carries two
-                # inconsistent counts on its top hit. Both read the same
-                # memoised resolution, so they agree; pinning the field to
-                # the block that also drives `commit_drift` /
-                # `staleness_verdict` here makes the top-hit triple
-                # provably consistent.
-                out[0]["commit_drift_count"] = commit_drift.commits_since_verify
             # Re-derive the top hit's verdict from the just-computed
             # body-level signals — the verdict that landed via
             # `hit_to_dict` was based on `path_drift_missing` from
