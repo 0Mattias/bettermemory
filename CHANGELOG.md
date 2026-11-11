@@ -32,6 +32,11 @@ eighteenth was built.
 
 #### Fixed
 
+- **The health API overview describes no-home skips consistently.**
+  The estate report lists remaining records without a home under
+  `skipped`, `no home`, as the per-memory surfaces leave their commit
+  leg unchecked. The overview now agrees with the detailed health and
+  verification contracts. (`docs/api.md`)
 - **Project audits include joins and their reversals (ENG-279).**
   `project why` lists the absorption and undo rows for both sides of a
   project join, alongside the merge rows it already showed. A migrated
