@@ -1804,8 +1804,9 @@ class Membership:
                 how = "retired into" if at in folded else "homed now at"
                 at = f"{at} ({how} {cid})"
             spelled = _named(self.project(home.project).name, home.project)
+            written_at = f"written in checkout {at}" if at else "no checkout recorded"
             text = (
-                f"{record_id}: project {spelled}, written in checkout {at}; rule "
+                f"{record_id}: project {spelled}, {written_at}; rule "
                 f"{home.rule}"
                 + (f"; the checkout joined by {registered}" if registered else "")
                 + f"; {len(rows)} rows"
@@ -1871,10 +1872,16 @@ def _decides(
     if kind in (
         "project_minted",
         "project_merged",
+        "project_absorbed",
+        "project_unmerged",
         "project_file_bound",
         "project_reparented",
     ):
-        return payload.get("project") in projects or payload.get("into") in projects
+        return (
+            payload.get("project") in projects
+            or payload.get("into") in projects
+            or (kind == "project_unmerged" and payload.get("was_into") in projects)
+        )
     if payload.get("checkout") in checkouts:
         return True
     if payload.get("proposal") in proposals:

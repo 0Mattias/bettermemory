@@ -39,6 +39,37 @@ eighteenth was built.
   expectation; capture behavior is unchanged.
   (`tests/test_membership_capture.py`)
 
+- **The health API overview describes no-home skips consistently.**
+  The estate report lists remaining records without a home under
+  `skipped`, `no home`, as the per-memory surfaces leave their commit
+  leg unchecked. The overview now agrees with the detailed health and
+  verification contracts. (`docs/api.md`)
+
+- **Project audits include joins and their reversals (ENG-279).**
+  `project why` lists the absorption and undo rows for both sides of a
+  project join, alongside the merge rows it already showed. A migrated
+  project home without a checkout says `no checkout recorded`. The audit
+  retains the existing order of rows and the checkout where a homed record
+  was written. (`membership.py`, `tests/test_why_project_history_proof.py`,
+  `tests/test_why_missing_checkout_proof.py`)
+
+- **A conversation's hooks preserve its memory delta (ENG-279).**
+  `memory_search(since_prior_session=True)` recognizes the caller's
+  declared harness session id alongside its tool session id. A prompt,
+  session-start or stop hook from that conversation no longer moves the
+  prior-session boundary past memories it just wrote. Other conversations'
+  events still establish the boundary, and an undeclared harness id is
+  not guessed.
+
+- **Health retains distinct reasons for skipped records (ENG-279).**
+  Records sharing a repository label and recorded path can lack usable
+  commit history for different reasons. Health lists each distinct cause
+  while keeping identical causes in one group. A readable regular file at
+  an old checkout path is reported as a non-directory, with stat refusals
+  reported as unreadable. (`health.py`,
+  `tests/test_health_skip_reason_proof.py`,
+  `tests/test_health_skip_membership_proof.py`)
+
 - **Expanded search drift fields reflect one read (ENG-279).** If a file
   or verification stamp changes between the initial hit read and expansion,
   the expanded hit refreshes its path counts and report, commit count and

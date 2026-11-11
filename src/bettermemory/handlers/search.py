@@ -53,7 +53,7 @@ Description-edit history:
 """
 
 from __future__ import annotations
-from .. import git_read_budget
+from .. import git_read_budget, identity
 
 import sqlite3
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, cast
@@ -569,8 +569,9 @@ def _prior_session_boundary(
     """Take the request's flag; return the prior session's boundary, or None."""
     # Prior-session boundary filter (loop-iteration entry path).
     # When set, narrow candidates to memories whose `updated` is
-    # at/after the latest event-log timestamp from a session_id
-    # other than the recorder's. We use the recorder's session
+    # strictly after the latest event-log timestamp from a session_id
+    # other than the recorder's or this conversation's declared harness
+    # id (which its hooks use). We use the recorder's request session
     # (not state.session_id) because the recorder is what stamps
     # events with `session`, so the boundary check has to compare
     # against the same id the events were tagged with. Surface as
@@ -591,6 +592,7 @@ def _prior_session_boundary(
         prior_boundary = find_prior_session_boundary(
             deps.store.iter_events(),
             deps.recorder.session_for_request(),
+            current_harness_session_id=identity.current_harness_session(),
         )
     return prior_boundary
 

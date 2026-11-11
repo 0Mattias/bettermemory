@@ -1879,7 +1879,9 @@ Each is a control row of its own, written whatever the telemetry setting
 - `store_forked`: the store took a new store id at an import.
 
 `bettermemory project why <id>` prints a record's project, checkout and
-rule and every row behind them: for a record homed at a checkout another
+rule and every row behind them, including project absorptions and the
+rows that undo joins. A project home without a recorded checkout says
+`no checkout recorded`. For a record homed at a checkout another
 was retired into (ENG-215), the checkout it was written in (its first
 home's) and the one it is homed at now, and the rows of every checkout
 retired into that one, its `checkout_retired` among them. `project

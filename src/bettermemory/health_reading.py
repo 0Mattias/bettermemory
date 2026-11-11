@@ -53,7 +53,7 @@ def _defer_caller_homes(
         return report
     report = report if report is not None else CrossRepoDrift()
     report.unanchorable += unanchorable
-    for (repo, worktree), reason in unchecked.items():
+    for repo, worktree, reason in unchecked:
         report.skipped.append(
             {
                 "repo": repo,
