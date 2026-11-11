@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import checkout_token, location, project_file
+from bettermemory import checkout_token, location, location_stamps, project_file
 from bettermemory.config import Config
 from bettermemory.location import (
     BARE,
@@ -155,11 +155,19 @@ def test_capture_fields_match_git(known: Path, tmp_path: Path) -> None:
     )
 
     for name, ino, mtime, ctime, size in first.stamps:
-        st = os.stat(Path(first.git_dir or "") / name)
+        path = Path(first.git_dir or "") / name
+        st = os.stat(path)
+        changed = st.st_ctime_ns
+        if sys.platform == "win32":
+            # os.stat reports creation time here; the capture records
+            # NTFS's ChangeTime, which need not equal creation time.
+            info = location_stamps.basic_info_ns(str(path))
+            assert info is not None
+            changed = info[3]
         assert (ino, mtime, ctime, size) == (
             st.st_ino,
             st.st_mtime_ns,
-            st.st_ctime_ns,
+            changed,
             st.st_size,
         )
     assert [s[0] for s in first.stamps] == ["description", "info/exclude"]

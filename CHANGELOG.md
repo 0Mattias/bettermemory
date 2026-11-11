@@ -32,6 +32,13 @@ eighteenth was built.
 
 #### Fixed
 
+- **Windows capture regression checks the change-time field.** The
+  filesystem oracle uses NTFS's ChangeTime for init stamps, as the capture
+  does, instead of comparing it with `os.stat`'s creation time. The two
+  timestamps can differ on an unchanged file. This corrects the test's
+  expectation; capture behavior is unchanged.
+  (`tests/test_membership_capture.py`)
+
 - **Expanded search drift fields reflect one read (ENG-279).** If a file
   or verification stamp changes between the initial hit read and expansion,
   the expanded hit refreshes its path counts and report, commit count and
