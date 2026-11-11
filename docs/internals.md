@@ -2353,7 +2353,10 @@ with its report model in `health_model.py`, the event-log arithmetic in
 **Hooks.** `bettermemory hook session-start|stop|prompt` runs the
 standard-library client in `_daemon_client.py`, which posts the hook's
 payload to the daemon, and `daemon.py` serves the three bodies at
-`/api/v1/hook/`. Two parts of the client live apart, on the standard
+`/api/v1/hook/`. After authentication and the body-size cap, `_json_body`
+treats malformed, over-deep or non-object JSON as an empty payload, so
+the endpoint still answers in its hook's JSON shape. Two parts of the
+client live apart, on the standard
 library alone like it: the namespace probe every post carries
 (`_location_probe.py`, design 8.1), and the stores a hook refuses
 before it starts a daemon, a store inside a backup bundle or one a

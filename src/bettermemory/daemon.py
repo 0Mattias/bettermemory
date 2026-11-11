@@ -366,9 +366,10 @@ def _version() -> str:
 
 
 async def _json_body(request: Request) -> dict[str, Any]:
+    """Malformed, over-deep or non-object hook JSON carries no payload."""
     try:
         body = await request.json()
-    except ValueError:
+    except (ValueError, RecursionError):
         return {}
     return body if isinstance(body, dict) else {}
 

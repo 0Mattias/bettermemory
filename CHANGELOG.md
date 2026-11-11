@@ -32,6 +32,14 @@ eighteenth was built.
 
 #### Fixed
 
+- **Deeply nested hook JSON keeps a structured reply (ENG-279).** The
+  session-start, prompt and stop routes treat a JSON decoder depth refusal
+  as an empty payload, as they already treat malformed or non-object JSON.
+  They no longer return a plain-text internal server error for a small
+  request whose nesting exceeds the decoder's limit. The body-size cap
+  and authentication checks still apply. (`daemon.py`,
+  `tests/test_hook_json_depth.py`)
+
 - **Known link annotations survive a failed bulk read (ENG-279).** Search
   recovers edges from its already-loaded candidate snapshot when the store's
   bulk link query fails. Successful empty answers remain authoritative;
