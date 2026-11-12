@@ -32,11 +32,10 @@ from ..durability import (
 )
 from ..models import Category, Memory, SimilarHit
 from ..scope_match import (
-    collect_project_roots,
-    collect_project_scopes,
+    project_scopes_and_roots,
     detect_scope_mismatch,
 )
-from ..search import find_similar, find_similar_tombstones
+from ..search_dedup import find_similar_in, find_similar_tombstones_in
 from .. import capture as _capture
 
 if TYPE_CHECKING:
@@ -106,10 +105,9 @@ class GateContext:
     scope_mismatch_hits: list[Any] = None  # type: ignore[assignment]
     related: list[SimilarHit] = None  # type: ignore[assignment]
     removed_related: list[SimilarHit] = None  # type: ignore[assignment]
-    # The active set `DedupActiveGate` loaded, kept so the review's related
-    # set and the persist step's supersession detection read the same
-    # snapshot instead of paying a second `load_all`. None when the gate
-    # did not run (`force=True`); the review then loads it itself.
+    # Every active record, for a caller that already holds them and wants
+    # the review and the persist step to read that list. The gates leave
+    # it None: they and the steps after them read the store's digest.
     active_snapshot: list[Memory] | None = None
 
     def __post_init__(self) -> None:
@@ -505,12 +503,12 @@ class ScopeMismatchGate(WriteGate):
     other gates' acknowledged hits are named (ENG-108)."""
 
     def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
-        existing_memories = deps.store.load_all()
+        project_scopes, project_roots = project_scopes_and_roots(deps.store)
         mismatch = detect_scope_mismatch(
             body=gc.payload["content"],
             declared_scopes=gc.payload["scopes"],
-            project_scopes=collect_project_scopes(existing_memories),
-            project_roots=collect_project_roots(existing_memories),
+            project_scopes=project_scopes,
+            project_roots=project_roots,
         )
         if not mismatch.has_mismatch:
             return Continue()
@@ -553,9 +551,7 @@ class DedupActiveGate(WriteGate):
     def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
-        existing = deps.store.load_all()
-        gc.active_snapshot = existing
-        similar = find_similar(gc.payload["content"], existing)
+        similar = find_similar_in(deps.store, gc.payload["content"])
         high = [h for h in similar if h.relevance == "high"]
         if high:
             response: dict[str, Any] = {"status": "duplicate"}
@@ -593,9 +589,8 @@ class DedupTombstoneGate(WriteGate):
     def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
-        tombstone_similar = find_similar_tombstones(
-            gc.payload["content"],
-            deps.store.load_tombstones(),
+        tombstone_similar = find_similar_tombstones_in(
+            deps.store, gc.payload["content"]
         )
         high_removed = [h for h in tombstone_similar if h.relevance == "high-removed"]
         if high_removed:

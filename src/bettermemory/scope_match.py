@@ -39,7 +39,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from .models import Memory
 from .verify import _fold_altsep, _home_ignores_case
@@ -400,6 +400,44 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
             if not scope.startswith("projects:"):
                 continue
             by_scope.setdefault(scope, Counter())[cwd] += 1
+    return _roots_of(by_scope)
+
+
+def project_scopes_and_roots(store: Any) -> tuple[set[str], dict[str, str]]:
+    """`collect_project_scopes` and `collect_project_roots` of every active
+    record, read from the store's digest (`Store.digest_scope_groups`: one
+    row per distinct scopes and working directory, with its count, in the
+    order the records first carry them) and not from the records. The
+    counts and the order each scope first meets a directory are the full
+    scan's, so the most common directory, ties included, is too. A store
+    whose digest is not available is scanned."""
+
+    def compute() -> tuple[frozenset[str], dict[str, str]] | None:
+        groups = store.digest_scope_groups()
+        if groups is None:
+            return None
+        scopes: set[str] = set()
+        by_scope: dict[str, Counter[str]] = {}
+        for group_scopes, cwd, count in groups:
+            for scope in group_scopes:
+                if not scope.startswith("projects:"):
+                    continue
+                if len(scope) > len("projects:"):
+                    scopes.add(scope)
+                if cwd:
+                    by_scope.setdefault(scope, Counter())[cwd] += count
+        return frozenset(scopes), _roots_of(by_scope)
+
+    found = store.digest_memo(("project scopes and roots",), compute)
+    if found is None:
+        memories = store.load_all()
+        return collect_project_scopes(memories), collect_project_roots(memories)
+    return set(found[0]), dict(found[1])
+
+
+def _roots_of(by_scope: dict[str, Counter[str]]) -> dict[str, str]:
+    """Each scope's most common working directory, less the degenerate
+    roots (`collect_project_roots`' docstring)."""
     out: dict[str, str] = {}
     home = _fold_altsep(str(Path.home()), os.sep, os.altsep)
     # Probed lazily: only a case-modulo home spelling ever asks the
@@ -746,5 +784,6 @@ __all__ = [
     "ScopeMismatchReport",
     "collect_project_roots",
     "collect_project_scopes",
+    "project_scopes_and_roots",
     "detect_scope_mismatch",
 ]

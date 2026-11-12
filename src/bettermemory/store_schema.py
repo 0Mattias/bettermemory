@@ -92,7 +92,12 @@ SCHEMA_VERSION = 1
 # build neither reads nor has to keep up (SQLite keeps it up under that
 # build's writes) and admits as a plain index on columns, so the minimums
 # stay where revision 2 put them.
-SCHEMA_REVISION = 5
+#
+# Revision 6 adds `SESSION_INDEX_SCHEMA`, the log's rows by session, on
+# the same terms: an index SQLite keeps up under every build's writes and
+# an earlier build admits as a plain index on columns, so the minimums
+# stay where revision 5 put them.
+SCHEMA_REVISION = 6
 MIN_READER_REVISION = 1
 MIN_WRITER_REVISION = 5
 
@@ -1003,6 +1008,20 @@ PROPOSALS_INDEX_SCHEMA = """
 CREATE INDEX IF NOT EXISTS proposals_by_state ON proposals(state, kind);
 """
 
+# Schema step 6 (`_add_session_index`). `log_by_session` holds the log's
+# rows by session and sequence number. A session's recall state is rebuilt
+# from its own rows (`Store.session_events_of_kinds`), and without the
+# index that read walked every row the log ever held of those kinds: at a
+# hundred times the owner's store, 1.9 million rows for a session with
+# none, 48 s of a session start (bench/scale/results,
+# scale-2026-11-04-x100-profile.json). Only the step and `Store.create`
+# add it; a store without it reads the session's rows by the walk it
+# replaces. A plain index on columns, admitted by an earlier build as
+# `proposals_by_state` is.
+SESSION_INDEX_SCHEMA = """
+CREATE INDEX IF NOT EXISTS log_by_session ON log(session, seq);
+"""
+
 
 class MemoryNotFoundError(KeyError):
     """No active memory with that id."""
@@ -1340,6 +1359,46 @@ def _add_proposals_index(
         conn.execute("BEGIN IMMEDIATE")
         try:
             for statement in _PROPOSALS_INDEX_STATEMENTS:
+                conn.execute(statement)
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+    except sqlite3.OperationalError as exc:
+        if "readonly" not in str(exc).replace(" ", "").lower():
+            raise
+        log.warning("store %s is read-only; not added: %s", path, ", ".join(wanted))
+
+
+_SESSION_INDEX_STATEMENTS = tuple(
+    statement.strip()
+    for statement in SESSION_INDEX_SCHEMA.split(";")
+    if statement.strip()
+)
+_SESSION_INDEX_OBJECTS = frozenset(
+    re.findall(r"IF NOT EXISTS (\w+)", SESSION_INDEX_SCHEMA)
+)
+
+
+def _add_session_index(
+    conn: sqlite3.Connection, path: Path, meta: dict[str, str]
+) -> None:
+    """Step 6: `SESSION_INDEX_SCHEMA` where a store lacks it, in a write
+    transaction of its own. A store that has it is not written; a store
+    file that cannot be written is left as it is, and a session's rows are
+    read there by the walk of the kind index."""
+    master = {
+        str(row[0]).lower()
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE name IS NOT NULL")
+    }
+    wanted = sorted(o for o in _SESSION_INDEX_OBJECTS if o.lower() not in master)
+    if not wanted:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in _SESSION_INDEX_STATEMENTS:
                 conn.execute(statement)
             conn.execute("COMMIT")
         except BaseException:

@@ -294,7 +294,7 @@ def review_change(
             chain,
             standing_write=True,
             content=body,
-            active=deps.store.load_all(),
+            store=deps.store,
         )
         missing = [i for i in related.ids if i not in answers.relation]
         if missing or unseen:
@@ -540,7 +540,7 @@ def after_commit(
         out["update_suggested"] = list(decision.update_suggested)
     if decision.filings:
         filed = _file_review_pairs(
-            deps, memory, decision.filings, deps.store.load_all(), cue_filed=set()
+            deps, memory, decision.filings, None, cue_filed=set()
         )
         if filed:
             out["conflicts_filed"] = [

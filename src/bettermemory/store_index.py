@@ -372,19 +372,51 @@ def pending_conflict_pairs(self: Store) -> list[tuple[str, str, str]]:
 def contradicted_at(self: Store, memory_ids: Sequence[str]) -> dict[str, datetime]:
     """The newest ``use`` event with outcome ``contradicted`` naming
     each of `memory_ids`, by id; ids never contradicted are absent.
-    Reads the ``use`` rows through the log's kind index, every
-    session and the whole log, since a contradiction stays open until
-    the record is updated or verified, however long ago it was
-    recorded. The outcome is filtered in SQL, so the rows of every
-    other outcome (nearly all of them) are never parsed here."""
+    Every session and the whole log count, since a contradiction stays
+    open until the record is updated or verified, however long ago it
+    was recorded.
+
+    The ``use`` rows are read once per store object and then only past
+    the last row read (`_contradictions`): the log only grows, so what
+    earlier rows said still stands, and a prompt does not walk every
+    ``use`` row the store ever took to learn that nothing new was
+    contradicted."""
     wanted = set(memory_ids)
     if not wanted:
         return {}
-    out: dict[str, datetime] = {}
-    for row in self._conn.execute(
-        "SELECT ts, payload FROM log WHERE kind = 'use' "
+    newest = _contradictions(self)
+    return {memory_id: newest[memory_id] for memory_id in wanted if memory_id in newest}
+
+
+def _contradictions(self: Store) -> dict[str, datetime]:
+    """Every contradicted id with its newest stamp, read from the ``use``
+    rows through the log's kind index. The store object keeps the answer
+    with the sequence number and MAC of the last row it covers. A call
+    reads the rows after that one; a log whose row at that number no
+    longer carries that MAC (a rollback, a replaced history) is read
+    again from its start. The outcome is filtered in SQL, so the rows of
+    every other outcome (nearly all of them) are never parsed here."""
+    held = self.__dict__.get("_contradicted_held")
+    conn = self._conn
+    head = conn.execute("SELECT seq, mac FROM log ORDER BY seq DESC LIMIT 1").fetchone()
+    if head is None:
+        return {}
+    head_seq, head_mac = int(head[0]), str(head[1])
+    after = 0
+    newest: dict[str, datetime] = {}
+    if held is not None:
+        row = conn.execute(
+            "SELECT mac FROM log WHERE seq = ?", (held["seq"],)
+        ).fetchone()
+        if row is not None and str(row[0]) == held["mac"]:
+            if held["seq"] == head_seq:
+                return dict(held["newest"])
+            after, newest = int(held["seq"]), dict(held["newest"])
+    for row in conn.execute(
+        "SELECT ts, payload FROM log WHERE kind = 'use' AND seq > ? AND seq <= ? "
         "AND json_valid(payload) "
-        "AND json_extract(payload, '$.outcome') = 'contradicted' ORDER BY seq"
+        "AND json_extract(payload, '$.outcome') = 'contradicted' ORDER BY seq",
+        (after, head_seq),
     ):
         try:
             fields = json.loads(row["payload"])
@@ -400,11 +432,16 @@ def contradicted_at(self: Store, memory_ids: Sequence[str]) -> dict[str, datetim
         except ValueError:
             continue
         for memory_id in ids:
-            if isinstance(memory_id, str) and memory_id in wanted:
-                previous = out.get(memory_id)
+            if isinstance(memory_id, str):
+                previous = newest.get(memory_id)
                 if previous is None or stamp > previous:
-                    out[memory_id] = stamp
-    return out
+                    newest[memory_id] = stamp
+    self.__dict__["_contradicted_held"] = {
+        "seq": head_seq,
+        "mac": head_mac,
+        "newest": newest,
+    }
+    return dict(newest)
 
 
 # -- the tokenizer the index is spelled by (ENG-100) ----------------------

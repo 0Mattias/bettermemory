@@ -230,9 +230,9 @@ def _project_scopes(store: Store, cwd: str | None) -> list[str]:
     `cwd` (`scope_match.collect_project_roots`), as a one-item list."""
     if not cwd:
         return []
-    from .scope_match import collect_project_roots
+    from .scope_match import project_scopes_and_roots
 
-    roots = collect_project_roots(store.load_all())
+    _scopes, roots = project_scopes_and_roots(store)
     here = os.path.normpath(cwd)
     under = [
         scope

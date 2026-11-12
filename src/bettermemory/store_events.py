@@ -410,19 +410,26 @@ def events_of_kinds(
     self: Store, kinds: Collection[str], *, since: datetime
 ) -> Iterator[dict[str, Any]]:
     """The telemetry rows of `kinds` stamped at or after `since`, in
-    log order, read through the log's kind index rather than the
-    whole log `events_since` walks. The cut compares the stamp's
-    first nineteen characters, as `events_since` does."""
+    log order. The cut is `events_since`'s (the instant to the second,
+    compared against the whole stamp), and so is the start: the window's
+    floor, the first row so stamped (`_window_floor`). From there the
+    log's kind index gives each kind's rows by sequence number, so a
+    window at the log's end costs the rows of those kinds inside it and
+    not every row the log ever held of them (at a hundred times the
+    owner's store, 1.5 million rows walked for 2,480 returned)."""
     names = sorted(set(kinds))
     if not names:
         return
     cut = _iso(since.astimezone(timezone.utc)).replace("+00:00", "Z")[:19]
+    floor = self._window_floor(cut)
+    if floor is None:
+        return
     placeholders = ",".join("?" * len(names))
     for raw in self._conn.execute(
         "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
-        f"WHERE kind IN ({placeholders}) AND substr(ts, 1, 19) >= ? "
+        f"WHERE kind IN ({placeholders}) AND seq >= ? AND ts >= ? "
         "ORDER BY seq",
-        (*names, cut),
+        (*names, floor, cut),
     ):
         event = self._event_from_raw(raw)
         if event is not None:
@@ -434,17 +441,27 @@ def session_events_of_kinds(
 ) -> Iterator[dict[str, Any]]:
     """The telemetry rows of `kinds` recorded under `session`, in log
     order, whenever they were stamped: what a session's recall state
-    is rebuilt from. Read through the log's kind index, the session
-    compared on each row of those kinds."""
+    is rebuilt from. Read through `log_by_session`, named by ``INDEXED
+    BY`` because the planner otherwise takes the kind index and compares
+    the session on every row the log holds of those kinds. A store
+    without the index (schema step 6 has not run on it) refuses the
+    hint; the rows are then read by that walk."""
     names = sorted(set(kinds))
     if not names:
         return
     placeholders = ",".join("?" * len(names))
-    for raw in self._conn.execute(
-        "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
-        f"WHERE kind IN ({placeholders}) AND session = ? ORDER BY seq",
-        (*names, session),
-    ):
+    hinted = (
+        "SELECT seq, ts, session, kind, payload, prev_mac, mac "
+        "FROM log INDEXED BY log_by_session "
+        f"WHERE session = ? AND kind IN ({placeholders}) ORDER BY seq"
+    )
+    try:
+        rows = self._conn.execute(hinted, (session, *names))
+    except sqlite3.OperationalError:
+        rows = self._conn.execute(
+            hinted.replace(" INDEXED BY log_by_session", ""), (session, *names)
+        )
+    for raw in rows:
         event = self._event_from_raw(raw)
         if event is not None:
             yield event

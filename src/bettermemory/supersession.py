@@ -101,9 +101,10 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
+from typing import Any, NamedTuple
 
 from .models import Memory, snippet_for
 from .search import (
@@ -487,6 +488,37 @@ def _one_claim_replaced(matches: list[SupersessionMatch]) -> list[SupersessionMa
     return [matches[0]] + [m for m in matches[1:] if m.old_value.lower() == replaced]
 
 
+class _Old(NamedTuple):
+    """One stored record as the detector reads it: the raw content tokens
+    of its provenance-stripped, claim-sized body, and that body, read when
+    the rule first needs it (None for a record that has gone since)."""
+
+    id: str
+    raw: AbstractSet[str]
+    body: Callable[[], str | None]
+
+
+def _held(body: str) -> Callable[[], str | None]:
+    """A body already in hand, as `_Old.body` takes it."""
+    return lambda: body
+
+
+def _stored(store: Any, record_id: str) -> Callable[[], str | None]:
+    """An active record's body, read from `store` when asked for."""
+    return lambda: store.bodies_of([record_id]).get(record_id)
+
+
+def _claims_among(existing: Iterable[Memory], skip: AbstractSet[str]) -> Iterator[_Old]:
+    """The claim-sized records of `existing`, less the ids in `skip`."""
+    for memory in existing:
+        if memory.id in skip:
+            continue
+        old_body = _strip_provenance(memory.body)
+        if not claim_sized(old_body):
+            continue
+        yield _Old(memory.id, raw_content_tokens(old_body), _held(old_body))
+
+
 def detect_supersession(
     new_body: str,
     existing: Iterable[Memory],
@@ -506,6 +538,81 @@ def detect_supersession(
     body = _strip_provenance(new_body)
     if not claim_sized(body):
         return SupersessionReport(eligible=False, supersedes=[], conflicts=[])
+    return _detect(body, _claims_among(existing, set(exclude_ids)))
+
+
+def _floor(cues: Sequence[str]) -> float:
+    """The lowest overlap at which a stored record can be reported. A body
+    with a change cue can supersede from `MIN_JACCARD`; one with none can
+    only conflict, which takes `MIN_CONFLICT_KIN_JACCARD` at the least."""
+    if cues:
+        return MIN_JACCARD
+    return min(MIN_CONFLICT_JACCARD, MIN_CONFLICT_KIN_JACCARD)
+
+
+def detect_supersession_in(
+    store: Any,
+    new_body: str,
+    *,
+    exclude_ids: Iterable[str] = (),
+) -> SupersessionReport:
+    """`detect_supersession(new_body, store.load_all(), ...)`, reading only
+    the records the rule can report. The store's digest (`store_digest`)
+    names every claim-sized record that can reach the overlap floor and
+    holds its tokens, so a record is scored before its body is read, and
+    its body is read only when the rule gets to it; the rule itself runs
+    in `_detect`, as it does for the full scan. A store whose digest is
+    not available is scanned."""
+    body = _strip_provenance(new_body)
+    if not claim_sized(body):
+        return SupersessionReport(eligible=False, supersedes=[], conflicts=[])
+    skip = frozenset(exclude_ids)
+
+    def compute() -> SupersessionReport | None:
+        docs = store.digest_candidates(
+            raw_content_tokens(body),
+            removed=False,
+            floor=_floor(change_cues(body)),
+            claims=True,
+        )
+        if docs is None:
+            return None
+        # A stamped record's digest tokens are its whole body's, so its
+        # stripped body is read and tokenised here; there are few (the
+        # stamp is an 8.x one).
+        stamped = store.bodies_of(
+            doc.id for doc in docs if doc.stamped and doc.id not in skip
+        )
+
+        def claims() -> Iterator[_Old]:
+            for doc in docs:
+                if doc.id in skip:
+                    continue
+                if not doc.stamped:
+                    yield _Old(doc.id, doc.tokens, _stored(store, doc.id))
+                elif doc.id in stamped:
+                    old_body = _strip_provenance(stamped[doc.id])
+                    yield _Old(doc.id, raw_content_tokens(old_body), _held(old_body))
+
+        return _detect(body, claims())
+
+    report: SupersessionReport | None = store.digest_memo(
+        ("supersession", new_body, skip), compute
+    )
+    if report is None:
+        return detect_supersession(new_body, store.load_all(), exclude_ids=exclude_ids)
+    return report
+
+
+def _detect(body: str, olds: Iterable[_Old]) -> SupersessionReport:
+    """The rule, for a claim-sized, provenance-stripped `body` against the
+    claim-sized records `olds`.
+
+    Each record's outcome depends on that record alone, and a list keeps
+    its first `MAX_LINKS_PER_WRITE` matches by similarity, then id. So the
+    records are scored first, and the rule reads them in that order and
+    stops once a list is full: what it would have found in the rest could
+    not have been kept."""
     new_raw = raw_content_tokens(body)
     cues = change_cues(body)
     new_values_all = value_tokens(body, new_raw)
@@ -513,23 +620,29 @@ def detect_supersession(
         new_values_all |= anchored_values(body) & new_raw
     new_stream = _content_stream(body)
     new_surface = _surface_forms(body)
-    skip = set(exclude_ids)
+    floor = _floor(cues)
+
+    scored: list[tuple[float, str, float, _Old]] = []
+    for old in olds:
+        similarity = _pairwise_content_jaccard(new_raw, old.raw)
+        if similarity >= floor:
+            scored.append((-round(similarity, 4), old.id, similarity, old))
+    scored.sort(key=lambda entry: (entry[0], entry[1]))
 
     supersedes: list[SupersessionMatch] = []
     conflicts: list[SupersessionMatch] = []
-    for memory in existing:
-        if memory.id in skip:
-            continue
-        old_body = _strip_provenance(memory.body)
-        if not claim_sized(old_body):
-            continue
-        old_raw = raw_content_tokens(old_body)
-        similarity = _pairwise_content_jaccard(new_raw, old_raw)
-        if similarity < MIN_JACCARD:
-            continue
+    replaced: str | None = None
+    for _key, _id, similarity, old in scored:
+        old_raw = old.raw
         new_values = new_values_all - old_raw
+        if not new_values:
+            continue
+        stored = old.body()
+        if stored is None:
+            continue
+        old_body: str = stored
         old_values = value_tokens(old_body, old_raw) - new_raw
-        if not new_values or not old_values:
+        if not old_values:
             continue
 
         kin = sorted(
@@ -549,23 +662,29 @@ def detect_supersession(
                 if pair is not None:
                     break
 
-        old_surface = _surface_forms(old_body)
-
         def _match(outcome: str, ev: str, a: str, b: str) -> SupersessionMatch:
             return SupersessionMatch(
-                memory_id=memory.id,
+                memory_id=old.id,
                 outcome=outcome,
                 evidence=ev,
                 cue=cues[0] if outcome == "supersedes" else None,
                 new_value=new_surface.get(a, a),
-                old_value=old_surface.get(b, b),
+                old_value=_surface_forms(old_body).get(b, b),
                 similarity=round(similarity, 4),
                 summary=snippet_for(old_body, max_chars=100),
             )
 
         if cues:
             if pair is not None and evidence is not None:
-                supersedes.append(_match("supersedes", evidence, *pair))
+                # One replaced claim (`_one_claim_replaced`): the strongest
+                # match, then each later one carrying its old value.
+                found = _match("supersedes", evidence, *pair)
+                if replaced is None:
+                    replaced = found.old_value.lower()
+                if found.old_value.lower() == replaced:
+                    supersedes.append(found)
+                    if len(supersedes) >= MAX_LINKS_PER_WRITE:
+                        break
             continue
         if similarity >= MIN_CONFLICT_JACCARD or (
             kin and similarity >= MIN_CONFLICT_KIN_JACCARD
@@ -576,18 +695,10 @@ def detect_supersession(
                 else (sorted(new_values)[0], sorted(old_values)[0])
             )
             conflicts.append(_match("conflict", evidence or "similarity", a, b))
+            if len(conflicts) >= MAX_LINKS_PER_WRITE:
+                break
 
-    def _order(m: SupersessionMatch) -> tuple[float, str]:
-        return (-m.similarity, m.memory_id)
-
-    supersedes.sort(key=_order)
-    conflicts.sort(key=_order)
-    supersedes = _one_claim_replaced(supersedes)
-    return SupersessionReport(
-        eligible=True,
-        supersedes=supersedes[:MAX_LINKS_PER_WRITE],
-        conflicts=conflicts[:MAX_LINKS_PER_WRITE],
-    )
+    return SupersessionReport(eligible=True, supersedes=supersedes, conflicts=conflicts)
 
 
 __all__ = [
@@ -604,6 +715,7 @@ __all__ = [
     "change_cues",
     "claim_sized",
     "detect_supersession",
+    "detect_supersession_in",
     "value_tokens",
     "values_are_kin",
 ]

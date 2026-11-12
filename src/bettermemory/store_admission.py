@@ -27,6 +27,7 @@ from .store_schema import (
     ADDITIVE_SCHEMA,
     MEMBERSHIP_SCHEMA,
     PROPOSALS_INDEX_SCHEMA,
+    SESSION_INDEX_SCHEMA,
     SCHEMA,
 )
 from .store_versions import (
@@ -168,7 +169,13 @@ class LaterStoreError(StoreRefusedError, StoreVersionError):
 _BUILT_OBJECTS: dict[tuple[str, str], tuple[str, str | None, bool]] = {}
 
 #: The texts a store this build creates is built from (`Store.create`).
-_SCHEMA_TEXTS = (SCHEMA, MEMBERSHIP_SCHEMA, ADDITIVE_SCHEMA, PROPOSALS_INDEX_SCHEMA)
+_SCHEMA_TEXTS = (
+    SCHEMA,
+    MEMBERSHIP_SCHEMA,
+    ADDITIVE_SCHEMA,
+    PROPOSALS_INDEX_SCHEMA,
+    SESSION_INDEX_SCHEMA,
+)
 
 
 def _built_objects() -> dict[tuple[str, str], tuple[str, str | None, bool]]:

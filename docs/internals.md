@@ -2593,7 +2593,10 @@ and SQLite keeps it up under that build's writes, so the minimums stay
 at 1 and 2, and that build's admission admits it as a plain index on
 columns. Only the step and `Store.create` add it, not every open, so a
 reader's open of a store at revision 2 reads the questions by a walk of
-the table. A step that is
+the table. Step 6 (`_add_session_index`) adds `log_by_session`, the
+log's rows by session and sequence number, on the same terms: a
+session's recall state is rebuilt through it, and a store without it
+reads those rows by a walk of the kind index. A step that is
 not additive runs under the write lock after `backup.create_backup` has
 written a bundle of the store as it stands (its snapshot reads through
 its own read-only connection, which sees the store before the step) and

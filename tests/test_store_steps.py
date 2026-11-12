@@ -181,6 +181,7 @@ def test_the_registry_is_numbered_and_names_this_builds_revision() -> None:
         (3, True, 1, 2, store_schema._add_proposals_index),
         (4, True, 1, 2, store_schema._add_path_targets),
         (5, True, 1, 5, store_schema._add_membership_tables),
+        (6, True, 1, 5, store_schema._add_session_index),
     ]
     assert runner().SCHEMA_STEPS_KEY == SCHEMA_STEPS_KEY
 

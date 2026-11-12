@@ -72,6 +72,7 @@ from .store_schema import (
     _add_proposals_index,
     _add_path_targets,
     _add_returned_marks,
+    _add_session_index,
 )
 from .time_utils import isoformat_utc
 
@@ -122,6 +123,9 @@ class Step:
 #: legacy projections and native origins in signed record envelopes. The
 #: reader minimum stays at 1; writer minimum 5 prevents a writer that sees
 #: no native view from retiring the checkout or dropping its origin.
+#: Step 6 adds the index of the log's rows by session
+#: (`_add_session_index`), which an earlier build neither reads nor has to
+#: keep up, so the minimums stay at 1 and 5.
 
 STEPS: tuple[Step, ...] = (
     Step(
@@ -163,6 +167,14 @@ STEPS: tuple[Step, ...] = (
         reader=1,
         writer=5,
         apply=_add_membership_tables,
+    ),
+    Step(
+        number=6,
+        name="the index of the log's rows by session",
+        additive=True,
+        reader=1,
+        writer=5,
+        apply=_add_session_index,
     ),
 )
 

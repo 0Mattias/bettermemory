@@ -164,6 +164,7 @@ from .store_schema import (
     MUTATION_KINDS,
     PAGE_SIZE as PAGE_SIZE,
     PROPOSALS_INDEX_SCHEMA,
+    SESSION_INDEX_SCHEMA,
     PROVENANCE_LABELS,
     SCHEMA,
     SCHEMA_VERSION,
@@ -236,6 +237,7 @@ from .store_events import (
 from . import store_provenance as _provenance
 from . import store_index as _index
 from . import store_returned as _returned
+from . import store_digest as _digest
 from .store_index import (
     _ADMISSION_INPUTS,
     _DOC_FREQS as _DOC_FREQS,
@@ -596,6 +598,7 @@ class Store:
             conn.executescript(MEMBERSHIP_SCHEMA)
             conn.executescript(ADDITIVE_SCHEMA)
             conn.executescript(PROPOSALS_INDEX_SCHEMA)
+            conn.executescript(SESSION_INDEX_SCHEMA)
             store_id = secrets.token_hex(16)
             keyring = KeyRing(
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
@@ -1528,6 +1531,16 @@ class Store:
     restore_trimmed = _records.restore_trimmed
     rename_scope = _records.rename_scope
     prune_tombstones = _records.prune_tombstones
+
+    # The digest of the records, which a write reads in their place
+    # (store_digest.py).
+    digest_mark = _digest.digest_mark
+    digest_sync = _digest.digest_sync
+    digest_memo = _digest.digest_memo
+    digest_candidates = _digest.digest_candidates
+    digest_scope_groups = _digest.digest_scope_groups
+    light_records = _digest.light_records
+    bodies_of = _digest.bodies_of
 
     # The episode journal (store_journal.py).
     put_episode = _journal.put_episode

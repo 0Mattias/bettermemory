@@ -208,6 +208,13 @@ then becomes read-only before changing records or writing checkout tokens.
 Read-only membership simulations remain temporary and roll back together,
 including nested reads.
 
+Step 6 adds `log_by_session`, an index of the log's rows by session and
+sequence number, which a session's recall state is rebuilt through
+(`Store.session_events_of_kinds`). An earlier build never reads it and
+SQLite keeps it up under that build's writes, so the minimums stay at 1
+and 5, and that build's admission admits it as a plain index on columns.
+Only the step and `Store.create` add it; a store without it reads a
+session's rows by a walk of the kind index.
 
 A field a later build adds to a record (`Memory`, `TombstonedMemory`) travels in the payload of the record's put, is optional like every field added within a major, and raises no minimum: an older reader reads the record without it, and an older writer refuses every change to a record whose last put carries a field its model does not define (`UnknownFieldsError`, a `ValueError` naming the fields) rather than write the record back without it. Round-tripping the field would keep its bytes and lose whatever the later build ties to the fields the older one edits (a body edit clears the verification it vouched for), so the older writer leaves such a record to the build that understands it. The same holds for a removal, a restore and a purge; a prune and a scope rename leave such a record and go on to the rest. Such a field may be read from its signed payload, or get a column of its own only when every supported reader's fold leaves unknown columns out (`store_rows._table_rows` compares the columns that build knows). It never occupies part of a column an older build compares, where that build's `log verify` would read every such row as tampered. The rc3 rollback contract requires the signed-payload form because its fold compares every physical column.
 

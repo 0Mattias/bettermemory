@@ -564,6 +564,45 @@ eighteenth was built.
 
 #### Changed
 
+- **A write no longer loads or tokenises the store.** The scope check,
+  both dedup gates and the supersession detector read a digest the store
+  keeps of its records (their content tokens, sizes, scopes and working
+  directory, with the tokens' postings) and then score only the records
+  that can reach a threshold; the hits are the full scan's, in the same
+  order. The digest is derived: it follows the log's record mutations,
+  whichever build wrote them, is rebuilt under another tokenizer, and a
+  store that cannot be written is scanned as before. The supersession
+  detector scores every candidate first and stops once a list holds its
+  five matches. One answer is kept per body while no record changes, so
+  the calls of a write's review ask each question once. On a synthetic
+  store ten times the owner's (15,096 active records, 2,569 removed) a
+  reviewed write's median went from 13.3 s to 0.67 s, and its first call
+  from 2.8 s to 0.40 s.
+  (`store_digest.py`, `search_dedup.py`, `supersession.py`,
+  `scope_match.py`, `handlers/write_gates.py`, `handlers/write.py`,
+  `review.py`, `tests/test_store_digest.py`)
+
+- **Windowed event reads start at the window.** `Store.events_of_kinds`
+  starts at the first row stamped inside its window, as `events_since`
+  does, and reads each kind from there by sequence number; before, it
+  walked every row the log held of those kinds (1.5 million for 2,480
+  returned at a hundred times the owner's store). `Store.contradicted_at`
+  reads the `use` rows once per store object and then only the rows
+  after the last it read. (`store_events.py`, `store_index.py`)
+
+- **A session's rows are read through an index (schema step 6).** A
+  session's recall state is rebuilt from its own rows, which
+  `Store.session_events_of_kinds` found by comparing the session on every
+  row the log held of those kinds (1.9 million rows for a session with
+  none, 48 s of a session start, at a hundred times the owner's store).
+  Step 6 adds `log_by_session`, a plain index on the log's session and
+  sequence number, at the owner's next open and in every new store; the
+  read names it and falls back to the walk on a store without it. The
+  schema revision is 6 and the minimums stay at 1 and 5, so the
+  sixteenth to eighteenth candidates read and write a store that has it.
+  (`store_schema.py`, `store_steps.py`, `store_events.py`,
+  `CONTRIBUTING.md`, `docs/internals.md`)
+
 - **A numeric config key refuses a boolean (ENG-221).** Python counts a
   boolean as an integer, so `true` written for a key that takes a number
   (`cold_endorsement_ratio_threshold = true`, `port = true`) loaded as 1,

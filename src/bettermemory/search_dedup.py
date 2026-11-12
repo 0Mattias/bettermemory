@@ -297,6 +297,7 @@ def _score_similar_jaccard(
     medium_label: str,
     build_hit: Callable[[Any, float, str], SimilarHit | None],
     sort_key: Callable[[SimilarHit], Any],
+    tokens_of: Callable[[Any], AbstractSet[str]] | None = None,
 ) -> list[SimilarHit]:
     """Jaccard-similarity dedup over `existing`, building hits via
     `build_hit`. See module commentary at the section header for the
@@ -305,14 +306,20 @@ def _score_similar_jaccard(
 
     Token sets are RAW (no kebab expansion); `_pairwise_content_jaccard`
     expands compounds per pair so a compound both sides share can't
-    inflate the score. Each set comes from `raw_content_tokens`' cache."""
+    inflate the score. Each set comes from `raw_content_tokens`' cache,
+    or from `tokens_of` for a caller that already holds them (the store's
+    digest, `find_similar_in`)."""
     new_tokens = raw_content_tokens(new_body)
     if not new_tokens:
         return []
 
     hits: list[SimilarHit] = []
     for memory in existing:
-        existing_tokens = raw_content_tokens(memory.body)
+        existing_tokens = (
+            tokens_of(memory)
+            if tokens_of is not None
+            else raw_content_tokens(memory.body)
+        )
         if not existing_tokens:
             continue
 
@@ -466,3 +473,63 @@ def _find_similar_tombstones_jaccard(
         build_hit=_build_tombstone_hit,
         sort_key=_tombstone_sort_key,
     )
+
+
+# ---------------------------------------------------------------------------
+# Dedup against a store, without loading it
+# ---------------------------------------------------------------------------
+#
+# `find_similar(body, store.load_all())` loads and tokenises every record
+# to keep the few that score. The store's digest (`store_digest`) names the
+# records that can score; these two score exactly those, through the same
+# scorer and in the same order, so their hits are the full scan's hits. A
+# store whose digest is not available is scanned as before.
+
+
+def _similar_in(store: Any, new_body: str, *, removed: bool) -> list[SimilarHit]:
+    new_tokens = raw_content_tokens(new_body)
+    if not new_tokens:
+        return []
+
+    def compute() -> list[SimilarHit] | None:
+        docs = store.digest_candidates(
+            new_tokens, removed=removed, floor=MEDIUM_SIMILARITY
+        )
+        if docs is None:
+            return None
+        scoring = {
+            doc.id: doc.tokens
+            for doc in docs
+            if _pairwise_content_jaccard(new_tokens, doc.tokens) >= MEDIUM_SIMILARITY
+        }
+        records = store.light_records(scoring, removed=removed)
+        return _score_similar_jaccard(
+            new_body,
+            records,
+            high_threshold=HIGH_SIMILARITY,
+            medium_threshold=MEDIUM_SIMILARITY,
+            high_label="high-removed" if removed else "high",
+            medium_label="medium-removed" if removed else "medium",
+            build_hit=_build_tombstone_hit if removed else _build_active_hit,
+            sort_key=_tombstone_sort_key if removed else _active_sort_key,
+            tokens_of=lambda record: scoring[record.id],
+        )
+
+    hits = store.digest_memo(("similar", removed, new_body), compute)
+    if hits is not None:
+        return list(hits)
+    if removed:
+        return find_similar_tombstones(new_body, store.load_tombstones())
+    return find_similar(new_body, store.load_all())
+
+
+def find_similar_in(store: Any, new_body: str) -> list[SimilarHit]:
+    """`find_similar(new_body, store.load_all())`, read from the store's
+    digest."""
+    return _similar_in(store, new_body, removed=False)
+
+
+def find_similar_tombstones_in(store: Any, new_body: str) -> list[SimilarHit]:
+    """`find_similar_tombstones(new_body, store.load_tombstones())`, read
+    from the store's digest."""
+    return _similar_in(store, new_body, removed=True)

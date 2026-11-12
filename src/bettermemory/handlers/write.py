@@ -909,7 +909,7 @@ def _with_named(
     *,
     standing_write: bool,
     content: str,
-    active: list[Memory],
+    store: Any,
 ) -> tuple[_review.RelatedSet, list[str]]:
     """Take the answers and their chain; return the related set with the roster records it holds, the unseen."""
     # Once a roster was shown in the open chain (ENG-112), the answers name
@@ -930,8 +930,8 @@ def _with_named(
         shown=chain.shown | set(related.ids),
         required=standing_write,
     )
-    by_id = {m.id: m for m in active}
     kept = dict.fromkeys([*named, *sorted(chain.roster & chain.shown)])
+    by_id = {m.id: m for m in store.get_many(list(kept))}
     related = related.plus(
         _review.related_entry(content, by_id[i]) for i in kept if i in by_id
     )
@@ -1213,7 +1213,6 @@ def _coverage(
     tau: _review.Tau,
     admission: Admission,
     declared_ids: list[str],
-    active: list[Memory],
 ) -> _Coverage:
     """Take the answers and their chain; return what they cover, or the page still due."""
     # A score at or above its threshold refuses whatever the relation
@@ -1236,7 +1235,7 @@ def _coverage(
             chain,
             standing_write=standing_write,
             content=payload["content"],
-            active=active,
+            store=deps.store,
         )
     missing = [i for i in related.ids if i not in answers.relation]
     captured: _CaptureWrite | None = payload.get("capture")
@@ -1319,7 +1318,6 @@ def _reviewed_write(
     from ..membership import REVIEW_STRATA
 
     answers = _review.parse_answers(review)
-    active = active_snapshot if active_snapshot is not None else deps.store.load_all()
     declared_ids = [str(link["target_id"]) for link in payload.get("links") or []]
     # The related set is the writing caller's REVIEW_STRATA admission
     # (design 3.5), resolved once here and kept in the payload for the
@@ -1332,7 +1330,7 @@ def _reviewed_write(
         behavior=deps.config.behavior,
         excluded_scopes=frozenset(state.disabled_scopes),
         admission=admission,
-        active=active,
+        active=active_snapshot,
         exclude_ids=declared_ids,
     )
     if answers is None:
@@ -1351,7 +1349,6 @@ def _reviewed_write(
         tau=tau,
         admission=admission,
         declared_ids=declared_ids,
-        active=active,
     )
     if cover.page is not None:
         return cover.page
@@ -1422,7 +1419,7 @@ def _reviewed_write(
         deps,
         payload=payload,
         commit=commit,
-        active_snapshot=active,
+        active_snapshot=active_snapshot,
         report=related.report,
         decision=decision,
         review_fields=review_fields,
@@ -1635,8 +1632,9 @@ def _persist(
     through a `GateBundle` for a caller with a store and no server, so
     none of them can drift on what a write sets.
 
-    `active_snapshot` is the `load_all` the dedup gate or the review
-    already paid for; a caller with none loads. `report` is the cue
+    `active_snapshot` is every active record, for a caller that already
+    holds them; with none the cue code reads the store's digest
+    (`supersession.detect_supersession_in`). `report` is the cue
     code's report when the review already ran it on this call, so the cue
     code runs once per call; None runs it here (only when
     `behavior.write_supersession` is on). `decision` is the review's: its
@@ -1656,10 +1654,13 @@ def _persist(
     existing = active_snapshot
     if report is None and deps.config.behavior.write_supersession:
         if existing is None:
-            existing = deps.store.load_all()
-        report = _supersession.detect_supersession(
-            payload["content"], existing, exclude_ids=declared_ids
-        )
+            report = _supersession.detect_supersession_in(
+                deps.store, payload["content"], exclude_ids=declared_ids
+            )
+        else:
+            report = _supersession.detect_supersession(
+                payload["content"], existing, exclude_ids=declared_ids
+            )
     if report is not None:
         detected, disagreements = report.supersedes, report.conflicts
     dropped = set(decision.cue_dropped) if decision is not None else set()
@@ -1744,8 +1745,6 @@ def _persist(
     conflicts = _file_conflicts(deps, memory, disagreements)
     review_filed: list[tuple[str, str, str]] = []
     if decision is not None and decision.filings:
-        if existing is None:
-            existing = deps.store.load_all()
         review_filed = _file_review_pairs(
             deps,
             memory,
@@ -1809,7 +1808,7 @@ def _file_review_pairs(
     deps: GateDeps,
     memory: Memory,
     filings: tuple[tuple[str, str], ...],
-    active: list[Memory],
+    active: list[Memory] | None,
     *,
     cue_filed: set[str],
     in_batch: bool = False,
@@ -1820,9 +1819,13 @@ def _file_review_pairs(
     ids the cue code queued on this write) keeps the cue code's row and
     is neither filed again nor reported twice. `in_batch` puts each row
     straight into the caller's open `Store.batch`, for a caller whose
-    `cue_filed` already holds every queued pair id."""
+    `cue_filed` already holds every queued pair id. `active` is every
+    active record, for a caller that holds them; with None the targets
+    are read from the store."""
     queue = ConflictQueue(deps.store)
     created = utcnow().isoformat()
+    if active is None:
+        active = deps.store.get_many([target for target, _ in filings])
     by_id = {m.id: m for m in active}
     new_tokens = raw_content_tokens(memory.body)
     seen = set(cue_filed)

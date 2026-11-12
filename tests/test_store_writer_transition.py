@@ -11,7 +11,7 @@ import pytest
 from bettermemory import restore_lock
 from bettermemory.origin import Origin
 from bettermemory.store import Store
-from bettermemory.store_schema import StoreVersionError
+from bettermemory.store_schema import SCHEMA_REVISION, StoreVersionError
 from bettermemory.store_versions import writes_rolled_back
 
 from .test_store import _memory
@@ -50,7 +50,7 @@ def test_upgrade_refuses_an_existing_legacy_connection_before_changing_the_store
     finally:
         older.close()
     with Store.open(path, keys_dir=keys, allow_rekey=True) as store:
-        assert store.meta()["schema_revision"] == "5"
+        assert store.meta()["schema_revision"] == str(SCHEMA_REVISION)
         assert store.meta()["min_writer_revision"] == "5"
         raw = "/w/bytes-" + chr(0xDCFF)
         record = store.put_memory(
@@ -74,8 +74,11 @@ def test_already_open_writer_refuses_a_later_minimum_and_still_serves_rolled_bac
         record = store.put_memory(_memory("original"))
         rows = len(store.log_rows())
         with closing(sqlite3.connect(path, isolation_level=None)) as other:
+            # A revision past this build's, as a later build's step leaves.
             other.execute(
-                "UPDATE meta SET value = '6' WHERE key IN ('schema_revision','min_writer_revision')"
+                "UPDATE meta SET value = ? "
+                "WHERE key IN ('schema_revision','min_writer_revision')",
+                (str(SCHEMA_REVISION + 1),),
             )
         if first == "write":
             with pytest.raises(
@@ -112,7 +115,7 @@ def test_upgrade_borrows_the_restores_barrier_without_clearing_its_record(
         held.mark(stage="checking the restored store")
         before = restore_lock.read_marker(path)
         with Store.open(path, keys_dir=keys, allow_rekey=True) as store:
-            assert store.meta()["schema_revision"] == "5"
+            assert store.meta()["schema_revision"] == str(SCHEMA_REVISION)
             assert store.log_verify()["status"] == "ok"
         assert restore_lock.read_marker(path) == before
         assert restore_lock.held_here(path)

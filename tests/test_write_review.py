@@ -1361,13 +1361,13 @@ async def test_cue_detection_runs_once_per_call(
 ) -> None:
     harness.seed(PORT_OLD)
     calls: list[str] = []
-    real = supersession.detect_supersession
+    real = supersession.detect_supersession_in
 
-    def counting(new_body: str, existing: Any, **kwargs: Any) -> Any:
+    def counting(store: Any, new_body: str, **kwargs: Any) -> Any:
         calls.append(new_body)
-        return real(new_body, existing, **kwargs)
+        return real(store, new_body, **kwargs)
 
-    monkeypatch.setattr(supersession, "detect_supersession", counting)
+    monkeypatch.setattr(supersession, "detect_supersession_in", counting)
     first = await harness.write(PORT_NEW)
     assert len(calls) == 1
     res = await harness.answer(first, PORT_NEW, label="update")

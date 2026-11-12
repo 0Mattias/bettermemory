@@ -458,6 +458,7 @@ def test_step_3_indexes_a_store_a_revision_2_build_made(path: Path) -> None:
         (3, None),
         (4, None),
         (5, None),
+        (6, None),
     ]
     assert bundles(path) == []
     with at_revision_2(), Store.open(path, allow_rekey=True) as older:

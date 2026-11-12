@@ -444,8 +444,10 @@ def related_for(
 
     `admission` None admits every memory (offline callers).
 
-    `active` is the active set the cue code reads; it is loaded when None
-    and the flag is on. The returned report is the one the commit uses.
+    `active` is every active record, for a caller that holds them; with
+    None the cue code reads the store's digest
+    (`supersession.detect_supersession_in`) and the records it matched are
+    read by id. The returned report is the one the commit uses.
     """
     from .handlers.search import resolve_search_pool
     from .search import search as run_search
@@ -479,12 +481,21 @@ def related_for(
 
     report: _supersession.SupersessionReport | None = None
     if behavior.write_supersession:
-        existing = list(active) if active is not None else store.load_all()
-        report = _supersession.detect_supersession(
-            content, existing, exclude_ids=list(exclude_ids)
-        )
-        active_by_id = {m.id: m for m in existing}
-        matches = [*report.supersedes, *report.conflicts]
+        if active is not None:
+            existing = list(active)
+            report = _supersession.detect_supersession(
+                content, existing, exclude_ids=list(exclude_ids)
+            )
+            matches = [*report.supersedes, *report.conflicts]
+            active_by_id = {m.id: m for m in existing}
+        else:
+            report = _supersession.detect_supersession_in(
+                store, content, exclude_ids=list(exclude_ids)
+            )
+            matches = [*report.supersedes, *report.conflicts]
+            active_by_id = {
+                m.id: m for m in store.get_many([match.memory_id for match in matches])
+            }
         if admission is not None:
             admission.prime(match.memory_id for match in matches)
         for match in matches:

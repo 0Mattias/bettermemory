@@ -788,7 +788,7 @@ def test_the_open_questions_are_read_through_their_index(tmp_path: Path) -> None
         made = s.meta()
         rows = len(s.log_rows())
         assert "USING INDEX proposals_by_state" in _open_questions_plan(s)
-    assert made["schema_revision"] == "5"
+    assert made["schema_revision"] == "6"
     assert index in _master(path)
     assert store_admission._PLAIN_INDEX.fullmatch(text)
     conn = sqlite3.connect(str(path))
@@ -813,6 +813,7 @@ def test_the_open_questions_are_read_through_their_index(tmp_path: Path) -> None
         (3, None),
         (4, None),
         (5, None),
+        (6, None),
     ]
 
 
