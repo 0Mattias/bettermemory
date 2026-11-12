@@ -619,10 +619,14 @@ eighteenth was built.
   taken before this entry's change). The annotation reads only `use`
   rows that name a hit, so `Store.events_of_kinds` takes `naming`: the
   rows of the window whose payload holds one of the hits' ids, chosen by
-  SQLite before a row is parsed. The annotation is unchanged. The event
-  window memo (`Store.events_since(..., memoised=True)`) served that one
-  read and kept a month of the store's rows in the server's memory; it
-  is removed, and `events_since` no longer takes `memoised`.
+  SQLite before a row is parsed. The annotation is unchanged. With it the
+  medians are 40 ms and 342 ms (`scale-2026-11-12-x10-measure.json` and
+  `-x100-`). SQLite still tests each `use` row of the thirty days, about
+  3 µs a row: 14 ms of a search at ten times and about 150 ms at a
+  hundred times. The event window memo
+  (`Store.events_since(..., memoised=True)`) served that one read and
+  kept a month of the store's rows in the server's memory; it is
+  removed, and `events_since` no longer takes `memoised`.
   (`store_events.py`, `store.py`, `handlers/search.py`,
   `tests/test_events_naming.py`)
 
