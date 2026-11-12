@@ -574,10 +574,15 @@ eighteenth was built.
   store that cannot be written is scanned as before. The supersession
   detector scores every candidate first and stops once a list holds its
   five matches. One answer is kept per body while no record changes, so
-  the calls of a write's review ask each question once. On a synthetic
-  store ten times the owner's (15,096 active records, 2,569 removed) a
-  reviewed write's median went from 13.3 s to 0.67 s, and its first call
-  from 2.8 s to 0.40 s.
+  the calls of a write's review ask each question once. On the scale
+  bench's store ten times the owner's (15,096 active records, 2,569
+  removed) a reviewed write's median went from 14.7 s to 0.40 s and its
+  first call from 3.9 s to 0.48 s; at a hundred times, from 112 s to
+  0.56 s and from 32 s to 4.0 s
+  (`bench/scale/results/scale-2026-11-04-x10-measure.json` and
+  `-x100-`, against `scale-2026-11-11-x10-measure.json` and `-x100-`).
+  A store's first write under this build builds the digest once: 0.2 s
+  at the owner's size, 3.1 s at ten times, 60 s at a hundred times.
   (`store_digest.py`, `search_dedup.py`, `supersession.py`,
   `scope_match.py`, `handlers/write_gates.py`, `handlers/write.py`,
   `review.py`, `tests/test_store_digest.py`)
@@ -602,6 +607,24 @@ eighteenth was built.
   sixteenth to eighteenth candidates read and write a store that has it.
   (`store_schema.py`, `store_steps.py`, `store_events.py`,
   `CONTRIBUTING.md`, `docs/internals.md`)
+
+- **A search reads the `use` rows that name its hits.** Since "Search
+  retains rejection annotations for their full 30-day window" above, a
+  search that returned a hit parsed every telemetry row of the last
+  thirty days to say which of its hits had been rejected. On the scale
+  bench `memory_search`'s median went from 23 ms to 273 ms at ten times
+  the owner's store, and from 191 ms to 2.8 s at a hundred times
+  (`bench/scale/results/scale-2026-11-04-x10-measure.json` and `-x100-`,
+  against `scale-2026-11-11-x10-measure.json` and `-x100-`, which were
+  taken before this entry's change). The annotation reads only `use`
+  rows that name a hit, so `Store.events_of_kinds` takes `naming`: the
+  rows of the window whose payload holds one of the hits' ids, chosen by
+  SQLite before a row is parsed. The annotation is unchanged. The event
+  window memo (`Store.events_since(..., memoised=True)`) served that one
+  read and kept a month of the store's rows in the server's memory; it
+  is removed, and `events_since` no longer takes `memoised`.
+  (`store_events.py`, `store.py`, `handlers/search.py`,
+  `tests/test_events_naming.py`)
 
 - **A numeric config key refuses a boolean (ENG-221).** Python counts a
   boolean as an integer, so `true` written for a key that takes a number

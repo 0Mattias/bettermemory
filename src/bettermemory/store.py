@@ -231,9 +231,6 @@ from . import store_journal as _journal
 from . import store_tables as _tables
 from . import store_membership as _membership
 from . import store_events as _events
-from .store_events import (
-    _EVENT_WINDOWS as _EVENT_WINDOWS,
-)
 from . import store_provenance as _provenance
 from . import store_index as _index
 from . import store_returned as _returned
@@ -1620,8 +1617,6 @@ class Store:
     session_events_of_kinds = _events.session_events_of_kinds
     events_since = _events.events_since
     _window_floor = _events._window_floor
-    _window_rows = _events._window_rows
-    _gather_window = staticmethod(_events._gather_window)
     iter_events_backward = _events.iter_events_backward
     log_rows = _events.log_rows
     refold = _events.refold

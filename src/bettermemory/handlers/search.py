@@ -791,31 +791,23 @@ def _attach_hit_relations(
     now: datetime,
 ) -> None:
     """Take the response rows; attach recent negative outcomes and link relations."""
-    # Per-hit `recent_negative_outcomes` (T2.3): walk the event log
-    # once for the recent window and annotate any hit that was
-    # ignored or contradicted AND not since validated. The lookup is
-    # bounded — one event-log iteration filtered to the hit ids,
-    # then per-id bucketing. The annotation tells the model "this
-    # was rejected on date X" so it doesn't keep re-suggesting the
-    # same junk; cheap to compute, high signal-to-noise. Skip when
-    # the hit list is empty (nothing to annotate). Loading events
-    # lazily here rather than at handler construction time keeps
-    # the cost off searches that produce no hits. The store's log does
-    # not rotate, so the read needs no window-aware reader like 8.x's
-    # `iter_events_window`, which kept a rotation from archiving away a
-    # just-recorded negative outcome. This is the one
-    # event read a search pays, and the store's event window memo serves
-    # it: the lookback only moves forward, so a search reads the rows
-    # appended since the last one rather than the whole log
-    # (`Store.events_since(..., memoised=True)`).
+    # Per-hit `recent_negative_outcomes`: a hit that was ignored or
+    # contradicted inside the window and not validated since says so, so
+    # the model does not keep re-suggesting what was rejected. The read
+    # is the ``use`` rows of the window that name a hit
+    # (`Store.events_of_kinds`'s `naming`): the window is thirty days,
+    # and a search that parsed every telemetry row in it paid for the
+    # store's whole month on each call.
     if out:
         from datetime import timedelta
 
         from .._response import NEGATIVE_OUTCOME_WINDOW_DAYS
 
         recent_events = list(
-            deps.store.events_since(
-                now - timedelta(days=NEGATIVE_OUTCOME_WINDOW_DAYS), memoised=True
+            deps.store.events_of_kinds(
+                ("use",),
+                since=now - timedelta(days=NEGATIVE_OUTCOME_WINDOW_DAYS),
+                naming=[hit.id for hit in hits],
             )
         )
         deps.responses.attach_recent_negative_outcomes(

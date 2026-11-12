@@ -1673,20 +1673,18 @@ def test_events_since_and_backward(store: Store) -> None:
 
 def test_events_since_reads_through_the_ts_index(store: Store) -> None:
     """A window read finds its floor through `log_by_ts` and walks the rows
-    from it by sequence number, in the plain read and the memo's cold
-    read alike: no statement of either scans the log, as the cut on
-    ``substr(ts, 1, 19)`` did on every call."""
+    from it by sequence number: no statement of it scans the log, as the
+    cut on ``substr(ts, 1, 19)`` did on every call."""
     store.record_event("search", session="s", query="one")
     statements: list[str] = []
     store._conn.set_trace_callback(statements.append)
     try:
         list(store.events_since(_NOW - timedelta(hours=1)))
-        list(store.events_since(_NOW - timedelta(hours=1), memoised=True))
     finally:
         store._conn.set_trace_callback(None)
     reads = [s for s in statements if "FROM log" in s and "ts >= " in s]
     floors = [s for s in reads if "MIN(seq)" in s]
-    assert len(floors) == 2 and len(reads) == 4, statements
+    assert len(floors) == 1 and len(reads) == 2, statements
     plans = {}
     for statement in reads:
         plans[statement] = " ".join(
@@ -1701,14 +1699,12 @@ def test_events_since_reads_through_the_ts_index(store: Store) -> None:
 def test_a_window_reads_without_its_index(store: Store) -> None:
     """`INDEXED BY` refuses a statement whose index is gone, where the cut
     before it scanned: a store without `log_by_ts` (in the schema since
-    9.0.0rc1, so one altered by hand) still reads its window, plain and
-    memoised, by the scan it read by before."""
+    9.0.0rc1, so one altered by hand) still reads its window, by the
+    scan it read by before."""
     store.record_event("search", session="s", query="one")
     store._conn.execute("DROP INDEX log_by_ts")
     since = _NOW - timedelta(hours=1)
-    plain = [row["kind"] for row in store.events_since(since)]
-    memoised = [row["kind"] for row in store.events_since(since, memoised=True)]
-    assert plain == memoised == ["search"]
+    assert [row["kind"] for row in store.events_since(since)] == ["search"]
 
 
 def test_the_journal_writes_lists_prunes_and_measures(store: Store) -> None:
