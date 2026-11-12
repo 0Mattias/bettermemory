@@ -93,6 +93,9 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
+    # Parallel test runs (`pytest -n auto`): the suite is about half an
+    # hour in one process. Development only; nothing that ships imports it.
+    "pytest-xdist>=3.5",
     "ruff>=0.1",
     "mypy>=1.10",
     "pyright>=1.1.400",

@@ -28,7 +28,8 @@ Inside a synced folder the rename is not enough, because syncing itself damages 
 ## Running the suite
 
 ```sh
-pytest -q                         # the whole suite
+pytest -q                         # the whole suite, in one process
+pytest -q -n 6                    # the whole suite on six workers (pytest-xdist)
 pytest tests/test_store.py        # one file
 
 ruff check .
@@ -40,6 +41,8 @@ pyright                           # secondary type gate
 # Bench (not part of the test suite):
 python bench/storage.py --sizes 1000,10000,50000
 ```
+
+The suite passes in one process and on parallel workers with the same counts. On a 12-core Apple M3 Pro, 12,525 tests took 33 minutes in one process, 5 minutes 22 seconds with `-n 6` and 5 minutes 2 seconds with `-n auto` (measured 2026-11-12 at `6b31ff29`). Each test's store, keys and home are its own (`tests/conftest.py`), which is what lets workers run side by side. A test that needs a fixed port, a path outside its `tmp_path`, or an order among tests would break that, so keep new tests to their own fixtures. CI runs the suite in one process.
 
 CI runs `uv sync --locked --extra dev`, then `ruff check .`, `ruff format --check .`, `mypy` and `pytest` with an 80% coverage floor (`--cov-fail-under=80`), on Python 3.11, 3.12, 3.13 and 3.14 on Ubuntu plus 3.14 on macOS and Windows. Separate jobs run `pyright` on 3.14, install the package from its declared constraints without `uv.lock` and import it, and lint the commit messages (see [Commit messages](#commit-messages)). Anything that fails CI is blocking on merge.
 
