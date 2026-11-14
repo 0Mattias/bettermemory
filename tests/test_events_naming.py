@@ -23,6 +23,7 @@ from bettermemory.events import Recorder
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from bettermemory.store_rows import _event_from_columns
 
 from .test_server_negative_outcomes import _call, _seed, _unwrap
 
@@ -104,11 +105,10 @@ async def test_a_search_parses_only_the_rows_that_name_its_hits(
         )
 
         parsed: list[str] = []
-        real = store_module._event_from_columns
 
         def counting(ts: str, session: str | None, kind: str, payload: str) -> Any:
             parsed.append(kind)
-            return real(ts, session, kind, payload)
+            return _event_from_columns(ts, session, kind, payload)
 
         monkeypatch.setattr(store_module, "_event_from_columns", counting)
         hits = _unwrap(await _call(server, "memory_search", query="python"))
