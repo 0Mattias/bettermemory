@@ -734,7 +734,14 @@ eighteenth was built.
   kept by their old value; for it the detector keeps each word's tokens
   (65,536 words) and reads one token's surface form without mapping the
   whole body. The report is the full scan's, on the digest's randomized
-  corpora as before and on 360 bodies of the scale bench's stores.
+  corpora as before and on 360 bodies of the scale bench's stores. With
+  the three entries below, a write's first call on the scale bench went
+  from 42 ms to 29 ms at the owner's size, from 322 ms to 170 ms at ten
+  times and from 1.9 s to 1.0 s at a hundred times, and the calls that
+  answer its review from 70 ms to 54 ms, from 368 ms to 239 ms and from
+  1.6 s to 0.63 s (`bench/scale/results/scale-2026-11-14-x1-measure.json`,
+  `-x10-` and `-x100-`, against `scale-2026-11-14-x1-measure-2.json`,
+  `-x10-` and `-x100-`).
   (`supersession.py`, `search_dedup.py`, `store_digest.py`,
   `tests/test_store_digest.py`)
 
@@ -777,6 +784,29 @@ eighteenth was built.
   of that search with no hit built, and the records are read as a
   ranking reads them. The lines are unchanged. (`search.py`,
   `review.py`, `tests/test_search_pool.py`)
+
+- **The capacity figures are this tree's.** The Capacity section of
+  `docs/operations.md` is rewritten from the scale bench's readings of
+  2026-11-14: the timed arms and the whole-store commands at one, ten
+  and a hundred times the owner's store
+  (`bench/scale/results/scale-2026-11-14-x1-measure-2.json`, `-x10-`
+  and `-x100-`), the contention arm at each size, run at a hundred
+  times for the first time (`-x1-contend.json`, `-x10-`, `-x100-`), and
+  one profiled first call of a session start, a prompt and a write at
+  ten and a hundred times (`-x10-profile.json`, `-x100-`). At ten times
+  every hook answers in under 0.4 s at p95 and a write's first call in
+  0.41 s; at a hundred times a first session start takes 1.1 s at p50
+  against 9.8 s on 2026-11-12, and what no longer holds there is a
+  store object's first call on a file the machine has not read (13.6 s
+  for a session start), the whole-store verification and concurrent
+  use. Under the contention arm a write transaction waits for the lock
+  239 ms at p95 at the owner's size and 850 ms at ten times, against
+  25 ms and 17 ms on 2026-11-04, on another Python and other built
+  stores. The profiles' `walked` and `plans` fields are computed from
+  the event reads as `bench/scale/costs.py` spells them, which the
+  store no longer runs; only their times are cited. The x100 contention
+  file names the bench's scratch directory as `<scratch>`.
+  (`docs/operations.md`, `bench/scale/results/`)
 
 - **A numeric config key refuses a boolean (ENG-221).** Python counts a
   boolean as an integer, so `true` written for a key that takes a number

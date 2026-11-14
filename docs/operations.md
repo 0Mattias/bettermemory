@@ -603,107 +603,120 @@ hop from the hook's client to the daemon, and runs the whole-store
 commands as the CLI. The readings are from one machine (Apple M3 Pro,
 12 cores, 18 GB, macOS), each arm started with the 1-minute load
 average under 4; the result files under `bench/scale/results/` name the
-commit they measured.
+commit they measured. The tables below are the readings of 2026-11-14
+(`scale-2026-11-14-x1-measure-2.json`, `-x10-` and `-x100-`, with the
+`-contend.json` and `-profile.json` files of that date).
 
 | Store | 1x | 10x | 100x |
 | --- | --- | --- | --- |
-| Memories | 1,499 | 14,933 | 147,578 |
-| Episodes | 341 | 3,673 | 35,242 |
-| Log rows | 39,473 | 396,645 | 3,945,178 |
-| Membership rows | 3,807 | 37,888 | 373,073 |
+| Memories | 1,516 | 14,765 | 147,659 |
+| Episodes | 362 | 3,500 | 35,749 |
+| Log rows | 40,009 | 393,892 | 3,942,517 |
+| Membership rows | 3,883 | 37,452 | 374,099 |
 | Projects, checkouts | 12, 14 | 38, 48 | 120, 152 |
-| File | 89 MB | 780 MB | 7.4 GB |
+| File | 79 MB | 774 MB | 7.7 GB |
 
 | p50 / p95, ms | Budget | 1x | 10x | 100x |
 | --- | --- | --- | --- | --- |
-| Session start, a first start | 13,000 | 84 / 129 | 852 / 960 | 84,680 / 89,927 |
-| Session start, with a transcript to probe | 13,000 | 55 / 74 | 531 / 650 | 78,967 / 84,774 |
-| Prompt hook | 8,000 | 46 / 63 | 332 / 503 | 80,332 / 127,298 |
-| Stop hook, in a whole session | 13,000 | 58 / 74 | 367 / 615 | 100,543 / 105,187 |
-| `memory_search` | 60,000 | 11 / 26 | 23 / 38 | 191 / 254 |
-| `memory_write`, the first call | 60,000 | 207 / 265 | 3,863 / 4,545 | 32,485 / 49,215 |
-| `memory_write`, with its review answered | | 438 / 940 | 14,655 / 16,658 | 112,100 / 196,192 |
-| Resolution of a known checkout | | 0.3 / 3.5 | 0.4 / 2.4 | 2.5 / 3.6 |
-| First sight of a repository | | 5.1 / 6.1 | 5.5 / 5.9 | 9.9 / 51.8 |
+| Session start, a first start | 13,000 | 25 / 63 | 172 / 322 | 1,134 / 4,355 |
+| Session start, with a transcript to probe | 13,000 | 33 / 48 | 199 / 323 | 1,854 / 3,906 |
+| Prompt hook | 8,000 | 13 / 16 | 36 / 65 | 168 / 212 |
+| Stop hook, in a whole session | 13,000 | 23 / 34 | 45 / 56 | 172 / 206 |
+| `memory_search` | 60,000 | 11 / 18 | 22 / 32 | 102 / 135 |
+| `memory_write`, the first call | 60,000 | 29 / 60 | 170 / 408 | 1,041 / 5,209 |
+| `memory_write`, with its review answered | | 54 / 123 | 239 / 643 | 632 / 5,366 |
+| Resolution of a known checkout | | 0.5 / 3.2 | 0.6 / 3.3 | 3.8 / 4.7 |
+| First sight of a repository | | 5.0 / 5.2 | 5.5 / 5.8 | 6.9 / 7.4 |
 
 A hook's budget is the time its body has for its store rows
 (`hook_budget_seconds`: the harness's timeout or the client's wait for
 the daemon, the shorter, less 2 s). A tool call's is the stdio shim's
 wait for the daemon's reply, 60 s; a write with its review answered is
-two to four calls. The stop hook was timed inside the whole sessions the
-bench runs (22 calls at 1x and at 10x, 2 at 100x), the others on their
-own, 10 to 90 calls each (the result files give each count).
+two to four calls after the first. The stop hook was timed inside the
+whole sessions the bench runs (22 calls at 1x and at 10x, 2 at 100x),
+the others on their own, 8 to 90 calls each (the result files give each
+count); at 100x an arm times 8 to 15 calls, so its p95 is close to its
+slowest call. Each arm makes three calls before the ones it times, so
+these are the readings of a store object that has answered before, as a
+daemon worker's has.
 
 | Wall time, peak RSS | 1x | 10x | 100x |
 | --- | --- | --- | --- |
-| `log verify` | 1.9 s, 176 MB | 8.4 s, 886 MB | stopped at the 2.6 GB cap, 10.6 s in |
-| `backup create` | 1.2 s, 107 MB | 1.9 s, 101 MB | 16.1 s, 103 MB |
-| `backup verify` | 1.8 s, 159 MB | 8.4 s, 885 MB | stopped at the 2.6 GB cap, 19.0 s in |
+| `log verify` | 1.1 s, 175 MB | 7.2 s, 910 MB | stopped at the 2.6 GB cap, 15.4 s in |
+| `backup create` | 0.5 s, 95 MB | 1.2 s, 95 MB | 12.9 s, 95 MB |
+| `backup verify` | 1.2 s, 175 MB | 7.4 s, 910 MB | stopped at the 2.6 GB cap, 13.5 s in |
 
 The supported envelope is 10x: 15,000 memories, 400,000 log rows and a
-0.8 GB file. There every hook answers in under a second at p95, well
-inside its budget, a search in under 40 ms, and `log verify` and
-`backup verify` in under 10 s and 1 GB. The one slow path at 10x is a
-write: 15 s with its review answered, 4.5 s for its first call at p95.
-At 100x nothing a session waits for works: every hook takes six to
-sixteen times its budget. Interpolated on a log-log line between the
-10x and 100x readings, the hooks cross their budgets at about 40x: a
-first session start at 39x at p50 and 38x at p95, the prompt hook at
-38x and 32x, the stop hook at 43x and 39x. The first call of a write
-reaches the shim's 60 s only past 100x (at about 120x at p95, by the
-same line carried on).
+0.8 GB file. There every hook answers in under 0.4 s at p95, a search
+in under 35 ms, a write's first call in 0.41 s and the calls that
+answer its review in 0.64 s, and `log verify` and `backup verify` in
+under 8 s and 1 GB. At 100x the calls a session waits for stay inside
+their budgets on a store object that has answered before: a first
+session start takes 1.1 s at p50 and 4.4 s at p95, the prompt hook
+0.2 s, a search 0.1 s and a write's first call 1.0 s at p50 and 5.2 s
+at p95. What does not hold at 100x is a store object's first call on a
+file the machine has not read, the whole-store verification, and
+concurrent use.
 
-Beyond 10x, four things degrade:
+Beyond 10x, five things grow:
 
-- **The hooks grow with the log.** A new session's start reads every
-  row of the kinds a session's recall state is rebuilt from, whatever
-  its session: `session_events_of_kinds` finds them through the kind
-  index and compares the session on each row. The prompt hook's reads
-  of its window (`events_of_kinds`) do the same with the stamp, so they
-  read every row of their kinds too. Both hooks read every `use` row of
-  the log for the contradictions among their hits (`contradicted_at`),
-  and session start loads every memory for the brief's search pool and
-  reads every active record for the standing backlog line. At 10x
-  session start took ten times as long as at 1x, and the prompt hook
-  seven times. At 100x the 7.4 GB file no longer fit in the memory the
-  machine had free (about 4 GB), so those reads went to the disk, and
-  each hook took 80 to 130 s. One profiled session start there took 88 s,
-  28 s of it on the CPU: 48 s walking 1,913,550 rows for a new session's
-  recall state to find none, 14 s in the contradiction read and 12 s
-  loading the search pool. One prompt took 79 s, 17 s on the CPU: 58 s
-  walking 2,157,052 rows for the 3,455 its window holds.
-- **A write grows with the memories.** The duplicate gate loads every
-  memory and tokenizes each one's content on every call
-  (`search_dedup`), and the review's supersession check
-  (`supersession.detect_supersession`) compares every active memory
-  again. Their token cache holds 5,000 bodies (`RAW_TOKEN_SET_ENTRIES`),
-  so past 5,000 memories every call tokenizes them all again. A write
-  with its review answered took 33 times as long at 10x as at 1x, and
-  112 s at 100x; one write under the profiler at 100x spent 271 s of
-  its 454 s of CPU tokenizing. The bench's synthetic bodies share more
-  words than real ones, so more pairs pass the supersession check's
-  first test than a real store's would.
+- **A store object's first calls read what its later calls keep.** A
+  store object keeps the contradicted ids it read from the `use` rows
+  (`contradicted_at`), the admission inputs of every record
+  (`_read_doc_freq_inputs`) and each term's rows (`_term_masks`), and
+  reads only what the log added after that. One session start profiled
+  as a store object's first call took 1.5 s at 10x, 0.9 s of it reading
+  the `use` rows for the contradicted ids. At 100x it took 13.6 s, past
+  its budget, 4.4 s of it on the CPU and the rest waiting for the disk:
+  10.9 s in that read, 1.0 s deciding the standing records and 0.6 s
+  reading the admission inputs. A first prompt took 0.09 s at 10x and
+  0.44 s at 100x, a first write with its review answered 1.6 s and
+  4.7 s. A daemon worker pays this once; a command that opens the store
+  itself pays it each time.
+- **A session start decides every record that can be standing.** The
+  standing candidates' rows are read on every start (`standing_ids`),
+  and the backlog line reads the records with no answer from the
+  digest. A first start's median grows 6.6 times from 10x to 100x. In
+  the profiled start at 100x the standing records took 1.0 s, the
+  brief's pools 1.0 s and the backlog line 0.5 s.
+- **A write ranks every match of its body.** The related list of a
+  request admitted to few of the best matches reads the index's whole
+  ranking a batch at a time (`ranked_admitted_rows`), and a write's
+  body matches most of the store. In the profiled write at 100x (five
+  calls, 4.7 s) the related lists took 2.3 s, 1.8 s of it in 930
+  reads of up to 800 rows; the standing records 1.7 s over three reads;
+  the gates 0.6 s. The supersession check scores the likeliest records
+  first, and a body with a change cue still compares every record over
+  the overlap floor. A write's p95 sits well above its median: 5.2 s
+  against 1.0 s for the first call at 100x. The bench's synthetic
+  bodies share more words than real ones, so more records pass the
+  check's first test than a real store's would.
 - **`log verify` and `backup verify` hold the whole log in memory.**
   The chain check lists every row and the fold replays every table in
-  memory, so the peak RSS grows with the store: 176 MB at 1x, 886 MB at
-  10x. At 100x both passed the bench's 2.6 GB cap (set from the memory
-  the machine had free) and were stopped: `log verify` held 1 GB at
-  3.7 s and 2 GB at 6.8 s. At the 2 KB a log row it grew by from 1x to
-  10x, it needs about 8 GB at 100x. `backup create` copies the store and
-  stays near 100 MB at every size.
-- **Concurrent calls share one process's CPU.** Four tool workers, four
-  hook workers and the CLI on one store for 90 s (`contend`): the lock
-  is not where the time goes. A write transaction waited for it 25 ms at
-  p95 at 1x and 17 ms at 10x, never more than 0.5 s. The calls run in
-  one process, and each took many times its time alone: at 1x a prompt
-  hook 3.8 s at p50, a session start 2.8 s and a write 32 s; at 10x a
-  session start 30 s, past its budget, and two hooks that reached their
-  state row after their budget ran out failed busy at once
-  (`StoreBusy`) instead of waiting for the lock. The arm was not run at
-  100x, where a hook alone is past its budget.
+  memory, so the peak RSS grows with the store: 175 MB at 1x, 910 MB at
+  10x. At 100x both passed the bench's 2.6 GB cap and were stopped:
+  `log verify` held 1 GB at 11.1 s and 2 GB at 13.7 s. At the 2 KB a log
+  row it grew by from 1x to 10x, it needs about 8 GB at 100x. `backup
+  create` copies the store and stays at 95 MB at every size.
+- **Concurrent calls share one process's CPU and one write lock.** Four
+  tool workers, four hook workers and the CLI on one store for 90 s
+  (`contend`). The calls run in one process, and each takes many times
+  its time alone. At 1x 282 hook calls, 107 tool calls and 542 CLI
+  commands finished with no error: a prompt hook took 1.2 s at p50, a
+  session start 0.8 s and a write 8.6 s, and a write transaction waited
+  for the lock 12 ms at p50 and 239 ms at p95, once over a second. At
+  10x a prompt hook took 10.3 s at p50, past its budget, a stop hook
+  10.8 s and a write 83 s; the lock wait was 850 ms at p95 and 3.3 s at
+  most, and eight hook calls that reached their state row after their
+  budget ran out failed busy at once (`StoreBusy`) instead of waiting
+  for the lock. At 100x a session start took 64 s at p50 and a write
+  127 s, lock waits reached 5.5 s, and one CLI command of five failed
+  on the lock after 14 s. A read that finds the digest behind the log
+  applies the missing rows under the write lock (`digest_mark`), so
+  searches and hooks wait for it beside the writers.
 
 Membership resolution barely grows with the store: a first sight takes
-5 to 10 ms at p50 from 1x to 100x. ENG-159's arm at 400 projects (300
+5 to 7 ms at p50 from 1x to 100x. ENG-159's arm at 400 projects (300
 commit-less repositories and 100 provisional projects) reads a
 commit-less first sight's content candidates in 4 store reads and
 20.4 ms at p50, against 1,201 reads and 73.4 ms on the tree before
