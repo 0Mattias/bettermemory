@@ -229,6 +229,30 @@ def _pairwise_content_jaccard(
     return jaccard
 
 
+def similarity_bound(shared: int, n: int, m: int) -> float:
+    """The most `_pairwise_content_jaccard` can return for two sets of
+    `n` and `m` raw tokens whose expanded sets share `shared` tokens.
+
+    The scorer's two sets hold at least `n` and `m` tokens and share at
+    most `shared`. Its Jaccard grows with the intersection and falls as
+    either set grows, so it is at most ``shared / (n + m - shared)``, and
+    at most ``shared / max(n, m)``, which also holds where the first
+    denominator is not positive. Its containment score divides by the
+    smaller set, which holds at least ``min(n, m)`` tokens, counts only
+    from `MEDIUM_SIMILARITY` and is capped at `_CONTAINMENT_CEILING`.
+    Division rounds monotonically, so the bound holds for the floats the
+    scorer returns, not only for the fractions."""
+    if shared <= 0 or n <= 0 or m <= 0:
+        return 0.0
+    bound = min(1.0, shared / max(n, m))
+    if n + m - shared > 0:
+        bound = min(bound, shared / (n + m - shared))
+    contained = shared / min(n, m)
+    if contained >= MEDIUM_SIMILARITY:
+        bound = max(bound, min(contained, _CONTAINMENT_CEILING))
+    return bound
+
+
 def find_similar(
     new_body: str,
     existing: list[Memory],

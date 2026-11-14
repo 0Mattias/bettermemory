@@ -1907,6 +1907,58 @@ def search(
     return _ranked_hits(trimmed, anchoring, query_unique, path_drift)
 
 
+def rank(
+    memories: list[Memory],
+    query: str,
+    *,
+    excluded_scopes: set[str] | None = None,
+    admission: Admission | None = None,
+    now: datetime | None = None,
+    half_life_days: float = 30.0,
+    mode: SearchMode = "hybrid",
+    rrf_k: int = _RRF_K_DEFAULT,
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
+    conversational: bool = True,
+) -> list[tuple[str, list[str]]]:
+    """The ranking `search` gives the same arguments when it returns every
+    candidate: each hit's id and its ``match_terms``, in the hits' order,
+    with no hit built. For a caller that reads ranks and matched terms and
+    nothing else of a hit (`review.roster_for`): a hit's snippet, labels
+    and drift report are most of what a search of a few hundred records
+    costs. Empty for a query with no token."""
+    _check_mode(mode)
+    now = now or datetime.now(timezone.utc)
+    query_tokens, stopword_fallback = _query_tokens(query, False)
+    if not query_tokens:
+        return []
+    candidates = _filter_candidates(
+        memories,
+        scopes=None,
+        excluded_scopes=excluded_scopes,
+        admission=admission,
+        client_filter=None,
+        model_filter=None,
+    )
+    if not candidates:
+        return []
+    scored, _lexical_ids, _expansion_ids = _rank_candidates(
+        candidates,
+        query,
+        query_tokens,
+        len(set(query_tokens)),
+        now=now,
+        mode=mode,
+        half_life_days=half_life_days,
+        rrf_k=rrf_k,
+        corpus_stats_provider=corpus_stats_provider,
+        stopword_fallback=stopword_fallback,
+        rescue_expansion=False,
+        conversational=conversational,
+        track_legs=False,
+    )
+    return [(memory.id, matched) for memory, _score, matched in scored]
+
+
 def _claim_anchors(
     anchoring: Anchoring | None, memories: Sequence[Memory]
 ) -> list[ClaimAnchor | None]:

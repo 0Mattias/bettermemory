@@ -679,6 +679,87 @@ def digest_candidates(
     ]
 
 
+class DigestShare(NamedTuple):
+    """One record `digest_candidates` would return, without its tokens:
+    its sizes as `DigestDoc` names them, and `shared`, how many tokens of
+    the asked body's expanded set its postings hold."""
+
+    id: str
+    n: int
+    claim: int
+    stamped: bool
+    shared: int
+
+
+def digest_shares(
+    self: Store,
+    tokens: AbstractSet[str],
+    *,
+    removed: bool,
+    floor: float,
+    claims: bool = False,
+) -> list[DigestShare] | None:
+    """The records `digest_candidates` returns for the same arguments,
+    each with its shared count in place of its tokens; None when the
+    digest is not available. A caller that ranks the records by what they
+    can score (`search_dedup.similarity_bound`) reads the tokens of those
+    it gets to (`digest_tokens_of`) and of no other."""
+    if not tokens:
+        return None
+    mark = self.digest_mark()
+    if mark is None:
+        return None
+    conn = self._conn
+    size = "s.claim" if claims else "s.n"
+    n = len(tokens)
+    floor_milli = int(floor * 1000)
+    medium_milli = int(MEDIUM_SIMILARITY * 1000)
+    contained = -(-medium_milli * _CONTAINMENT_MIN_TOKENS // 1000)
+    try:
+        _share(conn, mark, tokens)
+        rows = conn.execute(
+            "SELECT d.id, d.n, d.claim, d.stamped, s.shared "
+            "FROM temp.digest_shared s JOIN digest_records d ON d.doc = s.doc "
+            f"WHERE s.removed = ? AND {size} > 0 AND ("
+            f"  s.shared * 1000 >= ? * MAX(?, {size}) "
+            f"  OR (s.shared >= ? AND s.shared * 1000 >= ? * MIN(?, {size})))",
+            (int(removed), floor_milli, n, contained, medium_milli, n),
+        ).fetchall()
+    except sqlite3.Error as exc:
+        log.warning("store %s: the digest could not be read (%s)", self._path, exc)
+        return None
+    return [
+        DigestShare(
+            id=str(row[0]),
+            n=int(row[1]),
+            claim=int(row[2]),
+            stamped=bool(row[3]),
+            shared=int(row[4]),
+        )
+        for row in rows
+    ]
+
+
+def digest_tokens_of(
+    self: Store, ids: Iterable[str], *, removed: bool = False
+) -> dict[str, frozenset[str]]:
+    """The digest's token sets of the records among `ids`, by id: what
+    `DigestDoc.tokens` holds for each. A record the digest no longer
+    holds is absent."""
+    wanted = list(dict.fromkeys(ids))
+    out: dict[str, frozenset[str]] = {}
+    for start in range(0, len(wanted), _IN_CHUNK):
+        chunk = wanted[start : start + _IN_CHUNK]
+        marks = ", ".join("?" for _ in chunk)
+        for row in self._conn.execute(
+            "SELECT id, tokens FROM digest_records "
+            f"WHERE removed = ? AND id IN ({marks})",
+            (int(removed), *chunk),
+        ):
+            out[str(row[0])] = frozenset(str(row[1]).split())
+    return out
+
+
 def digest_scope_groups(self: Store) -> list[tuple[list[str], str, int]] | None:
     """The active records' (scopes, working directory, count) groups, in
     the order `load_all` first meets each; None when the digest is not

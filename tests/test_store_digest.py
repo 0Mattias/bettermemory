@@ -107,6 +107,79 @@ def test_digest_paths_equal_the_scans(store: Store, seed: int) -> None:
     _assert_equal_to_scans(store, _probes(store, rng))
 
 
+@pytest.mark.parametrize("seed", [11, 12, 13])
+def test_the_bound_is_never_under_the_score(seed: int) -> None:
+    """`similarity_bound` on the count the postings give (the tokens the
+    two expanded sets share) is at least what the scorer returns for the
+    two raw sets, compounds and containment included."""
+    rng = random.Random(seed)
+    tight = 0
+    for _ in range(4000):
+        a = frozenset(rng.choice(WORDS) for _ in range(rng.randint(1, 40)))
+        b = frozenset(rng.choice(WORDS) for _ in range(rng.randint(1, 40)))
+        shared = len(store_digest.expanded(a) & store_digest.expanded(b))
+        score = search_dedup._pairwise_content_jaccard(a, b)
+        bound = search_dedup.similarity_bound(shared, len(a), len(b))
+        assert bound >= score, (sorted(a), sorted(b), shared)
+        tight += bound == score
+    assert tight > 400, "premise: the bound is the score where no compound expands"
+    assert search_dedup.similarity_bound(0, 5, 5) == 0.0
+
+
+@pytest.mark.parametrize("seed", [21, 22])
+def test_the_detector_scores_best_first_and_stops_with_its_lists(
+    store: Store, seed: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A body with no change cue can only conflict, and its list holds
+    five: the detector reads the tokens of the records it scores before
+    the list is full, not of every record that could reach the floor, and
+    reports what the scan of every record reports."""
+    rng = random.Random(seed)
+    for index in range(260):
+        store.write(content=_body(rng, rng.choice((6, 9, 12))), scopes=["tools"])
+    assert store.digest_sync()
+    active = store.load_all()
+    read: list[str] = []
+    real = Store.digest_tokens_of
+
+    def spy(self: Store, ids: Any, **kwargs: Any) -> Any:
+        wanted = list(ids)
+        read.extend(wanted)
+        return real(self, wanted, **kwargs)
+
+    monkeypatch.setattr(Store, "digest_tokens_of", spy)
+    stopped_early = 0
+    for _ in range(12):
+        body = _body(rng, 9)
+        assert not supersession.change_cues(body)
+        tokens = search_dedup.raw_content_tokens(body)
+        could = store.digest_shares(
+            tokens, removed=False, floor=supersession._floor([]), claims=True
+        )
+        assert could is not None
+        read.clear()
+        report = supersession.detect_supersession_in(store, body)
+        assert report == supersession.detect_supersession(body, active)
+        if len(report.conflicts) == supersession.MAX_LINKS_PER_WRITE:
+            stopped_early += len(read) < len(could)
+    assert stopped_early >= 6, "premise: full lists leave candidates unscored"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Deploys moved to release-gateway (v2.3.1); the old Jenkins job is gone.",
+        "The port is 5432, the PORT was 8080: port.",
+        "to be or not to be",
+        "",
+    ],
+)
+def test_one_tokens_surface_form_is_the_maps(body: str) -> None:
+    forms = supersession._surface_forms(body)
+    for token in [*forms, "absent-token"]:
+        assert supersession._surface_form(body, token) == forms.get(token)
+
+
 def test_digest_follows_every_kind_of_change(store: Store) -> None:
     rng = random.Random(7)
     ids = _fill(store, rng, 60)

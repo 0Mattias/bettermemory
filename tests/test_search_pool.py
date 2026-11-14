@@ -19,6 +19,7 @@ statistics. What is held here:
 
 from __future__ import annotations
 
+import logging
 import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ import pytest
 
 import bettermemory.handlers.search as pool_module
 import bettermemory.search as search_module
+import bettermemory.store_index as store_index
 from bettermemory.config import Config, StorageConfig
 from bettermemory.handlers.search import POOL_SIZE, resolve_search_pool
 from bettermemory.hook import run_audit
@@ -184,6 +186,51 @@ def test_the_pool_holds_its_size_of_admitted_rows_in_the_indexes_order(
     assert [m.id for m in pool.memories] == ranked[:10]
     assert pool.corpus_stats_provider is not None
     assert len(resolve_search_pool(store, "alpha").memories) == 30
+
+
+@pytest.mark.parametrize("scopes", [["tools"], ["rare"], None])
+def test_the_pool_is_the_same_by_either_read_of_the_index(
+    store: Store, monkeypatch: pytest.MonkeyPatch, scopes: list[str] | None
+) -> None:
+    """A request that admits a quarter of the store or more reads the
+    index's best rows first, one that admits less reads its whole ranking
+    in batches, and a request the first read leaves short goes on to the
+    batches: the pool holds the same records in the same order."""
+    monkeypatch.setattr(pool_module, "_FIRST_READ", 20)
+    _write_dense(store, 60, scopes=["tools"], home=GLOBAL_HOME)
+    rare = _write_weak(store, 6, scopes=["rare"], home=GLOBAL_HOME)
+    shares: list[tuple[int, int] | None] = []
+    real = Store.admitted_share
+
+    def spy(self: Store, admit: Any) -> tuple[int, int] | None:
+        shares.append(real(self, admit))
+        return shares[-1]
+
+    monkeypatch.setattr(Store, "admitted_share", spy)
+    measured = [
+        m.id
+        for m in resolve_search_pool(store, "alpha", scopes=scopes, size=5).memories
+    ]
+    assert (
+        shares[-1]
+        == {"tools": (60, 66), "rare": (6, 66), None: (66, 66)}[
+            scopes[0] if scopes else None
+        ]
+    )
+    pools = []
+    for share in (None, (66, 66), (0, 66)):
+        monkeypatch.setattr(Store, "admitted_share", lambda self, admit, _s=share: _s)
+        pools.append(
+            [
+                m.id
+                for m in resolve_search_pool(
+                    store, "alpha", scopes=scopes, size=5
+                ).memories
+            ]
+        )
+    assert pools == [measured] * 3
+    if scopes == ["rare"]:
+        assert measured == rare[:5] or set(measured) <= set(rare)
 
 
 def test_a_row_the_statistics_do_not_know_is_admitted_from_its_own_columns(
@@ -488,6 +535,119 @@ def test_where_every_match_fits_the_hits_are_the_whole_stores(
         assert got == _ranked(everything, query, scopes=scopes), (seed, query, scopes)
         compared += bool(got)
     assert compared >= 20, "premise: the queries rank hits"
+
+
+def _everyone(scopes: list[str], project: str | None, actor: Any) -> bool:
+    return True
+
+
+@pytest.mark.parametrize("seed", [4, 5])
+def test_the_index_is_asked_once_and_read_in_batches(store: Store, seed: int) -> None:
+    """The rows read in batches are `ranked_rows` cut at the size asked,
+    whatever the batch."""
+    rng = random.Random(seed)
+    for i in range(90):
+        words = [rng.choice(_WORDS) for _ in range(rng.randint(4, 20))]
+        store.write(
+            content=" ".join(words) + f" entry{i}", scopes=["tools"], home=GLOBAL_HOME
+        )
+    for _ in range(10):
+        query = " ".join(rng.sample(_WORDS, rng.randint(1, 4)))
+        every = store.ranked_rows(query)
+        for size in (3, 7, 20, len(every) + 1):
+            got = store.ranked_admitted_rows(query, _everyone, size=size, batch=7)
+            assert got == every[:size]
+    assert store.ranked_admitted_rows("", _everyone, size=7, batch=7) == []
+    assert store.ranked_admitted_rows("the of and", _everyone, size=7, batch=7) == []
+
+
+def test_the_batches_open_after_the_statistics_are_current(
+    store: Store,
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A statement left open holds its connection to the snapshot it began
+    on, and a write begun under it fails at once when another writer has
+    committed since. The batched read therefore brings the statistics'
+    inputs current, the digest with them, before its statement opens:
+    with another store writing before and after every read of the
+    inputs, the digest's catch-up never fails and the pool is the
+    request's own."""
+    monkeypatch.setattr(pool_module, "_FIRST_READ", 5)
+    _write_dense(store, 40, scopes=["noise"], home=GLOBAL_HOME)
+    rare = _write_weak(store, 4, scopes=["rare"], home=GLOBAL_HOME)
+    assert store.digest_mark() is not None
+    other = Store(memory_dir)
+    real = store_index._current_inputs
+    written: list[str] = []
+
+    def beside_a_writer(self: Store) -> Any:
+        if self is not store:
+            return real(self)
+        written.append(_bystander(other, len(written)))
+        try:
+            return real(self)
+        finally:
+            written.append(_bystander(other, len(written)))
+
+    monkeypatch.setattr(store_index, "_current_inputs", beside_a_writer)
+    with caplog.at_level(logging.WARNING):
+        pool = resolve_search_pool(store, "alpha", scopes=["rare"], size=3)
+    monkeypatch.setattr(store_index, "_current_inputs", real)
+
+    assert len(written) >= 4, "premise: the other store wrote around each read"
+    assert "could not be brought current" not in caplog.text
+    ids = [m.id for m in pool.memories]
+    assert len(ids) == 3 and set(ids) <= set(rare)
+    assert store.digest_mark(build=False) is not None
+
+
+def _bystander(other: Store, i: int) -> str:
+    return other.write(
+        content=f"bystander record number {i}", scopes=["noise"], home=GLOBAL_HOME
+    ).id
+
+
+@pytest.mark.parametrize("seed", [6, 7])
+def test_a_ranking_without_hits_is_the_searchs_own(store: Store, seed: int) -> None:
+    """`search.rank` gives the ids and matched terms of the hits a search
+    of every candidate returns, in their order."""
+    rng = random.Random(seed)
+    for i in range(80):
+        words = [rng.choice(_WORDS) for _ in range(rng.randint(3, 25))]
+        store.write(
+            content=" ".join(words) + f" entry{i}",
+            scopes=[rng.choice(["tools", "notes"])],
+            home=GLOBAL_HOME,
+        )
+    everything = store.load_all()
+    compared = 0
+    for mode in ("hybrid", "bm25", "keyword"):
+        for _ in range(8):
+            query = " ".join(rng.sample(_WORDS, rng.randint(1, 5)))
+            excluded = rng.choice([None, {"notes"}])
+            hits = run_search(
+                everything,
+                query,
+                excluded_scopes=excluded,
+                max_results=len(everything),
+                now=NOW,
+                mode=mode,
+                rescue_expansion=False,
+                path_drift=False,
+            )
+            ranked = search_module.rank(
+                everything,
+                query,
+                excluded_scopes=excluded,
+                now=NOW,
+                mode=mode,
+            )
+            assert ranked == [(hit.id, list(hit.match_terms)) for hit in hits]
+            compared += bool(ranked)
+    assert compared >= 18, "premise: the queries rank hits"
+    assert search_module.rank(everything, "the of and", now=NOW) == []
 
 
 @pytest.mark.parametrize(

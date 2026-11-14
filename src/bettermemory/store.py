@@ -112,6 +112,7 @@ import sqlite3
 import threading
 import time
 import weakref
+from array import array
 from collections import OrderedDict
 from collections.abc import (
     Callable,
@@ -1544,6 +1545,8 @@ class Store:
     digest_sync = _digest.digest_sync
     digest_memo = _digest.digest_memo
     digest_candidates = _digest.digest_candidates
+    digest_shares = _digest.digest_shares
+    digest_tokens_of = _digest.digest_tokens_of
     digest_scope_groups = _digest.digest_scope_groups
     digest_admission_rows = _digest.digest_admission_rows
     digest_ambient_ids = _digest.digest_ambient_ids
@@ -1637,7 +1640,9 @@ class Store:
     # The search seams and the document frequency memo (store_index.py).
     query_candidates = _index.query_candidates
     ranked_rows = _index.ranked_rows
+    ranked_admitted_rows = _index.ranked_admitted_rows
     admitted_rows = _index.admitted_rows
+    admitted_share = _index.admitted_share
     newest_rows = _index.newest_rows
     rows_updated_since = _index.rows_updated_since
     index_spelled_here = _index.index_spelled_here
@@ -1760,6 +1765,9 @@ class Store:
             tuple[Any, ...], tuple[list[str], str | None, Actor | None, list[int]]
         ] = {}
         totals: dict[tuple[Any, ...], int] = {}
+        numbers: dict[tuple[Any, ...], int] = {}
+        group_of = array("i")
+        length_of = array("q")
         digest = self.digest_admission_rows()
         rows: Iterable[tuple[int, str, str | None, str | None, str | None, int]]
         if digest is not None:
@@ -1793,8 +1801,11 @@ class Store:
                 group = (list(scopes), home_project, actor, [])
                 grouped[group_key] = group
                 totals[group_key] = 0
+                numbers[group_key] = len(numbers)
             group[3].append(position)
             totals[group_key] += length
+            group_of.append(numbers[group_key])
+            length_of.append(length)
         return _DocFreqInputs(
             head=head,
             groups=tuple(
@@ -1804,6 +1815,9 @@ class Store:
             index=index,
             terms=OrderedDict(),
             lengths=tuple(totals.values()) if digest is not None else None,
+            keys=tuple(grouped),
+            group_of=group_of,
+            length_of=length_of,
         )
 
     def _term_masks(self, term: str, inputs: _DocFreqInputs) -> tuple[int, int]:

@@ -99,6 +99,7 @@ sit side by side unsignaled, which the benchmark shows on every arm.
 
 from __future__ import annotations
 
+import heapq
 import math
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -106,6 +107,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+from . import _caches
 from .models import Memory, snippet_for
 from .search import (
     _STOPWORDS,
@@ -114,6 +116,7 @@ from .search import (
     raw_content_tokens,
     tokenize,
 )
+from .search_dedup import similarity_bound
 
 # Provenance stamp appended by the retired `consolidate --llm
 # --from-transcript` propose_new writes. The stamp is system-manufactured
@@ -145,15 +148,19 @@ def _strip_provenance(body: str) -> str:
 # not disagreeing. Short version/port/date/count shapes all pass:
 # "5432", "3.27.0", "2026-07-20", "v2", "74f625d".
 _NUMERIC_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.\-_]*")
+# The pattern above matches ASCII alone, so a token's digits are these.
+_ASCII_DIGIT_RE = re.compile(r"[0-9]")
 
 
 def _numeric_token_set(body: str) -> frozenset[str]:
     """The digit-bearing tokens of a provenance-stripped body,
     lowercased, trailing punctuation trimmed."""
+    if _ASCII_DIGIT_RE.search(body) is None:
+        return frozenset()
     out: set[str] = set()
     for tok in _NUMERIC_TOKEN_RE.findall(body.lower()):
         tok = tok.strip(".-_")
-        if tok and len(tok) <= 16 and any(c.isdigit() for c in tok):
+        if tok and len(tok) <= 16 and _ASCII_DIGIT_RE.search(tok) is not None:
             out.add(tok)
     return frozenset(out)
 
@@ -331,8 +338,35 @@ def change_cues(body: str) -> list[str]:
     return [m.group(1) for m in _CUE_RE.finditer(body.lower())]
 
 
+#: Words `_word_tokens` keeps. The detector reads every word of every
+#: record it reaches, and a store's records share most of their words:
+#: at ten times the owner's store one detection asked for 50,000 words,
+#: a few thousand of them distinct. A word's tokens depend on the word
+#: alone, so the entry is exact. Emptied whole when full.
+_WORD_TOKEN_ENTRIES = 65_536
+_WORD_TOKENS: dict[str, tuple[str, ...]] = {}
+
+
+@_caches.register
+def clear_word_token_cache() -> None:
+    """Drop every entry of `_word_tokens`' cache."""
+    _WORD_TOKENS.clear()
+
+
+def _word_tokens(word: str) -> tuple[str, ...]:
+    """The content tokens of one word, in order: `tokenize(word)` less
+    the stopwords, or the entry an earlier call built for the word."""
+    found = _WORD_TOKENS.get(word)
+    if found is None:
+        found = tuple(t for t in tokenize(word) if t not in _STOPWORDS)
+        if len(_WORD_TOKENS) >= _WORD_TOKEN_ENTRIES:
+            _WORD_TOKENS.clear()
+        _WORD_TOKENS[word] = found
+    return found
+
+
 def _first_content_token(word: str) -> str | None:
-    tokens = [t for t in tokenize(word) if t not in _STOPWORDS]
+    tokens = _word_tokens(word)
     return tokens[0] if tokens else None
 
 
@@ -380,7 +414,7 @@ def _proper_nouns(body: str) -> set[str]:
         for word in clause.split()[1:]:
             bare = word.strip("(),'\"`")
             if _PROPER_NOUN_RE.match(bare):
-                out.update(t for t in tokenize(bare) if t not in _STOPWORDS)
+                out.update(_word_tokens(bare))
     return out
 
 
@@ -467,6 +501,15 @@ def _surface_forms(body: str) -> dict[str, str]:
         if tok is not None:
             out.setdefault(tok, word.strip(".,;:()"))
     return out
+
+
+def _surface_form(body: str, token: str) -> str | None:
+    """`_surface_forms(body).get(token)`, read up to the first word that
+    gives the token and no further."""
+    for word in _WORD_RE.findall(body):
+        if _first_content_token(word) == token:
+            return str(word).strip(".,;:()")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -569,32 +612,15 @@ def detect_supersession_in(
     skip = frozenset(exclude_ids)
 
     def compute() -> SupersessionReport | None:
-        docs = store.digest_candidates(
-            raw_content_tokens(body),
-            removed=False,
-            floor=_floor(change_cues(body)),
-            claims=True,
-        )
-        if docs is None:
+        new_raw = raw_content_tokens(body)
+        floor = _floor(change_cues(body))
+        shares = store.digest_shares(new_raw, removed=False, floor=floor, claims=True)
+        if shares is None:
             return None
-        # A stamped record's digest tokens are its whole body's, so its
-        # stripped body is read and tokenised here; there are few (the
-        # stamp is an 8.x one).
-        stamped = store.bodies_of(
-            doc.id for doc in docs if doc.stamped and doc.id not in skip
+        return _rule(
+            body,
+            _best_first(store, new_raw, floor, [s for s in shares if s.id not in skip]),
         )
-
-        def claims() -> Iterator[_Old]:
-            for doc in docs:
-                if doc.id in skip:
-                    continue
-                if not doc.stamped:
-                    yield _Old(doc.id, doc.tokens, _stored(store, doc.id))
-                elif doc.id in stamped:
-                    old_body = _strip_provenance(stamped[doc.id])
-                    yield _Old(doc.id, raw_content_tokens(old_body), _held(old_body))
-
-        return _detect(body, claims())
 
     report: SupersessionReport | None = store.digest_memo(
         ("supersession", new_body, skip), compute
@@ -604,15 +630,91 @@ def detect_supersession_in(
     return report
 
 
+#: Records `_best_first` scores at a time: one read of their tokens.
+_SCORE_BATCH = 64
+
+
+def _best_first(
+    store: Any,
+    new_raw: AbstractSet[str],
+    floor: float,
+    shares: Sequence[Any],
+) -> Iterator[tuple[float, _Old]]:
+    """The records of `shares` (`Store.digest_shares`) that score `floor`
+    or more against `new_raw`, with their scores, in the order `_detect`
+    reads them: by score rounded to four places, highest first, then id.
+
+    A record's shared count bounds its score from above
+    (`search_dedup.similarity_bound`). The records are scored in the order
+    of that bound, a batch at a time, and a scored record is handed on
+    once its rounded score is above the rounded bound of every record not
+    yet scored: none of those can come before it. The rule stops reading
+    once a list is full, and the records it never reached are never
+    scored, nor are their tokens read. A stamped record's digest tokens
+    are its whole body's, so its stripped body is read and tokenised here;
+    there are few (the stamp is an 8.x one)."""
+    n = len(new_raw)
+    bounded = sorted(
+        ((similarity_bound(s.shared, n, s.claim), s) for s in shares),
+        key=lambda entry: -entry[0],
+    )
+    # A bound under the floor is a score under the floor.
+    total = next(
+        (i for i, entry in enumerate(bounded) if entry[0] < floor), len(bounded)
+    )
+    heap: list[tuple[float, str, float, _Old]] = []
+    position = 0
+    while position < total or heap:
+        ceiling = round(bounded[position][0], 4) if position < total else -1.0
+        while heap and -heap[0][0] > ceiling:
+            _key, _id, similarity, old = heapq.heappop(heap)
+            yield similarity, old
+        if position >= total:
+            continue
+        chunk = [s for _bound, s in bounded[position : position + _SCORE_BATCH]]
+        position += len(chunk)
+        tokens = store.digest_tokens_of(s.id for s in chunk if not s.stamped)
+        stamped = store.bodies_of(s.id for s in chunk if s.stamped)
+        for s in chunk:
+            if not s.stamped:
+                raw = tokens.get(s.id)
+                if raw is None:
+                    continue
+                old = _Old(s.id, raw, _stored(store, s.id))
+            elif s.id in stamped:
+                old_body = _strip_provenance(stamped[s.id])
+                old = _Old(s.id, raw_content_tokens(old_body), _held(old_body))
+            else:
+                continue
+            similarity = _pairwise_content_jaccard(new_raw, old.raw)
+            if similarity >= floor:
+                heapq.heappush(heap, (-round(similarity, 4), s.id, similarity, old))
+
+
 def _detect(body: str, olds: Iterable[_Old]) -> SupersessionReport:
     """The rule, for a claim-sized, provenance-stripped `body` against the
-    claim-sized records `olds`.
+    claim-sized records `olds`: every record is scored, and `_rule` reads
+    them by score, then id."""
+    new_raw = raw_content_tokens(body)
+    floor = _floor(change_cues(body))
+    scored: list[tuple[float, str, float, _Old]] = []
+    for old in olds:
+        similarity = _pairwise_content_jaccard(new_raw, old.raw)
+        if similarity >= floor:
+            scored.append((-round(similarity, 4), old.id, similarity, old))
+    scored.sort(key=lambda entry: (entry[0], entry[1]))
+    return _rule(body, ((similarity, old) for _key, _id, similarity, old in scored))
+
+
+def _rule(body: str, ordered: Iterable[tuple[float, _Old]]) -> SupersessionReport:
+    """The rule, for a claim-sized, provenance-stripped `body` against
+    scored records in their order (by score rounded to four places,
+    highest first, then id).
 
     Each record's outcome depends on that record alone, and a list keeps
-    its first `MAX_LINKS_PER_WRITE` matches by similarity, then id. So the
-    records are scored first, and the rule reads them in that order and
-    stops once a list is full: what it would have found in the rest could
-    not have been kept."""
+    its first `MAX_LINKS_PER_WRITE` matches in that order. So the rule
+    reads the records as they come and stops once a list is full: what it
+    would have found in the rest could not have been kept."""
     new_raw = raw_content_tokens(body)
     cues = change_cues(body)
     new_values_all = value_tokens(body, new_raw)
@@ -620,19 +722,11 @@ def _detect(body: str, olds: Iterable[_Old]) -> SupersessionReport:
         new_values_all |= anchored_values(body) & new_raw
     new_stream = _content_stream(body)
     new_surface = _surface_forms(body)
-    floor = _floor(cues)
-
-    scored: list[tuple[float, str, float, _Old]] = []
-    for old in olds:
-        similarity = _pairwise_content_jaccard(new_raw, old.raw)
-        if similarity >= floor:
-            scored.append((-round(similarity, 4), old.id, similarity, old))
-    scored.sort(key=lambda entry: (entry[0], entry[1]))
 
     supersedes: list[SupersessionMatch] = []
     conflicts: list[SupersessionMatch] = []
     replaced: str | None = None
-    for _key, _id, similarity, old in scored:
+    for similarity, old in ordered:
         old_raw = old.raw
         new_values = new_values_all - old_raw
         if not new_values:
@@ -663,13 +757,14 @@ def _detect(body: str, olds: Iterable[_Old]) -> SupersessionReport:
                     break
 
         def _match(outcome: str, ev: str, a: str, b: str) -> SupersessionMatch:
+            surface = _surface_form(old_body, b)
             return SupersessionMatch(
                 memory_id=old.id,
                 outcome=outcome,
                 evidence=ev,
                 cue=cues[0] if outcome == "supersedes" else None,
                 new_value=new_surface.get(a, a),
-                old_value=_surface_forms(old_body).get(b, b),
+                old_value=b if surface is None else surface,
                 similarity=round(similarity, 4),
                 summary=snippet_for(old_body, max_chars=100),
             )

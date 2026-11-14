@@ -33,8 +33,16 @@ import re
 import sqlite3
 import threading
 import time
+from array import array
 from collections import OrderedDict
-from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Generator,
+    Iterable,
+    Iterator,
+    Sequence,
+)
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,13 +87,28 @@ class _DocFreqInputs:
     position. `lengths` holds, beside each group, the sum of its rows'
     BM25 lengths, read from the digest; None when the digest did not
     answer, and the length average is then the pool's. `head` is the log's
-    last memory or home row, `(seq, mac)`, when the inputs were read."""
+    last memory or home row, `(seq, mac)`, when the inputs were read.
+
+    The rest is what lets the inputs follow the log (`_advanced_inputs`).
+    `keys` names each group by the columns it was grouped on, `group_of`
+    and `length_of` give each position's group and BM25 length, and a
+    position with no group (-1) is a row whose scopes stopped parsing.
+    `version` counts the times the inputs were advanced since they were
+    read, and `changed` lists `(version, row number, position)` for each
+    row an advance touched. A term's masks carry, third, the version they
+    were read at: masks read at an older one are brought up to date for
+    the rows changed since (`_patched_masks`)."""
 
     head: tuple[int, str]
     groups: tuple[tuple[list[str], str | None, Actor | None, int], ...]
     index: dict[int, int]
-    terms: OrderedDict[str, tuple[int, int]]
+    terms: OrderedDict[str, tuple[int, int, int]]
     lengths: tuple[int, ...] | None = None
+    keys: tuple[tuple[Any, ...], ...] = ()
+    group_of: array[int] | None = None
+    length_of: array[int] | None = None
+    version: int = 0
+    changed: tuple[tuple[int, int, int], ...] = ()
 
 
 # The document frequency memo of `Store.document_frequencies(...,
@@ -98,10 +121,13 @@ class _DocFreqInputs:
 # log in the same transaction (`_mutate`; the fold applies the same rows),
 # and each row's MAC covers the rows before it, so the log's last memory
 # row names the table's state: the memo keeps a store's admission inputs
-# and its terms' hits keyed on that row's sequence number and MAC, and a
-# call whose key differs reads them again. A write, an update, a
-# tombstone, a restore, a deletion and an import each append such a row; a
-# telemetry row does not, so the searches' own events leave the memo warm.
+# and its terms' hits keyed on that row's sequence number and MAC. A
+# call whose key differs brings them to it by the rows the log holds
+# since (`_advanced_inputs`, `_patched_masks`), and reads them again from
+# the store where the log cannot say which row changed. A write, an
+# update, a tombstone, a restore, a deletion and an import each append
+# such a row; a telemetry row does not, so the searches' own events leave
+# the memo as it is.
 # A record's home is a `home_put` row (beside its memory's, or alone from
 # the migration and an import), so the key is the last row of either.
 # What is not kept is the admission itself: `admit` is the search's
@@ -208,6 +234,38 @@ def ranked_rows(self: Store, text: str, *, limit: int | None = None) -> list[int
         sql += " LIMIT ?"
         params.append(int(limit))
     return [int(row[0]) for row in self._conn.execute(sql, params)]
+
+
+def _ranked_batches(
+    self: Store, text: str, batch: int
+) -> Generator[list[int], None, None]:
+    """`ranked_rows(text)` in its order, `batch` row numbers at a time,
+    from one statement: the index scores every match once, and a caller
+    that stops after a few batches leaves the rest of the rows unread.
+
+    The statement stays open between batches and holds the connection to
+    the snapshot it began on, so the caller begins no write on this store
+    until the batches are closed: under an open statement a write that
+    another writer has committed ahead of fails at once, without waiting
+    for the lock (`ranked_admitted_rows` is the one caller)."""
+    if not text.strip():
+        return
+    match_query = fts_match_query(text)
+    if not match_query:
+        return
+    cursor = self._conn.execute(
+        "SELECT rowid FROM memories_fts WHERE memories_fts MATCH ? "
+        "ORDER BY bm25(memories_fts), rowid",
+        (match_query,),
+    )
+    try:
+        while True:
+            rows = cursor.fetchmany(int(batch))
+            if not rows:
+                return
+            yield [int(row[0]) for row in rows]
+    finally:
+        cursor.close()
 
 
 def newest_rows(self: Store, *, limit: int, offset: int = 0) -> list[int]:
@@ -336,20 +394,26 @@ def _memoised_document_frequencies(
     the admitted rows' average BM25 length (None when the memo's inputs
     carry no lengths)."""
     entry, fresh, key, head = _current_inputs(self)
-    known: dict[str, tuple[int, int]] = {}
-    if not fresh:
-        with _DOC_FREQS_LOCK:
-            for term in unique:
-                masks = entry.terms.get(term)
-                if masks is not None:
-                    entry.terms.move_to_end(term)
-                    known[term] = masks
+    known: dict[str, tuple[int, int, int]] = {}
+    behind: dict[str, tuple[int, int, int]] = {}
+    with _DOC_FREQS_LOCK:
+        for term in unique:
+            masks = entry.terms.get(term)
+            if masks is not None:
+                entry.terms.move_to_end(term)
+                (known if masks[2] == entry.version else behind)[term] = masks
     # The predicate runs on every call, once per group: it is not a
     # function of the store alone.
     admitted, length = _admitted_mask(entry, admit)
-    found: dict[str, tuple[int, int]] = {}
+    found: dict[str, tuple[int, int, int]] = {}
     if admitted:
-        found = {t: self._term_masks(t, entry) for t in unique if t not in known}
+        for term in unique:
+            if term in known:
+                continue
+            if term in behind:
+                found[term] = _patched_masks(self, term, behind[term], entry)
+            else:
+                found[term] = (*self._term_masks(term, entry), entry.version)
     if (fresh or found) and self._memory_head() == head:
         self._keep_doc_freqs(key, entry, found, fresh=fresh)
     if not admitted:
@@ -357,7 +421,7 @@ def _memoised_document_frequencies(
     body_df: dict[str, int] = {}
     scope_df: dict[str, int] = {}
     for term in unique:
-        body_mask, any_mask = known.get(term) or found[term]
+        body_mask, any_mask, _version = known.get(term) or found[term]
         body_count = (body_mask & admitted).bit_count()
         any_count = (any_mask & admitted).bit_count()
         if body_count:
@@ -372,20 +436,229 @@ def _memoised_document_frequencies(
 def _current_inputs(
     self: Store,
 ) -> tuple[_DocFreqInputs, bool, tuple[str, str], tuple[int, str]]:
-    """The memo's inputs for this store at its memory head, read from the
-    store when the memo holds none there: the entry, whether this call
-    read it, and the memo's key and the head it was read at."""
+    """The memo's inputs for this store at its memory head: the entry,
+    whether this call made it, and the memo's key and the head it stands
+    at. An entry kept at an older head is brought to this one by the
+    record rows the log holds since (`_advanced_inputs`); with none kept,
+    or one that cannot follow, the inputs are read from the store."""
     key = (str(self._path), self._store_id)
     head = self._memory_head()
     with _DOC_FREQS_LOCK:
         entry = _DOC_FREQS.get(key)
-        if entry is not None and entry.head != head:
-            entry = None
-        if entry is not None:
+        if entry is not None and entry.head == head:
             _DOC_FREQS.move_to_end(key)
+            return entry, False, key, head
     if entry is not None:
-        return entry, False, key, head
+        advanced = _advanced_inputs(self, entry, head)
+        if advanced is not None:
+            return advanced, True, key, head
     return self._read_doc_freq_inputs(head), True, key, head
+
+
+#: The log rows that move the memo's key (`_memory_head`).
+_HEAD_KINDS = ("memory_put", "memory_delete", "home_put", "home_delete", INDEX_REBUILT)
+
+#: Rows an entry follows before the inputs are read again: `changed` and
+#: the work of bringing a term's masks up to date both grow with it.
+_ADVANCE_ROWS = 256
+
+#: Changed rows a term's masks are brought up to date for; past it the
+#: term's two queries are read whole.
+_PATCH_ROWS = 8
+
+#: Rows of a term the patch reads from the lowest changed row number up
+#: before it gives way to the whole read (`_patched_masks`).
+_PATCH_WINDOW = 64
+
+
+def _advanced_inputs(
+    self: Store, entry: _DocFreqInputs, head: tuple[int, str]
+) -> _DocFreqInputs | None:
+    """`entry` brought to `head` by the record rows the log holds after
+    the entry's own head, as a new entry; None when it has to be read
+    from the store instead.
+
+    A `memory_put` or a home row names the record it changed, and a
+    record keeps its row number when it is written again (the upsert), so
+    the rows the log names are read as they stand now and each takes its
+    place: a new row a new position, a changed row its old one under the
+    group its inputs now name. That is what a read of every row would
+    hold, without reading the rows that did not change. Three things are
+    not followed. A `memory_delete` names an id whose row number is gone
+    with the row, and a rebuilt index re-spells the text the terms' hits
+    are read from. An entry read without the digest carries no lengths to
+    keep. And a log whose row at the entry's head no longer carries its
+    MAC is another history."""
+    if entry.lengths is None or entry.group_of is None or entry.length_of is None:
+        return None
+    seq, mac = entry.head
+    if head[0] <= seq:
+        return None
+    conn = self._conn
+    row = conn.execute("SELECT mac FROM log WHERE seq = ?", (seq,)).fetchone()
+    if row is None or str(row[0]) != mac:
+        return None
+    marks = ",".join("?" * len(_HEAD_KINDS))
+    ids: dict[str, None] = {}
+    try:
+        for kind, payload in conn.execute(
+            f"SELECT kind, payload FROM log WHERE kind IN ({marks}) "
+            "AND seq > ? AND seq <= ? ORDER BY seq",
+            (*_HEAD_KINDS, seq, head[0]),
+        ):
+            if kind == "memory_put":
+                record_id = json.loads(payload)["memory"]["id"]
+            elif kind == "home_put":
+                record_id = json.loads(payload)["home"]["record_id"]
+            elif kind == "home_delete":
+                record_id = json.loads(payload)["record_id"]
+            else:
+                return None
+            ids[str(record_id)] = None
+            if len(ids) + len(entry.changed) > _ADVANCE_ROWS:
+                return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    if self.digest_mark(build=False) is None:
+        return None
+    rows: list[tuple[int, str, str | None, str | None, str | None, int]] = []
+    wanted = list(ids)
+    try:
+        for start in range(0, len(wanted), _PROVENANCE_BATCH):
+            chunk = wanted[start : start + _PROVENANCE_BATCH]
+            rows.extend(
+                (int(r[0]), str(r[1]), r[2], r[3], r[4], int(r[5]))
+                for r in conn.execute(
+                    "SELECT d.rid, d.scopes, h.project, d.client, d.model, d.dl "
+                    "FROM digest_records d LEFT JOIN homes h ON h.record_id = d.id "
+                    f"WHERE d.removed = 0 AND d.id IN ({','.join('?' * len(chunk))})",
+                    chunk,
+                )
+            )
+    except sqlite3.Error:
+        return None
+
+    index = dict(entry.index)
+    group_of = array("i", entry.group_of)
+    length_of = array("q", entry.length_of)
+    groups = list(entry.groups)
+    lengths = list(entry.lengths)
+    keys = list(entry.keys)
+    number_of = {key: number for number, key in enumerate(keys)}
+    version = entry.version + 1
+    changed = list(entry.changed)
+    for rid, scopes_text, home_project, client, model, length in rows:
+        scopes = _load_json(scopes_text, None)
+        position = index.get(rid)
+        if position is None:
+            if not isinstance(scopes, list):
+                continue
+            position = len(index)
+            index[rid] = position
+            group_of.append(-1)
+            length_of.append(0)
+        else:
+            was = group_of[position]
+            if was >= 0:
+                had_scopes, had_home, had_actor, mask = groups[was]
+                groups[was] = (had_scopes, had_home, had_actor, mask & ~(1 << position))
+                lengths[was] -= length_of[position]
+            group_of[position] = -1
+            length_of[position] = 0
+        changed.append((version, rid, position))
+        if not isinstance(scopes, list):
+            continue
+        group_key = (scopes_text, home_project, client, model)
+        number = number_of.get(group_key)
+        if number is None:
+            actor = (
+                Actor(client=client, model=model)
+                if (client is not None or model is not None)
+                else None
+            )
+            number = len(groups)
+            number_of[group_key] = number
+            keys.append(group_key)
+            groups.append((list(scopes), home_project, actor, 0))
+            lengths.append(0)
+        now_scopes, now_home, now_actor, mask = groups[number]
+        groups[number] = (now_scopes, now_home, now_actor, mask | (1 << position))
+        lengths[number] += length
+        group_of[position] = number
+        length_of[position] = length
+    with _DOC_FREQS_LOCK:
+        terms = OrderedDict(entry.terms)
+    return _DocFreqInputs(
+        head=head,
+        groups=tuple(groups),
+        index=index,
+        terms=terms,
+        lengths=tuple(lengths),
+        keys=tuple(keys),
+        group_of=group_of,
+        length_of=length_of,
+        version=version,
+        changed=tuple(changed),
+    )
+
+
+def _patched_masks(
+    self: Store, term: str, masks: tuple[int, int, int], entry: _DocFreqInputs
+) -> tuple[int, int, int]:
+    """A term's masks, read at an older version of `entry`, as
+    `Store._term_masks` reads them now: the two bits of each row changed
+    since are set from what the FTS table says of that row.
+
+    The table is asked for the term's rows from the lowest changed row
+    number up, highest first. Written records take the highest numbers,
+    so after a write that is the end of the term's list, which the table
+    reaches without walking the rest: 35 µs for a term 5,500 rows hold,
+    where asking for one row by number walks to it (185 µs) and the whole
+    list takes a millisecond (ten times the owner's store). The term is
+    read whole instead past `_PATCH_ROWS` changed rows, and when more
+    than `_PATCH_WINDOW` of its rows stand at or above the lowest one,
+    which is an old record written again."""
+    body, either, seen = masks
+    rows = dict.fromkeys(
+        (rid, position) for version, rid, position in entry.changed if version > seen
+    )
+    if not rows:
+        return body, either, entry.version
+    if len(rows) > _PATCH_ROWS:
+        return (*self._term_masks(term, entry), entry.version)
+    low = min(rid for rid, _position in rows)
+    quoted = '"' + term.replace('"', '""') + '"'
+
+    def matching(match_expr: str) -> set[int] | None:
+        found = [
+            int(row[0])
+            for row in self._conn.execute(
+                "SELECT rowid FROM memories_fts WHERE memories_fts MATCH ? "
+                "AND rowid >= ? ORDER BY rowid DESC LIMIT ?",
+                (match_expr, low, _PATCH_WINDOW + 1),
+            )
+        ]
+        return None if len(found) > _PATCH_WINDOW else set(found)
+
+    # Either column first, with no column named: a phrase matches inside
+    # one column, so these are the rows `_term_masks` finds in either. A
+    # column filter is applied as the list is walked, so naming a column
+    # the term never occurs in walks the whole list to find nothing; the
+    # body is asked only when a changed row matched at all.
+    in_either = matching(quoted)
+    if in_either is None:
+        return (*self._term_masks(term, entry), entry.version)
+    in_body: set[int] = set()
+    if any(rid in in_either for rid, _position in rows):
+        found_in_body = matching(f"body_fts : {quoted}")
+        if found_in_body is None:
+            return (*self._term_masks(term, entry), entry.version)
+        in_body = found_in_body
+    for rid, position in rows:
+        bit = 1 << position
+        body = body | bit if rid in in_body else body & ~bit
+        either = either | bit if rid in in_either else either & ~bit
+    return body, either, entry.version
 
 
 def _admitted_mask(
@@ -425,25 +698,83 @@ def admitted_rows(
     wanted = [int(r) for r in rowids]
     if not wanted:
         return []
+    return _admitter(self, admit)(wanted)
+
+
+def _admitter(
+    self: Store,
+    admit: Callable[[list[str], str | None, Actor | None], bool],
+) -> Callable[[list[int]], list[int]]:
+    """`admitted_rows` for one predicate, with the memo's inputs brought
+    current here, once: what it returns decides rows from them and reads
+    only the rows they do not hold, so it begins no write."""
     if self._tx_depth or self._conn.in_transaction:
-        return _admitted_rows_read(self, wanted, admit)
+        return lambda wanted: _admitted_rows_read(self, wanted, admit)
     entry, fresh, key, head = _current_inputs(self)
     admitted, _ = _admitted_mask(entry, admit)
     if fresh and self._memory_head() == head:
         self._keep_doc_freqs(key, entry, {}, fresh=True)
     bits = admitted.to_bytes((len(entry.index) + 7) // 8 or 1, "little")
     index = entry.index
-    unknown = [rid for rid in wanted if rid not in index]
-    read = set(_admitted_rows_read(self, unknown, admit)) if unknown else set()
-    out: list[int] = []
-    for rid in wanted:
-        position = index.get(rid)
-        if position is None:
-            if rid in read:
+
+    def decide(wanted: list[int]) -> list[int]:
+        unknown = [rid for rid in wanted if rid not in index]
+        read = set(_admitted_rows_read(self, unknown, admit)) if unknown else set()
+        out: list[int] = []
+        for rid in wanted:
+            position = index.get(rid)
+            if position is None:
+                if rid in read:
+                    out.append(rid)
+            elif bits[position >> 3] & (1 << (position & 7)):
                 out.append(rid)
-        elif bits[position >> 3] & (1 << (position & 7)):
-            out.append(rid)
-    return out
+        return out
+
+    return decide
+
+
+def ranked_admitted_rows(
+    self: Store,
+    text: str,
+    admit: Callable[[list[str], str | None, Actor | None], bool],
+    *,
+    size: int,
+    batch: int,
+) -> list[int]:
+    """The first `size` rows of `ranked_rows(text)` that `admit` admits,
+    from one statement read `batch` rows at a time, so the index ranks
+    the matches once and the rows past the last batch needed are never
+    read. The memo's inputs are brought current before the statement
+    opens (`_admitter`), which may write the digest; nothing writes while
+    it is open (`_ranked_batches`)."""
+    decide = _admitter(self, admit)
+    out: list[int] = []
+    batches = _ranked_batches(self, text, batch)
+    try:
+        for rows in batches:
+            out.extend(decide(rows))
+            if len(out) >= size:
+                break
+    finally:
+        batches.close()
+    return out[:size]
+
+
+def admitted_share(
+    self: Store,
+    admit: Callable[[list[str], str | None, Actor | None], bool],
+) -> tuple[int, int] | None:
+    """How many of the store's memory rows `admit` admits, and how many
+    rows there are, from the document frequency memo's inputs: the
+    predicate runs once per group and no row is read. None inside a
+    transaction, where the memo is not consulted."""
+    if self._tx_depth or self._conn.in_transaction:
+        return None
+    entry, fresh, key, head = _current_inputs(self)
+    admitted, _ = _admitted_mask(entry, admit)
+    if fresh and self._memory_head() == head:
+        self._keep_doc_freqs(key, entry, {}, fresh=True)
+    return admitted.bit_count(), len(entry.index)
 
 
 def _admitted_rows_read(
@@ -483,11 +814,11 @@ def _admitted_rows_read(
 def _keep_doc_freqs(
     key: tuple[str, str],
     entry: _DocFreqInputs,
-    found: dict[str, tuple[int, int]],
+    found: dict[str, tuple[int, int, int]],
     *,
     fresh: bool,
 ) -> None:
-    """Store `entry`, read at the store's current memory head, or add
+    """Store `entry`, made at the store's current memory head, or add
     `found` to the entry already kept at that head."""
     with _DOC_FREQS_LOCK:
         current = _DOC_FREQS.get(key)

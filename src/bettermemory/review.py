@@ -558,7 +558,13 @@ def roster_candidates(
     ids = [i for i in standing_ids(store, admission) if i not in skip]
     if not ids:
         return []
-    memories = [m for m in store.get_many(ids) if excluded_scopes.isdisjoint(m.scopes)]
+    # Read as a ranking reads them: the roster ranks these records and
+    # quotes their bodies, and reads nothing of the signed row.
+    memories = [
+        m
+        for m in store.light_by_ids(ids, seed_tokens=store.index_spelled_here())
+        if excluded_scopes.isdisjoint(m.scopes)
+    ]
     memories.sort(key=lambda m: (m.updated, m.id), reverse=True)
     return memories
 
@@ -583,8 +589,9 @@ def roster_for(
     order) for a write of `content`, restricted to `only` when given.
 
     Each of the write's sentences is ranked against `memories` by the
-    engine (`search.search`, every record returned, the path-drift check
-    off: the roster reads ranks and matched terms, never drift). A record's
+    engine (`search.rank`: the order and matched terms of a search that
+    returns every record, with no hit built, since the roster reads ranks
+    and matched terms and nothing else). A record's
     line is `search._query_biased_snippet` of its body on the terms its
     best-ranked sentence matched, cut at `ROSTER_TEXT_CHARS`, whitespace
     folded; a record no sentence matches shows its head. On a tie of rank
@@ -613,7 +620,7 @@ def roster_for(
     from .handlers.search import _corpus_stats_provider
     from .models import snippet_for
     from .search import _query_biased_snippet
-    from .search import search as run_search
+    from .search import rank
 
     excluded = set(excluded_scopes)
     pool = list(memories)
@@ -628,23 +635,20 @@ def roster_for(
             model_filter=None,
         )
         for sentence in _write_sentences(content):
-            hits = run_search(
+            ranked = rank(
                 pool,
                 sentence,
                 excluded_scopes=excluded,
                 admission=admission,
-                max_results=len(pool),
                 half_life_days=behavior.recency_boost_half_life_days,
                 mode=behavior.search_mode or "hybrid",  # type: ignore[arg-type]
                 corpus_stats_provider=provider,
-                rescue_expansion=False,
                 conversational=behavior.conversational,
-                path_drift=False,
             )
-            for rank, hit in enumerate(hits):
-                key = (rank, -len(hit.match_terms))
-                if hit.id not in best or key < best[hit.id][0]:
-                    best[hit.id] = (key, list(hit.match_terms))
+            for place, (record_id, terms) in enumerate(ranked):
+                key = (place, -len(terms))
+                if record_id not in best or key < best[record_id][0]:
+                    best[record_id] = (key, list(terms))
     lines: list[RosterLine] = []
     for memory in pool:
         if only is not None and memory.id not in only:

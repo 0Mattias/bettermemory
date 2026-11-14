@@ -719,6 +719,65 @@ eighteenth was built.
   read beside the candidates (`Store.records_linking_to`).
   (`_response.py`, `store_records.py`)
 
+- **A write's replaced-claim check scores the likeliest records first
+  (ENG-224).** The supersession detector took from the digest every
+  record that could reach its overlap floor, read each one's tokens and
+  scored each before its rule read the first. Its lists keep five
+  matches by score, so most of that was never used. The digest now
+  answers with each record's shared-token count and no tokens
+  (`Store.digest_shares`), the count bounds the record's score from
+  above (`search_dedup.similarity_bound`), and the records are scored in
+  the order of that bound, 64 at a time: a scored record is handed to
+  the rule once no unscored one can come before it, and the rule stops
+  when a list is full. A body with a change cue still reads every
+  record over the floor, since a replaced claim's later matches are
+  kept by their old value; for it the detector keeps each word's tokens
+  (65,536 words) and reads one token's surface form without mapping the
+  whole body. The report is the full scan's, on the digest's randomized
+  corpora as before and on 360 bodies of the scale bench's stores.
+  (`supersession.py`, `search_dedup.py`, `store_digest.py`,
+  `tests/test_store_digest.py`)
+
+- **The search statistics follow the log instead of the store
+  (ENG-110).** The document frequency memo kept the admission inputs of
+  every record and each term's hits under the log's last record row, so
+  every write, update or import made the next search, hook or write
+  read them all again. A `memory_put` or a home row names the record it
+  changed and a record keeps its row number when written again, so the
+  memo now reads the rows the log names since its head and gives each
+  its place; a term's hits are brought up to date for those rows by
+  asking the full-text table from the lowest changed row number up,
+  which for a written record is the end of the term's list. The rows
+  are read again from the store after a removal (the row number goes
+  with the row), an index rebuild, 256 followed rows, or a log whose
+  row at the memo's head carries another MAC; a term is read whole past
+  eight changed rows or when an old record was written again. The
+  answers are the uncached call's through every kind of change.
+  (`store_index.py`, `store.py`, `tests/test_doc_freq_memo.py`)
+
+- **A request admitted to little of the store ranks its matches once.**
+  A request admitted to less than a quarter of the index's best 800
+  matches read those 800 and then ranked every match again. How much of
+  the store a request admits is known from the statistics' inputs before
+  the index is asked (`Store.admitted_share`). Under a quarter, the
+  whole ranking is read from one statement, 800 rows at a time
+  (`Store.ranked_admitted_rows`); from a quarter up, the best 800 are
+  read first as before, which costs less than the whole ranking where a
+  query matches most of a large store. The pool is the same either way.
+  The statistics' inputs are brought current before that statement
+  opens: a write begun under an open statement fails at once, without
+  waiting for the lock, when another writer has committed since.
+  (`store_index.py`, `handlers/search.py`, `tests/test_search_pool.py`)
+
+- **The standing roster ranks without building hits.** A standing
+  write's roster ranked each of the write's sentences against every
+  standing record in force and built a full hit for each record and
+  sentence to read its rank and matched terms, over records loaded with
+  their signed rows. `search.rank` returns the order and matched terms
+  of that search with no hit built, and the records are read as a
+  ranking reads them. The lines are unchanged. (`search.py`,
+  `review.py`, `tests/test_search_pool.py`)
+
 - **A numeric config key refuses a boolean (ENG-221).** Python counts a
   boolean as an integer, so `true` written for a key that takes a number
   (`cold_endorsement_ratio_threshold = true`, `port = true`) loaded as 1,

@@ -168,9 +168,9 @@ MAX_SEARCH_RESULTS = 50
 #: pool's own length average) read 91.9% and 31.5% in 21.2 ms.
 POOL_SIZE = 200
 
-#: Row numbers asked of the index before the pool reads every match: four
-#: pools' worth, so a request that admits a quarter of what matches fills
-#: its pool from the one bounded read.
+#: Row numbers read from the index at a time: four pools' worth, so a
+#: request that admits a quarter of what matches fills its pool from the
+#: first read.
 _FIRST_READ = 4 * POOL_SIZE
 
 
@@ -301,12 +301,23 @@ def _admitted_candidates(
                 break
             offset += len(newest)
     else:
-        ranked = store.ranked_rows(query, limit=_FIRST_READ)
-        rows = store.admitted_rows(ranked, admit)
-        if len(rows) < size and len(ranked) == _FIRST_READ:
-            # The request admits less than a quarter of the best matches:
-            # admit among every match instead.
-            rows = store.admitted_rows(store.ranked_rows(query), admit)
+        # The index's best `_FIRST_READ` rows cost less than its whole
+        # ranking, which sorts every match (62 ms against 85 ms for a
+        # query 90,000 records match), and fill the pool of a request
+        # that admits a quarter of the store or more. One that admits
+        # less would find them short and rank the matches a second time,
+        # so it reads the whole ranking from the start, a batch at a
+        # time. The rows and their order are the same either way.
+        share = store.admitted_share(admit)
+        wide = share is None or share[0] * _FIRST_READ >= size * share[1]
+        if wide:
+            ranked = store.ranked_rows(query, limit=_FIRST_READ)
+            rows = store.admitted_rows(ranked, admit)
+            wide = len(rows) >= size or len(ranked) < _FIRST_READ
+        if not wide:
+            rows = store.ranked_admitted_rows(
+                query, admit, size=size, batch=_FIRST_READ
+            )
     return store.light_many(rows[:size], seed_tokens=store.index_spelled_here())
 
 
