@@ -37,26 +37,25 @@ merely phrasing and the guidance is the cheaper fix. Reporting only
 asked-vs-requery would leave that ambiguous, which is exactly how a
 measurement becomes a talking point.
 
-THE THRESHOLD, AND THE TWO KNOBS THAT REACH IT. The default corpus sits
-below `_INDEX_THRESHOLD_DEFAULT` (500), so retrieval scores the whole
-corpus. Above that threshold production prefilters through SQLite bm25
-and every other ranker only REORDERS that top-50 — no ranker can
-surface a document bm25 never nominated. The 3.29.0 default flip
-was justified entirely by a below-threshold measurement, which is the
-sharpest fair criticism of it.
+THE POOL, AND THE TWO KNOBS THAT REACH IT. Production ranks a pool:
+the `POOL_SIZE` records SQLite's bm25 ranks best for the query, and every
+other ranker only REORDERS that pool — no ranker can surface a document
+bm25 never nominated. Before 9.0.0rc19 the pool was 50 rows, drawn only
+on a store of 500 memories or more; the artifacts of that time name the
+threshold they ran under.
 
-Reaching the other regime takes BOTH knobs, and conflating them is how
-this runner spent four published artifacts measuring the wrong thing:
+Two knobs, and conflating them is how this runner spent four published
+artifacts measuring the wrong thing:
 
-  --pad-to N     grows the CORPUS past the threshold. Padding changes
-                 the corpus, so a padded run is reported as its own row
-                 and never merged with an unpadded one.
+  --pad-to N     grows the CORPUS, so the pool is a smaller share of it.
+                 Padding changes the corpus, so a padded run is reported
+                 as its own row and never merged with an unpadded one.
   --prefilter    picks the CODE PATH. Default `off` ranks the full
                  corpus in-process. `on` drives production's own loader
                  (`handlers.search.resolve_search_pool`), so bm25
-                 nominates the pool and corpus-IDF prices the terms.
+                 nominates the pool and the store's statistics price it.
 
-`--pad-to` alone measures dilution, not prefiltering: the pool is still
+`--pad-to` alone measures dilution, not the pool: the off arm still ranks
 the whole corpus. `--prefilter both` runs the same queries against the
 same store twice and reports the paired difference, which is the only
 form in which the prefilter's recall cost is a measurement rather than
@@ -68,7 +67,7 @@ Usage:
 
     venv/bin/python bench/retrieval/run.py                  # both arms
     venv/bin/python bench/retrieval/run.py --json           # machine-readable
-    venv/bin/python bench/retrieval/run.py --pad-to 600     # above-threshold
+    venv/bin/python bench/retrieval/run.py --pad-to 600     # a diluted corpus
     venv/bin/python bench/retrieval/run.py --arms lexical   # skip the model
     venv/bin/python bench/retrieval/run.py --pad-to 600 --prefilter both
 """
@@ -78,7 +77,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import random
 import shutil
 import sys
@@ -99,11 +97,10 @@ if str(_BENCH) not in sys.path:
 
 
 from interval import min_n_for, read_delta, wilson  # noqa: E402
-from bettermemory._handlers import (  # noqa: E402
-    _PREFILTER_CAP,
-    resolve_index_threshold,
+from bettermemory.handlers.search import (  # noqa: E402
+    POOL_SIZE,
+    resolve_search_pool,
 )
-from bettermemory.handlers.search import resolve_search_pool  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.store import Store  # noqa: E402
 
@@ -114,25 +111,9 @@ _HERE = Path(__file__).resolve().parent
 CORPUS = _HERE / "corpus.jsonl"
 QUESTIONS = _HERE / "questions.jsonl"
 
-# Mirrors `_handlers._INDEX_THRESHOLD_DEFAULT`. Duplicated rather than
-# imported because the point is to report which REGIME a run was in, and
-# a silent import drift would make the label wrong without failing.
-# tests/test_bench_retrieval.py cross-pins the two.
-INDEX_THRESHOLD = 500
-
-# `_PREFILTER_CAP` gets the opposite treatment — imported, not copied.
-# INDEX_THRESHOLD labels a run, so a silent drift there would mislabel a
-# result and must be caught by a test; the cap is a measured property of
-# the pool the prefilter actually served, so the artifact should follow
-# production wherever it moves rather than record a stale 50.
-PREFILTER_CAP = _PREFILTER_CAP
-
-# The env var `_handlers.resolve_index_threshold()` re-reads on EVERY
-# search, so `--index-threshold` can flip the regime with no rebuild.
-# Written inside `main()` ONLY: tests/test_bench_retrieval.py exec's this
-# module at pytest COLLECTION time, so a module-scope write would leak
-# the prefilter regime into every other test in the session.
-INDEX_THRESHOLD_ENV = "BETTERMEMORY_INDEX_THRESHOLD"
+# The pool's size is imported, not copied: it is a property of the pool
+# production serves, so the artifact follows it wherever it moves.
+PREFILTER_CAP = POOL_SIZE
 
 # Whether the arms rank with the 5.1 rescue-expansion repairs
 # (`search.search(rescue_expansion=...)`). Module-level and defaulting
@@ -461,22 +442,15 @@ def run_arm_prefiltered(
 
     `run_arm` hands `search.search` a list someone else built. Production
     never does that: `memory_search` and both silent-miss producers go
-    through `handlers.search.resolve_search_pool`, which above the index
-    threshold serves a bm25-nominated slice capped at `PREFILTER_CAP` and
-    hands back a corpus-statistics provider so term rarity is still
+    through `handlers.search.resolve_search_pool`, which serves the
+    `PREFILTER_CAP` records bm25 ranks best and hands back a
+    corpus-statistics provider so term rarity and length are still
     priced against the whole store. Driving that call is the entire
     difference between this arm and the other one, and `--pad-to` alone
     never crossed it.
 
-    THE FILTERS STAY NONE, AND THAT IS LOAD-BEARING. `resolve_search_pool`
-    runs a cap-starvation guard that reloads the full corpus and clears
-    the prefiltered flag when a post-cap filter leaves too few survivors.
-    That guard is gated on an admission (`admission.Admission`) or
-    `excluded_scopes` being set, so passing either "to look more like
-    production" would let a saturated slice silently turn this arm
-    back into `run_arm`, and the report would print prefilter numbers
-    that are not. `min_survivors` is required by the signature and
-    unreachable for the same reason.
+    The filters stay None: the corpus has one writer and no project, so
+    the arm measures the pool and not an admission.
     """
     result = ArmResult(arm=arm, probe=probe, prefilter=True)
     for q in questions:
@@ -489,15 +463,10 @@ def run_arm_prefiltered(
             query,
             scopes=None,
             excluded_scopes=None,
-            min_survivors=max(K_VALUES),
         )
-        # An exact IFF, not a heuristic: `resolve_search_pool` attaches a
-        # corpus-statistics provider if and only if the FTS path served
-        # the pool. Every fallback (empty query, store count below the
-        # threshold, empty FTS match set, every candidate unloadable, and
-        # the starvation reload) returns the full corpus with the flag
-        # clear, and every one of them looks like a successful cheap
-        # search from here.
+        # A pool always carries its corpus-statistics provider. One that
+        # does not was not drawn by production's loader, and would score
+        # like the other arm under this one's heading.
         if pool.corpus_stats_provider is None:
             result.unengaged.append(query)
         else:
@@ -597,8 +566,7 @@ def engagement_failure(store: Store, rows: list[ArmResult]) -> str | None:
     lines = [
         "PREFILTER NEVER ENGAGED — this run measured the full corpus "
         "while reporting it as prefiltered. Refusing to emit.",
-        f"  store: memories={store.count_memories()} "
-        f"(threshold in force: {resolve_index_threshold()})",
+        f"  store: memories={store.count_memories()}",
     ]
     for r in failed:
         if not r.n:
@@ -611,11 +579,6 @@ def engagement_failure(store: Store, rows: list[ArmResult]) -> str | None:
             f"  {r.arm}/{r.probe}: {len(r.unengaged)}/{r.n} queries fell back, "
             f"first: {r.unengaged[0]!r}"
         )
-    lines.append(
-        "  If memories is below the threshold, pass --pad-to 600 or "
-        "--index-threshold N. If it is above, the FTS match set was empty "
-        "for those queries or the candidates would not load."
-    )
     return "\n".join(lines)
 
 
@@ -636,9 +599,8 @@ def _format_text(
     # this addition is not allowed to make old output look changed.
     show_pool = any(r.prefilter for r in rows)
     out = [
-        f"corpus: {name} — {corpus_n} memories "
-        f"({'ABOVE' if corpus_n >= INDEX_THRESHOLD else 'below'} the "
-        f"{INDEX_THRESHOLD}-memory index threshold)",
+        f"corpus: {name} — {corpus_n} memories (a search ranks a pool of "
+        f"{PREFILTER_CAP})",
         "",
     ]
     if show_pool:
@@ -841,8 +803,8 @@ def main() -> int:
         type=int,
         default=None,
         help=(
-            f"Pad the corpus with filler to N memories, to measure the "
-            f"above-{INDEX_THRESHOLD} prefilter regime. Reported separately."
+            "Pad the corpus with filler to N memories, so the pool is a "
+            "smaller share of it. Reported separately."
         ),
     )
     parser.add_argument(
@@ -854,18 +816,6 @@ def main() -> int:
             "in-process and reproduces the pre-3.30 artifacts. 'on' drives "
             "production's resolve_search_pool, so bm25 nominates the pool. "
             "'both' runs the same queries twice and reports the difference."
-        ),
-    )
-    parser.add_argument(
-        "--index-threshold",
-        type=int,
-        default=None,
-        help=(
-            f"Override {INDEX_THRESHOLD_ENV} for this run, to reach the "
-            f"prefilter regime without padding the corpus. Must be > 0: "
-            f"resolve_index_threshold() silently falls back to "
-            f"{INDEX_THRESHOLD} at <= 0, which would quietly measure the "
-            f"wrong regime."
         ),
     )
     parser.add_argument(
@@ -991,23 +941,6 @@ def main() -> int:
     notes: list[str] = []
     modes = {"off": [False], "on": [True], "both": [False, True]}[args.prefilter]
 
-    if args.index_threshold is not None:
-        if args.index_threshold <= 0:
-            print(
-                f"--index-threshold must be > 0; resolve_index_threshold() "
-                f"treats <= 0 as unset and falls back to {INDEX_THRESHOLD}, "
-                f"so the run would silently measure the wrong regime.",
-                file=sys.stderr,
-            )
-            return 1
-        # Function-scoped on purpose — see INDEX_THRESHOLD_ENV.
-        os.environ[INDEX_THRESHOLD_ENV] = str(args.index_threshold)
-        notes.append(
-            f"{INDEX_THRESHOLD_ENV} forced to {args.index_threshold} for this "
-            f"run, so the prefilter regime was reached without padding. "
-            f"Production's threshold is {INDEX_THRESHOLD}."
-        )
-
     if "semantic" in arms:
         arms = [a for a in arms if a != "semantic"]
         notes.append(
@@ -1083,27 +1016,22 @@ def main() -> int:
 
     deltas = paired_deltas(rows)
 
-    if corpus_n >= INDEX_THRESHOLD and args.prefilter == "off":
+    if corpus_n > PREFILTER_CAP and args.prefilter == "off":
         # Gated: with a prefiltered arm in the report this note is simply
         # false, and a stale caveat that contradicts the artifact beside
         # it is worse than no caveat.
         notes.append(
-            "corpus is above the index threshold, but this runner ranks the "
-            "full corpus — production would prefilter through SQLite bm25 "
-            "first. Treat this as an upper bound."
+            "this runner ranked the full corpus — production ranks the "
+            f"{PREFILTER_CAP} records SQLite bm25 ranks best. Treat this as "
+            "an upper bound."
         )
     if True in modes:
         notes.append(
             "prefilter=on drives the production handler path "
-            "(handlers.search.resolve_search_pool): the FTS5 candidate slice "
-            f"capped at {PREFILTER_CAP}, ranked with the corpus-IDF provider. "
-            "Every question was checked for engagement; the run exits "
-            "non-zero if any pool came back un-prefiltered."
-        )
-        notes.append(
-            "scope, repo, worktree and excluded-scope filters are all unset, "
-            "so the cap-starvation guard cannot reload the full corpus and "
-            "silently turn the on-arm into the off-arm."
+            "(handlers.search.resolve_search_pool): the FTS5 pool of "
+            f"{PREFILTER_CAP}, ranked with the store's statistics. Every "
+            "question was checked for its provider; the run exits non-zero "
+            "if any pool came back without one."
         )
     if deltas:
         baseline = None
@@ -1152,9 +1080,6 @@ def main() -> int:
                     "questions": questions_path.name,
                     "questions_sha256": corpus_fingerprint(questions_path),
                     "questions_n": len(questions),
-                    "index_threshold": INDEX_THRESHOLD,
-                    "index_threshold_forced": args.index_threshold,
-                    "above_threshold": corpus_n >= INDEX_THRESHOLD,
                     "padded": bool(args.pad_to),
                     "prefilter_mode": args.prefilter,
                     "prefilter_cap": PREFILTER_CAP,

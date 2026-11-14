@@ -781,9 +781,9 @@ def test_find_similar_comparable_pair_widened_related_band_is_deliberate() -> No
 # Corpus-wide IDF for prefiltered candidate pools
 # ---------------------------------------------------------------------------
 #
-# Above `_INDEX_THRESHOLD_DEFAULT` the search path hands the ranker at most
-# `_PREFILTER_CAP` candidates, every one of them selected BECAUSE it matched
-# the query. Counting document frequency over that pool makes the query's own
+# The search path hands the ranker a pool of at most
+# `handlers.search.POOL_SIZE` candidates, every one of them selected BECAUSE
+# it matched the query. Counting document frequency over that pool makes the query's own
 # discriminative terms look ubiquitous — df approaches N by construction — and
 # Okapi IDF collapses toward zero for exactly the terms that should dominate.
 # `compute_idf(corpus_stats=…)` restores the real denominator.

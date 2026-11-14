@@ -418,47 +418,79 @@ def _select_brief(
     nothing."""
     # Imported here: the handlers import this module's word table
     # (`handlers.questions`), so a module-level import would be a cycle.
-    from .handlers.search import default_search_width, resolve_search_pool
+    from .handlers.search import POOL_SIZE, resolve_search_pool
 
-    pool = resolve_search_pool(
-        store,
-        probe,
-        excluded_scopes=set(),
-        admission=admission.on(POOL_PREFILTER),
-        min_survivors=default_search_width(cfg.behavior),
-    )
     standing_ids = _standing.standing_ids(store, admission)
-    standing = _delivered(store, store.load_many(standing_ids) if standing_ids else [])
-    excluded = set(standing_ids)
-    admission.prime([memory.id for memory in pool.memories])
-    work = _delivered(
+    standing = _delivered(
         store,
-        [
-            memory
-            for memory in pool.memories
-            if memory.id not in excluded and admission.admits_id(memory.id)
-        ],
+        store.light_by_ids(standing_ids, seed_tokens=store.index_spelled_here())
+        if standing_ids
+        else [],
     )
-    if standing is None or work is None:
+    if standing is None:
         return _BriefSelection([], [], _ranked_by(probe))
+    excluded = set(standing_ids)
+    prefilter = admission.on(POOL_PREFILTER)
+    pool = resolve_search_pool(store, probe, excluded_scopes=set(), admission=prefilter)
+    # WORK is drawn from the probe's pool and from the newest admitted
+    # records, which fill the places the ranker leaves whatever the probe
+    # matches (every place when it is empty). The newest are read a pool's
+    # worth at a time, until `BRIEF_WORK` of them can be delivered or
+    # there are no more: a store's worth is never read to show eight.
+    size = POOL_SIZE
     forced: dict[str, InForce] = {}
-    if standing or work:
-        forced = in_force(
-            store, [memory.id for memory in [*standing, *work]], admission
+    while True:
+        newest = (
+            resolve_search_pool(
+                store, "", excluded_scopes=set(), admission=prefilter, size=size
+            ).memories
+            if probe.strip() or size != POOL_SIZE
+            else pool.memories
         )
-    if work:
-        # History yields to its head, and a record held out of force
-        # (ENG-200) is not delivered: a held standing record is out of the
-        # standing list, so it reaches here, and is dropped.
-        work = [
-            memory
-            for memory in work
-            if not forced[memory.id].history and not forced[memory.id].held
+        ranked = {memory.id for memory in pool.memories} if probe.strip() else set()
+        rows = [
+            *(pool.memories if probe.strip() else []),
+            *(memory for memory in newest if memory.id not in ranked),
         ]
-        contradicted = store.contradicted_at([memory.id for memory in work])
-        work = [
-            memory for memory in work if not _contradiction_open(memory, contradicted)
-        ]
+        admission.prime([memory.id for memory in rows])
+        found = _delivered(
+            store,
+            [
+                memory
+                for memory in rows
+                if memory.id not in excluded and admission.admits_id(memory.id)
+            ],
+        )
+        if found is None:
+            return _BriefSelection([], [], _ranked_by(probe))
+        work = found
+        forced = {}
+        if standing or work:
+            forced = in_force(
+                store, [memory.id for memory in [*standing, *work]], admission
+            )
+        if work:
+            # History yields to its head, and a record held out of force
+            # (ENG-200) is not delivered: a held standing record is out of
+            # the standing list, so it reaches here, and is dropped.
+            work = [
+                memory
+                for memory in work
+                if not forced[memory.id].history and not forced[memory.id].held
+            ]
+            contradicted = store.contradicted_at([memory.id for memory in work])
+            work = [
+                memory
+                for memory in work
+                if not _contradiction_open(memory, contradicted)
+            ]
+        fresh = {memory.id for memory in newest}
+        if (
+            len(newest) < size
+            or sum(1 for memory in work if memory.id in fresh) >= BRIEF_WORK
+        ):
+            break
+        size *= 4
     if not standing and not work:
         # Withheld means not admitted: a deliverable record of the
         # caller's own project that the pool's slice over the probe did

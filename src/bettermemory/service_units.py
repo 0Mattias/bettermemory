@@ -109,8 +109,7 @@ PINNED_PATH_VARIABLES: tuple[str, ...] = (
 #: Variables carried over as they are. PATH because the daemon runs
 #: `git` by name (`_git`), and launchd's PATH is /usr/bin:/bin:/usr/sbin:
 #: /sbin: a git the user installed elsewhere would be missed.
-#: BETTERMEMORY_FLOCK_TIMEOUT tunes the daemon's own lock waits, and
-#: BETTERMEMORY_INDEX_THRESHOLD its searches (`_handlers`), which a
+#: BETTERMEMORY_FLOCK_TIMEOUT tunes the daemon's own lock waits, which a
 #: spawned daemon inherits from the shell that started it. The
 #: identity variables (BETTERMEMORY_CLIENT, _CLIENT_VERSION, _MODEL,
 #: _WORKSPACE) are left out on purpose: they describe the client a
@@ -119,7 +118,6 @@ PINNED_PATH_VARIABLES: tuple[str, ...] = (
 #: spawned daemon's environment.
 PINNED_VARIABLES: tuple[str, ...] = (
     "BETTERMEMORY_FLOCK_TIMEOUT",
-    "BETTERMEMORY_INDEX_THRESHOLD",
     "PATH",
 )
 

@@ -642,12 +642,16 @@ class Store:
             _claim_key_ring(keyring, path, store_id)
             with contextlib.suppress(OSError):
                 os.chmod(path, 0o600)
+            # A new store is born with its digest, empty, so every later
+            # call only applies the rows it is behind by.
+            store.digest_mark()
             return store
         except Exception:
             conn.close()
             raise
 
     @classmethod
+    @_digest.keeps_digest
     @_index.reconciles_tokenizer
     def open(
         cls,
@@ -1499,6 +1503,7 @@ class Store:
     iter_memory_rows = _records.iter_memory_rows
     memory_ids = _records.memory_ids
     count_memories = _records.count_memories
+    has_memories = _records.has_memories
     filename_for = _records.filename_for
     tombstone = _records.tombstone
     put_tombstone = _records.put_tombstone
@@ -1519,6 +1524,10 @@ class Store:
     load_one = _records.load_one
     show = _records.show
     load_many = _records.load_many
+    light_many = _records.light_many
+    light_by_ids = _records.light_by_ids
+    records_linking_to = _records.records_linking_to
+    standing_candidate_ids = _records.standing_candidate_ids
     load_all = _records.load_all
     iter_active = _records.iter_active
     list_summaries = _records.list_summaries
@@ -1536,6 +1545,9 @@ class Store:
     digest_memo = _digest.digest_memo
     digest_candidates = _digest.digest_candidates
     digest_scope_groups = _digest.digest_scope_groups
+    digest_admission_rows = _digest.digest_admission_rows
+    digest_ambient_ids = _digest.digest_ambient_ids
+    digest_unanswered_ids = _digest.digest_unanswered_ids
     light_records = _digest.light_records
     bodies_of = _digest.bodies_of
 
@@ -1624,6 +1636,11 @@ class Store:
 
     # The search seams and the document frequency memo (store_index.py).
     query_candidates = _index.query_candidates
+    ranked_rows = _index.ranked_rows
+    admitted_rows = _index.admitted_rows
+    newest_rows = _index.newest_rows
+    rows_updated_since = _index.rows_updated_since
+    index_spelled_here = _index.index_spelled_here
     links_for_many = _index.links_for_many
     inbound_links = _index.inbound_links
     _memory_head = _index._memory_head
@@ -1632,6 +1649,7 @@ class Store:
     declared_scopes = _index.declared_scopes
     pending_conflict_pairs = _index.pending_conflict_pairs
     contradicted_at = _index.contradicted_at
+    negative_uses = _index.negative_uses
 
     # Provenance and trust (store_provenance.py).
     provenance_for = _provenance.provenance_for
@@ -1667,7 +1685,8 @@ class Store:
         if not unique:
             return None
         if memoised and not (self._tx_depth or self._conn.in_transaction):
-            return self._memoised_document_frequencies(unique, admit)
+            found = self._memoised_document_frequencies(unique, admit)
+            return None if found is None else found[:3]
         admitted: set[str] = set()
         for row in self._conn.execute(_ADMISSION_INPUTS):
             client = row["actor_client"]
@@ -1708,23 +1727,62 @@ class Store:
                 scope_df[term] = len(any_hits)
         return len(admitted), body_df, scope_df
 
+    def ranking_statistics(
+        self,
+        terms: Sequence[str],
+        *,
+        admit: Callable[[list[str], str | None, Actor | None], bool],
+    ) -> tuple[int, dict[str, int], dict[str, int], float | None] | None:
+        """What a ranking prices its BM25 leg with, over the collection
+        `admit` admits: `document_frequencies(terms, admit=admit,
+        memoised=True)` and, fourth, the average BM25 length of the
+        admitted records (`search_bm25.compute_idf`'s ``avgdl`` over that
+        collection), read from the digest. The average is None where the
+        digest did not answer (a store this open may not write, a digest
+        not built yet) and inside a transaction; the ranking then takes
+        the average of the pool it was handed."""
+        unique = sorted({t for t in terms if t})
+        if not unique:
+            return None
+        if self._tx_depth or self._conn.in_transaction:
+            found = self.document_frequencies(unique, admit=admit)
+            return None if found is None else (*found, None)
+        return self._memoised_document_frequencies(unique, admit)
+
     def _read_doc_freq_inputs(self, head: tuple[int, str]) -> _DocFreqInputs:
         """Every memory row's admission inputs, as the uncached
-        `document_frequencies` reads them, grouped by equal inputs."""
-        index: dict[str, int] = {}
+        `document_frequencies` reads them, grouped by equal inputs. Read
+        from the digest's rows with each row's BM25 length where the
+        digest answers (`Store.digest_admission_rows`), and from the
+        memory rows, with no lengths, where it does not."""
+        index: dict[int, int] = {}
         grouped: dict[
             tuple[Any, ...], tuple[list[str], str | None, Actor | None, list[int]]
         ] = {}
-        for row in self._conn.execute(_ADMISSION_INPUTS):
-            scopes = _load_json(row["scopes_json"], None)
+        totals: dict[tuple[Any, ...], int] = {}
+        digest = self.digest_admission_rows()
+        rows: Iterable[tuple[int, str, str | None, str | None, str | None, int]]
+        if digest is not None:
+            rows = digest
+        else:
+            rows = (
+                (
+                    int(row["rid"]),
+                    str(row["scopes_json"]),
+                    row["home_project"],
+                    row["actor_client"],
+                    row["actor_model"],
+                    0,
+                )
+                for row in self._conn.execute(_ADMISSION_INPUTS)
+            )
+        for rid, scopes_text, home_project, client, model, length in rows:
+            scopes = _load_json(scopes_text, None)
             if not isinstance(scopes, list):
                 continue
             position = len(index)
-            index[str(row["id"])] = position
-            home_project = row["home_project"]
-            client = row["actor_client"]
-            model = row["actor_model"]
-            group_key = (row["scopes_json"], home_project, client, model)
+            index[rid] = position
+            group_key = (scopes_text, home_project, client, model)
             group = grouped.get(group_key)
             if group is None:
                 actor = (
@@ -1734,7 +1792,9 @@ class Store:
                 )
                 group = (list(scopes), home_project, actor, [])
                 grouped[group_key] = group
+                totals[group_key] = 0
             group[3].append(position)
+            totals[group_key] += length
         return _DocFreqInputs(
             head=head,
             groups=tuple(
@@ -1743,27 +1803,29 @@ class Store:
             ),
             index=index,
             terms=OrderedDict(),
+            lengths=tuple(totals.values()) if digest is not None else None,
         )
 
     def _term_masks(self, term: str, inputs: _DocFreqInputs) -> tuple[int, int]:
         """The rows of `inputs` whose body matches `term`, and whose body
-        or scopes do, by the uncached call's two FTS queries."""
+        or scopes do. Each is read from the FTS table alone, by row
+        number: a phrase matches inside one column, so the rows matching
+        in either column are the rows the unfiltered query finds."""
 
         def rows_matching(match_expr: str) -> int:
             positions = []
-            for r in self._conn.execute(
-                "SELECT m.id AS id FROM memories m "
-                "JOIN memories_fts f ON f.rowid = m.rowid "
-                "WHERE memories_fts MATCH ?",
+            for (rid,) in self._conn.execute(
+                "SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?",
                 (match_expr,),
             ):
-                position = inputs.index.get(str(r["id"]))
+                position = inputs.index.get(int(rid))
                 if position is not None:
                     positions.append(position)
             return _row_mask(positions, len(inputs.index))
 
         quoted = '"' + term.replace('"', '""') + '"'
-        return rows_matching(f"body_fts : {quoted}"), rows_matching(quoted)
+        in_body = rows_matching(f"body_fts : {quoted}")
+        return in_body, in_body | rows_matching(f"scopes_fts : {quoted}")
 
     def scope_counts(
         self, *, admit: Callable[[list[str], str | None], bool]

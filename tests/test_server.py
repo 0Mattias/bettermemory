@@ -740,26 +740,21 @@ async def test_search_since_prior_session_default_false_keeps_old_shape(
     assert len(hits) == 1
 
 
-async def test_search_since_prior_session_bypasses_fts_prefilter_cap(
+async def test_search_since_prior_session_reads_past_the_querys_pool(
     memory_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression: on stores large enough to engage the FTS5 prefilter,
-    `since_prior_session=True` must NOT route through the prefilter — it
-    caps candidates at 50 by query relevance, which would silently drop
-    a newly-written matching memory ranked outside the cap. Fix: when
-    `since_prior_session=True`, the handler calls `load_all` directly
-    and applies the boundary filter to the full corpus."""
-    # Force the FTS prefilter into a tiny-cap regime so we can engage
-    # it without writing thousands of memories. Threshold of 1 means
-    # any non-empty index triggers the prefilter path.
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    """Regression: `since_prior_session=True` must NOT draw its candidates
+    by the query. A pool holds the query's best matches, which would
+    silently drop a newly-written matching memory ranked outside it. The
+    handler reads the records changed since the boundary through the
+    index on `updated` instead, whatever they say."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     # Session A: write a bunch of memories that all match "zzz" so they
-    # crowd the FTS prefilter's top-50 rows. These all predate the
+    # rank ahead of the later write for the query. These all predate the
     # session boundary, so the boundary filter would drop them anyway —
-    # they exist purely to fill the prefilter cap. `force=True` skips
+    # they exist purely to crowd the query's best matches. `force=True` skips
     # the similarity-dedup check that would otherwise stage these as
     # pending writes (they're intentionally near-duplicates).
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
@@ -802,7 +797,7 @@ async def test_search_since_prior_session_bypasses_fts_prefilter_cap(
         )
     )
     ids = [h["id"] for h in hits]
-    # The session-B write must surface despite the prefilter cap.
+    # The session-B write must surface however the query ranks it.
     assert written_b["id"] in ids
     # No session-A memory should leak through — they all predate the
     # boundary.
@@ -1079,19 +1074,13 @@ async def test_search_depends_on_resolved_targeted_loads_cross_topic_target(
     server: Any, monkeypatch: Any
 ) -> None:
     """Cross-topic depends_on auto-pull. Pre-fix: the side-map built
-    from the FTS prefilter (cap 50 query-relevant rows) silently
+    from the search's pool (the records the query matches) silently
     skipped depended-on targets whose body didn't match the query —
     exactly the auto-pull case that exists because B depends_on A
     when A provides context the query for B won't surface. Post-fix:
     `attach_depends_on_resolved` calls `store.load_one` for missing
     target ids and merges them into the side-map.
-
-    Forcing the FTS prefilter via `BETTERMEMORY_INDEX_THRESHOLD=1`
-    is what actually exercises the targeted-load path: at default
-    threshold (500) the store falls back to `load_all` which
-    includes A in the side-map even when the query doesn't match.
     """
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     target = await _call(
         server,
         "memory_write",
@@ -1140,7 +1129,6 @@ async def test_search_depends_on_resolved_targeted_load_honors_disabled_scope(
     same `excluded_scopes` filter that the side-map path applies has
     to run at load time, otherwise the targeted-load reintroduces
     the scope-leak."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     target = await _call(
         server,
         "memory_write",
@@ -1187,7 +1175,6 @@ async def test_search_depends_on_resolved_targeted_load_honors_cross_project_ori
     fallback when the caller is auto-scoped to its own project: the
     LINKS admission (design 3.5) re-runs at load time, mirroring the
     side-map path."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     # Write the cross-project target standing in checkout bar. Body is
@@ -1242,7 +1229,6 @@ async def test_search_depends_on_resolved_max_total_caps_across_hits(
     not exceed 10. Pins the cap that the new targeted-load path
     must respect; closes the side observation that no test
     previously locked this cross-hit cap down."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     # Build 5 hits, each with 5 distinct cross-topic depends_on
     # targets (25 targets total). Pre-fix: most would silently drop
     # because they're cross-topic. Post-fix: targeted-load surfaces
@@ -1296,7 +1282,6 @@ async def test_search_depends_on_resolved_targeted_load_skips_deleted_target(
     leave the resolved list empty (or omit it entirely) — same
     behaviour as the pre-existing prefilter-miss skip. No crash, no
     half-loaded entry."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     target = await _call(
         server,
         "memory_write",

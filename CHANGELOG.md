@@ -630,6 +630,83 @@ eighteenth was built.
   (`store_events.py`, `store.py`, `handlers/search.py`,
   `tests/test_events_naming.py`)
 
+- **A search ranks the 200 best matches the caller is admitted to, at
+  every store size (ENG-110).** A store of fewer than 500 records was
+  loaded whole for each search. From 500 the full-text index drew 50
+  rows by its own rank, the request's filter ran on them afterwards, and a
+  filter that left fewer rows than the request's width loaded the whole
+  store. The 50 rows were priced with their own length average, and
+  they are the records that match the query, which run longer than the
+  collection. Now the index ranks every match from the index alone, the
+  rows are put through the request's filter in that order (scopes,
+  excluded scopes, the membership admission, the writer filters) from
+  the admission inputs the store keeps for its statistics, and the
+  first 200 that pass are read as a ranking reads them. Only the hits a
+  search returns are read in full. A query that matches nothing loads
+  nothing; an empty query pools the newest 200 admitted records; and
+  `since_prior_session` reads the records updated since the boundary
+  through the index on `updated`. The collection's size, each term's
+  document frequency and the average BM25 length all come from the
+  store, over the collection the same filter admits; each record's
+  length is kept in the digest. A candidate's token streams are split
+  from its row's index text while the index is spelled by this build's
+  tokenizer, and its term counts are kept with them, so a search no
+  longer tokenises or counts the bodies it ranks. On 1,266 distinct
+  searches the owner's sessions made, replayed over a copy of his store
+  (1,369 records) against a ranking of every record, the pool's top hit
+  is the whole store's in 99.2% and its whole list in 84.0%, in a
+  median 16.2 ms; the pool it replaces read 91.9% and 31.5% in 21.2 ms
+  (the replay of `bench/parity/private.py`, 2026-11-12; the store is
+  private, so the table stands at `handlers.search.POOL_SIZE`). On
+  `bench/retrieval`'s 600-document corpus the pool holds every
+  question's gold document and recall@5 is the whole-corpus ranking's
+  on each of the three probes, 0.85, 1.0 and 0.75
+  (`bench/retrieval/results/shipped-pool-padded600-2026-11-12.json`).
+  The silent-miss probe ranks the same pool, and an index that matches
+  nothing in a store that holds records reports its query, as every
+  branch that reached the ranker does. `BETTERMEMORY_INDEX_THRESHOLD` is
+  no longer read and the service units no longer pin it.
+  `resolve_search_pool` takes `size` and no `min_survivors`;
+  `load_search_candidates`, `resolve_index_threshold` and
+  `default_search_width` are removed with the tests of the threshold
+  and the reload. The digest's rows gain the length, the writer, the
+  category and the body's sha256, so an existing store's digest is built
+  once more, at the owner's next open and no longer at its first write.
+  (`handlers/search.py`, `store_index.py`, `store_records.py`,
+  `store_digest.py`, `store.py`, `search.py`, `search_bm25.py`,
+  `audit.py`, `recall_settle.py`, `service_units.py`,
+  `tests/test_search_pool.py`, `tests/test_store_digest.py`)
+
+- **The rejection note reads the window's negative `use` rows.** About
+  three `use` rows in a hundred carry `ignored` or `contradicted`. A
+  search now reads those rows of the thirty days, chosen by SQLite on
+  the outcome, once per store object and then only the rows after the
+  last it read (`Store.negative_uses`). The `use` rows that name a hit
+  are read only when one of the negative rows names it, to learn
+  whether it was applied since, so a search none of whose hits was
+  rejected reads no `use` row. The annotation is unchanged.
+  (`store_index.py`, `handlers/search.py`, `tests/test_events_naming.py`)
+
+- **A session's start reads the records it can show.** The brief asked
+  the store for every record to find the standing ones, read every
+  standing row to count those waiting for an answer, and, with no probe,
+  loaded the whole store to show eight. The digest keeps each record's
+  category and the sha256 of its body, so the standing candidates are
+  the `ambient` records and those whose standing row answers at or above
+  the threshold, and the backlog is the records with no answer for the
+  body they hold; each is decided as before. Work is drawn from the
+  probe's pool and from the newest admitted records, read a pool's worth
+  at a time until its eight places are filled. A store whose digest does
+  not answer is read as before. (`recall.py`, `standing.py`,
+  `store_records.py`, `store_digest.py`, `tests/test_store_digest.py`)
+
+- **Link annotations survive an unreadable links table for every
+  source.** When the bulk link query fails, a search rebuilt the edges
+  from the candidates it had loaded, so an inbound link from a record
+  outside them was lost. The records whose own rows name a hit are now
+  read beside the candidates (`Store.records_linking_to`).
+  (`_response.py`, `store_records.py`)
+
 - **A numeric config key refuses a boolean (ENG-221).** Python counts a
   boolean as an integer, so `true` written for a key that takes a number
   (`cold_endorsement_ratio_threshold = true`, `port = true`) loaded as 1,

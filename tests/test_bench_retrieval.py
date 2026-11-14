@@ -213,15 +213,6 @@ def test_asked_and_requery_are_actually_different_probes() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_index_threshold_is_cross_pinned_to_production() -> None:
-    """run.py duplicates `_INDEX_THRESHOLD_DEFAULT` so it can LABEL which
-    regime a run was in. A silent drift would mislabel the result without
-    failing anything, so the copy is pinned to the original here."""
-    from bettermemory import _handlers
-
-    assert runner.INDEX_THRESHOLD == _handlers._INDEX_THRESHOLD_DEFAULT
-
-
 def test_control_probe_strips_interrogatives_but_keeps_content() -> None:
     stripped = runner.strip_question_words(
         "why did we move the pooling out of the app again?"
@@ -248,9 +239,9 @@ def test_k_values_are_within_the_search_cap(k: int) -> None:
 
 
 def test_filler_shares_no_vocabulary_with_gold_documents() -> None:
-    """Padding exists to move the corpus across the index threshold. If
-    filler could win a gold probe, the threshold experiment would be
-    measuring the filler generator instead of the ranker."""
+    """Padding exists to make the pool a smaller share of the corpus. If
+    filler could win a gold probe, the padded run would be measuring the
+    filler generator instead of the ranker."""
     gold_text = " ".join(r["body"] for r in CORPUS if r["gold"]).lower()
     gold_terms = set(re.findall(r"[a-z]{5,}", gold_text))
     for seed in range(25):
@@ -289,31 +280,12 @@ def _two_questions() -> tuple[list[dict], dict[str, str]]:
     return picked, {q["slug"]: f"id-{i}" for i, q in enumerate(picked)}
 
 
-def test_index_threshold_env_name_is_the_one_production_reads() -> None:
-    """`INDEX_THRESHOLD_ENV` is a second copy of a string that only means
-    anything if it matches. Pinned by behaviour rather than by equality so
-    a rename on either side has to move both."""
-    import os
-
-    from bettermemory import _handlers
-
-    original = os.environ.get(runner.INDEX_THRESHOLD_ENV)
-    os.environ[runner.INDEX_THRESHOLD_ENV] = "7"
-    try:
-        assert _handlers.resolve_index_threshold() == 7
-    finally:
-        if original is None:
-            del os.environ[runner.INDEX_THRESHOLD_ENV]
-        else:
-            os.environ[runner.INDEX_THRESHOLD_ENV] = original
-
-
 def test_the_runner_never_touches_the_environment_at_import_time() -> None:
     """This module exec's run.py at pytest COLLECTION time, so anything
     run.py does at module scope happens once inside the pytest process and
-    stays done. A module-level `os.environ[...] = ...` would put every
-    later test's store into the prefilter regime, which is a whole-suite
-    behaviour change with no failing test anywhere near the cause."""
+    stays done. A module-level `os.environ[...] = ...` would reach every
+    later test of the session, a whole-suite behaviour change with no
+    failing test anywhere near the cause."""
     tree = ast.parse(_RUNNER.read_text(encoding="utf-8"))
     module_scope = [
         node
@@ -393,12 +365,9 @@ def test_engagement_failure_stays_quiet_when_every_pool_engaged(
     assert runner.engagement_failure(Store(tmp_path), [row]) is None
 
 
-def test_engagement_failure_names_the_regime_and_the_query(tmp_path: Path) -> None:
-    """A run that fell back has to say WHICH way it fell back, or the next
-    person re-runs it blind. The store census, its memory count beside
-    the threshold in force, separates "corpus below the threshold" from
-    "the FTS match set was empty"."""
-    from bettermemory import _handlers
+def test_engagement_failure_names_the_store_and_the_query(tmp_path: Path) -> None:
+    """A run whose pool came back without its provider has to say which
+    queries, on what store, or the next person re-runs it blind."""
     from bettermemory.store import Store
 
     store = Store(tmp_path)
@@ -410,7 +379,6 @@ def test_engagement_failure_names_the_regime_and_the_query(tmp_path: Path) -> No
     report = runner.engagement_failure(store, [row])
     assert report is not None
     assert "memories=3" in report
-    assert f"threshold in force: {_handlers.resolve_index_threshold()}" in report
     assert "lexical/control: 1/20" in report
     assert "'pooling app'" in report
 
@@ -519,20 +487,6 @@ def test_main_refuses_to_emit_when_the_prefilter_did_not_engage(
     assert not captured.out
 
 
-def test_a_zero_index_threshold_is_rejected_rather_than_silently_defaulted(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """`resolve_index_threshold` treats `<= 0` as unset and returns 500, so
-    accepting it would run the below-threshold regime under an
-    above-threshold label — the one failure this whole arm exists to make
-    impossible."""
-    monkeypatch.setattr(
-        sys, "argv", ["run.py", "--index-threshold", "0", "--prefilter", "on"]
-    )
-    assert runner.main() == 1
-    assert "must be > 0" in capsys.readouterr().err
-
-
 def test_the_default_report_shape_is_unchanged_by_the_new_columns() -> None:
     """The four committed artifacts and every earlier text run have to stay
     reproducible, so the pool columns appear only once a prefiltered arm is
@@ -583,7 +537,7 @@ def test_the_prefilter_really_engages_on_every_committed_question(
     # the flag below is parsed; registering the attr with monkeypatch
     # first means teardown restores the module default (off) even after
     # that write, so no later test in this session measures rescue-on
-    # by leakage — the same containment INDEX_THRESHOLD_ENV gets.
+    # by leakage.
     monkeypatch.setattr(runner, "RESCUE_EXPANSION", False)
     monkeypatch.setattr(
         sys,
@@ -621,7 +575,7 @@ def test_the_prefilter_really_engages_on_every_committed_question(
     # therefore keeps meaning "the harness reproduces what it published"
     # rather than "the engine never changes".
     committed = json.loads(
-        (_RESULTS / "shipped-prefilter-above-threshold-2026-08-11.json").read_text()
+        (_RESULTS / "shipped-pool-padded600-2026-11-12.json").read_text()
     )
     published = {
         (r["arm"], r["probe"]): r for r in committed["results"] if r["prefilter"]
@@ -660,10 +614,7 @@ def test_the_prefilter_really_engages_on_every_committed_question(
     [
         "prefilter-above-threshold-2026-07-30.json",
         "prefilter-forced-180-2026-07-30.json",
-        # The 5.1 lane pair. Left uncovered when they landed, which is
-        # backwards: `test_prefilter_live_run_matches_the_committed_artifact`
-        # uses the above-threshold file as its GOLDEN, so the artifact the
-        # suite trusts most was the one nothing checked.
+        # The 5.1 lane pair.
         "prefilter-above-threshold-2026-08-09.json",
         "prefilter-forced-180-2026-08-09.json",
     ],
@@ -690,8 +641,10 @@ def test_prefilter_artifacts_are_internally_consistent(name: str) -> None:
         f"which is no longer any corpus in the tree "
         f"({sorted(on_disk.values())}) — the artifact is unverifiable"
     )
-    assert art["index_threshold"] == runner.INDEX_THRESHOLD
-    assert art["prefilter_cap"] == runner.PREFILTER_CAP
+    # The pool these four were measured on: 50 rows by the index's rank,
+    # drawn on a store of 500 memories or more.
+    assert art["index_threshold"] == 500
+    assert art["prefilter_cap"] == 50
     assert art["prefilter_mode"] == "both"
 
     rows = {(r["arm"], r["probe"], r["prefilter"]): r for r in art["results"]}

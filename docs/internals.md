@@ -151,7 +151,8 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
 - Hybrid search (keyword plus BM25 fused via RRF), with plural-folding
   and CJK-capable tokenization. Every ranker is deterministic lexical
   code; the project ships no embedding models, and the store's FTS5
-  table is the candidate prefilter above ~500 memories.
+  table draws each search's pool: the 200 records it ranks best among
+  those the caller is admitted to.
 - Typed inter-memory links (`supersedes`, `contradicts`, `extends`,
   `depends_on`), surfaced as trust signals at retrieval; `supersedes`
   is also set by the write path (declared or detected), `contradicts`
@@ -2295,7 +2296,7 @@ refuses the record every capture there runs git: four processes, 37 ms
 against 0.6 ms for a kept capture on the author's machine.
 
 **Read path.** `handlers/search.py` and `handlers/show.py` read the
-store's candidate query (the FTS5 prefilter above the index threshold)
+pool the store's FTS5 index draws (`handlers.search.resolve_search_pool`)
 into `search.py`, the ranker, with `expansion.py` kept for the retrieval
 bench's expansion arm. `search.py` re-exports its family: the tokenizer
 and the text the index stores (`search_lexicon.py`), the keyword and

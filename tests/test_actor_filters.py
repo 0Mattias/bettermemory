@@ -187,18 +187,11 @@ def test_document_frequencies_bind_the_actor_filter(store: Store) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("threshold", ["1", "10000"])
-async def test_the_where_and_the_predicate_are_one_set(
-    server: Any,
-    store: Store,
-    monkeypatch: pytest.MonkeyPatch,
-    threshold: str,
+async def test_a_writer_filter_selects_that_writers_records(
+    server: Any, store: Store
 ) -> None:
-    """G1. `threshold=1` forces the FTS prefilter (the SQL `WHERE`);
-    `threshold=10000` forces `load_all` (the Python predicate alone).
-    Parametrised rather than asserted twice so the two paths cannot be
-    given different expectations by hand."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", threshold)
+    """G1. The filter is one predicate (`search.candidate_admitted`), read
+    by the pool, by its statistics and by the ranker."""
     a = store.write(content="alpha one", scopes=["tools"], actor=HERMES, home=OUTSIDE)
     store.write(content="alpha two", scopes=["tools"], actor=CODE, home=OUTSIDE)
     store.write(content="alpha three", scopes=["tools"], home=OUTSIDE)
@@ -210,30 +203,24 @@ async def test_the_where_and_the_predicate_are_one_set(
     assert len(unfiltered) == 3
 
 
-async def test_the_prefilter_cap_is_spent_on_eligible_rows(
+async def test_the_pool_is_spent_on_eligible_rows(
     server: Any, store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """G4, and the whole reason the filter is also a SQL `WHERE`.
+    """G4, and the reason the filter is applied before the pool is cut.
 
     The store is dominated by one writer whose bodies repeat the query
-    term, so the 50-row candidate cap fills with that writer's memories
-    on relevance alone. A post-cap filter would be handed 50 rows none of
-    which are the rare writer's and return nothing, with the match
-    sitting in the store. Reverting the `WHERE` in `query_candidates`
-    turns this red, which is what makes it a test of the design and not
-    of pytest.
-
-    Every search carries the caller's membership admission (design 3.5),
-    a post-cap filter, so `resolve_search_pool`'s cap-starvation guard is
-    armed whether or not the search is auto-scoped: on a slice the
-    `WHERE` did not spend on eligible rows the guard reloads the whole
-    store and finds the rare row anyway. That second net is real and
-    worth having, so the test pins that it never fired: the pool was the
-    filtered slice, with no reload. A gate that let the reload answer
-    would be measuring the guard rather than the `WHERE`, and would go on
-    passing after the `WHERE` was deleted.
+    term, so the best matches are all that writer's. A filter applied
+    after a cut on relevance alone would be handed rows none of which are
+    the rare writer's and return nothing, with the match sitting in the
+    store. The pool admits each row in the index's order before it counts
+    it, so the rare writer's row is reached, and no whole-store load
+    stands in for that.
     """
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    import bettermemory.handlers.search as pool_module
+
+    # A pool and a first read smaller than the loud block, so the rare row
+    # sits past both on relevance alone.
+    monkeypatch.setattr(pool_module, "_FIRST_READ", 20)
     for i in range(60):
         store.write(
             content=f"alpha alpha alpha alpha loud note {i}",
@@ -242,8 +229,7 @@ async def test_the_prefilter_cap_is_spent_on_eligible_rows(
             home=OUTSIDE,
         )
     # One mention, buried in a long body: BM25 saturates term frequency and
-    # penalises length, so this row sorts below all sixty and lands outside
-    # a 50-row cap taken on relevance alone.
+    # penalises length, so this row sorts below all sixty.
     filler = " ".join(f"padding{i}" for i in range(400))
     rare = store.write(
         content=f"quiet note alpha {filler}",
@@ -252,16 +238,16 @@ async def test_the_prefilter_cap_is_spent_on_eligible_rows(
         home=OUTSIDE,
     )
 
-    # The premise the gate rests on, asserted rather than assumed: without
-    # the filter this row is NOT in the candidate slice.
-    unfiltered = {mid for mid, _ in store.query_candidates("alpha", max_results=50)}
-    assert rare.id not in unfiltered, "the cap must actually exclude it"
+    # The premise, asserted rather than assumed: on relevance alone this
+    # row is not among the first read's rows.
+    unfiltered = {mid for mid, _ in store.query_candidates("alpha", max_results=20)}
+    assert rare.id not in unfiltered, "the first read must actually exclude it"
 
-    reloads: list[int] = []
+    loads: list[int] = []
     real_load_all = Store.load_all
 
     def load_all(self: Store, *args: Any, **kwargs: Any) -> Any:
-        reloads.append(1)
+        loads.append(1)
         return real_load_all(self, *args, **kwargs)
 
     monkeypatch.setattr(Store, "load_all", load_all)
@@ -269,7 +255,7 @@ async def test_the_prefilter_cap_is_spent_on_eligible_rows(
         server, "memory_search", query="alpha", client="hermes", auto_scope=False
     )
     assert [h["id"] for h in hits] == [rare.id]
-    assert reloads == [], "the starvation guard reloaded: the WHERE did not serve"
+    assert loads == [], "the whole store was loaded to find one row"
 
 
 async def test_search_is_unchanged_when_no_filter_is_passed(

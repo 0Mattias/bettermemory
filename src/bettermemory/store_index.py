@@ -36,7 +36,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ParamSpec
 
@@ -45,7 +45,7 @@ from .identity import Actor
 from .log import INDEX_REBUILT, STORE_CREATED
 from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
 from .store_schema import _PROVENANCE_BATCH
-from .store_rows import _dt, _load_json
+from .store_rows import _dt, _iso, _load_json
 
 if TYPE_CHECKING:
     from .doctor import Check
@@ -58,7 +58,8 @@ log = logging.getLogger("bettermemory.store")
 # scopes, the project its ``homes`` row names (null for a row with none)
 # and its declared writer, in one query.
 _ADMISSION_INPUTS = (
-    "SELECT m.id AS id, m.scopes_json AS scopes_json, h.project AS home_project, "
+    "SELECT m.rowid AS rid, m.id AS id, m.scopes_json AS scopes_json, "
+    "h.project AS home_project, "
     "m.actor_client AS actor_client, m.actor_model AS actor_model "
     "FROM memories m LEFT JOIN homes h ON h.record_id = m.id"
 )
@@ -73,13 +74,18 @@ class _DocFreqInputs:
     maps `(scopes, home project, actor)` to the mask of the rows that carry
     them (the project the row's ``homes`` row names, None for a row with
     none), and `terms` maps a term to the masks of the rows whose body
-    matches it and whose body or scopes match it. `head` is the log's last
-    memory or home row, `(seq, mac)`, when the inputs were read."""
+    matches it and whose body or scopes match it. `index` maps a row's
+    number in `memories`, which is its number in the FTS table, to its
+    position. `lengths` holds, beside each group, the sum of its rows'
+    BM25 lengths, read from the digest; None when the digest did not
+    answer, and the length average is then the pool's. `head` is the log's
+    last memory or home row, `(seq, mac)`, when the inputs were read."""
 
     head: tuple[int, str]
     groups: tuple[tuple[list[str], str | None, Actor | None, int], ...]
-    index: dict[str, int]
+    index: dict[int, int]
     terms: OrderedDict[str, tuple[int, int]]
+    lengths: tuple[int, ...] | None = None
 
 
 # The document frequency memo of `Store.document_frequencies(...,
@@ -180,6 +186,68 @@ def query_candidates(
     return [(str(row["id"]), float(row["score"])) for row in rows]
 
 
+def ranked_rows(self: Store, text: str, *, limit: int | None = None) -> list[int]:
+    """The row numbers of the memories `text` matches, best first by the
+    FTS table's own rank and by row number among equals, at most `limit`
+    when given. Read from the FTS table alone: no record row is touched,
+    so the cost is the index's and not the records'. The match is
+    `fts_match_query`'s, as `query_candidates`'; no filter is applied
+    here, since the caller admits each row itself. Empty for a query with
+    no token."""
+    if not text.strip():
+        return []
+    match_query = fts_match_query(text)
+    if not match_query:
+        return []
+    sql = (
+        "SELECT rowid FROM memories_fts WHERE memories_fts MATCH ? "
+        "ORDER BY bm25(memories_fts), rowid"
+    )
+    params: list[Any] = [match_query]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    return [int(row[0]) for row in self._conn.execute(sql, params)]
+
+
+def newest_rows(self: Store, *, limit: int, offset: int = 0) -> list[int]:
+    """The row numbers of `limit` memories from the `offset`-th newest,
+    newest ``updated`` first and the greater id first among equals (the
+    browse order, `search._browse_hits`). Walks `memories_by_updated`, so
+    a caller that stops after a few batches reads only those rows."""
+    return [
+        int(row[0])
+        for row in self._conn.execute(
+            "SELECT rowid FROM memories ORDER BY updated DESC, id DESC LIMIT ? OFFSET ?",
+            (int(limit), int(offset)),
+        )
+    ]
+
+
+def rows_updated_since(self: Store, since: datetime) -> list[int]:
+    """The row numbers of the memories whose ``updated`` stamp is at or
+    after the second `since` falls in, newest first: a superset of those
+    updated after `since`, read through `memories_by_updated`. The stamps
+    are compared as text on their first nineteen characters, which every
+    spelling of a UTC stamp shares; the caller compares the parsed stamp."""
+    cut = _iso(since.astimezone(timezone.utc))[:19]
+    return [
+        int(row[0])
+        for row in self._conn.execute(
+            "SELECT rowid FROM memories WHERE updated >= ? ORDER BY updated DESC, id DESC",
+            (cut,),
+        )
+    ]
+
+
+def index_spelled_here(self: Store) -> bool:
+    """Whether the store's index text is spelled by this build's
+    tokenizer (`tokenizer_drift`): a row's ``body_fts`` is then the stream
+    this build's tokenizer gives its body, and a ranking may read it in
+    place of tokenising the body (`search.seed_memory_tokens`)."""
+    return tokenizer_drift(self._conn) is None
+
+
 def links_for_many(
     self: Store, memory_ids: Iterable[str]
 ) -> dict[
@@ -263,31 +331,22 @@ def _memoised_document_frequencies(
     self: Store,
     unique: list[str],
     admit: Callable[[list[str], str | None, Actor | None], bool],
-) -> tuple[int, dict[str, int], dict[str, int]] | None:
-    """`document_frequencies` through the document frequency memo."""
-    key = (str(self._path), self._store_id)
-    head = self._memory_head()
+) -> tuple[int, dict[str, int], dict[str, int], float | None] | None:
+    """`document_frequencies` through the document frequency memo, with
+    the admitted rows' average BM25 length (None when the memo's inputs
+    carry no lengths)."""
+    entry, fresh, key, head = _current_inputs(self)
     known: dict[str, tuple[int, int]] = {}
-    with _DOC_FREQS_LOCK:
-        entry = _DOC_FREQS.get(key)
-        if entry is not None and entry.head != head:
-            entry = None
-        if entry is not None:
-            _DOC_FREQS.move_to_end(key)
+    if not fresh:
+        with _DOC_FREQS_LOCK:
             for term in unique:
                 masks = entry.terms.get(term)
                 if masks is not None:
                     entry.terms.move_to_end(term)
                     known[term] = masks
-    fresh = entry is None
-    if entry is None:
-        entry = self._read_doc_freq_inputs(head)
     # The predicate runs on every call, once per group: it is not a
     # function of the store alone.
-    admitted = 0
-    for scopes, home_project, actor, mask in entry.groups:
-        if admit(list(scopes), home_project, actor):
-            admitted |= mask
+    admitted, length = _admitted_mask(entry, admit)
     found: dict[str, tuple[int, int]] = {}
     if admitted:
         found = {t: self._term_masks(t, entry) for t in unique if t not in known}
@@ -305,7 +364,120 @@ def _memoised_document_frequencies(
             body_df[term] = body_count
         if any_count:
             scope_df[term] = any_count
-    return admitted.bit_count(), body_df, scope_df
+    size = admitted.bit_count()
+    average = length / size if entry.lengths is not None and size else None
+    return size, body_df, scope_df, average
+
+
+def _current_inputs(
+    self: Store,
+) -> tuple[_DocFreqInputs, bool, tuple[str, str], tuple[int, str]]:
+    """The memo's inputs for this store at its memory head, read from the
+    store when the memo holds none there: the entry, whether this call
+    read it, and the memo's key and the head it was read at."""
+    key = (str(self._path), self._store_id)
+    head = self._memory_head()
+    with _DOC_FREQS_LOCK:
+        entry = _DOC_FREQS.get(key)
+        if entry is not None and entry.head != head:
+            entry = None
+        if entry is not None:
+            _DOC_FREQS.move_to_end(key)
+    if entry is not None:
+        return entry, False, key, head
+    return self._read_doc_freq_inputs(head), True, key, head
+
+
+def _admitted_mask(
+    entry: _DocFreqInputs,
+    admit: Callable[[list[str], str | None, Actor | None], bool],
+) -> tuple[int, int]:
+    """The mask of the rows of `entry` whose group `admit` admits, and the
+    sum of their BM25 lengths (0 where the entry carries none)."""
+    admitted = 0
+    length = 0
+    for position, (scopes, home_project, actor, mask) in enumerate(entry.groups):
+        if admit(list(scopes), home_project, actor):
+            admitted |= mask
+            if entry.lengths is not None:
+                length += entry.lengths[position]
+    return admitted, length
+
+
+def admitted_rows(
+    self: Store,
+    rowids: Sequence[int],
+    admit: Callable[[list[str], str | None, Actor | None], bool],
+) -> list[int]:
+    """Those of `rowids` (row numbers in `memories`) whose record `admit`
+    admits, in the order given. `admit` is `document_frequencies`'s
+    predicate over `(scopes, home project, actor)`, and the rows are
+    decided from the document frequency memo's inputs, so no record is
+    read to learn that a request does not admit it. A row whose scopes do
+    not parse is admitted nowhere, as the statistics count it nowhere.
+
+    A row the memo's inputs do not hold is decided from its own columns,
+    in one statement per `_PROVENANCE_BATCH`: a record written after the
+    inputs were read, and a row no log row put in the table, which a
+    search still delivers under the label its provenance read gives it
+    (``unaccounted``). Inside a transaction every row is decided that
+    way."""
+    wanted = [int(r) for r in rowids]
+    if not wanted:
+        return []
+    if self._tx_depth or self._conn.in_transaction:
+        return _admitted_rows_read(self, wanted, admit)
+    entry, fresh, key, head = _current_inputs(self)
+    admitted, _ = _admitted_mask(entry, admit)
+    if fresh and self._memory_head() == head:
+        self._keep_doc_freqs(key, entry, {}, fresh=True)
+    bits = admitted.to_bytes((len(entry.index) + 7) // 8 or 1, "little")
+    index = entry.index
+    unknown = [rid for rid in wanted if rid not in index]
+    read = set(_admitted_rows_read(self, unknown, admit)) if unknown else set()
+    out: list[int] = []
+    for rid in wanted:
+        position = index.get(rid)
+        if position is None:
+            if rid in read:
+                out.append(rid)
+        elif bits[position >> 3] & (1 << (position & 7)):
+            out.append(rid)
+    return out
+
+
+def _admitted_rows_read(
+    self: Store,
+    wanted: list[int],
+    admit: Callable[[list[str], str | None, Actor | None], bool],
+) -> list[int]:
+    """`admitted_rows` from the rows' own admission inputs."""
+    out: list[int] = []
+    for start in range(0, len(wanted), _PROVENANCE_BATCH):
+        chunk = wanted[start : start + _PROVENANCE_BATCH]
+        rows = {
+            int(row["rid"]): row
+            for row in self._conn.execute(
+                f"{_ADMISSION_INPUTS} WHERE m.rowid IN ({','.join('?' * len(chunk))})",
+                chunk,
+            )
+        }
+        for rid in chunk:
+            row = rows.get(rid)
+            if row is None:
+                continue
+            scopes = _load_json(row["scopes_json"], None)
+            if not isinstance(scopes, list):
+                continue
+            client, model = row["actor_client"], row["actor_model"]
+            actor = (
+                Actor(client=client, model=model)
+                if (client is not None or model is not None)
+                else None
+            )
+            if admit(list(scopes), row["home_project"], actor):
+                out.append(rid)
+    return out
 
 
 def _keep_doc_freqs(
@@ -442,6 +614,68 @@ def _contradictions(self: Store) -> dict[str, datetime]:
         "newest": newest,
     }
     return dict(newest)
+
+
+#: The outcomes a search's rejection note reads (`_response`).
+_NEGATIVE_OUTCOMES = ("ignored", "contradicted")
+
+
+def negative_uses(self: Store, since: datetime) -> list[dict[str, Any]]:
+    """The ``use`` events stamped at or after `since` whose outcome is
+    ``ignored`` or ``contradicted``, oldest first.
+
+    A search asks this on every call, to say which of its hits were
+    rejected lately, and about three ``use`` rows in a hundred are
+    negative. So the rows are read once per store object and then only
+    past the last row read, as `_contradictions` reads its own: the log
+    only grows, and what earlier rows said still stands. The store object
+    keeps the events with the sequence number and MAC of the last row
+    they cover and the stamp they reach back to. A log whose row at that
+    number no longer carries that MAC (a rollback, a replaced history),
+    or a `since` before that stamp, reads the window again from its
+    floor. The outcome is filtered in SQL, so the rows of every other
+    outcome are never parsed here."""
+    conn = self._conn
+    head = conn.execute("SELECT seq, mac FROM log ORDER BY seq DESC LIMIT 1").fetchone()
+    if head is None:
+        return []
+    head_seq, head_mac = int(head[0]), str(head[1])
+    cut = _iso(since.astimezone(timezone.utc)).replace("+00:00", "Z")[:19]
+    held = self.__dict__.get("_negative_held")
+    events: list[dict[str, Any]] = []
+    after: int | None = None
+    if held is not None and held["cut"] <= cut:
+        row = conn.execute(
+            "SELECT mac FROM log WHERE seq = ?", (held["seq"],)
+        ).fetchone()
+        if row is not None and str(row[0]) == held["mac"]:
+            after = int(held["seq"])
+            events = [e for e in held["events"] if str(e.get("ts", ""))[:19] >= cut]
+            if after == head_seq:
+                held["events"], held["cut"] = events, cut
+                return list(events)
+    if after is None:
+        floor = self._window_floor(cut, head_seq=head_seq)
+        after = None if floor is None else floor - 1
+    if after is not None:
+        marks = ",".join("?" * len(_NEGATIVE_OUTCOMES))
+        for raw in conn.execute(
+            "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
+            "WHERE kind = 'use' AND seq > ? AND seq <= ? AND ts >= ? "
+            "AND json_valid(payload) "
+            f"AND json_extract(payload, '$.outcome') IN ({marks}) ORDER BY seq",
+            (after, head_seq, cut, *_NEGATIVE_OUTCOMES),
+        ):
+            event = self._event_from_raw(raw)
+            if event is not None:
+                events.append(event)
+    self.__dict__["_negative_held"] = {
+        "seq": head_seq,
+        "mac": head_mac,
+        "cut": cut,
+        "events": events,
+    }
+    return list(events)
 
 
 # -- the tokenizer the index is spelled by (ENG-100) ----------------------

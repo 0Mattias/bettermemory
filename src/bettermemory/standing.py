@@ -68,7 +68,7 @@ from .review import RELATED_CAP, RELATED_TEXT_CHARS, STANDING_STATEMENT, current
 from .store import NotFoundError, StandingAnswer, body_sha256
 
 if TYPE_CHECKING:
-    from .admission import Admission, RecordView
+    from .admission import RecordView
     from .store import Store
 
 __all__ = [
@@ -231,10 +231,13 @@ class Backlog:
         return len(self.ids)
 
 
-def backlog(store: Store, admission: Admission) -> Backlog:
-    """The records `admission` admits that wait for a standing answer."""
+def backlog(store: Store, admission: RecordView) -> Backlog:
+    """The records `admission` admits that wait for a standing answer.
+    The rows read are those the digest says hold no answer for their body
+    (`Store.digest_unanswered_ids`), each decided here as before; every
+    record's row where the digest does not answer."""
     waiting: list[str] = []
-    for row in store.standing_rows():
+    for row in store.standing_rows(store.digest_unanswered_ids()):
         if not admission.admits_row(row["scopes"], row["recorded"]):
             continue
         if _current(store, row) is None:
@@ -317,9 +320,16 @@ def standing_ids(
 ) -> list[str]:
     """The admitted records (of `ids`, when given) that are standing and
     in force, newest ``updated`` first. A held record (`held_ids`) is
-    left out unless `held`, which only the guard passes."""
+    left out unless `held`, which only the guard passes. With no `ids`
+    the rows read are those that can be standing
+    (`Store.standing_candidate_ids`), each decided here as before; every
+    record's row where the digest does not answer."""
     if ids is not None and not ids:
         return []
+    if ids is None:
+        ids = store.standing_candidate_ids(TAU_STANDING)
+        if ids is not None and not ids:
+            return []
     candidates: list[str] = []
     for row in store.standing_rows(ids):
         if row["category"] != Category.AMBIENT.value and (

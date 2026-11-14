@@ -112,7 +112,6 @@ def test_the_pinned_environment(tmp_path: Path) -> None:
         "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
         "PATH": "/usr/local/bin:/usr/bin",
         "BETTERMEMORY_FLOCK_TIMEOUT": "5",
-        "BETTERMEMORY_INDEX_THRESHOLD": "200",
         "BETTERMEMORY_STATE_DIR": "elsewhere",
         "BETTERMEMORY_CLIENT": "claude-code",
         "BETTERMEMORY_CLIENT_VERSION": "2.0",
@@ -124,7 +123,6 @@ def test_the_pinned_environment(tmp_path: Path) -> None:
     assert pinned == {
         "BETTERMEMORY_DIR": str(cwd / "store"),
         "BETTERMEMORY_FLOCK_TIMEOUT": "5",
-        "BETTERMEMORY_INDEX_THRESHOLD": "200",
         "BETTERMEMORY_KEYS_DIR": str(home / "keys"),
         "BETTERMEMORY_STATE_DIR": str(state_dir),
         "PATH": "/usr/local/bin:/usr/bin",

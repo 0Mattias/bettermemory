@@ -19,6 +19,7 @@ package's 2,000-line bound (ENG-96); from the family it imports
 from __future__ import annotations
 
 import math
+from collections.abc import Collection, Sequence
 from datetime import datetime, timezone
 from typing import NamedTuple
 
@@ -81,7 +82,12 @@ def _filler_floor_stats(
     for t in filler_present:
         body_df[t] = max(body_df.get(t, 0), floor)
         scope_df[t] = max(scope_df.get(t, 0), floor)
-    return CorpusStats(size=size, body_df=body_df, scope_df=scope_df)
+    return CorpusStats(
+        size=size,
+        body_df=body_df,
+        scope_df=scope_df,
+        avgdl=base.avgdl if base is not None else None,
+    )
 
 
 def _merge_corpus_stats(
@@ -103,7 +109,10 @@ def _merge_corpus_stats(
     scope_df = dict(a.scope_df)
     scope_df.update(b.scope_df)
     return CorpusStats(
-        size=b.size if b.size > 0 else a.size, body_df=body_df, scope_df=scope_df
+        size=b.size if b.size > 0 else a.size,
+        body_df=body_df,
+        scope_df=scope_df,
+        avgdl=b.avgdl if b.avgdl is not None else a.avgdl,
     )
 
 
@@ -144,6 +153,23 @@ class _MemoryTokens(NamedTuple):
     """Union of `_scope_tokens(scope)` across `memory.scopes` — every
     consumer builds a set from the per-scope lists, so only the union is
     kept."""
+
+    body_tf: dict[str, int] | None = None
+    """`term_counts(body)`: each token of `body` with how often it occurs.
+    The keyword scorer's counts and the BM25 fallbacks' as they stand, and
+    BM25's own for any token that is not a stopword, since `content` is
+    `body` without the stopwords. Counted once when the entry is built;
+    the scorers counted every token of every candidate on every search
+    before, which made a search's cost follow the bodies' length. None on
+    an entry built without it: the scorers count as they did."""
+
+
+def term_counts(tokens: list[str]) -> dict[str, int]:
+    """Each token of `tokens` with how often it occurs."""
+    counts: dict[str, int] = {}
+    for tok in tokens:
+        counts[tok] = counts.get(tok, 0) + 1
+    return counts
 
 
 def _recency_factor(created: datetime, now: datetime, half_life_days: float) -> float:
@@ -195,11 +221,17 @@ class CorpusStats(NamedTuple):
     the caller could actually retrieve. A provider that fed whole-store
     frequencies here would re-create the auto-scope mispricing c58c836
     removed. Which see for why the subset case needs this at all.
+
+    `avgdl` is the same collection's average BM25 length, the mean of
+    `compute_idf`'s per-document length over every admitted document;
+    None where the provider does not know it, and `compute_idf` then
+    takes the mean of the list it was handed.
     """
 
     size: int
     body_df: dict[str, int]
     scope_df: dict[str, int]
+    avgdl: float | None = None
 
 
 def compute_idf(
@@ -207,6 +239,7 @@ def compute_idf(
     *,
     tokens: list[_MemoryTokens] | None = None,
     corpus_stats: CorpusStats | None = None,
+    terms: Collection[str] | None = None,
 ) -> tuple[dict[str, float], dict[str, float], float]:
     """Build the per-term IDF maps and the average doc length for BM25.
 
@@ -250,8 +283,8 @@ def compute_idf(
     ``corpus_stats``: optional ranked-collection document frequencies —
     counted over the ADMITTED set, not the whole store; see `CorpusStats`.
     Supply it whenever `memories` is a query-biased SUBSET of that
-    collection — which is what the FTS prefilter produces above
-    `_INDEX_THRESHOLD_DEFAULT`. Without it, df is counted over candidates
+    collection — which is what the full-text index's pool is
+    (`handlers.search.resolve_search_pool`). Without it, df is counted over candidates
     that are present precisely because they matched, so a discriminative
     query term's df approaches N and its Okapi IDF collapses toward zero:
     BM25 degenerates into length normalisation plus recency for exactly the
@@ -262,10 +295,20 @@ def compute_idf(
     tokenizer edge) keeps its pool-derived value, so the degraded path is
     never worse than not passing stats at all.
 
-    ``avgdl`` stays pool-derived even with `corpus_stats`. It is a scalar
-    length normaliser, so a biased sample shifts scores by a roughly common
-    factor instead of inverting their order the way collapsed IDF does, and
-    a corpus-wide average would cost a full vocabulary scan per search.
+    ``terms``: the terms the caller will look up, when it knows them
+    (`idf_terms` of the query's tokens). The maps then hold those terms
+    and no others, each with the value the unrestricted call gives it,
+    and with `tokens` that carry counts (`_MemoryTokens.body_tf`) no
+    document's tokens are walked: a document is asked for each term. None
+    builds the maps over every term of every document.
+
+    ``avgdl`` is the collection's too when `corpus_stats` carries one
+    (`CorpusStats.avgdl`). A pool the full-text index drew holds the
+    documents that match the query, which run longer than the collection:
+    on the owner's replayed searches the pool's own average moved the top
+    hit away from the whole-store ranking's in 8.1% of them, and the
+    collection's average in 3.7%, at the same 50 candidates. Without one
+    the average is the pool's, as it is when the pool is the collection.
     """
     n = len(memories)
     if n == 0:
@@ -274,8 +317,21 @@ def compute_idf(
     body_df: dict[str, int] = {}
     scope_df: dict[str, int] = {}
     total_len = 0
+    wanted = None if terms is None else list(dict.fromkeys(terms))
     for i, memory in enumerate(memories):
         pre = tokens[i] if tokens is not None else None
+        if wanted is not None and pre is not None and pre.body_tf is not None:
+            total_len += len(pre.content)
+            counts = pre.body_tf
+            scope_set = pre.scope_set
+            for term in wanted:
+                # In the content stream: in the body and not a stopword.
+                if term in counts and term not in _STOPWORDS:
+                    body_df[term] = body_df.get(term, 0) + 1
+                    scope_df[term] = scope_df.get(term, 0) + 1
+                elif term in scope_set:
+                    scope_df[term] = scope_df.get(term, 0) + 1
+            continue
         toks = (
             pre.content
             if pre is not None
@@ -298,7 +354,19 @@ def compute_idf(
         for term in doc_terms:
             scope_df[term] = scope_df.get(term, 0) + 1
 
+    if wanted is not None:
+        keep = set(wanted)
+        body_df = {t: c for t, c in body_df.items() if t in keep}
+        scope_df = {t: c for t, c in scope_df.items() if t in keep}
+
     avgdl = total_len / n if n else 0.0
+    if (
+        corpus_stats is not None
+        and corpus_stats.size > 0
+        and corpus_stats.avgdl is not None
+        and corpus_stats.avgdl > 0
+    ):
+        avgdl = corpus_stats.avgdl
 
     def _okapi(df: dict[str, int], total: int) -> dict[str, float]:
         return {
@@ -323,6 +391,18 @@ def compute_idf(
                 scope_idf[term] = math.log((corpus_n - dfi + 0.5) / (dfi + 0.5) + 1.0)
 
     return body_idf, scope_idf, avgdl
+
+
+def idf_terms(query_tokens: Sequence[str]) -> list[str]:
+    """Every term `score_memory_bm25` looks up in the IDF maps for
+    `query_tokens`: each token, and the parts of each joined one, which
+    the conjunctive fallback prices (`_bm25_kebab_fallback`)."""
+    out: dict[str, None] = {}
+    for tok in query_tokens:
+        out[tok] = None
+        for part in _kebab_parts(tok):
+            out[part] = None
+    return list(out)
 
 
 def _bm25_doc_streams(
@@ -472,9 +552,20 @@ def score_memory_bm25(
     if not query_tokens or avgdl <= 0:
         return 0.0, []
 
-    body_stream, body_count, dl, scope_set = _bm25_doc_streams(
-        memory, tokens, stopword_fallback
-    )
+    counted = tokens.body_tf if tokens is not None else None
+    # With the entry's counts in hand nothing is counted here: they are the
+    # unstripped stream's, which is what the fallback call and the
+    # component counter read, and what the content stream holds for every
+    # token that is not a stopword (`stripped` zeroes the rest).
+    stripped = False
+    if tokens is not None and counted is not None:
+        body_stream, body_count = tokens.body, counted
+        dl, scope_set = len(tokens.content), tokens.scope_set
+        stripped = not stopword_fallback
+    else:
+        body_stream, body_count, dl, scope_set = _bm25_doc_streams(
+            memory, tokens, stopword_fallback
+        )
     # Component counter for the conjunctive kebab fallback below, built
     # lazily (only when a compound query token misses directly). It reads
     # the UNSTRIPPED `body_stream` so a stopword component ('to' in
@@ -484,7 +575,7 @@ def score_memory_bm25(
     # zero the min() — silent zero recall in mode='bm25' for the whole
     # X-to-X / X-by-X compound family. Mirrors the keyword scorer, whose
     # `body_count` is unstripped by construction.
-    comp_count: dict[str, int] | None = None
+    comp_count: dict[str, int] | None = counted
 
     score = 0.0
     matched: list[str] = []
@@ -498,6 +589,8 @@ def score_memory_bm25(
         contrib = 0.0
 
         tf = body_count.get(tok, 0)
+        if stripped and tf and tok in _STOPWORDS:
+            tf = 0
         # Fallback tokens are stopwords — absent from the content-stream
         # `body_idf_map` by construction — so floor their body IDF at 1.0
         # (the scope bonus's no-corpus-statistics floor below), or the
@@ -575,14 +668,14 @@ def score_memory(
     if not query_tokens:
         return 0.0, []
 
-    body_tokens = (
-        tokens.body
-        if tokens is not None
-        else _expand_kebab(_lexicon.tokenize(memory.body))
-    )
-    body_count: dict[str, int] = {}
-    for tok in body_tokens:
-        body_count[tok] = body_count.get(tok, 0) + 1
+    if tokens is not None and tokens.body_tf is not None:
+        body_count = tokens.body_tf
+    else:
+        body_count = term_counts(
+            tokens.body
+            if tokens is not None
+            else _expand_kebab(_lexicon.tokenize(memory.body))
+        )
 
     if tokens is not None:
         scope_set = tokens.scope_set

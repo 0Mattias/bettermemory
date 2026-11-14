@@ -98,13 +98,19 @@ def _reloaded(memory: Memory) -> Memory:
     )
 
 
-def _recompute(memory: Memory) -> tuple[list[str], list[str], set[str]]:
-    """The expressions the scorers evaluate when no tokens are threaded."""
+def _recompute(
+    memory: Memory,
+) -> tuple[list[str], list[str], set[str], dict[str, int]]:
+    """The expressions the scorers evaluate when no tokens are threaded,
+    and the counts of the body stream the scorers build from it."""
     body = _expand_kebab(tokenize(memory.body))
     scope_set: set[str] = set()
     for scope in memory.scopes:
         scope_set.update(_scope_tokens(scope))
-    return body, _strip_stopwords(body), scope_set
+    counts: dict[str, int] = {}
+    for token in body:
+        counts[token] = counts.get(token, 0) + 1
+    return body, _strip_stopwords(body), scope_set, counts
 
 
 @pytest.fixture(autouse=True)
@@ -259,10 +265,11 @@ def test_a_hit_equals_the_recompute_token_for_token() -> None:
     assert all(hit is entry for hit, entry in zip(hits, filled))
 
     for memory, hit in zip(corpus, hits):
-        body, content, scope_set = _recompute(memory)
+        body, content, scope_set, counts = _recompute(memory)
         assert hit.body == body, memory.body
         assert hit.content == content, memory.body
         assert hit.scope_set == scope_set, memory.body
+        assert hit.body_tf == counts, memory.body
 
     idf_plain = compute_idf(corpus)
     assert compute_idf(corpus, tokens=hits) == idf_plain

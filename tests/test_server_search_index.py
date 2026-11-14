@@ -1,16 +1,10 @@
-"""Tests for the FTS5 candidate pre-filter on memory_search.
+"""memory_search's optional reads past its pool.
 
-The integration: when the store size exceeds BETTERMEMORY_INDEX_THRESHOLD
-(default 500), memory_search asks the store's FTS table for up to 50
-candidate ids and only loads those memories instead of walking the full
-active set. Falls back to load_all when:
-
-- the query is empty
-- the store's row count is below the threshold
-- the FTS query returns zero candidates
-
-The fallback contract is load-bearing: result quality on small stores
-must match the pre-prefilter behaviour exactly.
+A search ranks the pool the full-text index draws for its query
+(`handlers.search.resolve_search_pool`, tests/test_search_pool.py). Two
+enrichments read a record the pool does not hold: `expand_top` reads the
+top hit's body, and a hit's `depends_on` target that does not match the
+query is loaded by id. Neither read may abort the search when it fails.
 """
 
 from __future__ import annotations
@@ -55,85 +49,6 @@ def _unwrap(res: Any) -> Any:
     return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 
 
-async def test_search_uses_load_all_on_small_store(
-    server: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Default threshold (500) is far above typical test corpus size,
-    so the FTS pre-filter shouldn't activate. Pin the byte-stable
-    behaviour: search results match what load_all + the rankers
-    would have produced before the prefilter existed."""
-    monkeypatch.delenv("BETTERMEMORY_INDEX_THRESHOLD", raising=False)
-    await _call(
-        server, "memory_write", content="python list comprehension", scopes=["tools"]
-    )
-    await _call(server, "memory_write", content="rust borrow checker", scopes=["tools"])
-
-    hits = _unwrap(await _call(server, "memory_search", query="python"))
-    assert hits
-    assert hits[0]["match_terms"] == ["python"]
-
-
-async def test_search_uses_index_when_threshold_crossed(
-    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Lowering the threshold via env var puts the search through the
-    FTS candidate path. Result must still surface the matching memory:
-    the prefilter is a candidate filter, not a different ranker."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    await _call(
-        server, "memory_write", content="python list comprehension", scopes=["tools"]
-    )
-    await _call(server, "memory_write", content="rust borrow checker", scopes=["tools"])
-
-    hits = _unwrap(await _call(server, "memory_search", query="python"))
-    assert hits
-    assert any("python" in h["match_terms"] for h in hits)
-    # Other ranker fields still populate.
-    assert all("score" in h for h in hits)
-
-
-async def test_search_falls_back_when_index_empty_match(
-    server: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A query that returns zero FTS candidates triggers the load_all
-    fallback: a query the FTS table cannot answer is ranked over
-    everything rather than over nothing. Test: query for a token that
-    doesn't appear in any body; the FTS query returns [], load_all
-    returns [] too, the search returns []. The fallback's invocation
-    isn't directly observable, but the result equivalence is."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    await _call(server, "memory_write", content="python notes", scopes=["tools"])
-
-    hits = _unwrap(await _call(server, "memory_search", query="unrelated-token-xyz"))
-    assert hits == []
-
-
-async def test_index_threshold_env_var_resets_per_call(
-    server: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The threshold is read at search time (not handler-init time)
-    so test isolation works — bumping the env var mid-test changes
-    behaviour on the next search. Pin the contract so a future
-    refactor that caches the threshold won't silently break test
-    setups."""
-    await _call(
-        server, "memory_write", content="python list comprehension", scopes=["tools"]
-    )
-
-    # Default threshold: load_all path.
-    monkeypatch.delenv("BETTERMEMORY_INDEX_THRESHOLD", raising=False)
-    hits_default = _unwrap(await _call(server, "memory_search", query="python"))
-    assert hits_default
-
-    # Lowered threshold: FTS candidate path.
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    hits_indexed = _unwrap(await _call(server, "memory_search", query="python"))
-    assert hits_indexed
-
-    # Same memory surfaces both ways — quality byte-stable.
-    assert hits_default[0]["id"] == hits_indexed[0]["id"]
-
-
 async def test_expand_top_survives_oserror_reading_body(
     server: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -145,9 +60,9 @@ async def test_expand_top_survives_oserror_reading_body(
     network mount) raised straight out of memory_search.
 
     `Store.load_one` is reached only on the expand_top body-load path
-    (the small-store candidate pool comes from `load_all`, not
-    `load_one`), so patching `load_one` to raise isolates exactly the
-    enrichment step under test.
+    (the pool and the returned hits are read by other loaders), so
+    patching `load_one` to raise isolates exactly the enrichment step
+    under test.
     """
     await _call(
         server,
@@ -185,8 +100,8 @@ async def test_depends_on_targeted_load_survives_oserror(
     must NOT abort the whole search (FIX 3).
 
     `attach_depends_on_resolved` runs BEFORE `expand_top` and, when a
-    hit's `depends_on` target isn't in the query's FTS prefilter
-    candidate set, loads it directly via `store.load_one`. That loop
+    hit's `depends_on` target isn't in the query's pool, loads it
+    directly via `store.load_one`. That loop
     only caught `(MemoryNotFoundError, TombstonedError)` — NOT OSError —
     so a flaky read (EIO, vanished file on a network mount) of the
     target's backing file raised straight out of `memory_search`,
@@ -198,25 +113,11 @@ async def test_depends_on_targeted_load_survives_oserror(
     `test_expand_top_survives_oserror_reading_body`: that test has NO
     `depends_on` link, so the targeted-load path never invokes
     `load_one`. Here B `depends_on` A, and A's body deliberately does
-    NOT match the query — so A is absent from B's prefilter candidate
-    set and the targeted-load branch fires `load_one(A)`, which we
-    patch to raise. `expand_top` is left off so the only `load_one`
-    call under test is the depends-on one.
-
-    Forces the FTS pre-filter (`BETTERMEMORY_INDEX_THRESHOLD=1`).
-    That's REQUIRED, not incidental: on the default (load_all) path the
-    candidate set is the whole store, so A is always present in the
-    side-map and the targeted-load branch never fires `load_one`. The
-    FTS pre-filter narrows candidates to query-relevant rows (just B),
-    so A is genuinely absent and the `store.load_one(A)` fallback, the
-    line under test, actually runs.
+    NOT match the query — so A is absent from the pool (the records
+    the query matches, just B) and the targeted-load branch fires
+    `load_one(A)`, which we patch to raise. `expand_top` is left off so
+    the only `load_one` call under test is the depends-on one.
     """
-    # Route the search through the FTS candidate pre-filter so the
-    # candidate pool excludes A (non-matching body) and the targeted
-    # load fires. The prefilter loads candidates via `load_many`, not
-    # `load_one`, so the patched `load_one` below only intercepts the
-    # depends-on targeted load.
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     # A: the dependency target. Distinct vocabulary so a query for
     # "python" never surfaces it via FTS — it can only be reached
     # through B's depends_on edge (the targeted-load path).

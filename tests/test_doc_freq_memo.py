@@ -298,30 +298,35 @@ async def _ranked(server: Any) -> list[list[tuple[str, float, str]]]:
 async def test_ranked_results_are_identical_with_the_memo_on_and_off(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "20")
     _synthetic(Store(memory_dir))
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     def server() -> Any:
         return build_server(config=cfg, store=Store(memory_dir), state=SessionState())
 
-    real = Store.document_frequencies
-    memoised_calls: list[bool] = []
+    real = Store.ranking_statistics
+    served: list[int] = []
 
-    def spy(self: Store, terms: Any, *, admit: Any, memoised: bool = False) -> Any:
-        memoised_calls.append(memoised)
-        return real(self, terms, admit=admit, memoised=memoised)
+    def spy(self: Store, terms: Any, *, admit: Any) -> Any:
+        served.append(len(terms))
+        return real(self, terms, admit=admit)
 
-    monkeypatch.setattr(Store, "document_frequencies", spy)
+    monkeypatch.setattr(Store, "ranking_statistics", spy)
     on = await _ranked(server())
     # Twice, so the second pass is served from a warm memo.
     assert await _ranked(server()) == on
-    assert memoised_calls and all(memoised_calls), "premise: the memo served"
+    assert served, "premise: the ranking read its statistics from the store"
     assert store_module._DOC_FREQS, "premise: the memo kept an entry"
 
-    def off(self: Store, terms: Any, *, admit: Any, memoised: bool = False) -> Any:
-        return real(self, terms, admit=admit, memoised=False)
+    def off(self: Store, terms: Any, *, admit: Any) -> Any:
+        # The frequencies of the uncached read, beside the length average
+        # the memo's inputs carry: what is compared is the frequencies.
+        found = self.document_frequencies(terms, admit=admit, memoised=False)
+        with_average = real(self, terms, admit=admit)
+        if found is None or with_average is None:
+            return None
+        return (*found, with_average[3])
 
-    monkeypatch.setattr(Store, "document_frequencies", off)
+    monkeypatch.setattr(Store, "ranking_statistics", off)
     assert await _ranked(server()) == on
     assert sum(1 for hits in on if hits) >= 4, "premise: the queries rank hits"

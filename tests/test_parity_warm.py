@@ -80,7 +80,6 @@ def _run(
 def test_cold_and_warm_runs_rank_identically(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "10")
     _keep_whole_hits(monkeypatch)
     corpus_path, questions_path = _subset(tmp_path)
     runner.build_store(tmp_path / "store", corpus_path)
@@ -109,8 +108,13 @@ def test_cold_and_warm_runs_rank_identically(
         warm_rows, warm_tokenised = _run(store, full, questions, body_calls, cold=False)
 
     assert len(cold_rows) == len(questions) * len(runner.PROBES) == 36
-    # Cold: every search tokenised each of its candidate bodies once.
-    assert all(n == pool for _, pool, n in cold_tokenised), cold_tokenised
+    # Cold: the arm that ranks every record tokenised each body once. The
+    # pool's streams are read from its rows' index text, so its searches
+    # tokenised none, and the rows below show both sources rank alike: the
+    # warm passes rank the pool from the streams the other arm tokenised.
+    assert all(
+        n == (pool if arm == "full" else 0) for arm, pool, n in cold_tokenised
+    ), cold_tokenised
     # Warm: no search tokenised a body.
     assert all(n == 0 for _, _, n in warm_tokenised), warm_tokenised
 

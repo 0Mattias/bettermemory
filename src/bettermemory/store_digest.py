@@ -9,6 +9,18 @@ their count, its claim size, its scopes and its working directory) and the
 postings of those tokens (`digest_tokens`), so a write reads the few
 records that can score and nothing else.
 
+A search asks two things of every record it could rank: whether the
+caller is admitted to it, and how long it is, for BM25's length average.
+The row carries those too (the writer's declared client and model, and
+`dl`, the length of the stream BM25 scores), so the ranking's statistics
+are read from the digest's rows and never from the records
+(`digest_admission_rows`).
+
+A session's start asks which records can be standing and which wait for
+a standing answer. The row carries the record's category and the sha256
+of its body, the one a standing answer names, so both are read without a
+body (`digest_ambient_ids`, `digest_unanswered_ids`).
+
 Three rules keep it honest:
 
 - It is derived. No log row carries it, no fold reads it, and a build that
@@ -29,23 +41,31 @@ Three rules keep it honest:
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
 import secrets
 import sqlite3
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Sequence, Set as AbstractSet
+from collections.abc import Callable, Iterable, Set as AbstractSet
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec
 
 from .search_dedup import (
     _CONTAINMENT_MIN_TOKENS,
     MEDIUM_SIMILARITY,
     raw_content_tokens,
 )
-from .search_lexicon import _STOPWORDS, _kebab_parts, tokenizer_fingerprint
-from .store_rows import _dt, _load_json
+from .search_lexicon import (
+    _STOPWORDS,
+    _expand_kebab,
+    _kebab_parts,
+    _strip_stopwords,
+    tokenize,
+    tokenizer_fingerprint,
+)
+from .store_rows import _dt, _load_json, body_sha256
 
 if TYPE_CHECKING:
     from .models import Memory, TombstonedMemory
@@ -64,6 +84,8 @@ _BUILD_BATCH = 2000
 #: Ids per ``IN (...)`` list, under SQLite's oldest default variable limit.
 _IN_CHUNK = 500
 
+#: The digest's tables. The small columns stand before `tokens`, so a read
+#: of them stops at the head of a row.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS digest_records (
     doc INTEGER PRIMARY KEY,
@@ -73,11 +95,18 @@ CREATE TABLE IF NOT EXISTS digest_records (
     n INTEGER NOT NULL DEFAULT 0,
     claim INTEGER NOT NULL DEFAULT 0,
     stamped INTEGER NOT NULL DEFAULT 0,
-    tokens TEXT NOT NULL DEFAULT '',
+    dl INTEGER NOT NULL DEFAULT 0,
+    client TEXT,
+    model TEXT,
+    category TEXT,
+    sha TEXT NOT NULL DEFAULT '',
     scopes TEXT NOT NULL DEFAULT '[]',
-    cwd TEXT NOT NULL DEFAULT ''
+    cwd TEXT NOT NULL DEFAULT '',
+    tokens TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS digest_records_by_id ON digest_records(removed, id);
+CREATE INDEX IF NOT EXISTS digest_records_by_category
+    ON digest_records(removed, category);
 CREATE TABLE IF NOT EXISTS digest_tokens (
     token TEXT NOT NULL DEFAULT '',
     doc INTEGER NOT NULL DEFAULT 0,
@@ -110,19 +139,26 @@ class _Features(NamedTuple):
     tokens: frozenset[str]
     claim: int
     stamped: bool
+    dl: int
 
 
 def _features(body: str) -> _Features:
     """What the digest keeps of a body: the token set the scorers read
-    (`search_dedup.raw_content_tokens`), and its claim size as the
-    supersession detector reads it."""
+    (`search_dedup.raw_content_tokens`), its claim size as the
+    supersession detector reads it, and `dl`, the length of the stream
+    BM25 scores (`search_bm25.compute_idf`: compounds beside their parts,
+    stopwords out, repeats counted). The body is tokenised once."""
     from .supersession import _strip_provenance, claim_sized
 
-    tokens = raw_content_tokens(body)
+    stream = tokenize(body)
+    tokens = frozenset(_strip_stopwords(stream))
+    dl = len(_strip_stopwords(_expand_kebab(stream)))
     stripped = _strip_provenance(body)
     stamped = stripped != body
-    claim = len(raw_content_tokens(stripped)) if claim_sized(stripped) else 0
-    return _Features(tokens, claim, stamped)
+    claim = 0
+    if claim_sized(stripped):
+        claim = len(raw_content_tokens(stripped)) if stamped else len(tokens)
+    return _Features(tokens, claim, stamped, dl)
 
 
 def expanded(tokens: AbstractSet[str]) -> set[str]:
@@ -137,6 +173,10 @@ def expanded(tokens: AbstractSet[str]) -> set[str]:
 
 
 _FINGERPRINT: str | None = None
+
+#: The tables' shape, named in the fingerprint: a digest built with other
+#: columns is dropped and built again.
+_SHAPE = "records: dl, client, model, category, sha; index: category"
 
 #: Bodies whose features name the rules the digest was built under: a
 #: compound, a stopword, a dotted number, a stamped claim and a body past
@@ -158,6 +198,7 @@ def fingerprint() -> str:
         from . import supersession
 
         parts: list[Any] = [
+            _SHAPE,
             tokenizer_fingerprint(),
             supersession.MAX_CLAIM_TOKENS,
             supersession.MAX_CLAIM_SENTENCES,
@@ -172,6 +213,7 @@ def fingerprint() -> str:
                     sorted(expanded(found.tokens)),
                     found.claim,
                     found.stamped,
+                    found.dl,
                 ]
             )
         text = json.dumps(parts, sort_keys=True, ensure_ascii=True)
@@ -253,10 +295,16 @@ def _put_entry(
     record_id: str,
     rid: int,
     body: str,
-    scopes: Sequence[str],
+    scopes: str,
     cwd: str,
+    client: str | None = None,
+    model: str | None = None,
+    category: str | None = None,
 ) -> None:
-    """Write one record's digest row and postings, replacing any it had."""
+    """Write one record's digest row and postings, replacing any it had.
+    `scopes`, `client` and `model` are the record row's own columns
+    (``scopes_json``, ``actor_client``, ``actor_model``), kept as they are
+    spelled there."""
     found = _features(body)
     old = conn.execute(
         "SELECT doc, tokens FROM digest_records WHERE removed = ? AND id = ?",
@@ -265,8 +313,10 @@ def _put_entry(
     if old is not None:
         _drop_entry(conn, int(old[0]), str(old[1]))
     cursor = conn.execute(
-        "INSERT INTO digest_records(removed, id, rid, n, claim, stamped, tokens, scopes, cwd) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO digest_records("
+        "removed, id, rid, n, claim, stamped, dl, client, model, category, sha, "
+        "scopes, cwd, tokens) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             int(removed),
             record_id,
@@ -274,9 +324,14 @@ def _put_entry(
             len(found.tokens),
             found.claim,
             int(found.stamped),
-            " ".join(sorted(found.tokens)),
-            json.dumps(list(scopes), ensure_ascii=False),
+            found.dl,
+            client,
+            model,
+            category,
+            body_sha256(body),
+            scopes,
             cwd,
+            " ".join(sorted(found.tokens)),
         ),
     )
     doc = cursor.lastrowid
@@ -320,8 +375,11 @@ def _index_record(conn: sqlite3.Connection, removed: bool, record_id: str) -> No
         record_id=record.id,
         rid=int(key[0]),
         body=record.body,
-        scopes=record.scopes,
+        scopes=str(row["scopes_json"]),
         cwd=_cwd_of(record),
+        client=row["actor_client"],
+        model=row["actor_model"],
+        category=row["category"],
     )
 
 
@@ -369,11 +427,13 @@ def _build(self: Store) -> bool:
     finishes. False when this build stopped."""
     token = secrets.token_hex(8)
     with self._transaction() as conn:
+        # Dropped, not emptied: a digest another build made may have other
+        # columns, and CREATE TABLE IF NOT EXISTS would keep them.
+        for table in _TABLES:
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
         for statement in _SCHEMA.split(";"):
             if statement.strip():
                 conn.execute(statement)
-        for table in _TABLES:
-            conn.execute(f"DELETE FROM {table}")
         start = _head(conn)
         _set_state(conn, fingerprint=fingerprint(), build=token)
     for removed in (False, True):
@@ -413,21 +473,28 @@ def _mark(conn: sqlite3.Connection) -> str | None:
     return f"{seen}:{state.get('mac', '')}"
 
 
-def digest_mark(self: Store) -> str | None:
+def digest_mark(self: Store, *, build: bool = True) -> str | None:
     """Bring the digest to the log's last record mutation and name the
     state it reached. None when it could not be (a store this open may not
     write, a busy lock, another process building it): the caller scans the
-    records instead."""
+    records instead.
+
+    With `build` false a digest that has to be built from the records is
+    left as it is and the answer is None. A search or a hook asks that
+    way: it applies the few rows a digest is behind by, and never pays
+    for a build, which the owner's open and a write do."""
     try:
         mark = _mark(self._conn)
         if mark is not None:
             return mark
+        if not build and _built(self._conn, _state(self._conn)) is None:
+            return None
         with self._transaction() as conn:
             seen = _built(conn, _state(conn))
             if seen is not None:
                 _ingest(conn, seen)
                 return _mark(conn)
-        if not _build(self):
+        if not build or not _build(self):
             return None
         with self._transaction() as conn:
             seen = _built(conn, _state(conn))
@@ -445,6 +512,38 @@ def digest_mark(self: Store) -> str | None:
 def digest_sync(self: Store) -> bool:
     """`digest_mark`, as whether the digest is current."""
     return self.digest_mark() is not None
+
+
+_P = ParamSpec("_P")
+
+
+def keeps_digest(open_: Callable[_P, Store]) -> Callable[_P, Store]:
+    """`Store.open`'s decorator: the owner's writing open (its
+    ``allow_rekey``) brings the digest current before it returns, building
+    it on a store that has none or one made under other rules. That is
+    where the one build of an existing store is paid (0.5 s at 1,500
+    records, 65 s at 150,000: bench/scale), as its schema steps are, so
+    no search or hook waits for it. A reader's open leaves the digest as
+    it is, and a store that cannot be written opens as it stands
+    (`digest_mark` answers None and says why once)."""
+
+    @functools.wraps(open_)
+    def opened(*args: _P.args, **kwargs: _P.kwargs) -> Store:
+        store = open_(*args, **kwargs)
+        if kwargs.get("allow_rekey") and _may_write(store):
+            store.digest_mark()
+        return store
+
+    return opened
+
+
+def _may_write(store: Store) -> bool:
+    """Whether this connection may write the digest: not opened
+    read-only, holding the store's key, and not held to reading by its
+    versions (``PRAGMA query_only``)."""
+    if store._read_only or not store.has_key:
+        return False
+    return not store.conn.execute("PRAGMA query_only").fetchone()[0]
 
 
 #: Answers kept per store while the records stand as they were read.
@@ -594,7 +693,72 @@ def digest_scope_groups(self: Store) -> list[tuple[list[str], str, int]] | None:
     except sqlite3.Error as exc:
         log.warning("store %s: the digest could not be read (%s)", self._path, exc)
         return None
-    return [(list(json.loads(row[0])), str(row[1]), int(row[2])) for row in rows]
+    return [(list(_load_json(row[0], [])), str(row[1]), int(row[2])) for row in rows]
+
+
+def digest_admission_rows(
+    self: Store,
+) -> list[tuple[int, str, str | None, str | None, str | None, int]] | None:
+    """Every active record as a ranking's statistics read it: its row
+    number in `memories`, its scopes as the row spells them, the project
+    its ``homes`` row names (None for none), its writer's declared client
+    and model, and its BM25 length. None when the digest is not current
+    and applying the rows it is behind by does not make it so; it is never
+    built here (`digest_mark`)."""
+    if self.digest_mark(build=False) is None:
+        return None
+    try:
+        return [
+            (int(r[0]), str(r[1]), r[2], r[3], r[4], int(r[5]))
+            for r in self._conn.execute(
+                "SELECT d.rid, d.scopes, h.project, d.client, d.model, d.dl "
+                "FROM digest_records d LEFT JOIN homes h ON h.record_id = d.id "
+                "WHERE d.removed = 0"
+            )
+        ]
+    except sqlite3.Error as exc:
+        log.warning("store %s: the digest could not be read (%s)", self._path, exc)
+        return None
+
+
+def digest_ambient_ids(self: Store) -> list[str] | None:
+    """The ids of the active records whose category is ``ambient``, read
+    through the digest's index on category; None when the digest is not
+    current (`digest_mark` with no build)."""
+    if self.digest_mark(build=False) is None:
+        return None
+    try:
+        return [
+            str(r[0])
+            for r in self._conn.execute(
+                "SELECT id FROM digest_records WHERE removed = 0 AND category = ?",
+                ("ambient",),
+            )
+        ]
+    except sqlite3.Error as exc:
+        log.warning("store %s: the digest could not be read (%s)", self._path, exc)
+        return None
+
+
+def digest_unanswered_ids(self: Store) -> list[str] | None:
+    """The ids of the active records with no standing answer for the body
+    they hold: no ``standing`` row, or one that names another body's
+    sha256. None when the digest is not current or the store has no
+    ``standing`` table; the caller then reads every record's row."""
+    if self.digest_mark(build=False) is None:
+        return None
+    try:
+        return [
+            str(r[0])
+            for r in self._conn.execute(
+                "SELECT d.id FROM digest_records d "
+                "LEFT JOIN standing s ON s.record_id = d.id "
+                "WHERE d.removed = 0 "
+                "AND (s.record_id IS NULL OR s.body_sha256 != d.sha)"
+            )
+        ]
+    except sqlite3.Error:
+        return None
 
 
 class LightRecord(NamedTuple):

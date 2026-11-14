@@ -9,17 +9,30 @@ stored body, which is what keeps its cost from growing with the store.
 
 from __future__ import annotations
 
+import json
 import random
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from bettermemory import scope_match, search_dedup, store_digest, supersession
+from bettermemory import (
+    scope_match,
+    search_dedup,
+    standing,
+    store_digest,
+    store_index,
+    supersession,
+)
+from bettermemory.admission import EVERY_RECORD
 from bettermemory.config import Config, StorageConfig
+from bettermemory.identity import Actor
+from bettermemory.models import Category
+from bettermemory.search_lexicon import _expand_kebab, _strip_stopwords, tokenize
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
-from bettermemory.store import Store
+from bettermemory.store import StandingAnswer, Store
+from bettermemory.store_rows import body_sha256
 
 from ._mcp import call_tool
 
@@ -261,3 +274,212 @@ def test_a_sessions_rows_are_read_through_the_session_index(store: Store) -> Non
         (event["kind"], event.get("query"))
         for event in store.session_events_of_kinds("session-1", ["search"])
     ] == wanted
+
+
+# ---------------------------------------------------------------------------
+# What a search and a session's start ask of every record
+# ---------------------------------------------------------------------------
+
+
+def _fill_for_reads(store: Store) -> list[str]:
+    rng = random.Random(23)
+    ids = _fill(store, rng, 50)
+    ambient = store.write(
+        content="The reader prefers short answers.",
+        scopes=["tools"],
+        category=Category.AMBIENT,
+        actor=Actor(client="claude-code", model="a-model"),
+    )
+    return [*ids, ambient.id]
+
+
+def test_the_digest_row_carries_the_records_own_values(store: Store) -> None:
+    _fill_for_reads(store)
+    assert store.digest_sync()
+    rows = {
+        str(r[0]): r
+        for r in store.conn.execute(
+            "SELECT id, dl, sha, category, client, model, scopes "
+            "FROM digest_records WHERE removed = 0"
+        )
+    }
+    active = store.load_all()
+    assert set(rows) == {m.id for m in active}
+    for memory in active:
+        _, dl, sha, category, client, model, scopes = rows[memory.id]
+        assert dl == len(_strip_stopwords(_expand_kebab(tokenize(memory.body))))
+        assert sha == body_sha256(memory.body)
+        assert category == (memory.category.value if memory.category else None)
+        assert client == (memory.actor.client if memory.actor else None)
+        assert model == (memory.actor.model if memory.actor else None)
+        assert json.loads(scopes) == memory.scopes
+    assert any(row[3] == "ambient" for row in rows.values())
+    assert any(row[4] == "claude-code" for row in rows.values())
+
+
+def test_the_statistics_inputs_are_the_record_rows_own(store: Store) -> None:
+    """`digest_admission_rows` is what `document_frequencies` reads from
+    the record rows, with each record's BM25 length beside it."""
+    _fill_for_reads(store)
+    scanned = sorted(
+        (
+            int(row["rid"]),
+            json.loads(row["scopes_json"]),
+            row["home_project"],
+            row["actor_client"],
+            row["actor_model"],
+        )
+        for row in store.conn.execute(store_index._ADMISSION_INPUTS)
+    )
+    read = store.digest_admission_rows()
+    assert read is not None
+    assert sorted((r[0], json.loads(r[1]), r[2], r[3], r[4]) for r in read) == scanned
+    lengths = {
+        int(row[0]): len(_strip_stopwords(_expand_kebab(tokenize(str(row[1])))))
+        for row in store.conn.execute("SELECT rowid, body FROM memories")
+    }
+    assert {r[0]: r[5] for r in read} == lengths
+
+
+def test_the_candidates_for_standing_and_the_unanswered_equal_the_scans(
+    store: Store,
+) -> None:
+    ids = _fill_for_reads(store)
+    active = {m.id: m for m in store.load_all()}
+    answered = [i for i in ids if i in active][:12]
+    for position, record_id in enumerate(answered):
+        store.put_standing(
+            record_id, StandingAnswer(0.1 if position % 3 else 0.6, "asked", "t/t")
+        )
+    # One answer given for a body the record no longer holds.
+    stale = active[answered[0]]
+    store.update(stale.model_copy(update={"body": stale.body + " Changed since."}))
+    active = {m.id: m for m in store.load_all()}
+
+    rows = {row["id"]: row for row in store.standing_rows()}
+    can_stand = {
+        rid
+        for rid, row in rows.items()
+        if row["category"] == "ambient"
+        or (row["probability"] is not None and row["probability"] >= 0.3)
+    }
+    assert set(store.standing_candidate_ids(0.3) or []) == can_stand
+    assert set(store.standing_candidate_ids(None) or []) == {
+        rid for rid, row in rows.items() if row["category"] == "ambient"
+    }
+    waiting = {
+        rid
+        for rid, row in rows.items()
+        if row["body_sha256"] != body_sha256(active[rid].body)
+    }
+    assert answered[0] in waiting
+    assert set(store.digest_unanswered_ids() or []) == waiting
+    assert set(store.digest_ambient_ids() or []) == {
+        rid for rid, row in rows.items() if row["category"] == "ambient"
+    }
+
+
+def test_standing_reads_are_the_same_with_and_without_the_digest(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = _fill_for_reads(store)
+    active = {m.id for m in store.load_all()}
+    for position, record_id in enumerate(i for i in ids if i in active):
+        if position % 4 == 0:
+            store.put_standing(record_id, StandingAnswer(0.7, "asked", "t/t"))
+    with_digest = (
+        standing.standing_ids(store, EVERY_RECORD),
+        standing.backlog(store, EVERY_RECORD).ids,
+    )
+    assert with_digest[0] and with_digest[1]
+
+    monkeypatch.setattr(Store, "digest_mark", lambda self, *, build=True: None)
+    assert store.standing_candidate_ids(0.3) is None
+    assert store.digest_unanswered_ids() is None
+    assert (
+        standing.standing_ids(store, EVERY_RECORD),
+        standing.backlog(store, EVERY_RECORD).ids,
+    ) == with_digest
+
+
+def test_a_read_brings_the_digest_current_and_never_builds_it(store: Store) -> None:
+    _fill_for_reads(store)
+    assert store.digest_mark(build=False) is not None
+    # Behind by one record: a read applies it.
+    written = store.write(content="A late note about the cache.", scopes=["tools"])
+    mark = store.digest_mark(build=False)
+    assert mark is not None
+    assert written.id in {
+        str(r[0])
+        for r in store.conn.execute("SELECT id FROM digest_records WHERE removed = 0")
+    }
+
+    with store._transaction() as conn:
+        for table in store_digest._TABLES:
+            conn.execute(f"DROP TABLE {table}")
+    assert store.digest_mark(build=False) is None
+    assert store.digest_admission_rows() is None
+    assert store.digest_ambient_ids() is None
+    tables = {
+        str(r[0])
+        for r in store.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    assert not (tables & set(store_digest._TABLES)), "a read built the digest"
+    assert store.digest_mark() is not None, "a write's call builds it"
+
+
+def test_the_owners_open_builds_the_digest_and_a_readers_does_not(
+    tmp_path: Path,
+) -> None:
+    with Store(tmp_path) as store:
+        assert store.digest_mark(build=False) is not None, "a new store has one"
+        _fill_for_reads(store)
+        with store._transaction() as conn:
+            for table in store_digest._TABLES:
+                conn.execute(f"DROP TABLE {table}")
+
+    with Store.open(tmp_path, allow_rekey=False) as reader:
+        assert reader.digest_mark(build=False) is None
+    with Store.open(tmp_path, allow_rekey=True) as owner:
+        assert owner.digest_mark(build=False) is not None
+        count = owner.conn.execute(
+            "SELECT COUNT(*) FROM digest_records WHERE removed = 0"
+        ).fetchone()[0]
+        assert count == owner.count_memories()
+
+
+def test_a_digest_of_another_shape_is_dropped_and_built_again(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A digest another build made may lack this build's columns: its
+    fingerprint differs, and the build that follows drops the tables
+    before it makes them."""
+    _fill_for_reads(store)
+    with store._transaction() as conn:
+        for table in store_digest._TABLES:
+            conn.execute(f"DROP TABLE {table}")
+        conn.execute(
+            "CREATE TABLE digest_records (doc INTEGER PRIMARY KEY, removed INTEGER, "
+            "id TEXT, rid INTEGER, n INTEGER, claim INTEGER, stamped INTEGER, "
+            "tokens TEXT, scopes TEXT, cwd TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE digest_tokens (token TEXT, doc INTEGER, "
+            "PRIMARY KEY (token, doc)) WITHOUT ROWID"
+        )
+        conn.execute(
+            "CREATE TABLE digest_state (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID"
+        )
+        conn.execute(
+            "INSERT INTO digest_state(key, value) VALUES ('fingerprint', 'older'), "
+            "('seq', '0'), ('mac', '')"
+        )
+    assert store.digest_mark(build=False) is None
+    assert store.digest_sync()
+    columns = {
+        str(r[1]) for r in store.conn.execute("PRAGMA table_info(digest_records)")
+    }
+    assert {"dl", "sha", "category", "client", "model"} <= columns
+    assert store.digest_admission_rows()

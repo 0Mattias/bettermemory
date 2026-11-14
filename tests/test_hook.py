@@ -1991,9 +1991,8 @@ def test_run_audit_threads_conversational_opt_out_into_probe(
     assert captured["conversational"] is False
 
 
-# A store where the FTS5 candidate prefilter is SATURATED and the memory
-# that would win a full-corpus ranking sits past the cap. Above
-# `_INDEX_THRESHOLD_DEFAULT` production ranks that capped slice; a probe
+# A store where the search pool is full and the memory that would win a
+# ranking of every record sits past it. Production ranks the pool; a probe
 # ranking an unconditional `store.load_all()` ranks a strict superset.
 # Mirrors `_write_prefilter_starved_store` in test_audit.py.
 _STARVED_QUERY = "alpha beta"
@@ -2001,23 +2000,24 @@ _STARVED_REPO = "git@github.com:example/repo-a.git"
 
 
 def _write_prefilter_starved_store(mem_dir: Path, worktree: str) -> str:
-    """Seed the starved store and return the past-the-cap target's id.
+    """Seed the starved store and return the past-the-pool target's id.
 
-    60 short bodies repeat both query terms and win the FTS5 BM25
-    ordering, monopolising the `_PREFILTER_CAP` slice. The target
-    mentions each term twice inside a long body — length normalisation
-    drops it past the cap — but the keyword scorer caps per-term TF at
-    2, so over the FULL corpus it ties the decoys and its freshness wins
-    rank 1. It is also the only memory homed in the caller's project (the
-    checkout at `worktree`; the decoys are global), so holding rank 1
-    lets `_caller_in_top_hit_project` suppress the verdict to `ok`."""
+    `POOL_SIZE` + 10 short bodies repeat both query terms and win the
+    FTS5 BM25 ordering, filling the pool. The target mentions each term
+    twice inside a long body — length normalisation drops it past the
+    pool — but the keyword scorer caps per-term TF at 2, so over the
+    FULL corpus it ties the decoys and its freshness wins rank 1. It is
+    also the only memory homed in the caller's project (the checkout at
+    `worktree`; the decoys are global), so holding rank 1 lets
+    `_caller_in_top_hit_project` suppress the verdict to `ok`."""
+    from bettermemory.handlers.search import POOL_SIZE
     from bettermemory.location import resolve_caller
     from bettermemory.origin import Origin
 
     store = Store(mem_dir)
     plain = _global_home(store, mem_dir)
     dense = "alpha beta " * 6
-    for i in range(60):
+    for i in range(POOL_SIZE + 10):
         store.write(
             content=f"{dense}filler-{i}",
             scopes=["infrastructure"],
@@ -2038,11 +2038,13 @@ def _write_prefilter_starved_store(mem_dir: Path, worktree: str) -> str:
     for mem in store.load_all():
         age = timedelta(minutes=30) if mem.id == target.id else timedelta(days=30)
         _backdate(store, mem, age)
-    top = {cid for cid, _ in store.query_candidates(_STARVED_QUERY, max_results=50)}
-    assert len(top) == 50, "prefilter slice is not saturated — densify the decoys"
+    top = {
+        cid for cid, _ in store.query_candidates(_STARVED_QUERY, max_results=POOL_SIZE)
+    }
+    assert len(top) == POOL_SIZE, "the pool is not full — densify the decoys"
     assert target.id not in top, (
-        "precondition drift: the target landed inside the FTS top-50, so "
-        "production and a load_all probe would see the same pool"
+        "precondition drift: the target landed inside the pool, so "
+        "production and a load_all probe would see the same candidates"
     )
     return target.id
 
@@ -2053,15 +2055,14 @@ def test_run_audit_ranks_productions_candidate_pool(
     """The Stop hook — the PRIMARY production audit producer — must rank
     production's candidate pool, not an unconditional `load_all()`.
 
-    Pre-fix it loaded the whole store while `memory_search` ranked the
-    `_PREFILTER_CAP`-capped FTS slice. The probe's pool was a strict
+    Pre-fix it loaded the whole store while `memory_search` ranked its
+    capped pool. The probe's pool was a strict
     superset, and the miss verdict reads ONLY the rank-1 hit, so a
-    memory the prefilter would have dropped could take that slot: here
+    memory the pool does not hold could take that slot: here
     the caller's own project memory, which `_caller_in_top_hit_project`
     suppresses to `ok` while production's real rank-1 is a global memory
     worth flagging. Asserting the verdict alone would be weak — the
     rank-1 identity is what the pool decides, so pin both."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     from bettermemory.config import (
         BehaviorConfig,
         Config,
@@ -2094,7 +2095,7 @@ def test_run_audit_ranks_productions_candidate_pool(
     )
     assert result["recent_retrieval_count"] == 0
     assert result["top_hits"][0]["id"] != target_id, (
-        "the probe ranked the past-the-cap memory production's prefilter "
+        "the probe ranked the past-the-pool memory production's search "
         "would never have surfaced"
     )
     assert result["top_hits"][0]["scopes"] == ["infrastructure"]

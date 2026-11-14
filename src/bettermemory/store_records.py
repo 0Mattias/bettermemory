@@ -338,6 +338,105 @@ def get_many(self: Store, ids: Sequence[str]) -> list[Memory]:
     return out
 
 
+def light_many(
+    self: Store, rowids: Sequence[int], *, seed_tokens: bool = False
+) -> list[Memory]:
+    """The memories at `rowids` (their row numbers in `memories`), in the
+    order asked, as a ranking reads them: every field of the record row,
+    in one statement per `_PROVENANCE_BATCH` rows, without the signed
+    row's path targets and native origin (`_MEMORY_SELECT`'s second read
+    per record, which only a returned hit needs: `load_many`). Unknown
+    row numbers are skipped.
+
+    With `seed_tokens` each record's token streams are taken from its
+    row's index text (`search.seed_memory_tokens`), which the caller has
+    checked this build's tokenizer spelled (`index_spelled_here`)."""
+    from .search import seed_memory_tokens
+
+    wanted = list(dict.fromkeys(int(r) for r in rowids))
+    found: dict[int, Memory] = {}
+    for start in range(0, len(wanted), _PROVENANCE_BATCH):
+        chunk = wanted[start : start + _PROVENANCE_BATCH]
+        for row in self._conn.execute(
+            "SELECT memories.rowid AS rid, memories.*, NULL AS attestation_payload "
+            f"FROM memories WHERE rowid IN ({','.join('?' * len(chunk))})",
+            chunk,
+        ):
+            memory = _row_to_memory(row)
+            if seed_tokens:
+                seed_memory_tokens(memory, str(row["body_fts"]))
+            found[int(row["rid"])] = memory
+    return [found[r] for r in wanted if r in found]
+
+
+def light_by_ids(
+    self: Store, ids: Sequence[str], *, seed_tokens: bool = False
+) -> list[Memory]:
+    """`light_many` for records named by id: the active records among
+    `ids`, in the order asked, without the signed row's fields."""
+    from .search import seed_memory_tokens
+
+    wanted = list(dict.fromkeys(ids))
+    found: dict[str, Memory] = {}
+    for start in range(0, len(wanted), _PROVENANCE_BATCH):
+        chunk = wanted[start : start + _PROVENANCE_BATCH]
+        for row in self._conn.execute(
+            "SELECT memories.*, NULL AS attestation_payload "
+            f"FROM memories WHERE id IN ({','.join('?' * len(chunk))})",
+            chunk,
+        ):
+            memory = _row_to_memory(row)
+            if seed_tokens:
+                seed_memory_tokens(memory, str(row["body_fts"]))
+            found[memory.id] = memory
+    return [found[i] for i in wanted if i in found]
+
+
+def records_linking_to(self: Store, ids: Sequence[str]) -> list[Memory]:
+    """The active records whose own links name one of `ids`, read from the
+    record rows (``links_json``) and not from the links table, without the
+    signed row's fields. What a search's link annotations fall back to
+    when the links table cannot be read (`_response.attach_link_annotations`):
+    every record row is tested, so it is for that path alone."""
+    wanted = list(dict.fromkeys(str(i) for i in ids))
+    found: dict[str, Memory] = {}
+    for start in range(0, len(wanted), 100):
+        chunk = wanted[start : start + 100]
+        named = " OR ".join(["instr(links_json, ?) > 0"] * len(chunk))
+        for row in self._conn.execute(
+            "SELECT memories.*, NULL AS attestation_payload FROM memories "
+            f"WHERE links_json != '[]' AND ({named})",
+            chunk,
+        ):
+            memory = _row_to_memory(row)
+            found.setdefault(memory.id, memory)
+    return list(found.values())
+
+
+def standing_candidate_ids(self: Store, tau: float | None) -> list[str] | None:
+    """The ids of the active records that can be standing: those whose
+    category is ``ambient``, and those whose ``standing`` row answers at
+    or above `tau` (none of them when `tau` is None). A superset of the
+    standing records, read from the digest and the ``standing`` table
+    without a record row; `standing.standing_ids` decides each. None when
+    the digest does not answer: the caller reads every record's row."""
+    ambient = self.digest_ambient_ids()
+    if ambient is None:
+        return None
+    ids: dict[str, None] = dict.fromkeys(ambient)
+    if tau is not None:
+        try:
+            for row in self._conn.execute(
+                "SELECT record_id FROM standing WHERE probability >= ?", (tau,)
+            ):
+                ids[str(row[0])] = None
+        except sqlite3.OperationalError:
+            # A store whose file could not take the membership tables has
+            # no answers.
+            pass
+    return list(ids)
+
+
 def iter_memories(self: Store) -> Iterator[Memory]:
     for row in self._conn.execute(_MEMORY_SELECT + " ORDER BY rowid"):
         yield _row_to_memory(row)
@@ -363,6 +462,11 @@ def memory_ids(self: Store) -> list[str]:
 
 def count_memories(self: Store) -> int:
     return int(self._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+
+
+def has_memories(self: Store) -> bool:
+    """Whether the store holds any active memory: one row read."""
+    return self._conn.execute("SELECT 1 FROM memories LIMIT 1").fetchone() is not None
 
 
 def filename_for(self: Store, memory_id: str) -> str | None:

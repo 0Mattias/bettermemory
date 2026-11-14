@@ -56,6 +56,7 @@ from __future__ import annotations
 from .. import git_read_budget, identity
 
 import sqlite3
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, cast
 
 from ..models import utcnow, validate_scope
@@ -63,7 +64,6 @@ from ..search import (
     CorpusStats,
     SearchMode,
     candidate_admitted,
-    _filter_candidates,
     _relevance_label_v2,
     search as run_search,
     top_hit_leads_runner_up,
@@ -79,7 +79,6 @@ if TYPE_CHECKING:
 
     from .._handlers import ToolHandlers
     from ..admission import Admission
-    from ..config import BehaviorConfig
     from ..models import MemoryHit
     from ..origin import Origin
     from ..verdict import MemoryVerdict
@@ -96,82 +95,93 @@ DESC_MEMORY_SEARCH = (
 )
 
 
+class Hydrator:
+    """Reads the records a search returns in full, once each.
+
+    A pool's candidates are read as a ranking uses them (`Store.light_many`:
+    one statement, no signed-row fields). A hit's drift report reads the
+    signed row's path targets and its origin the native origin, so the
+    few records a search returns are loaded again whole (`Store.load_many`)
+    before their hits are built (`search.search`'s `hydrate`). `full`
+    keeps what was loaded, by id."""
+
+    def __init__(self, store: Store) -> None:
+        self._store = store
+        self.full: dict[str, Any] = {}
+
+    def __call__(self, memories: Sequence[Any]) -> list[Any]:
+        missing = [m.id for m in memories if m.id not in self.full]
+        if missing:
+            for whole in self._store.load_many(missing):
+                self.full[whole.id] = whole
+        return [self.full.get(m.id, m) for m in memories]
+
+    def replaced(self, memories: Sequence[Any]) -> list[Any]:
+        """`memories` with each record this read in full in its place."""
+        return [self.full.get(m.id, m) for m in memories]
+
+
 class SearchPool(NamedTuple):
-    """The candidate list one search ranks, plus the BM25
-    corpus-statistics wiring THAT pool needs.
+    """The candidates one search ranks, the BM25 statistics they are
+    priced with, and the loader of the hits it returns.
 
-    The two travel together because they are one decision: a pool served
-    by the FTS prefilter is query-biased and needs corpus-derived
-    document frequencies to keep its IDF honest, while a `load_all` pool
-    IS the corpus and must not pay the lookup. Splitting them let a
-    caller take one without the other — which is exactly how the
-    silent-miss probe came to rank an unconditional `load_all()` with no
-    provider while `memory_search` ranked a capped, corpus-corrected
-    slice.
+    The three travel together because they are one decision. The pool
+    holds the records the full-text index ranks best for the query, so it
+    is biased toward the query: its own document frequencies and its own
+    length average describe the matches, not the collection, and a ranking
+    over it reads both from the store (`corpus_stats_provider`). Its
+    records carry what a ranking reads and no more, so the hits a search
+    returns are read in full first (`hydrate`).
 
-    `memories` is a SEARCH pool, never a census: above the index
-    threshold it is capped and query-biased. Anything that wants the
-    store's size must call `store.load_all()` itself.
+    `memories` is a search pool, never a census: at most `POOL_SIZE`
+    admitted records. Anything that wants the store's size counts it.
     """
 
     memories: list[Any]
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None
+    hydrate: Hydrator | None = None
 
 
 # The ceiling on how many hits one search serves; with the floor of 1 it
-# is the whole range a result width — request or config — can take.
-# `memory_search` narrows a REQUEST to it and `default_search_width`
-# narrows the CONFIG knob to it, both through `clamp_search_width`, so the
-# request path and the audit path cannot disagree about the range.
-#
-# NOT `_handlers._PREFILTER_CAP`, which is also 50 today: that one bounds
-# the INDEX ROWS the FTS prefilter returns, this one bounds the HITS a
-# search serves. `resolve_search_pool`'s starvation guard compares a count
-# bounded by the first against a width bounded by the second, so folding
-# them into one constant would turn a measurement into an artifact of the
-# spelling.
+# is the whole range a result width, request or config, can take
+# (`clamp_search_width`).
 MAX_SEARCH_RESULTS = 50
+
+#: How many admitted candidates one search ranks: the records the
+#: full-text index ranks best for the query, among those the request
+#: admits. Measured on 1,266 distinct searches the owner's sessions made,
+#: replayed over a copy of his store (1,369 records) against a ranking of
+#: every record (2026-11-12, `bench/parity/private.py`'s replay): how
+#: often the pool's top hit and its whole list are the whole store's, and
+#: the median time to build and rank the pool.
+#:
+#:     pool   top hit   whole list   median
+#:       50    96.4%      52.1%       8.9 ms
+#:      100    98.5%      70.1%      11.3 ms
+#:      200    99.2%      84.0%      16.2 ms
+#:      400    99.4%      91.7%      26.2 ms
+#:
+#: 200 is the last size whose step buys more agreement than time: 400
+#: adds 0.2 points of top hit for 10 ms. It is four times the widest
+#: result a search serves (`MAX_SEARCH_RESULTS`). The pool this replaced
+#: (50 rows by the index's rank, admitted afterwards, priced with the
+#: pool's own length average) read 91.9% and 31.5% in 21.2 ms.
+POOL_SIZE = 200
+
+#: Row numbers asked of the index before the pool reads every match: four
+#: pools' worth, so a request that admits a quarter of what matches fills
+#: its pool from the one bounded read.
+_FIRST_READ = 4 * POOL_SIZE
 
 
 def clamp_search_width(value: int) -> int:
-    """Narrow a result width to the range a search can actually serve —
+    """Narrow a result width to the range a search can actually serve:
     `[1, MAX_SEARCH_RESULTS]`.
 
-    The single arithmetic site for that range, read by all three widths
-    that reach `resolve_search_pool`: `memory_search`'s request and both
-    silent-miss producers' `min_survivors` (the latter two via
-    `default_search_width`). Hoisted here because the producers used to
-    read `behavior.default_max_results` RAW while `memory_search` clamped
-    the same number before handing it to the same parameter — so an
-    out-of-range knob desynchronised the audit's starvation guard from
-    production's while a pin using an in-range value stayed green.
+    The single arithmetic site for that range: `memory_search`'s request
+    and `config set`'s check of `default_max_results` both read it.
     """
     return max(1, min(int(value), MAX_SEARCH_RESULTS))
-
-
-def default_search_width(behavior: BehaviorConfig) -> int:
-    """The width of a DEFAULT `memory_search` under `behavior` — what both
-    silent-miss producers size their starvation guard for.
-
-    `config.py` coerces `default_max_results` to an int at load and range-
-    checks nothing, so the knob arrives here as any integer whatsoever.
-    Clamping it through `clamp_search_width` is what keeps "the width of a
-    default search" a width the request path can also produce, and outside
-    that range the two ends of the guard come apart in opposite
-    directions:
-
-    - above `MAX_SEARCH_RESULTS` no survivor count can reach the threshold
-      at all (the prefilter serves at most `_handlers._PREFILTER_CAP`
-      rows), so `resolve_search_pool`'s `<` holds unconditionally on every
-      saturated slice and the probe is handed the whole corpus with no
-      corpus-statistics provider — the strict-superset-under-different-
-      statistics pool that helper exists to eliminate;
-    - at `<= 0` the comparison can never hold, so the probe keeps a
-      starved slice that production (clamped to 1) reloads. That one
-      reaches the verdict: measured on a fully starved slice, the probe
-      returns `no_signal` at width 0 where width 1 returns `miss`.
-    """
-    return clamp_search_width(behavior.default_max_results)
 
 
 def resolve_search_pool(
@@ -183,178 +193,149 @@ def resolve_search_pool(
     admission: Admission | None = None,
     client_filter: str | None = None,
     model_filter: str | None = None,
-    min_survivors: int,
+    size: int = POOL_SIZE,
 ) -> SearchPool:
     """Build the candidate pool for `query` exactly as production
     retrieval does.
 
-    Shared by `memory_search` and BOTH silent-miss audit producers
-    (`hook.run_audit`, `handlers.audit_turn.memory_audit_turn`). The
-    probe exists to measure what production retrieval would have
-    surfaced, so it has to start from production's candidate set: an
-    unconditional `load_all()` is a strict SUPERSET above
-    `_INDEX_THRESHOLD_DEFAULT`, and since the miss verdict reads only the
-    rank-1 hit, a memory the prefilter would have dropped can take that
-    slot and rewrite the verdict.
+    Shared by `memory_search`, the session brief, the write review's
+    related list and both silent-miss producers (`recall_settle`,
+    `handlers.audit_turn`): a probe measures what production retrieval
+    would have surfaced, so it starts from production's candidates.
 
-    Three moving parts, all of them production's:
+    One path, whatever the store's size:
 
-    - the FTS5 prefilter (`_handlers.load_search_candidates`), capped at
-      `_PREFILTER_CAP` rows by query relevance and engaged only above
-      `_INDEX_THRESHOLD_DEFAULT` indexed memories;
-    - the cap-starvation guard, which dry-runs the authoritative post-cap
-      filter (`_filter_candidates`) on a cap-SATURATED slice and reloads
-      the full corpus when fewer than `min_survivors` candidates survive.
-      The FTS prefilter threads only `scopes` into SQL; the membership
-      admission and session-disabled scopes apply post-cap, so on
-      a saturated slice they can strip every candidate even though
-      in-filter matches exist past the cap. The saturation signal comes
-      from the loader (keyed on the INDEX row count) — NOT from
-      `len(memories)`, which the loader's per-candidate skips can shrink
-      below the cap, masking a saturated slice from the guard;
-    - the BM25 corpus-statistics provider, returned non-None only when
-      the prefilter actually served the pool. On a query-biased slice,
-      document frequencies counted over the pool make the query's own
-      discriminative terms look ubiquitous and collapse their IDF toward
-      zero (measured at 74x on a 600-memory corpus). When the full corpus
-      was loaded — including after a starvation reload — pool statistics
-      ARE corpus statistics and the provider stays None so the shipped
-      ranking is byte-stable.
-
-    `min_survivors` is the starvation threshold, and the two callers pass
-    DIFFERENT values on purpose — each the width of the search it is
-    describing:
-
-    - `memory_search` passes the REQUEST's `max_results`. That is the
-      guard's whole purpose: a request for 50 results that finds 6
-      in-filter survivors in the capped slice must reload, or it serves
-      six hits while matching memories sit past the cap — the round-85
-      failure this guard exists for. Pinning production to the config
-      default instead would re-open that failure for every above-default
-      request, so the divergence must not be closed from this end.
-    - Both audit producers pass `default_search_width(behavior)`. The
-      search they describe is the one the model did NOT make: a
-      counterfactual carrying no `max_results` of its own, so its width is
-      the config default — put through the SAME `clamp_search_width` a
-      request goes through, which is what makes it a width production
-      could actually have produced. Passing the raw knob instead put the
-      guard outside the range production can reach, in either direction;
-      `default_search_width` carries which failure lives at which end.
-      There is no request to read on that path — the miss verdict's own
-      precondition is that no retrieval happened.
-
-    The widths are not interchangeable, and the difference reaches the
-    verdict rather than stopping at pool size, so it is measured rather
-    than asserted: `test_min_survivors_width_can_flip_the_probe_verdict`
-    in `tests/test_search_prefilter.py` builds a store whose in-filter
-    survivors sit between the two thresholds, and the same probe reports
-    `ok` at the default width and `miss` at a request width of 25. The
-    comparison is a strict `<`, so the asymmetry reverses for a request
-    NARROWER than the default: there the audit reloads where production
-    keeps the capped slice.
-
-    What that leaves standing: a model habitually passing an
-    above-default `max_results` is audited against a narrower
-    counterfactual than its own habit. Nothing on the audit path can
-    observe that habit, and deriving it from an earlier turn's search
-    would make this turn's verdict depend on unrelated history — so it is
-    left open rather than guessed.
+    - The full-text index ranks every record the query matches, from the
+      index alone (`Store.ranked_rows`). The match is built from the
+      tokens the rankers score (`search_lexicon.fts_match_query`), so a
+      record no leg can score is not a candidate, and a query that
+      matches nothing has no candidates: nothing is loaded for it.
+    - The rows are put through the request's own filter in that order
+      (`Store.admitted_rows` with `search.candidate_admitted`: scopes,
+      excluded scopes, the membership admission, the writer filters),
+      from the admission inputs the store keeps for its statistics, so a
+      row the request does not admit is never read. The pool is the first
+      `size` that pass, read as a ranking reads them
+      (`Store.light_many`). A request that admits little of what matches
+      admits further down the order instead of loading the store, and
+      the pool is short only when the matches run out.
+    - An empty query has no match to rank by. Its pool is the newest
+      `size` admitted records (`Store.newest_rows`), which is the order a
+      browse returns them in.
+    - The statistics a ranking prices the pool with come from the store,
+      over the collection the same filter admits
+      (`Store.ranking_statistics`): its size, each term's document
+      frequency, and the average BM25 length. The pool's own would
+      describe the matches.
 
     Pass the same `scopes` / `excluded_scopes` / `admission` /
     `client_filter` / `model_filter` that will be handed to
-    `search.search`: the corpus-statistics predicate binds them so
-    document frequencies come from exactly the collection about to be
-    ranked. `admission` is the request's (`admission.Admission`, built
-    once from the caller's resolution): `memory_search` passes the
-    SEARCH_AUTO_SCOPE or SEARCH_UNSCOPED surface, the hooks' probe the
-    POOL_PREFILTER surface, the review's related set REVIEW_STRATA (design
-    3.5); None only for offline callers that rank a whole store. The two
-    audit producers leave the actor filters at None and must keep doing
-    so: the probe measures what PRODUCTION retrieval would have surfaced,
-    and production retrieval never carries one. Under auto-scope that
-    differs sharply from the whole store — a store spanning several
-    projects would otherwise price term rarity against memories the
-    caller cannot retrieve.
+    `search.search`: the statistics' predicate binds them, so the
+    denominator is the collection about to be ranked. `admission` is the
+    request's (`admission.Admission`, built once from the caller's
+    resolution): `memory_search` passes the SEARCH_AUTO_SCOPE or
+    SEARCH_UNSCOPED surface, the hooks' probe the POOL_PREFILTER surface,
+    the review's related set REVIEW_STRATA (design 3.5); None only for
+    offline callers that rank a whole store. The two audit producers
+    leave the writer filters at None and must keep doing so: the probe
+    measures what production retrieval would have surfaced, and
+    production retrieval never carries one.
 
-    Returns a pool, not a census — see `SearchPool`.
+    Returns a pool, not a census (`SearchPool`). Its `hydrate` is passed
+    to `search.search` by a caller that returns hits.
     """
-    # Function-local to break the package cycle (`_handlers` imports the
-    # `handlers` package, which imports this module), NOT to defer a
-    # cost: importing any `bettermemory` submodule runs the package
-    # `__init__`, which pulls `_handlers` in through `.builder` before
-    # any caller — including the out-of-process Stop hook — reaches this
-    # line, so the statement resolves out of `sys.modules`.
-    from .._handlers import load_search_candidates
-
     excluded = set(excluded_scopes) if excluded_scopes else set()
-    memories, prefilter_saturated, prefiltered = load_search_candidates(
-        store, query, scopes, client=client_filter, model=model_filter
-    )
-    memories, prefiltered = _guard_cap_starvation(
+    memories = _admitted_candidates(
         store,
-        memories,
-        prefilter_saturated,
-        prefiltered,
+        query,
         scopes=scopes,
         excluded=excluded,
         admission=admission,
         client_filter=client_filter,
         model_filter=model_filter,
-        min_survivors=min_survivors,
-    )
-    _corpus_stats = _corpus_stats_provider(
-        store,
-        scopes=scopes,
-        excluded=excluded,
-        admission=admission,
-        client_filter=client_filter,
-        model_filter=model_filter,
+        size=size,
     )
     return SearchPool(
         memories=memories,
-        corpus_stats_provider=_corpus_stats if prefiltered else None,
+        corpus_stats_provider=_corpus_stats_provider(
+            store,
+            scopes=scopes,
+            excluded=excluded,
+            admission=admission,
+            client_filter=client_filter,
+            model_filter=model_filter,
+        ),
+        hydrate=Hydrator(store),
     )
 
 
-def _guard_cap_starvation(
+def _admitted_candidates(
     store: Store,
-    memories: list[Any],
-    prefilter_saturated: bool,
-    prefiltered: bool,
+    query: str,
     *,
     scopes: list[str] | None,
     excluded: set[str],
     admission: Admission | None,
     client_filter: str | None,
     model_filter: str | None,
-    min_survivors: int,
-) -> tuple[list[Any], bool]:
-    """Take the loaded pool and its flags; return it (the corpus if starved), prefiltered."""
-    # The actor filters are absent here on purpose. They are the one
-    # class of filter the prefilter SQL applies itself, so a saturated
-    # slice is already 50 rows that PASS them and there is no post-cap
-    # attrition for the guard to catch — counting them would arm a
-    # starvation reload that can only ever reload the same set.
-    post_cap_filter_active = admission is not None or bool(excluded)
-    if post_cap_filter_active and prefilter_saturated:
-        survivors = _filter_candidates(
-            memories,
-            scopes=scopes,
-            excluded_scopes=excluded,
+    size: int,
+) -> list[Any]:
+    """The first `size` records the request admits, in the index's order
+    for `query`, or newest first for an empty one. The rows are admitted
+    before they are read (`Store.admitted_rows`), so only the pool's own
+    records are loaded."""
+    admit = _admit_predicate(
+        scopes=scopes,
+        excluded=excluded,
+        admission=admission,
+        client_filter=client_filter,
+        model_filter=model_filter,
+    )
+    rows: list[int] = []
+    if not query.strip():
+        offset = 0
+        while len(rows) < size:
+            newest = store.newest_rows(limit=_FIRST_READ, offset=offset)
+            rows.extend(store.admitted_rows(newest, admit))
+            if len(newest) < _FIRST_READ:
+                break
+            offset += len(newest)
+    else:
+        ranked = store.ranked_rows(query, limit=_FIRST_READ)
+        rows = store.admitted_rows(ranked, admit)
+        if len(rows) < size and len(ranked) == _FIRST_READ:
+            # The request admits less than a quarter of the best matches:
+            # admit among every match instead.
+            rows = store.admitted_rows(store.ranked_rows(query), admit)
+    return store.light_many(rows[:size], seed_tokens=store.index_spelled_here())
+
+
+def _admit_predicate(
+    *,
+    scopes: list[str] | None,
+    excluded: set[str],
+    admission: Admission | None,
+    client_filter: str | None,
+    model_filter: str | None,
+) -> Callable[[list[str], str | None, Any], bool]:
+    """The request's filter as the store's row readers take it: over a
+    record's scopes, the project its ``homes`` row names and its writer
+    (`search.candidate_admitted`, the predicate `_filter_candidates` runs)."""
+    scope_filter = set(scopes) if scopes else None
+
+    def admit(memory_scopes: list[str], home: str | None, actor: Any) -> bool:
+        return candidate_admitted(
+            memory_scopes,
+            home,
+            actor,
+            scope_filter=scope_filter,
+            excluded=excluded,
             admission=admission,
             client_filter=client_filter,
             model_filter=model_filter,
         )
-        if len(survivors) < min_survivors:
-            memories = store.load_all()
-            # The starvation reload replaced the query-biased slice with
-            # the whole corpus, so pool-derived statistics are corpus
-            # statistics again and the BM25 corpus-IDF lookup must not
-            # fire. Clearing the flag here rather than re-deriving it
-            # later keeps the claim tied to the assignment that makes it
-            # true.
-            prefiltered = False
-    return memories, prefiltered
+
+    return admit
 
 
 def _corpus_stats_provider(
@@ -367,27 +348,22 @@ def _corpus_stats_provider(
     model_filter: str | None,
 ) -> Callable[[list[str]], CorpusStats | None]:
     """Take the pool's filters; return the BM25 corpus-statistics lookup bound to them."""
+    admit = _admit_predicate(
+        scopes=scopes,
+        excluded=excluded,
+        admission=admission,
+        client_filter=client_filter,
+        model_filter=model_filter,
+    )
 
     def _corpus_stats(terms: list[str]) -> CorpusStats | None:
-        def _admit(memory_scopes: list[str], home: str | None, actor: Any) -> bool:
-            return candidate_admitted(
-                memory_scopes,
-                home,
-                actor,
-                scope_filter=set(scopes) if scopes else None,
-                excluded=excluded,
-                admission=admission,
-                client_filter=client_filter,
-                model_filter=model_filter,
-            )
-
         # Through the store's document frequency memo, which answers as
         # the uncached read does and reads again after a memory changes.
-        resolved = store.document_frequencies(terms, admit=_admit, memoised=True)
+        resolved = store.ranking_statistics(terms, admit=admit)
         if resolved is None:
             return None
-        size, body_df, scope_df = resolved
-        return CorpusStats(size=size, body_df=body_df, scope_df=scope_df)
+        size, body_df, scope_df, avgdl = resolved
+        return CorpusStats(size=size, body_df=body_df, scope_df=scope_df, avgdl=avgdl)
 
     return _corpus_stats
 
@@ -446,7 +422,7 @@ async def memory_search(
     links = admission.on(LINKS)
 
     prior_boundary = _prior_session_boundary(deps, since_prior_session)
-    memories, corpus_stats_provider = _candidate_pool(
+    pool = _candidate_pool(
         deps,
         query,
         since_prior_session=since_prior_session,
@@ -456,11 +432,10 @@ async def memory_search(
         admission=admission,
         client=client,
         model=model,
-        max_results=max_results,
     )
     hits, matched_leg = _rank_pool(
         deps,
-        memories,
+        pool,
         query,
         scopes=scopes,
         excluded=excluded,
@@ -470,8 +445,14 @@ async def memory_search(
         max_results=max_results,
         resolved_mode=resolved_mode,
         since_prior_session=since_prior_session,
-        corpus_stats_provider=corpus_stats_provider,
         anchoring=anchoring,
+    )
+    # The response's side map of records by id: the pool, with each hit's
+    # record as it was read in full.
+    memories = (
+        pool.hydrate.replaced(pool.memories)
+        if pool.hydrate is not None
+        else pool.memories
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper
@@ -542,10 +523,8 @@ def _request_width_and_mode(
     deps: ToolHandlers, max_results: int | None, mode: str | None
 ) -> tuple[int, str]:
     """Take the request's width and mode; return the clamped width and the mode."""
-    # The request clamp. Same helper — so the same range — the audit
-    # producers reach through `default_search_width`; when the request
-    # omits `max_results` the two paths are then reading one expression
-    # over one value.
+    # The request clamp: the one range a result width can take, whether
+    # the request names it or the config default stands in.
     if max_results is None:
         max_results = deps.config.behavior.default_max_results
     max_results = clamp_search_width(max_results)
@@ -608,55 +587,22 @@ def _candidate_pool(
     admission: Admission,
     client: str | None,
     model: str | None,
-    max_results: int,
-) -> tuple[list[Any], Callable[[list[str]], CorpusStats | None] | None]:
-    """Take the request; return the candidate pool and its corpus-statistics lookup."""
-    # Candidate pool. Two paths:
+) -> SearchPool:
+    """Take the request; return its candidate pool."""
+    # Two paths:
     #
-    # 1. `since_prior_session=True`: bypass the FTS5 prefilter and
-    #    take the full corpus via `load_all`, then narrow to the
-    #    post-boundary slice. Required for correctness — the
-    #    prefilter caps at 50 rows by query relevance, so a newly-
-    #    written memory matching the query but ranked outside top-N
-    #    would be dropped before the boundary filter ever sees it.
-    #    The post-boundary slice is bounded by session activity, so
-    #    even on a 10k-memory store only a handful of memories will
-    #    pass the `updated > prior_boundary` check.
-    # 2. Default: FTS5 candidate prefilter (T3.1 phase B), plus the
-    #    cap-starvation guard and the BM25 corpus-statistics wiring that
-    #    slice needs — all three resolved by `resolve_search_pool`, the
-    #    one implementation the silent-miss audit producers call too, so
-    #    the probe cannot rank a different candidate set than the model's
-    #    actual retrieval did.
-    # The provider stays None for every branch that does not go through
-    # the FTS prefilter — including `since_prior_session`, which slices
-    # `load_all()` by timestamp. That slice is narrower than the corpus
-    # but it is not QUERY-biased, so pool-derived document frequencies
-    # stay honest and the corpus lookup would be cost without benefit.
-    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None
-    if since_prior_session:
-        if prior_boundary is None:
-            memories = []
-        else:
-            # Strict `>`: the boundary IS the prior session's last event
-            # ts (per `find_prior_session_boundary`), so a memory whose
-            # `updated` equals it was written by the prior session and
-            # belongs to *that* session, not the current-session delta.
-            # A naive `>=` would count the boundary memory in both
-            # sessions' deltas.
-            memories = [m for m in deps.store.load_all() if m.updated > prior_boundary]
-    else:
-        # The prefilter, the cap-starvation guard and the corpus-stats
-        # wiring are one decision — see `resolve_search_pool`, which the
-        # two audit producers share so the silent-miss probe ranks this
-        # same pool. `min_survivors` is THIS request's `max_results`,
-        # already clamped above — the audit producers pass
-        # `default_search_width(behavior)` instead, which
-        # `resolve_search_pool` records as a deliberate difference (each
-        # caller sizes the guard for the search it describes), not a
-        # drift to close. Deliberate about the VALUE, never about the
-        # RANGE: both sides go through `clamp_search_width`.
-        pool = resolve_search_pool(
+    # 1. `since_prior_session=True`: the records changed after the prior
+    #    session's last event, whatever they say. They are read through
+    #    the index on `updated` (`Store.rows_updated_since`), not through
+    #    the query: a record written since and ranked low for the query is
+    #    still part of the answer. The slice is bounded by one session's
+    #    activity. It is not biased toward the query, so it is priced with
+    #    its own statistics and carries no provider.
+    # 2. Default: `resolve_search_pool`, the one implementation the
+    #    silent-miss audit producers call too, so the probe cannot rank a
+    #    different candidate set than the model's actual retrieval did.
+    if not since_prior_session:
+        return resolve_search_pool(
             deps.store,
             query,
             scopes=scopes,
@@ -664,16 +610,30 @@ def _candidate_pool(
             admission=admission,
             client_filter=client,
             model_filter=model,
-            min_survivors=max_results,
         )
-        memories = pool.memories
-        corpus_stats_provider = pool.corpus_stats_provider
-    return memories, corpus_stats_provider
+    memories: list[Any] = []
+    if prior_boundary is not None:
+        # Strict `>`: the boundary IS the prior session's last event ts
+        # (per `find_prior_session_boundary`), so a memory whose `updated`
+        # equals it was written by the prior session and belongs to that
+        # session, not the current-session delta.
+        store = deps.store
+        memories = [
+            m
+            for m in store.light_many(
+                store.rows_updated_since(prior_boundary),
+                seed_tokens=store.index_spelled_here(),
+            )
+            if m.updated > prior_boundary
+        ]
+    return SearchPool(
+        memories=memories, corpus_stats_provider=None, hydrate=Hydrator(deps.store)
+    )
 
 
 def _rank_pool(
     deps: ToolHandlers,
-    memories: list[Any],
+    pool: SearchPool,
     query: str,
     *,
     scopes: list[str] | None,
@@ -684,7 +644,6 @@ def _rank_pool(
     max_results: int,
     resolved_mode: str,
     since_prior_session: bool,
-    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None,
     anchoring: Anchoring,
 ) -> tuple[list[MemoryHit], dict[str, str]]:
     """Take the pool and the request; return the ranked hits and each hit's leg."""
@@ -694,7 +653,7 @@ def _rank_pool(
     # field.
     matched_leg: dict[str, str] = {}
     hits = run_search(
-        memories,
+        pool.memories,
         query,
         scopes=scopes,
         excluded_scopes=excluded,
@@ -710,7 +669,7 @@ def _rank_pool(
         # candidates as hits sorted by `updated` desc instead of
         # short-circuiting to an empty list on the stopword check.
         allow_empty_query=since_prior_session,
-        corpus_stats_provider=corpus_stats_provider,
+        corpus_stats_provider=pool.corpus_stats_provider,
         matched_leg_out=matched_leg,
         # The expansion leg is a bench instrument, not a shipped knob.
         rescue_expansion=False,
@@ -718,6 +677,9 @@ def _rank_pool(
         # Every hit's path drift reads a homed record where memory_show
         # reads it (design 3.6), so a non-top hit and memory_show agree.
         anchoring=anchoring,
+        # The hits are built from the whole record; the pool's records
+        # carry what the ranking read.
+        hydrate=pool.hydrate,
     )
     return hits, matched_leg
 
@@ -793,26 +755,35 @@ def _attach_hit_relations(
     """Take the response rows; attach recent negative outcomes and link relations."""
     # Per-hit `recent_negative_outcomes`: a hit that was ignored or
     # contradicted inside the window and not validated since says so, so
-    # the model does not keep re-suggesting what was rejected. The read
-    # is the ``use`` rows of the window that name a hit
-    # (`Store.events_of_kinds`'s `naming`): the window is thirty days,
-    # and a search that parsed every telemetry row in it paid for the
-    # store's whole month on each call.
+    # the model does not keep re-suggesting what was rejected. The window
+    # is thirty days and nearly every ``use`` row in it is an applied
+    # one, so the read is in two steps: the window's negative rows, which
+    # the store keeps as it reads them (`Store.negative_uses`), and, only
+    # when one of them names a hit, the window's ``use`` rows that name
+    # that hit (`Store.events_of_kinds`'s `naming`), which say whether it
+    # was applied since. A search none of whose hits was rejected reads
+    # no ``use`` row.
     if out:
         from datetime import timedelta
 
         from .._response import NEGATIVE_OUTCOME_WINDOW_DAYS
+        from ..events import _event_id_items
 
-        recent_events = list(
-            deps.store.events_of_kinds(
-                ("use",),
-                since=now - timedelta(days=NEGATIVE_OUTCOME_WINDOW_DAYS),
-                naming=[hit.id for hit in hits],
+        since = now - timedelta(days=NEGATIVE_OUTCOME_WINDOW_DAYS)
+        hit_ids = {hit.id for hit in hits}
+        rejected: set[str] = set()
+        for event in deps.store.negative_uses(since):
+            named = event.get("ids") or event.get("memory_ids")
+            rejected.update(mid for _, mid in _event_id_items(named) if mid in hit_ids)
+        if rejected:
+            recent_events = list(
+                deps.store.events_of_kinds(
+                    ("use",), since=since, naming=sorted(rejected)
+                )
             )
-        )
-        deps.responses.attach_recent_negative_outcomes(
-            out, hits, recent_events, now=now
-        )
+            deps.responses.attach_recent_negative_outcomes(
+                out, hits, recent_events, now=now
+            )
 
     # Per-hit `depends_on_resolved`: when a hit's memory carries
     # `depends_on`-typed links, inline summaries of the targets so
@@ -857,10 +828,8 @@ def _attach_hit_relations(
         # depends_on_resolved this is post-rank and additive (it never
         # reorders or drops a hit), with the same scope/origin re-filter
         # so a link can't leak a hidden-scope memory. Inbound edges come
-        # from the links index, with a candidate-scan fallback whenever
-        # the index can't answer (absent / empty / rebuild-pending /
-        # unreadable — the states the candidate loader routed to
-        # load_all).
+        # from the links table; when that read fails, the links the
+        # search's own candidates carry are read instead.
         deps.responses.attach_link_annotations(
             out,
             hits,
@@ -1155,9 +1124,10 @@ def _record_search(
 __all__ = [
     "DESC_MEMORY_SEARCH",
     "MAX_SEARCH_RESULTS",
+    "POOL_SIZE",
+    "Hydrator",
     "SearchPool",
     "clamp_search_width",
-    "default_search_width",
     "memory_search",
     "resolve_search_pool",
 ]

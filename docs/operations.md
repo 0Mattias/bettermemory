@@ -190,9 +190,8 @@ state directory, with an owner-only umask, its output appended to the
 daemon log. It is started at login and again after an exit with a
 failure status, 30 s apart; an exit 0 (a `down`, or a newer client
 replacing it) is final. It pins `BETTERMEMORY_DIR`,
-`BETTERMEMORY_KEYS_DIR`, `XDG_CONFIG_HOME`, `BETTERMEMORY_FLOCK_TIMEOUT`,
-`BETTERMEMORY_INDEX_THRESHOLD` and `PATH` as the installing shell had
-them, and always `BETTERMEMORY_STATE_DIR`; the identity variables
+`BETTERMEMORY_KEYS_DIR`, `XDG_CONFIG_HOME`, `BETTERMEMORY_FLOCK_TIMEOUT`
+and `PATH` as the installing shell had them, and always `BETTERMEMORY_STATE_DIR`; the identity variables
 (`BETTERMEMORY_CLIENT`, `_MODEL` and the rest) are never pinned. With no
 `BETTERMEMORY_DIR` the unit serves the store a daemon resolves from its
 state directory: `[storage] directory`, else `~/.claude-memory`, never a

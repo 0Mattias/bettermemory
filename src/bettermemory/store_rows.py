@@ -96,7 +96,13 @@ def _json_or_none(value: Mapping[str, Any]) -> str | None:
 
 
 def _load_json(text: str | None, default: Any) -> Any:
-    return default if text is None else json.loads(text)
+    if text is None:
+        return default
+    # Most list columns of most rows are empty; a new list each time, as
+    # the parser gives.
+    if text == "[]":
+        return []
+    return json.loads(text)
 
 
 def _origin_json(origin: Origin | None) -> str | None:

@@ -60,12 +60,9 @@ if str(_ROOT / "src") not in sys.path:
 
 from bettermemory import origin as _origin  # noqa: E402
 from bettermemory.admission import Admission, recorded_caller  # noqa: E402
-from bettermemory._handlers import (  # noqa: E402
-    _INDEX_THRESHOLD_DEFAULT,
-    _PREFILTER_CAP,
-)
 from bettermemory.config import BehaviorConfig  # noqa: E402
 from bettermemory.handlers.search import (  # noqa: E402
+    POOL_SIZE,
     clamp_search_width,
     resolve_search_pool,
 )
@@ -281,7 +278,6 @@ def replay(
         admission=admission,
         client_filter=spec["client"],
         model_filter=spec["model"],
-        min_survivors=width,
     )
     hits = run_search(
         pool.memories,
@@ -370,8 +366,7 @@ def run_private(store_root: Path, transcripts: Path = TRANSCRIPTS) -> dict[str, 
         "engine": {
             "tokenizer_fingerprint": tokenizer_fingerprint(),
             "schema_version": status["schema_version"],
-            "prefilter_cap": _PREFILTER_CAP,
-            "index_threshold": _INDEX_THRESHOLD_DEFAULT,
+            "pool_size": POOL_SIZE,
         },
         "store": {
             "root": str(store_root),

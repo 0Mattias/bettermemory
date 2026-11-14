@@ -51,9 +51,8 @@ async def test_search_keeps_its_hit_when_an_optional_target_cannot_be_read(
     monkeypatch: pytest.MonkeyPatch,
     failure: type[Exception] | None,
 ) -> None:
-    # A small store otherwise preloads the target with load_all. Force
-    # the supported FTS path and prove its targeted load is exercised.
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    # The target does not match the query, so the pool does not hold it
+    # and its targeted load is exercised.
     target = await _call(
         server,
         "memory_write",
@@ -97,7 +96,6 @@ async def test_search_keeps_its_hit_when_optional_expansion_cannot_be_read(
     monkeypatch: pytest.MonkeyPatch,
     failure: type[Exception] | None,
 ) -> None:
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     content = "alpha beta gamma the quick brown fox jumps over"
     source = await _call(server, "memory_write", content=content, scopes=["tools"])
     real = Store.load_one

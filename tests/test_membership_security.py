@@ -303,7 +303,7 @@ class Lab:
         """The candidate pool production retrieval draws under the
         surface's admission."""
         drawn = resolve_search_pool(
-            self.store, WORD, admission=self.admission(surface, who), min_survivors=5
+            self.store, WORD, admission=self.admission(surface, who)
         )
         admission = self.admission(surface, who)
         return self.names(

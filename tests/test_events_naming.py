@@ -2,10 +2,13 @@
 
 A search annotates each hit with its rejections of the last thirty days.
 The rows that can say so are the ``use`` rows of that window that name a
-hit, a few among everything the store logged in a month. Two things are
+hit, a few among everything the store logged in a month. Three things are
 held here: the narrowed read returns every row the full read returns that
-names one of the strings, in the same order, and a search parses the rows
-that name its hits and no others, so its cost does not follow the window's.
+names one of the strings, in the same order; the window's negative rows
+are read once and then only past the last row read
+(`Store.negative_uses`); and a search parses the negative rows and the
+rows that name a rejected hit and no others, so its cost does not follow
+the window's.
 """
 
 from __future__ import annotations
@@ -95,7 +98,12 @@ async def test_a_search_parses_only_the_rows_that_name_its_hits(
         assert "recent_negative_outcomes" not in before[0]
         for index in range(150):
             store.record_event("search", session="other", query=f"q{index}")
-            _use(store, [f"01OTHER{index:019d}"])
+            store.record_event(
+                "use",
+                session="other",
+                ids=[f"01OTHER{index:019d}"],
+                outcome="applied" if index % 30 else "ignored",
+            )
         await _call(
             server,
             "memory_record_use",
@@ -115,7 +123,54 @@ async def test_a_search_parses_only_the_rows_that_name_its_hits(
         hit = next(row for row in hits if row["id"] == memory_id)
         assert hit["recent_negative_outcomes"][0]["outcome"] == "ignored"
         assert hit["recent_negative_outcomes"][0]["note"] == "not now"
-        # 300 telemetry rows stand in the window; the search parses the
-        # one that names its hit and whatever else it reads of its own
-        # session, not the window.
-        assert len(parsed) < 20, len(parsed)
+        # 300 telemetry rows stand in the window, five of the `use` rows
+        # negative. The search parses those and the one that names its
+        # hit, and whatever else it reads of its own session: not the
+        # window.
+        first = len(parsed)
+        assert first < 25, first
+
+        # The negative rows are kept as they are read: a second search
+        # parses only the rows that name its rejected hit.
+        del parsed[:]
+        again = _unwrap(await _call(server, "memory_search", query="python"))
+        assert again[0]["recent_negative_outcomes"][0]["note"] == "not now"
+        assert len(parsed) < first, (len(parsed), first)
+
+
+def test_negative_uses_reads_each_row_once_and_follows_the_log(store: Store) -> None:
+    assert store.negative_uses(SINCE) == []
+    _use(store, ["A1"])
+    store.record_event("use", session="s", ids=["B2"], outcome="applied")
+    store.record_event("use", session="s", ids=["C3"], outcome="contradicted")
+    first = store.negative_uses(SINCE)
+    assert [(e["ids"], e["outcome"]) for e in first] == [
+        (["A1"], "ignored"),
+        (["C3"], "contradicted"),
+    ]
+
+    reads: list[str] = []
+
+    def counting(ts: str, session: str | None, kind: str, payload: str) -> Any:
+        reads.append(kind)
+        return _event_from_columns(ts, session, kind, payload)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(store_module, "_event_from_columns", counting)
+        assert store.negative_uses(SINCE) == first
+        assert reads == [], "nothing new in the log: nothing is read again"
+        store.record_event("search", session="s", query="x")
+        _use(store, ["D4"])
+        later = store.negative_uses(SINCE)
+        assert reads == ["use"], "only the row past the last one read"
+    assert [e["ids"] for e in later] == [["A1"], ["C3"], ["D4"]]
+
+
+def test_negative_uses_keeps_to_its_window(store: Store) -> None:
+    _use(store, ["A1"])
+    assert len(store.negative_uses(SINCE)) == 1
+    # A later start drops what is before it, and an earlier one than the
+    # events held reads the window again.
+    ahead = datetime.now(timezone.utc) + timedelta(hours=1)
+    assert store.negative_uses(ahead) == []
+    assert [e["ids"] for e in store.negative_uses(SINCE)] == [["A1"]]

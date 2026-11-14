@@ -24,12 +24,11 @@ WHAT IS FIXED. Everything a ranking depends on:
 
 TWO ARMS PER QUERY. `full` ranks the whole store in-process, the engine
 alone. `prefilter` drives `handlers.search.resolve_search_pool`, the
-production path: above the index threshold the FTS5 index nominates a
-capped slice by bm25 and hands back the corpus-statistics provider. The
-corpus is above the threshold, so every prefilter row must report
-`engaged`; a row that does not is a harness fault, not a result. The
-prefilter arm is the one that exercises the store: its SQL, its tie order
-at the cap, its document frequencies.
+production path: the FTS5 index draws the pool by bm25 and hands back the
+corpus-statistics provider, so every prefilter row reports `engaged`; a
+row that does not is a harness fault, not a result. The prefilter arm is
+the one that exercises the store: its SQL, its tie order at the pool's
+edge, its document frequencies and its length average.
 
 THE ARTIFACT. Per query: the query text, both arms' ranked ids, scores
 (diagnostic, outside the digest) and relevance labels. `digest` is a
@@ -62,11 +61,10 @@ _ROOT = _HERE.parents[1]
 if str(_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
-from bettermemory._handlers import (  # noqa: E402
-    _INDEX_THRESHOLD_DEFAULT,
-    _PREFILTER_CAP,
+from bettermemory.handlers.search import (  # noqa: E402
+    POOL_SIZE,
+    resolve_search_pool,
 )
-from bettermemory.handlers.search import resolve_search_pool  # noqa: E402
 from bettermemory.models import (  # noqa: E402
     Confidence,
     Memory,
@@ -88,8 +86,6 @@ PROBES = ("asked", "requery", "control")
 MAX_RESULTS = 10
 PINNED_NOW = datetime(2026, 9, 25, tzinfo=timezone.utc)
 BASE_CREATED = datetime(2026, 1, 1, tzinfo=timezone.utc)
-PREFILTER_CAP = _PREFILTER_CAP
-INDEX_THRESHOLD = _INDEX_THRESHOLD_DEFAULT
 
 # The product defaults. Fixed here rather than read from any config file,
 # so the artifact never measures the operator's own settings.
@@ -228,7 +224,6 @@ def rank_prefilter(store: Store, query: str) -> dict[str, Any]:
         query,
         scopes=None,
         excluded_scopes=None,
-        min_survivors=MAX_RESULTS,
     )
     hits = run_search(
         pool.memories,
@@ -337,8 +332,7 @@ def run_public(
         "engine": {
             "tokenizer_fingerprint": tokenizer_fingerprint(),
             "schema_version": status["schema_version"],
-            "prefilter_cap": PREFILTER_CAP,
-            "index_threshold": INDEX_THRESHOLD,
+            "pool_size": POOL_SIZE,
         },
         "params": {
             "pinned_now": PINNED_NOW.isoformat(),

@@ -22,9 +22,9 @@ sweep over the candidate list its CALLER supplies, using a completed
 turn's user message, and looks for a high-relevance hit. Both
 production producers supply production's own search pool
 (`handlers.search.resolve_search_pool`) rather than the whole active
-store, so above the FTS index threshold the probe ranks the same capped
-slice the model's retrieval would have; offline tooling that hands over
-a full `load_all()` gets the whole store. When a hit exists AND no retrieval
+store, so the probe ranks the same pool the model's retrieval would
+have; offline tooling that hands over every record ranks the whole
+store. When a hit exists AND no retrieval
 event (see `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, `list`, or
 `prompt_recall`) fired in the same session within a configurable
 lookback window, the probe returns a `MissReport` — the explicit
@@ -932,6 +932,7 @@ def probe_for_miss(
     conversational: bool = True,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
     floor: bool = True,
+    searched: bool = False,
 ) -> MissReport:
     """Decide whether the just-completed turn was a silent retrieval miss.
 
@@ -988,10 +989,10 @@ def probe_for_miss(
 
     `corpus_stats_provider` is forwarded for the same reason and belongs
     with the CANDIDATE POOL the caller built: `memories` must be
-    production's pool, not an unconditional `store.load_all()`. Above
-    `_INDEX_THRESHOLD_DEFAULT` production ranks a `_PREFILTER_CAP`-capped,
-    query-relevance-ordered slice and corrects its collapsed IDF with
-    corpus document frequencies, so a probe fed the whole corpus with no
+    production's pool, not an unconditional `store.load_all()`.
+    Production ranks the `handlers.search.POOL_SIZE` records the
+    full-text index draws for the query and prices them with the store's
+    statistics, so a probe fed the whole corpus with no
     provider ranks a strict SUPERSET under different statistics — and the
     verdict, which reads only the rank-1 hit, can land on a memory
     production would never have surfaced. Both production producers build
@@ -1030,14 +1031,26 @@ def probe_for_miss(
     mid-conversation server restart that re-anchored the bridge) can't
     orphan an in-window retrieval and re-fire a false miss.
 
+    `searched` says `memories` is the pool the store's index drew for
+    `user_message` out of a store that holds records
+    (`handlers.search.resolve_search_pool`): an empty list then means
+    the index matched nothing, and the report carries the query as every
+    branch that reached the ranker does. False (the default) reads an
+    empty list as a store with nothing to probe.
+
     Returns a `MissReport`. The handler is responsible for emitting a
     `search_miss` event when `report.is_miss` — this function is
     side-effect-free so it can be reused from offline tooling.
     """
     now = _probe_now(now)
-    if not memories or not user_message.strip():
+    if not user_message.strip() or not (memories or searched):
         return _no_signal_report(now, session_id, lookback_seconds, None)
     if floor and _too_thin_to_probe(user_message):
+        return _no_signal_report(now, session_id, lookback_seconds, user_message)
+    if not memories:
+        # `searched`: the store's index was asked for this message and
+        # matched no record the caller is admitted to. The ranker saw
+        # nothing, which is the no-hits branch below.
         return _no_signal_report(now, session_id, lookback_seconds, user_message)
     memories = _created_before_shield(memories, now, creation_shield_seconds)
     hits = _probe_hits(
@@ -1178,20 +1191,11 @@ def _created_before_shield(
 # Honest residuals in the pool parity `probe_for_miss` keeps with
 # production (its docstring), none of them closed here:
 #
-# - The producers size the pool's cap-starvation guard for a DEFAULT
-#   search (`handlers.search.default_search_width` — the config knob
-#   under the same clamp a request goes through), since the search they
-#   describe is the one that did not happen and carries no width of its
-#   own. A model habitually passing a wider `max_results` is therefore
-#   measured against a narrower counterfactual than its own habit;
-#   `handlers.search.resolve_search_pool` carries the measurement of
-#   how far that can travel.
 # - The producers build the pool from the RAW USER MESSAGE, because
 #   that is the only query text a turn-end audit has. The model would
-#   have typed a distilled query, so above the index threshold the FTS
-#   prefilter draws a different capped slice than the model's own
-#   search would have — the pool is production's *mechanism*, not
-#   necessarily production's *rows*.
+#   have typed a distilled query, so the index draws a different pool
+#   than the model's own search would have — the pool is production's
+#   *mechanism*, not necessarily production's *rows*.
 # - `corpus_stats_provider` prices document frequencies over the
 #   admitted collection, which still contains the memories the
 #   creation shield then drops from `memories`. Only the df

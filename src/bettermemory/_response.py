@@ -1656,12 +1656,14 @@ class ResponseBuilder:
 
         Edges come from the store's canonical `memory_links` table. A
         successful answer, including an empty one, wins over the older
-        candidate snapshot. If the bulk query raises, recover the edges
-        already named by loaded candidates (`candidate_link_rows`), without
-        loading another candidate pool or repeating the query. An inbound
-        source outside that snapshot cannot be recovered without the query. Resolution
+        candidate snapshot. If the bulk query raises, the edges are rebuilt
+        from the records' own links (`candidate_link_rows`): the loaded
+        candidates' and those of the records whose rows name a hit
+        (`Store.records_linking_to`), so an inbound source the query did
+        not draw is still found; when that read fails too, the candidates
+        alone are read. Resolution
         reuses the `depends_on` discipline: a side-map over the candidates, a
-        targeted `store.load_one` for targets outside the FTS prefilter,
+        targeted `store.load_one` for targets outside the search's pool,
         tombstoned / missing skipped silently, and the caller's scope filter
         and LINKS admission (`admission`, design 3.5) re-applied so a link
         can't leak a hidden-scope memory or one the caller is not admitted
@@ -1699,6 +1701,15 @@ class ResponseBuilder:
         try:
             links_map = store.links_for_many(hit_ids)
         except Exception:  # noqa: BLE001 - the annotation is best-effort
+            # The links table could not be read. The records carry their
+            # own links: those that name a hit are read from their rows,
+            # beside the candidates, and the link rows are rebuilt from
+            # them. When that read fails too, from the candidates alone.
+            try:
+                for source in store.records_linking_to(hit_ids):
+                    memory_by_id.setdefault(source.id, source)
+            except Exception:  # noqa: BLE001 - the annotation is best-effort
+                pass
             links_map = candidate_link_rows(memory_by_id.values(), hit_ids)
         if admission is not None:
             admission.prime(

@@ -56,8 +56,10 @@ from .search_bm25 import (
     _filler_floor_stats as _filler_floor_stats,
     _scope_tokens as _scope_tokens,
     compute_idf as compute_idf,
+    idf_terms as idf_terms,
     score_memory as score_memory,
     score_memory_bm25 as score_memory_bm25,
+    term_counts as term_counts,
 )
 from .search_dedup import (
     HIGH_SIMILARITY as HIGH_SIMILARITY,
@@ -548,13 +550,50 @@ def _memory_tokens(memory: Memory) -> _MemoryTokens:
     for scope in memory.scopes:
         scope_set.update(_scope_tokens(scope))
     tokens = _MemoryTokens(
-        body=body, content=_strip_stopwords(body), scope_set=scope_set
+        body=body,
+        content=_strip_stopwords(body),
+        scope_set=scope_set,
+        body_tf=term_counts(body),
     )
     with _TOKEN_CACHE_LOCK:
         _TOKEN_CACHE[key] = tokens
         while len(_TOKEN_CACHE) > TOKEN_CACHE_ENTRIES:
             _TOKEN_CACHE.popitem(last=False)
     return tokens
+
+
+def seed_memory_tokens(memory: Memory, index_text: str) -> None:
+    """Give `_memory_tokens` the streams of `memory` from the text the
+    store's index keeps for its body, so a candidate read from the store
+    is not tokenised again.
+
+    `index_text` is the record row's ``body_fts``:
+    ``fts_index_text(memory.body)``, the body stream joined by spaces, and
+    no token holds a space, so splitting it gives the stream back (625 µs
+    to tokenise a body of the owner's store against 13 µs to split its
+    row's text, equal on every one of its 1,369 records). The caller
+    vouches that the text was spelled by this build's tokenizer
+    (`Store.index_spelled_here`); a row spelled by another is tokenised
+    from its body as ever. An entry already kept stands."""
+    key = (memory.body, tuple(memory.scopes))
+    with _TOKEN_CACHE_LOCK:
+        if key in _TOKEN_CACHE:
+            _TOKEN_CACHE.move_to_end(key)
+            return
+    body = index_text.split(" ") if index_text else []
+    scope_set: set[str] = set()
+    for scope in memory.scopes:
+        scope_set.update(_scope_tokens(scope))
+    tokens = _MemoryTokens(
+        body=body,
+        content=_strip_stopwords(body),
+        scope_set=scope_set,
+        body_tf=term_counts(body),
+    )
+    with _TOKEN_CACHE_LOCK:
+        _TOKEN_CACHE[key] = tokens
+        while len(_TOKEN_CACHE) > TOKEN_CACHE_ENTRIES:
+            _TOKEN_CACHE.popitem(last=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1129,7 +1168,10 @@ def _score_bm25(
     whenever `candidates` is a query-filtered subset rather than the
     whole corpus."""
     body_idf_map, scope_idf_map, avgdl = compute_idf(
-        candidates, tokens=candidate_tokens, corpus_stats=corpus_stats
+        candidates,
+        tokens=candidate_tokens,
+        corpus_stats=corpus_stats,
+        terms=idf_terms(query_tokens),
     )
     if avgdl <= 0:
         return []
@@ -1288,6 +1330,7 @@ def _browse_hits(
     max_results: int,
     anchoring: Anchoring | None,
     path_drift: bool,
+    hydrate: Callable[[Sequence[Memory]], list[Memory]] | None = None,
 ) -> list[MemoryHit]:
     """Sort the filtered candidates newest first in place; return them as zero-score hits."""
     # Browse mode: the candidates passed the same filter the scored
@@ -1296,6 +1339,8 @@ def _browse_hits(
     # scored branches do at the end of `search()`.
     browse_candidates.sort(key=lambda m: (m.updated, m.id), reverse=True)
     browsed = browse_candidates[:max_results]
+    if hydrate is not None and browsed:
+        browsed = hydrate(browsed)
     return [
         _build_hit(
             memory,
@@ -1718,6 +1763,7 @@ def search(
     conversational: bool = True,
     anchoring: Anchoring | None = None,
     path_drift: bool = True,
+    hydrate: Callable[[Sequence[Memory]], list[Memory]] | None = None,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -1771,10 +1817,10 @@ def search(
       False (the default) is the pre-5.1 two-leg behavior byte for byte.
 
       `keyword` and `bm25` modes are explicit instrument choices and
-      are never touched. Above the index threshold the FTS prefilter
-      nominates the pool from the CALLER's tokens, so there the rescue
-      re-ranks the nominated pool rather than widening it — a
-      documented limit, not a silent one.
+      are never touched. The full-text index draws the pool from the
+      CALLER's tokens (`handlers.search.resolve_search_pool`), so the
+      rescue re-ranks that pool rather than widening it — a documented
+      limit, not a silent one.
     - `conversational`: hybrid-mode only, DEFAULT ON since 6.1.0 (the
       L1 ship, owner decision 2026-08-16). The Lane L repairs for
       conversation-shaped stores (the L1 declaration) run as described
@@ -1797,6 +1843,13 @@ def search(
       brief, `recall_brief._ranked`): a path on a mount that stopped
       answering would block it in stat() for a result it discards
       (ENG-169 G2).
+    - `hydrate`: given the records of the hits about to be returned, in
+      order, returns the records to build the hits from, in the same
+      order. A pool read without the fields a ranking does not use (the
+      signed row's path targets and native origin,
+      `handlers.search.resolve_search_pool`) passes the loader of the
+      whole record here, so only the returned hits are read in full.
+      None builds each hit from the record it was ranked as.
 
     Score semantics vary by mode: keyword/BM25 scores live on
     different scales and are not comparable across modes. Hybrid scores
@@ -1822,7 +1875,7 @@ def search(
         model_filter=model_filter,
     )
     if not query_tokens:
-        return _browse_hits(candidates, max_results, anchoring, path_drift)
+        return _browse_hits(candidates, max_results, anchoring, path_drift, hydrate)
     if not candidates:
         return []
 
@@ -1845,6 +1898,12 @@ def search(
     trimmed = scored[:max_results]
     if matched_leg_out is not None:
         _record_matched_legs(trimmed, lexical_ids, expansion_ids, matched_leg_out)
+    if hydrate is not None and trimmed:
+        whole = hydrate([memory for memory, _, _ in trimmed])
+        trimmed = [
+            (record, score, matched)
+            for record, (_, score, matched) in zip(whole, trimmed, strict=True)
+        ]
     return _ranked_hits(trimmed, anchoring, query_unique, path_drift)
 
 

@@ -375,9 +375,8 @@ class StorageConfig:
 @dataclass
 class BehaviorConfig:
     # Coerced to an int at load and NOT range-checked. Every consumer
-    # narrows it through `handlers.search.clamp_search_width` instead —
-    # one clamp for the request width and the audit probe's guard width,
-    # so an out-of-range knob cannot move one without the other.
+    # narrows it through `handlers.search.clamp_search_width` instead,
+    # so an out-of-range knob is a width a search can serve.
     default_max_results: int = 5
     recency_boost_half_life_days: float = 30.0
     # The Lane L conversational repairs: the temporal-scaffold df-floor

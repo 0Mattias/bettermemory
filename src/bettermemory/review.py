@@ -458,7 +458,6 @@ def related_for(
         content,
         excluded_scopes=excluded,
         admission=admission,
-        min_survivors=RELATED_TOP,
     )
     hits = run_search(
         pool.memories,

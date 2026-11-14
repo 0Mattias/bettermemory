@@ -403,7 +403,6 @@ def _engine_top(harness: Harness, content: str) -> list[str]:
         content,
         excluded_scopes=set(),
         admission=admission,
-        min_survivors=review.RELATED_TOP,
     )
     hits = run_search(
         pool.memories,

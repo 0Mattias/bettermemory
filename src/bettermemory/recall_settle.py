@@ -90,28 +90,19 @@ def _probe_message(
     the same pool the same way; the Stop and the settlement keep the
     floor.
     """
-    from .handlers.search import default_search_width, resolve_search_pool
+    from .handlers.search import resolve_search_pool
 
-    # Candidate pool: production's, not an unconditional `load_all()`.
+    # Candidate pool: production's, not every record of the store.
     # `resolve_search_pool` is the same helper `memory_search` builds its
-    # pool with: the FTS prefilter above `_INDEX_THRESHOLD_DEFAULT`, the
-    # cap-starvation guard, and the BM25 corpus-statistics provider that
-    # capped slice needs. Probing the whole corpus instead ranked a
-    # strict SUPERSET of what the model's retrieval could reach, and the
-    # miss verdict reads only the rank-1 hit, so a memory production's
-    # prefilter would have dropped could take that slot and decide the
-    # verdict on its own. The filters handed here are the ones
-    # `probe_for_miss` re-applies inside `run_search` (the same
-    # admission object), so the
-    # document frequencies price exactly the collection about to be
-    # ranked. `min_survivors` is the width of a DEFAULT `memory_search`
-    # (`default_search_width`: the config knob under the same clamp a
-    # request goes through, NOT the raw knob, which `config.py` never
-    # range-checks), not the probe's `_TOP_HITS_RETAINED`: the starvation
-    # guard has to fire on the same slices a default-width retrieval's
-    # would. It does NOT track a wider or narrower REQUEST: there is no
-    # request on this path, and `resolve_search_pool` records what that
-    # leaves open.
+    # pool with: the records the full-text index ranks best among those
+    # the admission passes, priced with the store's statistics. Probing
+    # the whole store instead ranked a superset of what the model's
+    # retrieval could reach, and the miss verdict reads only the rank-1
+    # hit, so a memory production would not have ranked could take that
+    # slot and decide the verdict on its own. The filters handed here are
+    # the ones `probe_for_miss` re-applies inside `run_search` (the same
+    # admission object), so the document frequencies price exactly the
+    # collection about to be ranked.
     #
     # `probe_pool` is deliberately NOT named `memories`: it is a capped,
     # query-biased SEARCH pool, not the store.
@@ -120,7 +111,6 @@ def _probe_message(
         user_message,
         excluded_scopes=excluded_scopes,
         admission=admission,
-        min_survivors=default_search_width(cfg.behavior),
     )
     # The ranker knobs production `memory_search` threads (the recency
     # half-life and the Lane L conversational repairs) are read straight
@@ -157,6 +147,9 @@ def _probe_message(
         conversational=cfg.behavior.conversational,
         corpus_stats_provider=probe_pool.corpus_stats_provider,
         floor=floor,
+        # An empty pool out of a store that holds records is an index
+        # that matched nothing, not a store with nothing to probe.
+        searched=bool(probe_pool.memories) or store.has_memories(),
     )
 
 

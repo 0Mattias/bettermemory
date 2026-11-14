@@ -90,7 +90,6 @@ def test_build_store_is_record_deterministic(tmp_path: Path) -> None:
 def test_public_rows_are_deterministic_and_the_prefilter_engages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "10")
     corpus_path, questions_path = _subset(tmp_path)
     first = runner.run_public(tmp_path / "s1", corpus_path, questions_path)
     second = runner.run_public(tmp_path / "s2", corpus_path, questions_path)
@@ -100,7 +99,7 @@ def test_public_rows_are_deterministic_and_the_prefilter_engages(
     store_ids = set(runner.build_store(tmp_path / "s3", corpus_path).values())
     for row in first["rows"]:
         assert row["prefilter"]["engaged"] is True
-        assert row["prefilter"]["pool_size"] <= runner.PREFILTER_CAP
+        assert row["prefilter"]["pool_size"] <= runner.POOL_SIZE
         assert row["full"]["pool_size"] == 40
         for arm in ("full", "prefilter"):
             assert set(row[arm]["ids"]) <= store_ids
@@ -112,7 +111,6 @@ def test_public_rows_are_deterministic_and_the_prefilter_engages(
 def test_compare_reports_the_differing_query_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "10")
     corpus_path, questions_path = _subset(tmp_path)
     base = runner.run_public(tmp_path / "s", corpus_path, questions_path)
     assert runner.compare(base, base) == []
@@ -142,7 +140,12 @@ def test_committed_public_artifacts_match_the_tree() -> None:
         assert artifact["corpus_sha256"] == corpus_sha, path.name
         assert artifact["questions_sha256"] == questions_sha, path.name
         assert artifact["params"]["max_results"] == runner.MAX_RESULTS, path.name
-        assert artifact["engine"]["prefilter_cap"] == runner.PREFILTER_CAP, path.name
+        # An artifact names the pool it ranked: its size, or, before the
+        # pool was drawn by admission, the index's cap.
+        engine = artifact["engine"]
+        assert ("pool_size" in engine) != ("prefilter_cap" in engine), path.name
+        if "pool_size" in engine:
+            assert engine["pool_size"] == runner.POOL_SIZE, path.name
         assert len(artifact["rows"]) == artifact["questions_n"] * len(runner.PROBES)
         assert artifact["digest"] == runner.digest(artifact["rows"]), path.name
         for row in artifact["rows"]:
