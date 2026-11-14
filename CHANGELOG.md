@@ -662,6 +662,12 @@ eighteenth was built.
   question's gold document and recall@5 is the whole-corpus ranking's
   on each of the three probes, 0.85, 1.0 and 0.75
   (`bench/retrieval/results/shipped-pool-padded600-2026-11-12.json`).
+  On the scale bench `memory_search`'s median went from 27 ms to 12 ms
+  at the owner's size, from 40 ms to 22 ms at ten times and from 342 ms
+  to 117 ms at a hundred times
+  (`bench/scale/results/scale-2026-11-12-x1-measure.json`, `-x10-` and
+  `-x100-`, against `scale-2026-11-14-x1-measure.json`, `-x10-` and
+  `-x100-`, which also carry the session start's figures below).
   The silent-miss probe ranks the same pool, and an index that matches
   nothing in a store that holds records reports its query, as every
   branch that reached the ranker does. `BETTERMEMORY_INDEX_THRESHOLD` is
@@ -671,7 +677,9 @@ eighteenth was built.
   `default_search_width` are removed with the tests of the threshold
   and the reload. The digest's rows gain the length, the writer, the
   category and the body's sha256, so an existing store's digest is built
-  once more, at the owner's next open and no longer at its first write.
+  once more, at the owner's next open and no longer at its first write:
+  that open took 0.7 s on the bench's store of the owner's size, 6.3 s
+  at ten times and 73 s at a hundred times.
   (`handlers/search.py`, `store_index.py`, `store_records.py`,
   `store_digest.py`, `store.py`, `search.py`, `search_bm25.py`,
   `audit.py`, `recall_settle.py`, `service_units.py`,
@@ -697,7 +705,11 @@ eighteenth was built.
   body they hold; each is decided as before. Work is drawn from the
   probe's pool and from the newest admitted records, read a pool's worth
   at a time until its eight places are filled. A store whose digest does
-  not answer is read as before. (`recall.py`, `standing.py`,
+  not answer is read as before. A first session start's median went from
+  95 ms to 26 ms at the owner's size, from 917 ms to 176 ms at ten times
+  and from 9.8 s to 1.3 s at a hundred times; a session start with a
+  probe reads 33 ms and 36 ms, 316 ms and 204 ms, 3.1 s and 1.7 s.
+  (`recall.py`, `standing.py`,
   `store_records.py`, `store_digest.py`, `tests/test_store_digest.py`)
 
 - **Link annotations survive an unreadable links table for every
