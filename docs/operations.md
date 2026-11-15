@@ -167,11 +167,19 @@ logs `returned: N records an earlier build brought back into force
 marked for a standing roster read` when there were any; a backfill that
 fails logs a warning and runs again at the next owner's open.
 
-9.0.0rc19 runs schema step 3 (ENG-215) at the owner's first open: an
-index of the membership questions by state and kind, which every
-sighting reads, and the revision raised to 3 with the minimums left at
-1 and 2. Going back to 9.0.0rc15 through 9.0.0rc18 after that still
-reads and writes the store, which keeps the index and its revision.
+9.0.0rc19 runs schema steps 3 to 6 at the owner's first open. Step 3
+(ENG-215) adds an index of the membership questions by state and kind,
+which every sighting reads; step 4 records the targets of explicit path
+attestations in signed payloads; step 5 (ENG-267) keeps the exact native
+strings of membership rows and record origins and raises the writer
+minimum to 5; step 6 adds an index of the log's rows by session. The
+revision is then 6 and the minimums 1 and 5. Going back to 9.0.0rc15
+through 9.0.0rc18 after that serves the store for reading only, so a
+switch's way back is this candidate or later, or the backup taken before
+the switch, which loses the writes made since. Step 5 runs only once
+every other connection to the store has closed: stop the old daemon and
+its sessions first, and an open that finds one refuses, naming it,
+without running a step.
 
 ### Running it as a service
 
