@@ -492,18 +492,31 @@ def sites() -> dict[str, tuple[str, Callable[[str, int], Any]]]:
     return out
 
 
+#: The deepest nesting `_probe` tries. Python 3.13 stops at 9,998 or just
+#: below; the cap sits a little above so the search still brackets it.
+_PROBE_CAP = 10_240
+
+
 def _probe(call: Callable[[str, int], Any], shape: str) -> dict[str, Any]:
     """The deepest ``depth`` the call takes and what it does one deeper,
-    by bisection (the call is taken to succeed up to a limit)."""
+    by bisection (the call is taken to succeed up to a limit).
+
+    The search stops at `_PROBE_CAP`. The pinned version's limits lie
+    below it; a version that reads deeper (3.14 counts the C stack, not
+    frames, and takes a million levels) gets a record saying so, which
+    differs from the committed file and so skips under the version gate.
+    The cap also bounds the indented forms, whose output grows with the
+    square of the depth."""
 
     def ok(depth: int) -> bool:
         return "ok" in _attempt(call, shape, depth)
 
     lo, hi = 1, 1
     while ok(hi):
-        lo, hi = hi, hi * 2
-        if hi > 1 << 20:
-            raise AssertionError("no limit found")
+        lo = hi
+        if hi >= _PROBE_CAP:
+            return {"no_limit_up_to": lo}
+        hi = min(hi * 2, _PROBE_CAP)
     while hi - lo > 1:
         mid = (lo + hi) // 2
         if ok(mid):
