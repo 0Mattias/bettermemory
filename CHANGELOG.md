@@ -28,7 +28,26 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 ### 9.0.0rc19
 
 The nineteenth candidate closes the residuals filed while the
-eighteenth was built.
+eighteenth was built, and then cuts what the tools and hooks cost a
+session. A search hit and a `memory_show` carry what choosing and acting
+on a memory needs and leave the rest out; a verdict asks for a check
+only when a check failed or an objection is on record; the session
+brief, the prompt recall block, the server instructions and the tool
+descriptions are shorter; `memory_admin`'s health, tombstones and
+conflicts answer a summary first. A reviewed write and an update reach
+their decision in fewer calls, with the review's questions and
+constants unchanged. A write no longer loads the store, and the reads a
+search, a session start and a hook make no longer grow with the log, as
+measured on stores at 1x, 10x and 100x of one in daily use. Git 2.34 and
+later is supported and checked by `bettermemory doctor`, and a path
+UTF-8 cannot represent keeps its exact bytes through membership, record
+origins and the responses.
+
+The store takes schema steps 3 to 6 at the owner's first open, which
+needs every other connection to the store closed. Step 5 raises the
+writer minimum to 5, so the fifteenth to eighteenth candidates read a
+store this one has opened and no longer write it: the way back from this
+candidate is the backup taken before the switch.
 
 #### Fixed
 
