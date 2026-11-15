@@ -201,7 +201,9 @@ async def test_memory_health_reports_episode_volume_through_the_tool(
     )
     assert written["status"] == "committed"
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="episode_volume"
+    )
 
     assert "episode_volume" in report, (
         "the health report carries no `episode_volume` key; the rollup is "

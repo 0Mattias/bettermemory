@@ -76,7 +76,7 @@ def test_every_detector_marks_a_brief_pointer(tmp_path: Path, detector: str) -> 
     memory = world.fresh("prefer short release notes in this project")
     other = world.store.write(content="prefer long release notes", scopes=["tools"])
     pair_id = _file(world.store, memory, other, detector)
-    line = world.brief().stdout.splitlines()[1]
+    line = world.brief().stdout.splitlines()[2]
     assert line.endswith(f"[disputed: {pair_id}]")
 
 

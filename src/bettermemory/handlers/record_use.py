@@ -34,10 +34,10 @@ if TYPE_CHECKING:
 
 
 DESC_MEMORY_RECORD_USE = (
-    "Override a retrieval's outcome. "
-    "ignored: off-topic. contradicted: wrong and unfixed; flags the memory "
-    "until an update or verify. corrected: drifted and fixed this turn. "
-    "`claim_excerpts`: per id, the sentence it shaped."
+    "Override a retrieval's automatic applied outcome: ignored (off-topic), "
+    "contradicted (wrong and not fixed; flags it until an update or verify) "
+    "or corrected (fixed this turn). `claim_excerpts`: per id, the sentence "
+    "it shaped."
 )
 
 

@@ -282,7 +282,9 @@ async def test_the_memory_health_tool_returns_the_membership_section(
         state=state,
         recorder=Recorder(store=scene.store, session_id=state.session_id),
     )
-    report = await call_tool(server, "memory_admin", {"action": "health"})
+    report = await call_tool(
+        server, "memory_admin", {"action": "health", "section": "membership"}
+    )
     section = report["membership"]
     assert [p["id"] for p in section["open_proposals"]] == [proposal]
     assert gone in [k["checkout"] for k in section["checkouts_without_live_view"]]

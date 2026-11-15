@@ -59,8 +59,8 @@ def _events(store: Store) -> list[dict[str, Any]]:
     return list(store.iter_events())
 
 
-async def _health(server: Any) -> dict[str, Any]:
-    return await _call(server, "memory_admin", action="health")
+async def _health(server: Any, section: str) -> dict[str, Any]:
+    return await _call(server, "memory_admin", action="health", section=section)
 
 
 async def _ack(server: Any, event_id: str, reason: str) -> dict[str, Any]:
@@ -133,7 +133,7 @@ async def test_acknowledge_miss_happy_path_drops_miss_from_rollup(
     assert isinstance(event_id, str) and event_id
 
     # Pre-ack: the rollup sees the miss.
-    pre = await _health(server)
+    pre = await _health(server, "silent_misses")
     assert pre["silent_misses"]["miss_total"] == 1
     assert pre["silent_misses"]["unique_miss_memories"] == 1
 
@@ -144,7 +144,7 @@ async def test_acknowledge_miss_happy_path_drops_miss_from_rollup(
     assert res["reason"] == "stopword-heavy probe, no real intent"
 
     # Post-ack: the rollup drops the miss.
-    post = await _health(server)
+    post = await _health(server, "silent_misses")
     assert post["silent_misses"]["miss_total"] == 0
     assert post["silent_misses"]["unique_miss_memories"] == 0
 
@@ -200,14 +200,14 @@ async def test_acknowledge_miss_surfaces_in_recent_silent_misses_pre_ack(
     server, store, _ = server_with_events
     await _emit_search_miss(server, store)
 
-    pre = await _health(server)
+    pre = await _health(server, "recent_silent_misses")
     assert len(pre["recent_silent_misses"]) == 1
     event_id = pre["recent_silent_misses"][0]["event_id"]
     assert isinstance(event_id, str) and event_id
 
     await _ack(server, event_id, "false positive on stopword")
 
-    post = await _health(server)
+    post = await _health(server, "recent_silent_misses")
     assert post["recent_silent_misses"] == []
 
 

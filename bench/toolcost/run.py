@@ -469,7 +469,9 @@ def measure(tools: list[dict[str, Any]], instructions: str = "") -> dict[str, An
     server instructions the `initialize` reply carried. `full_bytes`
     keeps its meaning (the tools array alone) so every dated result file
     stays comparable; `instructions_bytes` and `session_bytes` (the two
-    together) are the additive keys the bettermemory 9 budget reads."""
+    together) are the additive keys the bettermemory 9 budget reads.
+    `prose_chars` is the server instructions plus every tool's
+    description: the prose the model reads, apart from the schemas."""
 
     def blob(obj: Any) -> str:
         return json.dumps(obj, sort_keys=True, separators=(",", ":"))
@@ -484,6 +486,7 @@ def measure(tools: list[dict[str, Any]], instructions: str = "") -> dict[str, An
     schemas = blob([t.get("inputSchema", {}) for t in tools])
     full_bytes = len(full.encode("utf-8"))
     instructions_bytes = len(instructions.encode("utf-8"))
+    description_chars = sum(len(t.get("description") or "") for t in tools)
     return {
         "tool_count": len(tools),
         "full_bytes": full_bytes,
@@ -494,6 +497,8 @@ def measure(tools: list[dict[str, Any]], instructions: str = "") -> dict[str, An
         "instructions_bytes": instructions_bytes,
         "instructions_chars": len(instructions),
         "session_bytes": full_bytes + instructions_bytes,
+        "description_chars": description_chars,
+        "prose_chars": len(instructions) + description_chars,
         "bytes_per_tool": round(full_bytes / len(tools)) if tools else None,
     }
 
@@ -554,15 +559,24 @@ def main() -> int:
     else:
         print(f"\nMCP tool-schema cost (protocol {_PROTOCOL})")
         print("full serialized tools/list — what a client pastes every turn\n")
-        print("| server                              | tools | full bytes | per tool |")
-        print("|-------------------------------------|-------|------------|----------|")
+        print(
+            "| server                              | tools | full bytes "
+            "| per tool | prose chars |"
+        )
+        print(
+            "|-------------------------------------|-------|------------"
+            "|----------|-------------|"
+        )
         for r in results:
             if "error" in r:
-                print(f"| {r['label']:<35} |   —   |   ERROR    |    —     |")
+                print(
+                    f"| {r['label']:<35} |   —   |   ERROR    |    —     |      —      |"
+                )
                 continue
             print(
                 f"| {r['label']:<35} | {r['tool_count']:>5} "
-                f"| {r['full_bytes']:>10,} | {r['bytes_per_tool']:>8,} |"
+                f"| {r['full_bytes']:>10,} | {r['bytes_per_tool']:>8,} "
+                f"| {r['prose_chars']:>11,} |"
             )
         print()
         for r in results:

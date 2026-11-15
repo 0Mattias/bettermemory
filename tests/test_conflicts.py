@@ -393,7 +393,7 @@ async def test_e2e_scan_list_and_confirm_contradiction(store: Store) -> None:
     assert res["pending_total"] == 1
     row = res["pending"][0]
     assert {row["a"]["id"], row["b"]["id"]} == {a_id, b_id}
-    assert "port 543" in row["a"]["body"]
+    assert "port 543" in row["a"]["summary"]
     assert row["detector"] == "numeric"
 
     verdictres = _unwrap(
@@ -1044,3 +1044,19 @@ async def test_lost_verdict_race_mutates_nothing(
         link.get("type") == "contradicts" and link.get("target_id") == b_id
         for link in (shown.get("links") or [])
     ), "the confirmed verdict's contradicts link must survive the lost race"
+
+
+def test_a_pair_that_opens_alike_reads_from_where_it_parts() -> None:
+    from bettermemory.handlers.conflicts import _sides
+
+    lead = "the deploy pipeline for the billing service runs on the shared runners and "
+    a = {"id": "a", "body": lead + "retries twice"}
+    b = {"id": "b", "body": lead + "never retries"}
+    sides = _sides(a, b)
+    assert sides["a"]["summary"].startswith("…")
+    assert sides["a"]["summary"].endswith("retries twice")
+    assert sides["b"]["summary"].endswith("never retries")
+    assert _sides({"id": "a", "body": "x one"}, {"id": "b", "body": "y two"}) == {
+        "a": {"id": "a", "summary": "x one"},
+        "b": {"id": "b", "summary": "y two"},
+    }

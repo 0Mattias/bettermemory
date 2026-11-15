@@ -435,14 +435,11 @@ def held_line(ids: Sequence[str]) -> str:
         return ""
     shown = list(ids[:BATCH])
     more = len(ids) - len(shown)
-    noun = "memory came" if len(ids) == 1 else "memories came"
-    verb = "is" if len(ids) == 1 else "are"
-    rest = f" ({more} more after these)" if more > 0 else ""
+    noun = "memory is" if len(ids) == 1 else "memories are"
+    rest = f" ({more} more)" if more > 0 else ""
     return (
-        f"bettermemory: {len(ids)} standing {noun} back into force and {verb} "
-        "held out of force until read against the standing roster: "
-        "memory_update(id, standing=<0 to 1>) on each of "
-        f"{', '.join(shown)}{rest} shows it the roster."
+        f"bettermemory: {len(ids)} standing {noun} held out of force until "
+        f"read: memory_update(id, standing=<0 to 1>) on {', '.join(shown)}{rest}."
     )
 
 

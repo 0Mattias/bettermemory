@@ -546,7 +546,7 @@ async def test_the_served_schema_is_not_on_the_call_path(tmp_path: Path) -> None
         "user_claim_warning",
     ], f"the battery stopped covering the commit and reject paths: {statuses}"
     # The two reads are shaped like reads, not like a repeated error.
-    assert "result" in rows[4] and "tombstones" in rows[5]
+    assert "result" in rows[4] and "tombstones_total" in rows[5]
 
     with pytest.raises(Exception) as excinfo:
         await control.call_tool("memory_record_use", {"outcome": "applied"})

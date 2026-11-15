@@ -119,7 +119,7 @@ async def test_admin_tombstones_and_restore(served: Any) -> None:
     await _call(server, "memory_remove", id=b["id"], reason="wrong")
 
     listed = await _call(server, "memory_admin", action="tombstones")
-    assert {row["id"] for row in listed["tombstones"]} == {a["id"], b["id"]}
+    assert listed["tombstones_total"] == 2
     scoped = await _call(server, "memory_admin", action="tombstones", scopes=["tools"])
     assert [row["id"] for row in scoped["tombstones"]] == [a["id"]]
 
@@ -151,13 +151,21 @@ async def test_admin_rename_scope(served: Any) -> None:
     assert store.load_one(a["id"]).scopes == ["tools"]
 
 
-async def test_admin_health_returns_the_report(served: Any) -> None:
+async def test_admin_health_returns_the_summary_and_each_section(
+    served: Any,
+) -> None:
     server, _, _ = served
     await _call(server, "memory_write", content="alpha fact", scopes=["tools"])
-    report = await _call(server, "memory_admin", action="health")
-    assert report["total_active_memories"] == 1
-    assert "verification_debt" in report
-    assert "recommendations" in report
+    summary = await _call(server, "memory_admin", action="health")
+    assert summary["total_active_memories"] == 1
+    assert set(summary) >= {"attention", "section_chars"}
+    assert "verification_debt" in summary["section_chars"]
+    section = await _call(
+        server, "memory_admin", action="health", section="verification_debt"
+    )
+    assert list(section) == ["verification_debt"]
+    with pytest.raises(Exception, match="no section 'nope'"):
+        await _call(server, "memory_admin", action="health", section="nope")
 
 
 async def test_admin_conflicts_lists_pending(served: Any) -> None:

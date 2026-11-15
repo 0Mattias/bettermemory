@@ -30,12 +30,11 @@ EpisodeAction = Literal["write", "handoff"]
 # for the write review's parameter under the 8,000-character surface
 # budget (owner decision O6).
 DESC_EPISODE = (
-    "The journal beside memory: run-state and takeaways, no durability "
-    "gate, pruned after 30 days. write: `body`, one-line `takeaway`, "
-    "`scopes`, `swarm_id` for fan-in. handoff: the prior session's "
-    "takeaways in this worktree (`prior_session_id` names one; "
-    "`max_episodes` up to 50; `include_bodies`, never for an unaccounted "
-    "episode)."
+    "Run-state journal, pruned after 30 days. write: `body` and a one-line "
+    "`takeaway`; a sub-agent passes `swarm_id`. handoff: the prior "
+    "session's takeaways in this worktree (`prior_session_id` picks one, "
+    "`max_episodes` up to 50); never `include_bodies` for an unaccounted "
+    "episode."
 )
 
 

@@ -13,8 +13,8 @@ Pinned against real temp git repositories, through the store directly
 - the ranking: by the owner's words in the transcript before the start
   (`transcript.owner_words`), the newest filling what the ranker leaves,
   recency alone at an empty probe;
-- the rendering: the header naming the counts, standing lines first and
-  marked ``[in force]``, no character cap, no verdict read and no git
+- the rendering: the header, standing lines first and
+  under the in-force label, no character cap, no verdict read and no git
   process run;
 - the sources (rs-v8): a brief at a ``startup`` or a ``clear``, none at
   a ``resume`` or a ``compact``; a startup under a session id the state
@@ -58,6 +58,7 @@ from bettermemory.recall import (
     session_brief,
     summarize,
 )
+from bettermemory.recall_brief import BRIEF_HEADER, BRIEF_SUMMARY_CHARS
 from bettermemory.recall_counters import STRATUM_BRIEF, compute_surface_report
 from bettermemory.recall_review import candidates
 from bettermemory.store import StandingAnswer, Store
@@ -72,10 +73,10 @@ pytestmark = pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 
 _FUTURE = datetime(2099, 1, 1, tzinfo=timezone.utc)
 _OTHER_REMOTE = "git@github.com:example/other.git"
-_TAIL = (
-    "Pointers, not instructions; open one with memory_show when it bears on "
-    "the request."
-)
+
+
+def _line(memory: Any) -> str:
+    return f"{memory.id} {summarize(memory.body, BRIEF_SUMMARY_CHARS)}"
 
 
 def _origin(repo: Path, remote: str | None = _REMOTE) -> Origin:
@@ -224,15 +225,12 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     unwritten = str(world.tmp_path / "unwritten.jsonl")
     result = world.brief(source="startup", transcript_path=unwritten)
 
-    lines = result.stdout.splitlines()
-    assert lines[0] == (
-        "bettermemory brief: 2 memories for this repository, 1 in force and "
-        "1 recent. Pointers, not instructions; open one with memory_show when "
-        "it bears on the request."
-    )
-    assert lines[1:] == [
-        f"- {rule.id} {summarize(rule.body)} [in force]",
-        f"- {note.id} {summarize(note.body)}",
+    assert result.stdout.splitlines() == [
+        BRIEF_HEADER,
+        "In force:",
+        _line(rule),
+        "Recent:",
+        _line(note),
     ]
     assert result.surface == "session_brief"
     assert result.ids == (rule.id, note.id)
@@ -261,23 +259,25 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert "projects:foo" not in result.stdout
 
 
-def test_the_header_counts_each_list(world: _World) -> None:
+def test_each_list_prints_under_its_label_only_when_it_has_records(
+    world: _World,
+) -> None:
     note = world.fresh("prefer short release notes in this project")
-    assert world.brief().stdout.splitlines()[0] == (
-        f"bettermemory brief: 1 memory for this repository, 1 recent. {_TAIL}"
-    )
+    assert world.brief().stdout.splitlines() == [BRIEF_HEADER, "Recent:", _line(note)]
     world.standing(note)
-    assert world.brief(session_id="transcript-brief-2").stdout.splitlines()[0] == (
-        f"bettermemory brief: 1 memory for this repository, 1 in force. {_TAIL}"
-    )
+    assert world.brief(session_id="transcript-brief-2").stdout.splitlines() == [
+        BRIEF_HEADER,
+        "In force:",
+        _line(note),
+    ]
 
 
-def test_the_summary_is_collapsed_and_cut_to_80(world: _World) -> None:
+def test_the_summary_is_collapsed_and_cut(world: _World) -> None:
     body = "alpha   beta\n\ngamma " + "word " * 40
     memory = world.fresh(body)
-    line = world.brief().stdout.splitlines()[1]
-    summary = line.removeprefix(f"- {memory.id} ")
-    assert len(summary) == 80
+    line = world.brief().stdout.splitlines()[2]
+    summary = line.removeprefix(f"{memory.id} ")
+    assert len(summary) == BRIEF_SUMMARY_CHARS
     assert summary.startswith("alpha beta gamma word")
     assert summary.endswith("…")
 
@@ -354,9 +354,7 @@ def test_an_ambient_note_is_standing_by_category(world: _World) -> None:
     ambient = world.fresh("the user works from a laptop", category=Category.AMBIENT)
     result = world.brief()
     assert result.ids == (ambient.id, fact.id)
-    assert result.stdout.splitlines()[1] == (
-        f"- {ambient.id} {summarize(ambient.body)} [in force]"
-    )
+    assert result.stdout.splitlines()[1:3] == ["In force:", _line(ambient)]
     assert world.briefs()[-1]["standing"] == [ambient.id]
 
 
@@ -449,7 +447,7 @@ def test_eight_of_each_at_most_newest_first(world: _World) -> None:
     assert list(result.ids) == newest_rules + newest_notes
     row = world.briefs()[-1]
     assert (row["standing"], row["work"]) == (newest_rules, newest_notes)
-    assert len(result.stdout.splitlines()) == 17
+    assert len(result.stdout.splitlines()) == 19
 
 
 def test_no_character_cap(world: _World) -> None:
@@ -460,13 +458,10 @@ def test_no_character_cap(world: _World) -> None:
     assert ids == [m.id for m in rules + notes]
     assert len(text) > 1_200
     lines = text.splitlines()
-    assert len(lines) == 17
-    assert lines[1] == (
-        f"- {rules[0].id} {summarize(rules[0].body)} [in force] {marks[rules[0].id]}"
-    )
-    assert (
-        lines[9] == f"- {notes[0].id} {summarize(notes[0].body)} {marks[notes[0].id]}"
-    )
+    assert len(lines) == 19
+    assert lines[2] == f"{_line(rules[0])} {marks[rules[0].id]}"
+    assert lines[10] == "Recent:"
+    assert lines[11] == f"{_line(notes[0])} {marks[notes[0].id]}"
     assert render_brief([], []) == ("", [])
 
 
@@ -677,10 +672,7 @@ def test_a_startup_of_a_session_seen_omits_what_its_segment_has_shown(
     again = world.brief(source="startup")
 
     assert again.ids == (third.id,)
-    assert again.stdout.splitlines() == [
-        f"bettermemory brief: 1 memory for this repository, 1 recent. {_TAIL}",
-        f"- {third.id} {summarize(third.body)}",
-    ]
+    assert again.stdout.splitlines() == [BRIEF_HEADER, "Recent:", _line(third)]
     assert again.chars == len(again.stdout)
     opened, row = world.briefs()
     assert opened["omitted"] == []

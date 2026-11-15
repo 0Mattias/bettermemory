@@ -169,7 +169,11 @@ async def test_daemon_rotation_and_offline_cli_cover_nine_homed_roots(
     world.stand_at(world.plain)
     checked: set[str] = set()
     for _ in range(2):
-        report = await call_tool(world.server, "memory_admin", {"action": "health"})
+        report = await call_tool(
+            world.server,
+            "memory_admin",
+            {"action": "health", "section": "cross_repo_drift"},
+        )
         estate = report["cross_repo_drift"]
         assert len(estate["groups"]) == 8 and len(estate["skipped"]) == 1
         assert estate["total_drifted"] == 8

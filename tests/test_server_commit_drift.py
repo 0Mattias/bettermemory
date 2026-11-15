@@ -1120,7 +1120,9 @@ async def test_memory_health_commit_drift_debt_lists_drifted_rows(
     _commit_touching(repo, "c2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
     _commit_touching(repo, "c3", when=datetime(2099, 3, 1, tzinfo=timezone.utc))
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     cd = report["commit_drift_debt"]
     assert cd is not None
     assert cd["current_repo"] == _REMOTE
@@ -1151,7 +1153,9 @@ async def test_memory_health_commit_drift_debt_clean_when_caught_up(
     )
     await _call(server, "memory_verify", id=written["id"])
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     cd = report["commit_drift_debt"]
     assert cd is not None
     assert cd["total_drifted"] == 0
@@ -1190,7 +1194,9 @@ async def test_memory_health_commit_drift_debt_null_when_no_anchored_memories(
 
     # Now run memory_health from the original repo, which has no anchored memory.
     server = server_with_fake_origin(Origin(cwd=str(repo), repo=_REMOTE, branch="main"))
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     assert report["commit_drift_debt"] is None
 
 
@@ -1204,7 +1210,9 @@ async def test_memory_health_commit_drift_debt_null_when_caller_not_in_repo(
 
     await _call(server, "memory_write", content="durable", scopes=["tools"])
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     assert report["commit_drift_debt"] is None
 
 
@@ -1242,7 +1250,9 @@ async def test_memory_health_commit_drift_debt_honors_verified_paths(
     _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
     _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     cd = report["commit_drift_debt"]
     assert cd is not None
     # Narrowed to the verified path (untouched) -> not the unfiltered 2.
@@ -1280,7 +1290,9 @@ async def test_health_commit_drift_honors_verified_paths(
     _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
     _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     cd = report["commit_drift_debt"]
     assert cd is not None
     assert cd["total_drifted"] == 0
@@ -1342,7 +1354,9 @@ async def _drift_counts_for(
             search_count = hit.get("commit_drift_count")
             break
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     cd = report["commit_drift_debt"]
     health_count: int | None = None
     if cd is not None:
@@ -1689,7 +1703,9 @@ async def test_memory_health_commit_drift_debt_excludes_untethered(
 
     _commit_touching(repo, "c1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     cd = report["commit_drift_debt"]
     assert cd is not None
     assert cd["total_drifted"] == 1
@@ -1975,7 +1991,9 @@ async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
     assert "commit_drift_basis" not in by_id[untethered["id"]]
     assert not by_id[untethered["id"]].get("commit_drift_unread")
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     rows = {r["id"]: r for r in report["commit_drift_debt"]["rows"]}
     assert set(rows) == {anchored["id"]}
     assert rows[anchored["id"]]["basis"] == "reachability"
@@ -2025,7 +2043,9 @@ async def test_a_rewritten_anchor_falls_back_to_the_author_date_count(
     )
     hit = next(h for h in _unwrap(raw) if h["id"] == written["id"])
     assert hit["commit_drift_basis"] == "author-date"
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     row = next(
         r for r in report["commit_drift_debt"]["rows"] if r["id"] == written["id"]
     )

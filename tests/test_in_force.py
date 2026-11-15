@@ -5,9 +5,10 @@ its head (the newest admitted superseder, followed to the end, a cycle
 closing the walk) takes its slot; a link from a record the caller is not
 admitted to changes nothing; the newest in-force record extending a
 record is named. Then the two surfaces: the prompt recall gives a history
-hit's slot to its head (``replaces``, the head's own gates, ``superseded``
-when the head is shown anyway) and names extenders; the session brief
-shows no history row and names extenders. The last test is part 2's on
+hit's slot to its head (the head's own gates, ``superseded`` when the
+head is shown anyway); the session brief shows no history row. Neither
+line names the replaced or extending record, which memory_show lists.
+The last test is part 2's on
 the brief: a global record naming the caller's project is briefed.
 """
 
@@ -23,6 +24,7 @@ from bettermemory.in_force import InForce, in_force
 from bettermemory.membership import PROMPT_RECALL
 from bettermemory.models import LinkType, Memory, MemoryLink
 from bettermemory.recall import RECALL_MAX_POINTERS, summarize
+from bettermemory.recall_brief import BRIEF_SUMMARY_CHARS
 
 from .test_recall_brief import _World as _BriefWorld
 from .test_recall_prompt import BODY, PromptWorld
@@ -129,11 +131,12 @@ def test_a_history_hit_gives_its_slot_to_its_head(world: PromptWorld) -> None:
     new = world.write("the offsite copy job now runs nightly", links=_sup(old))
     result = world.recall()
     assert result.ids == (new.id,)
-    (line,) = result.stdout.splitlines()[1:-1]
-    assert line.startswith(f"- {new.id} [high] ")
-    assert f"[replaces {old.id}]" in line
-    # The query's snippet was the old record's text; the head has none.
-    assert " — " not in line
+    (line,) = result.stdout.splitlines()[1:]
+    assert line.startswith(f"{new.id} ")
+    # The line does not name the replaced record; memory_show lists the
+    # link. The query's snippet was the old record's text; the head has none.
+    assert old.id not in line
+    assert " | " not in line
     (event,) = world.recalls()
     assert event["shown_ids"] == [new.id]
 
@@ -174,12 +177,14 @@ def test_every_hit_has_a_slot() -> None:
     assert audit._TOP_HITS_RETAINED <= RECALL_MAX_POINTERS
 
 
-def test_a_recall_line_names_the_newest_extender(world: PromptWorld) -> None:
+def test_a_recall_line_leaves_the_extender_to_memory_show(
+    world: PromptWorld,
+) -> None:
     base = world.write()
     extender = world.write("the copies are checked weekly", links=_ext(base))
     result = world.recall()
     assert result.ids == (base.id,)
-    assert f"[extended by {extender.id}]" in result.stdout.splitlines()[1]
+    assert extender.id not in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -200,15 +205,17 @@ def test_the_brief_shows_no_history_row(brief_world: _BriefWorld) -> None:
     assert brief_world.brief().ids == (new.id,)
 
 
-def test_a_brief_line_names_the_newest_extender(brief_world: _BriefWorld) -> None:
+def test_a_brief_line_leaves_the_extender_to_memory_show(
+    brief_world: _BriefWorld,
+) -> None:
     base = brief_world.fresh("the deploy window is tuesday mornings")
     extender = brief_world.fresh(
         "the deploy window also needs a changelog entry", links=_ext(base)
     )
     result = brief_world.brief()
     assert result.ids == (extender.id, base.id)
-    assert result.stdout.splitlines()[2] == (
-        f"- {base.id} {summarize(base.body)} [extended by {extender.id}]"
+    assert result.stdout.splitlines()[3] == (
+        f"{base.id} {summarize(base.body, BRIEF_SUMMARY_CHARS)}"
     )
 
 

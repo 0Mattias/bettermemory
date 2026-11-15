@@ -54,7 +54,9 @@ async def test_health_reports_both_actual_membership_skip_causes(
         plain = tmp_path / "plain"
         plain.mkdir()
         monkeypatch.setattr(handlers, "capture_origin", lambda: Origin(cwd=str(plain)))
-        report = await call_tool(server, "memory_admin", {"action": "health"})
+        report = await call_tool(
+            server, "memory_admin", {"action": "health", "section": "cross_repo_drift"}
+        )
         estate = report["cross_repo_drift"]
         assert estate is not None and not estate["groups"]
         reasons = {

@@ -87,9 +87,9 @@ _CONTROL_TOKEN_HINT = (
 )
 
 DESC_MEMORY_UPDATE = (
-    "Change a memory in place; id and created stay. Pass only what changes; "
-    "new `content` resets verification. `links` replaces the typed edges "
-    "(supersedes, contradicts, extends, depends_on). The write gates apply."
+    "Edit a memory in place; pass only what changes. New `content` resets "
+    "verification. `links` replaces every edge (supersedes, contradicts, "
+    "extends, depends_on)."
 )
 
 

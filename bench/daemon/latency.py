@@ -182,7 +182,6 @@ import json
 import os
 import platform
 import random
-import re
 import shutil
 import statistics
 import subprocess
@@ -804,27 +803,34 @@ def brief_hook_wall(
 
 def brief_shape(replies: list[dict[str, Any]]) -> dict[str, Any]:
     """What the briefs showed, as counts: briefs, briefs with no pointer,
-    pointers and characters per brief at the median, and the in-force and
-    recent counts the first brief's header names (0 where the header
-    names none)."""
+    pointers and characters per brief at the median, and how many lines
+    the first brief prints under its in-force and recent labels (0 for a
+    label it does not print)."""
+    from bettermemory.recall_brief import (
+        BRIEF_HEADER,
+        BRIEF_STANDING_LABEL,
+        BRIEF_WORK_LABEL,
+    )
+
     pointers = [len(reply.get("ids") or []) for reply in replies]
     chars = [int(reply.get("chars") or 0) for reply in replies]
-    # The brief's header follows the membership lines in the hook's stdout.
-    header = re.search(
-        r"^bettermemory brief: .*$",
-        str(replies[0].get("stdout") or "") if replies else "",
-        re.MULTILINE,
-    )
-    head = header.group(0) if header else ""
-    in_force = re.search(r"(\d+) in force", head)
-    recent = re.search(r"(\d+) recent", head)
+    counts = {BRIEF_STANDING_LABEL: 0, BRIEF_WORK_LABEL: 0}
+    # The brief follows the membership lines in the hook's stdout.
+    lines = str(replies[0].get("stdout") or "").splitlines() if replies else []
+    if BRIEF_HEADER in lines:
+        label = None
+        for line in lines[lines.index(BRIEF_HEADER) + 1 :]:
+            if line in counts:
+                label = line
+            elif label is not None:
+                counts[label] += 1
     return {
         "briefs": len(replies),
         "empty": sum(1 for count in pointers if count == 0),
         "pointers_p50": statistics.median(pointers) if pointers else 0,
         "chars_p50": statistics.median(chars) if chars else 0,
-        "first_in_force": int(in_force.group(1)) if in_force else 0,
-        "first_recent": int(recent.group(1)) if recent else 0,
+        "first_in_force": counts[BRIEF_STANDING_LABEL],
+        "first_recent": counts[BRIEF_WORK_LABEL],
     }
 
 

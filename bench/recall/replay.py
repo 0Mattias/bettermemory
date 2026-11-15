@@ -387,13 +387,16 @@ def _pending_pairs_at(
 
 
 def _m4_block(lines: list[tuple[str, str, int]]) -> int:
-    from bettermemory.recall import _RECALL_FOOTER, _RECALL_HEADER
+    from bettermemory.recall import _RECALL_HEADER, RecallPointer, _recall_line
 
     body = [
-        f"- {memory_id} [{relevance}] {'x' * chars} " + "x" * _M4_SNIPPET
-        for memory_id, relevance, chars in lines
+        _recall_line(
+            RecallPointer(id=memory_id, summary="x" * chars, snippet=""),
+            "y" * _M4_SNIPPET,
+        )
+        for memory_id, _relevance, chars in lines
     ]
-    return len("\n".join([_RECALL_HEADER, *body, _RECALL_FOOTER]))
+    return len("\n".join([_RECALL_HEADER, *body]))
 
 
 def _pct(values: list[float], pct: float) -> float | None:
@@ -515,13 +518,12 @@ def replay(fixture: Mapping[str, Any], rule: str) -> dict[str, Any]:
             pointers = [
                 RecallPointer(
                     id=memory_id,
-                    relevance=relevance,
                     summary="x" * int(memories[memory_id]["summary_chars"]),
                     snippet="y" * 200,
                     provenance=str(memories[memory_id]["provenance"]),
                     disputed=marks.get(memory_id),
                 )
-                for memory_id, relevance in chosen
+                for memory_id, _relevance in chosen
             ]
             block, shown_ids = render_recall_block(pointers)
             if not shown_ids:

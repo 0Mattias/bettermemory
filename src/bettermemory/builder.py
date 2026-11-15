@@ -68,28 +68,21 @@ log = logging.getLogger("bettermemory")
 
 
 # The server-level instructions block. Every MCP client surfaces it at
-# the system-prompt level; Claude Code truncates it past about 1.8 KB,
-# so it carries the contract and nothing else. The nine tool
-# descriptions say what each tool does; the addendum in `prompts.py`
-# carries the long-form policy for clients that paste it in.
+# the system-prompt level, and Claude Code truncates it past about 1.8 KB.
+# It carries only the policy that changes what the model does; each tool
+# description says what its tool does, and the addendum in `prompts.py`
+# carries the long form for clients that paste it in.
 INSTRUCTIONS = (
-    "Persistent memory between sessions lives in this server's tools; "
-    "keep it there, not in ad-hoc files beside them, since later sessions "
-    "see only what these tools hold.\n\n"
-    "Retrieval is opt-in: beyond hook pointers, no memory is in context "
-    "until you search. Search when the user references shared context "
-    "you lack or a request is ambiguous in a way stored preferences could "
-    "resolve; skip generic and self-contained questions.\n\n"
-    "Writing is proactive: call memory_write whenever something durable "
-    "enters the conversation (a preference, a decision, a tool or config "
-    "fact, finished work with its why); do not wait to be asked. A "
-    "refusal is cheap: rephrase, or pass the acknowledge flag it names.\n\n"
-    "Verify before relying: when a hit's staleness_verdict is not fresh, "
-    "check one claim, then memory_verify if it holds or memory_update if "
-    "it drifted.\n\n"
-    "When a stored memory shapes your reply, say so briefly. Retrievals "
-    "settle as applied on their own. At a loop iteration's entry, call "
-    "episode(action='handoff') first."
+    "Memory between sessions lives in these tools, not in files.\n"
+    "Search when the user refers to shared context you lack or a stored "
+    "preference could settle an ambiguity; otherwise do not.\n"
+    "Write unasked whenever something durable appears: a preference, a "
+    "decision, a tool or config fact, finished work and its reason.\n"
+    "A staleness_verdict other than fresh means a check failed and "
+    "`reason` names it: check that claim before relying on it, then "
+    "memory_verify or memory_update.\n"
+    "Say briefly when a memory shaped your reply. In a loop, call "
+    "episode(action='handoff') at each iteration's start."
 )
 
 

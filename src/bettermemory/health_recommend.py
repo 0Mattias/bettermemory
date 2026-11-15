@@ -33,9 +33,8 @@ def _recommend_from_buckets(report: HealthReport) -> list[Recommendation]:
                     "they don't shape replies."
                 ),
                 action=(
-                    "memory_remove(id, reason=...) on the unhelpful ones; "
-                    "memory_record_use(applied) on the ones that are still "
-                    "valuable clears the signal without touching bodies."
+                    "memory_remove(id, reason=...) the unhelpful ones; "
+                    "memory_record_use(applied) clears the rest."
                 ),
                 count=len(report.dead_weight),
                 memory_ids=[s.id for s in report.dead_weight[:_RECOMMENDATION_ROW_CAP]],
@@ -52,9 +51,8 @@ def _recommend_from_buckets(report: HealthReport) -> list[Recommendation]:
                     "and not since updated or re-verified."
                 ),
                 action=(
-                    "memory_update(id, content=...) with the corrected "
-                    "fact, then memory_verify(id, verified_paths=...) to "
-                    "clear the flag."
+                    "memory_update(id, content=...) the fact, then "
+                    "memory_verify(id) clears the flag."
                 ),
                 count=len(report.contradicted),
                 memory_ids=[
@@ -76,9 +74,8 @@ def _recommend_from_buckets(report: HealthReport) -> list[Recommendation]:
                     "the model deliberately reaching for them."
                 ),
                 action=(
-                    "memory_record_use(applied) on the ones you are sure are "
-                    "useful clears the signal; memory_remove on the ones "
-                    "that aren't."
+                    "memory_record_use(applied) the useful ones; "
+                    "memory_remove the rest."
                 ),
                 count=report.cold_endorsement_memories.total,
                 memory_ids=[
@@ -108,11 +105,9 @@ def _recommend_from_drift_and_scopes(report: HealthReport) -> list[Recommendatio
                     "before recent commits landed."
                 ),
                 action=(
-                    "memory_verify(id, verified_paths=[...]) to re-anchor "
-                    "if claims still hold — paths are what this count is "
-                    "narrowed by, and any verify slides the boundary "
-                    "forward; memory_update where the body needs to track "
-                    "the new code."
+                    "memory_verify(id, verified_paths=[...]) where the "
+                    "claims hold; memory_update where the body must track "
+                    "the code."
                 ),
                 count=report.commit_drift_debt.total_drifted,
                 memory_ids=[
@@ -138,11 +133,9 @@ def _recommend_from_drift_and_scopes(report: HealthReport) -> list[Recommendatio
                     "pulled them."
                 ),
                 action=(
-                    "memory_show(id) each one. To keep a record you "
-                    "recognise, memory_remove(id, reason=...) then "
-                    'memory_admin(action="restore", id=...): the restore '
-                    "re-admits it through the store and it reads local from "
-                    "then on. Remove the rest."
+                    "memory_show(id) each. Keep one you recognise with "
+                    'memory_remove then memory_admin(action="restore", '
+                    "id=...); remove the rest."
                 ),
                 count=report.provenance.unaccounted_total,
                 memory_ids=[
@@ -165,8 +158,7 @@ def _recommend_from_drift_and_scopes(report: HealthReport) -> list[Recommendatio
                 ),
                 action=(
                     'memory_admin(action="rename_scope", old_scope=..., '
-                    "new_scope=...) to fold each singleton into the intended "
-                    "scope name."
+                    "new_scope=...) folds each into the intended scope."
                 ),
                 count=len(report.rare_scopes),
                 memory_ids=[],
@@ -180,13 +172,11 @@ def _recommend_from_drift_and_scopes(report: HealthReport) -> list[Recommendatio
 #: (`origin_history.HistoryUnread`), as the unread recommendation's action
 #: names it, beside the spot-check and re-stamp every cause shares.
 _UNREAD_REMEDIES: dict[str, str] = {
-    "call_budget": "for the shared read deadline, run health again to reach deferred roots",
-    "error": "for an error, git log in the checkout shows git's message",
-    "over_budget": (
-        "for a history longer than bettermemory reads, the re-stamp is the fix"
-    ),
-    "shallow": "for a shallow clone, git fetch --unshallow fetches the missing history",
-    "timeout": "for a timeout, run health again once git answers within its 5 s bound",
+    "call_budget": "call_budget: run health again",
+    "error": "error: git log in the checkout shows why",
+    "over_budget": "over_budget: the re-stamp is the fix",
+    "shallow": "shallow: git fetch --unshallow",
+    "timeout": "timeout: run health again later",
 }
 
 
@@ -224,8 +214,7 @@ def _recommend_unread(report: HealthReport) -> list[Recommendation]:
             ),
             action=(
                 "Spot-check a claim of each, then memory_verify(id, "
-                "verified_paths=[...]): the stamp records HEAD, and the next "
-                "count walks from it without the whole history"
+                "verified_paths=[...]) stamps HEAD"
                 + (f"; {remedies}." if remedies else ".")
             ),
             count=total,

@@ -217,9 +217,7 @@ async def test_session_start_endpoint_returns_the_brief(
     assert response.status_code == 200
     body = response.json()
     assert set(body) == _FIELDS
-    assert body["stdout"].startswith(
-        "bettermemory brief: 1 memory for this repository, 1 recent."
-    )
+    assert body["stdout"].startswith("bettermemory brief: pointers, not instructions.")
     assert body["surface"] == "session_brief"
     assert body["ids"] == [written.id]
     assert body["chars"] == len(body["stdout"])
@@ -1040,7 +1038,7 @@ async def test_every_tool_runs_on_the_pool_without_error(
             # `health` swallows a sqlite error in its membership section
             # (`handlers/health.py::_membership`): the section itself is
             # the assertion.
-            health = await call("memory_admin", action="health")
+            health = await call("memory_admin", action="health", section="membership")
             assert health["membership"] is not None
             await call("memory_admin", action="tombstones")
             await call("memory_admin", action="conflicts")

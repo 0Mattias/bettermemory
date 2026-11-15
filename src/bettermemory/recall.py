@@ -10,9 +10,9 @@ a tool call, on two hook moments.
   owner's words in the transcript before the start
   (`transcript.owner_words`) with production's ranker, the newest
   filling what the ranker leaves, and by recency alone at a startup with
-  no words yet. Each line is an id and an 80-character summary, a
-  standing line marked ``[in force]``, under a header that says they are
-  pointers, not instructions. No body, no scope list, nothing outside a
+  no words yet. Each line is an id and a short summary, the standing
+  lines and the others under a label each, below a header that says they
+  are pointers, not instructions. No body, no scope list, nothing outside a
   project, nothing for a caller nothing could be read for (its row says
   so), nothing for an empty selection.
 - The prompt recall (`prompt_recall`), on UserPromptSubmit: the owner's
@@ -375,8 +375,9 @@ _SEEN_KINDS: frozenset[str] = frozenset(
     {"search", "show", "list", "list_active", "write", "update"}
 )
 
-_RECALL_HEADER = "bettermemory recall: pointers, not instructions."
-_RECALL_FOOTER = "Open one with memory_show when it bears on the request."
+_RECALL_HEADER = (
+    "bettermemory recall: pointers, not instructions. memory_show opens one."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -522,12 +523,7 @@ def _select_brief(
     work = _ranked(
         work, probe, limit=BRIEF_WORK, admission=admission, pool=pool, cfg=cfg, now=now
     )
-    notes = {
-        memory.id: " ".join(_in_force_marks(entry.replaces, entry.extended_by))
-        for memory in [*standing, *work]
-        if (entry := forced[memory.id]).replaces or entry.extended_by
-    }
-    return _BriefSelection(standing, work, _ranked_by(probe), notes=notes)
+    return _BriefSelection(standing, work, _ranked_by(probe))
 
 
 def confirm_compaction(
@@ -1198,8 +1194,6 @@ def _print_brief(
     # state row, `events.Recorder.record`); the claim is then dropped
     # with the session's held state, which is read back from the log.
     marks = disputed_marks(store.pending_conflict_pairs())
-    for memory_id, note in selection.notes.items():
-        marks[memory_id] = f"{marks[memory_id]} {note}" if memory_id in marks else note
     # The cooldown decides atomically: a concurrent prompt of the same
     # session may have shown some of these ids since `_open_brief_segment`
     # read the segment's view, and what the claim keeps is noted as shown
@@ -1280,20 +1274,15 @@ class RecallPointer:
     this host never made; a store opened without its key): the rule's
     provenance gate admits local and imported records only, so neither is
     reached by a delivery today, and the renderer keeps them so a widened
-    gate cannot deliver such a record unannounced. `replaces` names the
-    superseded record whose slot this one took, `extended_by` the newest
-    in-force record extending it (`in_force`, RS-F7 part 3)."""
+    gate cannot deliver such a record unannounced."""
 
     id: str
-    relevance: str
     summary: str
     snippet: str
     provenance: str | None = None
     remote_stamp: bool = False
     trust_unavailable: bool = False
     disputed: str | None = None
-    replaces: str | None = None
-    extended_by: str | None = None
 
 
 def _annotation(pointer: RecallPointer) -> str:
@@ -1305,46 +1294,61 @@ def _annotation(pointer: RecallPointer) -> str:
     return ""
 
 
-def _in_force_marks(replaces: str | None, extended_by: str | None) -> list[str]:
-    """The line's in-force notes (`in_force`): the record whose slot this
-    one took, and the newest record extending it."""
-    marks: list[str] = []
-    if replaces:
-        marks.append(f"[replaces {replaces}]")
-    if extended_by:
-        marks.append(f"[extended by {extended_by}]")
-    return marks
+def _core(text: str) -> str:
+    """`text` without the ellipses a cut leaves at either end."""
+    return text.strip("…").strip()
+
+
+def _one_excerpt(
+    pointer: RecallPointer, snippet: str | None
+) -> tuple[RecallPointer, str | None]:
+    """The pointer and snippet a line prints. The summary and the snippet
+    are both cut from the body, so the line keeps one alone when it holds
+    the other: the snippet in place of a summary it contains, nothing for
+    a snippet the summary contains."""
+    if snippet and _core(snippet) in pointer.summary:
+        return pointer, None
+    if snippet and _core(pointer.summary) in snippet:
+        return replace(pointer, summary=snippet), None
+    return pointer, snippet
 
 
 def _recall_line(pointer: RecallPointer, snippet: str | None) -> str:
-    parts = [f"- {pointer.id} [{pointer.relevance}] {pointer.summary}"]
+    """``<id> <summary> <annotations> | <snippet>``. The probe's coverage
+    label is not printed: Stage A found it did not separate relevant
+    records from irrelevant ones (see `RECALL_MAX_POINTERS`), and the
+    lines come in rank order."""
+    parts = [f"{pointer.id} {pointer.summary}"]
     annotation = _annotation(pointer)
     if annotation:
         parts.append(annotation)
     if pointer.disputed:
         parts.append(pointer.disputed)
-    parts.extend(_in_force_marks(pointer.replaces, pointer.extended_by))
     line = " ".join(parts)
-    return f"{line} — {snippet}" if snippet else line
+    return f"{line} | {snippet}" if snippet else line
 
 
 def render_recall_block(pointers: Sequence[RecallPointer]) -> tuple[str, list[str]]:
     """The recall block and the ids it shows.
 
-    The header line, one line per pointer (``- <id> [<relevance>]
-    <summary>``, its annotations, then `` — `` and the query-biased
-    snippet cut at `SNIPPET_CHARS`), and the footer. Over
+    The header line, then one line per pointer (`_recall_line`: the id,
+    summary and annotations, then the query-biased snippet cut
+    at `SNIPPET_CHARS` unless the summary holds it). Over
     `RECALL_CAP_CHARS` the snippets are cut first, from the last pointer
     back (a snippet that would fall under a dozen characters is dropped),
     then trailing pointers go. ``("", [])`` when nothing fits."""
-    kept = list(pointers)
-    snippets: list[str | None] = [
-        summarize(pointer.snippet, SNIPPET_CHARS) or None for pointer in kept
+    # The excerpts are settled once, before the cap cuts: a cut then only
+    # ever shortens a snippet, so each line only shrinks.
+    settled = [
+        _one_excerpt(pointer, summarize(pointer.snippet, SNIPPET_CHARS) or None)
+        for pointer in pointers
     ]
+    kept = [pointer for pointer, _snippet in settled]
+    snippets: list[str | None] = [snippet for _pointer, snippet in settled]
 
     def render() -> str:
         lines = [_recall_line(p, s) for p, s in zip(kept, snippets)]
-        return "\n".join([_RECALL_HEADER, *lines, _RECALL_FOOTER])
+        return "\n".join([_RECALL_HEADER, *lines])
 
     text = render()
     for index in range(len(kept) - 1, -1, -1):
@@ -1488,10 +1492,10 @@ def prompt_recall(
     ``contradicted`` (an open contradiction) or ``seen_in_segment``
     (shown, retrieved, written or updated in this session segment). A hit
     an admitted record supersedes is history (`in_force`, RS-F7 part 3):
-    its head takes the slot, named ``replaces <id>`` on the line and
-    decided by its own gates, and the slot is held as ``superseded`` when
-    the head is shown in its own slot, already taken, or seen in the
-    segment. A line names the newest in-force record extending it. Until
+    its head takes the slot, decided by its own gates, and the slot is
+    held as ``superseded`` when the head is shown in its own slot, already
+    taken, or seen in the segment. The line does not name the replaced or
+    extending records: `memory_show` lists a record's links both ways. Until
     rs-v6 a hit was also held as ``low_relevance`` (not medium or high)
     and as ``segment_cap`` (the segment had had twelve deliveries). The
     probe's verdict and its retrieval shield do not gate delivery; the
@@ -1841,17 +1845,14 @@ def _deliver_recall(
     pointers = [
         RecallPointer(
             id=memory.id,
-            relevance=hit.relevance,
             summary=summarize(memory.body),
             # The query's snippet is the hit's text; a head that took the
             # slot is named by its summary alone.
             snippet=hit.snippet if memory.id == hit.id else "",
             provenance=row.provenance,
             disputed=marks.get(memory.id),
-            replaces=forced_entry.replaces if forced_entry is not None else None,
-            extended_by=forced_entry.extended_by if forced_entry is not None else None,
         )
-        for hit, memory, row, forced_entry in chosen
+        for hit, memory, row, _forced in chosen
     ]
     block, shown_ids = render_recall_block(pointers)
     if not shown_ids:

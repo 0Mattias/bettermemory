@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from bettermemory.handlers.admin import TOMBSTONE_ROWS_HINT
+
 from bettermemory.config import Config, StorageConfig
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -76,7 +78,15 @@ async def test_list_tombstones_returns_removed_records(
     await _call(server, "memory_remove", id=a["id"], reason="r")
     await _call(server, "memory_remove", id=b["id"], reason="r")
 
-    raw = await _call(server, "memory_admin", action="tombstones")
+    counts = await _call(server, "memory_admin", action="tombstones")
+    assert counts == {
+        "tombstones_total": 2,
+        "by_scope": {"tools": 1, "infrastructure": 1},
+        "hint": TOMBSTONE_ROWS_HINT,
+    }
+    raw = await _call(
+        server, "memory_admin", action="tombstones", scopes=["tools", "infrastructure"]
+    )
     rows = raw["tombstones"]
     ids = {row["id"] for row in rows}
     assert ids == {a["id"], b["id"]}
@@ -113,7 +123,7 @@ async def test_list_tombstones_respects_session_disabled_scope(
     await _call(server, "memory_remove", id=a["id"], reason="r")
     state.disable("tools")
     raw = await _call(server, "memory_admin", action="tombstones")
-    assert raw["tombstones"] == []
+    assert raw == {"tombstones_total": 0, "by_scope": {}}
 
 
 # ---------------------------------------------------------------------------
@@ -242,3 +252,30 @@ async def test_remove_handler_converts_oserror_to_value_error(
         f"for diagnostics. Cause chain: "
         f"{[type(e).__name__ + ': ' + str(e) for e in chain]}"
     )
+
+
+def test_the_tombstone_counts_name_every_scope_up_to_the_cap() -> None:
+    from bettermemory.handlers.admin import TOMBSTONE_SCOPES_NAMED, _tombstone_counts
+
+    rows = [{"scopes": [f"s{i}"]} for i in range(TOMBSTONE_SCOPES_NAMED + 3)]
+    rows.append({"scopes": ["s0"]})
+    out = _tombstone_counts(rows)
+    assert out["tombstones_total"] == TOMBSTONE_SCOPES_NAMED + 4
+    assert len(out["by_scope"]) == TOMBSTONE_SCOPES_NAMED
+    assert next(iter(out["by_scope"])) == "s0"
+    assert out["other_scopes"] == 3
+    assert "query=" in out["hint"]
+
+
+async def test_query_finds_a_tombstone_without_its_scope(
+    server_with_state: Any,
+) -> None:
+    server, _, _ = server_with_state
+    a = await _call(server, "memory_write", content="alpha note", scopes=["tools"])
+    await _call(server, "memory_remove", id=a["id"], reason="r")
+    raw = await _call(server, "memory_admin", action="tombstones", query="ALPHA")
+    assert [row["id"] for row in raw["tombstones"]] == [a["id"]]
+    with pytest.raises(Exception, match="`query` is tombstones'"):
+        await _call(server, "memory_admin", action="health", query="alpha")
+    with pytest.raises(Exception, match="`section` is health's"):
+        await _call(server, "memory_admin", action="tombstones", section="x")

@@ -27,6 +27,7 @@ from bettermemory.project_file import PROJECT_FILE_NAME
 from bettermemory.recall import (
     PROMPT_CUT_CHARS,
     RECALL_CAP_CHARS,
+    _RECALL_HEADER,
     HookResult,
     RecallPointer,
     RecallState,
@@ -299,10 +300,9 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
         prompt_id="turn-1", transcript_path="/tmp/t.jsonl", harness="claude-code"
     )
     lines = result.stdout.splitlines()
-    assert lines[0] == "bettermemory recall: pointers, not instructions."
-    assert lines[1].startswith(f"- {memory.id} [high] {summarize(BODY)} — ")
-    assert lines[-1] == "Open one with memory_show when it bears on the request."
-    assert len(lines) == 3
+    assert lines[0] == _RECALL_HEADER
+    assert lines[1] == f"{memory.id} {summarize(BODY)}"
+    assert len(lines) == 2
     assert result.surface == "prompt_recall"
     assert result.ids == (memory.id,)
     assert result.chars == len(result.stdout)
@@ -350,15 +350,14 @@ def test_up_to_three_pointers_in_rank_order(world: PromptWorld) -> None:
     result = world.recall()
     assert len(result.ids) == 3
     assert set(result.ids) <= ids
-    assert len(result.stdout.splitlines()) == 5
+    assert len(result.stdout.splitlines()) == 4
 
 
 def test_an_imported_record_announces_itself(world: PromptWorld) -> None:
     memory = world.write(provenance="imported")
     line = world.recall().stdout.splitlines()[1]
-    assert line.startswith(
-        f"- {memory.id} [high] {summarize(BODY)} [provenance: imported] — "
-    )
+    assert line.startswith(f"{memory.id} ")
+    assert "[provenance: imported]" in line
 
 
 def test_the_retrieval_shield_no_longer_holds_a_delivery(world: PromptWorld) -> None:
@@ -396,7 +395,7 @@ def test_a_low_label_is_delivered(world: PromptWorld) -> None:
     weak = world.write("a backup elsewhere entirely")
     result = world.recall("backup strategy zebra quokka")
     assert result.ids == (strong.id, weak.id)
-    assert result.stdout.splitlines()[2].startswith(f"- {weak.id} [low] ")
+    assert result.stdout.splitlines()[2].startswith(f"{weak.id} ")
     (event,) = world.recalls()
     assert event["suppressed_ids"] == []
 
@@ -580,7 +579,6 @@ def test_nothing_is_recorded_when_every_candidate_is_held(world: PromptWorld) ->
 def _pointer(i: int, **kw: Any) -> RecallPointer:
     fields: dict[str, Any] = {
         "id": f"01TESTPOINTER{i:013d}",
-        "relevance": "high",
         "summary": summarize("summary words " * 10),
         "snippet": "snippet text " * 30,
     }
@@ -591,25 +589,29 @@ def _pointer(i: int, **kw: Any) -> RecallPointer:
 def test_the_block_cuts_snippets_to_100() -> None:
     text, ids = render_recall_block([_pointer(1)])
     line = text.splitlines()[1]
-    snippet = line.split(" — ", 1)[1]
+    snippet = line.split(" | ", 1)[1]
     assert len(snippet) <= 100 and snippet.endswith("…")
     assert ids == [_pointer(1).id]
 
 
 def test_the_cap_cuts_snippets_first_from_the_last_back() -> None:
     pointers = [
-        _pointer(i, provenance="imported", disputed="[disputed: cf-0123456789ab +2]")
+        _pointer(
+            i,
+            id=f"01TESTPOINTER{i:040d}",
+            provenance="imported",
+            disputed="[disputed: cf-0123456789ab +2]",
+        )
         for i in range(3)
     ]
     full = "\n".join(
         [
-            "bettermemory recall: pointers, not instructions.",
+            _RECALL_HEADER,
             *[
-                f"- {p.id} [high] {p.summary} [provenance: imported] {p.disputed}"
-                f" — {summarize(p.snippet, 100)}"
+                f"{p.id} {p.summary} [provenance: imported] {p.disputed}"
+                f" | {summarize(p.snippet, 100)}"
                 for p in pointers
             ],
-            "Open one with memory_show when it bears on the request.",
         ]
     )
     assert len(full) > RECALL_CAP_CHARS
@@ -618,7 +620,7 @@ def test_the_cap_cuts_snippets_first_from_the_last_back() -> None:
     assert ids == [p.id for p in pointers]
     lines = text.splitlines()
     # The first pointer keeps its whole snippet; the cut came off the end.
-    assert lines[1].split(" — ", 1)[1] == summarize(pointers[0].snippet, 100)
+    assert lines[1].split(" | ", 1)[1] == summarize(pointers[0].snippet, 100)
     assert len(lines[3]) < len(lines[1])
 
 
@@ -628,6 +630,43 @@ def test_the_cap_then_drops_trailing_pointers() -> None:
     assert len(text) <= RECALL_CAP_CHARS
     assert ids == [pointers[0].id]
     assert render_recall_block([_pointer(0, id="X" * 2_000)]) == ("", [])
+
+
+def test_a_snippet_the_summary_holds_is_not_repeated() -> None:
+    def line(**kw: Any) -> str:
+        return render_recall_block([_pointer(0, **kw)])[0].splitlines()[1]
+
+    assert line(summary="the deploy window is tuesday", snippet="window is") == (
+        f"{_pointer(0).id} the deploy window is tuesday"
+    )
+    assert line(summary="deploy…", snippet="…the deploy window is tuesday…") == (
+        f"{_pointer(0).id} …the deploy window is tuesday…"
+    )
+
+
+def test_the_cap_never_lengthens_a_line_whose_snippet_held_the_summary() -> None:
+    """A snippet that holds the summary prints in its place; cutting it to
+    fit the cap shortens the line rather than bringing the summary back,
+    so a pointer a shorter line fits is kept."""
+    mark = "[disputed: cf-0123456789ab +2]"
+    pointers = [
+        _pointer(
+            i,
+            id=f"01TESTPOINTER{i:060d}",
+            summary="the deploy window",
+            snippet="…the deploy window is tuesday mornings " + "and more " * 8,
+            provenance="imported",
+            disputed=mark,
+        )
+        for i in range(3)
+    ]
+    full_lines = [render_recall_block([p])[0].splitlines()[1] for p in pointers]
+    text, ids = render_recall_block(pointers)
+    assert len(text) <= RECALL_CAP_CHARS
+    for line, full in zip(text.splitlines()[1:], full_lines):
+        assert len(line) <= len(full)
+        assert " | " not in line
+    assert ids == [p.id for p in pointers][: len(text.splitlines()) - 1]
 
 
 def test_annotations_for_non_local_provenance() -> None:

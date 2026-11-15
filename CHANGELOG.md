@@ -513,6 +513,20 @@ eighteenth was built.
 
 #### Added
 
+- **`memory_admin` takes `section` for health and `query` for
+  tombstones.** `section` names one health section, or several separated
+  by commas, to read in full from one report; `query` lists the tombstones whose id or summary holds the text. Either
+  passed to another action is a raised error naming the action that
+  reads it. (`handlers/admin.py`, `handlers/health.py`, `_handlers.py`,
+  `docs/api.md`)
+
+- **`bench/toolcost/injections.py` measures the hook injections.** It
+  re-renders every recorded session brief and prompt recall from a store
+  snapshot with the checkout's own renderers and reports characters at
+  the median, so two builds compare on the same records.
+  `bench/toolcost/run.py` also reports `prose_chars`: the server
+  instructions plus every tool description. (`bench/toolcost/`)
+
 - **bettermemory supports git 2.34 and later, and `bettermemory doctor`
   checks the git on PATH (ENG-227).** Repositories are read through the
   git first on PATH, and nothing said which git that had to be. 2.34 is
@@ -563,6 +577,61 @@ eighteenth was built.
   `tests/test_unread_history.py`, `tests/test_health.py`)
 
 #### Changed
+
+- **The session brief is shorter.** One header line, then the standing
+  records under `In force:` and the others under `Recent:`, each line an
+  id and an 80-character summary. Lines no longer carry `- `,
+  `[in force]`, `[replaces <id>]` or `[extended by <id>]`;
+  `memory_show` lists a record's links. The same records are shown in
+  the same order. Over the owner's deliveries since 2026-11-04 the
+  median brief went from 2,377 to 1,813 characters. (`recall_brief.py`,
+  `recall.py`, `docs/internals.md`)
+
+- **The prompt recall block is shorter.** One header line, then one
+  line per pointer: id, summary, marks and ` | ` with the query's
+  snippet. The footer, the relevance label and the in-force notes are
+  gone, and a line keeps one excerpt when the summary and the snippet
+  hold each other. The cap only ever shortens a line. The median block
+  went from 542 to 410 characters on the same deliveries.
+  (`recall.py`, `docs/internals.md`)
+
+- **The server instructions and the system-prompt addendum keep only
+  what changes the model's behavior.** The instructions are five lines
+  (1,000 to 582 characters) and say that a staleness verdict other than
+  fresh means a check failed, named by `reason`. The addendum went from
+  about 8,000 to about 2,500 characters. (`builder.py`, `prompts.py`,
+  `docs/system_prompt.md`)
+
+- **Tool descriptions drop restatement of the schema.** The
+  descriptions of `memory_write`, `memory_update`, `memory_record_use`,
+  `episode` and `memory_admin` name each parameter rule once. The
+  instructions plus every tool description went from 3,690 to 3,059
+  characters. (`handlers/write.py`, `handlers/update.py`,
+  `handlers/record_use.py`, `handlers/episode.py`, `handlers/admin.py`)
+
+- **`memory_admin(action="health")` answers a summary.** The default is
+  the headline counts, one `attention` line per recommendation and each
+  section's size, at most 3,000 characters; `section` returns the
+  sections it names in full. On the owner's store the default answer went from
+  144,301 to 1,287 characters. Recommendation actions are shorter.
+  (`health_summary.py`, `health_recommend.py`, `handlers/health.py`,
+  `docs/api.md`)
+
+- **`memory_admin(action="tombstones")` answers counts.** Without
+  `scopes` or `query` it returns the total, the count under each scope
+  (the 100 largest) and how to list rows. On the owner's store the
+  default answer went from 148,632 to 1,407 characters.
+  (`handlers/admin.py`, `docs/api.md`)
+
+- **`memory_admin(action="conflicts")` lists summaries, not bodies.**
+  Each member of a pending pair is its id and an 80-character summary
+  that starts where the two bodies first differ; `memory_show` reads a
+  member in full. On the owner's store the default answer went from
+  24,656 to 1,289 characters. (`handlers/conflicts.py`, `docs/api.md`)
+
+- **The held-standing lead line is shorter.** It names the held records
+  and the `memory_update(id, standing=<0 to 1>)` call in one sentence.
+  (`standing.py`)
 
 - **A write no longer loads or tokenises the store.** The scope check,
   both dedup gates and the supersession detector read a digest the store

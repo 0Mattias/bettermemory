@@ -9,12 +9,15 @@ join_project and unjoin_project are the agent's membership declarations
 question for the records that wait for it (`standing.py`, unit RS-F7
 part 1). The bodies keep their modules; this module
 is the dispatch the served tool is built from, and every action returns
-the keys its former tool returned (`tombstones` wraps its list under one
-key, since a dict is the tool's shape).
+the keys its former tool returned, except the two whose full answer runs
+long: `tombstones` counts the removed records by scope unless the call
+names `scopes`, which lists those rows under one key, and `health` is a
+summary unless the call names a `section` (`handlers/health.py`).
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING, Any, Literal
 
 from ._shared import Context
@@ -50,19 +53,54 @@ AdminAction = Literal[
 ]
 
 DESC_MEMORY_ADMIN = (
-    "restore: tombstone `id` back. "
-    "tombstones: removed memories. health: the health report. "
-    "rename_scope: `old_scope` to `new_scope`. conflicts: pending pairs; "
+    "restore: `id`. rename_scope: `old_scope` to `new_scope`. "
+    "disable_scope, enable_scope: `scope`, this session; disable "
+    "projects:X when the user says the work is unrelated to X. conflicts: "
     "scan=True detects; `id`, `verdict` (contradiction|compatible), `note` "
-    "resolve. acknowledge_miss: search_miss `id` with `reason`, or all "
-    "before ISO `before`. disable_scope, enable_scope: hide or unhide "
-    "`scope` this session. relations: a capture's closing call. "
-    "answer_question: a membership question (`id` Qnnn, else the first "
-    "here): `answer` separate on your judgement, or join on the user's "
-    "words in `said`; `target` picks among several. join_project: merge "
-    "project `id` into this checkout's, on the user's words in `said`. "
-    "unjoin_project: undo it. answer_standing: `standing` {id: 0 to 1}."
+    "resolve one; memory_show reads a member. acknowledge_miss: `id` and "
+    "`reason`, or all before ISO `before`. tombstones, health: a summary; "
+    "`scopes` or `query`, and `section` (names, comma-separated), return detail. relations: a "
+    "capture's closing call. answer_question (`id` Qnnn, else the first "
+    "here; `target` picks among several), join_project: answer separate on "
+    "your judgement; join needs the user's words in `said`. "
+    "unjoin_project: undo a join. answer_standing: `standing` {id: 0 to 1}."
 )
+
+
+#: The scopes the tombstones answer counts by name, largest first; the
+#: rest are one count. Generous, so a scope is nearly always named.
+TOMBSTONE_SCOPES_NAMED = 100
+
+#: How the tombstones answer without `scopes` or `query` says to get rows.
+TOMBSTONE_ROWS_HINT = (
+    "Pass scopes=[...] or query=<text in the summary or id> for the rows."
+)
+
+
+def _tombstone_counts(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The tombstones answer without `scopes` or `query`: how many, the
+    count under each scope (`TOMBSTONE_SCOPES_NAMED` at most), how many
+    other scopes there are, and how to list rows."""
+    ranked = Counter(scope for row in rows for scope in row["scopes"]).most_common()
+    out: dict[str, Any] = {
+        "tombstones_total": len(rows),
+        "by_scope": dict(ranked[:TOMBSTONE_SCOPES_NAMED]),
+    }
+    if len(ranked) > TOMBSTONE_SCOPES_NAMED:
+        out["other_scopes"] = len(ranked) - TOMBSTONE_SCOPES_NAMED
+    if rows:
+        out["hint"] = TOMBSTONE_ROWS_HINT
+    return out
+
+
+def _matching(rows: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """The rows whose id or summary holds `query`, case folded."""
+    needle = query.casefold()
+    return [
+        row
+        for row in rows
+        if needle in row["id"].casefold() or needle in str(row["summary"]).casefold()
+    ]
 
 
 def _need(value: str | None, name: str, action: str) -> str:
@@ -89,8 +127,14 @@ async def memory_admin(
     target: str | None = None,
     said: str | None = None,
     standing: dict[str, Any] | None = None,
+    section: str | None = None,
+    query: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
+    if section is not None and action != "health":
+        raise ValueError("`section` is health's; this action takes none")
+    if query is not None and action != "tombstones":
+        raise ValueError("`query` is tombstones'; this action takes none")
     if action == "answer_standing":
         return await answer_standing(deps, standing, said=said, ctx=ctx)
     if action == "answer_question":
@@ -105,9 +149,13 @@ async def memory_admin(
         return await memory_restore(deps, _need(id, "id", action), said=said, ctx=ctx)
     if action == "tombstones":
         rows = await memory_list_tombstones(deps, scopes=scopes, ctx=ctx)
-        return {"tombstones": rows}
+        if query:
+            return {"tombstones": _matching(rows, query)}
+        if scopes:
+            return {"tombstones": rows}
+        return _tombstone_counts(rows)
     if action == "health":
-        return await memory_health(deps, ctx=ctx)
+        return await memory_health(deps, section=section, ctx=ctx)
     if action == "rename_scope":
         return await memory_rename_scope(
             deps,

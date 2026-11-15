@@ -40,6 +40,11 @@ async def _health(server: Any) -> dict[str, Any]:
     return await _call(server, "memory_admin", action="health")
 
 
+async def _section(server: Any, name: str) -> Any:
+    out = await _call(server, "memory_admin", action="health", section=name)
+    return out[name]
+
+
 async def test_memory_admin_is_registered(server: Any) -> None:
     tools = await server.list_tools()
     names = {t.name for t in tools}
@@ -48,19 +53,18 @@ async def test_memory_admin_is_registered(server: Any) -> None:
 
 async def test_memory_health_returns_expected_keys(server: Any) -> None:
     res = await _health(server)
-    expected = {
+    assert set(res) == {
         "generated_at",
         "window_days",
         "total_active_memories",
         "total_events",
         "distinct_sessions",
-        "dead_weight",
-        "heavily_used",
-        "contradicted",
-        "marker_stats",
-        "scope_distribution",
+        "attention",
+        "section_chars",
     }
-    assert expected <= set(res.keys())
+    for name in ("dead_weight", "heavily_used", "contradicted", "marker_stats"):
+        assert isinstance(await _section(server, name), list), name
+    assert isinstance(await _section(server, "scope_distribution"), dict)
 
 
 async def test_memory_health_reflects_recent_activity(
@@ -174,8 +178,7 @@ async def test_memory_health_surfaces_marker_overrides(server: Any) -> None:
         acknowledge_transient=True,
     )
 
-    res = await _health(server)
-    by_marker = {m["marker"]: m for m in res["marker_stats"]}
+    by_marker = {m["marker"]: m for m in await _section(server, "marker_stats")}
     assert "currently" in by_marker
     stats = by_marker["currently"]
     assert stats["fire_count"] >= 1

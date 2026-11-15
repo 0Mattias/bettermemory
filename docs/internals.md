@@ -52,15 +52,15 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   two lists, standing first: the caller's standing records in force
   (`standing.standing_ids`: an answer at or above `TAU_STANDING` for the
   current body, or category ambient; history excluded), eight at most,
-  each line marked `[in force]`; then the admitted in-force records the
+  under an `In force:` label; then, under `Recent:`, the admitted in-force records the
   conversation so far bears on, eight at most, drawn from the hooks'
   pool over a probe of the newest 12,000 characters of owner words in
   the session's transcript (`transcript.owner_words`), history excluded
   (`in_force`), an open contradiction held. Each list ranks by the probe
   through the search ranker; with no transcript, or one not yet written,
-  the probe is empty and both rank by recency. A record another in-force
-  record extends carries `[extended by <id>]`. The header counts both
-  lists, and there is no character cap. On UserPromptSubmit the prompt
+  the probe is empty and both rank by recency. Each line is an id and an
+  80-character summary; a line does not name a replaced or extending
+  record, which `memory_show` lists. There is no character cap. On UserPromptSubmit the prompt
   recall probes the owner's words as the one definition of an owner
   prompt reads them (`owner_prompt.py`: the app's envelope blocks
   removed, reminders, pastes and artifact views, then 2,000 characters)
@@ -68,12 +68,34 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   `rs-v7`: a prompt of one content word or only acknowledgments is
   probed like any other) and delivers its top three hits admitted for
   the caller, unless held by provenance, an open contradiction or the
-  segment; a superseded hit yields its slot to its head, marked
-  `[replaces <id>]`. The recall block is cut to `RECALL_CAP_CHARS`, 900
-  characters: the snippets are shortened first, from the last pointer
-  back, a snippet that would fall under a dozen characters dropped, and
-  then trailing pointers go. On both surfaces a disputed record carries a
+  segment; a superseded hit yields its slot to its head. A recall line
+  is the id, the 80-character summary, its marks, and ` | ` with the
+  query's snippet; the line keeps one excerpt when one holds the other,
+  and prints no relevance label. The recall block is cut to
+  `RECALL_CAP_CHARS`, 900 characters: the snippets are shortened first,
+  from the last pointer back, a snippet that would fall under a dozen
+  characters dropped, and then trailing pointers go. On both surfaces a disputed record carries a
   `[disputed: cf-…]` mark. A prompt
+
+  A brief, from synthetic records:
+
+  ```
+  bettermemory brief: pointers, not instructions. memory_show opens one.
+  In force:
+  01JD8Q2K7M4V9X3B6N1C5T8R2W Release notes stay under ten lines and name the user-visible change first.
+  Recent:
+  01JD8Q3A1F6H2J9K4L7P0S3U5Y The deploy window is Tuesday mornings; the pipeline holds merges after noon on…
+  01JD8Q4B8D2G5K1M7N3Q6T9V0X CI runs the integration suite on the shared runners with a 20 minute timeout pe…
+  ```
+
+  A recall block:
+
+  ```
+  bettermemory recall: pointers, not instructions. memory_show opens one.
+  01JD8Q3A1F6H2J9K4L7P0S3U5Y The deploy window is Tuesday mornings; the pipeline holds merges after noon on… | …holds merges after noon on Monday so staging can settle.
+  01JD8Q4B8D2G5K1M7N3Q6T9V0X CI runs the integration suite on the shared runners with a 20 minute timeout pe… [disputed: cf-3f9a1c2b7d40] | …a 20 minute timeout per job.
+  ```
+
   the harness composed and no human typed (a task notification, a
   message from another session, an interrupt line, any other harness
   tag, reminder blocks alone) is not probed and records nothing. The

@@ -231,18 +231,26 @@ async def test_every_surface_names_the_cause(
         assert row["staleness_verdict"] == "spot_check_required"
         assert row["verification"]["recommendation"] == unread_recommendation(why)
         assert "commit_drift_count" not in row
-    report = await call_tool(server, "memory_admin", {"action": "health"})
+    report = await call_tool(
+        server, "memory_admin", {"action": "health", "section": "commit_drift_debt"}
+    )
     debt = report["commit_drift_debt"]
     assert (debt["rows"], debt["unread"]) == ([], 1)
     assert debt["unread_causes"] == {why.value: 1}
     assert debt["unread_ids"] == [memory_id]
-    (spot,) = [
-        recommendation
-        for recommendation in report["recommendations"]
-        if recommendation["kind"] == "spot_check_unread"
+    summary = await call_tool(server, "memory_admin", {"action": "health"})
+    (spot,) = [line for line in summary["attention"] if "spot_check_unread" in line]
+    assert spot.startswith("spot_check_unread 1: ")
+    assert spot.endswith(f"[{memory_id}]")
+    recommendations = await call_tool(
+        server, "memory_admin", {"action": "health", "section": "recommendations"}
+    )
+    (full,) = [
+        r
+        for r in recommendations["recommendations"]
+        if r["kind"] == "spot_check_unread"
     ]
-    assert (spot["count"], spot["memory_ids"]) == (1, [memory_id])
-    assert f"({why.value} 1)" in spot["summary"]
+    assert f"({why.value} 1)" in full["summary"]
 
 
 def _stats(memory_id: str) -> MemoryStats:

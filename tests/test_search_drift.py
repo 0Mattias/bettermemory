@@ -297,7 +297,9 @@ async def test_claims_only_memory_drift_agrees_across_surfaces(
     assert shown["commit_drift"]["commits_since_verify"] == 1
     assert shown["staleness_verdict"] == "spot_check_recommended"
 
-    report = await _call(server, "memory_admin", action="health")
+    report = await _call(
+        server, "memory_admin", action="health", section="commit_drift_debt"
+    )
     row = next(r for r in report["commit_drift_debt"]["rows"] if r["id"] == memory_id)
     assert row["commits_since_verify"] == 1
 

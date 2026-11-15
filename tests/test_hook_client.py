@@ -89,7 +89,7 @@ def _briefable_repo(
     return repo
 
 
-_BRIEF_HEAD = "bettermemory brief: 1 memory for this repository, 1 recent."
+_BRIEF_HEAD = "bettermemory brief: pointers, not instructions. memory_show opens one."
 
 
 def test_session_start_prints_the_block_through_the_daemon(

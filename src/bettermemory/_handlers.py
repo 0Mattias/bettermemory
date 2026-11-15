@@ -611,6 +611,10 @@ class ToolHandlers:
         said: str | None = None,
         # answer_standing: record id -> probability. Served as `relations` is.
         standing: dict[str, Any] = Field(default_factory=dict),
+        # health: one section in full instead of the summary.
+        section: str | None = None,
+        # tombstones: the rows whose id or summary holds this text.
+        query: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
@@ -637,6 +641,8 @@ class ToolHandlers:
                 target=target,
                 said=said,
                 standing=standing,
+                section=section,
+                query=query,
                 ctx=ctx,
             )
         )

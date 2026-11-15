@@ -1,6 +1,9 @@
 """The health report behind `memory_admin(action="health")`.
 
-The tool's description is `DESC_MEMORY_ADMIN`'s `health` clause; the
+The answer is the summary (`health_summary.health_summary`) unless the
+call names a `section`, which is then returned in full
+(`health_summary.health_section`). The tool's description is
+`DESC_MEMORY_ADMIN`'s `health` clause; the
 fields are documented in docs/api.md, where
 `tests/test_health_description.py` holds the list to the report's keys.
 The standalone `memory_health` description went with the nine-tool
@@ -13,6 +16,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from ..health import report_for_store
+from ..health_summary import health_section, health_summary
 from ._shared import Context, _advance_turn, caller_anchoring
 
 if TYPE_CHECKING:
@@ -25,6 +29,7 @@ async def memory_health(
     window_days: int = 30,
     heavily_used_top_k: int = 10,
     min_applied: int | None = None,
+    section: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     from .. import _handlers as _h
@@ -70,7 +75,7 @@ async def memory_health(
     )
     out = report.to_dict()
     out["membership"] = _membership(deps.store)
-    return out
+    return health_summary(out) if section is None else health_section(out, section)
 
 
 def _membership(store: Store) -> dict[str, Any] | None:

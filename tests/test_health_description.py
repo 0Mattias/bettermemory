@@ -28,7 +28,7 @@ from ._mcp import call_tool as _mcp_call
 
 _ROOT = Path(__file__).resolve().parents[1]
 _API = _ROOT / "docs" / "api.md"
-_HEADING = '### `memory_admin(action="health")`'
+_HEADING = '### `memory_admin(action="health", section?)`'
 _LEAD_IN = "the tool does not): "
 
 # The surfaces 9.0 removed that the health family used to feed or cite.
@@ -87,9 +87,18 @@ def test_the_parser_reads_the_field_list() -> None:
 async def test_the_doc_names_exactly_the_fields_the_health_action_returns(
     server: Any,
 ) -> None:
-    report = await _mcp_call(server, "memory_admin", {"action": "health"})
+    """The summary carries the headline; every other field is a section,
+    and a call naming an unknown section lists them all."""
+    from bettermemory.health_summary import HEADLINE_KEYS
+
+    summary = await _mcp_call(server, "memory_admin", {"action": "health"})
+    assert set(HEADLINE_KEYS) <= set(summary)
+    with pytest.raises(Exception, match="the sections are ") as refused:
+        await _mcp_call(server, "memory_admin", {"action": "health", "section": "?"})
+    listed = str(refused.value).split("the sections are ", 1)[1]
+    sections = {name.strip(" '\"") for name in listed.split(",")}
     documented = set(_documented_fields())
-    returned = set(report)
+    returned = set(HEADLINE_KEYS) | sections
     assert documented - returned == set(), "the doc names fields the report lacks"
     assert returned - documented == set(), "the report carries fields the doc omits"
 

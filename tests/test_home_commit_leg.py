@@ -279,7 +279,11 @@ async def _surfaces(world: World, rid: str, where: str) -> Surfaces:
             {"query": _QUERY, "auto_scope": False, "expand_top": True},
         )
         auto = await call_tool(world.server, "memory_search", {"query": _QUERY})
-        health = await call_tool(world.server, "memory_admin", {"action": "health"})
+        health = await call_tool(
+            world.server,
+            "memory_admin",
+            {"action": "health", "section": "commit_drift_debt,cross_repo_drift"},
+        )
     finally:
         objects.chmod(0o755)
     # A record with no home row is admitted nowhere, so no search reads it

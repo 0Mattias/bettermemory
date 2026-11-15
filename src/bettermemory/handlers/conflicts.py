@@ -3,8 +3,9 @@
 The corpus-inference arbitration surface. The server detects
 memory-vs-memory disagreement candidates mechanically (high dedup-scan
 similarity + a polarity flip or numeric divergence — see
-`conflicts.py`); this action is where the model LISTS them with both
-bodies inline, and rules on each pair:
+`conflicts.py`); this action is where the model LISTS them, each member
+as its id and an 80-character summary (`memory_show` reads a member in
+full), and rules on each pair:
 
 - verdict="contradiction": the pair genuinely disagrees. A
   `contradicts` link is written (a→b, with the note) BEFORE the verdict
@@ -50,6 +51,7 @@ from ..conflicts import (
 )
 from ..control_tokens import refuse_control_tokens
 from ..models import LinkType, Memory, MemoryLink
+from ..recall_admission import summarize
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ..store_schema import absent_text
 from ._shared import Context, _advance_turn
@@ -245,29 +247,50 @@ def _render_pending(
         except (MemoryNotFoundError, TombstonedError):
             dead_ids.add(memory_id)
             return False
-        live_sides[memory_id] = {
-            "id": m.id,
-            "body": m.body,
-            "scopes": m.scopes,
-            "updated": m.updated.isoformat(),
-        }
+        live_sides[memory_id] = {"id": m.id, "body": " ".join(m.body.split())}
         return True
 
     judgeable, omitted = split_judgeable(pending, is_active)
     rows = [
         {
             "id": cand.id,
-            "similarity": cand.similarity,
-            "method": cand.method,
             "detector": cand.detector,
             # Present in `live_sides` by construction: `split_judgeable`
             # only keeps a row once `is_active` has loaded both members.
-            "a": dict(live_sides[cand.a_id]),
-            "b": dict(live_sides[cand.b_id]),
+            **_sides(live_sides[cand.a_id], live_sides[cand.b_id]),
         }
         for cand in judgeable[:max_results]
     ]
     return rows, len(judgeable), omitted
+
+
+#: The shared words a member's summary keeps before the two bodies part.
+_SHARED_LEAD_CHARS = 24
+
+
+def _sides(a: dict[str, str], b: dict[str, str]) -> dict[str, dict[str, str]]:
+    """Each member as its id and a summary that starts where the two
+    bodies first differ, keeping `_SHARED_LEAD_CHARS` of the text they
+    share for context, from a word boundary: two records that open alike
+    then read apart."""
+    first, second = a["body"], b["body"]
+    common = 0
+    for x, y in zip(first, second):
+        if x != y:
+            break
+        common += 1
+    start = max(common - _SHARED_LEAD_CHARS, 0)
+    if start:
+        start = first.rfind(" ", 0, start) + 1
+
+    def side(member: dict[str, str]) -> dict[str, str]:
+        text = member["body"][start:]
+        return {
+            "id": member["id"],
+            "summary": f"…{summarize(text)}" if start else summarize(text),
+        }
+
+    return {"a": side(a), "b": side(b)}
 
 
 def _load_active_member(deps: ToolHandlers, memory_id: str) -> Memory:

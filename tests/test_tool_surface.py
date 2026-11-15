@@ -140,7 +140,7 @@ async def test_review_parameter_is_a_plain_object(tmp_path: Path) -> None:
 
 def test_instructions_fit_claude_code() -> None:
     """Claude Code truncates the instructions block past about 1.8 KB."""
-    assert 700 <= len(INSTRUCTIONS) <= 1_500
+    assert 300 <= len(INSTRUCTIONS) <= 1_500
     assert len(INSTRUCTIONS.encode("utf-8")) <= 1_750
 
 

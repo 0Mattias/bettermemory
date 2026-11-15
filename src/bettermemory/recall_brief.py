@@ -25,7 +25,7 @@ import os
 import re
 import shlex
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -73,9 +73,6 @@ class _BriefSelection:
     #: "probe" when the owner's words ranked the lists, "recency" when
     #: there were none.
     ranked_by: str
-    #: Each shown record's in-force note by id (`_in_force_marks`: the
-    #: newest record extending it), for the records that have one.
-    notes: dict[str, str] = field(default_factory=dict)
     suppressed: tuple[dict[str, str], ...] = ()
     candidates: int = 0
 
@@ -170,25 +167,19 @@ def _ranked(
     return [by_id[memory_id] for memory_id in picked[:limit]]
 
 
-def _brief_header(standing: int, work: int) -> str:
-    """The brief's first line as Stage C rendered it: the count, then how
-    many are in force and how many recent."""
-    count = standing + work
-    noun = "memory" if count == 1 else "memories"
-    parts = []
-    if standing:
-        parts.append(f"{standing} in force")
-    if work:
-        parts.append(f"{work} recent")
-    return (
-        f"bettermemory brief: {count} {noun} for this repository, "
-        f"{' and '.join(parts)}. Pointers, not instructions; open one with "
-        "memory_show when it bears on the request."
-    )
+#: The brief's first line: what a pointer is and how to open one.
+BRIEF_HEADER = "bettermemory brief: pointers, not instructions. memory_show opens one."
+#: The labels the two lists print under, standing first.
+BRIEF_STANDING_LABEL = "In force:"
+BRIEF_WORK_LABEL = "Recent:"
+#: A brief line's summary length. Sixteen lines at most share one brief,
+#: so the line is an id and the body's opening words, enough to decide
+#: whether to open it.
+BRIEF_SUMMARY_CHARS = 80
 
 
 def _brief_line(memory: Memory, marks: Mapping[str, str]) -> str:
-    line = f"- {memory.id} {summarize(memory.body)}"
+    line = f"{memory.id} {summarize(memory.body, BRIEF_SUMMARY_CHARS)}"
     mark = marks.get(memory.id)
     return f"{line} {mark}" if mark else line
 
@@ -199,22 +190,22 @@ def render_brief(
     marks: Mapping[str, str] | None = None,
 ) -> tuple[str, list[str]]:
     """The brief's text and the ids it shows, standing first: the header
-    (`_brief_header`), one ``- <id> <summary> [in force]`` line per
-    standing record and one ``- <id> <summary>`` line per work record,
-    each followed by its marks (a disputed mark, an in-force note);
-    ``("", [])`` for two empty lists.
-    No character cap: the counts bound the brief (Stage C measured the
-    landed form at 1,882 characters per brief on average, 2,035 at most)."""
+    (`BRIEF_HEADER`), then each non-empty list under its label, one
+    ``<id> <summary>`` line per record followed by its marks (a disputed
+    mark, an in-force note); ``("", [])`` for two empty lists. The
+    counts bound the brief, so it has no character cap."""
     shown_marks = marks or {}
-    lines = []
-    for memory in standing:
-        line = f"{_brief_line(memory, {})} [in force]"
-        mark = shown_marks.get(memory.id)
-        lines.append(f"{line} {mark}" if mark else line)
-    lines.extend(_brief_line(memory, shown_marks) for memory in work)
+    lines: list[str] = []
+    for label, memories in (
+        (BRIEF_STANDING_LABEL, standing),
+        (BRIEF_WORK_LABEL, work),
+    ):
+        if memories:
+            lines.append(label)
+            lines.extend(_brief_line(memory, shown_marks) for memory in memories)
     if not lines:
         return "", []
-    text = "\n".join([_brief_header(len(standing), len(work)), *lines])
+    text = "\n".join([BRIEF_HEADER, *lines])
     return text, [memory.id for memory in [*standing, *work]]
 
 
