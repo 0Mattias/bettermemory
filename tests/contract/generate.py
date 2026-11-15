@@ -81,16 +81,21 @@ UNICODE_GATED = frozenset(
 SQLITE_VERSION = "3.50.4"
 SQLITE_GATED = frozenset({"store", "store_path", "mcp", "hooks"})
 
-#: The CPython the golden files were generated under. ``python_edges``
-#: records what changes between versions (`datetime.fromisoformat`'s C
-#: parser, where `list.sort` leaves a NaN key, the recursion budget JSON
-#: stops at); under another version it is not compared.
-PYTHON_VERSION = "3.13"
+#: The CPython the golden files were generated under, to the patch
+#: release. ``python_edges`` records what changes between versions
+#: (`datetime.fromisoformat`'s C parser, where `list.sort` leaves a NaN
+#: key, the recursion budget JSON stops at); under another version it is
+#: not compared. The patch release is part of it: CI installs the newest
+#: 3.13 (3.13.18 on 2026-11-15) and its `datetime_edges.jsonl` differs
+#: from 3.13.13's, so a minor-version gate compared files it should have
+#: skipped (CI run 43752288601).
+PYTHON_VERSION = "3.13.13"
 PYTHON_GATED = frozenset({"python_edges"})
 
 
 def python_version() -> str:
-    return f"{sys.version_info.major}.{sys.version_info.minor}"
+    v = sys.version_info
+    return f"{v.major}.{v.minor}.{v.micro}"
 
 
 def main() -> int:

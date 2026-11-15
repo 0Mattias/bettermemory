@@ -29,11 +29,12 @@ import sys
 import tempfile
 import threading
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from bettermemory import log as blog
+from bettermemory import review
 from bettermemory.store_schema import SCHEMA
 
 from . import gen_json, gen_log_ring, gen_time
@@ -241,6 +242,126 @@ def _fromtimestamp(x: float) -> dict[str, Any]:
         return {"error": type(exc).__name__}
 
 
+def _timeval(x: float) -> tuple[int, int]:
+    """``(time_t, microseconds)`` as CPython's ``_PyTime_ObjectToTimeval``
+    computes them under ``_PyTime_ROUND_HALF_EVEN``: ``modf``, the fraction
+    times 1e6 in double arithmetic, rounded half to even, carried into the
+    whole seconds. IEEE-754 operations only, the same on every platform."""
+    frac, whole = math.modf(x)
+    frac = float(round(frac * 1e6))
+    if frac >= 1e6:
+        frac -= 1e6
+        whole += 1.0
+    elif frac < 0:
+        frac += 1e6
+        whole -= 1.0
+    return int(whole), int(frac)
+
+
+_EPOCH_ORDINAL = 719163  # date(1970, 1, 1).toordinal()
+
+
+def pure_fromtimestamp(x: float) -> dict[str, Any]:
+    """`datetime.fromtimestamp(x, tz=timezone.utc)` on a platform whose
+    ``gmtime_r`` takes every 64-bit ``time_t`` whose year fits a C int
+    (glibc and macOS both do), computed without the C library: the
+    calendar from integer arithmetic, then ValueError where the year
+    falls outside 1..9999, as `datetime`'s constructor raises."""
+    timet, us = _timeval(x)
+    if not -(2**63) <= timet < 2**63:
+        return {"error": "OverflowError"}
+    days, secs = divmod(timet, 86400)
+    ordinal = _EPOCH_ORDINAL + days
+    if not 1 <= ordinal <= date.max.toordinal():
+        return {"error": "ValueError"}
+    day = date.fromordinal(ordinal)
+    hour, rest = divmod(secs, 3600)
+    minute, second = divmod(rest, 60)
+    when = datetime(
+        day.year, day.month, day.day, hour, minute, second, us, tzinfo=timezone.utc
+    )
+    return {"v": when.isoformat()}
+
+
+#: Windows' ``gmtime_s`` (CPython's `_PyTime_gmtime` there) takes
+#: ``time_t`` from the epoch to the end of the year 3000, give or take its
+#: half-day margins for local time; CPython raises OSError where it
+#: refuses. Inside this range Windows agrees with every other platform;
+#: past these margins it raises OSError for certain; between, it is not
+#: known here and a cell records no Windows result.
+_WIN_SAFE = (0, 32503680000)  # 1970-01-01 .. 3000-01-01
+_WIN_REFUSES = (-86400, 32535302400)  # below / from: 1969-12-31, 3001-01-02
+
+
+def timestamp_cell(x: float, out: dict[str, Any]) -> dict[str, Any]:
+    """The cell of ``datetime.fromtimestamp(x, tz=timezone.utc)`` whose
+    result on this platform is ``out``. On every platform but Windows
+    ``out`` must equal `pure_fromtimestamp`; otherwise the cell records
+    both, so the file no longer matches (self-check). Where Windows may
+    differ the cell is ``platform_dependent``, with the result on any
+    other platform and, where known, Windows'. The bytes are the same on
+    every platform: nothing here reads the platform's own result there."""
+    pure = pure_fromtimestamp(x)
+    if sys.platform != "win32" and out != pure:
+        return {"self_check_failed": {"pure": pure, "got": out}}
+    timet, _ = _timeval(x)
+    if _WIN_SAFE[0] <= timet < _WIN_SAFE[1]:
+        if sys.platform == "win32" and out != pure:
+            return {"self_check_failed": {"pure": pure, "got": out}}
+        return pure
+    by_platform: dict[str, Any] = {"other": pure}
+    if timet < _WIN_REFUSES[0] or timet >= _WIN_REFUSES[1]:
+        by_platform["win32"] = {"error": "OSError"}
+    return {"platform_dependent": by_platform}
+
+
+def _ulid_cell(text: str, out: dict[str, Any]) -> dict[str, Any]:
+    """`review.ulid_time`: None for a text that is no ULID, else
+    ``fromtimestamp(ms / 1000)`` of its first ten characters."""
+    if out == {"v": None}:
+        return out
+    ms = 0
+    for char in text[:10]:
+        ms = ms * 32 + review._CROCKFORD_INDEX[char]
+    return timestamp_cell(ms / 1000, out)
+
+
+#: Formatters that call ``strftime``, and the directives they use. The C
+#: library spells ``%Y`` below the year 1000 its own way (`gen_time._format`
+#: marks those); the other directives, and ``%Y`` from 1000 on, are the
+#: zero-padded decimal fields C99 fixes on every platform.
+_STRFTIME = {
+    "compact_utc": "{Y:04d}{m:02d}{d:02d}T{H:02d}{M:02d}{S:02d}Z",
+    "date_only": "{Y:04d}-{m:02d}-{d:02d}",
+    "seconds_z": "{Y:04d}-{m:02d}-{d:02d}T{H:02d}:{M:02d}:{S:02d}Z",
+}
+
+
+def _format_cell(name: str, fn: Callable[[datetime], str], dt: datetime) -> Any:
+    """`gen_time._format`, and for an unmarked ``strftime`` cell a check
+    that the text equals its fields spelled in Python (no C library).
+    ``isoformat``, ``str`` and ``isoformat_utc`` are CPython's own
+    formatting (``PyUnicode_FromFormat``) and pydantic's is Rust's: none
+    consults the C library or the local zone."""
+    cell = gen_time._format(name, fn, dt)
+    spec = _STRFTIME.get(name)
+    if spec is None or "v" not in cell:
+        return cell
+    t = dt.astimezone(timezone.utc) if name == "compact_utc" else dt
+    pure = spec.format(Y=t.year, m=t.month, d=t.day, H=t.hour, M=t.minute, S=t.second)
+    if cell != {"v": pure}:
+        return {"self_check_failed": {"pure": {"v": pure}, "got": cell}}
+    return cell
+
+
+def _parse_cell(name: str, fn: Callable[[str], Any], text: str) -> dict[str, Any]:
+    """A parser's cell. Only ``ulid_time`` reaches the platform (through
+    ``gmtime``); the others are CPython's own ``fromisoformat`` parser and
+    ``str`` methods, which read no C library function, locale or zone."""
+    out = gen_time._run(fn, text)
+    return _ulid_cell(text, out) if name == "ulid_time" else out
+
+
 #: Offsets below a minute and below a second, through every formatter:
 #: `isoformat_utc` replaces every ``+00:00`` in the isoformat text, so an
 #: offset of 30 s, ``+00:00:30``, comes out as ``Z:30``; pydantic rounds
@@ -276,7 +397,7 @@ def _format_records() -> list[dict[str, Any]]:
                 {
                     "datetime": {"fields": list(fields), "offset_us": us},
                     "out": {
-                        k: gen_time._format(k, fn, dt)
+                        k: _format_cell(k, fn, dt)
                         for k, (fn, _) in gen_time.FORMATTERS.items()
                     },
                 }
@@ -305,6 +426,15 @@ def _datetime_edges() -> bytes:
                 "surrogate) through each parser; timestamp (IEEE-754 bits and "
                 "repr) through datetime.fromtimestamp(x, tz=timezone.utc), as "
                 "isoformat(). Each result is v, or error: the exception type"
+            ),
+            "marks": (
+                "platform_dependent: {other: the result on Linux and macOS, "
+                "win32: on Windows where known; a platform not named is not "
+                "known}, for fromtimestamp (and ulid_time) outside 1970..3000, "
+                "which Windows' gmtime_s refuses; platform_dependent: true and "
+                "local_time_dependent: true as datetime.jsonl (strftime %Y below "
+                "1000, a naive value through astimezone). Every unmarked "
+                "fromtimestamp and strftime cell equals its pure-Python spelling"
             ),
             "accidents": [
                 "isoformat_utc replaces every '+00:00' of isoformat(), so an "
@@ -340,7 +470,7 @@ def _datetime_edges() -> bytes:
             {
                 **text_field("text", text),
                 "out": {
-                    k: gen_time._run(fn, text)
+                    k: _parse_cell(k, fn, text)
                     for k, (fn, _) in gen_time.PARSERS.items()
                 },
             }
@@ -349,7 +479,7 @@ def _datetime_edges() -> bytes:
         records.append(
             {
                 "timestamp": {"bits": float_bits(x), "repr": repr(x)},
-                "out": _fromtimestamp(x),
+                "out": timestamp_cell(x, _fromtimestamp(x)),
             }
         )
     return jsonl(records)

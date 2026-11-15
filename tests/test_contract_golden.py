@@ -15,6 +15,7 @@ import json
 import sqlite3
 import tempfile
 import unicodedata
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -67,8 +68,48 @@ def test_golden_files_match_the_reference(name: str) -> None:
     for filename, data in sorted(produced.items()):
         committed = (GOLDEN / filename).read_bytes()
         if data != committed and drift:
-            pytest.skip(f"{filename} differs under {', '.join(drift)}")
-        assert data == committed, f"{filename} no longer matches the reference"
+            where = _differing(data, committed)
+            # A warning as well as the skip reason: a quiet run prints the
+            # warnings summary and not the reasons, and which records
+            # another version changes is worth reading in a CI log.
+            warnings.warn(
+                f"{filename} differs under {', '.join(drift)}: {where}", stacklevel=1
+            )
+            pytest.skip(f"{filename} differs under {', '.join(drift)}: {where}")
+        assert data == committed, (
+            f"{filename} no longer matches the reference: {_differing(data, committed)}"
+        )
+
+
+def _differing(data: bytes, committed: bytes, shown: int = 12) -> str:
+    """Which lines of a golden file differ, by number, with the first few
+    named by their record's ``name`` or ``case`` where a line holds one."""
+    ours, theirs = data.splitlines(), committed.splitlines()
+    lines = [
+        i + 1
+        for i in range(max(len(ours), len(theirs)))
+        if (ours[i] if i < len(ours) else None)
+        != (theirs[i] if i < len(theirs) else None)
+    ]
+    names = []
+    for number in lines[:shown]:
+        label = str(number)
+        if number <= len(theirs):
+            try:
+                record = json.loads(theirs[number - 1])
+            except ValueError:
+                record = None
+            if isinstance(record, dict):
+                for key in ("name", "case", "text", "id"):
+                    if isinstance(record.get(key), str):
+                        label = f"{number} ({key} {record[key]!r:.60})"
+                        break
+        names.append(label)
+    more = f", and {len(lines) - shown} more" if len(lines) > shown else ""
+    return (
+        f"{len(lines)} of {len(theirs)} lines, at {', '.join(names)}{more}"
+        f"; produced {len(ours)} lines"
+    )
 
 
 def test_every_golden_file_has_a_generator() -> None:
