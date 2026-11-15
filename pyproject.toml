@@ -180,6 +180,9 @@ exclude = [
     "venv",
     ".venv",
     "htmlcov",
+    # The native (Rust) build: its own workspace, not part of the Python
+    # distribution; `native/target` holds its build output.
+    "/native",
 ]
 
 [tool.mypy]

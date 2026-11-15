@@ -57,3 +57,6 @@ htmlcov/
 # Model-response cache for the bench harnesses that call a model
 # (bench/llm.py). Rebuildable by rerunning; holds sampled text only.
 bench/.llm-cache/
+
+# The native build (Rust) writes here; CARGO_TARGET_DIR points inside it.
+native/target/
