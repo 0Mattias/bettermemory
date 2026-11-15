@@ -2,11 +2,13 @@
 
 Formatters take a neutral datetime (fields plus an offset in seconds, or
 null for a naive value); parsers take text. Each result is the exact
-output text, null, or the exception type raised.
+output text, null, or the exception type raised. A cell whose result
+differs by platform or Python version is marked and records each result.
 """
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -144,6 +146,62 @@ def _run(fn: Callable[[Any], Any], arg: Any) -> dict[str, Any]:
         return {"error": type(exc).__name__}
 
 
+_MIDNIGHT_24 = "2026-11-15T24:00:00Z"
+_NEXT_DAY = {"v": "2026-11-16T00:00:00+00:00"}
+
+#: Parser cells whose result depends on the Python version, keyed by
+#: (text, parser): the first version each result holds from, and the
+#: result. ``datetime.fromisoformat`` reads the hour 24 as midnight of
+#: the next day from 3.14 and rejects it before.
+_BY_VERSION: dict[tuple[str, str], list[tuple[tuple[int, int], dict[str, Any]]]] = {
+    (_MIDNIGHT_24, "parse_event_ts"): [((3, 11), {"v": None}), ((3, 14), _NEXT_DAY)],
+    (_MIDNIGHT_24, "store_rows_dt"): [
+        ((3, 11), {"error": "ValueError"}),
+        ((3, 14), _NEXT_DAY),
+    ],
+    (_MIDNIGHT_24, "v8_as_dt"): [
+        ((3, 11), {"error": "ValueError"}),
+        ((3, 14), _NEXT_DAY),
+    ],
+    (_MIDNIGHT_24, "git_instant"): [((3, 11), {"v": None}), ((3, 14), _NEXT_DAY)],
+}
+
+#: Parser cells whose result depends on the platform, keyed by (text,
+#: parser): the result on each ``sys.platform`` named, and on any other.
+#: ``datetime.fromtimestamp`` past the year 9999 raises OSError on
+#: Windows and ValueError elsewhere.
+_BY_PLATFORM: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
+    ("7ZZZZZZZZZZZZZZZZZZZZZZZZZ", "ulid_time"): {
+        "win32": {"error": "OSError"},
+        "other": {"error": "ValueError"},
+    },
+}
+
+
+def _parse(name: str, fn: Callable[[str], Any], text: str) -> dict[str, Any]:
+    """The parser's result, or for a cell that differs by Python version
+    or platform every recorded result, once this run's result is the one
+    recorded for this version or platform. A result that is not records
+    itself, so the file no longer matches."""
+    out = _run(fn, text)
+    by_version = _BY_VERSION.get((text, name))
+    if by_version is not None:
+        expected = [r for since, r in by_version if sys.version_info[:2] >= since][-1]
+        if out != expected:
+            return out
+        return {
+            "version_dependent": {
+                f"{since[0]}.{since[1]}+": result for since, result in by_version
+            }
+        }
+    by_platform = _BY_PLATFORM.get((text, name))
+    if by_platform is not None:
+        if out != by_platform.get(sys.platform, by_platform["other"]):
+            return out
+        return {"platform_dependent": by_platform}
+    return out
+
+
 _STRFTIME = frozenset({"compact_utc", "date_only", "seconds_z"})
 
 
@@ -190,6 +248,9 @@ def generate() -> dict[str, bytes]:
         )
     for text in _TEXTS:
         records.append(
-            {"text": text, "out": {k: _run(fn, text) for k, (fn, _) in PARSERS.items()}}
+            {
+                "text": text,
+                "out": {k: _parse(k, fn, text) for k, (fn, _) in PARSERS.items()},
+            }
         )
     return {"datetime.jsonl": jsonl(records)}

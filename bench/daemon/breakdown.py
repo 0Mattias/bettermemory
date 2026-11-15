@@ -5,7 +5,8 @@ The panel (bench/panel) reads the prompt hook's wall time as Claude Code
 measures it, from the spawn of the hook's shell to its exit, and the daemon's
 answer is a small part of it. This arm splits one round trip into parts,
 each timed from outside the hook as its own process or call, interleaved
-round by round so that drift falls on every part alike:
+round by round so that drift falls on every part alike (both arms run on
+POSIX only, since each launch is a `/bin/sh -c`):
 
   shell           `sh -c :`: the shell Claude Code spawns for a hook command,
                   with nothing run in it.
@@ -146,6 +147,15 @@ def scratch_env(scratch: Path, source: dict[str, str] | None = None) -> dict[str
     env["BETTERMEMORY_KEYS_DIR"] = str(scratch / "keys")
     env["BETTERMEMORY_STATE_DIR"] = str(scratch / "state")
     return env
+
+
+def require_posix() -> None:
+    """Both arms time `/bin/sh -c` launches, so they run on POSIX only."""
+    if os.name != "posix":
+        raise SystemExit(
+            "the breakdown and uvx arms time /bin/sh launches and run on POSIX "
+            "only (macOS or Linux)"
+        )
 
 
 def launcher() -> Path:
@@ -371,6 +381,7 @@ def run_breakdown(
     prompts: list[str],
     refuse: Callable[[Path], None],
 ) -> dict[str, Any]:
+    require_posix()
     if n < 1:
         raise SystemExit("--n must be at least 1")
     refuse(scratch)
@@ -516,6 +527,7 @@ def run_uvx(
 ) -> dict[str, Any]:
     from bettermemory import __version__
 
+    require_posix()
     if n < 1:
         raise SystemExit("--n must be at least 1")
     refuse(scratch)

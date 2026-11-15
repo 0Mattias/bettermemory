@@ -2229,6 +2229,17 @@ def _row_reason(
     )
 
 
+#: The platform's separator when it is not ``/`` (Windows), else None.
+_NATIVE_SEP: str | None = os.sep if os.sep != "/" else None
+
+
+def _slashed(path: str) -> str:
+    """`path` with the platform's own separator written as ``/``. A
+    backslash is a separator only where the platform says so; on POSIX it
+    is part of a name and stays."""
+    return path if _NATIVE_SEP is None else path.replace(_NATIVE_SEP, "/")
+
+
 def _path_states(
     memory: Memory, drift: PathDriftReport
 ) -> tuple[dict[str, str], list[str]]:
@@ -2266,11 +2277,12 @@ def _path_states(
     def spelled(path: str) -> str:
         """The key the read already holds for an attested or claimed
         spelling (the read resolves a relative one against the record's
-        root), else the spelling itself."""
+        root, joined with the platform's separator), else the spelling
+        itself."""
         if path in states:
             return path
-        tail = "/" + path.lstrip("./")
-        return next((key for key in states if key.endswith(tail)), path)
+        tail = "/" + _slashed(path).lstrip("./")
+        return next((key for key in states if _slashed(key).endswith(tail)), path)
 
     for path in memory.verified_paths:
         key = spelled(path)
@@ -2302,12 +2314,17 @@ def _path_states(
 
 def _compact_origin(origin: Any) -> dict[str, Any] | None:
     """`origin_to_dict`'s shape without a `cwd` that repeats the worktree
-    root."""
+    root, in either spelling: the text, or the native bytes
+    (`cwd_bytes_base64`) of a directory UTF-8 cannot represent."""
     if not isinstance(origin, dict):
         return None
     out = {key: value for key, value in origin.items() if value is not None}
-    if "cwd" in out and out["cwd"] == out.get("worktree_root"):
-        del out["cwd"]
+    for cwd, root in (
+        ("cwd", "worktree_root"),
+        ("cwd_bytes_base64", "worktree_root_bytes_base64"),
+    ):
+        if cwd in out and out[cwd] == out.get(root):
+            del out[cwd]
     return out or None
 
 

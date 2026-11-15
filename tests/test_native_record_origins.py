@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bettermemory._response import ResponseBuilder
+from bettermemory._response import ResponseBuilder, _compact_origin
 from bettermemory.migrate_v8 import migrate
 from bettermemory.mirror import write_mirror
 from bettermemory.models import Episode, generate_ulid
@@ -86,3 +86,19 @@ def test_origin_response_carries_exact_bytes_without_invalid_unicode() -> None:
         assert result[field] is None
         assert base64.b64decode(result[f"{field}_bytes_base64"]) == os.fsencode(RAW)
     json.dumps(result, ensure_ascii=False).encode("utf-8")
+
+
+def test_a_shown_native_origin_drops_a_cwd_that_repeats_the_root() -> None:
+    builder = ResponseBuilder(stale_after_days=30)
+    at_root = _compact_origin(
+        builder.origin_to_dict(Origin(cwd=RAW, worktree_root=RAW, repo=RAW))
+    )
+    assert at_root is not None
+    assert "cwd" not in at_root and "cwd_bytes_base64" not in at_root
+    assert base64.b64decode(at_root["worktree_root_bytes_base64"]) == os.fsencode(RAW)
+    below = RAW + "/src"
+    nested = _compact_origin(
+        builder.origin_to_dict(Origin(cwd=below, worktree_root=RAW, repo=RAW))
+    )
+    assert nested is not None
+    assert base64.b64decode(nested["cwd_bytes_base64"]) == os.fsencode(below)

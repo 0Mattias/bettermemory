@@ -20,6 +20,12 @@ _ROOT = Path(__file__).resolve().parents[1]
 _RUNNER = _ROOT / "bench" / "daemon" / "breakdown.py"
 
 
+_POSIX_ONLY = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the arms launch /bin/sh and an executable sh script stands in for uvx",
+)
+
+
 def _load() -> ModuleType:
     spec = importlib.util.spec_from_file_location("bench_daemon_breakdown", _RUNNER)
     assert spec is not None and spec.loader is not None
@@ -129,6 +135,7 @@ def _fake_uvx(tmp_path: Path, body: str) -> dict[str, str]:
     return {"PATH": f"{bin_dir}:/usr/bin:/bin"}
 
 
+@_POSIX_ONLY
 def test_a_cached_uvx_of_another_version_is_not_timed(tmp_path: Path) -> None:
     env = _fake_uvx(tmp_path, "echo 0.0.1")
     resolution = breakdown.uvx_resolves(env, "9.9.9")
@@ -140,6 +147,7 @@ def test_a_cached_uvx_of_another_version_is_not_timed(tmp_path: Path) -> None:
     }
 
 
+@_POSIX_ONLY
 def test_a_uvx_failure_is_named_by_category_only(tmp_path: Path) -> None:
     env = _fake_uvx(
         tmp_path, "echo 'error: /private/x not found in the cache' >&2; exit 2"
@@ -196,6 +204,7 @@ class _Client:
         return {}
 
 
+@_POSIX_ONLY
 def test_the_rounds_alternate_and_drop_the_warm_ups(tmp_path: Path) -> None:
     ran: list[str] = []
     stdin_sessions: list[str] = []
@@ -235,3 +244,21 @@ def test_n_below_one_is_refused(tmp_path: Path) -> None:
         )
     with pytest.raises(ValueError):
         breakdown.summary_ms([])
+
+
+def test_both_arms_say_they_run_on_posix_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(breakdown.os, "name", "nt")
+    for arm in (breakdown.run_breakdown, breakdown.run_uvx):
+        with pytest.raises(SystemExit, match="POSIX only"):
+            arm(
+                scratch=tmp_path / "s",
+                store_copy=None,
+                snapshot_from=None,
+                n=1,
+                gap=0,
+                prompts=[],
+                refuse=_never,
+            )
+    assert not (tmp_path / "s").exists()

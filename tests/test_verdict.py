@@ -23,6 +23,7 @@ git subprocess in the package is spawned.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from collections.abc import Iterator
@@ -285,10 +286,12 @@ async def test_verdict_agrees_with_show_and_search(
         (finding,) = [
             found
             for path, found in shown["paths"].items()
-            if path.endswith("docs/guide.md")
+            if path.replace(os.sep, "/").endswith("docs/guide.md")
         ]
         assert finding.startswith("missing")
-        assert "docs/guide.md" in shown["reason"]
+        # The read resolves the citation at the record's root, so the
+        # reason names it with the platform's separator.
+        assert "docs/guide.md" in shown["reason"].replace(os.sep, "/")
     if case == "never_verified":
         assert "commit_drift" not in shown
 
@@ -641,3 +644,36 @@ async def test_a_warm_expanded_search_spawns_no_git(
     assert top_warm["staleness_verdict"] == shown["staleness_verdict"]
     assert top_warm.get("reason") == shown.get("reason")
     assert ("reason" in top_warm) == drifted
+
+
+@pytest.mark.parametrize(
+    ("sep", "root"),
+    [(None, "/w/repo"), ("\\", "C:\\w\\repo")],
+)
+def test_a_show_names_an_attested_path_once_whatever_the_separator(
+    monkeypatch: pytest.MonkeyPatch, sep: str | None, root: str
+) -> None:
+    from bettermemory import _response
+    from bettermemory.verify_anchoring import PathDriftReport
+
+    from .test_store import _memory
+
+    monkeypatch.setattr(_response, "_NATIVE_SEP", sep)
+    resolved = root + (sep or "/") + "docs" + (sep or "/") + "guide.md"
+    drift = PathDriftReport(
+        checked=(resolved,), missing=(resolved,), claim_anchored_missing=(resolved,)
+    )
+    memory = _memory(
+        "the rule lives in docs/guide.md", verified_paths=["docs/guide.md"]
+    )
+    paths, _claims = _response._path_states(memory, drift)
+    assert paths == {resolved: "missing, attested or anchored"}
+
+
+def test_a_backslash_in_a_posix_name_is_not_a_separator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bettermemory import _response
+
+    monkeypatch.setattr(_response, "_NATIVE_SEP", None)
+    assert _response._slashed("docs\\guide.md") == "docs\\guide.md"

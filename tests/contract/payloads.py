@@ -4,7 +4,7 @@ Three sources, in order of preference for a kind:
 
 - ``store``: a row the store-path build wrote (`gen_store_path.log_rows`),
   its payload with every value replaced by a synthetic one of the same
-  type (`synthetic`);
+  type (`synthetic`), a host fact by its key (`_HOST_FACTS`);
 - ``call_site``: the keys a call site names (`kinds.call_sites`), each
   with a value of the type its source expression reads as (`_typed`),
   telemetry put through the recorder's own redaction and given an actor;
@@ -37,6 +37,24 @@ from .kinds import Site
 
 _TS = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}")
 _HEX = re.compile(r"[0-9a-f]+")
+
+#: Keys whose values are facts of the host that ran the build (its
+#: hardware id and hostname, a file's device, inode and birth time).
+#: Their spelling, type and presence differ by platform, so each is
+#: replaced by its key whatever it holds.
+_HOST_FACTS = frozenset(
+    {
+        "hardware",
+        "hostname",
+        "id_file",
+        "common_birth",
+        "common_device",
+        "common_inode",
+        "object_birth",
+        "object_device",
+        "object_inode",
+    }
+)
 
 _ACTOR = {
     "client": "fixture-client",
@@ -170,9 +188,14 @@ LEGACY_SHAPES: dict[str, dict[str, Any]] = {
 def synthetic(value: Any, key: str = "v") -> Any:
     """`value` with every leaf replaced by a fixed one of its type: a
     timestamp by a timestamp of the same spelling, hex by hex of the same
-    length, other text by text naming its key, numbers by fixed numbers."""
+    length, other text by text naming its key, numbers by fixed numbers.
+    A host fact (`_HOST_FACTS`) is text naming its key, so the result is
+    the same on every platform."""
     if isinstance(value, dict):
-        return {k: synthetic(v, str(k)) for k, v in value.items()}
+        return {
+            k: f"<{k}>" if k in _HOST_FACTS else synthetic(v, str(k))
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [synthetic(v, key) for v in value[:2]]
     if isinstance(value, bool) or value is None:

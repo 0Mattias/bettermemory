@@ -138,13 +138,15 @@ async def test_mcp_write_show_and_search_keep_a_native_checkout_origin(
         )
         assert written["status"] == "committed", written
         shown = await _call(server, "memory_show", id=written["id"], ctx=ctx)
-        assert shown["origin"]["cwd"] is None
-        assert base64.b64decode(shown["origin"]["cwd_bytes_base64"]) == os.fsencode(
-            folder
-        )
+        shown_origin = shown["origin"]
+        assert "worktree_root" not in shown_origin
         assert base64.b64decode(
-            shown["origin"]["worktree_root_bytes_base64"]
+            shown_origin["worktree_root_bytes_base64"], validate=True
         ) == os.fsencode(folder)
+        # The write ran at the worktree root, so neither spelling of cwd
+        # repeats it.
+        assert "cwd" not in shown_origin
+        assert "cwd_bytes_base64" not in shown_origin
         found = await _call(server, "memory_search", query="loader settings", ctx=ctx)
         assert any(row["id"] == written["id"] for row in found)
         json.dumps(shown, ensure_ascii=False).encode("utf-8")
