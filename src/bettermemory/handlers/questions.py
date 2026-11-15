@@ -269,7 +269,10 @@ async def join_project(
             "line": f"{_named(model, src)} is already this checkout's project",
             "tethered": None,
         }
-    quote, tethered = _tether(deps, [mine], said, f"joining {_named(model, src)}")
+    # Named before the merge: once it is merged, `src` resolves to `into`
+    # and the line would name the same project twice.
+    merged_name = _named(model, src)
+    quote, tethered = _tether(deps, [mine], said, f"joining {merged_name}")
     model.declare(
         Declaration("absorb", _principal(), checkout=mine, target=src, said=quote)
     )
@@ -278,7 +281,7 @@ async def join_project(
         "project": into,
         "merged": src,
         "line": (
-            f"{_named(model, src)} is merged into {_named(model, into)}; its "
+            f"{merged_name} is merged into {_named(model, into)}; its "
             "records are delivered here from now on"
         ),
         "said": quote,

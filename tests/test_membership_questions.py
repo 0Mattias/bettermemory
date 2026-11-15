@@ -290,6 +290,11 @@ async def test_join_project_merges_a_separate_project_on_the_users_words_and_unj
         True,
     )
     assert out["reversal"] == f'memory_admin(action="unjoin_project", id="{theirs}")'
+    # The line names the project that was merged and the one it went into,
+    # not the surviving project twice.
+    merged, _, rest = out["line"].partition(" is merged into ")
+    assert f"({theirs})" in merged and f"({bench.project})" not in merged
+    assert f"({bench.project})" in rest and f"({theirs})" not in rest
     home = bench.model().home(written.id)
     assert home is not None and home.project == bench.project
     (absorbed,) = bench.rows("project_absorbed")

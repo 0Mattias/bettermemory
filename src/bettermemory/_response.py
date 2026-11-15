@@ -2099,7 +2099,7 @@ def check_reason(
         plural = "" if commits == 1 else "s"
         if claims_drifted:
             parts.append(
-                f"{commits} commit{plural} since the last verify touch the "
+                f"{commits} commit{plural} since the last verify touched the "
                 f"claims {_named(list(claims_drifted))}."
             )
         else:

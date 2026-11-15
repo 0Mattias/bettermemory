@@ -312,8 +312,9 @@ def _claim_drift_recommendation(count: int, drifted: Sequence[str]) -> str:
     plural = "" if count == 1 else "s"
     cplural = "" if len(drifted) == 1 else "s"
     head = ", ".join(drifted[:3]) + ("…" if len(drifted) > 3 else "")
+    verb = "implicates" if count == 1 else "implicate"
     return (
-        f"{count} commit{plural} since the last memory_verify implicate "
+        f"{count} commit{plural} since the last memory_verify {verb} "
         f"{len(drifted)} declared claim{cplural} ({head}) — the claimed "
         "binding itself was touched, not merely its file. Spot-check "
         "those claims at HEAD; memory_verify if they hold, memory_update "

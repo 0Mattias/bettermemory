@@ -77,6 +77,20 @@ default behaviour moves.
 - A daemon started before the upgrade keeps the old values until it
   restarts.
 
+#### Fixed
+
+- **A merge's reply names the project that was merged.**
+  `memory_admin(action="join_project")` built its line after the merge,
+  when the merged project already resolved to the one it went into, so
+  the line read `"alpha" (P001) is merged into "alpha" (P001)`. It now
+  names the merged project and then the surviving one. Found while
+  pinning the tool responses for the contract fixtures.
+  (`handlers/questions.py`, `tests/test_membership_questions.py`)
+- **Two drift messages agree with a single commit.** "1 commit since
+  the last verify touch the claims" reads "touched", as its sibling line
+  does, and the claim-drift recommendation reads "1 commit ...
+  implicates". (`_response.py`, `verify.py`)
+
 ### 9.0.0rc19
 
 The nineteenth candidate closes the residuals filed while the
