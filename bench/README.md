@@ -41,6 +41,7 @@ with it.
 | `daemon/` | Daemon latency: the hook round trip and `memory_search` through the stdio shim, on a scratch copy of a real store. |
 | `decisions/` | The decision models behind the write and recall gates, graded blind. |
 | `integrity/` | The integrity benchmark: planted and forged memories against five systems under one protocol. |
+| `panel/` | The instrument panel: over a read-only copy of a store and the local Claude Code transcripts, the helped rate, characters per tool response and per hook injection, the hooks' wall time as the harness measured it, calls and characters per committed write, verdict precision, pointer outcomes by rank, and every record's use by age and standing. Aggregates only; the per-record rows go to a private directory. |
 | `parity/` | The v8 migration round trip, and rank parity of the search step alone. |
 | `recall/` | The session brief and prompt recall on a sealed copy of a real store. |
 | `retrieval/` | recall@k on a committed, blind-authored gold set. |
