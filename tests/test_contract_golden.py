@@ -178,6 +178,39 @@ def test_every_golden_file_has_a_generator() -> None:
         assert on_disk == made
 
 
+def test_no_golden_file_carries_a_host_fact() -> None:
+    from tests.contract.gen_store_files import host_fact
+
+    leaks = {
+        path.name: leak
+        for path in sorted(GOLDEN.iterdir())
+        if path.is_file() and (leak := host_fact(path.read_bytes()))
+    }
+    assert leaks == {}
+
+
+@pytest.mark.parametrize(
+    ("data", "caught"),
+    [
+        (rb'"/tmp/a b"', False),
+        (rb'"/tmp/a bc"', True),
+        (rb'"/tmp/x y/zz"', True),
+        (rb'"/home/fixture/other"', True),
+        (rb'"C:\\Users\\example\\file.txt"', False),
+        (rb'"C:\\Users\\example\\file.txt.bak"', True),
+        (rb"C:\Users\x", True),
+        (rb"\\?\C:\x", True),
+        (rb"/Volumes/Data/x", True),
+        (rb"D:/Users/x", True),
+        (b"\x00/private/var\xff", True),
+    ],
+)
+def test_the_host_fact_guard(data: bytes, caught: bool) -> None:
+    from tests.contract.gen_store_files import host_fact
+
+    assert (host_fact(data) is not None) is caught
+
+
 def test_golden_files_stay_small() -> None:
     total = sum(p.stat().st_size for p in GOLDEN.iterdir() if p.is_file())
     assert total < 6 * 1024 * 1024

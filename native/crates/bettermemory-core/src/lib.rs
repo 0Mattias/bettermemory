@@ -9,7 +9,10 @@
 //!   over tables generated from the reference Python's Unicode 15.1.0;
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`log`]: the row MAC, the key ring and `verify_chain`;
-//! - [`search`]: `search.search` over records in memory, bit for bit.
+//! - [`search`]: `search.search` over records in memory, bit for bit;
+//! - [`store`]: a store file read without writing to it: the version
+//!   contract, the tables, the key ring from a keys directory, the chain
+//!   verified on disk, the FTS5 prefilter.
 
 #![forbid(unsafe_code)]
 
@@ -20,4 +23,5 @@ pub mod lexicon;
 pub mod log;
 pub mod pyvalue;
 pub mod search;
+pub mod store;
 pub mod unicode;

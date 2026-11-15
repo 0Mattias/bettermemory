@@ -41,19 +41,29 @@ const TAMPER_PROBLEMS: [&str; 6] = [
 
 /// HMAC-SHA256 (RFC 2104) over `sha2`.
 pub fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
-    let mut block = [0u8; 64];
+    // The key block and both pads are key material: wiped when dropped.
+    let mut block = Zeroizing::new([0u8; 64]);
     if key.len() > 64 {
-        block[..32].copy_from_slice(&Sha256::digest(key));
+        let mut digest = Zeroizing::new([0u8; 32]);
+        digest.copy_from_slice(&Sha256::digest(key));
+        block[..32].copy_from_slice(&digest[..]);
     } else {
         block[..key.len()].copy_from_slice(key);
     }
+    let mut pad = Zeroizing::new([0u8; 64]);
+    for (p, b) in pad.iter_mut().zip(block.iter()) {
+        *p = b ^ 0x36;
+    }
     let mut inner = Sha256::new();
-    inner.update(block.map(|b| b ^ 0x36));
+    inner.update(&pad[..]);
     for part in parts {
         inner.update(part);
     }
+    for (p, b) in pad.iter_mut().zip(block.iter()) {
+        *p = b ^ 0x5C;
+    }
     let mut outer = Sha256::new();
-    outer.update(block.map(|b| b ^ 0x5C));
+    outer.update(&pad[..]);
     outer.update(inner.finalize());
     outer.finalize().into()
 }
@@ -536,17 +546,18 @@ fn leading_key(ring: &KeyRing, named: &[u32], first_row: &LogRow) -> (PyStr, Opt
 /// The segment map by first seq (a later start at the same seq replaces an
 /// earlier one, as the reference's dict does).
 fn segments_from(
-    rows: &[LogRow],
+    first_row: Option<&LogRow>,
+    rekeys: &[LogRow],
     ring: &KeyRing,
     current_fingerprint: &str,
     origin_seq: Option<i64>,
 ) -> Result<BTreeMap<i64, Segment>, PyError> {
-    let Some(first_row) = rows.first() else {
+    let Some(first_row) = first_row else {
         return Ok(BTreeMap::new());
     };
     let mut starts: Vec<(&LogRow, PyStr)> = Vec::new();
     let mut leading_name = unicode::cps(current_fingerprint);
-    for (position, row) in rows.iter().filter(|r| r.kind == REKEY).enumerate() {
+    for (position, row) in rekeys.iter().filter(|r| r.kind == REKEY).enumerate() {
         let names = rekey_fingerprints(row)?;
         if position == 0 {
             if let Some((old, _)) = &names {
@@ -638,6 +649,65 @@ fn cmp_seq(head: &PyValue, seq: i64) -> std::cmp::Ordering {
     }
 }
 
+/// Where `verify_chain` reads the log's rows from: the rows in memory
+/// (a slice) or a store's log table (`store::StoreFile`). Every row is
+/// visited once, in seq order, by [`LogSource::each`]; the few rows the
+/// report needs out of order are asked for by seq or by kind, so a source
+/// on disk never holds the whole log.
+pub trait LogSource {
+    /// What reading a row can fail with (none for rows in memory).
+    type Error;
+    /// The first row in seq order.
+    fn first(&self) -> Result<Option<LogRow>, Self::Error>;
+    /// The `rekey` rows, in seq order.
+    fn rekeys(&self) -> Result<Vec<LogRow>, Self::Error>;
+    /// The first row in seq order whose seq is `seq`.
+    fn at_seq(&self, seq: i64) -> Result<Option<LogRow>, Self::Error>;
+    /// Visit every row in seq order; `visit`'s error stops the walk.
+    fn each(
+        &self,
+        visit: &mut dyn FnMut(&LogRow) -> Result<(), PyError>,
+    ) -> Result<Result<(), PyError>, Self::Error>;
+}
+
+impl LogSource for [LogRow] {
+    type Error = std::convert::Infallible;
+    fn first(&self) -> Result<Option<LogRow>, Self::Error> {
+        Ok(<[LogRow]>::first(self).cloned())
+    }
+    fn rekeys(&self) -> Result<Vec<LogRow>, Self::Error> {
+        Ok(self.iter().filter(|r| r.kind == REKEY).cloned().collect())
+    }
+    fn at_seq(&self, seq: i64) -> Result<Option<LogRow>, Self::Error> {
+        Ok(self.iter().find(|r| r.seq == seq).cloned())
+    }
+    fn each(
+        &self,
+        visit: &mut dyn FnMut(&LogRow) -> Result<(), PyError>,
+    ) -> Result<Result<(), PyError>, Self::Error> {
+        for row in self {
+            if let Err(e) = visit(row) {
+                return Ok(Err(e));
+            }
+        }
+        Ok(Ok(()))
+    }
+}
+
+/// Why `verify_chain_from` gave no report: the reference's exception, or
+/// the source's own failure.
+#[derive(Debug)]
+pub enum VerifyError<E> {
+    Py(PyError),
+    Source(E),
+}
+
+impl<E> From<PyError> for VerifyError<E> {
+    fn from(e: PyError) -> Self {
+        VerifyError::Py(e)
+    }
+}
+
 /// `log.verify_chain` over the rows the log holds from seq 1 on, in seq
 /// order. Err only where the reference raises: OverflowError for a head
 /// file whose `seq` is an infinite float, RecursionError for an origin
@@ -647,12 +717,27 @@ pub fn verify_chain(
     ring: &KeyRing,
     current_fingerprint: &str,
 ) -> Result<ChainReport, PyError> {
+    verify_chain_from(rows, ring, current_fingerprint).map_err(|e| match e {
+        VerifyError::Py(e) => e,
+        VerifyError::Source(never) => match never {},
+    })
+}
+
+/// [`verify_chain`] over any [`LogSource`]: the same report, the rows read
+/// in one pass plus the first row, the rekey rows and the rows the origin
+/// anchor and the head name.
+pub fn verify_chain_from<S: LogSource + ?Sized>(
+    source: &S,
+    ring: &KeyRing,
+    current_fingerprint: &str,
+) -> Result<ChainReport, VerifyError<S::Error>> {
     let mut problems: Vec<ReportDict> = Vec::new();
     let anchor = ring.read_origin()?;
-    let anchored_row = anchor
-        .as_ref()
-        .and_then(|a| rows.iter().find(|r| r.seq == a.seq));
-    let origin = check_origin(anchor.as_ref(), anchored_row, &ring.held_keys());
+    let anchored_row = match &anchor {
+        Some(a) => source.at_seq(a.seq).map_err(VerifyError::Source)?,
+        None => None,
+    };
+    let origin = check_origin(anchor.as_ref(), anchored_row.as_ref(), &ring.held_keys());
     let mut origin_dict: ReportDict = vec![("status", s(origin.status))];
     if let Some(seq) = origin.seq {
         origin_dict.push(("seq", ReportValue::Int(seq)));
@@ -676,7 +761,20 @@ pub fn verify_chain(
     } else {
         None
     };
-    let segment_map = segments_from(rows, ring, current_fingerprint, origin_seq)?;
+    let first_row = source.first().map_err(VerifyError::Source)?;
+    let rekeys = if first_row.is_some() {
+        source.rekeys().map_err(VerifyError::Source)?
+    } else {
+        Vec::new()
+    };
+    let segment_map = segments_from(
+        first_row.as_ref(),
+        &rekeys,
+        ring,
+        current_fingerprint,
+        origin_seq,
+    )?;
+    drop(rekeys);
 
     struct Open {
         first_seq: i64,
@@ -690,8 +788,11 @@ pub fn verify_chain(
     let mut key: Option<Key> = None;
     // Python's ints: a seq of i64::MAX expects one past it.
     let mut expected_seq: i128 = 1;
-    let mut previous: Option<&LogRow> = None;
-    for row in rows {
+    let mut previous_mac: Option<String> = None;
+    let mut last: Option<LogRow> = None;
+    let mut count: usize = 0;
+    let mut visit = |row: &LogRow| -> Result<(), PyError> {
+        count += 1;
         if row.kind == REKEY && rekey_fingerprints(row)?.is_none() {
             problems.push(row_problem(row, "payload_invalid"));
         }
@@ -709,7 +810,8 @@ pub fn verify_chain(
         // The first row always opens a segment (it is the leading
         // segment's or a rekey's); a row before any would be skipped.
         let Some(segment) = segments.last_mut() else {
-            continue;
+            last = Some(row.clone());
+            return Ok(());
         };
         segment.last_seq = row.seq;
         segment.rows += 1;
@@ -720,7 +822,7 @@ pub fn verify_chain(
             expected_seq = i128::from(row.seq);
         }
         expected_seq += 1;
-        let linked_to = previous.map_or(GENESIS_MAC, |p| p.mac.as_str());
+        let linked_to = previous_mac.as_deref().unwrap_or(GENESIS_MAC);
         if row.prev_mac != linked_to {
             problems.push(row_problem(row, "chain_break"));
         }
@@ -730,8 +832,11 @@ pub fn verify_chain(
                 segment.status = "tampered";
             }
         }
-        previous = Some(row);
-    }
+        previous_mac = Some(row.mac.clone());
+        last = Some(row.clone());
+        Ok(())
+    };
+    source.each(&mut visit).map_err(VerifyError::Source)??;
     for stray in segments.iter().filter(|s| s.foreign) {
         problems.push(vec![
             ("seq", ReportValue::Int(stray.first_seq)),
@@ -758,7 +863,7 @@ pub fn verify_chain(
     }
 
     let head = ring.read_head()?;
-    let last = rows.last();
+    let last = last.as_ref();
     let head_dict: ReportDict = match (&head, last) {
         (None, _) => vec![("status", s("absent"))],
         (Some(h), last) => {
@@ -774,7 +879,14 @@ pub fn verify_chain(
                         }
                     }
                     std::cmp::Ordering::Less => {
-                        let named = rows.iter().find(|r| cmp_seq(&h.seq, r.seq).is_eq());
+                        // A head seq below the last row's is an i64.
+                        let named = match &h.seq {
+                            PyValue::Int(text) => match text.parse::<i64>() {
+                                Ok(seq) => source.at_seq(seq).map_err(VerifyError::Source)?,
+                                Err(_) => None,
+                            },
+                            _ => None,
+                        };
                         if named.is_some_and(|r| same_mac(&h.mac, &unicode::cps(&r.mac))) {
                             "stale"
                         } else {
@@ -813,7 +925,7 @@ pub fn verify_chain(
     };
     Ok(ChainReport {
         status,
-        rows: rows.len(),
+        rows: count,
         segments: segments
             .iter()
             .map(|s| {

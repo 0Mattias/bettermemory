@@ -8,9 +8,10 @@ publish = false
 description = "bettermemory 9 native core: canonical JSON, datetime, Unicode, lexicon, signed log"
 
 [dependencies]
-sha2 = { version = "=0.10.9", default-features = false }
+sha2 = { version = "=0.11.1", default-features = false }
 subtle = { version = "=2.6.1", default-features = false }
 zeroize = { version = "=1.9.0", default-features = false, features = ["alloc"] }
+rusqlite = { version = "=0.43.0", default-features = false, features = ["bundled", "limits", "hooks"] }
 
 [dev-dependencies]
 serde_json = { version = "=1.0.151" }

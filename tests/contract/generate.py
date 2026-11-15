@@ -28,6 +28,7 @@ from . import (
     gen_state,
     gen_search_ranker,
     gen_store,
+    gen_store_files,
     gen_store_path,
     gen_time,
     gen_unicode,
@@ -55,6 +56,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "settings": gen_config.generate,
     "cli_surface": gen_cli.generate,
     "state_files": gen_state.generate,
+    "store_files": gen_store_files.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -68,6 +70,7 @@ UNICODE_GATED = frozenset(
         "unicode_sequences",
         "store",
         "store_path",
+        "store_files",
         "search_ranker",
         "mcp",
         "hooks",
@@ -78,9 +81,10 @@ UNICODE_GATED = frozenset(
 #: holds FTS5's shadow-table definitions and ``bm25()`` scores. The tool
 #: responses rank hits through FTS5 and tokenize through `re`'s word class,
 #: so ``mcp`` is gated on both; so is ``hooks``, whose hooks rank the
-#: prompt recall's pointers and the Stop audit's hits the same way.
+#: prompt recall's pointers and the Stop audit's hits the same way, and
+#: ``store_files``, whose FTS case records ``bm25()`` score bits.
 SQLITE_VERSION = "3.50.4"
-SQLITE_GATED = frozenset({"store", "store_path", "mcp", "hooks"})
+SQLITE_GATED = frozenset({"store", "store_path", "store_files", "mcp", "hooks"})
 
 #: The CPython the golden files were generated under, to the patch
 #: release. ``python_edges`` records what changes between versions
@@ -103,7 +107,9 @@ PYTHON_GATED = frozenset({"python_edges"})
 #: property of one platform: a build is held to the reference on the
 #: platform it runs on, and elsewhere a difference is skipped and named.
 PLATFORM = "darwin-arm64"
-PLATFORM_GATED = frozenset({"search_ranker", "store", "store_path", "mcp", "hooks"})
+PLATFORM_GATED = frozenset(
+    {"search_ranker", "store", "store_path", "store_files", "mcp", "hooks"}
+)
 
 
 def platform_key() -> str:

@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod stores;
+
 use std::path::PathBuf;
 
 use bettermemory_core::datetime::DateTime;

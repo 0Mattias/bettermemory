@@ -1,0 +1,230 @@
+//! `bm-verify <store file> <keys dir>`: open a store read-only, apply the
+//! version contract, count each table's rows, read the key ring and verify
+//! the chain on disk; print ONE JSON object with the outcome, the counts,
+//! the chain report and each phase's time in milliseconds.
+//!
+//! It prints no record content, no payload text and no key material: the
+//! report's fields are seqs, statuses, log row kinds, MACs, key
+//! fingerprints and counts. Exit status 0 when the chain is `ok`, 1 for any
+//! other report, 2 when the store could not be read.
+
+use std::path::Path;
+use std::time::Instant;
+
+use bettermemory_core::log::{ReportDict, ReportValue, VerifyError};
+use bettermemory_core::store::keys::load_key_ring;
+use bettermemory_core::store::{open_checks, sqlite_version, StoreError, StoreFile};
+use bettermemory_core::unicode;
+
+/// The reference version the version contract's messages name.
+const VERSION: &str = "9.0.0";
+
+fn quote(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 || (c as u32) >= 0x7f => {
+                let mut buf = [0u16; 2];
+                for unit in c.encode_utf16(&mut buf) {
+                    out.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn quote_cps(cps: &[u32]) -> String {
+    match unicode::to_string(cps) {
+        Some(text) => quote(&text),
+        None => {
+            let mut out = String::from("\"");
+            for &cp in cps {
+                match char::from_u32(cp) {
+                    Some(c) => {
+                        let q = quote(&c.to_string());
+                        out.push_str(&q[1..q.len() - 1]);
+                    }
+                    None => out.push_str(&format!("\\u{cp:04x}")),
+                }
+            }
+            out.push('"');
+            out
+        }
+    }
+}
+
+fn value(v: &ReportValue) -> String {
+    match v {
+        ReportValue::Null => "null".into(),
+        ReportValue::Int(i) => i.to_string(),
+        ReportValue::BigInt(t) => t.clone(),
+        ReportValue::Str(s) => quote_cps(s),
+    }
+}
+
+fn dict(d: &ReportDict) -> String {
+    let fields: Vec<String> = d
+        .iter()
+        .map(|(k, v)| format!("{}: {}", quote(k), value(v)))
+        .collect();
+    format!("{{{}}}", fields.join(", "))
+}
+
+fn ms(start: Instant) -> String {
+    format!("{:.3}", start.elapsed().as_secs_f64() * 1000.0)
+}
+
+fn fail(fields: &mut Vec<String>, phase: &str, error: &str) -> i32 {
+    fields.push(format!(
+        "{}: {}",
+        quote("error"),
+        quote(&format!("{phase}: {error}"))
+    ));
+    println!("{{{}}}", fields.join(", "));
+    2
+}
+
+fn main() {
+    // Every value drops before the exit, so a private copy is removed.
+    let code = run();
+    std::process::exit(code);
+}
+
+fn run() -> i32 {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 3 {
+        eprintln!("usage: bm-verify <store file> <keys dir>");
+        return 2;
+    }
+    let store_path = Path::new(&args[1]);
+    let keys_dir = Path::new(&args[2]);
+    let mut fields: Vec<String> = vec![format!("{}: {}", quote("sqlite"), quote(sqlite_version()))];
+    let mut timings: Vec<String> = Vec::new();
+
+    let t = Instant::now();
+    let store = match StoreFile::open(store_path) {
+        Ok(s) => s,
+        Err(StoreError::Admission(r)) => {
+            // The reason names schema objects, never a value.
+            fields.push(format!(
+                "\"admission\": {{\"refused\": true, \"why\": {}, \"timed_out\": {}, \"later\": {}}}",
+                quote(&r.why),
+                r.timed_out,
+                r.later.is_some()
+            ));
+            timings.push(format!("\"open\": {}", ms(t)));
+            fields.push(format!("\"ms\": {{{}}}", timings.join(", ")));
+            println!("{{{}}}", fields.join(", "));
+            return 1;
+        }
+        Err(e) => return fail(&mut fields, "open", &e.to_string()),
+    };
+    timings.push(format!("\"open\": {}", ms(t)));
+    // Meta, the counts and the chain from one snapshot of the store.
+    if let Err(e) = store.connection().execute_batch("BEGIN") {
+        return fail(&mut fields, "begin", &e.to_string());
+    }
+    fields.push(format!("\"read_from_copy\": {}", store.reads_a_copy()));
+
+    let t = Instant::now();
+    let meta = match store.meta() {
+        Ok(m) => m,
+        Err(e) => return fail(&mut fields, "meta", &e.to_string()),
+    };
+    let path_text = store_path.to_string_lossy().into_owned();
+    let opened = open_checks(&meta, &path_text, VERSION);
+    timings.push(format!("\"version_contract\": {}", ms(t)));
+    let opened = match opened {
+        Ok(o) => {
+            let outcome = if o.verdict.read_only.is_some() {
+                "read_only"
+            } else {
+                "readable"
+            };
+            fields.push(format!(
+                "\"version_contract\": {{\"outcome\": {}, \"revision\": {}, \"min_reader\": {}, \"min_writer\": {}}}",
+                quote(outcome),
+                o.verdict.revision,
+                o.verdict.min_reader,
+                o.verdict.min_writer
+            ));
+            o
+        }
+        Err(StoreError::Version(e)) => {
+            fields.push(format!(
+                "\"version_contract\": {{\"outcome\": \"refused\", \"key\": {}, \"needed\": {}}}",
+                e.key.map_or("null".into(), quote),
+                e.needed.map_or("null".into(), |n| n.to_string())
+            ));
+            println!("{{{}}}", fields.join(", "));
+            return 1;
+        }
+        Err(e) => return fail(&mut fields, "version_contract", &e.to_string()),
+    };
+
+    let t = Instant::now();
+    let names = match store.table_names() {
+        Ok(n) => n,
+        Err(e) => return fail(&mut fields, "tables", &e.to_string()),
+    };
+    let mut counts = Vec::new();
+    for name in &names {
+        match store.count(name) {
+            Ok(n) => counts.push(format!("{}: {n}", quote(name))),
+            Err(e) => counts.push(format!(
+                "{}: {}",
+                quote(name),
+                quote(&format!("error: {e}"))
+            )),
+        }
+    }
+    timings.push(format!("\"table_counts\": {}", ms(t)));
+    fields.push(format!("\"table_counts\": {{{}}}", counts.join(", ")));
+
+    let t = Instant::now();
+    let ring = match load_key_ring(keys_dir, &opened.store_id) {
+        Ok(r) => r,
+        Err(e) => return fail(&mut fields, "key_ring", &format!("{e:?}")),
+    };
+    timings.push(format!("\"key_ring\": {}", ms(t)));
+    fields.push(format!(
+        "\"key_ring\": {{\"current\": {}, \"retired\": {}, \"head_file\": {}, \"origin_file\": {}}}",
+        ring.current.is_some(),
+        ring.retired.len(),
+        ring.head_file.is_some(),
+        ring.origin_file.is_some()
+    ));
+
+    let t = Instant::now();
+    let report = match store.verify_chain(&ring, &opened.key_fingerprint) {
+        Ok(r) => r,
+        Err(VerifyError::Py(e)) => return fail(&mut fields, "verify_chain", e.name()),
+        Err(VerifyError::Source(e)) => return fail(&mut fields, "verify_chain", &e.to_string()),
+    };
+    let verify_ms = t.elapsed().as_secs_f64() * 1000.0;
+    timings.push(format!("\"verify_chain\": {verify_ms:.3}"));
+    let rows_per_second = if verify_ms > 0.0 {
+        report.rows as f64 / (verify_ms / 1000.0)
+    } else {
+        0.0
+    };
+    fields.push(format!(
+        "\"chain\": {{\"status\": {}, \"rows\": {}, \"segments\": [{}], \"problems\": [{}], \"head\": {}, \"origin\": {}}}",
+        quote(report.status),
+        report.rows,
+        report.segments.iter().map(dict).collect::<Vec<_>>().join(", "),
+        report.problems.iter().map(dict).collect::<Vec<_>>().join(", "),
+        dict(&report.head),
+        dict(&report.origin)
+    ));
+    fields.push(format!("\"verify_rows_per_second\": {rows_per_second:.0}"));
+    fields.push(format!("\"ms\": {{{}}}", timings.join(", ")));
+    drop(store);
+    println!("{{{}}}", fields.join(", "));
+    i32::from(report.status != "ok")
+}

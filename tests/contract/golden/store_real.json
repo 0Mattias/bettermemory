@@ -1,0 +1,2730 @@
+{
+ "answers": {
+  "chain": {
+   "head": {
+    "mac": "293446dc401d5887a4f5696346c3d958ed1c1b0e1255a4b4f784d51c529ea7e8",
+    "seq": 26,
+    "status": "ok"
+   },
+   "origin": {
+    "seq": 1,
+    "status": "ok"
+   },
+   "problems": [],
+   "rows": 26,
+   "segments": [
+    {
+     "first_seq": 1,
+     "key_fingerprint": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+     "last_seq": 26,
+     "rows": 26,
+     "status": "ok"
+    }
+   ],
+   "status": "ok"
+  },
+  "episodes": [
+   {
+    "body": "Set up staging.\n",
+    "created": "2026-11-15T21:39:04.338106+00:00",
+    "id": "01M7GJCHGJ99W9DE2MZP6GZ800",
+    "is_floor": false,
+    "scopes": [],
+    "session_id": "sess_0000000000000001",
+    "swarm_id": null,
+    "takeaway": null
+   },
+   {
+    "body": "Upgraded postgres.\n",
+    "created": "2026-11-15T21:39:04.338553+00:00",
+    "id": "01M7GJCHGJYM8PMVJRAZ2Y22TC",
+    "is_floor": false,
+    "scopes": [
+     "db"
+    ],
+    "session_id": "sess_0000000000000002",
+    "swarm_id": null,
+    "takeaway": "pin versions"
+   }
+  ],
+  "fts": [
+   {
+    "candidates": [
+     [
+      "01M7GJCHGSZY9JAZBBR4TBT7MP",
+      "c015f4a94f874a9c"
+     ],
+     [
+      "01M7GJCHGT7MA8DRM8PXW5PYCP",
+      "c000de3cfc2ddf05"
+     ]
+    ],
+    "match_query": "\"docker\" OR \"compos\"",
+    "options": {},
+    "query": "docker compose",
+    "ranked_rows": [
+     4,
+     5
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGSZY9JAZBBR4TBT7MP",
+      "c0252584da770316"
+     ]
+    ],
+    "match_query": "(\"docker-compos\" OR (\"docker\" AND \"compos\")) OR \"staging\"",
+    "options": {},
+    "query": "docker-compose staging",
+    "ranked_rows": [
+     4
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGG0D9DCA9S8XSQKVCC",
+      "c012303092373470"
+     ],
+     [
+      "01M7GJCHGVZE3NXSNETS5JSNHV",
+      "c00db7d180474b6f"
+     ],
+     [
+      "01M7GJCHGVQKMNK1WD3YRGGW2W",
+      "bffc025be4be33f7"
+     ]
+    ],
+    "match_query": "\"postgr\" OR \"16\"",
+    "options": {},
+    "query": "postgres 16",
+    "ranked_rows": [
+     2,
+     6,
+     7
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGVZE3NXSNETS5JSNHV",
+      "c02536f97aff54b1"
+     ],
+     [
+      "01M7GJCHGG0D9DCA9S8XSQKVCC",
+      "c0248015d6a623a7"
+     ],
+     [
+      "01M7GJCHGVQKMNK1WD3YRGGW2W",
+      "bffc025be4be33f7"
+     ]
+    ],
+    "match_query": "\"postgr\" OR \"upgrad\" OR (\"16.3\" OR (\"16\" AND \"3\"))",
+    "options": {},
+    "query": "postgres upgrade 16.3",
+    "ranked_rows": [
+     6,
+     2,
+     7
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGVQKMNK1WD3YRGGW2W",
+      "c01a1835feca16c4"
+     ]
+    ],
+    "match_query": "\"connection\" OR \"pool\"",
+    "options": {},
+    "query": "connection pool",
+    "ranked_rows": [
+     7
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGWC3XTD0504BFNG48Z",
+      "c0257b892b1c9744"
+     ],
+     [
+      "01M7GJCHGG3EBY459AX14J7CYJ",
+      "c022b35228b38c69"
+     ]
+    ],
+    "match_query": "(\"snak-cas\" OR (\"snak\" AND \"cas\")) OR \"identifier\"",
+    "options": {},
+    "query": "snake_case identifiers",
+    "ranked_rows": [
+     8,
+     3
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGWC3XTD0504BFNG48Z",
+      "c023b71c018e14cf"
+     ]
+    ],
+    "match_query": "(\"kebab-cas\" OR (\"kebab\" AND \"cas\"))",
+    "options": {},
+    "query": "kebab-case",
+    "ranked_rows": [
+     8
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGW127PYSCXWX9F9R6N",
+      "c0203e4ee1621d20"
+     ],
+     [
+      "01M7GJCHGG3EBY459AX14J7CYJ",
+      "bfff0872b617d43b"
+     ],
+     [
+      "01M7GJCHGWC3XTD0504BFNG48Z",
+      "bff770ecf46646b4"
+     ]
+    ],
+    "match_query": "\"commit\" OR \"messag\" OR \"styl\"",
+    "options": {},
+    "query": "commit message style",
+    "ranked_rows": [
+     9,
+     3,
+     8
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGXF246JK7HS44CPPN6",
+      "c01e8190981a1958"
+     ]
+    ],
+    "match_query": "\"fts5\" OR \"tokenizer\" OR \"ranking\"",
+    "options": {},
+    "query": "fts5 tokenizer ranking",
+    "ranked_rows": [
+     10
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGX29RE7S760D5XXBB3",
+      "c0022f4675ea92ef"
+     ]
+    ],
+    "match_query": "\"bm25\"",
+    "options": {},
+    "query": "bm25",
+    "ranked_rows": [
+     11
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGYQR3300WCXQ0V13QX",
+      "c007de9c37620c42"
+     ]
+    ],
+    "match_query": "\"zurich\"",
+    "options": {},
+    "query": "zurich",
+    "ranked_rows": [
+     12
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGYQR3300WCXQ0V13QX",
+      "c017de9c37620c42"
+     ]
+    ],
+    "match_query": "\"zurich\" OR \"kontoret\"",
+    "options": {},
+    "query": "Z\u00fcrich kontoret",
+    "ranked_rows": [
+     12
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGY18XFZPBNPJJ47C7D",
+      "bff5e3771b00cd4f"
+     ]
+    ],
+    "match_query": "\"\u6771\u4eac\"",
+    "options": {},
+    "query": "\u6771\u4eac",
+    "ranked_rows": [
+     13
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGY18XFZPBNPJJ47C7D",
+      "bff5e3771b00cd4f"
+     ]
+    ],
+    "match_query": "\"\u79fb\u8ee2\"",
+    "options": {},
+    "query": "\u79fb\u8ee2",
+    "ranked_rows": [
+     13
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGZ2CY69RHN7ZMJ0GB2",
+      "c018ba81153e4532"
+     ]
+    ],
+    "match_query": "\"munchen\" OR \"buro\"",
+    "options": {},
+    "query": "munchen buro",
+    "ranked_rows": [
+     14
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH0V5J94963XFC70X2Y",
+      "c0085e0f95450b3e"
+     ],
+     [
+      "01M7GJCHGZ58ZDQH9FWHR237AW",
+      "c0074ee8053adf1b"
+     ]
+    ],
+    "match_query": "\"api\"",
+    "options": {},
+    "query": "api",
+    "ranked_rows": [
+     16,
+     15
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGZ58ZDQH9FWHR237AW",
+      "c016d04a4d498515"
+     ],
+     [
+      "01M7GJCHH0V5J94963XFC70X2Y",
+      "c0085e0f95450b3e"
+     ]
+    ],
+    "match_query": "\"api\" OR \"versioned\"",
+    "options": {},
+    "query": "apis versioned",
+    "ranked_rows": [
+     15,
+     16
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH04HRDW81WTACNGJJK",
+      "c004f5294cd20d89"
+     ]
+    ],
+    "match_query": "\"cpp\"",
+    "options": {},
+    "query": "c++",
+    "ranked_rows": [
+     17
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH04HRDW81WTACNGJJK",
+      "c004f5294cd20d89"
+     ]
+    ],
+    "match_query": "\"dotnet\"",
+    "options": {},
+    "query": ".net",
+    "ranked_rows": [
+     17
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH1B4J3JSWNSRETBWMZ",
+      "c0197b465cb5a590"
+     ],
+     [
+      "01M7GJCHGT7MA8DRM8PXW5PYCP",
+      "c000de3cfc2ddf05"
+     ]
+    ],
+    "match_query": "\"cach\" OR \"polici\"",
+    "options": {},
+    "query": "cache policy",
+    "ranked_rows": [
+     18,
+     5
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH1RZ9N1NNRYKQVX339",
+      "c00ddebf683c027a"
+     ]
+    ],
+    "match_query": "\"frontmatter\"",
+    "options": {},
+    "query": "frontmatter",
+    "ranked_rows": [
+     19
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH1RZ9N1NNRYKQVX339",
+      "c0239ee8270e97c8"
+     ]
+    ],
+    "match_query": "(\"python-frontmatter\" OR (\"python\" AND \"frontmatter\"))",
+    "options": {},
+    "query": "python-frontmatter",
+    "ranked_rows": [
+     19
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH20XEGQ91G88TMWW47",
+      "c008ba81153e4532"
+     ]
+    ],
+    "match_query": "\"emoji\"",
+    "options": {},
+    "query": "emoji \ud83d\ude00",
+    "ranked_rows": [
+     20
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH2EJ8AV2D3HXM4YBQA",
+      "c00c0aaf832ad05b"
+     ]
+    ],
+    "match_query": "\"standup\"",
+    "options": {},
+    "query": "standup",
+    "ranked_rows": [
+     21
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH1B4J3JSWNSRETBWMZ",
+      "c015a5c0e3efdcb3"
+     ],
+     [
+      "01M7GJCHGZ58ZDQH9FWHR237AW",
+      "c00651ad27550c6d"
+     ],
+     [
+      "01M7GJCHGT7MA8DRM8PXW5PYCP",
+      "c000de3dbb66f4cc"
+     ],
+     [
+      "01M7GJCHGSZY9JAZBBR4TBT7MP",
+      "beb6ed6e7e6ae4e0"
+     ],
+     [
+      "01M7GJCHGXF246JK7HS44CPPN6",
+      "beb6ed6e7e6ae4e0"
+     ],
+     [
+      "01M7GJCHH2EJ8AV2D3HXM4YBQA",
+      "beb6ed6e7e6ae4e0"
+     ],
+     [
+      "01M7GJCHGW127PYSCXWX9F9R6N",
+      "beb437f133b40a86"
+     ],
+     [
+      "01M7GJCHH0V5J94963XFC70X2Y",
+      "beb3842711e51e05"
+     ],
+     [
+      "01M7GJCHGVQKMNK1WD3YRGGW2W",
+      "beb23f9c2bcd2e2d"
+     ],
+     [
+      "01M7GJCHH1RZ9N1NNRYKQVX339",
+      "beb23f9c2bcd2e2d"
+     ],
+     [
+      "01M7GJCHGX29RE7S760D5XXBB3",
+      "beadbc7c437616db"
+     ],
+     [
+      "01M7GJCHGVZE3NXSNETS5JSNHV",
+      "beab8c9762f8aa8c"
+     ]
+    ],
+    "match_query": "\"what\" OR \"is\" OR \"the\" OR \"polici\"",
+    "options": {},
+    "query": "what is the policy",
+    "ranked_rows": [
+     18,
+     15,
+     5,
+     4,
+     10,
+     21,
+     9,
+     16,
+     7,
+     19,
+     11,
+     6
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGT7MA8DRM8PXW5PYCP",
+      "beb7e722b8cc7fe2"
+     ],
+     [
+      "01M7GJCHH1B4J3JSWNSRETBWMZ",
+      "beb767aee2734833"
+     ],
+     [
+      "01M7GJCHGSZY9JAZBBR4TBT7MP",
+      "beb6ed6e7e6ae4e0"
+     ],
+     [
+      "01M7GJCHGXF246JK7HS44CPPN6",
+      "beb6ed6e7e6ae4e0"
+     ],
+     [
+      "01M7GJCHH2EJ8AV2D3HXM4YBQA",
+      "beb6ed6e7e6ae4e0"
+     ],
+     [
+      "01M7GJCHGW127PYSCXWX9F9R6N",
+      "beb437f133b40a86"
+     ],
+     [
+      "01M7GJCHH0V5J94963XFC70X2Y",
+      "beb3842711e51e05"
+     ],
+     [
+      "01M7GJCHGVQKMNK1WD3YRGGW2W",
+      "beb23f9c2bcd2e2d"
+     ],
+     [
+      "01M7GJCHGZ58ZDQH9FWHR237AW",
+      "beb23f9c2bcd2e2d"
+     ],
+     [
+      "01M7GJCHH1RZ9N1NNRYKQVX339",
+      "beb23f9c2bcd2e2d"
+     ],
+     [
+      "01M7GJCHGX29RE7S760D5XXBB3",
+      "beadbc7c437616db"
+     ],
+     [
+      "01M7GJCHGVZE3NXSNETS5JSNHV",
+      "beab8c9762f8aa8c"
+     ]
+    ],
+    "match_query": "\"the\"",
+    "options": {},
+    "query": "the",
+    "ranked_rows": [
+     5,
+     18,
+     4,
+     10,
+     21,
+     9,
+     16,
+     7,
+     15,
+     19,
+     11,
+     6
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGXF246JK7HS44CPPN6",
+      "c00456606566bb90"
+     ]
+    ],
+    "match_query": "\"nothing\" OR \"match\" OR \"this\" OR \"queri\" OR \"xyzzi\"",
+    "options": {},
+    "query": "nothing matches this query xyzzy",
+    "ranked_rows": [
+     10
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHGT7MA8DRM8PXW5PYCP",
+      "c000de3cfc2ddf05"
+     ],
+     [
+      "01M7GJCHGSZY9JAZBBR4TBT7MP",
+      "bfffbd4637c789b8"
+     ]
+    ],
+    "match_query": "\"docker\"",
+    "options": {
+     "scopes": [
+      "tools"
+     ]
+    },
+    "query": "docker",
+    "ranked_rows": [
+     5,
+     4
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH1B4J3JSWNSRETBWMZ",
+      "beb767aee2734833"
+     ],
+     [
+      "01M7GJCHH2EJ8AV2D3HXM4YBQA",
+      "beb6ed6e7e6ae4e0"
+     ],
+     [
+      "01M7GJCHGVQKMNK1WD3YRGGW2W",
+      "beb23f9c2bcd2e2d"
+     ]
+    ],
+    "match_query": "\"the\"",
+    "options": {
+     "max_results": 3,
+     "scopes": [
+      "db",
+      "misc"
+     ]
+    },
+    "query": "the",
+    "ranked_rows": [
+     5,
+     18,
+     4,
+     10,
+     21,
+     9,
+     16,
+     7,
+     15,
+     19,
+     11,
+     6
+    ]
+   },
+   {
+    "candidates": [],
+    "match_query": "\"api\"",
+    "options": {
+     "client": "nobody"
+    },
+    "query": "api",
+    "ranked_rows": [
+     16,
+     15
+    ]
+   },
+   {
+    "candidates": [],
+    "match_query": "\"postgr\"",
+    "options": {
+     "model": "nobody"
+    },
+    "query": "postgres",
+    "ranked_rows": [
+     7,
+     2,
+     6
+    ]
+   },
+   {
+    "candidates": [
+     [
+      "01M7GJCHH1B4J3JSWNSRETBWMZ",
+      "c0197b465cb5a590"
+     ]
+    ],
+    "match_query": "\"cach\" OR \"polici\"",
+    "options": {
+     "max_results": 1,
+     "scopes": [
+      "misc"
+     ]
+    },
+    "query": "cache policy",
+    "ranked_rows": [
+     18,
+     5
+    ]
+   }
+  ],
+  "history_replaced": [],
+  "memories": [
+   {
+    "body": "Postgres 16.3 replaced 15.4.\n",
+    "category": "fact",
+    "claims": [
+     "postgres 16.3"
+    ],
+    "confidence": "high",
+    "created": "2026-11-15T21:39:04.336304+00:00",
+    "id": "01M7GJCHGG0D9DCA9S8XSQKVCC",
+    "last_verified_at": null,
+    "scopes": [
+     "db",
+     "infra"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.336304+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Prefer snake_case in Python.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "low",
+    "created": "2026-11-15T21:39:04.336890+00:00",
+    "id": "01M7GJCHGG3EBY459AX14J7CYJ",
+    "last_verified_at": null,
+    "scopes": [
+     "style"
+    ],
+    "source": "inferred",
+    "updated": "2026-11-15T21:39:04.336890+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Use docker compose for the staging cluster; the compose file lives in deploy/.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.345907+00:00",
+    "id": "01M7GJCHGSZY9JAZBBR4TBT7MP",
+    "last_verified_at": null,
+    "scopes": [
+     "tools"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.345907+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Docker containers restart with the always policy on the build hosts.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.346724+00:00",
+    "id": "01M7GJCHGT7MA8DRM8PXW5PYCP",
+    "last_verified_at": null,
+    "scopes": [
+     "tools"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.346724+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Postgres 16.3 replaced 15.4; the upgrade ran on 2026-03-02.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.347329+00:00",
+    "id": "01M7GJCHGVZE3NXSNETS5JSNHV",
+    "last_verified_at": null,
+    "scopes": [
+     "db"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.347329+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "The postgres connection pool caps at 40 connections per service.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.347845+00:00",
+    "id": "01M7GJCHGVQKMNK1WD3YRGGW2W",
+    "last_verified_at": null,
+    "scopes": [
+     "db"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.347845+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Prefer snake_case for Python identifiers and kebab-case for CLI flags.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.348344+00:00",
+    "id": "01M7GJCHGWC3XTD0504BFNG48Z",
+    "last_verified_at": null,
+    "scopes": [
+     "style"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.348344+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Write commit messages in the imperative mood.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.348872+00:00",
+    "id": "01M7GJCHGW127PYSCXWX9F9R6N",
+    "last_verified_at": null,
+    "scopes": [
+     "style"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.348872+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "The FTS5 index stores the tokenizer's own output, so ranking and MATCH agree.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.349352+00:00",
+    "id": "01M7GJCHGXF246JK7HS44CPPN6",
+    "last_verified_at": null,
+    "scopes": [
+     "search"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.349352+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "BM25 scoring with k1 1.2 and b 0.75 ranks the candidates.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.349849+00:00",
+    "id": "01M7GJCHGX29RE7S760D5XXBB3",
+    "last_verified_at": null,
+    "scopes": [
+     "search"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.349849+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Kontoret i Z\u00fcrich flyttar till Tj\u00f6rn n\u00e4sta \u00e5r.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.350339+00:00",
+    "id": "01M7GJCHGYQR3300WCXQ0V13QX",
+    "last_verified_at": null,
+    "scopes": [
+     "i18n"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.350339+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "\u6771\u4eac\u30aa\u30d5\u30a3\u30b9\u306f\u79fb\u8ee2\u3059\u308b\u4e88\u5b9a\u3067\u3059\u3002\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.350821+00:00",
+    "id": "01M7GJCHGY18XFZPBNPJJ47C7D",
+    "last_verified_at": null,
+    "scopes": [
+     "i18n"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.350821+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Das B\u00fcro in M\u00fcnchen schlie\u00dft im Dezember.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.351301+00:00",
+    "id": "01M7GJCHGZ2CY69RHN7ZMJ0GB2",
+    "last_verified_at": null,
+    "scopes": [
+     "i18n"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.351301+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "The APIs return JSON; every endpoint is versioned under /v2/.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.351784+00:00",
+    "id": "01M7GJCHGZ58ZDQH9FWHR237AW",
+    "last_verified_at": null,
+    "scopes": [
+     "api"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.351784+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "The api gateway rejects requests over 1 MB.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.352301+00:00",
+    "id": "01M7GJCHH0V5J94963XFC70X2Y",
+    "last_verified_at": null,
+    "scopes": [
+     "api"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.352301+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "C++20 modules and C# records were evaluated, .NET 8 was chosen.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.352769+00:00",
+    "id": "01M7GJCHH04HRDW81WTACNGJJK",
+    "last_verified_at": null,
+    "scopes": [
+     "misc"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.352769+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "What's the policy on caches? The cache policies expire after one hour.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.353251+00:00",
+    "id": "01M7GJCHH1B4J3JSWNSRETBWMZ",
+    "last_verified_at": null,
+    "scopes": [
+     "misc"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.353251+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "python-frontmatter parses the header of every note.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.353720+00:00",
+    "id": "01M7GJCHH1RZ9N1NNRYKQVX339",
+    "last_verified_at": null,
+    "scopes": [
+     "misc"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.353720+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Emoji in titles \ud83d\ude00 are allowed but discouraged.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.354199+00:00",
+    "id": "01M7GJCHH20XEGQ91G88TMWW47",
+    "last_verified_at": null,
+    "scopes": [
+     "misc"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.354199+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   },
+   {
+    "body": "Standups happen daily at 09:30; the standup notes go in the wiki.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.354767+00:00",
+    "id": "01M7GJCHH2EJ8AV2D3HXM4YBQA",
+    "last_verified_at": null,
+    "scopes": [
+     "misc"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.354767+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   }
+  ],
+  "meta": {
+   "created": "2026-11-15T21:39:04.332831Z",
+   "engine_version": "9.0.0rc19",
+   "key_fingerprint": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+   "membership_store_id": "fedcba9876543210fedcba9876543210",
+   "min_reader_revision": "1",
+   "min_writer_revision": "5",
+   "schema_revision": "6",
+   "schema_version": "1",
+   "store_id": "0123456789abcdef0123456789abcdef",
+   "tokenizer_fingerprint": "972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd"
+  },
+  "open": {
+   "min_reader": 1,
+   "min_writer": 5,
+   "outcome": "readable",
+   "reason": null,
+   "revision": 6
+  },
+  "pragmas": {
+   "application_id": 0,
+   "auto_vacuum": 0,
+   "encoding": "UTF-8",
+   "journal_mode": "delete",
+   "page_size": 512,
+   "user_version": 0
+  },
+  "row_counts": {
+   "checkout_views": 0,
+   "checkouts": 0,
+   "conflicts": 0,
+   "declared_remotes": 0,
+   "digest_records": 0,
+   "digest_state": 3,
+   "digest_tokens": 0,
+   "episodes": 2,
+   "homes": 0,
+   "imports": 0,
+   "log": 26,
+   "machines": 0,
+   "memories": 20,
+   "memory_links": 0,
+   "meta": 10,
+   "native_membership_rows": 0,
+   "project_blobs": 0,
+   "project_files": 0,
+   "project_remotes": 0,
+   "project_witnesses": 0,
+   "projects": 0,
+   "proposals": 0,
+   "quarantine": 0,
+   "returned": 0,
+   "standing": 0,
+   "tombstones": 1,
+   "verifications": 0
+  },
+  "sqlite_master": [
+   [
+    "index",
+    "checkout_views_by_path",
+    "checkout_views",
+    "CREATE INDEX checkout_views_by_path ON checkout_views(machine, path)"
+   ],
+   [
+    "index",
+    "checkouts_by_common",
+    "checkouts",
+    "CREATE INDEX checkouts_by_common\n    ON checkouts(machine, common_device, common_inode)"
+   ],
+   [
+    "index",
+    "checkouts_by_object",
+    "checkouts",
+    "CREATE INDEX checkouts_by_object\n    ON checkouts(machine, object_device, object_inode)"
+   ],
+   [
+    "index",
+    "checkouts_by_project",
+    "checkouts",
+    "CREATE INDEX checkouts_by_project ON checkouts(project)"
+   ],
+   [
+    "index",
+    "checkouts_by_token",
+    "checkouts",
+    "CREATE INDEX checkouts_by_token ON checkouts(token)"
+   ],
+   [
+    "index",
+    "digest_records_by_category",
+    "digest_records",
+    "CREATE INDEX digest_records_by_category\n    ON digest_records(removed, category)"
+   ],
+   [
+    "index",
+    "digest_records_by_id",
+    "digest_records",
+    "CREATE UNIQUE INDEX digest_records_by_id ON digest_records(removed, id)"
+   ],
+   [
+    "index",
+    "episodes_by_session",
+    "episodes",
+    "CREATE INDEX episodes_by_session ON episodes(session_id, created)"
+   ],
+   [
+    "index",
+    "homes_by_checkout",
+    "homes",
+    "CREATE INDEX homes_by_checkout ON homes(checkout)"
+   ],
+   [
+    "index",
+    "homes_by_project",
+    "homes",
+    "CREATE INDEX homes_by_project ON homes(project)"
+   ],
+   [
+    "index",
+    "log_by_kind",
+    "log",
+    "CREATE INDEX log_by_kind ON log(kind, seq)"
+   ],
+   [
+    "index",
+    "log_by_mac",
+    "log",
+    "CREATE INDEX log_by_mac ON log(mac)"
+   ],
+   [
+    "index",
+    "log_by_session",
+    "log",
+    "CREATE INDEX log_by_session ON log(session, seq)"
+   ],
+   [
+    "index",
+    "log_by_ts",
+    "log",
+    "CREATE INDEX log_by_ts ON log(ts)"
+   ],
+   [
+    "index",
+    "log_corroborations",
+    "log",
+    "CREATE INDEX log_corroborations ON log(session)\n    WHERE kind = 'memory_put'"
+   ],
+   [
+    "index",
+    "memories_by_updated",
+    "memories",
+    "CREATE INDEX memories_by_updated ON memories(updated DESC)"
+   ],
+   [
+    "index",
+    "memory_links_by_target",
+    "memory_links",
+    "CREATE INDEX memory_links_by_target ON memory_links(target_id)"
+   ],
+   [
+    "index",
+    "project_blobs_by_witness",
+    "project_blobs",
+    "CREATE INDEX project_blobs_by_witness ON project_blobs(project, witness)"
+   ],
+   [
+    "index",
+    "project_files_by_project",
+    "project_files",
+    "CREATE INDEX project_files_by_project ON project_files(project)"
+   ],
+   [
+    "index",
+    "project_remotes_by_key",
+    "project_remotes",
+    "CREATE INDEX project_remotes_by_key ON project_remotes(remote_key)"
+   ],
+   [
+    "index",
+    "project_witnesses_by_commit",
+    "project_witnesses",
+    "CREATE INDEX project_witnesses_by_commit ON project_witnesses(commit_id)"
+   ],
+   [
+    "index",
+    "project_witnesses_by_fingerprint",
+    "project_witnesses",
+    "CREATE INDEX project_witnesses_by_fingerprint\n    ON project_witnesses(fingerprint)"
+   ],
+   [
+    "index",
+    "projects_by_merged_into",
+    "projects",
+    "CREATE INDEX projects_by_merged_into ON projects(merged_into)"
+   ],
+   [
+    "index",
+    "proposals_by_checkout",
+    "proposals",
+    "CREATE INDEX proposals_by_checkout ON proposals(checkout, state)"
+   ],
+   [
+    "index",
+    "proposals_by_state",
+    "proposals",
+    "CREATE INDEX proposals_by_state ON proposals(state, kind)"
+   ],
+   [
+    "index",
+    "sqlite_autoindex_checkout_views_1",
+    "checkout_views",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_checkouts_1",
+    "checkouts",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_conflicts_1",
+    "conflicts",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_declared_remotes_1",
+    "declared_remotes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_episodes_1",
+    "episodes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_homes_1",
+    "homes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_imports_1",
+    "imports",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_machines_1",
+    "machines",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_memories_1",
+    "memories",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_memory_links_1",
+    "memory_links",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_meta_1",
+    "meta",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_native_membership_rows_1",
+    "native_membership_rows",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_blobs_1",
+    "project_blobs",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_files_1",
+    "project_files",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_remotes_1",
+    "project_remotes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_witnesses_1",
+    "project_witnesses",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_projects_1",
+    "projects",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_proposals_1",
+    "proposals",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_quarantine_1",
+    "quarantine",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_returned_1",
+    "returned",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_standing_1",
+    "standing",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_tombstones_1",
+    "tombstones",
+    null
+   ],
+   [
+    "index",
+    "tombstones_by_removed",
+    "tombstones",
+    "CREATE INDEX tombstones_by_removed ON tombstones(removed)"
+   ],
+   [
+    "index",
+    "verifications_by_memory_machine",
+    "verifications",
+    "CREATE UNIQUE INDEX verifications_by_memory_machine\n    ON verifications(memory_id, COALESCE(machine_id, ''))"
+   ],
+   [
+    "table",
+    "checkout_views",
+    "checkout_views",
+    "CREATE TABLE checkout_views (\n    checkout TEXT NOT NULL,\n    machine TEXT NOT NULL,\n    path TEXT NOT NULL,\n    first_seen TEXT NOT NULL,\n    last_seen TEXT NOT NULL,\n    seen_order INTEGER NOT NULL,\n    PRIMARY KEY (checkout, machine, path)\n)"
+   ],
+   [
+    "table",
+    "checkouts",
+    "checkouts",
+    "CREATE TABLE checkouts (\n    id TEXT PRIMARY KEY,\n    project TEXT NOT NULL,\n    machine TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    object_device TEXT,\n    object_inode TEXT,\n    object_birth TEXT,\n    common_device TEXT,\n    common_inode TEXT,\n    common_birth TEXT,\n    git_dir TEXT,\n    token TEXT,\n    token_status TEXT NOT NULL,\n    stamps_json TEXT NOT NULL DEFAULT '[]',\n    last_head TEXT,\n    branch TEXT,\n    remotes_json TEXT NOT NULL DEFAULT '[]',\n    manifest_json TEXT,\n    legacy INTEGER NOT NULL DEFAULT 0,\n    retired INTEGER NOT NULL DEFAULT 0,\n    registered TEXT NOT NULL,\n    unresolved_json TEXT\n)"
+   ],
+   [
+    "table",
+    "conflicts",
+    "conflicts",
+    "CREATE TABLE conflicts (\n    id TEXT PRIMARY KEY,\n    a_id TEXT NOT NULL,\n    b_id TEXT NOT NULL,\n    summary_a TEXT NOT NULL,\n    summary_b TEXT NOT NULL,\n    similarity REAL NOT NULL,\n    method TEXT NOT NULL,\n    detector TEXT NOT NULL,\n    created TEXT NOT NULL,\n    status TEXT NOT NULL,\n    verdict_ts TEXT,\n    note TEXT,\n    verdict_hash_a TEXT,\n    verdict_hash_b TEXT\n)"
+   ],
+   [
+    "table",
+    "declared_remotes",
+    "declared_remotes",
+    "CREATE TABLE declared_remotes (\n    remote_key TEXT PRIMARY KEY,\n    project TEXT NOT NULL,\n    principal TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "digest_records",
+    "digest_records",
+    "CREATE TABLE digest_records (\n    doc INTEGER PRIMARY KEY,\n    removed INTEGER NOT NULL DEFAULT 0,\n    id TEXT NOT NULL DEFAULT '',\n    rid INTEGER NOT NULL DEFAULT 0,\n    n INTEGER NOT NULL DEFAULT 0,\n    claim INTEGER NOT NULL DEFAULT 0,\n    stamped INTEGER NOT NULL DEFAULT 0,\n    dl INTEGER NOT NULL DEFAULT 0,\n    client TEXT,\n    model TEXT,\n    category TEXT,\n    sha TEXT NOT NULL DEFAULT '',\n    scopes TEXT NOT NULL DEFAULT '[]',\n    cwd TEXT NOT NULL DEFAULT '',\n    tokens TEXT NOT NULL DEFAULT ''\n)"
+   ],
+   [
+    "table",
+    "digest_state",
+    "digest_state",
+    "CREATE TABLE digest_state (\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL DEFAULT ''\n) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "digest_tokens",
+    "digest_tokens",
+    "CREATE TABLE digest_tokens (\n    token TEXT NOT NULL DEFAULT '',\n    doc INTEGER NOT NULL DEFAULT 0,\n    PRIMARY KEY (token, doc)\n) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "episodes",
+    "episodes",
+    "CREATE TABLE episodes (\n    id TEXT PRIMARY KEY,\n    session_id TEXT NOT NULL,\n    created TEXT NOT NULL,\n    body TEXT NOT NULL,\n    scopes_json TEXT NOT NULL DEFAULT '[]',\n    takeaway TEXT,\n    origin_json TEXT,\n    is_floor INTEGER NOT NULL DEFAULT 0,\n    swarm_id TEXT,\n    log_mac TEXT\n)"
+   ],
+   [
+    "table",
+    "homes",
+    "homes",
+    "CREATE TABLE homes (\n    record_id TEXT PRIMARY KEY,\n    kind TEXT NOT NULL,\n    project TEXT NOT NULL,\n    checkout TEXT,\n    rule TEXT NOT NULL,\n    decided TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "imports",
+    "imports",
+    "CREATE TABLE imports (\n    source TEXT PRIMARY KEY,\n    content_hash TEXT NOT NULL,\n    imported_at TEXT NOT NULL,\n    memory_id TEXT\n)"
+   ],
+   [
+    "table",
+    "log",
+    "log",
+    "CREATE TABLE log (\n    seq INTEGER PRIMARY KEY,\n    ts TEXT NOT NULL,\n    session TEXT,\n    kind TEXT NOT NULL,\n    payload TEXT NOT NULL,\n    prev_mac TEXT NOT NULL,\n    mac TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "machines",
+    "machines",
+    "CREATE TABLE machines (\n    id TEXT PRIMARY KEY,\n    facts_json TEXT NOT NULL DEFAULT '{}',\n    predecessor TEXT,\n    minted TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "memories",
+    "memories",
+    "CREATE TABLE memories (\n    rowid INTEGER PRIMARY KEY,\n    id TEXT NOT NULL UNIQUE,\n    created TEXT NOT NULL,\n    updated TEXT NOT NULL,\n    last_verified_at TEXT,\n    confidence TEXT NOT NULL,\n    category TEXT,\n    body TEXT NOT NULL,\n    body_fts TEXT NOT NULL DEFAULT '',\n    scopes_text TEXT NOT NULL,\n    scopes_fts TEXT NOT NULL DEFAULT '',\n    scopes_json TEXT NOT NULL,\n    filename TEXT,\n    origin_repo TEXT,\n    origin_worktree TEXT,\n    provenance TEXT NOT NULL,\n    verified_head TEXT,\n    actor_client TEXT,\n    actor_model TEXT,\n    source TEXT NOT NULL,\n    origin_json TEXT,\n    actor_json TEXT,\n    verified_paths_json TEXT NOT NULL DEFAULT '[]',\n    verified_commits_json TEXT NOT NULL DEFAULT '[]',\n    verified_versions_json TEXT NOT NULL DEFAULT '[]',\n    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]',\n    claims_json TEXT NOT NULL DEFAULT '[]',\n    links_json TEXT NOT NULL DEFAULT '[]',\n    corroborations INTEGER NOT NULL DEFAULT 0,\n    last_corroborated TEXT,\n    log_mac TEXT\n)"
+   ],
+   [
+    "table",
+    "memories_fts",
+    "memories_fts",
+    "CREATE VIRTUAL TABLE memories_fts USING fts5(\n    body_fts, scopes_fts,\n    content='memories', content_rowid='rowid',\n    tokenize='unicode61'\n)"
+   ],
+   [
+    "table",
+    "memories_fts_config",
+    "memories_fts_config",
+    "CREATE TABLE 'memories_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "memories_fts_data",
+    "memories_fts_data",
+    "CREATE TABLE 'memories_fts_data'(id INTEGER PRIMARY KEY, block BLOB)"
+   ],
+   [
+    "table",
+    "memories_fts_docsize",
+    "memories_fts_docsize",
+    "CREATE TABLE 'memories_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)"
+   ],
+   [
+    "table",
+    "memories_fts_idx",
+    "memories_fts_idx",
+    "CREATE TABLE 'memories_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "memory_links",
+    "memory_links",
+    "CREATE TABLE memory_links (\n    source_id TEXT NOT NULL,\n    type TEXT NOT NULL,\n    target_id TEXT NOT NULL,\n    note TEXT,\n    PRIMARY KEY (source_id, type, target_id, note)\n)"
+   ],
+   [
+    "table",
+    "meta",
+    "meta",
+    "CREATE TABLE meta (\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "native_membership_rows",
+    "native_membership_rows",
+    "CREATE TABLE native_membership_rows (\n    member_kind TEXT NOT NULL,\n    key_text TEXT NOT NULL,\n    row_text TEXT NOT NULL,\n    PRIMARY KEY (member_kind, key_text)\n)"
+   ],
+   [
+    "table",
+    "project_blobs",
+    "project_blobs",
+    "CREATE TABLE project_blobs (\n    project TEXT NOT NULL,\n    blob TEXT NOT NULL,\n    witness TEXT NOT NULL,\n    PRIMARY KEY (project, blob)\n)"
+   ],
+   [
+    "table",
+    "project_files",
+    "project_files",
+    "CREATE TABLE project_files (\n    file_id TEXT PRIMARY KEY,\n    project TEXT NOT NULL,\n    evidence TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "project_remotes",
+    "project_remotes",
+    "CREATE TABLE project_remotes (\n    project TEXT NOT NULL,\n    remote_key TEXT NOT NULL,\n    PRIMARY KEY (project, remote_key)\n)"
+   ],
+   [
+    "table",
+    "project_witnesses",
+    "project_witnesses",
+    "CREATE TABLE project_witnesses (\n    project TEXT NOT NULL,\n    commit_id TEXT NOT NULL,\n    arrival INTEGER NOT NULL,\n    source TEXT NOT NULL,\n    fingerprint TEXT,\n    PRIMARY KEY (project, commit_id)\n)"
+   ],
+   [
+    "table",
+    "projects",
+    "projects",
+    "CREATE TABLE projects (\n    id TEXT PRIMARY KEY,\n    name TEXT NOT NULL,\n    merged_into TEXT,\n    provisional TEXT,\n    parent TEXT,\n    tenant TEXT,\n    folder INTEGER NOT NULL DEFAULT 0,\n    boundary INTEGER NOT NULL DEFAULT 0,\n    minted TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "proposals",
+    "proposals",
+    "CREATE TABLE proposals (\n    id TEXT PRIMARY KEY,\n    checkout TEXT,\n    kind TEXT NOT NULL,\n    candidates_json TEXT NOT NULL DEFAULT '[]',\n    evidence_json TEXT NOT NULL DEFAULT '{}',\n    reason TEXT NOT NULL,\n    line TEXT NOT NULL,\n    state TEXT NOT NULL,\n    answer TEXT,\n    answered_by TEXT,\n    signature_json TEXT,\n    opened TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "quarantine",
+    "quarantine",
+    "CREATE TABLE quarantine (\n    name TEXT PRIMARY KEY,\n    reason TEXT NOT NULL,\n    detail TEXT,\n    remote TEXT,\n    at TEXT NOT NULL,\n    size INTEGER,\n    sha256 TEXT\n)"
+   ],
+   [
+    "table",
+    "returned",
+    "returned",
+    "CREATE TABLE returned (\n    record_id TEXT PRIMARY KEY,\n    via TEXT NOT NULL,\n    returned TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "standing",
+    "standing",
+    "CREATE TABLE standing (\n    record_id TEXT PRIMARY KEY,\n    probability REAL NOT NULL,\n    body_sha256 TEXT NOT NULL,\n    source TEXT NOT NULL,\n    answered_by TEXT NOT NULL,\n    answered TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "tombstones",
+    "tombstones",
+    "CREATE TABLE tombstones (\n    id TEXT PRIMARY KEY,\n    created TEXT NOT NULL,\n    updated TEXT NOT NULL,\n    last_verified_at TEXT,\n    confidence TEXT NOT NULL,\n    category TEXT,\n    body TEXT NOT NULL,\n    scopes_json TEXT NOT NULL,\n    filename TEXT,\n    origin_repo TEXT,\n    origin_worktree TEXT,\n    provenance TEXT NOT NULL,\n    verified_head TEXT,\n    actor_client TEXT,\n    actor_model TEXT,\n    source TEXT NOT NULL,\n    origin_json TEXT,\n    actor_json TEXT,\n    verified_paths_json TEXT NOT NULL DEFAULT '[]',\n    verified_commits_json TEXT NOT NULL DEFAULT '[]',\n    verified_versions_json TEXT NOT NULL DEFAULT '[]',\n    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]',\n    claims_json TEXT NOT NULL DEFAULT '[]',\n    links_json TEXT NOT NULL DEFAULT '[]',\n    corroborations INTEGER NOT NULL DEFAULT 0,\n    last_corroborated TEXT,\n    removed TEXT NOT NULL,\n    removed_reason TEXT NOT NULL,\n    removed_session TEXT,\n    log_mac TEXT\n)"
+   ],
+   [
+    "table",
+    "verifications",
+    "verifications",
+    "CREATE TABLE verifications (\n    memory_id TEXT NOT NULL,\n    machine_id TEXT,\n    verified_at TEXT NOT NULL,\n    verified_head TEXT,\n    verified_paths_json TEXT NOT NULL DEFAULT '[]',\n    verified_commits_json TEXT NOT NULL DEFAULT '[]',\n    verified_versions_json TEXT NOT NULL DEFAULT '[]',\n    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]'\n)"
+   ],
+   [
+    "trigger",
+    "memories_ad",
+    "memories",
+    "CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN\n    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)\n    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);\nEND"
+   ],
+   [
+    "trigger",
+    "memories_ai",
+    "memories",
+    "CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN\n    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)\n    VALUES (new.rowid, new.body_fts, new.scopes_fts);\nEND"
+   ],
+   [
+    "trigger",
+    "memories_au",
+    "memories",
+    "CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN\n    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)\n    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);\n    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)\n    VALUES (new.rowid, new.body_fts, new.scopes_fts);\nEND"
+   ],
+   [
+    "trigger",
+    "memory_links_cleanup",
+    "memories",
+    "CREATE TRIGGER memory_links_cleanup AFTER DELETE ON memories BEGIN\n    DELETE FROM memory_links\n    WHERE source_id = old.id OR target_id = old.id;\nEND"
+   ]
+  ],
+  "tables": {
+   "checkout_views": [],
+   "checkouts": [],
+   "conflicts": [],
+   "declared_remotes": [],
+   "digest_records": [],
+   "digest_state": [
+    [
+     "fingerprint",
+     "59e8e47cd83bbb95543f0def4de2f4eee3f2c4abaa5cabe2c93b68c5b747687f"
+    ],
+    [
+     "mac",
+     ""
+    ],
+    [
+     "seq",
+     "0"
+    ]
+   ],
+   "digest_tokens": [],
+   "episodes": [
+    [
+     "01M7GJCHGJ99W9DE2MZP6GZ800",
+     "sess_0000000000000001",
+     "2026-11-15T21:39:04.338106+00:00",
+     "Set up staging.\n",
+     "[]",
+     null,
+     null,
+     0,
+     null,
+     "9230a0b1d35b80de480d70eaf4e7bedf23c8f4c65e8d75b657f5066f350e31e9"
+    ],
+    [
+     "01M7GJCHGJYM8PMVJRAZ2Y22TC",
+     "sess_0000000000000002",
+     "2026-11-15T21:39:04.338553+00:00",
+     "Upgraded postgres.\n",
+     "[\"db\"]",
+     "pin versions",
+     null,
+     0,
+     null,
+     "6da7d545b1023dba4fb8bec2f7e4b6024b0b05de872ac2b45b181001f836bd29"
+    ]
+   ],
+   "homes": [],
+   "imports": [],
+   "log": [
+    [
+     1,
+     "2026-11-15T21:39:04.333461Z",
+     null,
+     "store_created",
+     "{\"created\":\"2026-11-15T21:39:04.332831Z\",\"engine_version\":\"9.0.0rc19\",\"schema_version\":1,\"store_id\":\"0123456789abcdef0123456789abcdef\",\"tokenizer_fingerprint\":\"972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd\"}",
+     "0000000000000000000000000000000000000000000000000000000000000000",
+     "a3fd7f6ededb1cb03adb898c7246d96c72908469571e144102dcbb1467fb25f6"
+    ],
+    [
+     2,
+     "2026-11-15T21:39:04.335639Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Use docker compose for staging.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.335431Z\",\"id\":\"01M7GJCHGFZ9B033NYDXR81RBK\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"tools\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.335431Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "a3fd7f6ededb1cb03adb898c7246d96c72908469571e144102dcbb1467fb25f6",
+     "483e4b0b5f8b5ba660fca0fb969981d74c5083dfd8b5b373c2f7911c0d0da857"
+    ],
+    [
+     3,
+     "2026-11-15T21:39:04.336360Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Postgres 16.3 replaced 15.4.\\n\",\"category\":\"fact\",\"claims\":[\"postgres 16.3\"],\"confidence\":\"high\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.336304Z\",\"id\":\"01M7GJCHGG0D9DCA9S8XSQKVCC\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"db\",\"infra\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.336304Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "483e4b0b5f8b5ba660fca0fb969981d74c5083dfd8b5b373c2f7911c0d0da857",
+     "118cf618353be082fa48cd839ecfc0433d74ac5afb6f28ff0ca22aa582c394e8"
+    ],
+    [
+     4,
+     "2026-11-15T21:39:04.336930Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Prefer snake_case in Python.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"low\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.336890Z\",\"id\":\"01M7GJCHGG3EBY459AX14J7CYJ\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"style\"],\"source\":\"inferred\",\"updated\":\"2026-11-15T21:39:04.336890Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "118cf618353be082fa48cd839ecfc0433d74ac5afb6f28ff0ca22aa582c394e8",
+     "a417d88a38e1ca120ac92d791d1b0c231c65bd93eb698551a3235c28110bbf89"
+    ],
+    [
+     5,
+     "2026-11-15T21:39:04.337517Z",
+     "sess_0000000000000001",
+     "memory_delete",
+     "{\"id\":\"01M7GJCHGFZ9B033NYDXR81RBK\"}",
+     "a417d88a38e1ca120ac92d791d1b0c231c65bd93eb698551a3235c28110bbf89",
+     "659d5487d7f7950cc72cb937bb1a88d592e860f6285d75b6329f8200ec5a9a15"
+    ],
+    [
+     6,
+     "2026-11-15T21:39:04.337583Z",
+     "sess_0000000000000001",
+     "tombstone_put",
+     "{\"corroborations\":0,\"filename\":null,\"last_corroborated\":null,\"links\":[],\"provenance\":\"local\",\"tombstone\":{\"actor\":null,\"body\":\"Use docker compose for staging.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"created\":\"2026-11-15T21:39:04.335431Z\",\"id\":\"01M7GJCHGFZ9B033NYDXR81RBK\",\"last_verified_at\":null,\"origin\":null,\"removed\":\"2026-11-15T21:39:04.337474Z\",\"removed_reason\":\"superseded\",\"removed_session\":\"sess_0000000000000001\",\"scopes\":[\"tools\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.335431Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]}}",
+     "659d5487d7f7950cc72cb937bb1a88d592e860f6285d75b6329f8200ec5a9a15",
+     "bba931d97ade17c65572afe3070a860c181c083554b56118aa2c132c7d84e01d"
+    ],
+    [
+     7,
+     "2026-11-15T21:39:04.338135Z",
+     "sess_0000000000000001",
+     "episode_put",
+     "{\"episode\":{\"body\":\"Set up staging.\\n\",\"created\":\"2026-11-15T21:39:04.338106Z\",\"id\":\"01M7GJCHGJ99W9DE2MZP6GZ800\",\"is_floor\":false,\"origin\":null,\"scopes\":[],\"session_id\":\"sess_0000000000000001\",\"swarm_id\":null,\"takeaway\":null}}",
+     "bba931d97ade17c65572afe3070a860c181c083554b56118aa2c132c7d84e01d",
+     "9230a0b1d35b80de480d70eaf4e7bedf23c8f4c65e8d75b657f5066f350e31e9"
+    ],
+    [
+     8,
+     "2026-11-15T21:39:04.338576Z",
+     "sess_0000000000000002",
+     "episode_put",
+     "{\"episode\":{\"body\":\"Upgraded postgres.\\n\",\"created\":\"2026-11-15T21:39:04.338553Z\",\"id\":\"01M7GJCHGJYM8PMVJRAZ2Y22TC\",\"is_floor\":false,\"origin\":null,\"scopes\":[\"db\"],\"session_id\":\"sess_0000000000000002\",\"swarm_id\":null,\"takeaway\":\"pin versions\"}}",
+     "9230a0b1d35b80de480d70eaf4e7bedf23c8f4c65e8d75b657f5066f350e31e9",
+     "6da7d545b1023dba4fb8bec2f7e4b6024b0b05de872ac2b45b181001f836bd29"
+    ],
+    [
+     9,
+     "2026-11-15T21:39:04.345986Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Use docker compose for the staging cluster; the compose file lives in deploy/.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.345907Z\",\"id\":\"01M7GJCHGSZY9JAZBBR4TBT7MP\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"tools\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.345907Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "6da7d545b1023dba4fb8bec2f7e4b6024b0b05de872ac2b45b181001f836bd29",
+     "68af8a95aae0dfa2f7a5e134cc932128ee38f2d64053ec537f26c2d843fc9750"
+    ],
+    [
+     10,
+     "2026-11-15T21:39:04.346782Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Docker containers restart with the always policy on the build hosts.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.346724Z\",\"id\":\"01M7GJCHGT7MA8DRM8PXW5PYCP\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"tools\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.346724Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "68af8a95aae0dfa2f7a5e134cc932128ee38f2d64053ec537f26c2d843fc9750",
+     "77f4241ea221ca620b92489e7114e033c3544c48fbe6df29397319d7c1b66b6b"
+    ],
+    [
+     11,
+     "2026-11-15T21:39:04.347372Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Postgres 16.3 replaced 15.4; the upgrade ran on 2026-03-02.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.347329Z\",\"id\":\"01M7GJCHGVZE3NXSNETS5JSNHV\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"db\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.347329Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "77f4241ea221ca620b92489e7114e033c3544c48fbe6df29397319d7c1b66b6b",
+     "a96f14e31540a1400b26a82ba0c86d9b1a5122bba2579f8e98e4943aaf25ffa8"
+    ],
+    [
+     12,
+     "2026-11-15T21:39:04.347880Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"The postgres connection pool caps at 40 connections per service.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.347845Z\",\"id\":\"01M7GJCHGVQKMNK1WD3YRGGW2W\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"db\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.347845Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "a96f14e31540a1400b26a82ba0c86d9b1a5122bba2579f8e98e4943aaf25ffa8",
+     "f41019464777b02679e81993241757c7fe4965dbe70034800e39edf38779e77c"
+    ],
+    [
+     13,
+     "2026-11-15T21:39:04.348382Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Prefer snake_case for Python identifiers and kebab-case for CLI flags.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.348344Z\",\"id\":\"01M7GJCHGWC3XTD0504BFNG48Z\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"style\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.348344Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "f41019464777b02679e81993241757c7fe4965dbe70034800e39edf38779e77c",
+     "5a51b23503e6082feb7ccf934769be0a586b74773e43dfa019eafbc8ea98f444"
+    ],
+    [
+     14,
+     "2026-11-15T21:39:04.348908Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Write commit messages in the imperative mood.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.348872Z\",\"id\":\"01M7GJCHGW127PYSCXWX9F9R6N\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"style\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.348872Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "5a51b23503e6082feb7ccf934769be0a586b74773e43dfa019eafbc8ea98f444",
+     "91070b0abe728abec14bdb6e7f89316c418f4fcf7d8de97851b730db60aaabeb"
+    ],
+    [
+     15,
+     "2026-11-15T21:39:04.349384Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"The FTS5 index stores the tokenizer's own output, so ranking and MATCH agree.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.349352Z\",\"id\":\"01M7GJCHGXF246JK7HS44CPPN6\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"search\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.349352Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "91070b0abe728abec14bdb6e7f89316c418f4fcf7d8de97851b730db60aaabeb",
+     "b7f184f0a6680c0392ddbc87151967f0d84ede306103436bf8f56307e8561a5b"
+    ],
+    [
+     16,
+     "2026-11-15T21:39:04.349882Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"BM25 scoring with k1 1.2 and b 0.75 ranks the candidates.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.349849Z\",\"id\":\"01M7GJCHGX29RE7S760D5XXBB3\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"search\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.349849Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "b7f184f0a6680c0392ddbc87151967f0d84ede306103436bf8f56307e8561a5b",
+     "e54053a396023300e71ff71d94e9a60ef05ed2db74c69e038c00e3b5467ca53c"
+    ],
+    [
+     17,
+     "2026-11-15T21:39:04.350371Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Kontoret i Z\u00fcrich flyttar till Tj\u00f6rn n\u00e4sta \u00e5r.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.350339Z\",\"id\":\"01M7GJCHGYQR3300WCXQ0V13QX\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"i18n\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.350339Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "e54053a396023300e71ff71d94e9a60ef05ed2db74c69e038c00e3b5467ca53c",
+     "aa947911a601645be49caac82b08f914e34d5d2dd9486ef609f046509d240ded"
+    ],
+    [
+     18,
+     "2026-11-15T21:39:04.350854Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"\u6771\u4eac\u30aa\u30d5\u30a3\u30b9\u306f\u79fb\u8ee2\u3059\u308b\u4e88\u5b9a\u3067\u3059\u3002\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.350821Z\",\"id\":\"01M7GJCHGY18XFZPBNPJJ47C7D\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"i18n\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.350821Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "aa947911a601645be49caac82b08f914e34d5d2dd9486ef609f046509d240ded",
+     "9a6d6f9393a28ec93f624e3423c296895cbc6dc1372d588e04bb5ad4e46c62d5"
+    ],
+    [
+     19,
+     "2026-11-15T21:39:04.351333Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Das B\u00fcro in M\u00fcnchen schlie\u00dft im Dezember.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.351301Z\",\"id\":\"01M7GJCHGZ2CY69RHN7ZMJ0GB2\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"i18n\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.351301Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "9a6d6f9393a28ec93f624e3423c296895cbc6dc1372d588e04bb5ad4e46c62d5",
+     "c692f86d93356e57833ad06e92959ac9b9647c19621fee56cf347513e233b576"
+    ],
+    [
+     20,
+     "2026-11-15T21:39:04.351816Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"The APIs return JSON; every endpoint is versioned under /v2/.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.351784Z\",\"id\":\"01M7GJCHGZ58ZDQH9FWHR237AW\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"api\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.351784Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "c692f86d93356e57833ad06e92959ac9b9647c19621fee56cf347513e233b576",
+     "7adb4fd8a2c072c5b5de491cdc51bd39e70ff6f04c23ae3ff5f895c0914028e6"
+    ],
+    [
+     21,
+     "2026-11-15T21:39:04.352333Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"The api gateway rejects requests over 1 MB.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.352301Z\",\"id\":\"01M7GJCHH0V5J94963XFC70X2Y\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"api\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.352301Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "7adb4fd8a2c072c5b5de491cdc51bd39e70ff6f04c23ae3ff5f895c0914028e6",
+     "6609c4d2d793064846826b00e9f00f775e7e07213f2258eace29dc60aebc9e0a"
+    ],
+    [
+     22,
+     "2026-11-15T21:39:04.352802Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"C++20 modules and C# records were evaluated, .NET 8 was chosen.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.352769Z\",\"id\":\"01M7GJCHH04HRDW81WTACNGJJK\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"misc\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.352769Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "6609c4d2d793064846826b00e9f00f775e7e07213f2258eace29dc60aebc9e0a",
+     "1f0dea72f4cd92c32972f341edb19ddc3f5e28909f3f6ac405b533beabf6aed4"
+    ],
+    [
+     23,
+     "2026-11-15T21:39:04.353283Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"What's the policy on caches? The cache policies expire after one hour.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.353251Z\",\"id\":\"01M7GJCHH1B4J3JSWNSRETBWMZ\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"misc\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.353251Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "1f0dea72f4cd92c32972f341edb19ddc3f5e28909f3f6ac405b533beabf6aed4",
+     "26a3960e318c09ab15e7b2eb07f342d12d99620ceca38ea34e67f5484e9d7bcb"
+    ],
+    [
+     24,
+     "2026-11-15T21:39:04.353751Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"python-frontmatter parses the header of every note.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.353720Z\",\"id\":\"01M7GJCHH1RZ9N1NNRYKQVX339\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"misc\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.353720Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "26a3960e318c09ab15e7b2eb07f342d12d99620ceca38ea34e67f5484e9d7bcb",
+     "b9ba132f92dbb27d7d09670880e43faaa21efb7818ea46778ad74af075d5f8cd"
+    ],
+    [
+     25,
+     "2026-11-15T21:39:04.354231Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Emoji in titles \ud83d\ude00 are allowed but discouraged.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.354199Z\",\"id\":\"01M7GJCHH20XEGQ91G88TMWW47\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"misc\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.354199Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "b9ba132f92dbb27d7d09670880e43faaa21efb7818ea46778ad74af075d5f8cd",
+     "5bb6eace64a2405524240e9a6660d5a5376c772e8122880b25e6e20cdd48afc2"
+    ],
+    [
+     26,
+     "2026-11-15T21:39:04.354835Z",
+     null,
+     "memory_put",
+     "{\"filename\":null,\"memory\":{\"actor\":null,\"body\":\"Standups happen daily at 09:30; the standup notes go in the wiki.\\n\",\"category\":null,\"claims\":[],\"confidence\":\"medium\",\"corroborations\":0,\"created\":\"2026-11-15T21:39:04.354767Z\",\"id\":\"01M7GJCHH2EJ8AV2D3HXM4YBQA\",\"last_corroborated\":null,\"last_verified_at\":null,\"links\":[],\"origin\":null,\"scopes\":[\"misc\"],\"source\":\"explicit-statement\",\"updated\":\"2026-11-15T21:39:04.354767Z\",\"verified_absent_paths\":[],\"verified_commits\":[],\"verified_head\":null,\"verified_paths\":[],\"verified_versions\":[]},\"provenance\":\"local\"}",
+     "5bb6eace64a2405524240e9a6660d5a5376c772e8122880b25e6e20cdd48afc2",
+     "293446dc401d5887a4f5696346c3d958ed1c1b0e1255a4b4f784d51c529ea7e8"
+    ]
+   ],
+   "machines": [],
+   "memories": [
+    [
+     2,
+     "01M7GJCHGG0D9DCA9S8XSQKVCC",
+     "2026-11-15T21:39:04.336304+00:00",
+     "2026-11-15T21:39:04.336304+00:00",
+     null,
+     "high",
+     "fact",
+     "Postgres 16.3 replaced 15.4.\n",
+     "postgr 16.3 16 3 replaced 15.4 15 4",
+     " db infra ",
+     "db infra",
+     "[\"db\", \"infra\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[\"postgres 16.3\"]",
+     "[]",
+     0,
+     null,
+     "118cf618353be082fa48cd839ecfc0433d74ac5afb6f28ff0ca22aa582c394e8"
+    ],
+    [
+     3,
+     "01M7GJCHGG3EBY459AX14J7CYJ",
+     "2026-11-15T21:39:04.336890+00:00",
+     "2026-11-15T21:39:04.336890+00:00",
+     null,
+     "low",
+     null,
+     "Prefer snake_case in Python.\n",
+     "prefer snak-cas snak cas in python",
+     " style ",
+     "styl",
+     "[\"style\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "inferred",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "a417d88a38e1ca120ac92d791d1b0c231c65bd93eb698551a3235c28110bbf89"
+    ],
+    [
+     4,
+     "01M7GJCHGSZY9JAZBBR4TBT7MP",
+     "2026-11-15T21:39:04.345907+00:00",
+     "2026-11-15T21:39:04.345907+00:00",
+     null,
+     "medium",
+     null,
+     "Use docker compose for the staging cluster; the compose file lives in deploy/.\n",
+     "use docker compos for the staging cluster the compos fil liv in deploi",
+     " tools ",
+     "tool",
+     "[\"tools\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "68af8a95aae0dfa2f7a5e134cc932128ee38f2d64053ec537f26c2d843fc9750"
+    ],
+    [
+     5,
+     "01M7GJCHGT7MA8DRM8PXW5PYCP",
+     "2026-11-15T21:39:04.346724+00:00",
+     "2026-11-15T21:39:04.346724+00:00",
+     null,
+     "medium",
+     null,
+     "Docker containers restart with the always policy on the build hosts.\n",
+     "docker container restart with the alwai polici on the build host",
+     " tools ",
+     "tool",
+     "[\"tools\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "77f4241ea221ca620b92489e7114e033c3544c48fbe6df29397319d7c1b66b6b"
+    ],
+    [
+     6,
+     "01M7GJCHGVZE3NXSNETS5JSNHV",
+     "2026-11-15T21:39:04.347329+00:00",
+     "2026-11-15T21:39:04.347329+00:00",
+     null,
+     "medium",
+     null,
+     "Postgres 16.3 replaced 15.4; the upgrade ran on 2026-03-02.\n",
+     "postgr 16.3 16 3 replaced 15.4 15 4 the upgrad ran on 2026-03-02 2026 03 02",
+     " db ",
+     "db",
+     "[\"db\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "a96f14e31540a1400b26a82ba0c86d9b1a5122bba2579f8e98e4943aaf25ffa8"
+    ],
+    [
+     7,
+     "01M7GJCHGVQKMNK1WD3YRGGW2W",
+     "2026-11-15T21:39:04.347845+00:00",
+     "2026-11-15T21:39:04.347845+00:00",
+     null,
+     "medium",
+     null,
+     "The postgres connection pool caps at 40 connections per service.\n",
+     "the postgr connection pool cap at 40 connection per servic",
+     " db ",
+     "db",
+     "[\"db\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "f41019464777b02679e81993241757c7fe4965dbe70034800e39edf38779e77c"
+    ],
+    [
+     8,
+     "01M7GJCHGWC3XTD0504BFNG48Z",
+     "2026-11-15T21:39:04.348344+00:00",
+     "2026-11-15T21:39:04.348344+00:00",
+     null,
+     "medium",
+     null,
+     "Prefer snake_case for Python identifiers and kebab-case for CLI flags.\n",
+     "prefer snak-cas snak cas for python identifier and kebab-cas kebab cas for cli flag",
+     " style ",
+     "styl",
+     "[\"style\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "5a51b23503e6082feb7ccf934769be0a586b74773e43dfa019eafbc8ea98f444"
+    ],
+    [
+     9,
+     "01M7GJCHGW127PYSCXWX9F9R6N",
+     "2026-11-15T21:39:04.348872+00:00",
+     "2026-11-15T21:39:04.348872+00:00",
+     null,
+     "medium",
+     null,
+     "Write commit messages in the imperative mood.\n",
+     "writ commit messag in the imperativ mood",
+     " style ",
+     "styl",
+     "[\"style\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "91070b0abe728abec14bdb6e7f89316c418f4fcf7d8de97851b730db60aaabeb"
+    ],
+    [
+     10,
+     "01M7GJCHGXF246JK7HS44CPPN6",
+     "2026-11-15T21:39:04.349352+00:00",
+     "2026-11-15T21:39:04.349352+00:00",
+     null,
+     "medium",
+     null,
+     "The FTS5 index stores the tokenizer's own output, so ranking and MATCH agree.\n",
+     "the fts5 index stor the tokenizer own output so ranking and match agree",
+     " search ",
+     "search",
+     "[\"search\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "b7f184f0a6680c0392ddbc87151967f0d84ede306103436bf8f56307e8561a5b"
+    ],
+    [
+     11,
+     "01M7GJCHGX29RE7S760D5XXBB3",
+     "2026-11-15T21:39:04.349849+00:00",
+     "2026-11-15T21:39:04.349849+00:00",
+     null,
+     "medium",
+     null,
+     "BM25 scoring with k1 1.2 and b 0.75 ranks the candidates.\n",
+     "bm25 scoring with k1 1.2 1 2 and b 0.75 0 75 rank the candidat",
+     " search ",
+     "search",
+     "[\"search\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "e54053a396023300e71ff71d94e9a60ef05ed2db74c69e038c00e3b5467ca53c"
+    ],
+    [
+     12,
+     "01M7GJCHGYQR3300WCXQ0V13QX",
+     "2026-11-15T21:39:04.350339+00:00",
+     "2026-11-15T21:39:04.350339+00:00",
+     null,
+     "medium",
+     null,
+     "Kontoret i Z\u00fcrich flyttar till Tj\u00f6rn n\u00e4sta \u00e5r.\n",
+     "kontoret i zurich flyttar till tjorn nasta ar",
+     " i18n ",
+     "i18n",
+     "[\"i18n\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "aa947911a601645be49caac82b08f914e34d5d2dd9486ef609f046509d240ded"
+    ],
+    [
+     13,
+     "01M7GJCHGY18XFZPBNPJJ47C7D",
+     "2026-11-15T21:39:04.350821+00:00",
+     "2026-11-15T21:39:04.350821+00:00",
+     null,
+     "medium",
+     null,
+     "\u6771\u4eac\u30aa\u30d5\u30a3\u30b9\u306f\u79fb\u8ee2\u3059\u308b\u4e88\u5b9a\u3067\u3059\u3002\n",
+     "\u6771\u4eac \u6771 \u4eac \u4eac\u30aa \u4eac \u30aa \u30aa\u30d5 \u30aa \u30d5 \u30d5\u30a3 \u30d5 \u30a3 \u30a3\u30b9 \u30a3 \u30b9 \u30b9\u306f \u30b9 \u306f \u306f\u79fb \u306f \u79fb \u79fb\u8ee2 \u79fb \u8ee2 \u8ee2\u3059 \u8ee2 \u3059 \u3059\u308b \u3059 \u308b \u308b\u4e88 \u308b \u4e88 \u4e88\u5b9a \u4e88 \u5b9a \u5b9a\u3066 \u5b9a \u3066 \u3066\u3059 \u3066 \u3059",
+     " i18n ",
+     "i18n",
+     "[\"i18n\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "9a6d6f9393a28ec93f624e3423c296895cbc6dc1372d588e04bb5ad4e46c62d5"
+    ],
+    [
+     14,
+     "01M7GJCHGZ2CY69RHN7ZMJ0GB2",
+     "2026-11-15T21:39:04.351301+00:00",
+     "2026-11-15T21:39:04.351301+00:00",
+     null,
+     "medium",
+     null,
+     "Das B\u00fcro in M\u00fcnchen schlie\u00dft im Dezember.\n",
+     "das buro in munchen schlie\u00dft im dezember",
+     " i18n ",
+     "i18n",
+     "[\"i18n\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "c692f86d93356e57833ad06e92959ac9b9647c19621fee56cf347513e233b576"
+    ],
+    [
+     15,
+     "01M7GJCHGZ58ZDQH9FWHR237AW",
+     "2026-11-15T21:39:04.351784+00:00",
+     "2026-11-15T21:39:04.351784+00:00",
+     null,
+     "medium",
+     null,
+     "The APIs return JSON; every endpoint is versioned under /v2/.\n",
+     "the api return json everi endpoint is versioned under v2",
+     " api ",
+     "api",
+     "[\"api\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "7adb4fd8a2c072c5b5de491cdc51bd39e70ff6f04c23ae3ff5f895c0914028e6"
+    ],
+    [
+     16,
+     "01M7GJCHH0V5J94963XFC70X2Y",
+     "2026-11-15T21:39:04.352301+00:00",
+     "2026-11-15T21:39:04.352301+00:00",
+     null,
+     "medium",
+     null,
+     "The api gateway rejects requests over 1 MB.\n",
+     "the api gatewai reject request over 1 mb",
+     " api ",
+     "api",
+     "[\"api\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "6609c4d2d793064846826b00e9f00f775e7e07213f2258eace29dc60aebc9e0a"
+    ],
+    [
+     17,
+     "01M7GJCHH04HRDW81WTACNGJJK",
+     "2026-11-15T21:39:04.352769+00:00",
+     "2026-11-15T21:39:04.352769+00:00",
+     null,
+     "medium",
+     null,
+     "C++20 modules and C# records were evaluated, .NET 8 was chosen.\n",
+     "cpp 20 modul and csharp record were evaluated dotnet 8 was chosen",
+     " misc ",
+     "misc",
+     "[\"misc\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "1f0dea72f4cd92c32972f341edb19ddc3f5e28909f3f6ac405b533beabf6aed4"
+    ],
+    [
+     18,
+     "01M7GJCHH1B4J3JSWNSRETBWMZ",
+     "2026-11-15T21:39:04.353251+00:00",
+     "2026-11-15T21:39:04.353251+00:00",
+     null,
+     "medium",
+     null,
+     "What's the policy on caches? The cache policies expire after one hour.\n",
+     "what the polici on cach the cach polici expir after one hour",
+     " misc ",
+     "misc",
+     "[\"misc\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "26a3960e318c09ab15e7b2eb07f342d12d99620ceca38ea34e67f5484e9d7bcb"
+    ],
+    [
+     19,
+     "01M7GJCHH1RZ9N1NNRYKQVX339",
+     "2026-11-15T21:39:04.353720+00:00",
+     "2026-11-15T21:39:04.353720+00:00",
+     null,
+     "medium",
+     null,
+     "python-frontmatter parses the header of every note.\n",
+     "python-frontmatter python frontmatter pars the header of everi note",
+     " misc ",
+     "misc",
+     "[\"misc\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "b9ba132f92dbb27d7d09670880e43faaa21efb7818ea46778ad74af075d5f8cd"
+    ],
+    [
+     20,
+     "01M7GJCHH20XEGQ91G88TMWW47",
+     "2026-11-15T21:39:04.354199+00:00",
+     "2026-11-15T21:39:04.354199+00:00",
+     null,
+     "medium",
+     null,
+     "Emoji in titles \ud83d\ude00 are allowed but discouraged.\n",
+     "emoji in titl are allowed but discouraged",
+     " misc ",
+     "misc",
+     "[\"misc\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "5bb6eace64a2405524240e9a6660d5a5376c772e8122880b25e6e20cdd48afc2"
+    ],
+    [
+     21,
+     "01M7GJCHH2EJ8AV2D3HXM4YBQA",
+     "2026-11-15T21:39:04.354767+00:00",
+     "2026-11-15T21:39:04.354767+00:00",
+     null,
+     "medium",
+     null,
+     "Standups happen daily at 09:30; the standup notes go in the wiki.\n",
+     "standup happen daili at 09 30 the standup note go in the wiki",
+     " misc ",
+     "misc",
+     "[\"misc\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "293446dc401d5887a4f5696346c3d958ed1c1b0e1255a4b4f784d51c529ea7e8"
+    ]
+   ],
+   "memory_links": [],
+   "meta": [
+    [
+     "created",
+     "2026-11-15T21:39:04.332831Z"
+    ],
+    [
+     "engine_version",
+     "9.0.0rc19"
+    ],
+    [
+     "key_fingerprint",
+     "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+    ],
+    [
+     "membership_store_id",
+     "fedcba9876543210fedcba9876543210"
+    ],
+    [
+     "min_reader_revision",
+     "1"
+    ],
+    [
+     "min_writer_revision",
+     "5"
+    ],
+    [
+     "schema_revision",
+     "6"
+    ],
+    [
+     "schema_version",
+     "1"
+    ],
+    [
+     "store_id",
+     "0123456789abcdef0123456789abcdef"
+    ],
+    [
+     "tokenizer_fingerprint",
+     "972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd"
+    ]
+   ],
+   "native_membership_rows": [],
+   "project_blobs": [],
+   "project_files": [],
+   "project_remotes": [],
+   "project_witnesses": [],
+   "projects": [],
+   "proposals": [],
+   "quarantine": [],
+   "returned": [],
+   "standing": [],
+   "tombstones": [
+    [
+     "01M7GJCHGFZ9B033NYDXR81RBK",
+     "2026-11-15T21:39:04.335431+00:00",
+     "2026-11-15T21:39:04.335431+00:00",
+     null,
+     "medium",
+     null,
+     "Use docker compose for staging.\n",
+     "[\"tools\"]",
+     null,
+     null,
+     null,
+     "local",
+     null,
+     null,
+     null,
+     "explicit-statement",
+     null,
+     null,
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     "[]",
+     0,
+     null,
+     "2026-11-15T21:39:04.337474+00:00",
+     "superseded",
+     "sess_0000000000000001",
+     "bba931d97ade17c65572afe3070a860c181c083554b56118aa2c132c7d84e01d"
+    ]
+   ],
+   "verifications": []
+  },
+  "tombstones": [
+   {
+    "body": "Use docker compose for staging.\n",
+    "category": null,
+    "claims": [],
+    "confidence": "medium",
+    "created": "2026-11-15T21:39:04.335431+00:00",
+    "id": "01M7GJCHGFZ9B033NYDXR81RBK",
+    "last_verified_at": null,
+    "removed": "2026-11-15T21:39:04.337474+00:00",
+    "removed_reason": "superseded",
+    "removed_session": "sess_0000000000000001",
+    "scopes": [
+     "tools"
+    ],
+    "source": "explicit-statement",
+    "updated": "2026-11-15T21:39:04.335431+00:00",
+    "verified_absent_paths": [],
+    "verified_commits": [],
+    "verified_head": null,
+    "verified_paths": [],
+    "verified_versions": []
+   }
+  ]
+ },
+ "file_bytes": 95744,
+ "file_sha256": "d3c62a5b585918df2373690a27957083511f3f4b9c4d6fe751f8893f4a1f78ae",
+ "fixture": "store_real",
+ "keys": {
+  ".head": "7b22736571223a2032362c20226d6163223a202232393334343664633430316435383837613466353639363334366333643935386564316331623065313235356134623466373834643531633532396561376538222c20227473223a2022323032362d31312d31355432313a33393a30342e3335353135305a227d",
+  ".key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  ".origin": "7b22736571223a20312c20226d6163223a202261336664376636656465646231636230336164623839386337323436643936633732393038343639353731653134343130326463626231343637666232356636222c20226b65795f66696e6765727072696e74223a202236333064636432393636633433333636393131323534343862626232356234666634313261343963373332646232633861626331623835383162643731306464227d"
+ },
+ "note": "store_real.sqlite as the reference's SQLite wrote it (not rebuilt): _intact's records and the FTS corpus, VACUUMed at page size 512, in WAL mode; its bytes are not reproducible, so generate compares a logical dump of it, clock-minted values masked, with a fresh build, and records the reference's answers about it as it is; written by `python -m tests.contract.gen_store_files --real`",
+ "reference_version": "9.0.0rc19",
+ "sqlite_version": "3.50.4",
+ "store_id": "0123456789abcdef0123456789abcdef"
+}

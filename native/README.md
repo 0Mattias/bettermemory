@@ -22,6 +22,7 @@ One library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows` | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
 is the reference's digest (the one the golden header pins), and
@@ -35,9 +36,11 @@ of the golden `lexicon_spelling_tables.json` that the tokenizer never reads:
 it is only hashed into the fingerprint. `golden_lexicon` pins that copy to
 the golden file byte for byte and each hand-written list to its entry there.
 
-Dependencies: `sha2`, `subtle` (constant-time MAC comparison) and `zeroize`
-(key bytes are wiped when a `Key` drops); the tests also use `serde_json`
-to read the golden files.
+Dependencies: `sha2`, `subtle` (constant-time MAC comparison), `zeroize`
+(key bytes are wiped when a `Key` drops) and `rusqlite` 0.43.0 with
+`bundled`, `limits` and `hooks` (its bundled SQLite is 3.54.1; nothing
+async); the tests also use `serde_json` to read the
+golden files.
 
 ## Limits and key material
 
@@ -163,6 +166,202 @@ string, and the only limit before it is the MCP SDK's 4 MiB request body
 handler ranks a pool it draws from FTS5 (`handlers/search.py`,
 `POOL_SIZE` 200), not the whole store. No cap is added here.
 
+## The store, read only
+
+`store::StoreFile::open` reads a store file as the reference's read-only
+commands do (`store_schema.connect_read_only`):
+
+- a rollback-journal file with no `-wal` is read in place with `mode=ro`;
+- a file whose `-wal` and `-shm` are both there (a daemon has it open, or
+  one died with it open) is read in place with `mode=ro` through the
+  `-shm`: the committed frames of the `-wal` are read and nothing is
+  checkpointed;
+- a WAL-mode file without both, or a `-wal` without its `-shm`, is copied
+  (with its `-wal`) into an owner-only directory
+  `bettermemory-native-read-<pid>-...` under the temp dir, taken again when
+  either file changed during the copy (three tries), and read
+  `immutable=1` (or `mode=ro` with a `-wal`).
+
+Then the file is admitted (`store::admission`, `store_admission.admit_store`
+in full) before any table is read: under a 2 s deadline (a progress handler
+every 100 virtual-machine steps) and with no value over 16 KiB, its
+`sqlite_master` is held to the reference's own schema (built in memory from
+`store/reference_schema.json`, the reference's schema texts, pinned to the
+golden `store_admission.json`): a view, a trigger the reference never
+writes, a virtual table, an index on an expression or with a WHERE, a
+unique index on a table it writes, one of its own objects with another
+text, a generated column, a default that is not a literal, a check or a
+foreign key, and a table of its own not shaped as it shapes it are refused
+with the reference's `StoreRefusedError` text (`LaterStoreError`, with its
+key and needed revision, when meta names a later revision). Meta is then
+read under the same deadline. The reference's regular expressions are
+written out by hand over Python's own `\w`, `\s`, `\d` and `re.I`
+equivalences. SQLite's limits after admission are its defaults, as the
+reference leaves them: an admitted file's tables compute nothing, so a read
+costs what the rows hold. No deadline is put on reads after admission (the
+reference has none, and one would refuse a large store the reference
+reads); the progress handler stays installed and idle.
+
+What a read can change on disk: nothing, byte for byte, in the four
+situations above (`store_read_only` hashes every file of the store and
+keys directories before and after a full read). One recorded exception,
+shared with the reference's `mode=ro` read of the same file: a `-wal` and a
+stale `-shm` left by a writer that died. Both are there, so the file is
+read in place, and SQLite rebuilds the wal-index in the `-shm`; the store
+file and the `-wal` are unchanged (`stale_shm_is_rewritten_and_nothing_else`).
+
+The private copy. Its directory is made 0700 under another prefix
+(`bettermemory-native-new-*`), its `.lock` created 0600 and locked
+(`File::lock`) there, and only then renamed to `bettermemory-native-read-*`,
+so a sweeper never sees a live reader's directory unlocked
+(`sweepers_never_remove_a_live_readers_directory`: 400 opens against
+concurrent sweeps). A store with no `-wal` (the usual closed WAL store) is
+copied into a file whose name is removed before a byte of the store is
+written to it; SQLite reads it as `/dev/fd/N` (immutable: no lock, no
+`-shm`), so no signal at any moment leaves the store's bytes under a name
+(`a_copy_without_wal_never_has_a_name`). With a `-wal` (a writer died
+before checkpointing), SQLite needs both files by name (it finds the
+`-wal` beside the path it opens and builds a `-shm` there), so the copy
+and its `-wal` carry names from the start of the copy until the admitted
+connection's first read, then both are removed and reads go on from the
+open descriptors (`read_only_wal_store_with_orphan_wal`). That window is
+the copy's duration plus admission (a 960 MB file copies in 0.51 s here
+from the page cache, so a 200 MB store with its `-wal` is named for about
+0.1 s, plus the few milliseconds admission takes). What remains after
+SIGTERM, SIGINT or SIGKILL (the reader installs no handler; the drop does
+not run on any of them): the directory and its empty 0600 `.lock`, and in
+the `-wal` case, if the signal lands in that window, the named 0600 copy
+and `-wal`. Only a later native open sweeps them: it removes this user's
+`bettermemory-native-read-*` directories whose lock can be taken (the
+kernel releases a dead reader's lock) or that have no lock and are over an
+hour old, and `bettermemory-native-new-*` directories over an hour old. The
+sweep's uid is read from a directory it just made with `mkdir`, never a
+name another user could take first. The reference's own `bettermemory-read-*`
+directories are never touched. On Windows names cannot be removed while
+open and `/dev/fd` does not exist: a killed reader leaves the copy until
+the next open sweeps it. The reference removes its copy on close, on
+garbage collection and at interpreter exit (`weakref.finalize`), so Ctrl-C
+cleans it; SIGTERM (no handler in the CLI) and SIGKILL leave it, and
+nothing sweeps it.
+
+Consistency. `verify_chain` runs all its statements in one read
+transaction, so the rows come from one snapshot, as the reference's single
+`SELECT` gives them; `read_transaction` groups more (bm-verify reads meta,
+the counts and the chain in one). The head and origin files are outside
+SQLite and are read as the reference reads them, so while a writer appends,
+the head can be behind the snapshot (`stale`) or ahead of it
+(`tail_deleted`) in both builds; no MAC, link or seq problem appears
+(`verify_while_a_writer_appends`: 40 native verifies during 7,738 writes
+gave 10 `ok` and 30 `stale`; the reference, 40 verifies during about 180
+writes of its own GIL-bound writer, gave 35 `ok`, 2 `stale` and 3
+`tail_deleted`). One order differs: the native verify reads the origin file
+before the rows, the reference after; only a rekey moves that file.
+
+The cost of that snapshot to a writer. On a rollback-journal store read in
+place, a read transaction holds SQLite's SHARED lock, and a writer's COMMIT
+waits for it. The reference fetches the log rows in one `SELECT` and hashes
+them after the lock is gone; the native verify hashes inside its
+transaction. Measured with a writer committing one small row every 5 ms on
+a 300,008-row store (416 MB) while verifies ran back to back for 20 s: no
+reader, median 2.2 ms and worst 5.4 ms per commit; the reference's verify
+(16 runs of 1.3 s), median 0.2 ms and worst 496 ms over 1,827 commits; the
+native bm-verify (21 runs), median 0.5 ms and worst 966 ms, and only 90
+commits got through. The native read holds out a writer for a whole verify
+(about 0.85 s per 300,000 rows); a WAL store, the store's own mode, is not
+affected (readers never block a WAL writer). Not changed here: fetching
+the rows first as the reference does would cost what it costs the
+reference in memory (413 MB peak against 9 MB).
+
+Readers. `meta`, every table's rows (`each_row`), `store_rows`' memory,
+tombstone and episode readers (`MemoryRow`, `EpisodeRow`), the log walked
+in seq order, `verify_chain`, `history_replaced` (the `log verify --json`
+field), and `query_candidates` with its scope, client, model and cap
+filters, and `ranked_rows`. What the reader accepts that the reference's
+models would reject (pydantic validation is not ported): an `id` that is
+not a ULID; an empty scope list or scopes the scope rules refuse; more
+than 64 entries in `verified_paths`, `verified_commits`,
+`verified_versions`, `verified_absent_paths` or `claims`, or entries that
+are not strings (the reference also turns each into `str`); a
+`confidence` or `source` outside its enum; a `category` outside its enum;
+`corroborations` below 0; list columns holding JSON that is not a list (an
+error here, a ValidationError there); and it does not read `links`,
+`origin`, `actor`, the path targets or `last_corroborated`'s model.
+
+`store::keys::load_key_ring` reads the fixed names only, into buffers sized
+from the file's length and wiped on drop. Two differences, neither able to
+change a report: a file over 1 MiB is read as unreadable, and retired keys
+are ordered by the part of the name between the id and `.key` rather than
+by whole file name (`ab` and `ab.c` order differently); the ring's order is
+only read to find the one key a row verifies under, and two distinct keys
+never verify one MAC (`retired_key_order_cannot_change_a_report`).
+
+The fixtures. `store_bases.json` holds five base stores (intact; rekeyed;
+restored, with a `store_restored` row; accepted, with a `history_accepted`
+row; both rows appended directly through `log.append_history_replaced` with
+neutral `/fixture/...` paths, since a real restore or accept-history signs
+the host's resolved paths into the row, and the rewind, the moved-aside file
+and the head and origin rewrites are not reproduced;
+the FTS corpus) as the SQL that rebuilds each and its keys directory's
+files, written once through the reference by `python -m
+tests.contract.gen_store_files --bases`, which also proves each rebuilt
+store answers as its original. `store_files.jsonl` holds 40 cases (a base
+and a recipe: SQL, a key file removed or written, a truncation) with the
+reference's answers: in full for the five bases, by sha256 digest of the
+rows, meta, `sqlite_master` and records for the tamper and version
+variants, the exact refusal for the 18 admission cases, and what the
+reference raises for the four schema-text cases; the counts are literals in
+the test, so a line removed fails it. The Rust tests
+rebuild each case and compare with no Python; each read runs under a 10 s
+bound on its own thread. `tests/test_contract_golden.py` regenerates the
+answers from the committed bases through the reference, so a change in how
+the reference reads a store shows there. Not pinned by the bases: how the
+reference writes a store (the bases are written once).
+
+The SQLite version: the reference runs 3.50.4; the crate bundles 3.54.1.
+`sqlite_spike` rebuilds `search.jsonl`'s FTS5 table: all 27 queries give
+the same rows, order and `bm25()` bits. Every case of `store_files.jsonl`
+(rebuilt by 3.54.1 here, by 3.50.4 for the reference) reads the same. And
+one file is kept as bytes: `store_real.sqlite` (95,744 bytes, page size 512,
+VACUUMed, WAL mode, the intact records and the FTS corpus), written by the
+reference's SQLite 3.50.4 (`--real`; the header's writer version is checked)
+and read as it is by `the_reference_written_file_reads_the_same`: all 1,793
+answers equal, the 32 FTS prefilter queries' rows and `bm25()` bits and the
+FTS shadow tables' schema rows included. Its bytes are not reproducible, so
+`generate` compares a logical dump of it, clock-minted values masked, with a
+fresh build.
+
+Schema text that is not text. A `sqlite_master` value that is not UTF-8 is
+never decoded lossily (a replaced name would match no table, and the
+per-table checks would see nothing, a generated column included): the
+reader refuses the file, carrying the `OperationalError` the reference's
+fetch raises out of `connect_read_only` (`Could not decode to UTF-8 column
+'name' with text ...`). A type, name or tbl_name that is not TEXT, or a sql
+that is neither TEXT nor NULL, is refused with its own wording. An accident
+of the reference the port does not copy: a BLOB sql makes `_blanked`
+(`src/bettermemory/store_admission.py:113-115`) raise `TypeError: cannot
+use a string pattern on a bytes-like object`; `store_files.jsonl`'s header
+lists it under `deliberate_differences`. Four cases pin these: a name not
+UTF-8, one hiding a generated column, a comment not UTF-8, a BLOB sql.
+
+An accident of the reference the port copies: `query_candidates` orders
+by `bm25()` alone (`ORDER BY score ASC LIMIT ?`), so equal scores come in
+whatever order the plan gives; `ranked_rows` breaks ties by rowid.
+
+`examples/bm-verify.rs`: `bm-verify <store file> <keys dir>` prints one JSON
+object: the admission's refusal (its reason names schema objects only) or
+the version contract's outcome, each table's row count, the key ring's
+shape, the chain report and each phase's milliseconds, from one snapshot.
+No record content, payload text or key byte is printed.
+
+Timing the chain verification: 50,001 log rows of about 650 signed bytes,
+written by the reference, three runs each, Apple M-series: the reference's
+`verify_chain` 205.8, 205.3 and 203.1 ms (about 244,000 rows a second);
+native release (sha2 0.11.1, which uses the aarch64 SHA instructions) 142.8,
+148.6 and 141.6 ms (about 347,000 rows a second), 1.4 times the reference.
+The prediction of at least ten times is missed: both are bound by
+HMAC-SHA256 on the CPU's SHA instructions (the reference's `hmac` is
+OpenSSL's), and walking the rows costs about 29 ms of the native time.
+
 ## Running the tests (offline)
 
 ```sh
@@ -177,7 +376,8 @@ cargo clippy --offline --all-targets -- -D warnings
 Each golden test checks every case of its file and fails if the number of
 cases it checked is zero or differs from the file's. The test
 `unicode_tables_regen` runs the table generator in check mode, under
-`BM_REFERENCE_PYTHON` or the repository's `.venv/bin/python`.
+`BM_REFERENCE_PYTHON` or the repository's `.venv/bin/python`;
+no store test needs it.
 
 Timing the tokenizer against the reference: both take every input of
 `lexicon.jsonl` as text and return its tokens (`tokenize_str` on a `&str`;
