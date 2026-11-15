@@ -83,7 +83,7 @@ def entries() -> list[tuple[str, dict[str, Any], str]]:
                 payload = from_site(site)
                 if payload not in seen:
                     seen.append(payload)
-                    out.append((kind, payload, f"call_site {site.path}:{site.line}"))
+                    out.append((kind, payload, f"call_site {site.path}"))
         if kind in LEGACY_SHAPES:
             out.append((kind, from_shape(LEGACY_SHAPES[kind]), "legacy"))
         elif not seen:
@@ -271,7 +271,7 @@ def generate() -> dict[str, bytes]:
             "legacy_kinds": sorted(LEGACY_SHAPES),
             "shape_sources": (
                 "store: a row the store-path build wrote, values synthetic; "
-                "call_site <file:line>: the keys that call names, values of "
+                "call_site <file>: the keys a call in that file names, values of "
                 "the type their expression reads as; legacy: a kind written "
                 "only by a v8 import, keys and types of such rows; none: no "
                 "source shapes it; table: a membership mutation from its table's columns; serialiser: serialiser coverage; chain: "
