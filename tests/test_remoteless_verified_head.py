@@ -91,7 +91,7 @@ async def test_old_author_dates_do_not_hide_newly_reachable_commits_without_a_re
     rid = await _merge_older_feature(world, mode, legacy=False)
     read = await _surfaces(world, rid, where)
     _agree(rid, read)
-    assert read.show["commit_drift"] is not None
+    assert "commit_drift" in read.show
     assert read.show["commit_drift"]["commits_since_verify"] == 1
     assert read.show["commit_drift"]["basis"] == "reachability"
     assert read.show["staleness_verdict"] == "spot_check_recommended"
@@ -111,7 +111,7 @@ async def test_a_legacy_stamp_cannot_prove_freshness_from_old_author_dates(
     _agree(rid, read)
     assert read.show["staleness_verdict"] == "spot_check_required"
     assert read.show["commit_drift_unread"] is True
-    assert "Author dates cannot rule out" in read.show["verification"]["recommendation"]
+    assert "Author dates cannot rule out" in read.show["reason"]
     assert rid in _estate(_cli_existing_views(world, where, capsys))["unread"]
     assert _direct_drift(world, rid) is verify.CommitDriftUnread.UNCONFIRMED_CUT
 

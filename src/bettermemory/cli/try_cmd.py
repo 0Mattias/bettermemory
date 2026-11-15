@@ -15,6 +15,7 @@ touched, and nothing hits the network.
 from __future__ import annotations
 
 import argparse
+import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -103,12 +104,13 @@ def run(args: argparse.Namespace) -> None:
             mode="keyword",
         )
         rb = ResponseBuilder(stale_after_days=30)
-        row = rb.hit_to_dict(hits[0], now=utcnow()) if hits else None
+        working = rb.hit_to_dict(hits[0], now=utcnow()) if hits else None
+        row = rb.render_hit(working) if working is not None else None
 
         reproduced = bool(
             row is not None
             and row.get("staleness_verdict") != "fresh"
-            and row.get("path_drift", {}).get("missing")
+            and str(target) in str(row.get("reason", ""))
         )
 
         if args.json:
@@ -135,7 +137,6 @@ def _narrate(target: Path, root: Path, row: dict[str, Any] | None) -> str:
         )
     from pathlib import Path
 
-    verification = row.get("verification", {}).get("status", "?")
     verdict = row.get("staleness_verdict", "?")
 
     def _rel(p: str) -> str:
@@ -146,19 +147,18 @@ def _narrate(target: Path, root: Path, row: dict[str, Any] | None) -> str:
         except ValueError:
             return p
 
-    missing = [_rel(p) for p in row.get("path_drift", {}).get("missing", [])]
+    reason = str(row.get("reason", "")).replace(f"{root}{os.sep}", "")
     lines = [
         "bettermemory try — a memory going stale, live. Offline, instant.",
         "",
         "1. Stored a memory that cites a file, and attested it while the file existed:",
         f"     cites: {_rel(str(target))}",
-        f"     verification.status: {verification}",
         "",
         "2. The code got refactored — that file moved / was deleted.",
         "",
         "3. Your very next search flags the memory automatically:",
         f"     staleness_verdict:  {verdict}",
-        f"     path_drift.missing: {missing}",
+        f"     reason:             {reason}",
         "",
         "That's the difference: the model is TOLD a memory may have rotted (a path",
         "it cited is gone) before it relies on it — instead of quoting a stale fact.",

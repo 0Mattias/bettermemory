@@ -10,17 +10,19 @@ What the model acts on, as it appears on a search hit:
 
 ```jsonc
 {
+  "id": "…",
   "snippet": "Auth middleware lives in src/auth/middleware.py …",
   "relevance": "high",
   "staleness_verdict": "spot_check_recommended",
-  "path_drift": { "missing": ["src/auth/middleware.py"] },  // file moved
-  "commit_drift_count": 12,  // commits since the fact was last verified
-  "commit_drift_basis": "reachability"  // counted in verified_head..HEAD
+  "reason": "Cited path missing: src/auth/middleware.py. 12 commits since the last verify touched the paths it cites."
 }
 ```
 
-The model repoints the path with `memory_update`, attests the rest
-with `memory_verify`, and answers from the corrected memory.
+The verdict asks for a check only when a check failed, and `reason`
+names it; `memory_show` gives the same verdict and reason with the
+detail behind them (`paths`, `commit_drift`). The model repoints the
+path with `memory_update`, attests the rest with `memory_verify`, and
+answers from the corrected memory.
 
 The commit count has two bases and says which it used.
 `memory_verify` records the origin checkout's HEAD on the record as
@@ -75,7 +77,10 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   `RECALL_CAP_CHARS`, 900 characters: the snippets are shortened first,
   from the last pointer back, a snippet that would fall under a dozen
   characters dropped, and then trailing pointers go. On both surfaces a disputed record carries a
-  `[disputed: cf-…]` mark. A prompt
+  `[disputed: cf-…]` mark. The mark comes from pending conflict pairs
+  (`recall_admission.disputed_marks`), not from `contradicts` links or
+  recorded rejections, so a record a search hit asks a check for can
+  reach a hook without a mark. A prompt
 
   A brief, from synthetic records:
 

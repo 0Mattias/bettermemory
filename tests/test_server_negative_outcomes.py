@@ -25,6 +25,19 @@ from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
+from ._internal_rows import raw_hits
+
+
+_RENDER = ResponseBuilder.render_hit
+
+
+@pytest.fixture(autouse=True)
+def _search_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module tests the rejections the search computes: its searches
+    answer with their working rows (`tests/_internal_rows.py`), except
+    where a test restores the wire shape."""
+    raw_hits(monkeypatch)
+
 
 @pytest.fixture
 def memory_dir(tmp_path: Path) -> Path:
@@ -554,3 +567,33 @@ async def test_poison_id_shapes_do_not_crash_search_and_claims_stay_aligned(
         "malformed element must not shift the surviving id onto a "
         "neighbor's claim"
     )
+
+
+async def test_a_rejection_asks_for_a_check_on_the_hit_and_the_show(
+    server_with_rec: tuple[Any, Recorder], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The caller's hit and show carry no rejection field: a recent
+    rejection makes the verdict ask for a check, and the reason says what
+    the user did and when. An applied use after it lifts it."""
+    monkeypatch.setattr(ResponseBuilder, "render_hit", _RENDER)
+    server, _ = server_with_rec
+    mid = await _seed(server, "python list comprehension idiom")
+    await _call(
+        server,
+        "memory_record_use",
+        memory_ids=[mid],
+        outcome="ignored",
+        note="not what I needed",
+    )
+    hits = _unwrap(await _call(server, "memory_search", query="python"))
+    (hit,) = [h for h in hits if h["id"] == mid]
+    assert "recent_negative_outcomes" not in hit
+    assert hit["staleness_verdict"] == "spot_check_recommended"
+    assert "A use marked it ignored on " in hit["reason"]
+    shown = await _call(server, "memory_show", id=mid)
+    assert shown["staleness_verdict"] == "spot_check_recommended"
+    assert shown["reason"] == hit["reason"]
+
+    await _call(server, "memory_record_use", memory_ids=[mid], outcome="applied")
+    shown = await _call(server, "memory_show", id=mid)
+    assert shown["staleness_verdict"] == "fresh"

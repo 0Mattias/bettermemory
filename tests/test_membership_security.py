@@ -30,6 +30,7 @@ The places:
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import shutil
 import subprocess
@@ -567,9 +568,11 @@ def test_b9_a_boundary_sub_project_shares_nothing_with_its_root(lab: Lab) -> Non
 async def test_links_omit_a_target_the_caller_is_not_admitted_to(
     lab: Lab, monkeypatch: pytest.MonkeyPatch, bulk_unavailable: bool
 ) -> None:
-    """A hit in the root whose superseding, contradicting and depended-on
-    records sit in the client (a tenant) shows none of them; the same
-    links from a global record show (LINKS admits ``global``)."""
+    """A hit in the root whose superseding and contradicting records sit
+    in the client (a tenant) shows none of them; the same links from a
+    global record show (LINKS admits ``global``). A hit that depends on
+    tenant records reveals neither, and the search never loads the one only
+    the dependency reaches."""
     target = lab.write("root", "the lanternfish deploy window is tuesday")
     tenant_links = [
         MemoryLink(type="supersedes", target_id=target),
@@ -589,10 +592,13 @@ async def test_links_omit_a_target_the_caller_is_not_admitted_to(
         "a global replacement",
         links=[MemoryLink(type="supersedes", target_id=target)],
     )
+    # A tenant record reached by nothing but a dependency.
+    depended = lab.write("client", "a tenant's private runbook")
     needs_hidden = lab.write(
         "root",
         "the lanternfish rollout checklist",
         links=[
+            MemoryLink(type="depends_on", target_id=depended),
             MemoryLink(type="depends_on", target_id=hidden),
             MemoryLink(type="depends_on", target_id=shown),
         ],
@@ -604,8 +610,33 @@ async def test_links_omit_a_target_the_caller_is_not_admitted_to(
             raise RuntimeError("synthetic bulk link read failure")
 
         monkeypatch.setattr(Store, "links_for_many", failed)
+    loaded: list[str] = []
+    real_one, real_many = Store.load_one, Store.load_many
+
+    def load_one(self: Store, memory_id: str) -> Any:
+        loaded.append(memory_id)
+        return real_one(self, memory_id)
+
+    def load_many(self: Store, ids: list[str]) -> Any:
+        loaded.extend(ids)
+        return real_many(self, ids)
+
+    real_linking = Store.records_linking_to
+    fallback_reads: list[int] = []
+
+    def records_linking_to(self: Store, ids: Any, admit: Any = None) -> Any:
+        fallback_reads.append(1)
+        found = real_linking(self, ids, admit=admit)
+        loaded.extend(record.id for record in found)
+        return found
+
+    monkeypatch.setattr(Store, "load_one", load_one)
+    monkeypatch.setattr(Store, "load_many", load_many)
+    monkeypatch.setattr(Store, "records_linking_to", records_linking_to)
     server = build_server(config=lab.config, store=lab.store, state=SessionState())
     for auto_scope in (True, False):
+        loaded.clear()
+        fallback_reads.clear()
         res = await call_tool(
             server,
             "memory_search",
@@ -615,11 +646,21 @@ async def test_links_omit_a_target_the_caller_is_not_admitted_to(
         by_id = {h["id"]: h for h in hits}
         assert hidden not in by_id
         hit = by_id[target]
-        assert [e["id"] for e in hit.get("superseded_by", [])] == [shown]
-        assert hidden not in [e["id"] for e in hit.get("contradicts", [])]
-        resolved = [e["id"] for e in by_id[needs_hidden].get("depends_on_resolved", [])]
-        assert hidden not in resolved
-        assert shown in resolved
+        assert hit.get("superseded_by", []) == [shown]
+        assert hidden not in hit.get("contradicts", [])
+        # The record that depends on the hidden ones is delivered, and no
+        # hit says anything of either: not its id, not its body.
+        assert needs_hidden in by_id
+        wire = json.dumps(hits)
+        for secret in (hidden, depended):
+            assert secret not in wire
+        assert "a tenant's private" not in wire
+        # Nor does the search load the record only a dependency reaches,
+        # or, when the links query fails, the tenant record whose own links
+        # name the hit.
+        assert depended not in loaded
+        assert hidden not in loaded
+        assert bool(fallback_reads) == bulk_unavailable
 
 
 # ---------------------------------------------------------------------------

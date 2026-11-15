@@ -40,7 +40,7 @@ async def test_no_home_record_with_unparseable_claims_is_not_listed_skipped(
     _since(world.home, "claim")
     for where in ("home", "B"):
         read = await _surfaces(world, written.id, where)
-        assert read.show["commit_drift"] is None
+        assert "commit_drift" not in read.show
         assert "commit_drift_unchecked" not in read.show
         assert read.show["staleness_verdict"] == "fresh"
         assert _estate(read.health)["skipped"] == []
@@ -57,7 +57,7 @@ async def test_homed_record_with_unparseable_claims_is_no_candidate(
     _since(world.home, "claim")
     for where in ("home", "B"):
         read = await _surfaces(world, rid, where)
-        assert read.show["commit_drift"] is None
+        assert "commit_drift" not in read.show
         assert "commit_drift_unchecked" not in read.show
         assert read.show["staleness_verdict"] == "fresh"
         estate = read.health.get("cross_repo_drift")

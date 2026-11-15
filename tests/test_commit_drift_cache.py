@@ -391,15 +391,25 @@ def _by_id(out: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {hit["id"]: hit for hit in out}
 
 
-def _assert_unconfirmed_cut(hit: dict[str, Any]) -> None:
+def _assert_unconfirmed_cut(row: dict[str, Any]) -> None:
+    """A row whose commit leg was not read at an unconfirmed cut: no count,
+    flagged, and the cause named. A row the search assembles names it in
+    its verification block; the wire hit and memory_show name it in the
+    reason, and memory_show also carries the flag."""
     from bettermemory.verify_basis import unread_recommendation
 
-    assert "commit_drift_count" not in hit
-    assert "commit_drift_basis" not in hit
-    assert hit["commit_drift_unread"] is True
-    assert hit["verification"]["recommendation"] == unread_recommendation(
-        verify.CommitDriftUnread.UNCONFIRMED_CUT
-    )
+    why = unread_recommendation(verify.CommitDriftUnread.UNCONFIRMED_CUT)
+    assert "commit_drift_count" not in row
+    assert "commit_drift_basis" not in row
+    if "recommendation" in row.get("verification", {}):
+        assert row["commit_drift_unread"] is True
+        assert row["verification"]["recommendation"] == why
+        return
+    assert "commit_drift" not in row
+    if "snippet" not in row:
+        assert row["commit_drift_unread"] is True
+    assert row["staleness_verdict"] != "fresh"
+    assert why in row["reason"]
 
 
 #: The log that reads a head's whole history, the one that reads it where a
@@ -1875,8 +1885,9 @@ async def test_memory_show_reads_the_same_block_around_a_warm_search(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """memory_show reads the same `commit_drift` block before and after two
-    searches that fill every memo, and the search hits carry that block's
-    count and basis. The two surfaces share the whole-history memo and the
+    searches that fill every memo, the rows the search assembles carry that
+    block's count and basis (the computation's own result), and the wire
+    hits read the shows' verdict and reason. The two surfaces share the whole-history memo and the
     head; neither memo changes what either surface says."""
     import bettermemory._handlers as handlers_module
 
@@ -1919,14 +1930,31 @@ async def test_memory_show_reads_the_same_block_around_a_warm_search(
     before = {
         i: await _mcp_call(server, "memory_show", {"id": i}) for i in (author, reach)
     }
+    # The hits' count and basis are the computation's, read from the rows
+    # the search assembles; the wire hits are compared with the shows.
+    real_render = ResponseBuilder.render_hit
+    assembled: list[dict[str, Any]] = []
+
+    def render(self: ResponseBuilder, row: dict[str, Any]) -> dict[str, Any]:
+        assembled.append(dict(row))
+        return real_render(self, row)
+
+    monkeypatch.setattr(ResponseBuilder, "render_hit", render)
     for _ in range(2):
+        assembled.clear()
         raw = await _mcp_call(server, "memory_search", {"query": "quokka widget"})
         hits = raw.get("result", raw) if isinstance(raw, dict) else raw
     after = {
         i: await _mcp_call(server, "memory_show", {"id": i}) for i in (author, reach)
     }
-    by_id = {hit["id"]: hit for hit in hits}
+    wire = {hit["id"]: hit for hit in hits}
+    by_id = {row["id"]: row for row in assembled}
     for memory_id in (author, reach):
+        assert (
+            wire[memory_id]["staleness_verdict"]
+            == (after[memory_id]["staleness_verdict"])
+        )
+        assert wire[memory_id]["reason"] == after[memory_id]["reason"]
         block = before[memory_id]["commit_drift"]
         assert block is not None and block["commits_since_verify"] == 1
         assert after[memory_id]["commit_drift"] == block
@@ -1965,9 +1993,8 @@ async def test_a_history_not_read_in_time_is_flagged_and_never_fresh(
     """A memory verified an hour ago at its anchor, one commit on the file
     it cites since: memory_show reads 1 and spot_check_recommended. Where
     the walk from the anchor and its listing meet their timeout, the count
-    is omitted (`commit_drift` null on memory_show, no `commit_drift_count`
-    on the hit), and the row says `commit_drift_unread: true`, reads
-    spot_check_required where it would read fresh, and its recommendation
+    is omitted, memory_show says `commit_drift_unread: true`, and the row
+    reads spot_check_required where it would read fresh, with a reason that
     says the history was not read in time: on memory_show, on the search
     hit, and on the expanded top hit, which reads it on its own where the
     hit's pass read nothing."""
@@ -2029,15 +2056,12 @@ async def test_a_history_not_read_in_time_is_flagged_and_never_fresh(
         ResponseBuilder, "attach_commit_drift_counts", lambda *a, **k: None
     )
     alone = await search(expand_top=True)
-    assert shown["commit_drift"] is None
+    assert "commit_drift" not in shown
+    assert shown["commit_drift_unread"] is True
+    assert shown["verification"]["status"] == "fresh"
     for row in (shown, hit, top, alone):
-        assert row["commit_drift_unread"] is True
         assert row["staleness_verdict"] == "spot_check_required"
-        assert row["verification"]["status"] == "fresh"
-        assert row["verification"]["recommendation"] == (
-            unread_recommendation(CommitDriftUnread.TIMEOUT)
-        )
-        assert "commit_drift_count" not in row
+        assert row["reason"] == unread_recommendation(CommitDriftUnread.TIMEOUT)
 
 
 def test_the_trust_rule_s_remedy_stands_beside_an_unread_history() -> None:

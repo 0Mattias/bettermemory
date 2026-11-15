@@ -25,6 +25,7 @@ if someone "simplifies" it.
 """
 
 from __future__ import annotations
+from ._internal_rows import raw_hits
 from ._mcp import call_tool as _mcp_call
 
 from datetime import datetime, timezone
@@ -132,6 +133,13 @@ def test_an_all_zero_result_set_leads_nothing() -> None:
     """Browse-mode hits all score 0.0 — a tie, not a win."""
     assert not top_hit_leads_runner_up(0.0, 0.0)
     assert top_hit_leads_runner_up(0.5, 0.0)
+
+
+@pytest.fixture(autouse=True)
+def _search_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module tests the ranking and the expansion gate the search computes: its searches answer with their working
+    rows (`tests/_internal_rows.py`)."""
+    raw_hits(monkeypatch)
 
 
 @pytest.fixture

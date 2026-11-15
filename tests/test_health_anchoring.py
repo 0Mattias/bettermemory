@@ -142,7 +142,9 @@ async def _shown_and_listed(server: Any, ids: list[str]) -> tuple[set[str], set[
     health's `commit_drift_debt` lists, both read by the same caller."""
     shown: set[str] = set()
     for rid in ids:
-        drift = (await call_tool(server, "memory_show", {"id": rid}))["commit_drift"]
+        drift = (await call_tool(server, "memory_show", {"id": rid})).get(
+            "commit_drift"
+        )
         if drift is not None and drift["commits_since_verify"]:
             shown.add(rid)
     health = await call_tool(
@@ -198,7 +200,9 @@ async def test_commit_drift_debt_lists_what_memory_show_shows_drifted(
 
     shown: set[str] = set()
     for rid in (homed, unhomed):
-        drift = (await call_tool(server, "memory_show", {"id": rid}))["commit_drift"]
+        drift = (await call_tool(server, "memory_show", {"id": rid})).get(
+            "commit_drift"
+        )
         if drift is not None and drift["commits_since_verify"]:
             shown.add(rid)
     assert shown == {homed}

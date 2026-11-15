@@ -162,10 +162,8 @@ async def test_search_recovers_known_annotations_when_bulk_read_fails(
     row = search_hit(
         await _search(server, "cedar fallback session tokens"), target["id"]
     )
-    assert [entry["id"] for entry in row.get("superseded_by", [])] == [
-        replacement["id"]
-    ]
-    assert [entry["id"] for entry in row.get("contradicts", [])] == [contrary["id"]]
+    assert row.get("superseded_by", []) == [replacement["id"]]
+    assert row.get("contradicts", []) == [contrary["id"]]
 
 
 def test_candidate_rows_match_the_stores_exact_duplicate_policy(

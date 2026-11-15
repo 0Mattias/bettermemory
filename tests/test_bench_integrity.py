@@ -490,3 +490,11 @@ def test_product_arm_rejects_pending_status(
     # and the adapter no longer copies a staging field off a response
     assert adapters.__file__ is not None
     assert "pending_reason" not in Path(adapters.__file__).read_text(encoding="utf-8")
+
+
+def test_hit_provenance_keeps_unknown_apart_from_local() -> None:
+    """A hit that states no trust row is recorded as None, not as local."""
+    assert adapters._hit_provenance({"id": "a"}) == "local"
+    assert adapters._hit_provenance({"id": "a", "provenance": None}) is None
+    assert adapters._hit_provenance({"id": "a", "provenance": "synced"}) == "synced"
+    assert adapters._hit_provenance({"id": "a", "trust_unavailable": True}) is None

@@ -86,12 +86,12 @@ if TYPE_CHECKING:
 
 
 DESC_MEMORY_SEARCH = (
-    "Rank stored memories for `query`; hits carry a snippet, relevance, "
-    "use_token and staleness_verdict. Auto-scoped to the caller's project "
+    "Rank stored memories for `query`. Auto-scoped to the caller's project "
     "(auto_scope=False: cross-project). `scopes` keeps tags, "
     "`exclude_scopes` drops them; `since_prior_session`: this session's "
-    "changes; `expand_top`: the top hit's body and drift; `client`, "
-    "`model`: one writer."
+    "changes; `expand_top`: the top hit's body; `client`, `model`: one "
+    "declared writer. A staleness_verdict other than fresh: `reason` names "
+    "the failed check or objection and its remedy."
 )
 
 
@@ -482,7 +482,14 @@ async def memory_search(
         anchoring=anchoring,
     )
     _attach_hit_relations(
-        deps, out, hits, memories, links=links, excluded=excluded, now=now
+        deps,
+        out,
+        hits,
+        memories,
+        links=links,
+        excluded=excluded,
+        disabled=set(state.disabled_scopes),
+        now=now,
     )
     expansion = _expand_top_hit(
         deps,
@@ -518,7 +525,9 @@ async def memory_search(
         since_prior_session=since_prior_session,
         prior_boundary=prior_boundary,
     )
-    return out
+    # The rows above are the search's working state, which the event
+    # reads; the caller gets each hit's wire shape (`render_hit`).
+    return [deps.responses.render_hit(row) for row in out]
 
 
 class _TopExpansion(NamedTuple):
@@ -761,9 +770,13 @@ def _attach_hit_relations(
     *,
     links: Admission,
     excluded: set[str],
+    disabled: set[str],
     now: datetime,
 ) -> None:
-    """Take the response rows; attach recent negative outcomes and link relations."""
+    """Take the response rows; attach recent negative outcomes and link
+    relations. `excluded` keeps records out of the displayed annotations;
+    only `disabled`, the session's disabled scopes, keeps a contradiction
+    from objecting."""
     # Per-hit `recent_negative_outcomes`: a hit that was ignored or
     # contradicted inside the window and not validated since says so, so
     # the model does not keep re-suggesting what was rejected. The window
@@ -775,73 +788,22 @@ def _attach_hit_relations(
     # was applied since. A search none of whose hits was rejected reads
     # no ``use`` row.
     if out:
-        from datetime import timedelta
+        from .._response import recent_rejections
 
-        from .._response import NEGATIVE_OUTCOME_WINDOW_DAYS
-        from ..events import _event_id_items
+        rejected = recent_rejections(deps.store, [hit.id for hit in hits], now=now)
+        for row in out:
+            if row["id"] in rejected:
+                row["recent_negative_outcomes"] = rejected[row["id"]]
 
-        since = now - timedelta(days=NEGATIVE_OUTCOME_WINDOW_DAYS)
-        hit_ids = {hit.id for hit in hits}
-        rejected: set[str] = set()
-        for event in deps.store.negative_uses(since):
-            named = event.get("ids") or event.get("memory_ids")
-            rejected.update(mid for _, mid in _event_id_items(named) if mid in hit_ids)
-        if rejected:
-            recent_events = list(
-                deps.store.events_of_kinds(
-                    ("use",), since=since, naming=sorted(rejected)
-                )
-            )
-            deps.responses.attach_recent_negative_outcomes(
-                out, hits, recent_events, now=now
-            )
-
-    # Per-hit `depends_on_resolved`: when a hit's memory carries
-    # `depends_on`-typed links, inline summaries of the targets so
-    # the model gets the dependency chain without a memory_show
-    # round-trip. Bounded (max 3 per hit, max 10 total). The
-    # MemoryLink type has existed in the schema since 2.x but
-    # retrieval has never surfaced it automatically — this closes
-    # that gap. Caller can disable via the response builder if a
-    # noisy `depends_on` graph would dominate the response, but the
-    # caps make the default safe.
     if out:
-        # Re-apply the caller's scope filters to the dependency
-        # auto-pull. The side-map inside `attach_depends_on_resolved`
-        # is built from `memories` (the pre-filter loader output)
-        # so cross-repo / session-disabled targets are still
-        # resolvable by id — without re-checking here, a hit in a
-        # caller-visible scope could pull in a target from a hidden
-        # scope, undoing the deliberate scope filter via the
-        # dependency edge.
-        deps.responses.attach_depends_on_resolved(
-            out,
-            hits,
-            memories,
-            admission=links,
-            excluded_scopes=excluded,
-            # Pass the store so the helper can targeted-load
-            # `depends_on` targets unrelated to the query. The
-            # `memories` list is the FTS prefilter set (cap 50, ranked
-            # by query relevance), so a depended-on target whose text
-            # doesn't match the query is missing from the side-map —
-            # the exact case the auto-pull feature exists to handle
-            # (B depends_on A precisely because A provides context
-            # B's query won't surface on its own). Filter discipline
-            # for the targeted-load path is identical to the side-map
-            # path: the LINKS admission + `excluded_scopes` re-applied
-            # at load time to prevent cross-project / disabled-scope leak.
-            store=deps.store,
-        )
-
         # Per-hit `superseded_by` / `contradicts`: activate the
         # supersedes/contradicts MemoryLink edges as trust signals. Like
-        # depends_on_resolved this is post-rank and additive (it never
+        # every annotation here this is post-rank and additive (it never
         # reorders or drops a hit), with the same scope/origin re-filter
         # so a link can't leak a hidden-scope memory. Inbound edges come
         # from the links table; when that read fails, the links the
         # search's own candidates carry are read instead.
-        deps.responses.attach_link_annotations(
+        links_map = deps.responses.attach_link_annotations(
             out,
             hits,
             memories,
@@ -849,6 +811,23 @@ def _attach_hit_relations(
             admission=links,
             excluded_scopes=excluded,
         )
+        # Every contradiction of each hit, uncapped, active and admitted:
+        # what the verdict, the reason and the hit's `contradicts` list read
+        # (`verdict_and_reason`, `render_hit`), the same read memory_show
+        # makes. Only the session's disabled scopes keep a contradicting
+        # record out: `exclude_scopes` narrows what the search lists, not
+        # what objects to a record it lists.
+        from .._response import contradicting_ids
+
+        contradicted = contradicting_ids(
+            deps.store,
+            [str(row["id"]) for row in out],
+            admission=links,
+            excluded_scopes=disabled,
+            links_map=links_map,
+        )
+        for row in out:
+            row["_contradicted_by"] = contradicted.get(row["id"], [])
         # A standing hit held out of force (ENG-200) is flagged, so a
         # search is not read as putting it back in force.
         from ..standing import held_ids

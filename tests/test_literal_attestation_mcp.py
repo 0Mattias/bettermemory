@@ -76,8 +76,7 @@ async def test_verified_literal_directory_is_still_that_directory_after_deletion
     _git(repo, "rm", "-r", "--", name)
     _git(repo, "commit", "-q", "-m", "remove checked directory", when=_LATER)
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["path_drift"]["missing"] == [str(target)]
-    assert shown["path_drift"]["claim_anchored_missing"] == [str(target)]
+    assert shown["paths"][str(target)].startswith("missing, attested or anchored")
     assert shown["commit_drift"]["basis"] == basis
     assert shown["commit_drift"]["commits_since_verify"] == 1
     with pytest.raises(Exception, match="cannot attest"):
@@ -122,7 +121,7 @@ async def test_an_intentionally_absent_literal_directory_anchors_its_appearance(
     _literal_directory(target)
     _commit(repo, name + "/settings.py", "LIMIT = 1\n", _LATER)
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["path_drift"]["present_but_attested_absent"] == [str(target)]
+    assert shown["paths"][str(target)].startswith("present, attested absent")
     for expand in (False, True):
         found = await _call(
             server,
@@ -133,9 +132,58 @@ async def test_an_intentionally_absent_literal_directory_anchors_its_appearance(
         )
         hits = found.get("result", found) if isinstance(found, dict) else found
         hit = next(hit for hit in hits if hit["id"] == written["id"])
-        assert hit["path_drift"]["present_but_attested_absent"] == [str(target)]
+        assert hit["staleness_verdict"] == "spot_check_recommended"
+        assert f"Attested absent but present: {target}" in hit["reason"]
+        assert "1 commit since the last verify" in hit["reason"]
+        assert hit["reason"] == shown["reason"]
     assert shown["commit_drift"]["basis"] == basis
     assert shown["commit_drift"]["commits_since_verify"] == 1
+
+
+@pytest.mark.parametrize("name", ["routes/[slug]", "app/[locale]", "docs/v1."])
+@pytest.mark.parametrize("kind", ["relative", "absolute", "home"])
+async def test_an_attested_absent_directory_that_appears_alone_asks_for_a_check(
+    home: Path,
+    server_with_fake_origin,
+    name: str,
+    kind: str,
+) -> None:
+    """The directory appears in the working tree with no commit: the commit
+    leg reads clean, and the attested-absent path alone raises the verdict
+    on memory_show and on every hit, with a reason naming it."""
+    repo, _ = _repo(home)
+    _git(repo, "remote", "add", "origin", _REMOTE)
+    target = repo / name
+    raw = _spelling(target, repo, kind)
+    server = server_with_fake_origin(
+        Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
+    )
+    written = await _call(
+        server,
+        "memory_write",
+        content="The loader reads its settings once at startup.",
+        scopes=["tools"],
+    )
+    await _call(server, "memory_verify", id=written["id"], verified_absent_paths=[raw])
+    _literal_directory(target)
+    (target / "settings.py").write_text("LIMIT = 1\n")
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["paths"][str(target)].startswith("present, attested absent")
+    assert shown.get("commit_drift", {}).get("commits_since_verify", 0) == 0
+    assert shown["staleness_verdict"] == "spot_check_recommended"
+    assert shown["reason"] == f"Attested absent but present: {target}."
+    for expand in (False, True):
+        found = await _call(
+            server,
+            "memory_search",
+            query="loader settings",
+            auto_scope=False,
+            expand_top=expand,
+        )
+        hits = found.get("result", found) if isinstance(found, dict) else found
+        hit = next(hit for hit in hits if hit["id"] == written["id"])
+        assert hit["staleness_verdict"] == shown["staleness_verdict"]
+        assert hit["reason"] == shown["reason"]
 
 
 @pytest.mark.parametrize(
@@ -185,7 +233,7 @@ async def test_path_mode_fixes_the_choice_between_a_literal_and_a_reference_twin
     _git(repo, "commit", "-q", "-m", "remove literal twin", when=_LATER)
     shown = await _call(server, "memory_show", id=written["id"])
     if mode == "reference" and basis == "author-date":
-        assert shown["commit_drift"] is None
+        assert "commit_drift" not in shown
         _assert_unconfirmed_cut(shown)
         assert shown["staleness_verdict"] == "spot_check_required"
     else:
@@ -193,10 +241,12 @@ async def test_path_mode_fixes_the_choice_between_a_literal_and_a_reference_twin
         assert shown["commit_drift"]["commits_since_verify"] == (
             0 if mode == "reference" else 1
         )
-    if mode == "reference":
-        assert shown["path_drift"]["missing"] == []
-    else:
-        assert shown["path_drift"]["missing"] == [str(repo / name)]
+    missing = [
+        path
+        for path, found in shown.get("paths", {}).items()
+        if found.startswith("missing")
+    ]
+    assert missing == ([] if mode == "reference" else [str(repo / name)])
 
 
 async def test_body_edits_clear_targets_and_metadata_edits_preserve_them(

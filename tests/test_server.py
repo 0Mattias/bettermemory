@@ -11,6 +11,7 @@ from __future__ import annotations
 from ._mcp import call_tool as _mcp_call
 from ._mcp import crash_text as _crash_text
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -194,7 +195,8 @@ async def test_write_then_show_roundtrip(server: Any) -> None:
     shown = await _call(server, "memory_show", id=written["id"])
     assert shown["id"] == written["id"]
     assert "code tutorials" in shown["body"]
-    assert shown["provenance"] == "local"
+    # A record entered by a write on this host carries no label.
+    assert "provenance" not in shown
 
 
 async def test_search_finds_written_memory(server: Any) -> None:
@@ -209,7 +211,7 @@ async def test_search_finds_written_memory(server: Any) -> None:
     hits = hits.get("result", hits) if isinstance(hits, dict) else hits
     assert len(hits) >= 1
     assert "home lab" in hits[0]["snippet"]
-    assert hits[0]["provenance"] == "local"
+    assert "provenance" not in hits[0]
 
 
 async def test_read_surfaces_carry_provenance(server: Any, memory_dir: Path) -> None:
@@ -234,8 +236,8 @@ async def test_read_surfaces_carry_provenance(server: Any, memory_dir: Path) -> 
         server, "memory_search", query="staging cluster", auto_scope=False
     )
     hits = hits.get("result", hits) if isinstance(hits, dict) else hits
-    assert {hit["id"]: hit["provenance"] for hit in hits} == {
-        written["id"]: "local",
+    assert {hit["id"]: hit.get("provenance") for hit in hits} == {
+        written["id"]: None,
         planted: "unaccounted",
     }
 
@@ -263,7 +265,12 @@ async def test_remove_excludes_from_search(server: Any) -> None:
     assert all(h["id"] != written["id"] for h in hits)
 
 
-async def test_disabled_scope_hidden_from_search(server: Any) -> None:
+async def test_disabled_scope_hidden_from_search(server: Any, memory_dir: Path) -> None:
+    store = Store(memory_dir)
+
+    def alpha(hits: list[dict[str, Any]]) -> bool:
+        return any("projects:alpha" in store.load_one(h["id"]).scopes for h in hits)
+
     await _call(
         server,
         "memory_write",
@@ -277,7 +284,7 @@ async def test_disabled_scope_hidden_from_search(server: Any) -> None:
         scopes=["tools"],
     )
     hits = _unwrap(await _call(server, "memory_search", query="alpha"))
-    assert any("projects:alpha" in h["scopes"] for h in hits)
+    assert alpha(hits)
 
     state = await _call(
         server, "memory_admin", action="disable_scope", scope="projects:alpha"
@@ -290,7 +297,7 @@ async def test_disabled_scope_hidden_from_search(server: Any) -> None:
     assert "projects:alpha" in state["disabled_scopes"]
 
     hits = _unwrap(await _call(server, "memory_search", query="alpha"))
-    assert all("projects:alpha" not in h["scopes"] for h in hits)
+    assert not alpha(hits)
 
     # Re-enabling brings them back.
     back = await _call(
@@ -299,7 +306,7 @@ async def test_disabled_scope_hidden_from_search(server: Any) -> None:
     back = _unwrap(back)
     assert "projects:alpha" not in back["disabled_scopes"]
     hits = _unwrap(await _call(server, "memory_search", query="alpha"))
-    assert any("projects:alpha" in h["scopes"] for h in hits)
+    assert alpha(hits)
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +415,6 @@ async def test_user_inference_commits_and_is_searchable_immediately(
     assert res["category"] == "user-inference"
     hits = _unwrap(await _call(server, "memory_search", query="tutorials"))
     assert [h["id"] for h in hits] == [res["id"]]
-    assert hits[0]["category"] == "user-inference"
     shown = await _call(server, "memory_show", id=res["id"])
     assert shown["category"] == "user-inference"
 
@@ -542,8 +548,22 @@ async def test_search_expand_top_default_false_keeps_old_shape(server: Any) -> N
 # ---------------------------------------------------------------------------
 
 
+async def test_show_omits_updated_until_the_record_changes(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="kubernetes networking notes",
+        scopes=["infrastructure"],
+    )
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert "created" in shown
+    assert "updated" not in shown
+
+
 async def test_search_hit_includes_updated_timestamp(server: Any) -> None:
-    await _call(
+    """The hit leaves the stamps to memory_show, which states `updated`
+    only once it differs from `created`."""
+    written = await _call(
         server,
         "memory_write",
         content="kubernetes networking notes",
@@ -551,8 +571,17 @@ async def test_search_hit_includes_updated_timestamp(server: Any) -> None:
     )
     hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
     assert len(hits) == 1
-    assert "updated" in hits[0]
-    assert hits[0]["updated"] == hits[0]["created"]
+    assert "updated" not in hits[0] and "created" not in hits[0]
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert "created" in shown and "updated" not in shown
+    await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        content="kubernetes networking notes v2",
+    )
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["updated"] >= shown["created"]
 
 
 # ---------------------------------------------------------------------------
@@ -846,6 +875,28 @@ async def test_search_since_prior_session_empty_query_returns_filtered_set(
     assert ids == [m3["id"], m2["id"], m1["id"]]
 
 
+async def _search_without_loading(
+    server: Any, monkeypatch: pytest.MonkeyPatch, target_id: str, **kwargs: Any
+) -> list[dict[str, Any]]:
+    """Run memory_search and assert it neither loads nor names `target_id`."""
+    loaded: list[str] = []
+    real = Store.load_one
+
+    def spy(self: Store, record_id: str) -> Any:
+        loaded.append(record_id)
+        return real(self, record_id)
+
+    monkeypatch.setattr(Store, "load_one", spy)
+    try:
+        hits = _unwrap(await _call(server, "memory_search", **kwargs))
+    finally:
+        monkeypatch.setattr(Store, "load_one", real)
+    assert target_id not in loaded
+    assert target_id not in json.dumps(hits)
+    assert all("depends_on_resolved" not in hit for hit in hits)
+    return list(hits)
+
+
 # ---------------------------------------------------------------------------
 # memory_search — depends_on_resolved auto-pull
 # ---------------------------------------------------------------------------
@@ -854,9 +905,8 @@ async def test_search_since_prior_session_empty_query_returns_filtered_set(
 async def test_search_attaches_depends_on_resolved_for_linked_hit(
     server: Any,
 ) -> None:
-    """A hit whose memory has a depends_on link surfaces the target's
-    summary inline so the model can see the dependency chain without
-    a memory_show round-trip."""
+    """A depends_on link is memory_show's to carry, with its note; the
+    hit stays compact."""
     target = await _call(
         server,
         "memory_write",
@@ -885,12 +935,15 @@ async def test_search_attaches_depends_on_resolved_for_linked_hit(
 
     hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
     hit = next(h for h in hits if h["id"] == dependent["id"])
-    assert "depends_on_resolved" in hit
-    resolved = hit["depends_on_resolved"]
-    assert len(resolved) == 1
-    assert resolved[0]["id"] == target["id"]
-    assert "JWT" in resolved[0]["summary"]
-    assert resolved[0]["link_note"] == "needs identity from auth"
+    assert "depends_on_resolved" not in hit
+    shown = await _call(server, "memory_show", id=dependent["id"])
+    assert shown["links"] == [
+        {
+            "type": "depends_on",
+            "ids": [target["id"]],
+            "note": "needs identity from auth",
+        }
+    ]
 
 
 async def test_search_omits_depends_on_resolved_when_no_links(
@@ -906,9 +959,7 @@ async def test_search_omits_depends_on_resolved_when_no_links(
 
 
 async def test_search_depends_on_resolved_caps_per_hit(server: Any) -> None:
-    """No more than 3 resolved targets surface per hit. The 4th+ link
-    still exists on the memory; the model can call memory_show to see
-    the full graph."""
+    """memory_show lists every depends_on target, in one group."""
     targets = []
     for i in range(5):
         t = await _call(
@@ -931,10 +982,8 @@ async def test_search_depends_on_resolved_caps_per_hit(server: Any) -> None:
         links=[{"type": "depends_on", "target_id": t["id"]} for t in targets],
     )
 
-    hits = _unwrap(await _call(server, "memory_search", query="dependent"))
-    hit = next(h for h in hits if h["id"] == dependent["id"])
-    assert "depends_on_resolved" in hit
-    assert len(hit["depends_on_resolved"]) == 3  # capped
+    shown = await _call(server, "memory_show", id=dependent["id"])
+    assert shown["links"] == [{"type": "depends_on", "ids": [t["id"] for t in targets]}]
 
 
 async def test_search_depends_on_resolved_skips_tombstoned_target(
@@ -969,21 +1018,13 @@ async def test_search_depends_on_resolved_skips_tombstoned_target(
     assert "depends_on_resolved" not in hit or hit["depends_on_resolved"] == []
 
 
-async def test_search_depends_on_resolved_skips_cross_project_target(
+async def test_search_never_reveals_a_cross_project_dependency(
     memory_dir: Path,
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A depended-on memory in a different project must NOT be inlined
-    via `depends_on_resolved` when the search is auto-scoped to the
-    caller's project. The hit itself is correctly filtered upstream,
-    but the dependency auto-pull built its side-map from the pre-filter
-    loader output and would otherwise resolve cross-project targets —
-    leaking memory that the caller's auto-scope was explicitly hiding.
-    The link surface admits the caller's project, its sub-projects and
-    global records only (LINKS, design 3.5); each memory is homed in the
-    checkout it is written in.
-    """
+    """A search auto-scoped to its project never loads or names a depended-on
+    record homed in another project."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     # Write the cross-project target (memory_B) standing in checkout bar.
@@ -1017,26 +1058,17 @@ async def test_search_depends_on_resolved_skips_cross_project_target(
 
     # Search from checkout foo (auto_scope defaults True). The hit list
     # must contain A; A's depends_on_resolved must NOT contain B.
-    hits = _unwrap(
-        await _call(server_foo, "memory_search", query="cross-project dependency")
+    hits = await _search_without_loading(
+        server_foo, monkeypatch, target["id"], query="cross-project dependency"
     )
-    hit = next(h for h in hits if h["id"] == dependent["id"])
-    resolved = hit.get("depends_on_resolved")
-    # Either omitted (only link's target was filtered out) or list
-    # without the cross-project target — both shapes are acceptable;
-    # the leak case would put `target["id"]` into `resolved`.
-    if resolved is not None:
-        assert target["id"] not in {r["id"] for r in resolved}
+    assert dependent["id"] in {h["id"] for h in hits}
 
 
-async def test_search_depends_on_resolved_skips_disabled_scope_target(
-    server: Any,
+async def test_search_never_reveals_a_disabled_scope_dependency(
+    server: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A depended-on memory in a session-disabled scope must NOT be
-    inlined via `depends_on_resolved`. The hit list itself is
-    already filtered via `excluded_scopes`, but the dependency
-    auto-pull would otherwise resolve targets from the pre-filter
-    loader output — undoing the disable via the dependency edge."""
+    """A search never loads or names a depended-on record in a
+    session-disabled scope."""
     target = await _call(
         server,
         "memory_write",
@@ -1063,24 +1095,17 @@ async def test_search_depends_on_resolved_skips_disabled_scope_target(
     # still find it (it lives in projects:beta), but the resolved
     # depends_on must not surface the disabled-scope target.
     await _call(server, "memory_admin", action="disable_scope", scope="projects:alpha")
-    hits = _unwrap(await _call(server, "memory_search", query="beta dependent"))
-    hit = next(h for h in hits if h["id"] == dependent["id"])
-    resolved = hit.get("depends_on_resolved")
-    if resolved is not None:
-        assert target["id"] not in {r["id"] for r in resolved}
+    hits = await _search_without_loading(
+        server, monkeypatch, target["id"], query="beta dependent"
+    )
+    assert dependent["id"] in {h["id"] for h in hits}
 
 
 async def test_search_depends_on_resolved_targeted_loads_cross_topic_target(
     server: Any, monkeypatch: Any
 ) -> None:
-    """Cross-topic depends_on auto-pull. Pre-fix: the side-map built
-    from the search's pool (the records the query matches) silently
-    skipped depended-on targets whose body didn't match the query —
-    exactly the auto-pull case that exists because B depends_on A
-    when A provides context the query for B won't surface. Post-fix:
-    `attach_depends_on_resolved` calls `store.load_one` for missing
-    target ids and merges them into the side-map.
-    """
+    """A depends_on target the query does not match is still named by
+    memory_show of the record that depends on it."""
     target = await _call(
         server,
         "memory_write",
@@ -1108,27 +1133,23 @@ async def test_search_depends_on_resolved_targeted_loads_cross_topic_target(
         ],
     )
 
-    # Query for B's distinctive phrase ("rate limiter") — the FTS
-    # prefilter surfaces B but not A (A's body has no overlapping
-    # tokens with the query). The targeted-load path must pull A
-    # in via `load_one` and surface it in B's `depends_on_resolved`.
     hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
-    hit = next(h for h in hits if h["id"] == dependent["id"])
-    assert "depends_on_resolved" in hit
-    resolved = hit["depends_on_resolved"]
-    assert {r["id"] for r in resolved} == {target["id"]}
-    assert resolved[0]["link_note"] == "needs xylophone for identity"
+    assert target["id"] not in {h["id"] for h in hits}
+    shown = await _call(server, "memory_show", id=dependent["id"])
+    assert shown["links"] == [
+        {
+            "type": "depends_on",
+            "ids": [target["id"]],
+            "note": "needs xylophone for identity",
+        }
+    ]
 
 
-async def test_search_depends_on_resolved_targeted_load_honors_disabled_scope(
+async def test_search_never_loads_a_disabled_scope_dependency(
     server: Any, monkeypatch: Any
 ) -> None:
-    """Counterpart to bf92912 for the targeted-load path. A
-    cross-topic `depends_on` target whose scope is session-disabled
-    must NOT surface via the targeted-load fallback either — the
-    same `excluded_scopes` filter that the side-map path applies has
-    to run at load time, otherwise the targeted-load reintroduces
-    the scope-leak."""
+    """A depended-on record in a disabled scope that the query does not
+    match is never loaded or named by a search."""
     target = await _call(
         server,
         "memory_write",
@@ -1154,27 +1175,19 @@ async def test_search_depends_on_resolved_targeted_load_honors_disabled_scope(
     # Disable the target's scope. Query for B's distinctive phrase
     # (so A is NOT in the FTS prefilter — pure targeted-load path).
     await _call(server, "memory_admin", action="disable_scope", scope="projects:alpha")
-    hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
-    hit = next(h for h in hits if h["id"] == dependent["id"])
-    resolved = hit.get("depends_on_resolved")
-    # The targeted-load must drop A at load time before it joins the
-    # side-map; either the key is omitted (only link's target was
-    # filtered) or the list is non-empty without A.
-    if resolved is not None:
-        assert target["id"] not in {r["id"] for r in resolved}
+    hits = await _search_without_loading(
+        server, monkeypatch, target["id"], query="rate limiter"
+    )
+    assert dependent["id"] in {h["id"] for h in hits}
 
 
-async def test_search_depends_on_resolved_targeted_load_honors_cross_project_origin(
+async def test_search_never_loads_a_cross_project_dependency(
     memory_dir: Path,
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Counterpart to bf92912 for the targeted-load path against the
-    auto-scope filter. A cross-topic `depends_on` target written
-    in another project must NOT surface via the targeted-load
-    fallback when the caller is auto-scoped to its own project: the
-    LINKS admission (design 3.5) re-runs at load time, mirroring the
-    side-map path."""
+    """A depended-on record in another project that the query does not
+    match is never loaded or named by a search."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     # Write the cross-project target standing in checkout bar. Body is
@@ -1212,27 +1225,15 @@ async def test_search_depends_on_resolved_targeted_load_honors_cross_project_ori
     # ("rate limiter") does not match A's body — the targeted-load
     # is the only path that could surface A, and it must drop A
     # because the LINKS admission is applied at load.
-    hits = _unwrap(await _call(server_foo, "memory_search", query="rate limiter"))
-    hit = next(h for h in hits if h["id"] == dependent["id"])
-    resolved = hit.get("depends_on_resolved")
-    if resolved is not None:
-        assert target["id"] not in {r["id"] for r in resolved}
+    hits = await _search_without_loading(
+        server_foo, monkeypatch, target["id"], query="rate limiter"
+    )
+    assert dependent["id"] in {h["id"] for h in hits}
 
 
-async def test_search_depends_on_resolved_max_total_caps_across_hits(
-    server: Any, monkeypatch: Any
-) -> None:
-    """The cross-hit `max_total=10` cap on `depends_on_resolved`
-    survives the targeted-load fallback: even when every hit has
-    many distinct cross-topic missing targets, the SUM of the
-    `depends_on_resolved` list lengths across the result set must
-    not exceed 10. Pins the cap that the new targeted-load path
-    must respect; closes the side observation that no test
-    previously locked this cross-hit cap down."""
-    # Build 5 hits, each with 5 distinct cross-topic depends_on
-    # targets (25 targets total). Pre-fix: most would silently drop
-    # because they're cross-topic. Post-fix: targeted-load surfaces
-    # them, but the cap clamps the response to <=10.
+async def test_search_never_loads_any_dependency(server: Any, monkeypatch: Any) -> None:
+    """However many depended-on records the hits link to, a search loads
+    and names none of them."""
     target_ids: list[str] = []
     for i in range(25):
         t = await _call(
@@ -1263,15 +1264,11 @@ async def test_search_depends_on_resolved_max_total_caps_across_hits(
         )
         dependent_ids.append(d["id"])
 
-    hits = _unwrap(
-        await _call(server, "memory_search", query="rate limiter", max_results=10)
-    )
-    total_resolved = sum(
-        len(h.get("depends_on_resolved", []))
-        for h in hits
-        if h["id"] in set(dependent_ids)
-    )
-    assert total_resolved <= 10
+    for target_id in target_ids:
+        hits = await _search_without_loading(
+            server, monkeypatch, target_id, query="rate limiter", max_results=10
+        )
+        assert set(dependent_ids) <= {h["id"] for h in hits}
 
 
 async def test_search_depends_on_resolved_targeted_load_skips_deleted_target(
@@ -2977,7 +2974,7 @@ async def test_update_can_retag_to_ambient(server: Any) -> None:
     )
     # Default category for a fresh write is `fact`.
     shown_before = await _call(server, "memory_show", id=written["id"])
-    assert shown_before["category"] == "fact"
+    assert "category" not in shown_before  # the default, `fact`
 
     res = await _call(
         server,
@@ -3182,7 +3179,7 @@ async def test_update_accepts_every_proposable_category(
     assert res["category"] == category
     # Persisted to disk.
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["category"] == category
+    assert shown.get("category", "fact") == category
 
 
 # ---------------------------------------------------------------------------
@@ -3696,7 +3693,7 @@ async def test_memory_update_content_resets_last_verified_at(server: Any) -> Non
 
     await _call(server, "memory_update", id=written["id"], content="rewritten body.")
     post = await _call(server, "memory_show", id=written["id"])
-    assert post["last_verified_at"] is None
+    assert "last_verified_at" not in post
 
 
 async def test_memory_verify_rejects_oversized_note(server: Any) -> None:
@@ -3785,18 +3782,18 @@ async def test_memory_update_content_clears_verified_attestation(
         verified_absent_paths=["/data/remote-only"],
     )
     pre = await _call(server, "memory_show", id=written["id"])
-    assert pre["verified_paths"] == [cited]
+    assert pre["paths"][cited].startswith("present, attested")
+    assert pre["paths"]["/data/remote-only"] == "attested absent"
     assert pre["verified_commits"] == ["abc1234"]
     assert pre["verified_versions"] == ["1.2.3"]
-    assert pre["verified_absent_paths"] == ["/data/remote-only"]
 
     await _call(server, "memory_update", id=written["id"], content="rewritten body.")
     post = await _call(server, "memory_show", id=written["id"])
-    assert post["last_verified_at"] is None
-    assert post["verified_paths"] == []
-    assert post["verified_commits"] == []
-    assert post["verified_versions"] == []
-    assert post["verified_absent_paths"] == []
+    assert "last_verified_at" not in post
+    assert "/data/remote-only" not in post.get("paths", {})
+    assert "attested" not in post.get("paths", {}).get(cited, "")
+    assert "verified_commits" not in post
+    assert "verified_versions" not in post
 
 
 async def test_memory_update_scope_only_preserves_verified_attestation(
@@ -3828,7 +3825,7 @@ async def test_memory_update_scope_only_preserves_verified_attestation(
     )
     post = await _call(server, "memory_show", id=written["id"])
     assert post["last_verified_at"] == pre["last_verified_at"]
-    assert post["verified_paths"] == [cited]
+    assert post["paths"][cited].startswith("present, attested")
     assert post["verified_versions"] == ["1.2.3"]
 
 
@@ -3842,19 +3839,17 @@ async def test_memory_show_includes_last_verified_at_null_default(
 ) -> None:
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
     shown = await _call(server, "memory_show", id=written["id"])
-    assert "last_verified_at" in shown
-    assert shown["last_verified_at"] is None
+    assert "last_verified_at" not in shown
+    assert shown["verification"] == {"status": "never"}
 
 
 async def test_memory_show_omits_path_drift_when_no_paths(server: Any) -> None:
-    """A body without filesystem paths should produce path_drift: null,
-    not an empty dict — the consumer branches on `if path_drift is not
-    None` to decide whether to surface drift to the user."""
+    """A body without filesystem paths carries no `paths` key."""
     written = await _call(
         server, "memory_write", content="just prose, no paths.", scopes=["tools"]
     )
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["path_drift"] is None
+    assert "paths" not in shown
 
 
 async def test_memory_show_surfaces_path_drift_when_path_missing(
@@ -3868,8 +3863,8 @@ async def test_memory_show_surfaces_path_drift_when_path_missing(
         scopes=["tools"],
     )
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["path_drift"] is not None
-    assert str(missing) in shown["path_drift"]["missing"]
+    assert shown["paths"][str(missing)] == "missing"
+    assert str(missing) in shown["reason"]
 
 
 async def test_memory_show_omits_path_drift_when_paths_healthy(
@@ -3884,9 +3879,9 @@ async def test_memory_show_omits_path_drift_when_paths_healthy(
         scopes=["tools"],
     )
     shown = await _call(server, "memory_show", id=written["id"])
-    # Healthy paths still get checked, but path_drift is null because
-    # nothing's actionable. The model shouldn't be nudged on healthy state.
-    assert shown["path_drift"] is None
+    # A healthy path reads present, and nothing asks for a check.
+    assert shown["paths"] == {str(real): "present"}
+    assert shown["staleness_verdict"] == "fresh"
 
 
 # ---------------------------------------------------------------------------
@@ -3902,7 +3897,9 @@ async def test_memory_search_hits_carry_last_verified_at(server: Any) -> None:
 
     hits = _unwrap(await _call(server, "memory_search", query="searchable durable"))
     assert len(hits) >= 1
-    assert hits[0]["last_verified_at"] is not None
+    assert "last_verified_at" not in hits[0]
+    shown = await _call(server, "memory_show", id=hits[0]["id"])
+    assert shown["last_verified_at"] is not None
 
 
 async def test_memory_search_expand_top_surfaces_path_drift(
@@ -3925,22 +3922,14 @@ async def test_memory_search_expand_top_surfaces_path_drift(
     )
     assert len(hits) >= 1
     assert hits[0]["relevance"] == "high"
-    assert hits[0].get("path_drift") is not None
-    assert str(missing) in hits[0]["path_drift"]["missing"]
+    assert hits[0]["staleness_verdict"] == "spot_check_recommended"
+    assert str(missing) in hits[0]["reason"]
 
 
 async def test_memory_search_surfaces_path_drift_without_expand_top(
     server: Any, tmp_path: Path
 ) -> None:
-    """Per-hit path drift detail surfaces even without expand_top.
-
-    The search pipeline runs `detect_path_drift` on every hit's body
-    inside `_build_hit`; the missing-paths list rides through on
-    `MemoryHit` so the response builder can expose `path_drift` directly.
-    A `spot_check_recommended` hit is actionable without a memory_show
-    round-trip — the model reads the missing paths and decides what to
-    do.
-    """
+    """Every hit names its missing paths in its reason, expanded or not."""
     missing = tmp_path / "not-expanded.txt"
     await _call(
         server,
@@ -3950,10 +3939,8 @@ async def test_memory_search_surfaces_path_drift_without_expand_top(
     )
     hits = _unwrap(await _call(server, "memory_search", query="something reference"))
     assert len(hits) >= 1
-    assert hits[0].get("path_drift") is not None
-    assert str(missing) in hits[0]["path_drift"]["missing"]
-    # Healthy/absent path_drift cases still omit the field — only the
-    # `has_drift or verified` cases surface it.
+    assert hits[0]["staleness_verdict"] == "spot_check_recommended"
+    assert str(missing) in hits[0]["reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -3983,10 +3970,8 @@ async def test_new_tools_registered(server: Any) -> None:
 
 
 async def test_memory_show_includes_verification_block_never(server: Any) -> None:
-    """A fresh write has never been verified — memory_show must
-    surface the never-recommendation. This is the regression we're
-    fixing: a model retrieving a memory like this should see an
-    explicit prompt to spot-check, not a quiet null timestamp."""
+    """A fresh write citing nothing testable has never been verified,
+    says so, and asks for no check."""
     written = await _call(
         server,
         "memory_write",
@@ -3995,34 +3980,25 @@ async def test_memory_show_includes_verification_block_never(server: Any) -> Non
     )
     shown = await _call(server, "memory_show", id=written["id"])
     assert "verification" in shown
-    block = shown["verification"]
-    assert block["status"] == "never"
-    assert block["last_verified_at"] is None
-    assert block["age_days"] is None
-    assert block["recommendation"] is not None
-    assert "spot-check" in block["recommendation"].lower()
+    assert shown["verification"] == {"status": "never"}
+    assert shown["staleness_verdict"] == "fresh"
+    assert "reason" not in shown
 
 
 async def test_memory_show_includes_verification_block_fresh(server: Any) -> None:
-    """After memory_verify, the same retrieval flips to fresh with
-    a null recommendation — the absence of a recommendation is the
-    "nothing to do" signal."""
+    """After memory_verify the record reads fresh, with its stamp."""
     written = await _call(
         server, "memory_write", content="another durable fact", scopes=["tools"]
     )
     await _call(server, "memory_verify", id=written["id"])
     shown = await _call(server, "memory_show", id=written["id"])
-    block = shown["verification"]
-    assert block["status"] == "fresh"
-    assert block["last_verified_at"] is not None
-    assert block["recommendation"] is None
+    assert shown["verification"] == {"status": "fresh", "age_days": 0}
+    assert shown["last_verified_at"] is not None
 
 
 async def test_memory_search_hits_carry_verification_block(server: Any) -> None:
-    """Every search hit carries the verification block. A hit on a
-    never-verified memory must have a populated recommendation —
-    otherwise a model could triage from search results without ever
-    paying the spot-check cost."""
+    """A hit carries the verdict and no verification block, which is
+    memory_show's."""
     await _call(
         server,
         "memory_write",
@@ -4031,9 +4007,8 @@ async def test_memory_search_hits_carry_verification_block(server: Any) -> None:
     )
     hits = _unwrap(await _call(server, "memory_search", query="kafka topics"))
     assert len(hits) >= 1
-    block = hits[0]["verification"]
-    assert block["status"] == "never"
-    assert block["recommendation"] is not None
+    assert "verification" not in hits[0]
+    assert hits[0]["staleness_verdict"] == "fresh"
 
 
 async def test_verification_block_uses_config_threshold(memory_dir: Path) -> None:
@@ -4056,10 +4031,9 @@ async def test_verification_block_uses_config_threshold(memory_dir: Path) -> Non
     )
     await _call(srv, "memory_verify", id=written["id"])
     shown = await _call(srv, "memory_show", id=written["id"])
-    block = shown["verification"]
-    assert block["status"] == "stale"
-    assert block["recommendation"] is not None
-    assert block["stale_after_days"] == 0
+    assert shown["verification"]["status"] == "stale"
+    # Age alone asks for nothing.
+    assert shown["staleness_verdict"] == "fresh"
 
 
 async def test_verification_block_path_drift_coexist(
@@ -4068,7 +4042,7 @@ async def test_verification_block_path_drift_coexist(
     """The two staleness signals are independent. A never-verified
     memory whose body cites a missing path shows both — the model's
     payload carries `verification.status='never'` and a populated
-    `path_drift.missing`."""
+    missing path in `paths`."""
     missing = tmp_path / "drifted.txt"
     written = await _call(
         server,
@@ -4078,8 +4052,8 @@ async def test_verification_block_path_drift_coexist(
     )
     shown = await _call(server, "memory_show", id=written["id"])
     assert shown["verification"]["status"] == "never"
-    assert shown["path_drift"] is not None
-    assert str(missing) in shown["path_drift"]["missing"]
+    assert shown["paths"][str(missing)] == "missing"
+    assert str(missing) in shown["reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -4453,12 +4427,8 @@ async def test_a_synced_stamp_this_host_never_made_reads_remote_on_every_surface
     hits = hits.get("result", hits) if isinstance(hits, dict) else hits
     (hit,) = hits
     assert hit["provenance"] == "synced"
-    assert hit["verification"]["status"] == "remote"
-    assert hit["verification"]["age_days"] is None
-    assert hit["verification"]["last_verified_at"] is not None
-    assert "another host" in hit["verification"]["recommendation"]
+    assert "another host" in hit["reason"]
     assert hit["staleness_verdict"] == "spot_check_required"
-    assert hit["last_verified_at"] is not None
 
     expanded = await _call(
         server,
@@ -4471,12 +4441,14 @@ async def test_a_synced_stamp_this_host_never_made_reads_remote_on_every_surface
         expanded.get("result", expanded) if isinstance(expanded, dict) else expanded
     )
     assert "body" in expanded[0]
-    assert expanded[0]["verification"]["status"] == "remote"
+    assert "another host" in expanded[0]["reason"]
     assert expanded[0]["staleness_verdict"] == "spot_check_required"
 
     shown = await _call(server, "memory_show", id=written["id"])
     assert shown["provenance"] == "synced"
-    assert shown["verification"]["status"] == "remote"
+    assert shown["verification"] == {"status": "remote"}
+    assert shown["last_verified_at"] is not None
+    assert "another host" in shown["reason"]
     assert shown["staleness_verdict"] == "spot_check_required"
 
     # A verify on this host is the one thing that lifts the rule.
@@ -4489,14 +4461,15 @@ async def test_a_synced_stamp_this_host_never_made_reads_remote_on_every_surface
         server, "memory_search", query="staging cluster postgres", auto_scope=False
     )
     hits = hits.get("result", hits) if isinstance(hits, dict) else hits
-    assert hits[0]["verification"]["status"] == "fresh"
+    assert hits[0]["staleness_verdict"] == "fresh"
 
 
 async def test_the_trust_rule_leaves_unstamped_and_local_records_alone(
     server: Any, memory_dir: Path
 ) -> None:
-    """A synced record with no stamp already reads `never`; a local record
-    with a stamp reads `fresh`. Neither is the rule's business."""
+    """The remote-stamp rule leaves both alone: a synced record with no
+    stamp reads `never` and asks for a check as untrusted, not as remote;
+    a local record with a stamp reads `fresh`."""
     unstamped = await _call(
         server,
         "memory_write",
@@ -4517,8 +4490,37 @@ async def test_the_trust_rule_leaves_unstamped_and_local_records_alone(
     shown = await _call(server, "memory_show", id=unstamped["id"])
     assert shown["provenance"] == "synced"
     assert shown["verification"]["status"] == "never"
-    assert shown["staleness_verdict"] == "spot_check_required"
+    assert shown["staleness_verdict"] == "spot_check_recommended"
+    assert "arrived by sync" in shown["reason"]
+    assert "another host" not in shown["reason"]
     shown = await _call(server, "memory_show", id=stamped_local["id"])
-    assert shown["provenance"] == "local"
+    assert "provenance" not in shown
     assert shown["verification"]["status"] == "fresh"
     assert shown["staleness_verdict"] == "fresh"
+
+
+async def test_a_path_attested_absent_that_appears_asks_for_a_check(
+    server: Any, tmp_path: Path
+) -> None:
+    """The only drift is a path a verify attested absent that is now
+    present: the hit and the show ask for a check and name the path."""
+    gone = tmp_path / "retired.conf"
+    written = await _call(
+        server,
+        "memory_write",
+        content=f"the retired config `{gone}` is gone from this box",
+        scopes=["tools"],
+    )
+    await _call(
+        server, "memory_verify", id=written["id"], verified_absent_paths=[str(gone)]
+    )
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["staleness_verdict"] == "fresh"
+    gone.write_text("back\n")
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["staleness_verdict"] == "spot_check_recommended"
+    assert str(gone) in shown["reason"]
+    hits = _unwrap(await _call(server, "memory_search", query="retired config"))
+    (hit,) = [h for h in hits if h["id"] == written["id"]]
+    assert hit["staleness_verdict"] == "spot_check_recommended"
+    assert str(gone) in hit["reason"]

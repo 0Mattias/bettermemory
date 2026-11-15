@@ -406,15 +406,14 @@ async def test_write_sets_the_link_and_search_renders_it(store: Store) -> None:
     assert shown["links"] == [
         {
             "type": "supersedes",
-            "target_id": old["id"],
+            "ids": [old["id"]],
             "note": "set at write time: 'moved' in this memory, '9443' against '8443' (kin)",
         }
     ]
 
     hits = await _search(server, "auth service port ingress")
     stale = _hit(hits, old["id"])
-    assert [e["id"] for e in stale["superseded_by"]] == [new["id"]]
-    assert stale["superseded_by"][0]["link_note"].startswith("set at write time")
+    assert stale["superseded_by"] == [new["id"]]
     assert "superseded_by" not in _hit(hits, new["id"])
 
     events = [
@@ -481,10 +480,10 @@ async def test_declared_supersedes_sets_the_link(store: Store) -> None:
     assert new["supersedes"] == [{"id": old["id"], "evidence": "declared"}]
     shown = _unwrap(await _call(server, "memory_show", id=new["id"]))
     assert shown["links"] == [
-        {"type": "supersedes", "target_id": old["id"], "note": "declared at write time"}
+        {"type": "supersedes", "ids": [old["id"]], "note": "declared at write time"}
     ]
     hits = await _search(server, "auth JWT session tokens")
-    assert [e["id"] for e in _hit(hits, old["id"])["superseded_by"]] == [new["id"]]
+    assert _hit(hits, old["id"])["superseded_by"] == [new["id"]]
     events = [
         e
         for e in store.iter_events()

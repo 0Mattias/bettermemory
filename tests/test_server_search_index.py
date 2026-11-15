@@ -99,9 +99,8 @@ async def test_depends_on_targeted_load_survives_oserror(
     """A transient OSError while targeted-loading a `depends_on` target
     must NOT abort the whole search (FIX 3).
 
-    `attach_depends_on_resolved` runs BEFORE `expand_top` and, when a
-    hit's `depends_on` target isn't in the query's pool, loads it
-    directly via `store.load_one`. That loop
+    A search never loads a hit's `depends_on` target, so a failing read
+    of one cannot reach the hit. That loop
     only caught `(MemoryNotFoundError, TombstonedError)` — NOT OSError —
     so a flaky read (EIO, vanished file on a network mount) of the
     target's backing file raised straight out of `memory_search`,

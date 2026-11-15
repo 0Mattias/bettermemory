@@ -187,7 +187,7 @@ async def test_memory_show_carries_the_anchor_beside_the_attestations(
     memory = _seed(store)
     server = _build(memory_dir)
     shown = await _call(server, "memory_show", id=memory.id)
-    assert shown["verified_head"] is None
+    assert "verified_head" not in shown
     store.mark_verified(memory.id, verified_head=_SHA)
     shown = await _call(server, "memory_show", id=memory.id)
     assert shown["verified_head"] == _SHA

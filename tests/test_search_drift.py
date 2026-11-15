@@ -1,12 +1,6 @@
-"""Tests for path-drift counts surfaced on every search hit + the
-claims-only commit-drift gate + race-safety of load_all against
-concurrent tombstoning.
-
-Background: drift used to fire only on `expand_top=True` and only for the
-top hit when its relevance was "high". Hits 2-5 in a default search carried
-stale path claims silently. Surfacing cheap drift counts on every hit lets
-the model self-triage which hit to expand without round-tripping through
-memory_show.
+"""Tests for what a search hit says about drift: the verdict on every
+hit and the reason that names what to check, the claims-only commit-drift
+gate, and race-safety of load_all against concurrent tombstoning.
 """
 
 from __future__ import annotations
@@ -60,17 +54,30 @@ def _hits(raw: Any) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Drift counts on every hit
+# The verdict and its reason on every hit
 # ---------------------------------------------------------------------------
 
 
+#: The keys a search hit may carry; the rest of a record is memory_show's.
+_HIT_KEYS = {
+    "id",
+    "snippet",
+    "relevance",
+    "staleness_verdict",
+    "reason",
+    "superseded_by",
+    "contradicts",
+    "held",
+    "body",
+    "use_token",
+}
+
+
 async def test_every_hit_carries_drift_counts(server: Any, tmp_path: Path) -> None:
-    """A search response should include path_drift_checked and
-    path_drift_missing on every hit — not just the top one — so the
-    model can pick which hit to expand."""
+    """Every hit carries the verdict its path checks give, in the compact
+    shape; the per-path detail is memory_show's."""
     real_path = tmp_path / "real.txt"
     real_path.write_text("real")
-
     await _call(
         server,
         "memory_write",
@@ -83,14 +90,14 @@ async def test_every_hit_carries_drift_counts(server: Any, tmp_path: Path) -> No
         content="another healthy memory mentioning the same `tools` topic",
         scopes=["tools"],
     )
-    raw = await _call(server, "memory_search", query="tools healthy memory")
-    hits = _hits(raw)
+    hits = _hits(await _call(server, "memory_search", query="tools healthy memory"))
     assert len(hits) >= 2
     for hit in hits:
-        assert "path_drift_checked" in hit
-        assert "path_drift_missing" in hit
-        assert isinstance(hit["path_drift_checked"], int)
-        assert isinstance(hit["path_drift_missing"], int)
+        assert set(hit) <= _HIT_KEYS
+        assert hit["staleness_verdict"] == "fresh"
+        assert "reason" not in hit
+    shown = [await _call(server, "memory_show", id=hit["id"]) for hit in hits]
+    assert [s.get("paths") for s in shown].count({str(real_path): "present"}) == 1
 
 
 async def test_drift_counts_fire_for_missing_path(server: Any, tmp_path: Path) -> None:
@@ -98,11 +105,11 @@ async def test_drift_counts_fire_for_missing_path(server: Any, tmp_path: Path) -
     body = f"see the script at `{bogus}` for the deploy steps"
     await _call(server, "memory_write", content=body, scopes=["tools"])
 
-    raw = await _call(server, "memory_search", query="deploy script tools")
-    hits = _hits(raw)
-    assert len(hits) >= 1
-    assert hits[0]["path_drift_checked"] == 1
-    assert hits[0]["path_drift_missing"] == 1
+    hits = _hits(await _call(server, "memory_search", query="deploy script tools"))
+    assert hits[0]["staleness_verdict"] == "spot_check_recommended"
+    assert str(bogus) in hits[0]["reason"]
+    shown = await _call(server, "memory_show", id=hits[0]["id"])
+    assert shown["paths"] == {str(bogus): "missing"}
 
 
 async def test_drift_counts_zero_when_path_exists(server: Any, tmp_path: Path) -> None:
@@ -114,65 +121,45 @@ async def test_drift_counts_zero_when_path_exists(server: Any, tmp_path: Path) -
         content=f"deploy step lives at `{real}`",
         scopes=["tools"],
     )
-    raw = await _call(server, "memory_search", query="deploy step lives")
-    hits = _hits(raw)
-    assert len(hits) >= 1
-    assert hits[0]["path_drift_checked"] == 1
-    assert hits[0]["path_drift_missing"] == 0
+    hits = _hits(await _call(server, "memory_search", query="deploy step lives"))
+    assert hits[0]["staleness_verdict"] == "fresh"
+    assert "reason" not in hits[0]
+    shown = await _call(server, "memory_show", id=hits[0]["id"])
+    assert shown["paths"] == {str(real): "present"}
 
 
 async def test_drift_counts_zero_for_pathless_body(server: Any) -> None:
-    """A memory body with no path-shaped tokens should carry both
-    counts at zero — it's a positive "nothing to spot-check" signal,
-    not noise."""
+    """Never verified and nothing testable: the calendar alone asks for no
+    check."""
     await _call(
         server,
         "memory_write",
         content="prefer code-driven tutorials over abstract explanations",
         scopes=["learning-style"],
     )
-    raw = await _call(server, "memory_search", query="tutorials")
-    hits = _hits(raw)
-    assert hits[0]["path_drift_checked"] == 0
-    assert hits[0]["path_drift_missing"] == 0
+    hits = _hits(await _call(server, "memory_search", query="tutorials"))
+    assert hits[0]["staleness_verdict"] == "fresh"
+    assert "reason" not in hits[0]
+    shown = await _call(server, "memory_show", id=hits[0]["id"])
+    assert "paths" not in shown
 
 
 async def test_expand_top_still_surfaces_full_drift_report(
     server: Any, tmp_path: Path
 ) -> None:
-    """When expand_top=True fires, the per-hit counts coexist with the
-    full path_drift report on the top hit — the existing surface that
-    surfaces actual missing paths is unchanged."""
     bogus = tmp_path / "missing.txt"
     body = f"deploy at `{bogus}`"
     await _call(server, "memory_write", content=body, scopes=["tools"])
-    raw = await _call(
-        server,
-        "memory_search",
-        query="deploy tools missing",
-        expand_top=True,
+    hits = _hits(
+        await _call(
+            server, "memory_search", query="deploy tools missing", expand_top=True
+        )
     )
-    hits = _hits(raw)
     top = hits[0]
-    assert top["path_drift_missing"] == 1
-    # When drift is found AND expand_top fires, full report is present.
-    if "path_drift" in top and top["path_drift"]:
-        assert str(bogus) in top["path_drift"]["missing"]
-
-
-# ---------------------------------------------------------------------------
-# Commit-drift gate parity — claims-only memories
-# ---------------------------------------------------------------------------
-#
-# A claims-only memory (declared claims, citation-less body, no
-# verified_paths) is fully governed by its claims — the declaration IS the
-# anchor (`verify._resolve_with_claims`). All four commit-drift surfaces
-# (per-hit search, memory_show, memory_health's commit_drift_debt, and the
-# scope-overview curation rollup) must gate on the same anchors-or-claims
-# condition, or the same memory reads a different staleness_verdict
-# depending on which tool the model reaches for. Fixture pattern follows
-# `test_server_claims.py`: tmp repo with controlled author dates,
-# `capture_origin` monkeypatched to point at it.
+    assert top["body"].strip() == body
+    assert str(bogus) in top["reason"]
+    shown = await _call(server, "memory_show", id=top["id"])
+    assert shown["paths"][str(bogus)] == "missing"
 
 
 _CLAIMED_MODULE = '''\
@@ -289,12 +276,15 @@ async def test_claims_only_memory_drift_agrees_across_surfaces(
 
     raw = await _call(server, "memory_search", query="handler drift escalation policy")
     hit = next(h for h in _hits(raw) if h["id"] == memory_id)
-    assert hit.get("commit_drift_count") == 1
-    assert hit["claim_drift"] == {"checked": 1, "drifted": ["pkg/mod.py::handler"]}
     assert hit["staleness_verdict"] == "spot_check_recommended"
+    assert "pkg/mod.py::handler" in hit["reason"]
 
     shown = await _call(server, "memory_show", id=memory_id)
     assert shown["commit_drift"]["commits_since_verify"] == 1
+    assert shown["commit_drift"]["claim_drift"] == {
+        "checked": 1,
+        "drifted": ["pkg/mod.py::handler"],
+    }
     assert shown["staleness_verdict"] == "spot_check_recommended"
 
     report = await _call(
@@ -329,10 +319,9 @@ async def test_claims_only_stale_memory_with_clean_claims_demotes_on_search(
 
     raw = await _call(server, "memory_search", query="handler drift escalation policy")
     hit = next(h for h in _hits(raw) if h["id"] == memory_id)
-    assert hit.get("commit_drift_count") == 0
-    assert hit["claim_drift"] == {"checked": 1, "drifted": []}
     assert hit["staleness_verdict"] == "fresh"
 
     shown = await _call(server, "memory_show", id=memory_id)
-    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["commit_drift"]["commits_since_verify"] == 0
+    assert shown["commit_drift"]["claim_drift"] == {"checked": 1, "drifted": []}
     assert shown["staleness_verdict"] == "fresh"

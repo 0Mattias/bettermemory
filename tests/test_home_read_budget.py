@@ -10,6 +10,8 @@ import pytest
 
 from bettermemory import _caches, _response, origin_history
 from bettermemory import git_read_budget
+from bettermemory.verify import CommitDriftUnread
+from bettermemory.verify_basis import unread_recommendation
 
 from ._mcp import call_tool
 from .test_commit_drift_cache import _git_args, _whole_history_logs
@@ -69,9 +71,14 @@ async def test_a_warm_search_retains_twenty_home_histories(
         hits = found["result"] if isinstance(found, dict) else found
         assert {hit["id"] for hit in hits} == set(ids)
         if basis == "reachability":
-            assert all(hit["commit_drift_count"] == 0 for hit in hits)
+            assert all(hit["staleness_verdict"] == "fresh" for hit in hits)
+            assert not any("reason" in hit for hit in hits)
         else:
-            assert all(hit["commit_drift_unread"] for hit in hits)
+            assert all(
+                unread_recommendation(CommitDriftUnread.UNCONFIRMED_CUT)
+                in hit["reason"]
+                for hit in hits
+            )
             assert all(
                 hit["staleness_verdict"] == "spot_check_required" for hit in hits
             )

@@ -35,6 +35,7 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 from ._mcp import call_tool as _mcp_call
+from ._internal_rows import raw_hits
 
 _GIT_AVAILABLE = shutil.which("git") is not None
 _REMOTE = "git@github.com:example/claims.git"
@@ -344,8 +345,8 @@ async def test_update_body_edit_clears_claims(server_in_repo) -> None:
     )
     assert updated.get("status") != "stale"
     shown = await _call(server, "memory_show", id=memory_id)
-    assert shown["claims"] == []
-    assert shown["last_verified_at"] is None
+    assert "claims" not in shown
+    assert "last_verified_at" not in shown
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +376,7 @@ async def test_body_churn_in_claimed_file_reads_clean(server_in_repo) -> None:
     shown = await _call(server, "memory_show", id=memory_id)
     drift = shown["commit_drift"]
     assert drift is not None
-    assert drift["status"] == "clean"
+    assert drift["commits_since_verify"] == 0
     assert drift["commits_since_verify"] == 0
     assert drift["claim_drift"] == {"checked": 1, "drifted": []}
     assert shown["staleness_verdict"] == "fresh"
@@ -399,11 +400,11 @@ async def test_touching_claimed_binding_reads_drift_naming_the_claim(
 
     shown = await _call(server, "memory_show", id=memory_id)
     drift = shown["commit_drift"]
-    assert drift["status"] == "drift"
+    assert drift["commits_since_verify"] > 0
     assert drift["commits_since_verify"] == 1
     assert drift["claim_drift"]["checked"] == 1
     assert drift["claim_drift"]["drifted"] == ["pkg/mod.py::handler"]
-    assert "pkg/mod.py::handler" in drift["recommendation"]
+    assert "pkg/mod.py::handler" in shown["reason"]
     assert shown["staleness_verdict"] == "spot_check_recommended"
 
 
@@ -423,13 +424,15 @@ async def test_unclaimed_cited_file_keeps_any_touch_rule(server_in_repo) -> None
 
     shown = await _call(server, "memory_show", id=memory_id)
     drift = shown["commit_drift"]
-    assert drift["status"] == "drift"
+    assert drift["commits_since_verify"] > 0
     assert drift["commits_since_verify"] == 1
     # The claim itself did not drift; the ungoverned anchor did.
     assert drift["claim_drift"] == {"checked": 1, "drifted": []}
 
 
-async def test_search_hit_carries_claim_drift(server_in_repo) -> None:
+async def test_search_hit_carries_claim_drift(
+    server_in_repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
     server, repo = server_in_repo
     memory_id = await _write_claimed(server, "pkg/mod.py::handler")
     await _call(server, "memory_verify", id=memory_id)
@@ -443,6 +446,14 @@ async def test_search_hit_carries_claim_drift(server_in_repo) -> None:
         when=_FUTURE,
     )
 
+    hits = await _call(server, "memory_search", query="drift gate mod.py")
+    hits = hits["result"] if isinstance(hits, dict) and "result" in hits else hits
+    hit = next(h for h in hits if h["id"] == memory_id)
+    # The caller's hit names the claim the commit touched.
+    assert "pkg/mod.py::handler" in hit["reason"]
+    assert hit["staleness_verdict"] == "spot_check_recommended"
+    # The search's working row carries the count it computed.
+    raw_hits(monkeypatch)
     hits = await _call(server, "memory_search", query="drift gate mod.py")
     hits = hits["result"] if isinstance(hits, dict) and "result" in hits else hits
     hit = next(h for h in hits if h["id"] == memory_id)
@@ -495,7 +506,10 @@ async def test_write_stores_absence_claim_when_path_is_gone(
     server, _repo = server_in_repo
     memory_id = await _write_absence_claimed(server)
     shown = await _call(server, "memory_show", id=memory_id)
-    assert shown["claims"] == ["!pkg/legacy.py"]
+    # An absence claim names a path, so memory_show carries it in `paths`.
+    assert "claims" not in shown
+    (finding,) = [f for p, f in shown["paths"].items() if p.endswith("pkg/legacy.py")]
+    assert "claimed absent" in finding
 
 
 async def test_verify_refuses_stamp_when_absent_path_reappears(
@@ -536,7 +550,7 @@ async def test_reappearance_escalates_commit_drift_naming_the_claim(
     shown = await _call(server, "memory_show", id=memory_id)
     drift = shown["commit_drift"]
     assert drift is not None
-    assert drift["status"] == "drift"
+    assert drift["commits_since_verify"] > 0
     assert drift["commits_since_verify"] == 1
     assert drift["claim_drift"]["checked"] == 1
     assert drift["claim_drift"]["drifted"] == ["!pkg/legacy.py"]
@@ -717,7 +731,7 @@ async def test_container_claim_interior_edit_still_escalates(server_in_repo) -> 
     shown = await _call(server, "memory_show", id=memory_id)
     drift = shown["commit_drift"]
     assert drift is not None
-    assert drift["status"] == "drift"
+    assert drift["commits_since_verify"] > 0
     assert drift["commits_since_verify"] == 1
     assert shown["staleness_verdict"] == "spot_check_recommended"
 
@@ -745,7 +759,7 @@ async def test_addressable_claim_on_the_same_file_still_narrows(
     )
 
     shown = await _call(server, "memory_show", id=memory_id)
-    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["commit_drift"]["commits_since_verify"] == 0
     assert shown["staleness_verdict"] == "fresh"
 
 

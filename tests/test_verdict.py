@@ -170,27 +170,34 @@ def _shown_verdict(memory_dir: Path, memory: Memory, caller: Origin) -> MemoryVe
     return verdict
 
 
+def _compact_commit(verdict: MemoryVerdict) -> dict[str, Any] | None:
+    """The commit leg as `memory_show` spells it: the count and basis, and
+    the claim detail where claims were checked."""
+    commit = verdict.commit_drift
+    if commit is None:
+        return None
+    block = commit.to_dict()
+    return {
+        "commits_since_verify": block["commits_since_verify"],
+        "basis": block["basis"],
+        **({"claim_drift": block["claim_drift"]} if "claim_drift" in block else {}),
+    }
+
+
 def _parts(verdict: MemoryVerdict) -> dict[str, Any]:
     """The verdict as `memory_show` spells it."""
-    drift = verdict.path_drift
     return {
-        "verification": verdict.verification.to_dict(),
+        "verification": verdict.verification.status,
         "staleness_verdict": verdict.staleness_verdict,
-        "path_drift": (
-            drift.to_dict()
-            if (drift.has_drift or drift.verified or drift.expected_absent)
-            else None
-        ),
-        "commit_drift": (
-            verdict.commit_drift.to_dict() if verdict.commit_drift is not None else None
-        ),
+        "commit_drift": _compact_commit(verdict),
     }
 
 
 def _shown_parts(shown: dict[str, Any]) -> dict[str, Any]:
     return {
-        key: shown[key]
-        for key in ("verification", "staleness_verdict", "path_drift", "commit_drift")
+        "verification": shown["verification"]["status"],
+        "staleness_verdict": shown["staleness_verdict"],
+        "commit_drift": shown.get("commit_drift"),
     }
 
 
@@ -210,7 +217,7 @@ async def _search_verdict(server: Any, memory_id: str, query: str) -> str:
     [
         ("fresh", "fresh"),
         ("commit_drift", "spot_check_recommended"),
-        ("never_verified", "spot_check_required"),
+        ("never_verified", "fresh"),
         ("path_drift", "spot_check_recommended"),
         ("caller_elsewhere", "fresh"),
     ],
@@ -268,13 +275,22 @@ async def test_verdict_agrees_with_show_and_search(
         # caller's search, so only the show reads it from there.
         assert await _search_verdict(server, memory_id, "widget rule") == expected
     if case == "commit_drift":
-        assert shown["commit_drift"]["status"] == "drift"
+        assert shown["commit_drift"]["commits_since_verify"] > 0
+        assert "reason" in shown
     if case in ("fresh", "path_drift", "caller_elsewhere"):
         # From another repository the leg is read at the memory's home, as
         # health's estate check reads it (ENG-229): no commit there since.
-        assert shown["commit_drift"]["status"] == "clean"
+        assert shown["commit_drift"]["commits_since_verify"] == 0
+    if case == "path_drift":
+        (finding,) = [
+            found
+            for path, found in shown["paths"].items()
+            if path.endswith("docs/guide.md")
+        ]
+        assert finding.startswith("missing")
+        assert "docs/guide.md" in shown["reason"]
     if case == "never_verified":
-        assert shown["commit_drift"] is None
+        assert "commit_drift" not in shown
 
 
 # ---------------------------------------------------------------------------
@@ -319,11 +335,11 @@ async def test_second_memory_show_spawns_no_git(
         cold = await _call(server, "memory_show", id=written["id"])
     assert cold_calls, "the cold show must resolve the commit leg from git"
     if not drifted and basis == "author-date":
-        assert cold["commit_drift"] is None
+        assert "commit_drift" not in cold
         assert cold["commit_drift_unread"] is True
         assert cold["staleness_verdict"] == "spot_check_required"
     else:
-        assert cold["commit_drift"]["status"] == ("drift" if drifted else "clean")
+        assert (cold["commit_drift"]["commits_since_verify"] > 0) == drifted
         assert cold["commit_drift"]["basis"] == basis
 
     with _git_calls(monkeypatch) as warm_calls:
@@ -412,7 +428,7 @@ async def test_memoised_verdicts_resolve_nothing_then_match_a_full_computation(
     never_verdict, untethered_verdict = first[0], first[1]
     assert isinstance(never_verdict, MemoryVerdict)
     assert isinstance(untethered_verdict, MemoryVerdict)
-    assert never_verdict.staleness_verdict == "spot_check_required"
+    assert never_verdict.staleness_verdict == "fresh"
     assert untethered_verdict.commit_drift is None
 
     # The resolve call, from a worker thread as the brief's background
@@ -503,7 +519,7 @@ async def test_a_commit_moves_the_verdict(
     assert isinstance(after_head_move, UnresolvedVerdict)
     shown = await _call(server, "memory_show", id=memory_id)
     assert shown["staleness_verdict"] == "spot_check_recommended"
-    assert shown["commit_drift"]["status"] == "drift"
+    assert shown["commit_drift"]["commits_since_verify"] > 0
 
 
 @_MEMO_IS_POSIX
@@ -523,13 +539,15 @@ async def test_a_body_update_moves_the_verdict(
     shown = await _call(server, "memory_show", id=memory_id)
     assert shown["staleness_verdict"] == "fresh"
 
-    # A new body clears the stamp: the next read is never-verified.
+    # A new body clears the stamp: the next read is never-verified, with
+    # nothing failing, so it asks for no check.
     await _call(
         server, "memory_update", id=memory_id, content="widget rule in other.md"
     )
     shown = await _call(server, "memory_show", id=memory_id)
-    assert shown["staleness_verdict"] == "spot_check_required"
-    assert shown["commit_drift"] is None
+    assert shown["verification"]["status"] == "never"
+    assert shown["staleness_verdict"] == "fresh"
+    assert "commit_drift" not in shown
     # Re-verified, the row keys on the new anchors and the new stamp: the
     # memo holds nothing for it until a resolving call has run.
     await _call(server, "memory_verify", id=memory_id)
@@ -574,7 +592,7 @@ async def test_a_verify_moves_the_verdict(
     assert isinstance(memoised, UnresolvedVerdict)
     shown = await _call(server, "memory_show", id=written["id"])
     assert shown["staleness_verdict"] == "fresh"
-    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["commit_drift"]["commits_since_verify"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -621,5 +639,5 @@ async def test_a_warm_expanded_search_spawns_no_git(
     assert top_warm == top_cold
     shown = await _call(server, "memory_show", id=written["id"])
     assert top_warm["staleness_verdict"] == shown["staleness_verdict"]
-    assert top_warm["commit_drift"] == shown["commit_drift"]
-    assert top_warm["commit_drift"]["status"] == ("drift" if drifted else "clean")
+    assert top_warm.get("reason") == shown.get("reason")
+    assert ("reason" in top_warm) == drifted

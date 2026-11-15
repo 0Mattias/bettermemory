@@ -698,7 +698,7 @@ def test_init_declares_the_client_in_the_env_block(tmp_path: Path) -> None:
     }
 
 
-async def test_memory_show_renders_the_full_actor_shape(tmp_path: Path) -> None:
+async def test_memory_show_renders_the_declared_actor_fields(tmp_path: Path) -> None:
     server, _store = _server(tmp_path / "store")
     committed = await _call(
         server,
@@ -711,9 +711,6 @@ async def test_memory_show_renders_the_full_actor_shape(tmp_path: Path) -> None:
     assert shown["actor"] == {
         "client": "claude-code",
         "client_version": "2.1.9",
-        "model": None,
-        "principal": None,
-        "session": None,
         "sources": {"client": SOURCE_CLIENT_INFO, "client_version": SOURCE_CLIENT_INFO},
     }
 

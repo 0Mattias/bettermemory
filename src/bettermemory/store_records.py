@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
-from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, overload
 
@@ -392,20 +392,36 @@ def light_by_ids(
     return [found[i] for i in wanted if i in found]
 
 
-def records_linking_to(self: Store, ids: Sequence[str]) -> list[Memory]:
+def records_linking_to(
+    self: Store,
+    ids: Sequence[str],
+    admit: Callable[[list[str]], list[str]] | None = None,
+) -> list[Memory]:
     """The active records whose own links name one of `ids`, read from the
     record rows (``links_json``) and not from the links table, without the
     signed row's fields. What a search's link annotations fall back to
     when the links table cannot be read (`_response.attach_link_annotations`):
-    every record row is tested, so it is for that path alone."""
+    every record row is tested, so it is for that path alone. `admit`,
+    when given, takes the matching ids and returns those the caller may
+    read; only those rows are loaded."""
     wanted = list(dict.fromkeys(str(i) for i in ids))
-    found: dict[str, Memory] = {}
+    matching: dict[str, None] = {}
     for start in range(0, len(wanted), 100):
         chunk = wanted[start : start + 100]
         named = " OR ".join(["instr(links_json, ?) > 0"] * len(chunk))
         for row in self._conn.execute(
+            f"SELECT id FROM memories WHERE links_json != '[]' AND ({named})",
+            chunk,
+        ):
+            matching[str(row[0])] = None
+    admitted = list(matching) if admit is None else admit(list(matching))
+    found: dict[str, Memory] = {}
+    for start in range(0, len(admitted), 100):
+        chunk = admitted[start : start + 100]
+        marks = ", ".join(["?"] * len(chunk))
+        for row in self._conn.execute(
             "SELECT memories.*, NULL AS attestation_payload FROM memories "
-            f"WHERE links_json != '[]' AND ({named})",
+            f"WHERE id IN ({marks})",
             chunk,
         ):
             memory = _row_to_memory(row)

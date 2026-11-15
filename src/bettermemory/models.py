@@ -271,8 +271,7 @@ class MemoryLink(BaseModel):
     in `links` unchanged — pinned by
     `test_broken_link_to_tombstoned_memory_still_surfaces` — while the
     retrieval-side resolvers that hydrate a target's summary
-    (`_response.attach_depends_on_resolved`,
-    `_response.attach_link_annotations`) drop a target they cannot
+    (`_response.attach_link_annotations`) drops a target they cannot
     load without saying so. A consumer that follows a link is the one
     that discovers it is broken; `memory_list_tombstones` finds a
     target that was removed rather than never written. Not blocking

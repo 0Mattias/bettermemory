@@ -20,6 +20,10 @@ __all__ = ["neutral_git", "this_machine", "world"]
 async def test_expansion_keeps_its_count_and_basis_together(
     world: World, monkeypatch: pytest.MonkeyPatch, stamp: str, leg: str
 ) -> None:
+    """The expanded top hit's commit count and basis come from one read, the
+    expansion's, after the stamp changed under the search. The count and
+    basis are internal computation, read from the row the search assembled
+    for the wire hit; the wire hit reads memory_show's verdict and reason."""
     rid = await world.homed(leg)
     if leg == "claim":
         _since(world.home, leg)
@@ -52,19 +56,35 @@ async def test_expansion_keeps_its_count_and_basis_together(
             world.store.update(latest.model_copy(update=update))
 
     monkeypatch.setattr(ResponseBuilder, "attach_commit_drift_counts", count)
+    real_render = ResponseBuilder.render_hit
+    assembled: list[dict[str, Any]] = []
+
+    def render(self: ResponseBuilder, row: dict[str, Any]) -> dict[str, Any]:
+        if row["id"] == rid:
+            assembled.append(dict(row))
+        return real_render(self, row)
+
+    monkeypatch.setattr(ResponseBuilder, "render_hit", render)
     result = await call_tool(
         world.server,
         "memory_search",
         {"query": "zebrafish loader", "auto_scope": False, "expand_top": True},
     )
     rows = result.get("result", result) if isinstance(result, dict) else result
-    top = next(row for row in rows if row["id"] == rid)
+    hit = next(row for row in rows if row["id"] == rid)
     assert earlier and earlier[0]["commit_drift_basis"] == "author-date"
     assert earlier[0]["commit_drift_count"] > 0
-    assert "body" in top and top["relevance"] == "high"
+    assert "body" in hit and hit["relevance"] == "high"
+    assert len(assembled) == 1
+    top = assembled[0]
+    shown = await call_tool(world.server, "memory_show", {"id": rid})
+    assert hit["staleness_verdict"] == shown["staleness_verdict"]
+    assert hit.get("reason") == shown.get("reason")
     if stamp == "cleared":
         assert top.get("commit_drift") is None
-        assert top["staleness_verdict"] == "spot_check_required"
+        # Never verified and no leg left to read: nothing a check could act on.
+        assert hit["staleness_verdict"] == "fresh"
+        assert "reason" not in hit
         assert "commit_drift_count" not in top
         assert "commit_drift_basis" not in top
         assert "claim_drift" not in top

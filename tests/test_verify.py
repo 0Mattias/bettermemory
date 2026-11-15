@@ -1446,78 +1446,54 @@ def test_verification_status_is_immutable_dataclass() -> None:
 
 
 # ---------------------------------------------------------------------------
-# verdict_from_signals — the rollup ladder, and the stale-demotion carve-out
+# verdict_from_signals: a verdict asks for a check only where a check
+# found something; the calendar sets how hard it asks, never whether.
 # ---------------------------------------------------------------------------
-#
-# Until 3.30.0 a `never`/`stale` verification status pre-empted both
-# drift inputs outright, which made the verdict a CONSTANT FUNCTION at
-# the shipped default: every memory past the 30-day window read
-# `spot_check_required` regardless of what the drift legs found.
-# `bench/rot` measured it as arithmetically identical to `always_flag`
-# (flag rate 100%, Youden's J = 0.000 in every class and both windows).
-#
-# The ladder now lets a MEASUREMENT override the calendar PROXY, and
-# these tests pin both halves of that — the demotion, and every guard
-# that stops it from becoming a false green. The guards are the
-# load-bearing part: a demotion that fired on absent evidence would be
-# the exact defect class the verdict exists to expose.
-#
-# Negative control: deleting the `commit_drift_count == 0` condition
-# from the final branch (i.e. demoting on any clean stale memory) flips
-# `test_verdict_stale_does_not_demote_when_commit_leg_silent` and
-# `test_verdict_stale_does_not_demote_on_path_evidence_alone` from
-# passing to failing; deleting the `status == "never"` early return
-# flips `test_verdict_never_never_demotes`.
 
 
 @pytest.mark.parametrize(
-    ("status", "path_missing", "commit_count", "expected"),
+    ("status", "path_missing", "commit_count", "cited_missing", "expected"),
     [
-        # Calendar-fresh: unchanged in every combination.
-        ("fresh", 0, 0, "fresh"),
-        ("fresh", 0, None, "fresh"),
-        ("fresh", 0, 3, "spot_check_recommended"),
-        ("fresh", 2, None, "spot_check_recommended"),
-        # `never`: no anchor exists, so nothing can stand the calendar down.
-        ("never", 0, None, "spot_check_required"),
-        ("never", 0, 0, "spot_check_required"),
-        ("never", 2, 0, "spot_check_required"),
-        # `stale`: demotes ONLY on a measured-zero commit leg.
-        ("stale", 0, 0, "fresh"),
-        ("stale", 0, None, "spot_check_required"),
-        ("stale", 0, 3, "spot_check_required"),
-        ("stale", 2, 0, "spot_check_required"),
+        ("fresh", 0, 0, 0, "fresh"),
+        ("fresh", 0, None, 0, "fresh"),
+        ("fresh", 0, 3, 0, "spot_check_recommended"),
+        ("fresh", 2, None, 2, "spot_check_recommended"),
+        ("fresh", 0, None, 1, "spot_check_recommended"),
+        ("never", 0, None, 0, "fresh"),
+        ("never", 0, 0, 0, "fresh"),
+        ("never", 2, 0, 2, "spot_check_required"),
+        ("never", 0, None, 1, "spot_check_recommended"),
+        ("stale", 0, 0, 0, "fresh"),
+        ("stale", 0, None, 0, "fresh"),
+        ("stale", 0, 3, 0, "spot_check_required"),
+        ("stale", 2, 0, 2, "spot_check_required"),
+        ("stale", 0, None, 1, "spot_check_recommended"),
+        ("remote", 0, 0, 0, "spot_check_required"),
     ],
 )
 def test_verdict_ladder(
-    status: str, path_missing: int, commit_count: int | None, expected: str
+    status: str,
+    path_missing: int,
+    commit_count: int | None,
+    cited_missing: int,
+    expected: str,
 ) -> None:
-    """Pin the full cross-product of the three signals.
-
-    Table-driven rather than one test per branch because the ladder's
-    correctness IS the interaction — reading the eleven rows together
-    is what shows that the only cell which moved is
-    `stale`/no-path-drift/commit-zero."""
+    """The ladder's every cell: a failing check asks, the calendar only
+    raises its tier, and a stamp from another host always asks."""
     assert (
         verdict_from_signals(
             status=status,
             path_drift_missing=path_missing,
             commit_drift_count=commit_count,
+            cited_missing=cited_missing,
         )
         == expected
     )
 
 
 def test_verdict_stale_demotes_on_measured_zero_commit_drift() -> None:
-    """The fix itself: a memory well past its freshness window whose
-    anchored paths saw ZERO commits since its own last verification
-    reads `fresh`.
-
-    This is the branch that stops the shipped default from being a
-    constant function. `commit_drift_count == 0` is not "we didn't
-    look" — `compute_commit_drift` returns None for that — it is
-    "we counted commits touching this memory's own claim anchors since
-    its `last_verified_at`, and there were none"."""
+    """A record past its window whose anchored paths saw no commit since
+    its stamp reads `fresh`."""
     now = datetime.now(timezone.utc)
     stale = compute_verification_status(now - timedelta(days=400), now=now)
     assert stale.status == "stale"
@@ -1529,61 +1505,54 @@ def test_verdict_stale_demotes_on_measured_zero_commit_drift() -> None:
     )
 
 
-def test_verdict_stale_does_not_demote_when_commit_leg_silent() -> None:
-    """`None` means the leg could not ask — no origin repo, caller in a
-    different repo, git unreachable, or no claim anchor landing here.
-
-    Absence of evidence is not evidence of freshness. This is the
-    branch that keeps preference/lesson/reflection memories — the ~36%
-    of real bodies `bench/claims.py` grades as judgement rather than
-    checkable claim — pinned at `spot_check_required`, which is the
-    class `compute_commit_drift` explicitly exempts and hands to the
-    calendar backstop."""
+def test_verdict_age_alone_asks_for_nothing() -> None:
+    """A record past its window or never verified, with no failing check,
+    reads `fresh`: the calendar alone names nothing to check."""
     now = datetime.now(timezone.utc)
-    stale = compute_verification_status(now - timedelta(days=400), now=now)
-    assert (
-        compute_staleness_verdict(
-            verification=stale, path_drift_missing=0, commit_drift_count=None
+    for verification in (
+        compute_verification_status(now - timedelta(days=400), now=now),
+        compute_verification_status(None, now=now),
+    ):
+        assert (
+            compute_staleness_verdict(
+                verification=verification,
+                path_drift_missing=0,
+                commit_drift_count=None,
+            )
+            == "fresh"
         )
-        == "spot_check_required"
-    )
 
 
-def test_verdict_stale_does_not_demote_on_path_evidence_alone() -> None:
-    """Path existence must not lower the verdict on its own.
-
-    "The cited file still exists" answers a weaker question than
-    "nothing touched it since you checked", and the 2026-07-26 store
-    sweep put a number on how much weaker: of 15 missing-path alerts
-    raised from paths scraped out of body prose, ~0 were real drift,
-    against 3 of 3 for anchored attestations. So a clean path leg with
-    a silent commit leg stays `spot_check_required`."""
-    now = datetime.now(timezone.utc)
-    stale = compute_verification_status(now - timedelta(days=400), now=now)
-    # Clean path leg (nothing missing), commit leg silent.
-    assert (
-        verdict_from_signals(
-            status=stale.status, path_drift_missing=0, commit_drift_count=None
+def test_a_path_attested_absent_that_is_present_asks_as_an_anchored_miss() -> None:
+    for status, expected in (
+        ("fresh", "spot_check_recommended"),
+        ("never", "spot_check_required"),
+        ("stale", "spot_check_required"),
+    ):
+        assert (
+            verdict_from_signals(
+                status=status,
+                path_drift_missing=0,
+                commit_drift_count=0,
+                attested_absent_present=1,
+            )
+            == expected
         )
-        == "spot_check_required"
-    )
 
 
-def test_verdict_never_never_demotes() -> None:
-    """`never` is unconditional, belt-and-braces against a future
-    `compute_commit_drift` that learns to emit a count without a
-    `last_verified_at` anchor. Without an anchor there is no "since
-    when", so a zero count would be meaningless rather than
-    reassuring."""
-    now = datetime.now(timezone.utc)
-    never = compute_verification_status(None, now=now)
-    assert never.status == "never"
-    assert (
-        compute_staleness_verdict(
-            verification=never, path_drift_missing=0, commit_drift_count=0
+def test_a_missing_prose_path_recommends_and_never_requires() -> None:
+    """A path scraped from prose that is missing recommends a check on any
+    record, and never requires one: only an anchored miss does."""
+    for status in ("fresh", "never", "stale"):
+        assert (
+            verdict_from_signals(
+                status=status,
+                path_drift_missing=0,
+                commit_drift_count=None,
+                cited_missing=1,
+            )
+            == "spot_check_recommended"
         )
-        == "spot_check_required"
-    )
 
 
 def test_verdict_drift_still_raises_a_stale_memory() -> None:
@@ -3820,10 +3789,11 @@ def test_route_check_is_structurally_last_in_the_not_exists_block() -> None:
     )
 
 
-def test_verdict_from_signals_takes_exactly_three_signals() -> None:
-    """The staleness rollup has three inputs BY DECISION, not by accident.
+def test_verdict_from_signals_takes_no_commit_sha_signal() -> None:
+    """The staleness rollup reads the path legs and the commit leg, and no
+    read-side commit-SHA signal, by decision.
 
-    A fourth — resolving body-cited or attested commit SHAs read-side —
+    That signal, resolving body-cited or attested commit SHAs read-side —
     was designed and measured on 2026-07-26 and rejected on arithmetic.
     The distance rule (commits since the cited SHA > 0) fired on 34 of 34
     SHA-carrying in-repo memories in the dogfood store, min 3 / median
@@ -3852,16 +3822,22 @@ def test_verdict_from_signals_takes_exactly_three_signals() -> None:
     """
     import inspect
 
-    expected = {"status", "path_drift_missing", "commit_drift_count"}
+    expected = {
+        "status",
+        "path_drift_missing",
+        "commit_drift_count",
+        "cited_missing",
+        "attested_absent_present",
+    }
     params = inspect.signature(verdict_from_signals).parameters
     assert set(params) == expected, (
         f"verdict_from_signals grew a signal: {set(params) ^ expected}. The "
         "read-side commit-SHA leg was measured and rejected (J = 0.000, "
-        "fires 34/34) — see the SHA_MARKER tombstone in "
-        "src/bettermemory/durability.py before adding a fourth."
+        "fires 34/34): see the SHA_MARKER tombstone in "
+        "src/bettermemory/durability.py before adding one."
     )
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values()), (
-        "the three signals are keyword-only so a positional add cannot slip in"
+        "the signals are keyword-only so a positional add cannot slip in"
     )
 
     rollup = inspect.signature(compute_staleness_verdict).parameters
@@ -3869,6 +3845,8 @@ def test_verdict_from_signals_takes_exactly_three_signals() -> None:
         "verification",
         "path_drift_missing",
         "commit_drift_count",
+        "cited_missing",
+        "attested_absent_present",
     }, f"compute_staleness_verdict grew a signal: {set(rollup)}"
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in rollup.values())
 
@@ -4314,18 +4292,10 @@ def test_commit_leg_escalates_today() -> None:
 def test_disabling_commit_escalation_leaves_the_demotion_intact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The in-process half of the B2(b) dry run: flip the switch and
-    check that exactly the escalating term goes quiet. (The measured
-    half — what that silence costs on real claims — is the bench
-    artifact `bench/rot/results/escalation-off-60d-2026-07-31.json`.)
-
-    Every other cell of the ladder must be untouched — above all the
-    stale-demotion arm, which reads `commit_drift_count` directly rather
-    than through the switch precisely so a subtraction here cannot take
-    it out. `None` staying at `spot_check_required` is the other half:
-    if the flip made "couldn't ask" behave like a measured zero, roughly
-    a third of real bodies (the judgement class that anchors nothing)
-    would mass-demote to `fresh`.
+    """Flip the switch and check that exactly the escalating term goes
+    quiet: a moved count stops asking, and the path leg keeps asking. The
+    measured cost of that silence is the bench artifact
+    `bench/rot/results/escalation-off-60d-2026-07-31.json`.
     """
     import bettermemory.verify as verify_mod
 
@@ -4336,29 +4306,19 @@ def test_disabling_commit_escalation_leaves_the_demotion_intact(
         verdict_from_signals(status="fresh", path_drift_missing=0, commit_drift_count=3)
         == "fresh"
     )
-    # The demotion — untouched.
+    # The demotion, untouched.
     assert (
         verdict_from_signals(status="stale", path_drift_missing=0, commit_drift_count=0)
         == "fresh"
     )
-    # None is still not zero.
-    assert (
-        verdict_from_signals(
-            status="stale", path_drift_missing=0, commit_drift_count=None
+    # A moved count no longer escalates, on any calendar.
+    for status in ("stale", "never"):
+        assert (
+            verdict_from_signals(
+                status=status, path_drift_missing=0, commit_drift_count=3
+            )
+            == "fresh"
         )
-        == "spot_check_required"
-    )
-    # A stale memory with a non-zero measured count still has nothing
-    # standing its calendar leg down.
-    assert (
-        verdict_from_signals(status="stale", path_drift_missing=0, commit_drift_count=3)
-        == "spot_check_required"
-    )
-    # `never` still pre-empts everything.
-    assert (
-        verdict_from_signals(status="never", path_drift_missing=0, commit_drift_count=0)
-        == "spot_check_required"
-    )
     # And the path leg keeps escalating on its own.
     assert (
         verdict_from_signals(
@@ -4456,7 +4416,7 @@ def test_no_verdict_site_escalates_on_the_full_missing_set() -> None:
 
     The parameter kept its name (the signature is pinned to exactly
     three signals by
-    `test_verdict_from_signals_takes_exactly_three_signals`), so nothing
+    `test_verdict_from_signals_takes_no_commit_sha_signal`), so nothing
     at a call site announces that the meaning moved. A new surface —
     or a merge that reverts one line — wiring `len(drift.missing)` back
     in would silently re-broaden the alarm to the ~0-of-15 prose class
@@ -4511,7 +4471,7 @@ def test_no_verdict_site_escalates_on_the_full_missing_set() -> None:
                     continue
                 offenders.append(f"{path.name}: path_drift_missing={arg_src}")
 
-    assert seen_sites >= 5, (
+    assert seen_sites >= 4, (
         f"expected to find every verdict call site, found {seen_sites} — the "
         "scan stopped matching and is no longer guarding anything"
     )
@@ -4572,4 +4532,71 @@ def test_verdict_reads_remote_like_never() -> None:
     assert (
         verdict_from_signals(status="fresh", path_drift_missing=0, commit_drift_count=0)
         == "fresh"
+    )
+
+
+def test_verdict_never_never_demotes() -> None:
+    """A never-verified record asks for a check only on a failing one, and
+    then at the strongest level: with no stamp there is no "since when"."""
+    now = datetime.now(timezone.utc)
+    never = compute_verification_status(None, now=now)
+    assert never.status == "never"
+    assert (
+        compute_staleness_verdict(
+            verification=never, path_drift_missing=0, commit_drift_count=0
+        )
+        == "fresh"
+    )
+    for missing, commits in ((1, 0), (0, 1)):
+        assert (
+            compute_staleness_verdict(
+                verification=never,
+                path_drift_missing=missing,
+                commit_drift_count=commits,
+            )
+            == "spot_check_required"
+        )
+
+
+def test_verdict_stale_does_not_demote_on_path_evidence_alone() -> None:
+    """A missing path scraped from body prose recommends a check on a stale
+    record and never requires one; an anchored miss requires it."""
+    now = datetime.now(timezone.utc)
+    stale = compute_verification_status(now - timedelta(days=400), now=now)
+    assert (
+        verdict_from_signals(
+            status=stale.status,
+            path_drift_missing=0,
+            commit_drift_count=None,
+            cited_missing=1,
+        )
+        == "spot_check_recommended"
+    )
+    assert (
+        verdict_from_signals(
+            status=stale.status,
+            path_drift_missing=1,
+            commit_drift_count=None,
+            cited_missing=1,
+        )
+        == "spot_check_required"
+    )
+
+
+def test_verdict_stale_does_not_demote_when_commit_leg_silent() -> None:
+    """A commit leg that could not ask (None) is no failing check: a stale
+    record with clean paths reads fresh, and a moved commit requires one."""
+    now = datetime.now(timezone.utc)
+    stale = compute_verification_status(now - timedelta(days=400), now=now)
+    assert (
+        compute_staleness_verdict(
+            verification=stale, path_drift_missing=0, commit_drift_count=None
+        )
+        == "fresh"
+    )
+    assert (
+        compute_staleness_verdict(
+            verification=stale, path_drift_missing=0, commit_drift_count=2
+        )
+        == "spot_check_required"
     )

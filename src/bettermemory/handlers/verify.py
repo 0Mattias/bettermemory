@@ -773,9 +773,10 @@ def _verify_response(
 
 
 DESC_MEMORY_VERIFY = (
-    "Attest ground-truth checks; reset last_verified_at. verified_paths anchor "
-    "drift; verified_absent_paths assert absence; claims replace bindings. "
-    "path_mode: auto/literal/reference. Evidence required."
+    "Attest checks you ran; resets last_verified_at. verified_paths anchor "
+    "drift; verified_absent_paths assert absence; claims replaces bindings. "
+    "path_mode: read paths as typed (literal) or as code refs (reference). "
+    "Evidence required."
 )
 
 

@@ -53,6 +53,7 @@ from bettermemory.store import Store
 from bettermemory.store_rows import event_import_payload
 
 from ._mcp import call_tool
+from ._internal_rows import raw_hits
 from .test_free_text_control_tokens import _log_text, _seed, _served
 from .test_health import _event, _memory, _search_miss_with_event_id, _utc
 from .test_recall_prompt import PromptWorld
@@ -595,6 +596,8 @@ async def test_a_search_names_a_token_an_older_use_row_holds(
     server: tuple[Any, Store], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mcp, store = server
+    # The rejection the search computed, as its working rows carry it.
+    raw_hits(monkeypatch)
     written = await call_tool(
         mcp,
         "memory_write",

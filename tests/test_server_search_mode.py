@@ -6,6 +6,7 @@ over the wire.
 """
 
 from __future__ import annotations
+from ._internal_rows import raw_hits
 from ._mcp import call_tool as _mcp_call
 
 from pathlib import Path
@@ -13,10 +14,21 @@ from typing import Any
 
 import pytest
 
+from bettermemory._response import ResponseBuilder
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+
+
+_RENDER = ResponseBuilder.render_hit
+
+
+@pytest.fixture(autouse=True)
+def _search_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module tests the ranking the search computes: its searches answer with their working
+    rows (`tests/_internal_rows.py`)."""
+    raw_hits(monkeypatch)
 
 
 @pytest.fixture
@@ -148,28 +160,20 @@ async def test_config_search_mode_sets_default(memory_dir: Path) -> None:
     assert hits[0]["id"] == hits_explicit[0]["id"]
 
 
-async def test_mode_keyword_preserves_existing_hit_shape(server: Any) -> None:
-    """Regression: the mode dispatch refactor shouldn't change the
-    field set on each hit. Pin the contract so a future per-mode
-    customisation doesn't drop a field the consumers expect."""
+async def test_mode_keyword_preserves_existing_hit_shape(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mode changes the ranking, never the field set of the hit the
+    caller gets."""
     await _seed(server, "python notes", scopes=["projects:foo"])
+    monkeypatch.setattr(ResponseBuilder, "render_hit", _RENDER)
 
     hits = _unwrap(await _call(server, "memory_search", query="python"))
     assert hits
-    h = hits[0]
-    # The pre-T1.2 shape that consumers rely on:
-    for field in (
+    assert set(hits[0]) == {
         "id",
-        "scopes",
-        "confidence",
         "snippet",
-        "score",
         "relevance",
-        "match_terms",
-        "created",
-        "updated",
         "staleness_verdict",
-        "path_drift_checked",
-        "path_drift_missing",
-    ):
-        assert field in h, f"missing field {field!r} in hit"
+        "use_token",
+    }

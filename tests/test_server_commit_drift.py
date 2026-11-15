@@ -34,6 +34,9 @@ from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
+from bettermemory._response import ResponseBuilder
+
+from ._internal_rows import raw_hits
 from .test_commit_drift_cache import _assert_unconfirmed_cut
 
 
@@ -44,6 +47,32 @@ _REMOTE = "git@github.com:example/foo.git"
 # files do not answer the root and the head (`_response._DriftPass.
 # _keyed_pair`), ahead of the history's log, which names that head.
 _KEYING = ("rev-parse", "--show-toplevel", "HEAD")
+
+
+@pytest.fixture(autouse=True)
+def _search_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module tests the search's drift computation: its searches
+    answer with their working rows (`tests/_internal_rows.py`)."""
+    raw_hits(monkeypatch)
+
+
+_RENDER = ResponseBuilder.render_hit
+
+
+def _wire(row: dict[str, Any]) -> dict[str, Any]:
+    """A working search row as the caller gets it; a show unchanged."""
+    if "snippet" not in row:
+        return row
+    return _RENDER(ResponseBuilder(stale_after_days=30), row)
+
+
+def _compact(block: dict[str, Any]) -> dict[str, Any]:
+    """A working row's `commit_drift` block as memory_show spells it."""
+    return {
+        key: block[key]
+        for key in ("commits_since_verify", "basis", "claim_drift")
+        if key in block
+    }
 
 
 @pytest.fixture(params=["files", "git"])
@@ -345,10 +374,10 @@ async def test_memory_show_drift_when_commits_after_verify(
     )
 
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["commit_drift"] is not None
-    assert shown["commit_drift"]["status"] == "drift"
+    assert "commit_drift" in shown
+    assert shown["commit_drift"]["commits_since_verify"] > 0
     assert shown["commit_drift"]["commits_since_verify"] == 2
-    assert "memory_verify" in shown["commit_drift"]["recommendation"]
+    assert "2 commits since the last verify" in shown["reason"]
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -379,10 +408,10 @@ async def test_memory_show_clean_when_no_commits_after_verify(
     await _call(server, "memory_verify", id=written["id"])
 
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["commit_drift"] is not None
-    assert shown["commit_drift"]["status"] == "clean"
+    assert "commit_drift" in shown
     assert shown["commit_drift"]["commits_since_verify"] == 0
-    assert shown["commit_drift"]["recommendation"] is None
+    assert shown["commit_drift"]["commits_since_verify"] == 0
+    assert "reason" not in shown
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -414,7 +443,7 @@ async def test_memory_show_null_when_caller_not_in_matching_repo(
         Origin(cwd=str(repo_b), repo=other_remote, branch="main")
     )
     shown = await _call(server_b, "memory_show", id=written["id"])
-    assert shown["commit_drift"] is None
+    assert "commit_drift" not in shown
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -437,7 +466,7 @@ async def test_memory_show_null_when_memory_never_verified(
 
     shown = await _call(server, "memory_show", id=written["id"])
     assert shown["verification"]["status"] == "never"
-    assert shown["commit_drift"] is None
+    assert "commit_drift" not in shown
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +560,7 @@ async def test_memory_search_expand_top_claim_governed_churn_agrees_with_show(
     )
 
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["commit_drift"]["commits_since_verify"] == 0
     assert shown["staleness_verdict"] == "fresh"
 
     raw = await _call(
@@ -549,8 +578,8 @@ async def test_memory_search_expand_top_claim_governed_churn_agrees_with_show(
     # One evaluation, reported once: the block's claim report and the
     # hit-level one stamped by `attach_commit_drift_counts` must match.
     assert top["commit_drift"]["claim_drift"] == top["claim_drift"]
-    assert top["commit_drift"] == shown["commit_drift"]
-    assert top["staleness_verdict"] == shown["staleness_verdict"]
+    assert _compact(top["commit_drift"]) == shown["commit_drift"]
+    assert _wire(top)["staleness_verdict"] == shown["staleness_verdict"]
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -597,7 +626,7 @@ async def test_memory_search_expand_top_claims_only_drift_agrees_with_show(
     )
 
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["commit_drift"]["status"] == "drift"
+    assert shown["commit_drift"]["commits_since_verify"] > 0
     assert shown["staleness_verdict"] == "spot_check_recommended"
 
     raw = await _call(
@@ -614,8 +643,8 @@ async def test_memory_search_expand_top_claims_only_drift_agrees_with_show(
     assert top["commit_drift"]["claim_drift"]["drifted"] == ["pkg/mod.py::handler"]
     assert top["commit_drift_count"] == 1
     assert top["staleness_verdict"] == "spot_check_recommended"
-    assert top["commit_drift"] == shown["commit_drift"]
-    assert top["staleness_verdict"] == shown["staleness_verdict"]
+    assert _compact(top["commit_drift"]) == shown["commit_drift"]
+    assert _wire(top)["staleness_verdict"] == shown["staleness_verdict"]
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -1077,7 +1106,7 @@ def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
     out, calls = attach()
     assert len(out) == 3
     for hit in out:
-        _assert_unconfirmed_cut(hit)
+        _assert_unconfirmed_cut(_wire(hit))
     _opens_as(calls, heads_by)
     assert len(calls) == len(_per_search(heads_by)) + 3
     warm, warm_calls = attach()
@@ -1554,7 +1583,7 @@ async def test_memory_search_verified_paths_does_not_resurrect_same_second_commi
     target = next(h for h in hits if h["id"] == written["id"])
     # The narrowing must not resurrect the same-second commit the bisect
     # already excluded. A date-only zero cannot establish freshness.
-    _assert_unconfirmed_cut(target)
+    _assert_unconfirmed_cut(_wire(target))
     assert target["staleness_verdict"] == "spot_check_required"
 
 
@@ -1594,7 +1623,7 @@ async def test_memory_show_commit_drift_null_for_untethered_memory(
     _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
 
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["commit_drift"] is None
+    assert "commit_drift" not in shown
     # And the verdict stays fresh — the repo moving is not evidence
     # against a claim-less memory.
     assert shown["staleness_verdict"] == "fresh"
@@ -1735,7 +1764,7 @@ async def test_a_sha_citing_fresh_memory_reads_fresh_on_both_surfaces(
     ``src/bettermemory/durability.py``.
 
     This is the BEHAVIOURAL pin, and it is deliberately at handler level.
-    ``test_verdict_from_signals_takes_exactly_three_signals`` in
+    ``test_verdict_from_signals_takes_no_commit_sha_signal`` in
     ``tests/test_verify.py`` pins the rollup's signature, but a primitive
     test cannot fail for the most likely re-opening: a leg wired only into
     ``ResponseBuilder.attach_commit_drift_counts``, the search-side
@@ -1968,7 +1997,7 @@ async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
     )
     assert (show_count, search_count, health_count) == (1, 1, 1)
     shown = await _call(server, "memory_show", id=anchored["id"])
-    assert shown["commit_drift"]["status"] == "drift"
+    assert shown["commit_drift"]["commits_since_verify"] > 0
     assert shown["commit_drift"]["basis"] == "reachability"
     assert shown["staleness_verdict"] == "spot_check_recommended"
 
@@ -1977,8 +2006,8 @@ async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
     )
     assert (show_count, search_count, health_count) == (None, None, 0)
     shown = await _call(server, "memory_show", id=unanchored["id"])
-    assert shown["commit_drift"] is None
-    _assert_unconfirmed_cut(shown)
+    assert "commit_drift" not in shown
+    _assert_unconfirmed_cut(_wire(shown))
     assert shown["staleness_verdict"] == "spot_check_required"
 
     raw = await _call(
@@ -1986,7 +2015,7 @@ async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
     )
     by_id = {hit["id"]: hit for hit in _unwrap(raw)}
     assert by_id[anchored["id"]]["commit_drift_basis"] == "reachability"
-    _assert_unconfirmed_cut(by_id[unanchored["id"]])
+    _assert_unconfirmed_cut(_wire(by_id[unanchored["id"]]))
     assert "commit_drift_count" not in by_id[untethered["id"]]
     assert "commit_drift_basis" not in by_id[untethered["id"]]
     assert not by_id[untethered["id"]].get("commit_drift_unread")
@@ -2077,9 +2106,7 @@ async def test_an_anchor_at_head_reads_clean_in_reachability_space(
 
     shown = await _call(server, "memory_show", id=written["id"])
     assert shown["commit_drift"] == {
-        "status": "clean",
         "commits_since_verify": 0,
-        "recommendation": None,
         "basis": "reachability",
     }
     assert shown["staleness_verdict"] == "fresh"
@@ -2098,7 +2125,7 @@ async def test_an_anchor_at_head_reads_clean_in_reachability_space(
     )
     assert await _drift_counts_for(server, written["id"]) == (0, 0, 0)
     shown = await _call(server, "memory_show", id=written["id"])
-    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["commit_drift"]["commits_since_verify"] == 0
     assert shown["commit_drift"]["basis"] == "reachability"
 
 
@@ -2163,13 +2190,13 @@ async def test_claim_governed_narrowing_runs_over_the_reachable_range(
     _merge_feature(repo)
 
     shown = await _call(server, "memory_show", id=handler["id"])
-    assert shown["commit_drift"]["status"] == "clean"
+    assert shown["commit_drift"]["commits_since_verify"] == 0
     assert shown["commit_drift"]["basis"] == "reachability"
     assert shown["commit_drift"]["claim_drift"] == {"checked": 1, "drifted": []}
     assert shown["staleness_verdict"] == "fresh"
 
     shown_other = await _call(server, "memory_show", id=other["id"])
-    assert shown_other["commit_drift"]["status"] == "drift"
+    assert shown_other["commit_drift"]["commits_since_verify"] > 0
     assert shown_other["commit_drift"]["basis"] == "reachability"
     assert shown_other["commit_drift"]["commits_since_verify"] == 1
     assert shown_other["commit_drift"]["claim_drift"] == {
@@ -2182,9 +2209,9 @@ async def test_claim_governed_narrowing_runs_over_the_reachable_range(
     )
     top = _unwrap(raw)[0]
     assert top["id"] == other["id"]
-    assert top["commit_drift"] == shown_other["commit_drift"]
+    assert _compact(top["commit_drift"]) == shown_other["commit_drift"]
     assert top["commit_drift_basis"] == "reachability"
-    assert top["staleness_verdict"] == shown_other["staleness_verdict"]
+    assert _wire(top)["staleness_verdict"] == shown_other["staleness_verdict"]
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")

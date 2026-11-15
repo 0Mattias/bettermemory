@@ -82,7 +82,7 @@ from .verify import (
     PathDriftReport,
     VerificationStatus,
     commit_drift_status,
-    compute_staleness_verdict,
+    staleness_verdict_from_report,
     compute_verification_status,
     detect_path_drift,
 )
@@ -96,7 +96,21 @@ __all__ = [
     "memoised_verdicts",
     "memory_verdict",
     "resolve_verdicts",
+    "with_objection",
 ]
+
+#: The verdict a recorded objection raises a fresh row to.
+_OBJECTED = "spot_check_recommended"
+
+
+def with_objection(verdict: str, objected: bool) -> str:
+    """The verdict of a row something on record objects to: a
+    `contradicts` link in either direction, or a use recorded through
+    memory_record_use that rejected it (ignored or contradicted) inside
+    the window and was not followed by an applied use
+    (`_response.recent_rejections`). Never ``fresh``; a row already
+    asking for a check keeps its tier."""
+    return _OBJECTED if objected and verdict == "fresh" else verdict
 
 
 @dataclass(frozen=True)
@@ -327,15 +341,9 @@ def _verdict(
             unchecked = resolved
         elif resolved is not None:
             commit_drift = commit_drift_status(resolved)
-    staleness_verdict = compute_staleness_verdict(
+    staleness_verdict = staleness_verdict_from_report(
         verification=verification,
-        # Claim-anchored subset only: attested paths that vanished, and
-        # citations resolved against this memory's own recorded worktree.
-        # The full `missing` list still travels in `path_drift` — prose
-        # absences stay visible as evidence, they just no longer raise the
-        # tier. Rationale and the 15-vs-3 measurement live on
-        # `verdict_from_signals`.
-        path_drift_missing=len(path_drift.claim_anchored_missing),
+        path_drift=path_drift,
         commit_drift_count=(
             commit_drift.commits_since_verify if commit_drift is not None else None
         ),

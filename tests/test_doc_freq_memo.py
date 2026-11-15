@@ -40,6 +40,7 @@ from bettermemory.session import SessionState
 from bettermemory.store import IMPORTED, Store
 
 from ._mcp import call_tool as _mcp_call
+from ._internal_rows import raw_hits
 
 REPO_A = "https://example.com/acme/alpha.git"
 REPO_B = "https://example.com/acme/beta.git"
@@ -442,6 +443,8 @@ async def _ranked(server: Any) -> list[list[tuple[str, float, str]]]:
 async def test_ranked_results_are_identical_with_the_memo_on_and_off(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The scores the ranking computed, as the search's working rows carry them.
+    raw_hits(monkeypatch)
     _synthetic(Store(memory_dir))
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 

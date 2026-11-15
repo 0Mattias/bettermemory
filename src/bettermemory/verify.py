@@ -1600,18 +1600,12 @@ _VERDICT_FRESH: str = "fresh"
 _VERDICT_RECOMMENDED: str = "spot_check_recommended"
 _VERDICT_REQUIRED: str = "spot_check_required"
 
-# Closed-protocol whitelist: the `verification.status` values that
-# pre-empt every drift input and force the verdict to
-# ``spot_check_required``. Lives as a module-level frozenset so the
-# two consumers (``compute_staleness_verdict`` below and
-# ``ResponseBuilder.attach_commit_drift_counts`` in ``_response.py``,
-# which re-runs the same gate after folding in commit-drift) share a
-# single source of truth. Silent divergence between the two sites
-# would let a stale memory surfaced by ``memory_search`` carry a
-# different verdict than the same memory surfaced by ``memory_show``
-# — the loudest re-verify signal we emit, downgraded by a one-site
-# typo. Pinned by ``_EXPECTED_RAISE_STATUSES`` in
-# ``tests/test_server_v12_features.py``.
+# The `verification.status` values under which a failing check reads
+# ``spot_check_required`` rather than ``spot_check_recommended``: a record
+# never verified, or verified past its window, has no recent check to
+# weigh against the failure. They raise a failing check's tier; on their
+# own they ask for nothing (`verdict_from_signals`). Pinned by
+# ``_EXPECTED_RAISE_STATUSES`` in ``tests/test_server_v12_features.py``.
 _VERDICT_RAISE_STATUSES: frozenset[str] = frozenset({"never", "stale"})
 
 # THE ONE PLACE the commit leg's ESCALATING term is switched, and the
@@ -1732,59 +1726,58 @@ def verdict_from_signals(
     status: str,
     path_drift_missing: int,
     commit_drift_count: int | None,
+    cited_missing: int = 0,
+    attested_absent_present: int = 0,
 ) -> str:
-    """Primitive rollup over the three staleness signals.
+    """The staleness verdict from the read's checks.
 
-    **`path_drift_missing` is the CLAIM-ANCHORED count, not
-    `len(report.missing)`.** Every production call site passes
-    `len(report.claim_anchored_missing)` — attested paths that vanished,
-    and citations resolved against the memory's own recorded worktree.
-    Prose-scraped absences still travel to the caller in
-    `report.missing`; they no longer raise a tier. The parameter kept its
-    name because the signature is pinned (see below) and because the
-    rename would have been the only visible part of the change; the
-    meaning moved, so read `PathDriftReport.claim_anchored_missing` for
-    what it counts and the 15-vs-3 sweep for why. A new surface that
-    wires `len(drift.missing)` in here silently re-broadens the alarm,
-    which is why an AST guard in `tests/test_verify.py` checks the
-    keyword at every call site rather than trusting the name.
+    A verdict asks for a check only where a check has something to act
+    on: a claim the read tested and found failing, or a stamp this host
+    cannot vouch for. The calendar alone never asks. A record never
+    verified, or verified long ago, whose cited paths all resolve and
+    whose commit leg moved nothing or does not apply, reads ``fresh``:
+    a request to re-check it would name nothing to check, and the
+    replay of the owner's store (`bench/panel/replay.py`) found such
+    flags corrected no more often than fresh records.
 
-    Split out of `compute_staleness_verdict` so the per-search
-    recompute in `_response.attach_commit_drift_counts` — which holds a
-    serialised verification dict rather than a `VerificationStatus` —
-    can share the ladder instead of restating it. The two sites had
-    already accreted three "mirror the gate above" comments warning
-    that a one-site edit would desync `memory_search`'s top hit from
-    `memory_show` for the same memory; sharing the primitive is the
-    fix those comments were asking for.
+    - `path_drift_missing` is the CLAIM-ANCHORED count
+      (`PathDriftReport.claim_anchored_missing`): attested paths that
+      vanished and citations resolved against the record's own worktree.
+      Every call site passes that subset under this keyword, which an
+      AST guard in `tests/test_verify.py` checks.
+    - `commit_drift_count` is the commit leg: commits since the stamp
+      that touch what the record cites or claims, None where the leg
+      does not apply or nothing read it.
+    - `cited_missing` is every cited path the read found missing,
+      anchored or scraped from prose (`PathDriftReport.missing`).
+    - `attested_absent_present` counts the paths a verify attested
+      absent that the read found present
+      (`PathDriftReport.present_but_attested_absent`): an attested claim
+      that failed, read as an anchored miss is.
 
-    **There are three signals by decision, not by accident.** A fourth —
-    resolving body-cited or attested commit SHAs read-side — was designed
-    and measured on 2026-07-26 and rejected: it fires on 34 of 34
-    SHA-carrying in-repo memories, Youden's J = 0.000, and the memories it
-    would flip are exactly the ones already reading fresh, so a zero-git
-    predictor reproduces its whole output. The full record, including the
-    honest cost of leaving that class uncovered, is the `SHA_MARKER`
-    tombstone in `src/bettermemory/durability.py`; the count is pinned by
-    `test_verdict_from_signals_takes_exactly_three_signals` in
-    `tests/test_verify.py`.
+    Returns ``spot_check_required`` for a ``remote`` stamp (another
+    host's, `remote_verification_status`) and for an anchored miss or a
+    moved commit on a record never verified or past its window;
+    ``spot_check_recommended`` for an anchored miss or a moved commit on
+    a calendar-fresh record, and for a path scraped from prose that is
+    missing; ``fresh`` otherwise. A surface that could not read a leg
+    that applies caps the row itself (`commit_legs.unchecked_verdict`,
+    `ResponseBuilder.apply_commit_drift_unread`), and a recorded
+    objection raises it (`verdict.with_objection`).
     """
-    drifty = path_drift_missing > 0 or _commit_leg_escalates(commit_drift_count)
-    if status in ("never", "remote"):
-        # No anchor was ever laid down, so there is no "since when" to
-        # measure against and nothing can stand the calendar leg down.
-        # "remote" is the same absence seen from this host: the stamp in
-        # the file was laid down elsewhere (`remote_verification_status`).
+    if status == "remote":
         return _VERDICT_REQUIRED
-    if drifty:
+    if (
+        path_drift_missing > 0
+        or attested_absent_present > 0
+        or _commit_leg_escalates(commit_drift_count)
+    ):
         if status in _VERDICT_RAISE_STATUSES:
             return _VERDICT_REQUIRED
         return _VERDICT_RECOMMENDED
-    if status not in _VERDICT_RAISE_STATUSES:
-        return _VERDICT_FRESH
-    # `status == "stale"`, and every leg that could speak came back
-    # clean. See `compute_staleness_verdict` for why that yields.
-    return _VERDICT_FRESH if commit_drift_count == 0 else _VERDICT_REQUIRED
+    if cited_missing > 0:
+        return _VERDICT_RECOMMENDED
+    return _VERDICT_FRESH
 
 
 def compute_staleness_verdict(
@@ -1792,92 +1785,36 @@ def compute_staleness_verdict(
     verification: VerificationStatus,
     path_drift_missing: int,
     commit_drift_count: int | None,
+    cited_missing: int = 0,
+    attested_absent_present: int = 0,
 ) -> str:
-    """Three-valued rollup over verification + path drift + commit drift.
-
-    Returns one of:
-
-    - ``"fresh"``: nothing to do; the body's claims are presumed
-      current. Reached either by ``verification.status == "fresh"``
-      with no drift on either axis, or — see below — by a calendar-
-      stale memory whose commit-drift leg measured zero.
-    - ``"spot_check_recommended"``: verification is calendar-fresh but
-      the world has moved — a path went missing on disk, or the repo
-      this memory came from has commits since the last verify. Worth
-      a quick check before relying on the body.
-    - ``"spot_check_required"``: the verification anchor is missing
-      (``"never"``), or it is expired (``"stale"``) and no measurement
-      is available to stand the calendar leg down.
-
-    `commit_drift_count` is `None` when the signal isn't applicable
-    (hit never verified, naming no repository, read nowhere, memory
-    makes no claims this repo's commits could invalidate). None never
-    elevates the verdict on a fresh memory; it behaves the same as 0
-    there, and a surface that read the leg nowhere caps the row itself
-    (`commit_legs.unchecked_verdict`, ENG-229).
-
-    **Why a calendar-stale memory can still read "fresh".** Until
-    3.30.0 ``verification.status in {"never", "stale"}`` pre-empted
-    both drift inputs outright. That made the verdict a CONSTANT
-    FUNCTION at the shipped default: with a 30-day freshness window,
-    every memory older than 30 days reported ``spot_check_required``
-    no matter what the drift legs found, so the legs that carry the
-    actual discrimination were unreachable in the configuration most
-    users run. ``bench/rot`` measured the consequence directly — the
-    ``shipped_default`` arm flags 100% of claims in every class and
-    both windows, Youden's J = 0.000, arithmetically identical to
-    ``always_flag``.
-
-    The asymmetry was never intended. ``compute_commit_drift`` already
-    states the division of labour from the other side: a memory with
-    no path-shaped claims is exempt from commit drift because a bare
-    repo-wide count carries no information about it, and *"calendar
-    staleness remains the backstop for that class"*. A backstop is
-    what you fall back to when the measurement cannot speak — not
-    something that overrides the measurement when it can. So the
-    ladder now honours that contract in both directions: when the
-    commit leg has actually run and returned zero, it means no commit
-    touched anything this memory cites SINCE ITS OWN LAST
-    VERIFICATION, which is precisely the question the calendar leg is
-    a crude proxy for. The measurement wins; the proxy yields.
-
-    The demotion is deliberately gated on the commit leg alone, not on
-    path drift:
-
-    - ``"never"`` never demotes. ``compute_commit_drift`` returns
-      ``None`` without a ``last_verified_at`` anyway, so this is
-      belt-and-braces, but it is the load-bearing carve-out: a memory
-      nobody ever checked has no anchor for "since when".
-    - ``commit_drift_count is None`` does not demote. None means the
-      leg could not ask — no origin repo, nothing read the leg, git
-      unreachable, or no anchor landing in this repo. Absence of
-      evidence is not evidence of freshness, and this is the branch
-      that keeps preference/lesson/reflection memories (the ~36% of
-      real bodies `bench/claims.py` grades as judgement rather than
-      checkable claim) pinned at ``spot_check_required`` where they
-      belong.
-    - Path existence alone does not demote. "The cited file still
-      exists" answers a weaker question than "nothing touched it since
-      you checked", and the 2026-07-26 store sweep put a number on how
-      much weaker: of 15 missing-path alerts raised from paths scraped
-      out of body prose, ~0 were real drift (remote-host paths,
-      ``/etc/nope``-style placeholders), against 3 of 3 real for
-      anchored attestations. A missing path still raises the verdict
-      via ``drifty`` — this carve-out is about what may LOWER it.
-
-    That same 15-vs-3 sweep later moved the RAISING side too, which is
-    the one line of this docstring's history worth keeping straight: the
-    prose half no longer raises either. ``path_drift_missing`` is the
-    claim-anchored count now (``verdict_from_signals`` has the full
-    note), so "a missing path still raises the verdict" holds for an
-    attested or anchored miss and no longer holds for a token scraped
-    out of a sentence. The carve-out above is unchanged — path evidence
-    of either provenance still cannot LOWER a verdict.
-    """
+    """`verdict_from_signals` over a `VerificationStatus`: one of
+    ``fresh``, ``spot_check_recommended`` or ``spot_check_required``."""
     return verdict_from_signals(
         status=verification.status,
         path_drift_missing=path_drift_missing,
         commit_drift_count=commit_drift_count,
+        cited_missing=cited_missing,
+        attested_absent_present=attested_absent_present,
+    )
+
+
+def staleness_verdict_from_report(
+    *,
+    verification: VerificationStatus,
+    path_drift: PathDriftReport,
+    commit_drift_count: int | None,
+) -> str:
+    """The product's verdict for a record from its path report and commit
+    leg: each path signal taken from the report as every read surface
+    takes it. Callers holding a `PathDriftReport` (memory_show's verdict,
+    the rot bench) compose it here rather than restating the keywords."""
+    return compute_staleness_verdict(
+        verification=verification,
+        path_drift_missing=len(path_drift.claim_anchored_missing),
+        commit_drift_count=commit_drift_count,
+        cited_missing=len(path_drift.missing),
+        attested_absent_present=len(path_drift.present_but_attested_absent),
     )
 
 
@@ -1906,5 +1843,6 @@ __all__ = [
     "holds_commit",
     "resolve_commit_drift",
     "resolve_commit_drift_count",
+    "staleness_verdict_from_report",
     "verdict_from_signals",
 ]

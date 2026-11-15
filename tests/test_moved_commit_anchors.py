@@ -18,6 +18,7 @@ from .test_home_commit_leg import (
     _agree,
     _estate,
     _git,
+    _missing,
     _since,
     _surfaces,
     neutral_git,
@@ -114,7 +115,7 @@ async def test_absolute_commit_anchors_survive_checkout_view_changes(
         await _surfaces(world, rid, "home")
     read = await _surfaces(world, rid, where)
     _agree(rid, read)
-    assert read.show["commit_drift"] is not None
+    assert "commit_drift" in read.show
     assert read.show["commit_drift"]["commits_since_verify"] == 1
     assert read.show["commit_drift"]["basis"] == basis
     assert read.show["staleness_verdict"] == "spot_check_recommended"
@@ -169,10 +170,10 @@ async def test_an_expected_home_anchor_without_a_recorded_view_is_not_checked(
     )
     read = await _surfaces(world, rid, where)
     _agree(rid, read)
-    assert read.show["commit_drift"] is None
+    assert "commit_drift" not in read.show
     assert read.show["commit_drift_unchecked"] is True
     assert read.show["staleness_verdict"] == "spot_check_recommended"
-    assert not (read.show.get("path_drift") or {}).get("missing")
+    assert _missing(read.show) == []
     cli = _estate(_cli_existing_views(world, where, capsys))
     assert rid not in cli["drifted"]
     assert cli["skipped"] == ["a commit anchor has no recorded checkout view"]

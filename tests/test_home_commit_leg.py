@@ -30,7 +30,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -258,12 +258,27 @@ class Surfaces:
     top: dict[str, Any] | None
     auto: dict[str, Any] | None
     health: dict[str, Any]
+    rows: list[dict[str, Any]] = field(default_factory=list)
+
+
+#: The search's own render, kept before any test wraps it.
+_RENDER_HIT = ResponseBuilder.render_hit
 
 
 async def _surfaces(world: World, rid: str, where: str) -> Surfaces:
     """memory_show, the hit of an unscoped search, the expanded top hit,
     the auto-scope hit (where it admits the memory) and health, read
-    from `where`; A's `objects` made unreadable for "objects"."""
+    from `where`; A's `objects` made unreadable for "objects". `rows` holds
+    the working rows the searches assembled for the memory, which carry the
+    search's own commit-leg flags."""
+    rows: list[dict[str, Any]] = []
+
+    def render(self: ResponseBuilder, row: dict[str, Any]) -> dict[str, Any]:
+        if row["id"] == rid:
+            rows.append(dict(row))
+        return _RENDER_HIT(self, row)
+
+    world.monkeypatch.setattr(ResponseBuilder, "render_hit", render)
     world.stand_at(world.place(where))
     objects = world.home / ".git" / "objects"
     if where == "objects":
@@ -299,6 +314,7 @@ async def _surfaces(world: World, rid: str, where: str) -> Surfaces:
         tops[0] if tops else None,
         autos[0] if autos else None,
         health,
+        rows,
     )
 
 
@@ -328,25 +344,31 @@ def _estate(health: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _missing(show: dict[str, Any]) -> list[str]:
+    """The paths memory_show's read found missing."""
+    return [
+        path
+        for path, found in show.get("paths", {}).items()
+        if found.startswith("missing")
+    ]
+
+
 def _agree(rid: str, read: Surfaces) -> None:
-    """Every surface reads the memory one way: the verdict, the count, the
-    flags; and health lists it where the per-memory surfaces read it."""
+    """Every surface reads the memory one way: the verdict and the reason
+    that names the count or the unread leg; and health lists it where the
+    per-memory surfaces read it."""
     show = read.show
     count = (
-        show["commit_drift"]["commits_since_verify"]
-        if show["commit_drift"] is not None
-        else None
+        show["commit_drift"]["commits_since_verify"] if "commit_drift" in show else None
     )
-    rows = [row for row in (read.hit, read.top, read.auto) if row is not None]
-    for row in rows:
+    rendered = [row for row in (read.hit, read.top, read.auto) if row is not None]
+    for row in rendered:
         assert row["staleness_verdict"] == show["staleness_verdict"]
-        assert row.get("commit_drift_count") == count
+        assert row.get("reason") == show.get("reason")
+    assert len(read.rows) == len(rendered)
+    for row in read.rows:
         for flag in ("commit_drift_unread", "commit_drift_unchecked"):
             assert bool(row.get(flag)) == bool(show.get(flag)), flag
-        assert (
-            row["verification"]["recommendation"]
-            == (show["verification"]["recommendation"])
-        )
     listed = _estate(read.health)
     assert rid not in listed["twice"]
     assert (rid in listed["drifted"]) == bool(count)
@@ -380,20 +402,18 @@ async def test_every_surface_counts_a_memory_away_from_home_at_its_home(
     assert (read.auto is not None) == (where in _ADMITTED)
     if leg == "path":
         # The path leg ran at A's live view before too.
-        assert show["path_drift"] is not None
-        assert [Path(p).name for p in show["path_drift"]["missing"]] == ["b.py"]
+        assert [Path(p).name for p in _missing(show)] == ["b.py"]
     if where == "objects":
-        assert show["commit_drift"] is None
+        assert "commit_drift" not in show
         assert show["commit_drift_unread"] is True
         assert show["staleness_verdict"] == "spot_check_required"
         return
     assert show["staleness_verdict"] == "spot_check_recommended"
-    assert show["commit_drift"]["status"] == "drift"
     assert show["commit_drift"]["commits_since_verify"] == 1
     assert "commit_drift_unread" not in show
     assert "commit_drift_unchecked" not in show
     if leg == "claim":
-        assert read.hit["claim_drift"] == {
+        assert show["commit_drift"]["claim_drift"] == {
             "checked": 1,
             "drifted": ["src/a.py::load"],
         }
@@ -409,7 +429,7 @@ async def test_nothing_since_the_stamp_reads_fresh_and_clean(
     read = await _surfaces(world, rid, where)
     _agree(rid, read)
     assert read.show["staleness_verdict"] == "fresh"
-    assert read.show["commit_drift"]["status"] == "clean"
+    assert read.show["commit_drift"]["commits_since_verify"] == 0
 
 
 async def test_no_live_checkout_holding_the_commit_reads_not_checked(
@@ -426,12 +446,10 @@ async def test_no_live_checkout_holding_the_commit_reads_not_checked(
     read = await _surfaces(world, rid, "B")
     _agree(rid, read)
     show = read.show
-    assert show["commit_drift"] is None
+    assert "commit_drift" not in show
     assert show["commit_drift_unchecked"] is True
     assert show["staleness_verdict"] == "spot_check_recommended"
-    assert show["verification"]["recommendation"] == unchecked_recommendation(
-        CommitLegUnchecked(UNCONFIRMED)
-    )
+    assert show["reason"] == unchecked_recommendation(CommitLegUnchecked(UNCONFIRMED))
     assert any(
         reason.startswith(
             "unconfirmed: its home checkout has no live view here and the "
@@ -456,8 +474,8 @@ async def test_a_home_with_no_history_reads_not_checked(
     _agree(rid, read)
     assert read.show["commit_drift_unchecked"] is True
     assert read.show["staleness_verdict"] == "spot_check_recommended"
-    assert read.show["verification"]["recommendation"] == (
-        unchecked_recommendation(CommitLegUnchecked(NO_HISTORY))
+    assert read.show["reason"] == unchecked_recommendation(
+        CommitLegUnchecked(NO_HISTORY)
     )
     assert "git unreachable in the home checkout" in _estate(read.health)["skipped"]
 
@@ -493,11 +511,11 @@ async def test_a_record_with_no_home_row_is_not_checked(
         for where in ("home", "B"):
             read = await _surfaces(world, rid, where)
             assert read.hit is None and read.auto is None
-            assert read.show["commit_drift"] is None
+            assert "commit_drift" not in read.show
             assert read.show["commit_drift_unchecked"] is True
             assert read.show["staleness_verdict"] == "spot_check_recommended"
-            assert read.show["verification"]["recommendation"] == (
-                unchecked_recommendation(CommitLegUnchecked(NO_HOME))
+            assert read.show["reason"] == unchecked_recommendation(
+                CommitLegUnchecked(NO_HOME)
             )
             listed = _estate(read.health)
             assert rid not in listed["drifted"], (since, where)
@@ -530,7 +548,7 @@ async def test_a_record_naming_no_repository_has_no_commit_leg(world: World) -> 
     )
     read = await _surfaces(world, written.id, "B")
     _agree(written.id, read)
-    assert read.show["commit_drift"] is None
+    assert "commit_drift" not in read.show
     assert "commit_drift_unchecked" not in read.show
     assert read.show["staleness_verdict"] == "fresh"
     assert _estate(read.health)["skipped"] == []
@@ -560,7 +578,7 @@ async def test_a_global_record_has_no_commit_leg(world: World, where: str) -> No
             )
         read = await _surfaces(world, rid, where)
         _agree(rid, read)
-        assert read.show["commit_drift"] is None, verified_again
+        assert "commit_drift" not in read.show, verified_again
         assert "commit_drift_unchecked" not in read.show
         listed = _estate(read.health)
         assert rid not in listed["drifted"]
@@ -604,7 +622,7 @@ async def test_a_leg_that_resolves_to_none_reads_no_whole_history(
     world.monkeypatch.setattr(subprocess, "run", spy)
     for _ in ("cold", "warm"):
         shown = await call_tool(world.server, "memory_show", {"id": written.id})
-        assert shown["commit_drift"] is None
+        assert "commit_drift" not in shown
         assert "commit_drift_unchecked" not in shown
         assert shown["staleness_verdict"] == "fresh"
     assert _whole_history_logs(calls) == []
@@ -684,7 +702,7 @@ async def test_a_folder_projects_record_has_no_commit_leg(world: World) -> None:
 
     read = await _surfaces(world, written.id, "B")
     _agree(written.id, read)
-    assert read.show["commit_drift"] is None
+    assert "commit_drift" not in read.show
     assert "commit_drift_unchecked" not in read.show
     assert read.show["staleness_verdict"] == "fresh"
     assert _estate(read.health)["skipped"] == []

@@ -12,21 +12,21 @@ from .. import git_read_budget
 from typing import TYPE_CHECKING, Any
 
 from .. import standing as _standing
-from .._response import isoformat, isoformat_optional
+from .._response import isoformat, isoformat_optional, verdict_and_reason
 from ..models import utcnow
 from ..verdict import memory_verdict
 from ._shared import Context, _advance_turn, caller_anchoring
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..admission import Admission
     from ..models import Memory
     from ..verdict import MemoryVerdict
 
 
 DESC_MEMORY_SHOW = (
-    "One memory in full: body, links both ways, verification, path and "
-    "commit drift, staleness_verdict. Read it before relying on a hit whose "
-    "verdict is not fresh."
+    "One memory in full: body, links both ways, verification and drift. A "
+    "staleness_verdict other than fresh: act on what `reason` names first."
 )
 
 
@@ -40,7 +40,7 @@ async def memory_show(
     # A removed or unknown id raises the store's own error, which the tool
     # boundary refuses with its words (`_refusals_as_tool_errors`).
     memory = deps.store.load_one(id)
-    shown = _show_verdict(deps, memory)
+    shown, links = _show_verdict(deps, memory)
     drift = shown.path_drift
     commit_drift = shown.commit_drift
     # The links payload carries `provenance` too: how the record entered
@@ -57,86 +57,80 @@ async def memory_show(
     # auto-`record_use` flow has something to commit on the next
     # turn if the model doesn't override.
     token_map = state.issue_use_tokens([memory.id])
-    response = _show_response(deps, memory, shown, index_reads, token_map[memory.id])
+    shown_state = _show_response(deps, memory, shown, index_reads, token_map[memory.id])
     _apply_show_trust_and_standing(
-        deps, memory, response, trust_unavailable, verified_locally_at
+        deps, memory, shown_state, trust_unavailable, verified_locally_at
     )
+    _apply_objection(deps, shown_state, links, set(state.disabled_scopes))
     deps.recorder.record(
         "show",
         id=memory.id,
         path_drift_checked=len(drift.checked),
         path_drift_missing=len(drift.missing),
-        verification_status=response["verification"]["status"],
-        staleness_verdict=response["staleness_verdict"],
+        verification_status=shown_state["verification"]["status"],
+        staleness_verdict=verdict_and_reason(shown_state)[0],
         commit_drift_status=(commit_drift.status if commit_drift is not None else None),
         commits_since_verify=(
             commit_drift.commits_since_verify if commit_drift is not None else None
         ),
     )
-    return response
+    return deps.responses.render_show(shown_state, memory, drift)
 
 
-def _show_verdict(deps: ToolHandlers, memory: Memory) -> MemoryVerdict:
-    """Take the shown memory; return its verdict for the caller's checkout."""
+def _apply_objection(
+    deps: ToolHandlers,
+    shown_state: dict[str, Any],
+    links: Admission,
+    excluded: set[str],
+) -> None:
+    """Take the show's state; keep on it what on record objects to the
+    record, as the search keeps it on a hit: the active, admitted records
+    a `contradicts` link names in either direction
+    (`_response.contradicting_ids`) and the recent uses that rejected it
+    (`_response.recent_rejections`). `_response.verdict_and_reason` reads
+    both."""
+    from .._response import contradicting_ids, recent_rejections
+
+    record_id = shown_state["id"]
+    contradicted = contradicting_ids(
+        deps.store, [record_id], admission=links, excluded_scopes=excluded
+    )
+    shown_state["_contradicted_by"] = contradicted.get(record_id, [])
+    rejections = recent_rejections(deps.store, [record_id], now=utcnow())
+    if rejections:
+        shown_state["recent_negative_outcomes"] = rejections[record_id]
+
+
+def _show_verdict(
+    deps: ToolHandlers, memory: Memory
+) -> tuple[MemoryVerdict, Admission]:
+    """Take the shown memory; return its verdict for the caller's checkout,
+    and the caller's LINKS admission."""
     from .. import _handlers as _h
 
     # One verdict for show and search (`verdict.memory_verdict`): the
-    # calendar status, path drift and the commit leg, rolled up into
-    # `staleness_verdict`, with the commit leg read through the search's
+    # calendar status, path drift over the full body (with the record's
+    # attested paths) and the commit leg, read through the search's
     # per-hit memo, so a show of a row nothing has moved under forks no
-    # git process.
+    # git process. The commit leg is counted in the caller's checkout when
+    # the caller's admission counts the record's home there (design 3.5),
+    # else where health's estate check counts it (`commit_legs`, ENG-229),
+    # and a leg that applies and that nothing here reads is flagged and
+    # never fresh. It is claim-anchored: narrowed to commits that touch
+    # what the record cites, attests or claims, and None for a record
+    # that cites nothing a commit could move. The rollup is
+    # `verify.verdict_from_signals`.
     #
-    # Path drift runs against the full body. We surface `path_drift`
-    # only when there's something actionable: a memory with no path
-    # claims (or all-healthy paths) returns the field as null so the
-    # consumer can branch on `if path_drift is not None`. Without
-    # that, every memory_show would carry an empty `path_drift` dict
-    # and the model would learn to ignore the field even when it
-    # mattered. `verified_paths` is threaded in so a path the user
-    # has previously attested gets surfaced in `path_drift.verified`
-    # even when no other claims drift.
-    #
-    # Verification staleness is structurally always present — emitted
-    # even for "fresh" memories — because consistent shape means the
-    # consumer can branch on `verification.status` without an
-    # existence check. The recommendation field is null on fresh,
-    # populated otherwise; that's the actionable handle.
-    #
-    # Commit-drift is the cwd-aware sibling of verification: when the
-    # caller's project is the memory's (its home, through the LINKS
-    # admission: `Admission.drift_counts`, design 3.5), count commits
-    # authored since the last verify in the caller's checkout; for any
-    # other memory, where health's estate check counts them, at its home
-    # checkout's live view or its recorded worktree (`commit_legs`,
-    # ENG-229), and where nothing here reads them, say so
-    # (`commit_drift_unchecked`) and never read fresh.
-    # Stays null when the memory names no repository or has no anchor to
-    # count from — emitting an "unknown" branch every consumer would have
-    # to filter is worse than silence, mirroring path_drift's
-    # null-when-clean contract.
-    # The count is claim-anchored: narrowed to commits that touched
-    # the memory's cited/attested paths (a memory anchored to
-    # `[/etc/foo]` reads as `clean` when the project moved but
-    # `/etc/foo` didn't), and not applicable at all — None — for a
-    # memory whose body cites no paths this repo's commits could
-    # invalidate (`body` feeds the anchor derivation).
-    #
-    # The verdict escalates on the claim-anchored path subset only:
-    # attested paths that vanished, and citations resolved against this
-    # memory's own recorded worktree. The full `missing` list is still
-    # emitted in `_show_response`'s `path_drift` block — prose absences stay
-    # visible as evidence, they just no longer raise the tier. Rationale
-    # and the 15-vs-3 measurement live on `verdict_from_signals`.
     # The caller is resolved once (design 3.1): its anchoring reads the
     # record's claims where design 3.6 reads them, and its LINKS admission
     # decides whether the commit leg is counted in the caller's checkout
     # or where the anchoring reads it.
-    from ..admission import Admission
+    from ..admission import Admission as _Admission
     from ..membership import LINKS
 
     anchoring, caller = caller_anchoring(deps.store, deps.config)
-    links = Admission.of(LINKS, caller)
-    return memory_verdict(
+    links = _Admission.of(LINKS, caller)
+    verdict = memory_verdict(
         memory,
         caller_origin=_h.capture_origin(),
         now=utcnow(),
@@ -144,6 +138,7 @@ def _show_verdict(deps: ToolHandlers, memory: Memory) -> MemoryVerdict:
         anchoring=anchoring,
         admission=links,
     )
+    return verdict, links
 
 
 def _show_response(
@@ -153,7 +148,10 @@ def _show_response(
     index_reads: dict[str, Any],
     use_token: str,
 ) -> dict[str, Any]:
-    """Take the memory, verdict, token and index reads (popped in place); return the response."""
+    """Take the memory, verdict, token and index reads (popped in place);
+    return the show's state, which the trust rule, the standing question
+    and the event read, and `ResponseBuilder.render_show` turns into the
+    response."""
     drift = shown.path_drift
     verification = shown.verification
     commit_drift = shown.commit_drift
@@ -172,42 +170,10 @@ def _show_response(
         "provenance": index_reads.pop("provenance"),
         "body": memory.body,
         "origin": deps.responses.origin_to_dict(memory.origin),
-        # Who wrote it — the full shape, nulls included, so an absent
-        # attestation reads as recorded rather than omitted. The key
-        # itself is omitted when the writer declared nothing (identity).
-        **(
-            {"actor": actor_dict}
-            if (actor_dict := deps.responses.actor_to_dict(memory.actor)) is not None
-            else {}
-        ),
-        "path_drift": (drift.to_dict() if (drift.should_report) else None),
+        "actor": deps.responses.actor_to_dict(memory.actor),
+        "path_drift": drift.to_dict() if drift.should_report else None,
         "commit_drift": (commit_drift.to_dict() if commit_drift is not None else None),
         "use_token": use_token,
-        # Corroboration rollup — omitted while zero (absence-as-signal,
-        # matching the frontmatter shape).
-        **(
-            {
-                "corroborations": memory.corroborations,
-                "last_corroborated": isoformat_optional(memory.last_corroborated),
-            }
-            if memory.corroborations
-            else {}
-        ),
-        "verified_paths": list(memory.verified_paths),
-        "verified_commits": list(memory.verified_commits),
-        "verified_versions": list(memory.verified_versions),
-        "verified_absent_paths": list(memory.verified_absent_paths),
-        **{
-            field: value
-            for field in ("verified_path_targets", "verified_absent_path_targets")
-            if (value := getattr(memory, field)) is not None
-        },
-        "claims": list(memory.claims),
-        # The stamp's commit anchor, beside the attestations it was
-        # stamped with; `null` on a record verified without a checkout
-        # or before the field existed (the `commit_drift` block's
-        # `basis` says which count that record gets).
-        "verified_head": memory.verified_head,
         **index_reads,
     }
     if shown.commit_drift_unread is not None:
@@ -282,13 +248,9 @@ def _links_payload(deps: ToolHandlers, memory: Any) -> dict[str, Any]:
     ways (e.g. "this memory is superseded by X" alongside "X
     supersedes this").
 
-    Both lists are omitted when empty — absence-as-signal, so a
-    consumer branches on key presence. That is the same contract the
-    `corroborations` pair in the caller's return literal uses, and the
-    OPPOSITE of the one `path_drift` / `commit_drift` take: those two
-    keys are always emitted, with `null` as the no-signal value. Reverse
-    links carry `source_id` so the consumer can navigate to the linking
-    memory; forward links carry `target_id`.
+    Both lists are omitted when empty. Reverse links carry `source_id`,
+    forward links `target_id`; the response groups each list by type and
+    note (`_response._grouped_links`).
 
     The same read returns the record's trust row, so the dict also
     carries `provenance` (always present; None when the store holds no

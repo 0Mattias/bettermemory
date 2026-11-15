@@ -414,7 +414,7 @@ async def test_e2e_scan_list_and_confirm_contradiction(store: Store) -> None:
     shown = _unwrap(await _call(server, "memory_show", id=row["a"]["id"]))
     links = shown.get("links") or []
     assert any(
-        link.get("type") == "contradicts" and link.get("target_id") == row["b"]["id"]
+        link.get("type") == "contradicts" and row["b"]["id"] in link.get("ids", [])
         for link in links
     )
 
@@ -1041,7 +1041,7 @@ async def test_lost_verdict_race_mutates_nothing(
     # The winner's link survived: queue and link layer agree.
     shown = _unwrap(await _call(server, "memory_show", id=a_id))
     assert any(
-        link.get("type") == "contradicts" and link.get("target_id") == b_id
+        link.get("type") == "contradicts" and b_id in link.get("ids", [])
         for link in (shown.get("links") or [])
     ), "the confirmed verdict's contradicts link must survive the lost race"
 

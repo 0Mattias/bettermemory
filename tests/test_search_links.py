@@ -76,8 +76,7 @@ async def test_superseded_by_surfaces_on_search_hit(server: Any) -> None:
     hits = await _search(server, "auth JWT session tokens")
     hit_a = _hit(hits, a["id"])
     assert "superseded_by" in hit_a
-    assert [e["id"] for e in hit_a["superseded_by"]] == [b["id"]]
-    assert hit_a["superseded_by"][0]["summary"]
+    assert hit_a["superseded_by"] == [b["id"]]
 
 
 async def test_contradicts_surfaces_both_directions(server: Any) -> None:
@@ -105,9 +104,14 @@ async def test_contradicts_surfaces_both_directions(server: Any) -> None:
 
     hits = await _search(server, "Friday deploy freeze shipping")
     # Outbound: A points at B.
-    assert [e["id"] for e in _hit(hits, a["id"])["contradicts"]] == [b["id"]]
-    # Inbound: B is pointed at by A — same edge, surfaced on B too.
-    assert [e["id"] for e in _hit(hits, b["id"])["contradicts"]] == [a["id"]]
+    assert _hit(hits, a["id"])["contradicts"] == [b["id"]]
+    # Inbound: B is pointed at by A, the same edge, surfaced on B too.
+    assert _hit(hits, b["id"])["contradicts"] == [a["id"]]
+    # A recorded contradiction asks for a check, and names the other end.
+    for one, other in ((a, b), (b, a)):
+        hit = _hit(hits, one["id"])
+        assert hit["staleness_verdict"] == "spot_check_recommended"
+        assert other["id"] in hit["reason"]
 
 
 async def test_no_links_omits_annotation_keys(server: Any) -> None:

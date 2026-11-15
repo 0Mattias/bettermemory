@@ -72,12 +72,13 @@ def test_a_held_range_classifies_untouched_and_phantom_anchors(
         assert got.basis == verify.BASIS_REACHABILITY
         assert (got.status, got.commits_since_verify) == ("clean", 0)
     else:
+        # A phantom anchor has no leg; age alone asks for no check.
         assert got is None
         assert (
             verify.verdict_from_signals(
                 status="stale", path_drift_missing=0, commit_drift_count=None
             )
-            == "spot_check_required"
+            == "fresh"
         )
 
 

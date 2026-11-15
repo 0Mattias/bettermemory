@@ -81,7 +81,7 @@ from bettermemory.verify import (  # noqa: E402
     ClaimAnchor,
     CommitDriftUnread,
     compute_commit_drift,
-    compute_staleness_verdict,
+    staleness_verdict_from_report,
     compute_verification_status,
     detect_path_drift,
 )
@@ -549,9 +549,9 @@ def verdict_for(
             # The history was not read: never fresh, as the product reads it.
             return "spot_check_required", len(drift.missing), 0
         count = drift_status.commits_since_verify if drift_status is not None else 0
-        verdict = compute_staleness_verdict(
+        verdict = staleness_verdict_from_report(
             verification=verification,
-            path_drift_missing=len(drift.missing),
+            path_drift=drift,
             commit_drift_count=count if drift_status is not None else None,
         )
         return verdict, len(drift.missing), count
@@ -586,9 +586,9 @@ def verdict_for(
     # measure the guard. Harmless before that change (the calendar
     # pre-empted every drift input, so 0 and None were indistinguishable
     # here); load-bearing after it.
-    verdict = compute_staleness_verdict(
+    verdict = staleness_verdict_from_report(
         verification=verification,
-        path_drift_missing=len(drift.missing),
+        path_drift=drift,
         commit_drift_count=count if drift_status is not None else None,
     )
     return verdict, len(drift.missing), count

@@ -259,7 +259,7 @@ TRANSIENT_PHRASE_MARKERS: tuple[str, ...] = (
 # signal; the store only confirms the corpus is not contradicted locally.
 #
 # Three routes back in are pinned shut: the verdict signature by
-# `test_verdict_from_signals_takes_exactly_three_signals` in
+# `test_verdict_from_signals_takes_no_commit_sha_signal` in
 # `tests/test_verify.py`; cross-surface agreement by
 # `test_a_sha_citing_fresh_memory_reads_fresh_on_both_surfaces` in
 # `tests/test_server_commit_drift.py`, which is the one that actually fires

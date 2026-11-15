@@ -65,7 +65,7 @@ async def test_show_does_not_restart_the_deadline_for_its_listing(
         monkeypatch.setattr(budget, "_clock", clock)
     _caches.clear_all()
     shown = await call_tool(world.server, "memory_show", {"id": rid})
-    assert shown["commit_drift"] is None and shown["commit_drift_unread"] is True
+    assert "commit_drift" not in shown and shown["commit_drift_unread"] is True
     assert shown["staleness_verdict"] == "spot_check_required"
     assert timeouts, "the cold show never attempted its history"
     assert elapsed <= 5.0, ("show restarted a full timeout for a fallback", timeouts)
@@ -109,6 +109,6 @@ async def test_show_applicability_metadata_shares_the_deadline(
     monkeypatch.setattr(_response._DriftPass, "lookup", no_count)
     monkeypatch.setattr(_response._DriftPass, "history_applies", history_applies)
     shown = await call_tool(world.server, "memory_show", {"id": rid})
-    assert shown["commit_drift"] is None and shown["commit_drift_unread"] is True
+    assert "commit_drift" not in shown and shown["commit_drift_unread"] is True
     assert shown["staleness_verdict"] == "spot_check_required"
     assert elapsed == 5.0

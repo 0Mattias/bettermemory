@@ -68,7 +68,7 @@ from bettermemory.verify import (  # noqa: E402
     ClaimAnchor,
     CommitDriftUnread,
     compute_commit_drift,
-    compute_staleness_verdict,
+    staleness_verdict_from_report,
     compute_verification_status,
     detect_path_drift,
 )
@@ -268,9 +268,9 @@ def _verdict_from_own_worktree(
     if isinstance(commit_drift, CommitDriftUnread):
         # The history was not read: never fresh, as the product reads it.
         return "spot_check_required"
-    return compute_staleness_verdict(
+    return staleness_verdict_from_report(
         verification=verification,
-        path_drift_missing=len(drift.claim_anchored_missing),
+        path_drift=drift,
         commit_drift_count=(
             commit_drift.commits_since_verify if commit_drift is not None else None
         ),

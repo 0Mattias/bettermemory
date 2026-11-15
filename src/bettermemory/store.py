@@ -1864,6 +1864,25 @@ class Store:
                 counts[scope] = counts.get(scope, 0) + 1
         return total, counts
 
+    def scopes_for(self, ids: Sequence[str]) -> dict[str, list[str]]:
+        """The scopes of each active record among `ids`, by id, read in
+        batched ``IN`` queries without loading a record. An id that names
+        no active record is absent."""
+        wanted = list(dict.fromkeys(str(i) for i in ids))
+        out: dict[str, list[str]] = {}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            marks = ", ".join(["?"] * len(chunk))
+            for row in self._conn.execute(
+                f"SELECT id, scopes_json FROM memories WHERE id IN ({marks})",
+                chunk,
+            ):
+                scopes = _load_json(row["scopes_json"], None)
+                out[str(row["id"])] = (
+                    [str(s) for s in scopes] if isinstance(scopes, list) else []
+                )
+        return out
+
     def category_rows(
         self,
         *,

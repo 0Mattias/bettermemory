@@ -225,12 +225,11 @@ async def test_every_surface_names_the_cause(
         hits = raw.get("result", raw) if isinstance(raw, dict) else raw
         assert [hit["id"] for hit in hits] == [memory_id]
         rows.append(dict(hits[0]))
-    assert rows[0]["commit_drift"] is None and "body" in rows[2]
+    assert "commit_drift" not in rows[0] and "body" in rows[2]
+    assert rows[0]["commit_drift_unread"] is True
     for row in rows:
-        assert row["commit_drift_unread"] is True
         assert row["staleness_verdict"] == "spot_check_required"
-        assert row["verification"]["recommendation"] == unread_recommendation(why)
-        assert "commit_drift_count" not in row
+        assert row["reason"] == unread_recommendation(why)
     report = await call_tool(
         server, "memory_admin", {"action": "health", "section": "commit_drift_debt"}
     )

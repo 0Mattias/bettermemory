@@ -438,7 +438,7 @@ def test_try_subcommand_reproduces_path_drift_offline(
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert "spot_check_recommended" in out
-    assert "path_drift.missing" in out
+    assert "reason:" in out
     # The demo store is isolated: no store file appears under
     # BETTERMEMORY_DIR.
     assert not (tmp_path / STORE_FILENAME).exists()
@@ -461,8 +461,8 @@ def test_try_json_emits_the_raw_hit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """`bettermemory try --json` emits the exact MCP-shaped hit dict, with
-    the path-drift-driven verdict and a populated path_drift.missing."""
+    """`bettermemory try --json` emits the rendered search hit, with the
+    path-drift-driven verdict and a reason naming the missing path."""
     import json
 
     with pytest.raises(SystemExit) as exc:
@@ -470,8 +470,8 @@ def test_try_json_emits_the_raw_hit(
     assert exc.value.code == 0
     row = json.loads(capsys.readouterr().out)
     assert row["staleness_verdict"] == "spot_check_recommended"
-    assert row["verification"]["status"] == "fresh"
-    assert row["path_drift"]["missing"]
+    assert "session.py" in row["reason"]
+    assert "path_drift" not in row
 
 
 def test_try_closes_its_store_before_removing_the_directory(
@@ -510,7 +510,7 @@ def test_try_closes_its_store_before_removing_the_directory(
     with pytest.raises(SystemExit) as exc:
         _run_main(["try", "--json"], monkeypatch=monkeypatch, storage=tmp_path)
     assert exc.value.code == 0
-    assert json.loads(capsys.readouterr().out)["path_drift"]["missing"]
+    assert "session.py" in json.loads(capsys.readouterr().out)["reason"]
     assert open_at_cleanup
     assert not any(open_at_cleanup)
 

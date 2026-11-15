@@ -36,11 +36,15 @@ When a stored memory shapes your reply, say so briefly.
 
 ## Verify
 
-A staleness_verdict other than `fresh` means a check failed, and the
-hit's `reason` names it. Check that claim before relying on the memory:
-memory_verify(id, verified_paths=[...]) if it holds, memory_update if
-it drifted. memory_update resets verification, so verify after fixing.
-A path absent on purpose goes in verified_absent_paths.
+A staleness_verdict other than `fresh` means a check failed or
+something on record objects, and `reason` names it with its remedy. For
+a failed check: memory_verify(id, verified_paths=[...]) if the claim
+holds, memory_update if it drifted (then verify again). A path absent
+on purpose goes in verified_absent_paths. A contradiction, a recent
+rejection or an untrusted provenance is not cleared by memory_verify;
+follow the reason. A hit names its provenance only when it was not
+written here, and carries trust_unavailable when the store's key is
+missing, which nothing in these tools clears.
 
 ## Outcomes
 

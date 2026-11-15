@@ -19,6 +19,7 @@ hermetic per-test memory dir, isolated SessionState.
 """
 
 from __future__ import annotations
+from ._internal_rows import raw_hits, wire_hits
 from ._mcp import call_tool as _mcp_call
 
 import os
@@ -43,6 +44,13 @@ from bettermemory.verify import (
     _VERDICT_RECOMMENDED,
     _VERDICT_REQUIRED,
 )
+
+
+@pytest.fixture(autouse=True)
+def _search_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module tests the verdict the search computes: its searches
+    answer with their working rows (`tests/_internal_rows.py`)."""
+    raw_hits(monkeypatch)
 
 
 @pytest.fixture
@@ -283,8 +291,8 @@ async def test_cold_memories_field_returned_by_health(
 async def test_memory_show_includes_staleness_verdict(server: Any) -> None:
     res = await _call(server, "memory_write", content="A claim.", scopes=["tools"])
     shown = await _call(server, "memory_show", id=res["id"])
-    # Never-verified memory → spot_check_required.
-    assert shown["staleness_verdict"] == "spot_check_required"
+    # Never verified and nothing testable: no check to ask for.
+    assert shown["staleness_verdict"] == "fresh"
 
 
 async def test_memory_show_verdict_fresh_after_verify(server: Any) -> None:
@@ -307,8 +315,8 @@ async def test_memory_search_hit_includes_staleness_verdict(
     assert hits, "expected at least one hit"
     for hit in hits:
         assert "staleness_verdict" in hit
-        # Never-verified, so the verdict is required regardless of drift.
-        assert hit["staleness_verdict"] == "spot_check_required"
+        # A missing path scraped from prose recommends a check.
+        assert hit["staleness_verdict"] == "spot_check_recommended"
 
 
 async def test_memory_search_expand_top_recomputes_verdict_on_drift(
@@ -584,6 +592,12 @@ async def _write_and_attest(server: Any, cited: Path, *, status: str) -> Any:
     return written
 
 
+#: The verdict `_write_memory_in_state`'s record reads under each raise
+#: status: never verified, its path is prose and recommends a check;
+#: stale, its path was attested and requires one.
+_RAISED = {"never": "spot_check_recommended", "stale": "spot_check_required"}
+
+
 def test_staleness_verdict_raise_statuses_match_frozenset() -> None:
     """Guard so additions to ``_VERDICT_RAISE_STATUSES`` are mirrored in
     the parametrise list — otherwise a new status joining the raise
@@ -595,37 +609,28 @@ def test_staleness_verdict_raise_statuses_match_frozenset() -> None:
 
 @pytest.mark.parametrize("status", _EXPECTED_RAISE_STATUSES)
 async def test_staleness_verdict_via_show(stale_server: Any, status: str) -> None:
-    """Every member of ``_VERDICT_RAISE_STATUSES`` must drive
-    ``memory_show``'s ``staleness_verdict`` to ``spot_check_required``
-    with a non-null ``verification.recommendation``. Routes through
-    ``verify.compute_staleness_verdict`` (the canonical gate). A silent
-    drop of either member here lets the loudest re-verify signal — the
-    verdict consumers branch on first — fall through to the drift-only
-    ``spot_check_recommended`` or even ``fresh``, treating an
-    unverified or expired memory as ground truth."""
+    """A raise status sets a failing check's tier on ``memory_show``: an
+    attested path gone requires a check on a stale record; the
+    never-verified fixture cites the path in prose only, which
+    recommends one. Either way the reason names the path."""
     memory_id = await _write_memory_in_state(stale_server, status=status)
     shown = await _call(stale_server, "memory_show", id=memory_id)
-
     assert shown["verification"]["status"] == status
-    assert shown["staleness_verdict"] == "spot_check_required"
-    recommendation = shown["verification"]["recommendation"]
-    assert recommendation is not None and recommendation.strip(), (
-        "raise-status verdicts must carry an actionable recommendation; "
-        "got an empty payload"
-    )
+    assert shown["staleness_verdict"] == _RAISED[status]
+    assert "widget-staleness-pin.toml" in shown["reason"]
 
 
 @pytest.mark.parametrize("status", _EXPECTED_RAISE_STATUSES)
-async def test_staleness_verdict_via_search(stale_server: Any, status: str) -> None:
-    """Mirror of ``test_staleness_verdict_via_show`` on the
-    ``memory_search`` surface. ``hit_to_dict`` in ``_response.py`` also
-    routes through ``verify.compute_staleness_verdict``;
-    a silent drop there is independent of the ``memory_show`` path and
-    would lower the top-hit verdict on every retrieval. Locks the
-    search side of the contract too."""
+async def test_staleness_verdict_via_search(
+    stale_server: Any, status: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``memory_search`` hit agrees with ``memory_show`` under each
+    raise status: the same raised verdict, and a non-empty reason naming
+    the path. The hit is the wire hit (``render_hit``)."""
+    wire_hits(monkeypatch)
     memory_id = await _write_memory_in_state(stale_server, status=status)
     # `auto_scope=False` keeps the test independent of the runner's
-    # cwd — the memory's `origin.repo` would otherwise depend on
+    # cwd: the memory's `origin.repo` would otherwise depend on
     # whether the test was invoked from inside a checkout.
     hits = _unwrap(
         await _call(
@@ -635,11 +640,13 @@ async def test_staleness_verdict_via_search(stale_server: Any, status: str) -> N
             auto_scope=False,
         )
     )
-    assert hits, "expected at least one hit for the seeded memory"
     hit = next((h for h in hits if h["id"] == memory_id), None)
     assert hit is not None, f"seeded memory {memory_id!r} missing from search results"
-    assert hit["verification"]["status"] == status
-    assert hit["staleness_verdict"] == "spot_check_required"
+    shown = await _call(stale_server, "memory_show", id=memory_id)
+    assert hit["staleness_verdict"] == shown["staleness_verdict"] == _RAISED[status]
+    assert hit["reason"]
+    assert "widget-staleness-pin.toml" in hit["reason"]
+    assert "verification" not in hit
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -720,6 +727,7 @@ async def test_staleness_verdict_matches_across_show_and_search(
     _init_repo(repo)
     origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
     server = _build_stale_server_with_origin(memory_dir, origin, monkeypatch)
+    wire_hits(monkeypatch)
 
     memory_id = await _write_memory_in_state(server, status="stale", repo=repo)
     shown = await _call(server, "memory_show", id=memory_id)
@@ -1628,8 +1636,8 @@ async def test_verify_persists_structured_claims(
 async def test_show_after_verify_marks_path_verified(
     server: Any, tmp_path: Path
 ) -> None:
-    """A path the caller has attested AND that still exists shows up in
-    `path_drift.verified` on memory_show."""
+    """A path the caller has attested and that still exists reads
+    present and attested in memory_show's `paths`."""
     extant = tmp_path / "exists.txt"
     extant.write_text("hello")
     res = await _call(
@@ -1645,8 +1653,7 @@ async def test_show_after_verify_marks_path_verified(
         verified_paths=[str(extant)],
     )
     shown = await _call(server, "memory_show", id=res["id"])
-    assert shown["path_drift"] is not None
-    assert str(extant) in shown["path_drift"]["verified"]
+    assert shown["paths"][str(extant)] == "present, attested"
 
 
 async def test_verify_passing_none_preserves_prior_lists(
@@ -1736,22 +1743,16 @@ async def _write_citing_a_vanished_file(
 async def test_show_surfaces_a_prose_miss_without_escalating(
     server: Any, tmp_path: Path
 ) -> None:
-    """A calendar-fresh memory whose PROSE-cited path vanished: the path
-    is still named on the wire, and the verdict stays `fresh`.
-
-    Before the provenance split this read `spot_check_recommended`, on
-    evidence measured ~0-of-15 real. The fix is not to hide the evidence
-    — `path_drift.missing` is unchanged — it is to stop the evidence from
-    speaking as a verdict.
+    """A calendar-fresh memory whose prose-cited path vanished: the path
+    is named, and the verdict recommends a check without requiring one.
     """
     memory_id, cited = await _write_citing_a_vanished_file(
         server, tmp_path, attest=False, name="prose-only.toml"
     )
     shown = await _call(server, "memory_show", id=memory_id)
 
-    assert shown["path_drift"]["missing"] == [str(cited)]
-    assert shown["path_drift"]["claim_anchored_missing"] == []
-    assert shown["staleness_verdict"] == "fresh"
+    assert shown["paths"][str(cited)] == "missing"
+    assert shown["staleness_verdict"] == "spot_check_recommended"
 
 
 async def test_show_escalates_on_an_attested_miss(server: Any, tmp_path: Path) -> None:
@@ -1763,9 +1764,9 @@ async def test_show_escalates_on_an_attested_miss(server: Any, tmp_path: Path) -
     )
     shown = await _call(server, "memory_show", id=memory_id)
 
-    assert shown["path_drift"]["missing"] == [str(cited)]
-    assert shown["path_drift"]["claim_anchored_missing"] == [str(cited)]
+    assert shown["paths"][str(cited)] == "missing, attested or anchored"
     assert shown["staleness_verdict"] == "spot_check_recommended"
+    assert str(cited) in shown["reason"]
 
 
 async def test_per_hit_search_block_keeps_the_full_missing_set(
@@ -1794,7 +1795,7 @@ async def test_per_hit_search_block_keeps_the_full_missing_set(
     assert hit["path_drift_missing"] == 1
     assert hit["path_drift"]["missing"] == [str(cited)]
     assert "claim_anchored_missing" not in hit["path_drift"]
-    assert hit["staleness_verdict"] == "fresh"
+    assert hit["staleness_verdict"] == "spot_check_recommended"
 
 
 async def test_per_hit_search_block_names_the_escalating_miss(
@@ -1831,7 +1832,7 @@ async def test_commit_drift_recompute_does_not_re_broaden_the_path_leg(
     and a measured-zero commit leg. Reading the claim-anchored count
     (zero) lets the stale-demotion arm fire and the hit reads `fresh`;
     reading the dict's full count (one) makes it drifty and the hit reads
-    `spot_check_required`. Same response, opposite tiers.
+    `spot_check_required`; the prose miss alone recommends one.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1869,4 +1870,4 @@ async def test_commit_drift_recompute_does_not_re_broaden_the_path_leg(
     assert hit["commit_drift_count"] == 0
     assert hit["verification"]["status"] == "stale"
     assert hit["path_drift_missing"] == 1, "the prose evidence must still ship"
-    assert hit["staleness_verdict"] == "fresh"
+    assert hit["staleness_verdict"] == "spot_check_recommended"

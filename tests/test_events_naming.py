@@ -28,6 +28,8 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 from bettermemory.store_rows import _event_from_columns
 
+from ._internal_rows import raw_hits
+
 from .test_server_negative_outcomes import _call, _seed, _unwrap
 
 SINCE = datetime.now(timezone.utc) - timedelta(days=1)
@@ -89,6 +91,8 @@ async def test_a_search_parses_only_the_rows_that_name_its_hits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = Config(storage=StorageConfig(directory=str(tmp_path / "store")))
+    # The rejection the search computed, as its working rows carry it.
+    raw_hits(monkeypatch)
     state = SessionState()
     with Store(cfg.resolved_directory()) as store:
         recorder = Recorder(store=store, session_id=state.session_id, enabled=True)

@@ -73,8 +73,8 @@ async def test_links_round_trip_through_memory_show(server: Any) -> None:
     assert "links" in shown
     assert len(shown["links"]) == 1
     link = shown["links"][0]
+    assert link["ids"] == [a_id]
     assert link["type"] == "supersedes"
-    assert link["target_id"] == a_id
     assert link["note"] == "rewrote after the audit"
 
 
@@ -97,28 +97,23 @@ async def test_reverse_links_surface_on_target(server: Any) -> None:
     assert "reverse_links" in shown
     assert len(shown["reverse_links"]) == 1
     rev = shown["reverse_links"][0]
+    assert rev["ids"] == [b_id]
     assert rev["type"] == "supersedes"
-    assert rev["source_id"] == b_id
 
 
 async def test_links_omitted_when_empty(server: Any) -> None:
     """A memory with no links carries neither `links` nor
     `reverse_links` — absence-as-signal, so the consumer branches on key
     presence and the wire shape stays compact for the common case. Same
-    shape as the `corroborations` / `last_corroborated` pair, and the
-    OPPOSITE of what `path_drift` / `commit_drift` do: memory_show emits
-    those two keys unconditionally, using `null` as the no-signal value.
-    Both halves are asserted below, so the contrast is pinned by the
-    test rather than only described here."""
+    shape as every other optional field of memory_show, the path and
+    commit findings included."""
     mid = await _seed(server, "lone memory")
     shown = await _call(server, "memory_show", id=mid)
     assert "links" not in shown
     assert "reverse_links" not in shown
-    # The contrasting half. A freshly-written memory is unverified and
-    # cites no paths, so neither drift signal applies — and memory_show
-    # still emits both keys, null rather than absent.
-    assert shown["path_drift"] is None
-    assert shown["commit_drift"] is None
+    # A freshly written memory citing no paths has no findings either.
+    assert "paths" not in shown
+    assert "commit_drift" not in shown
 
 
 async def test_self_link_rejected(server: Any) -> None:
@@ -161,7 +156,7 @@ async def test_links_replace_semantics(server: Any) -> None:
     shown = await _call(server, "memory_show", id=c_id)
     assert len(shown["links"]) == 1
     assert shown["links"][0]["type"] == "contradicts"
-    assert shown["links"][0]["target_id"] == b_id
+    assert shown["links"][0]["ids"] == [b_id]
 
     # Clear with empty list.
     await _call(server, "memory_update", id=c_id, links=[])
@@ -237,7 +232,10 @@ async def test_multiple_link_types_to_same_target_allowed(server: Any) -> None:
         ],
     )
     shown = await _call(server, "memory_show", id=source_id)
-    assert len(shown["links"]) == 2
+    assert [(g["type"], g["ids"]) for g in shown["links"]] == [
+        ("extends", [target_id]),
+        ("depends_on", [target_id]),
+    ]
 
 
 async def test_broken_link_to_tombstoned_memory_still_surfaces(server: Any) -> None:
@@ -259,8 +257,7 @@ async def test_broken_link_to_tombstoned_memory_still_surfaces(server: Any) -> N
     shown = await _call(server, "memory_show", id=b_id)
     # The link is still on disk — the source memory's frontmatter
     # doesn't know the target moved.
-    assert len(shown["links"]) == 1
-    assert shown["links"][0]["target_id"] == a_id
+    assert shown["links"] == [{"type": "supersedes", "ids": [a_id]}]
 
 
 async def test_links_over_count_cap_rejected_not_silently_lost(
@@ -306,4 +303,4 @@ async def test_links_at_count_cap_accepted(server: Any, memory_dir: Path) -> Non
     assert res["status"] == "committed"
 
     shown = await _call(server, "memory_show", id=b_id)
-    assert len(shown["links"]) == 64
+    assert shown["links"] == [{"type": "extends", "ids": [a_id] * 64}]

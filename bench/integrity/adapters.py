@@ -104,6 +104,18 @@ REVIEW_ISSUED = "review_issued"
 MAX_REVIEW_ROUNDS = 4
 
 
+def _hit_provenance(hit: dict[str, Any]) -> str | None:
+    """The provenance label a rendered hit states. A hit omits the key when
+    the label is "local" and states None when the store holds no trust row
+    for the record; a hit read without the trust key states neither."""
+    if hit.get("trust_unavailable"):
+        return None
+    if "provenance" in hit:
+        value = hit["provenance"]
+        return None if value is None else str(value)
+    return "local"
+
+
 class SystemUnavailable(Exception):
     """The arm cannot execute here; `reason` is published with the row."""
 
@@ -670,13 +682,13 @@ class BetterMemoryAdapter:
                     text=body,
                     signal=bool(signal_fields),
                     signal_fields=signal_fields,
-                    provenance=hit.get("provenance"),
-                    score=hit.get("score"),
+                    provenance=_hit_provenance(hit),
                     raw={
                         "snippet": hit.get("snippet"),
                         "relevance": hit.get("relevance"),
                         "staleness_verdict": hit.get("staleness_verdict"),
-                        "verification": _json_safe(hit.get("verification")),
+                        "reason": hit.get("reason"),
+                        "verification": _json_safe(shown.get("verification")),
                     },
                 )
             )

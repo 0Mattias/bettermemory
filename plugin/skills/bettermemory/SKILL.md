@@ -61,15 +61,20 @@ When the memory shaped a user-visible sentence, pass the load-bearing phrase as 
 
 ## Verify before relying
 
-Memory is a snapshot; it does not refresh itself. Every retrieval carries `staleness_verdict`, and only claim-anchored drift moves it: a path you attested with `verified_paths`, a citation resolved against the memory's own worktree, or a commit touching what the body cites. A path scraped out of prose ships as evidence but does not move the tier.
+Memory is a snapshot; it does not refresh itself. Every hit and every `memory_show` carries `staleness_verdict`, and it asks for a check only when a check failed or something on record objects. The calendar alone never asks.
 
-- `fresh`: verification fresh and no claim-anchored drift. Entries in `path_drift.missing` can still sit here as evidence.
-- `spot_check_recommended`: verification calendar-fresh but an anchored path went missing, or commits landed on what the body cites.
-- `spot_check_required`: never verified, or stale with no measurement to stand the calendar down.
+- `fresh`: nothing failed and nothing objects.
+- `spot_check_recommended`: a cited path is missing, commits landed on what the body cites, another record contradicts it, the user rejected it in the last 30 days, its provenance is untrusted (`unaccounted`, or `synced` and never verified here), or the store's key is missing here.
+- `spot_check_required`: an attested path went missing, or commits moved it, on a record never verified or past its window; a stamp this host cannot vouch for (another host's, one on an `unaccounted` row, or any on a store without its key).
 
-When the verdict is not `fresh`, the hit carries the detail: `path_drift.claim_anchored_missing` is the subset that moved it, so `memory_update` those. Attest what held with `memory_verify(id, verified_paths=[...])`; attesting is what anchors a path, so its next disappearance escalates. A path absent on purpose (another host, another platform) goes in `verified_absent_paths`. `memory_update` resets `last_verified_at`, so verify again after fixing drifted prose.
+When the verdict is not `fresh`, `reason` names each failed check or objection and its remedy; the hit and its `memory_show` give the same one. `memory_show` lists each cited path's state under `paths`.
 
-A hit's `recent_negative_outcomes`, when present, means the user rejected it in the last 30 days. Do not re-surface it without new reason.
+- A failed check: `memory_verify(id, verified_paths=[...])` if the claim holds, `memory_update` if it drifted, then verify again (`memory_update` resets `last_verified_at`). Attesting is what anchors a path; a path absent on purpose (another host, another platform) goes in `verified_absent_paths`.
+- A contradiction: read the other record, then fix whichever is wrong or remove the link.
+- A rejection: it clears once a later use applies the record.
+- Provenance: a hit shows `provenance` only when the record was not written on this host. `unaccounted` is cleared by removing the record, or restoring it after `memory_remove` if you recognise it; `synced` by verifying it here. `trust_unavailable: true` means the store's key is missing here; nothing in these tools clears it.
+
+`memory_verify` clears only failed checks, not objections.
 
 ## Writing is proactive
 

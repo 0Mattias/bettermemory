@@ -78,9 +78,9 @@ INSTRUCTIONS = (
     "preference could settle an ambiguity; otherwise do not.\n"
     "Write unasked whenever something durable appears: a preference, a "
     "decision, a tool or config fact, finished work and its reason.\n"
-    "A staleness_verdict other than fresh means a check failed and "
-    "`reason` names it: check that claim before relying on it, then "
-    "memory_verify or memory_update.\n"
+    "A staleness_verdict other than fresh means a check failed or a record "
+    "objects; `reason` names it and its remedy. Act on it before relying "
+    "on the memory.\n"
     "Say briefly when a memory shaped your reply. In a loop, call "
     "episode(action='handoff') at each iteration's start."
 )

@@ -513,6 +513,12 @@ eighteenth was built.
 
 #### Added
 
+- **`bench/panel/replay.py` replays recorded searches and shows.** It
+  reruns the queries the transcripts recorded against a read-only copy
+  of the store and reports aggregates only: answer sizes at p50 and p90,
+  the share of hits asking for a check, and the records each failing
+  check flags. (`bench/panel/replay.py`)
+
 - **`memory_admin` takes `section` for health and `query` for
   tombstones.** `section` names one health section, or several separated
   by commas, to read in full from one report; `query` lists the tombstones whose id or summary holds the text. Either
@@ -577,6 +583,39 @@ eighteenth was built.
   `tests/test_unread_history.py`, `tests/test_health.py`)
 
 #### Changed
+
+- **A search hit carries what choosing it needs.** `id`, `snippet`,
+  `relevance`, `staleness_verdict`, `reason` when the verdict is not
+  `fresh`, `use_token`, and when they apply `superseded_by` and
+  `contradicts` as ids, `provenance` when not `local`, `held` and the
+  expanded `body`. The path lists, verification block, stamps, actor and
+  commit detail are `memory_show`'s. On the owner's store replay the
+  median search answer went from 10,741 to 2,515 characters and the
+  median hit from 1,401 to 369. (`_response.py`, `handlers/search.py`,
+  `docs/api.md`, `bench/panel/replay.py`)
+
+- **`memory_show` leaves out nulls, defaults and repeated paths.**
+  Every path the read checked, attested or claimed appears once, in
+  `paths`, with its state; links are grouped by type. The median show
+  went from 6,691 to 5,612 characters on the same replay; the body is
+  kept whole. (`_response.py`, `handlers/show.py`, `docs/api.md`)
+
+- **A verdict asks for a check only when a check failed, and `reason`
+  names it.** The calendar alone no longer asks: a record never verified
+  or past its window whose paths resolve and whose commit leg moved
+  nothing reads `fresh`. A contradiction by an admitted record, a use
+  marked `ignored` or `contradicted` in the last 30 days, an untrusted
+  provenance (`unaccounted`, or `synced` and never verified here) and a
+  store opened without its key each raise the verdict with their own
+  reason and remedy; a stamp on an `unaccounted` row requires a check.
+  `memory_verify` clears only a failed check. A hit and the show of its
+  record give the same verdict and reason, `exclude_scopes` does not hide
+  an objection, and a reason never names a record the caller is not
+  admitted to, which is not read on its behalf either. The objection read
+  costs the same statements and loads however many links a hit has. The share of replayed hits asking for a check went from 80.6% to
+  29.2%; every record with a missing path or moved commit still asks.
+  (`verify.py`, `verdict.py`, `_response.py`, `handlers/`,
+  `bench/rot/`, `tests/test_hit_show_parity.py`)
 
 - **The session brief is shorter.** One header line, then the standing
   records under `In force:` and the others under `Recent:`, each line an
@@ -2645,6 +2684,14 @@ eighteenth was built.
   `tests/test_membership_restated.py`, `tests/test_membership_alias.py`,
   `tests/test_membership_store.py`, `tests/test_store_steps.py`,
   `tests/test_store_versions.py`, `tests/test_cross_build.py`)
+
+#### Removed
+
+- **`depends_on_resolved`, `recent_negative_outcomes` and the path-drift
+  fields leave the search hit.** A search no longer loads the records a
+  hit depends on; `memory_show` lists the link. A recent rejection is
+  named in `reason`, and the path states are `memory_show`'s `paths`.
+  (`_response.py`, `_response_depends.py`, `handlers/search.py`)
 
 ### 9.0.0rc18
 

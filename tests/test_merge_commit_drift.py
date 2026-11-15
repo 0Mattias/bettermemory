@@ -10,8 +10,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from bettermemory.origin import Origin, commits_since_anchor
 from bettermemory.store import Store
+
+from ._internal_rows import raw_hits
 
 from .test_server_commit_drift import (  # noqa: F401
     _REMOTE,
@@ -74,8 +78,15 @@ def _merge_changing_the_cited_file(repo: Path) -> str:
 
 
 async def test_a_merge_that_changes_the_cited_file_counts_on_both_bases(
-    server_with_fake_origin, memory_dir: Path, tmp_path: Path
+    server_with_fake_origin,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A merge commit that changes the cited file counts once on the
+    author-date basis and on the reachability basis: memory_show, the
+    search and health agree on the count (the search's from its working
+    rows), and the wire hit reads the show's verdict and reason."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -125,10 +136,23 @@ async def test_a_merge_that_changes_the_cited_file_counts_on_both_bases(
     walk = commits_since_anchor(repo, anchor)
     assert walk is not None and merge in walk.commits
 
+    # The wire hit and memory_show read the merge alike, on both bases.
+    found = await _call(server, "memory_search", query="widgets durable")
+    hits = found.get("result", found) if isinstance(found, dict) else found
+    for record in (unanchored, anchored):
+        wire = next(hit for hit in hits if hit["id"] == record["id"])
+        shown = await _call(server, "memory_show", id=record["id"])
+        assert wire["staleness_verdict"] == shown["staleness_verdict"]
+        assert wire["staleness_verdict"] == "spot_check_recommended"
+        assert wire["reason"] == shown["reason"]
+        assert wire["reason"].startswith("1 commit since the last verify")
+
+    # The count itself is the computation's: the search's is read from the
+    # rows it assembles, since its wire hit carries the verdict and reason.
+    raw_hits(monkeypatch)
     # Author-date basis (no verified_head): the merge counts.
     shown = await _call(server, "memory_show", id=unanchored["id"])
     assert shown["commit_drift"]["basis"] == "author-date"
-    assert shown["commit_drift"]["status"] == "drift"
     assert shown["commit_drift"]["commits_since_verify"] == 1
     assert await _drift_counts_for(server, unanchored["id"]) == (1, 1, 1)
 
@@ -137,8 +161,7 @@ async def test_a_merge_that_changes_the_cited_file_counts_on_both_bases(
     shown = await _call(server, "memory_show", id=anchored["id"])
     assert shown["commit_drift"]["basis"] == "reachability"
     assert (
-        shown["commit_drift"]["status"],
         shown["commit_drift"]["commits_since_verify"],
         shown["staleness_verdict"],
-    ) == ("drift", 1, "spot_check_recommended")
+    ) == (1, "spot_check_recommended")
     assert await _drift_counts_for(server, anchored["id"]) == (1, 1, 1)

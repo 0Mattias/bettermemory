@@ -15,6 +15,15 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 from .test_server_negative_outcomes import _call, _seed, _unwrap
+from ._internal_rows import raw_hits
+
+
+@pytest.fixture(autouse=True)
+def _search_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module tests the rejections the search computes: its searches
+    answer with their working rows (`tests/_internal_rows.py`), except
+    where a test restores the wire shape."""
+    raw_hits(monkeypatch)
 
 
 @pytest.mark.parametrize("hours", [1, 48, 31 * 24])

@@ -21,7 +21,7 @@ import sqlite3
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -31,13 +31,13 @@ from . import _caches, githead
 from ._git import timed_out_calls
 from . import git_read_budget
 from ._response_commit_counts import count_hits as _count_hits
-from ._response_depends import _load_depends_targets, _resolve_depends
 from ._response_links import candidate_link_rows
 from .credentials import CredentialMatch
 from .durability import TransientMatch
 from .control_tokens import named_tokens
 from .events import _event_id_items
 from .models import (
+    Memory,
     MemoryHit,
     MemorySummary,
     SimilarHit,
@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from .commit_legs import CommitLegUnchecked
     from .verify_anchoring import Anchoring
 from .verify import (
+    PathDriftReport,
     ResolvedCommitDrift,
     commit_drift_anchor_paths,
     compute_staleness_verdict,
@@ -88,7 +89,7 @@ TRUST_UNAVAILABLE_RECOMMENDATION = (
 )
 
 
-__all__ = ["ResponseBuilder", "isoformat", "isoformat_optional"]
+__all__ = ["ResponseBuilder", "check_reason", "isoformat", "isoformat_optional"]
 
 
 # `isoformat` / `isoformat_optional` are the public names this module
@@ -817,6 +818,8 @@ class ResponseBuilder:
             # measurement.
             path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
             commit_drift_count=None,
+            cited_missing=len(hit.path_drift_missing_paths),
+            attested_absent_present=len(hit.path_drift_present_but_attested_absent),
         )
         out: dict[str, Any] = {
             "id": hit.id,
@@ -882,6 +885,143 @@ class ResponseBuilder:
                 )
         return out
 
+    def render_hit(self, row: dict[str, Any]) -> dict[str, Any]:
+        """The wire shape of one search hit, built from the row the search
+        assembled (`hit_to_dict` and the attach passes).
+
+        A hit carries what choosing and acting on it needs: its id, the
+        snippet, the relevance, the verdict, a reason where the verdict
+        asks for a check (`check_reason`), the ids of the records that
+        supersede or contradict it, how it entered the store when not by a
+        write on this host (`provenance`), whether it is held out of force, the
+        body when `expand_top` inlined it, and its use token. The path
+        lists, the verification block, the stamps, the actor and the
+        commit detail are `memory_show`'s.
+        """
+        if "_contradicted_by" in row:
+            contradicts = list(row["_contradicted_by"])
+        else:
+            contradicts = [entry["id"] for entry in row.get("contradicts") or ()]
+        verdict, reason = verdict_and_reason(row)
+        out: dict[str, Any] = {
+            "id": row["id"],
+            "snippet": row["snippet"],
+            "relevance": row["relevance"],
+            "staleness_verdict": verdict,
+        }
+        if reason is not None:
+            out["reason"] = reason
+        if row.get("trust_unavailable"):
+            out["trust_unavailable"] = True
+        else:
+            provenance = row.get("provenance")
+            if provenance != "local":
+                # None: the store holds no trust row for the record.
+                out["provenance"] = provenance
+        superseded_by = [entry["id"] for entry in row.get("superseded_by") or ()]
+        if superseded_by:
+            out["superseded_by"] = superseded_by
+        if contradicts:
+            out["contradicts"] = contradicts
+        if row.get("held"):
+            out["held"] = True
+        if "body" in row:
+            out["body"] = row["body"]
+        if "use_token" in row:
+            out["use_token"] = row["use_token"]
+        return out
+
+    def render_show(
+        self,
+        state: dict[str, Any],
+        memory: Memory,
+        path_drift: PathDriftReport,
+    ) -> dict[str, Any]:
+        """The wire shape of `memory_show`, built from the state the show
+        assembled (`handlers.show`).
+
+        Null fields and fields at their default are left out, and each
+        path appears once: `paths` maps every path the read checked or the
+        record attests or claims to what the read found (`_path_states`).
+        Links are grouped by type and note (`_grouped_links`), every id
+        kept. The commit leg reads as its count and basis; why a check is
+        asked for is the `reason`."""
+        verdict, reason = verdict_and_reason(state)
+        out: dict[str, Any] = {"id": state["id"], "staleness_verdict": verdict}
+        if reason is not None:
+            out["reason"] = reason
+        out["use_token"] = state["use_token"]
+        out["scopes"] = state["scopes"]
+        out["body"] = state["body"]
+        out["created"] = state["created"]
+        if state["updated"] != state["created"]:
+            out["updated"] = state["updated"]
+        if state.get("last_verified_at") is not None:
+            out["last_verified_at"] = state["last_verified_at"]
+        verification = state["verification"]
+        out["verification"] = {
+            key: verification[key]
+            for key in ("status", "age_days")
+            if verification.get(key) is not None
+        }
+        for key, default in _SHOW_DEFAULTS:
+            value = state.get(key)
+            if value is not None and value != default:
+                out[key] = value
+        if state.get("provenance") is None and not state.get("trust_unavailable"):
+            # The store holds no trust row for the record.
+            out["provenance"] = None
+        origin = _compact_origin(state.get("origin"))
+        if origin:
+            out["origin"] = origin
+        actor = state.get("actor")
+        if isinstance(actor, dict):
+            declared = {key: value for key, value in actor.items() if value is not None}
+            if declared:
+                out["actor"] = declared
+        paths, claims = _path_states(memory, path_drift)
+        if paths:
+            out["paths"] = paths
+            if path_drift.anchor is not None:
+                out["paths_read_at"] = path_drift.anchor
+        commit = state.get("commit_drift")
+        if isinstance(commit, dict):
+            out["commit_drift"] = {
+                "commits_since_verify": commit["commits_since_verify"],
+                "basis": commit["basis"],
+                **(
+                    {"claim_drift": commit["claim_drift"]}
+                    if "claim_drift" in commit
+                    else {}
+                ),
+            }
+        for flag in ("commit_drift_unread", "commit_drift_unchecked"):
+            if state.get(flag):
+                out[flag] = True
+        for key in ("verified_commits", "verified_versions"):
+            values = getattr(memory, key)
+            if values:
+                out[key] = list(values)
+        if memory.verified_head is not None:
+            out["verified_head"] = memory.verified_head
+        if claims:
+            out["claims"] = claims
+        if memory.corroborations:
+            out["corroborations"] = memory.corroborations
+            out["last_corroborated"] = isoformat_optional(memory.last_corroborated)
+        for key, end in (("links", "target_id"), ("reverse_links", "source_id")):
+            if state.get(key):
+                out[key] = _grouped_links(state[key], end)
+        for key in (
+            "trust_unavailable",
+            "held",
+            "held_hint",
+            "standing_question",
+        ):
+            if state.get(key):
+                out[key] = state[key]
+        return out
+
     def summary_to_dict(
         self,
         summary: MemorySummary,
@@ -898,23 +1038,12 @@ class ResponseBuilder:
         list shouldn't have to call memory_show to see whether a row is
         fresh.
 
-        `staleness_verdict` here intentionally only reflects verification
-        + the commit-drift signal isn't computed at the list level (the
-        list view never loads bodies for path_drift, never resolves the
-        per-row repo for commit_drift). A list-row verdict of "fresh"
-        therefore means "calendar-fresh"; a row landing in
-        spot_check_recommended via the list view would imply the
-        body-level drift signal was already known, which it isn't here.
-        Effectively the list verdict collapses to fresh ↔ verification
-        fresh, spot_check_required ↔ never|stale.
+        A list row carries no verdict word: the list view runs no check
+        (it loads no body for path drift and resolves no commit leg), and a
+        verdict it did not compute would read as one it had.
         """
         verification = compute_verification_status(
             summary.last_verified_at, now=now, stale_after_days=self._stale_after_days
-        )
-        verdict = compute_staleness_verdict(
-            verification=verification,
-            path_drift_missing=0,
-            commit_drift_count=None,
         )
         row: dict[str, Any] = {
             "id": summary.id,
@@ -928,7 +1057,6 @@ class ResponseBuilder:
             "updated": isoformat(summary.updated),
             "last_verified_at": isoformat_optional(summary.last_verified_at),
             "verification": verification.to_dict(),
-            "staleness_verdict": verdict,
         }
         # The COMPACT actor, not `actor_to_dict`'s full shape: this is
         # the cheap-triage view, and the two declared fields the `client`
@@ -1476,153 +1604,6 @@ class ResponseBuilder:
         _count_hits(out, hits, memories, drift)
         drift.store()
 
-    def attach_depends_on_resolved(  # type: ignore[no-untyped-def]
-        self,
-        out: list[dict[str, Any]],
-        hits: list[MemoryHit],
-        memories,
-        *,
-        max_per_hit: int = 3,
-        max_total: int = 10,
-        admission: Admission | None = None,
-        excluded_scopes: set[str] | None = None,
-        store: Any = None,
-    ) -> None:
-        """Mutate `out` in-place, adding `depends_on_resolved` to any hit
-        whose memory carries `depends_on`-typed links.
-
-        `MemoryLink.depends_on` has been in the schema since 2.x but
-        retrieval has never surfaced the linked content automatically —
-        the model had to call `memory_show` on each target to see what
-        the hit depended on. This decorator closes that gap for the
-        common case: when a hit has explicit dependencies, the model
-        sees their summaries inline.
-
-        Bounded: at most `max_per_hit` resolved entries per hit, at
-        most `max_total` across the whole result set. Without the
-        caps a hit with N dependencies (each with M reverse-links)
-        could balloon the response; the caps keep the surface
-        predictable for the model.
-
-        Tombstoned targets are skipped silently — they remain
-        accessible via `memory_list_tombstones` if the caller needs
-        to investigate. A pruned target shouldn't surface as a stale
-        link in normal retrieval flow.
-
-        Shape per resolved entry:
-
-            {
-                "id": "...",
-                "scopes": [...],
-                "summary": "...",   # first_summary_line of the target's body
-                "link_note": str | None,
-            }
-
-        Omitted (key absent from the dict, not null) when the hit has
-        no `depends_on` links or all the targets are tombstoned —
-        same absence-as-signal contract as the other attach_* helpers.
-
-        `admission` (the request's LINKS admission, design 3.5) and
-        `excluded_scopes` re-apply the caller-side filters to the targets.
-        The side-map below is built from the pre-filter loader output (so
-        other projects' and session-disabled targets are still resolvable
-        by id), but a target the LINKS surface does not admit for the
-        caller (another project's, another tenant's, one with no home) or
-        one in a session-disabled scope must not leak back in via the
-        dependency edge. An omitted `admission` admits every target
-        (offline callers); an omitted `excluded_scopes` means "no session
-        disables".
-
-        `store` enables the targeted-load fallback: a `depends_on`
-        target unrelated to the query is not in the FTS prefilter
-        candidate set (`memories` is capped at 50 query-relevant
-        rows), so the side-map built from it would silently skip the
-        target — defeating the auto-pull contract for the cross-topic
-        case (B depends_on A precisely because A provides context B
-        needs to be intelligible; the query that finds B usually
-        won't find A). When `store` is supplied, missing target ids
-        referenced by any hit are loaded directly via `store.load_one`
-        and merged into the side-map, capped at `max_total` loads
-        per call so the targeted path can't dominate the response
-        budget. Load rounds reserve at most each hit's display cap before
-        later hits get a turn; failed reservations may be backfilled within
-        that same hard load limit. Tombstoned or missing targets are absorbed silently
-        (same as the pre-existing prefilter-miss branch). The same
-        `admission` + `excluded_scopes` filter is re-applied to
-        the loaded targets at the same place as side-map hits, so
-        the targeted-load path cannot reintroduce the scope-leak
-        that the per-target filter closed for the prefilter path.
-        Default `None` for back-compat: when omitted, behaviour is
-        identical to before (silent prefilter-miss skip).
-        """
-        if not out or not hits or max_per_hit <= 0 or max_total <= 0:
-            return
-        # Build the id → memory side-map once. The caller (`search.py`)
-        # has already paid the load cost for ranking; reuse it here.
-        memory_by_id = {m.id: m for m in memories}
-        excluded = excluded_scopes or set()
-
-        if admission is not None:
-            admission.prime(
-                link.target_id
-                for hit in hits
-                if (source := memory_by_id.get(hit.id)) is not None
-                for link in source.links
-                if link.type.value == "depends_on"
-            )
-
-        # Targeted-load fallback. Without this, a `depends_on` target
-        # whose text doesn't match the query is never in the FTS
-        # prefilter candidate set, so `memory_by_id.get(...)` returns
-        # None and we silently skip — the exact case the auto-pull
-        # feature exists to handle (B depends_on A because A provides
-        # context the query for B usually won't surface). When a store
-        # handle is supplied, collect every depends_on target id any
-        # hit's source carries, subtract the ids already resolvable
-        # via the side-map, and `load_one` the rest. Cap the load count
-        # at `max_total` so a pathological hit (1000 depends_on links)
-        # can't balloon the lookup budget — `max_total` is the natural
-        # ceiling because nothing past that ever appears in the output
-        # anyway. Tombstoned / removed targets raise here; absorb as
-        # missing so the resolved list mirrors the pre-existing
-        # "silently skip" semantics of the prefilter-miss branch.
-        if store is not None:
-            memory_by_id = _load_depends_targets(
-                hits,
-                memory_by_id,
-                store,
-                max_per_hit=max_per_hit,
-                max_total=max_total,
-                admission=admission,
-                excluded=excluded,
-            )
-
-        total = 0
-        for hit_dict, hit in zip(out, hits):
-            if total >= max_total:
-                break
-            source = memory_by_id.get(hit.id)
-            if source is None or not source.links:
-                continue
-            depends_links = [
-                link for link in source.links if link.type.value == "depends_on"
-            ]
-            if not depends_links:
-                continue
-
-            resolved, total = _resolve_depends(
-                depends_links,
-                memory_by_id,
-                total,
-                max_per_hit=max_per_hit,
-                max_total=max_total,
-                admission=admission,
-                excluded=excluded,
-            )
-
-            if resolved:
-                hit_dict["depends_on_resolved"] = resolved
-
     def attach_link_annotations(  # type: ignore[no-untyped-def]
         self,
         out: list[dict[str, Any]],
@@ -1634,9 +1615,10 @@ class ResponseBuilder:
         excluded_scopes: set[str] | None = None,
         max_per_hit: int = 3,
         max_total: int = 10,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Mutate `out` in-place, surfacing supersedes / contradicts edges as
-        trust signals on each hit.
+        trust signals on each hit, and return the link rows read for the
+        hits, which `contradicting_ids` reuses.
 
         `MemoryLink` has carried `supersedes` and `contradicts` since 2.x,
         but retrieval never acted on them — setting the link changed nothing
@@ -1676,6 +1658,10 @@ class ResponseBuilder:
         excluded = excluded_scopes or set()
 
         def _resolve(other_id: str, note: str | None) -> dict[str, Any] | None:
+            # Admission is read before any load, so a record the caller is
+            # not admitted to is never read on its behalf.
+            if admission is not None and not admission.admits_id(other_id):
+                return None
             target = memory_by_id.get(other_id)
             if target is None:
                 try:
@@ -1684,8 +1670,6 @@ class ResponseBuilder:
                     return None
                 memory_by_id[other_id] = target
             if excluded and (set(target.scopes) & excluded):
-                return None
-            if admission is not None and not admission.admits_id(target.id):
                 return None
             return {
                 "id": target.id,
@@ -1706,7 +1690,9 @@ class ResponseBuilder:
             # beside the candidates, and the link rows are rebuilt from
             # them. When that read fails too, from the candidates alone.
             try:
-                for source in store.records_linking_to(hit_ids):
+                for source in store.records_linking_to(
+                    hit_ids, admit=_admitted_ids(admission)
+                ):
                     memory_by_id.setdefault(source.id, source)
             except Exception:  # noqa: BLE001 - the annotation is best-effort
                 pass
@@ -1754,6 +1740,7 @@ class ResponseBuilder:
                         total += 1
                 if resolved:
                     hit_dict[key] = resolved
+        return dict(links_map)
 
     def attach_recent_negative_outcomes(
         self,
@@ -1907,6 +1894,435 @@ class ResponseBuilder:
                 hit_dict["recent_negative_outcomes"] = entries
 
 
+def _admitted_ids(
+    admission: Admission | None,
+) -> Callable[[list[str]], list[str]] | None:
+    """The filter a link fallback runs over candidate ids before it loads
+    them: the ids `admission` admits, read before any record is."""
+    if admission is None:
+        return None
+    gate = admission
+
+    def admit(ids: list[str]) -> list[str]:
+        gate.prime(ids)
+        return [record_id for record_id in ids if gate.admits_id(record_id)]
+
+    return admit
+
+
+def contradicting_ids(
+    store: Any,
+    ids: Sequence[str],
+    *,
+    admission: Admission | None = None,
+    excluded_scopes: frozenset[str] | set[str] = frozenset(),
+    links_map: dict[str, Any] | None = None,
+) -> dict[str, list[str]]:
+    """The records each of `ids` is in a `contradicts` link with, in either
+    direction, by id: uncapped, active (a removed record counts for
+    nothing), outside `excluded_scopes` (the session's disabled scopes),
+    and admitted by `admission` (an omitted admission admits every
+    record). Both surfaces read a record's contradictions here
+    (`verdict_and_reason`).
+
+    Edges come from `links_map` when the caller already read the link rows
+    for `ids` (a search's `attach_link_annotations`), else from the links
+    table, else from the records' own links and those of the records whose
+    links name them (`Store.records_linking_to`,
+    `_response_links.candidate_link_rows`). Whether a candidate is active
+    and in scope is read for all of them in one batched query
+    (`Store.scopes_for`), after admission and without loading a record, so
+    the cost does not grow with the number of links."""
+    from .store import MemoryNotFoundError, TombstonedError
+
+    wanted = list(dict.fromkeys(ids))
+    if not wanted:
+        return {}
+    primed = links_map is not None
+    edges: dict[str, Any]
+    if links_map is not None:
+        edges = links_map
+    else:
+        try:
+            edges = store.links_for_many(wanted)
+        except Exception:  # noqa: BLE001 - the fallback reads the records instead
+            records: list[Any] = []
+            for record_id in wanted:
+                try:
+                    records.append(store.load_one(record_id))
+                except (MemoryNotFoundError, TombstonedError, OSError, sqlite3.Error):
+                    continue
+            try:
+                records.extend(
+                    store.records_linking_to(wanted, admit=_admitted_ids(admission))
+                )
+            except Exception:  # noqa: BLE001 - the records' own links remain
+                pass
+            edges = candidate_link_rows(records, wanted)
+    others = {
+        record_id: list(
+            dict.fromkeys(
+                other
+                for kind, other, _note in [*outbound, *inbound]
+                if kind == "contradicts" and other != record_id
+            )
+        )
+        for record_id, (outbound, inbound) in (
+            (rid, edges.get(rid, ([], []))) for rid in wanted
+        )
+    }
+    candidates = list(dict.fromkeys(oid for found in others.values() for oid in found))
+    if not candidates:
+        return {}
+    if admission is not None:
+        if not primed:
+            admission.prime(candidates)
+        candidates = [oid for oid in candidates if admission.admits_id(oid)]
+    try:
+        scopes = store.scopes_for(candidates) if candidates else {}
+    except (OSError, sqlite3.Error):
+        scopes = {}
+    excluded = set(excluded_scopes)
+    readable = {oid for oid, tags in scopes.items() if not (set(tags) & excluded)}
+    return {
+        record_id: kept
+        for record_id, found in others.items()
+        if (kept := [other for other in found if other in readable])
+    }
+
+
+def recent_rejections(
+    store: Any, ids: Sequence[str], *, now: datetime
+) -> dict[str, list[dict[str, Any]]]:
+    """The uses recorded through memory_record_use that rejected each of
+    `ids` (ignored or contradicted) within `NEGATIVE_OUTCOME_WINDOW_DAYS`
+    and were not followed by an applied use, by id
+    (`ResponseBuilder.attach_recent_negative_outcomes`'s entries).
+
+    Two reads, as the search makes them: the window's negative rows
+    (`Store.negative_uses`), and only when one names an id, the window's
+    ``use`` rows that name it (`Store.events_of_kinds`), which say whether
+    it was applied since. Ids nothing rejected read no ``use`` row."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    since = now - timedelta(days=NEGATIVE_OUTCOME_WINDOW_DAYS)
+    wanted = set(ids)
+    rejected: set[str] = set()
+    for event in store.negative_uses(since):
+        named = event.get("ids") or event.get("memory_ids")
+        rejected.update(mid for _, mid in _event_id_items(named) if mid in wanted)
+    if not rejected:
+        return {}
+    events = list(store.events_of_kinds(("use",), since=since, naming=sorted(rejected)))
+    rows: list[dict[str, Any]] = [{"id": mid} for mid in sorted(rejected)]
+    ResponseBuilder(stale_after_days=0).attach_recent_negative_outcomes(
+        rows,
+        [SimpleNamespace(id=row["id"]) for row in rows],  # type: ignore[misc]
+        events,
+        now=now,
+    )
+    return {
+        row["id"]: row["recent_negative_outcomes"]
+        for row in rows
+        if row.get("recent_negative_outcomes")
+    }
+
+
+def _rejection_note(entries: Sequence[dict[str, Any]]) -> str:
+    """One sentence per outcome: what the user did, how often, and when."""
+    parts = []
+    for entry in entries:
+        count = entry["count_in_window"]
+        times = (
+            ""
+            if count == 1
+            else f" {count} times in the last {NEGATIVE_OUTCOME_WINDOW_DAYS} days, last"
+        )
+        day = str(entry["most_recent_ts"])[:10]
+        parts.append(f"A use marked it {entry['outcome']}{times} on {day}.")
+    parts.append("It clears once a later use applies it.")
+    return " ".join(parts)
+
+
+#: The paths a reason names before it counts the rest.
+_REASON_PATHS = 3
+
+#: `memory_show` fields left out at these values: the write defaults, and
+#: the label of a record entered on this host.
+_SHOW_DEFAULTS: tuple[tuple[str, Any], ...] = (
+    ("confidence", "medium"),
+    ("source", "explicit-statement"),
+    ("category", "fact"),
+    ("provenance", "local"),
+)
+
+
+def _named(items: Sequence[str]) -> str:
+    shown = ", ".join(items[:_REASON_PATHS])
+    more = len(items) - _REASON_PATHS
+    return f"{shown} and {more} more" if more > 0 else shown
+
+
+def check_reason(
+    *,
+    missing: Sequence[str] = (),
+    anchored_missing: Sequence[str] = (),
+    attested_absent_present: Sequence[str] = (),
+    commits: int | None = None,
+    claims_drifted: Sequence[str] = (),
+    leg_note: str | None = None,
+    remote: bool = False,
+    trust_unavailable: bool = False,
+    untrusted: str | None = None,
+    contradicted_by: Sequence[str] = (),
+    rejections: Sequence[dict[str, Any]] = (),
+) -> str | None:
+    """Why a row asks for a check, naming what to check: the missing
+    paths, the paths attested absent that are present, the commits since the stamp and the claims they touch, a
+    commit leg that could not be read and why, a stamp this host did not
+    make, the records a link says it contradicts, and the uses that
+    rejected it lately. None when there is nothing a check could act on."""
+    parts: list[str] = []
+    anchored = [path for path in missing if path in set(anchored_missing)]
+    anchored += [path for path in anchored_missing if path not in anchored]
+    prose = [path for path in missing if path not in set(anchored)]
+    if anchored:
+        parts.append(f"Attested or anchored path missing: {_named(anchored)}.")
+    if prose:
+        parts.append(f"Cited path missing: {_named(prose)}.")
+    if attested_absent_present:
+        parts.append(
+            f"Attested absent but present: {_named(list(attested_absent_present))}."
+        )
+    if commits:
+        plural = "" if commits == 1 else "s"
+        if claims_drifted:
+            parts.append(
+                f"{commits} commit{plural} since the last verify touch the "
+                f"claims {_named(list(claims_drifted))}."
+            )
+        else:
+            parts.append(
+                f"{commits} commit{plural} since the last verify touched the "
+                "paths it cites."
+            )
+    if leg_note:
+        parts.append(leg_note)
+    if remote:
+        parts.append("Its verification stamp was made on another host.")
+    if trust_unavailable:
+        parts.append(
+            TRUST_UNAVAILABLE_RECOMMENDATION
+            + " Nothing in these tools clears it; the store's owner restores the key."
+        )
+    if untrusted:
+        parts.append(untrusted)
+    if contradicted_by:
+        parts.append(
+            f"A recorded link says it contradicts {_named(contradicted_by)}: read "
+            "it, then fix whichever is wrong or remove the link; memory_verify "
+            "does not clear it."
+        )
+    if rejections:
+        parts.append(_rejection_note(rejections))
+    return " ".join(parts) or None
+
+
+#: Why a record whose trust row says it was not written through this
+#: host's log asks for a check, by its provenance label.
+_UNTRUSTED_PROVENANCE = {
+    "unaccounted": (
+        "It entered the store without a log record on this host, so nothing "
+        "says who wrote it; memory_verify does not clear that. Remove it, or "
+        "restore it after a memory_remove if you recognise it."
+    ),
+    "synced": (
+        "It arrived by sync and has not been verified on this host; "
+        "memory_verify here clears that."
+    ),
+}
+
+
+def _untrusted(row: dict[str, Any]) -> str | None:
+    """The trust objection of a row: an unaccounted record, or a synced one
+    this host never verified (a synced stamp from another host reads
+    ``remote`` already)."""
+    provenance = row.get("provenance")
+    status = (row.get("verification") or {}).get("status")
+    if provenance == "unaccounted":
+        return _UNTRUSTED_PROVENANCE["unaccounted"]
+    if provenance == "synced" and status == "never":
+        return _UNTRUSTED_PROVENANCE["synced"]
+    return None
+
+
+def verdict_and_reason(row: dict[str, Any]) -> tuple[str, str | None]:
+    """The verdict and reason the caller gets for an assembled hit or show
+    row: the row's own verdict, raised by what on record objects to the
+    record (`verdict.with_objection`): a contradiction among the
+    admitted, active records (`contradicting_ids`, kept on the row as
+    `_contradicted_by`), a recent rejection, a store opened without its
+    key, or a trust row that says the record did not come through this
+    host's log (`_untrusted`). One function for both surfaces, so they
+    cannot read one record two ways."""
+    from .verdict import with_objection
+
+    contradicted_by = row.get("_contradicted_by") or ()
+    untrusted = _untrusted(row)
+    objected = bool(
+        contradicted_by
+        or row.get("recent_negative_outcomes")
+        or row.get("trust_unavailable")
+        or untrusted
+    )
+    verdict = with_objection(row["staleness_verdict"], objected)
+    status = (row.get("verification") or {}).get("status")
+    if row.get("provenance") == "unaccounted" and status not in (None, "never"):
+        # A stamp on a row this host's log does not account for may be
+        # planted: the least trustworthy stamp there is.
+        verdict = "spot_check_required"
+    if verdict == "fresh":
+        return verdict, None
+    return verdict, _row_reason(row, contradicted_by, untrusted)
+
+
+def _row_reason(
+    row: dict[str, Any], contradicted_by: Sequence[str], untrusted: str | None
+) -> str | None:
+    """`check_reason` over an assembled hit or show row."""
+    drift = row.get("path_drift") or {}
+    commit = row.get("commit_drift")
+    if isinstance(commit, dict):
+        commits = commit.get("commits_since_verify")
+        claims_drifted = (commit.get("claim_drift") or {}).get("drifted") or ()
+    else:
+        commits = row.get("commit_drift_count")
+        claims_drifted = (row.get("claim_drift") or {}).get("drifted") or ()
+    verification = row.get("verification") or {}
+    remote = verification.get("status") == "remote"
+    trust_unavailable = bool(row.get("trust_unavailable"))
+    leg_note: str | None = None
+    if row.get("commit_drift_unread") or row.get("commit_drift_unchecked"):
+        if not remote and not trust_unavailable:
+            leg_note = verification.get("recommendation")
+        else:
+            # The verification block carries the trust remedy here, so the
+            # leg is named on its own.
+            leg_note = (
+                "The commits since its stamp were not read."
+                if row.get("commit_drift_unread")
+                else "No checkout here can read the commits since its stamp."
+            )
+    return check_reason(
+        missing=drift.get("missing") or (),
+        anchored_missing=drift.get("claim_anchored_missing") or (),
+        attested_absent_present=drift.get("present_but_attested_absent") or (),
+        commits=commits if isinstance(commits, int) else None,
+        claims_drifted=claims_drifted,
+        leg_note=leg_note,
+        remote=remote,
+        trust_unavailable=trust_unavailable,
+        untrusted=untrusted,
+        contradicted_by=contradicted_by,
+        rejections=row.get("recent_negative_outcomes") or (),
+    )
+
+
+def _path_states(
+    memory: Memory, drift: PathDriftReport
+) -> tuple[dict[str, str], list[str]]:
+    """Every path the read checked, the record attests or its claims name,
+    once, with what the read found; and the claims that name more than a
+    path (a symbol or a literal), which the map cannot carry."""
+    from .claims import parse_claim
+
+    states: dict[str, list[str]] = {}
+
+    def add(path: str, finding: str) -> None:
+        found = states.setdefault(path, [])
+        if finding not in found:
+            found.append(finding)
+
+    anchored = set(drift.claim_anchored_missing)
+    for path in drift.missing:
+        add(path, "missing, attested or anchored" if path in anchored else "missing")
+    for path in drift.claim_anchored_missing:
+        add(path, "missing, attested or anchored")
+    for path in drift.verified:
+        add(path, "present, attested")
+    for path in drift.expected_absent:
+        add(path, "absent, as attested")
+    for path in drift.present_but_attested_absent:
+        add(path, "present, attested absent")
+    for path, why in zip(drift.unconfirmed, drift.unconfirmed_reasons, strict=True):
+        add(path, f"unconfirmed: {why}")
+    for path in drift.dropped_as_route:
+        add(path, "read as a route, not checked")
+    for path in drift.checked:
+        if path not in states:
+            add(path, "present")
+
+    def spelled(path: str) -> str:
+        """The key the read already holds for an attested or claimed
+        spelling (the read resolves a relative one against the record's
+        root), else the spelling itself."""
+        if path in states:
+            return path
+        tail = "/" + path.lstrip("./")
+        return next((key for key in states if key.endswith(tail)), path)
+
+    for path in memory.verified_paths:
+        key = spelled(path)
+        if key not in states:
+            add(key, "attested")
+    for path in memory.verified_absent_paths:
+        key = spelled(path)
+        if key not in states:
+            add(key, "attested absent")
+    for targets in (memory.verified_path_targets, memory.verified_absent_path_targets):
+        for spelling, target in (targets or {}).items():
+            if target is not None and target != spelling:
+                add(spelled(spelling), f"target {target}")
+    claims: list[str] = []
+    for raw in memory.claims:
+        try:
+            claim = parse_claim(raw)
+        except ValueError:
+            claims.append(raw)
+            continue
+        if claim.kind == "path":
+            add(spelled(claim.rel_path), "claimed present")
+        elif claim.kind == "absent":
+            add(spelled(claim.rel_path), "claimed absent")
+        else:
+            claims.append(raw)
+    return {path: "; ".join(found) for path, found in states.items()}, claims
+
+
+def _compact_origin(origin: Any) -> dict[str, Any] | None:
+    """`origin_to_dict`'s shape without a `cwd` that repeats the worktree
+    root."""
+    if not isinstance(origin, dict):
+        return None
+    out = {key: value for key, value in origin.items() if value is not None}
+    if "cwd" in out and out["cwd"] == out.get("worktree_root"):
+        del out["cwd"]
+    return out or None
+
+
+def _grouped_links(entries: list[dict[str, Any]], end: str) -> list[dict[str, Any]]:
+    """Links grouped by type and note, in first-seen order, every id kept:
+    `{type, ids, note?}`."""
+    groups: dict[tuple[str, str | None], list[str]] = {}
+    for entry in entries:
+        groups.setdefault((entry["type"], entry.get("note")), []).append(entry[end])
+    return [
+        {"type": kind, "ids": ids, **({"note": note} if note is not None else {})}
+        for (kind, note), ids in groups.items()
+    ]
+
+
 def _stamp_hit_drift(
     hit_dict: dict[str, Any],
     hit: MemoryHit,
@@ -1960,6 +2376,8 @@ def _stamp_hit_drift(
         # caller's zip already pairs them.
         path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
         commit_drift_count=count,
+        cited_missing=len(hit.path_drift_missing_paths),
+        attested_absent_present=len(hit.path_drift_present_but_attested_absent),
     )
 
 
