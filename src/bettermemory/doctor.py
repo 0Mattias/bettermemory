@@ -684,22 +684,38 @@ def _lock_held(path: Path) -> bool:
     return False
 
 
-def _await_state_file(state_file: Path, lock_path: Path) -> dict[str, Any] | None:
-    """The state file of a daemon that holds the store's lock and has not
-    written one yet, waited for up to `DAEMON_START_GRACE_SECONDS`. A
-    daemon takes the lock first and writes its state file only once its
-    port is bound (`daemon.serve`), so a start caught between the two
-    holds the lock with no file; the wait ends when the file appears,
-    when the lock is given back, or at the deadline."""
+def _read_state(state_file: Path) -> tuple[dict[str, Any] | None, bool]:
+    """The state file's contents, and whether it was there before the
+    read. The daemon writes the file whole (`_daemon_client.write_state`
+    replaces it in one rename), so a file that was there before a read
+    that failed is one that cannot be read; looked for after the read, a
+    file written between the two read as one that cannot be read (a
+    Windows runner, CI on f60b8510)."""
     from . import _daemon_client as _dc
 
+    present = state_file.exists()
+    return _dc.read_state_file(state_file), present
+
+
+def _await_state_file(
+    state_file: Path, lock_path: Path
+) -> tuple[dict[str, Any] | None, bool]:
+    """The state file of a daemon that holds the store's lock and has not
+    written one yet, waited for up to `DAEMON_START_GRACE_SECONDS`, as
+    `_read_state` gives it. A daemon takes the lock first and writes its
+    state file only once its port is bound (`daemon.serve`), so a start
+    caught between the two holds the lock with no file; the wait ends
+    when the file is read, when the lock is given back, or at the
+    deadline. A file that appears during the wait and cannot be read yet
+    is read again on the next poll: Windows can refuse the first read of
+    a file just renamed into place."""
     deadline = time.monotonic() + DAEMON_START_GRACE_SECONDS
     while True:
-        state = _dc.read_state_file(state_file)
-        if state is not None or state_file.exists() or not _lock_held(lock_path):
-            return state
+        state, present = _read_state(state_file)
+        if state is not None or not _lock_held(lock_path):
+            return state, present
         if time.monotonic() >= deadline:
-            return None
+            return None, present
         time.sleep(_GRACE_POLL_SECONDS)
 
 
@@ -727,11 +743,11 @@ def check_daemon(ctx: _Context) -> Check:
         "log_file": str(_dc.log_file_for(state_dir, store_path)),
         "lock_file": str(lock_path),
     }
-    state = _dc.read_state_file(state_file)
-    if state is None and not state_file.exists() and _lock_held(lock_path):
-        state = _await_state_file(state_file, lock_path)
+    state, present = _read_state(state_file)
+    if state is None and not present and _lock_held(lock_path):
+        state, present = _await_state_file(state_file, lock_path)
     if state is None:
-        if state_file.exists():
+        if present:
             return Check(
                 "daemon",
                 WARN,

@@ -90,14 +90,16 @@ _CHILD_TIMEOUT = 30.0
 #: the deadline.
 _REFUSAL_BOUND = 0.5
 
-#: How many times a child makes its timed call; the fastest pass is held to
-#: the bound. The Windows runner has stalled one child's single pass by
-#: about 1.3 s, on a call that takes 5 ms here and nowhere waits: the
-#: audit's read in the rc14 release run (1.37 s), the daemon's open on two
-#: cases of the rc16 candidate's two CI attempts (1.28 s each), each time
-#: one case of fourteen. A stall of the machine lands on one pass; a
-#: refusal that costs what the bound is there to catch, the deadline's
-#: 2 s, lands on every pass, as a hang does on the first.
+#: How many times a child, and an in-process test (`_refused_quickly`),
+#: makes its timed call; the fastest pass is held to the bound. The Windows
+#: runner has stalled one child's single pass by about 1.3 s, on a call
+#: that takes 5 ms here and nowhere waits: the audit's read in the rc14
+#: release run (1.37 s), the daemon's open on two cases of the rc16
+#: candidate's two CI attempts (1.28 s each), each time one case of
+#: fourteen. A Linux runner stalled one in-process open to 0.502 s (CI on
+#: f60b8510). A stall of the machine lands on one pass; a refusal that
+#: costs what the bound is there to catch, the deadline's 2 s, lands on
+#: every pass, as a hang does on the first.
 _TIMED_PASSES = 3
 
 #: How long the audit's read of a meta SQLite cannot parse may take. The
@@ -252,6 +254,23 @@ def _in_time(call: Callable[[], _T]) -> _T:
         raise box["error"]
     value: _T = box["value"]
     return value
+
+
+def _refused_quickly(call: Callable[[], object], match: str) -> BaseException:
+    """The error `call` raises, matching `match`, on each of
+    `_TIMED_PASSES` passes (each `_in_time`), with the fastest held to
+    `_REFUSAL_BOUND`, as the children's timed call is. Every pass must
+    refuse; the last one's error is returned."""
+    times: list[float] = []
+    errors: list[BaseException] = []
+    for _ in range(_TIMED_PASSES):
+        started = time.perf_counter()
+        with pytest.raises(ValueError, match=match) as raised:
+            _in_time(call)
+        times.append(time.perf_counter() - started)
+        errors.append(raised.value)
+    assert min(times) < _REFUSAL_BOUND, times
+    return errors[-1]
 
 
 def _snapshot(path: Path) -> tuple[bytes, int, list[str]]:
@@ -560,12 +579,11 @@ def test_every_open_refuses_it_and_writes_nothing(
     path = _poisoned(repo, poison)
     os.chmod(path, 0o644)
     before = _snapshot(path)
-    started = time.perf_counter()
-    with pytest.raises(ValueError, match=_REFUSED) as refused:
-        _in_time(lambda: Store.open(path, allow_rekey=allow_rekey))
-    assert time.perf_counter() - started < _REFUSAL_BOUND
-    assert isinstance(refused.value, store_admission.StoreRefusedError)
-    assert not refused.value.timed_out
+    refused = _refused_quickly(
+        lambda: Store.open(path, allow_rekey=allow_rekey), _REFUSED
+    )
+    assert isinstance(refused, store_admission.StoreRefusedError)
+    assert not refused.timed_out
     assert _snapshot(path) == before
 
 
@@ -867,13 +885,12 @@ def test_what_a_later_build_may_not_add_is_refused(repo: Path, refused: str) -> 
     _sql(path, *statements)
     before = _snapshot(path)
     for allow_rekey in (False, True):
-        started = time.perf_counter()
-        with pytest.raises(ValueError, match=_REFUSED) as raised:
-            _in_time(lambda: Store.open(path, allow_rekey=allow_rekey))
-        assert time.perf_counter() - started < _REFUSAL_BOUND
-        assert named in str(raised.value)
-        assert isinstance(raised.value, store_admission.StoreRefusedError)
-        assert not isinstance(raised.value, store_schema.StoreVersionError)
+        raised = _refused_quickly(
+            lambda: Store.open(path, allow_rekey=allow_rekey), _REFUSED
+        )
+        assert named in str(raised)
+        assert isinstance(raised, store_admission.StoreRefusedError)
+        assert not isinstance(raised, store_schema.StoreVersionError)
     assert _snapshot(path) == before
 
 
@@ -964,11 +981,9 @@ def test_a_refused_store_a_later_build_wrote_says_to_upgrade(
     _written_later(path, reader=reader)
     before = _snapshot(path)
     for allow_rekey in (False, True):
-        started = time.perf_counter()
-        with pytest.raises(ValueError, match="upgrade bettermemory") as raised:
-            _in_time(lambda: Store.open(path, allow_rekey=allow_rekey))
-        assert time.perf_counter() - started < _REFUSAL_BOUND
-        refused = raised.value
+        refused = _refused_quickly(
+            lambda: Store.open(path, allow_rekey=allow_rekey), "upgrade bettermemory"
+        )
         message = str(refused)
         assert said in message
         assert f"reads revision {_OURS}" in message

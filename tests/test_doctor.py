@@ -1101,6 +1101,55 @@ def test_a_daemon_that_writes_its_state_file_during_the_wait_is_ok(
     assert check.summary.startswith("running: pid 4242")
 
 
+@pytest.mark.parametrize(
+    ("written_after", "refused"),
+    [(1, ()), (2, ()), (2, (3,))],
+    ids=["the check's read", "the wait's read", "then a refused read"],
+)
+def test_a_state_file_written_just_after_a_read_missed_it_is_read(
+    env: Env,
+    monkeypatch: pytest.MonkeyPatch,
+    written_after: int,
+    refused: tuple[int, ...],
+) -> None:
+    """The check looked for the state file after a read that missed it: a
+    daemon that wrote it between the two was reported as a file that
+    cannot be read (a Windows runner, CI on f60b8510). The file is looked
+    for first, and one that appears during the wait and cannot be read
+    yet (`refused`, as Windows can refuse a file just renamed into place)
+    is read on the next poll."""
+    store_path = env.store_dir / STORE_FILENAME
+    monkeypatch.setattr(doctor, "DAEMON_START_GRACE_SECONDS", 30.0)
+    monkeypatch.setattr(doctor, "_GRACE_POLL_SECONDS", 0.0)
+    monkeypatch.setattr(
+        _daemon_client,
+        "health",
+        _answers(
+            {
+                "status": "ok",
+                "version": _daemon_client.package_version(),
+                "store": str(store_path),
+                "pid": 4242,
+            }
+        ),
+    )
+    real = _daemon_client.read_state_file
+    reads: list[Path] = []
+
+    def read(path: Path) -> dict[str, Any] | None:
+        reads.append(path)
+        state = None if len(reads) in refused else real(path)
+        if len(reads) == written_after:
+            _state(env, pid=4242)
+        return state
+
+    monkeypatch.setattr(_daemon_client, "read_state_file", read)
+    with _held_lock(env):
+        check = env.checks()["daemon"]
+    assert check.status == "ok", check
+    assert check.summary.startswith("running: pid 4242")
+
+
 def test_a_free_lock_file_with_no_state_file_is_ok(env: Env) -> None:
     with _held_lock(env):
         pass
