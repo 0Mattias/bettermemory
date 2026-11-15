@@ -314,9 +314,13 @@ fn hostile_key_rings() {
     // A directory as the key, a dangling link as the head, a huge origin,
     // retired names of odd shapes.
     fs::create_dir(keys.join(format!("{STORE_ID}.key"))).expect("dir");
+    // Windows: a symlink needs a privilege the runner may lack, so the
+    // dangling head is not made there and the test says so.
     #[cfg(unix)]
     std::os::unix::fs::symlink(dir.join("nowhere"), keys.join(format!("{STORE_ID}.head")))
         .expect("link");
+    #[cfg(not(unix))]
+    eprintln!("PARITY hostile_key_rings: the dangling-link head is set aside on Windows");
     fs::write(keys.join(format!("{STORE_ID}.origin")), vec![b' '; 2 << 20]).expect("big");
     fs::write(keys.join(format!("{STORE_ID}..key")), key()).expect("empty part");
     fs::write(keys.join(format!("{STORE_ID}.a.b.key")), key()).expect("dotted part");

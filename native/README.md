@@ -218,10 +218,17 @@ The private copy. Its directory is made 0700 under another prefix
 so a sweeper never sees a live reader's directory unlocked
 (`sweepers_never_remove_a_live_readers_directory`: 400 opens against
 concurrent sweeps). A store with no `-wal` (the usual closed WAL store) is
-copied into a file whose name is removed before a byte of the store is
-written to it; SQLite reads it as `/dev/fd/N` (immutable: no lock, no
-`-shm`), so no signal at any moment leaves the store's bytes under a name
-(`a_copy_without_wal_never_has_a_name`). With a `-wal` (a writer died
+read through a copy SQLite opens immutable (no lock, no `-shm`). On macOS
+and FreeBSD the copy's name is removed before a byte of the store is
+written to it and SQLite reads it as `/dev/fd/N`, so no signal at any
+moment leaves the store's bytes under a name
+(`a_copy_without_wal_never_has_a_name`). Not on Linux: `/dev/fd/N` there is
+a symlink to `/proc/self/fd/N`, whose link text is the removed name plus
+" (deleted)", and SQLite's unix VFS resolves the link before opening and
+fails ("unable to open database file"; the first CI run). Linux copies the
+store under a name, as the `-wal` case below and the reference do, and
+removes the name after the admitted connection's first read
+(`a_store_without_wal_is_read_through_a_copy`). With a `-wal` (a writer died
 before checkpointing), SQLite needs both files by name (it finds the
 `-wal` beside the path it opens and builds a `-shm` there), so the copy
 and its `-wal` carry names from the start of the copy until the admitted
@@ -231,17 +238,24 @@ the copy's duration plus admission (a 960 MB file copies in 0.51 s here
 from the page cache, so a 200 MB store with its `-wal` is named for about
 0.1 s, plus the few milliseconds admission takes). What remains after
 SIGTERM, SIGINT or SIGKILL (the reader installs no handler; the drop does
-not run on any of them): the directory and its empty 0600 `.lock`, and in
-the `-wal` case, if the signal lands in that window, the named 0600 copy
-and `-wal`. Only a later native open sweeps them: it removes this user's
+not run on any of them): the directory and its empty 0600 `.lock`, and, if
+the signal lands in that window, the named 0600 copy (and its `-wal` in the
+`-wal` case). On macOS and FreeBSD that window exists only with a `-wal`;
+on Linux it exists for every copy. Only a later native open sweeps them: it removes this user's
 `bettermemory-native-read-*` directories whose lock can be taken (the
 kernel releases a dead reader's lock) or that have no lock and are over an
 hour old, and `bettermemory-native-new-*` directories over an hour old. The
 sweep's uid is read from a directory it just made with `mkdir`, never a
 name another user could take first. The reference's own `bettermemory-read-*`
-directories are never touched. On Windows names cannot be removed while
-open and `/dev/fd` does not exist: a killed reader leaves the copy until
-the next open sweeps it. The reference removes its copy on close, on
+directories are never touched. On Windows a directory that holds an open
+file cannot be renamed (the first CI run's "Access is denied"), so the
+directory is made under its swept name and locked in place, and a sweeper
+counts it dead only when its lock can be taken and it is over a minute old;
+names cannot be removed while open, so the named copy (and `-wal`) stays
+for the reader's whole life, and a killed reader leaves the directory with
+the copy until the next open sweeps it. An I/O failure on this path names
+its step ("create the private directory's lock file: ...", "rename the
+locked private directory: ...", "copy the store: ..."), never a path. The reference removes its copy on close, on
 garbage collection and at interpreter exit (`weakref.finalize`), so Ctrl-C
 cleans it; SIGTERM (no handler in the CLI) and SIGKILL leave it, and
 nothing sweeps it.
@@ -432,13 +446,15 @@ the gates under which it differs from the committed files, and for each
 file its size, SHA-256, whether it is byte-identical to the committed one
 and, if not, how many lines differ and where (the `_differing` detail of
 `tests/test_contract_golden.py`, now `tests/contract/_diff.py`).
-`store_real.sqlite` is a store file as the generating Python's SQLite wrote
-it; the as-found set holds that platform's file, its manifest entry names
-the SQLite and says whether the bytes are the committed ones, and
-`store_real.json` beside it records its SHA-256 and its answers, which the
-native test reads the file against (its SQLite pin is then the manifest's,
-not 3.50.4). On this Mac the as-found set is byte-identical to the
-committed one, `store_real.sqlite` included.
+`store_real.sqlite` is a store file SQLite 3.50.4 wrote once; it cannot be
+written again byte for byte, so every generator run, the as-found one
+included, copies the committed file and records in `store_real.json` its
+SHA-256, its writer (3.50.4, always) and its answers as the running
+Python's SQLite reads them. The native test checks the writer is 3.50.4 in
+every set (the first CI run wrongly expected the manifest's SQLite, 3.53.1
+on the runners) and reads the file against those answers; its PARITY line
+names both SQLites. On this Mac the as-found set is byte-identical to the
+committed one.
 
 **Three classes.** A test's class is that of the golden file it compares
 with, by the generator that writes it, mirroring the Python side's
@@ -507,9 +523,11 @@ uv run python native/tools/parity.py --lint     # what CI runs
 ```
 
 It lints (`cargo build --locked`, `clippy --all-targets -D warnings`, `fmt
---check`); step 1 runs `cargo test --locked` against the committed files;
+--check`, all under the toolchain `rust-toolchain.toml` pins, 1.94.1);
+step 1 runs `cargo test --locked --no-fail-fast` (every test binary runs,
+whatever fails) against the committed files;
 step 2 regenerates the set as found with the running Python and runs
-`cargo test --locked` with `BM_GOLDEN_DIR` at it and `BM_REFERENCE_PYTHON`
+`cargo test --locked --no-fail-fast` with `BM_GOLDEN_DIR` at it and `BM_REFERENCE_PYTHON`
 at that Python: the parity claim on that platform. It prints the manifest
 and a per-test table (compared, set aside, why) to the log and to
 `$GITHUB_STEP_SUMMARY`, and fails on any strict difference, a generator that

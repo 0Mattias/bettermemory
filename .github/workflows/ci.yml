@@ -511,19 +511,17 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked --extra dev --python 3.13
 
-      # The runner's own Rust; native/Cargo.toml wants 1.94 or later. An
-      # image that ships an older one gets 1.94 through the preinstalled
-      # rustup, for this job only.
+      # native/rust-toolchain.toml pins the toolchain (1.94.1 with clippy and
+      # rustfmt) for every cargo call under native/; the runner's own newer
+      # Rust brought lints the tree was never held to (clippy 1.99 in the
+      # first run). The preinstalled rustup installs the pin here.
       - name: Rust toolchain
+        working-directory: native
         run: |
+          rustup toolchain install --no-self-update
           rustc -V
           cargo -V
-          have=$(rustc -V | cut -d' ' -f2)
-          if ! uv run --no-sync python -c "import sys; v = tuple(map(int, sys.argv[1].split('-')[0].split('.'))); sys.exit(v < (1, 94))" "$have"; then
-            echo "::notice title=native parity::rustc $have is older than 1.94; installing 1.94"
-            rustup toolchain install 1.94 --profile minimal --component clippy,rustfmt
-            echo "RUSTUP_TOOLCHAIN=1.94" >> "$GITHUB_ENV"
-          fi
+          cargo clippy -V
 
       - name: Restore cargo's registry and target directory
         id: cargo-cache

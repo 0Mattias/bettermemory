@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         step1_log.unlink(missing_ok=True)
         status, lines = run(
             "step 1: cargo test against the committed files",
-            ["cargo", "test", "--locked"],
+            ["cargo", "test", "--locked", "--no-fail-fast"],
             NATIVE,
             {**env, "BM_PARITY_LOG": str(step1_log)},
         )
@@ -183,13 +183,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         if status:
             failures.append(f"a generator raised under this platform (exit {status})")
-    manifest = json.loads((golden / "platform.json").read_text(encoding="utf-8"))
+    try:
+        manifest = json.loads((golden / "platform.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        failures.append(f"no readable platform.json in the set under test: {exc}")
+        manifest = {
+            "platform": "?",
+            "python": "?",
+            "sqlite": "?",
+            "unicode": "?",
+            "machine": "?",
+            "committed": {},
+            "raised": [],
+            "files": {},
+            "generators": {},
+        }
 
     step2_log = work / "step2.jsonl"
     step2_log.unlink(missing_ok=True)
     status, lines = run(
         "step 2b: cargo test against the fixtures made here",
-        ["cargo", "test", "--locked"],
+        ["cargo", "test", "--locked", "--no-fail-fast"],
         NATIVE,
         {
             **env,

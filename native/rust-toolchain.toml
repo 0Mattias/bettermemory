@@ -1,0 +1,8 @@
+# The toolchain the native build is developed, linted and tested with, on
+# every machine and CI runner alike: rustup reads this file. A newer clippy
+# brings lints this tree was never held to (1.99's explicit_counter_loop
+# failed the first CI run), so a runner's own newer Rust is not used.
+[toolchain]
+channel = "1.94.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

@@ -436,14 +436,9 @@ impl Decoder<'_> {
     }
 
     fn starts_with(&self, word: &str) -> bool {
-        let mut i = self.pos;
-        for b in word.bytes() {
-            if self.text.get(i) != Some(&u32::from(b)) {
-                return false;
-            }
-            i += 1;
-        }
-        true
+        word.bytes()
+            .enumerate()
+            .all(|(k, b)| self.text.get(self.pos + k) == Some(&u32::from(b)))
     }
 
     fn scalar(&mut self) -> Result<PyValue, PyError> {

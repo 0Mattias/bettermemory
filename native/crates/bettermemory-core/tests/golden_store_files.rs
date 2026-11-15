@@ -429,11 +429,20 @@ fn run_cases(header: &Value, cases: &[Value]) -> usize {
         let (path, owned, v) = (dir.0.clone(), case.clone(), version.clone());
         let started = Instant::now();
         std::thread::spawn(move || {
-            let _ = tx.send(native_answers(&path, &owned, &v, is_full));
+            let answer = std::panic::catch_unwind(|| native_answers(&path, &owned, &v, is_full));
+            let _ = tx.send(answer.map_err(|p| {
+                p.downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| p.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_else(|| "a panic with no message".to_owned())
+            }));
         });
-        let got = rx
-            .recv_timeout(BOUND)
-            .unwrap_or_else(|_| panic!("{name}: no answer within {BOUND:?}"));
+        // A read that fails says why at once; only one that hangs waits.
+        let got = match rx.recv_timeout(BOUND) {
+            Ok(Ok(got)) => got,
+            Ok(Err(why)) => panic!("{name}: the read failed: {why}"),
+            Err(_) => panic!("{name}: no answer within {BOUND:?}"),
+        };
         let took = started.elapsed();
         let mut want = case.as_object().expect("object").clone();
         for k in ["case", "what", "base", "recipe"] {
@@ -504,12 +513,23 @@ fn the_reference_written_file_reads_the_same() {
         "the_reference_written_file_reads_the_same",
         "store_real.sqlite",
     );
-    ledger.case("store_real.sqlite", reference_written_file);
+    // The file is an input the generator copies, written once by SQLite
+    // 3.50.4 on every platform; its answers are read by the generating
+    // Python's SQLite, which the label names.
+    let label = format!(
+        "store_real.sqlite (written by SQLite {}, answers read by SQLite {})",
+        parity::COMMITTED_SQLITE,
+        parity::provenance().sqlite
+    );
+    ledger.case(label, reference_written_file);
     ledger.finish(1);
 }
 
-/// The committed file is SQLite 3.50.4's; an as-found set's is the SQLite
-/// its Python links, which its manifest names.
+/// `store_real.sqlite` is SQLite 3.50.4's in every set: the as-found mode
+/// copies the committed file (it cannot be written again byte for byte)
+/// and records its answers as the running Python's SQLite reads them. The
+/// first CI run checked the version against the manifest's SQLite (3.53.1
+/// on the runners) and failed: the file's writer is not the reader.
 fn reference_written_file() {
     let doc: Value = serde_json::from_str(
         &std::fs::read_to_string(golden_path("store_real.json")).expect("golden"),
@@ -518,8 +538,8 @@ fn reference_written_file() {
     let bytes = std::fs::read(golden_path("store_real.sqlite")).expect("store_real.sqlite");
     assert_eq!(
         doc["sqlite_version"],
-        parity::provenance().sqlite.as_str(),
-        "written by the reference's SQLite"
+        parity::COMMITTED_SQLITE,
+        "store_real.sqlite is the committed file, written by SQLite 3.50.4"
     );
     assert_eq!(
         common::hex(&Sha256::digest(&bytes)),

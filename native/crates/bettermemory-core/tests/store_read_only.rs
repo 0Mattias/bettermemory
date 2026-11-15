@@ -455,9 +455,32 @@ fn the_deadline_interrupts_a_slow_read() {
     eprintln!("interrupted after {took:?}");
 }
 
-/// A store copied with no `-wal` (WAL mode, closed): the copy's name is
-/// removed before any byte of the store is written to it, so the private
-/// directory never holds a named copy; only the reader's `.lock`, 0600.
+/// A store in WAL mode, closed, with no `-wal`: read through a private
+/// copy (`immutable=1`) on every platform. This is the path that failed on
+/// Linux in the first CI run (SQLite cannot open `/dev/fd/N` there); the
+/// error names the step that failed.
+#[test]
+fn a_store_without_wal_is_read_through_a_copy() {
+    let (dir, _) = case_store("intact");
+    let store = StoreFile::open(&dir.0.join("memory.sqlite"))
+        .unwrap_or_else(|e| panic!("open a store with no -wal: {e}"));
+    assert!(store.reads_a_copy());
+    let private = store.private_dir().expect("private").to_path_buf();
+    assert!(!store.meta().expect("meta").is_empty());
+    store
+        .read_transaction(|s| s.each_row("log", &mut |_| {}))
+        .expect("txn")
+        .expect("rows");
+    drop(store);
+    assert!(!private.exists(), "the private copy is removed on drop");
+}
+
+/// A store copied with no `-wal` (WAL mode, closed): once open, the private
+/// directory holds no named copy, only the reader's `.lock`, 0600. On macOS
+/// and FreeBSD the copy's name is removed before a byte is written to it;
+/// on Linux the named copy is unlinked after SQLite opens it (README, "The
+/// store, read only"). POSIX only: Windows keeps the named copy until the
+/// reader drops, and has no mode bits (the test below).
 #[cfg(unix)]
 #[test]
 fn a_copy_without_wal_never_has_a_name() {
@@ -480,6 +503,28 @@ fn a_copy_without_wal_never_has_a_name() {
         .expect("rows");
     drop(store);
     assert!(!private.exists());
+}
+
+/// Windows: the copy keeps its name while the reader lives (no open file
+/// can be removed) and goes when it drops; mode bits do not exist there,
+/// so the 0600/0700 checks are set aside, counted, with that reason.
+#[cfg(not(unix))]
+#[test]
+fn a_copy_without_wal_never_has_a_name() {
+    let (dir, _) = case_store("intact");
+    let store = StoreFile::open(&dir.0.join("memory.sqlite")).expect("open");
+    let private = store.private_dir().expect("private").to_path_buf();
+    assert!(private.join(".lock").exists());
+    drop(store);
+    assert!(!private.exists());
+    common::parity::record(
+        "a_copy_without_wal_never_has_a_name",
+        "private copy",
+        "i",
+        1,
+        &["no name before the first write; 0600/0700 modes".to_owned()],
+        &["Windows cannot remove an open file and has no mode bits".to_owned()],
+    );
 }
 
 /// Readers opening copies while sweepers run, in a loop: no sweep removes

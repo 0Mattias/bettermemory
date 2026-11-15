@@ -312,8 +312,16 @@ struct Scratch {
     dir: PathBuf,
     _lock: fs::File,
     /// The copy when its name is already gone: SQLite reads it through
-    /// `/dev/fd/N`, which this descriptor keeps open.
-    held: Option<fs::File>,
+    /// `/dev/fd/N`, which this descriptor keeps open (macOS and FreeBSD
+    /// only, [`copy_unnamed`]).
+    #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+    _held: Option<fs::File>,
+}
+
+/// An I/O error with the step that failed and what it touched named, never
+/// a host path: a failure on a platform no one runs here says which call.
+fn step<T>(what: &str, result: io::Result<T>) -> io::Result<T> {
+    result.map_err(|e| io::Error::new(e.kind(), format!("{what}: {e}")))
 }
 
 /// A new 0700 directory under the temp dir named with `prefix`, made with
@@ -327,16 +335,17 @@ fn exclusive_dir(prefix: &str) -> io::Result<PathBuf> {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos());
         let dir = base.join(format!("{prefix}{}-{nanos:x}-{n}", std::process::id()));
-        let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let created = {
             use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        match builder.create(&dir) {
+            fs::DirBuilder::new().mode(0o700).create(&dir)
+        };
+        #[cfg(not(unix))]
+        let created = fs::DirBuilder::new().create(&dir);
+        match created {
             Ok(()) => return Ok(dir),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e),
+            Err(e) => return step("make the private directory", Err(e)),
         }
     }
     Err(io::Error::new(
@@ -359,11 +368,38 @@ fn owner_only() -> fs::OpenOptions {
 /// A private directory, locked before it carries the name a sweeper looks
 /// at: made under [`UNLOCKED_PREFIX`], its `.lock` (0600) created and
 /// locked, then renamed.
+///
+/// On Windows a directory that holds an open file cannot be renamed (the
+/// first CI run's "Access is denied"), so there the directory is made under
+/// its final name and locked in place: a sweeper that meets it in the
+/// instant before its lock is taken finds an empty `.lock` it can lock and
+/// tries to remove the directory, which Windows refuses while the reader
+/// holds `.lock` open.
+#[cfg(not(unix))]
+fn private_dir() -> io::Result<Scratch> {
+    let dir = exclusive_dir(SCRATCH_PREFIX)?;
+    let locked = step(
+        "create the private directory's lock file",
+        owner_only().open(dir.join(SCRATCH_LOCK)),
+    )
+    .and_then(|f| step("lock the private directory", f.lock().map(|()| f)));
+    match locked {
+        Ok(lock) => Ok(Scratch { dir, _lock: lock }),
+        Err(e) => {
+            let _ = fs::remove_dir_all(&dir);
+            Err(e)
+        }
+    }
+}
+
+#[cfg(unix)]
 fn private_dir() -> io::Result<Scratch> {
     let made = exclusive_dir(UNLOCKED_PREFIX)?;
-    let locked = owner_only()
-        .open(made.join(SCRATCH_LOCK))
-        .and_then(|f| f.lock().map(|()| f));
+    let locked = step(
+        "create the private directory's lock file",
+        owner_only().open(made.join(SCRATCH_LOCK)),
+    )
+    .and_then(|f| step("lock the private directory", f.lock().map(|()| f)));
     let lock = match locked {
         Ok(lock) => lock,
         Err(e) => {
@@ -383,12 +419,13 @@ fn private_dir() -> io::Result<Scratch> {
     // sticky temp dir forbids.
     if let Err(e) = fs::rename(&made, &dir) {
         let _ = fs::remove_dir_all(&made);
-        return Err(e);
+        return step("rename the locked private directory", Err(e));
     }
     Ok(Scratch {
         dir,
         _lock: lock,
-        held: None,
+        #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+        _held: None,
     })
 }
 
@@ -412,12 +449,13 @@ pub fn sweep_private_copies() -> usize {
             uid
         })
     };
-    let old = |meta: &fs::Metadata| {
+    let older = |meta: &fs::Metadata, secs: u64| {
         meta.modified()
             .ok()
             .and_then(|m| m.elapsed().ok())
-            .is_some_and(|age| age > UNLOCKED_GRACE)
+            .is_some_and(|age| age > std::time::Duration::from_secs(secs))
     };
+    let old = |meta: &fs::Metadata| older(meta, UNLOCKED_GRACE.as_secs());
     let mut removed = 0;
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -448,7 +486,10 @@ pub fn sweep_private_copies() -> usize {
                 .write(true)
                 .open(entry.path().join(SCRATCH_LOCK))
             {
-                Ok(lock) => lock.try_lock().is_ok(),
+                // Windows makes the directory under its swept name and locks
+                // it after ([`private_dir`]): there a lock that can be taken
+                // means a dead reader only once the directory is a minute old.
+                Ok(lock) => lock.try_lock().is_ok() && (cfg!(unix) || older(&meta, 60)),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => old(&meta),
                 Err(_) => false,
             }
@@ -460,10 +501,13 @@ pub fn sweep_private_copies() -> usize {
     removed
 }
 
-fn copy_owner_only(source: &Path, target: &Path) -> io::Result<()> {
-    let mut out = owner_only().open(target)?;
-    let mut input = fs::File::open(source)?;
-    io::copy(&mut input, &mut out)?;
+fn copy_owner_only(what: &str, source: &Path, target: &Path) -> io::Result<()> {
+    let mut out = step(
+        &format!("create the {what} copy"),
+        owner_only().open(target),
+    )?;
+    let mut input = step(&format!("open the {what} to copy"), fs::File::open(source))?;
+    step(&format!("copy the {what}"), io::copy(&mut input, &mut out))?;
     Ok(())
 }
 
@@ -471,17 +515,22 @@ fn copy_owner_only(source: &Path, target: &Path) -> io::Result<()> {
 /// its name removed before a byte of the store is written to it, so no
 /// signal can leave the store's bytes under a name; SQLite opens it as
 /// `/dev/fd/N` (immutable, so it takes no lock and wants no `-shm`).
-#[cfg(unix)]
-fn copy_unnamed(source: &Path, scratch: &mut Scratch) -> io::Result<PathBuf> {
+///
+/// macOS and FreeBSD only, where `/dev/fd/N` is the descriptor itself. On
+/// Linux it is a symlink to `/proc/self/fd/N`, whose link text is the
+/// removed name with " (deleted)" after it; SQLite's unix VFS resolves the
+/// link before it opens and fails ("unable to open database file", the
+/// first CI run). Linux reads the named copy instead ([`snapshot`]).
+#[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+fn copy_unnamed(source: &Path, dir: &Path) -> io::Result<(PathBuf, fs::File)> {
     use std::os::fd::AsRawFd;
-    let named = scratch.dir.join("copy");
-    let mut out = owner_only().open(&named)?;
-    fs::remove_file(&named)?;
-    let mut input = fs::File::open(source)?;
-    io::copy(&mut input, &mut out)?;
+    let named = dir.join("copy");
+    let mut out = step("create the unnamed copy", owner_only().open(&named))?;
+    step("remove the unnamed copy's name", fs::remove_file(&named))?;
+    let mut input = step("open the store to copy", fs::File::open(source))?;
+    step("copy the store", io::copy(&mut input, &mut out))?;
     let path = PathBuf::from(format!("/dev/fd/{}", out.as_raw_fd()));
-    scratch.held = Some(out);
-    Ok(path)
+    Ok((path, out))
 }
 
 /// `_snapshot`: (dir, copy, whether a -wal came, whether the copy has a
@@ -489,25 +538,24 @@ fn copy_unnamed(source: &Path, scratch: &mut Scratch) -> io::Result<PathBuf> {
 fn snapshot(path: &Path) -> Result<Option<(Scratch, PathBuf, bool, bool)>, StoreError> {
     let wal = beside(path, "-wal");
     let before = (stamp(path)?, stamp(&wal)?);
-    let mut scratch = private_dir()?;
+    let scratch = private_dir()?;
     let dir = scratch.dir.clone();
-    let mut copy = dir.join(path.file_name().unwrap_or_default());
-    let mut named = true;
-    let result = (|| -> io::Result<()> {
-        #[cfg(unix)]
+    // (the copy, whether it has a name, the descriptor of an unnamed one)
+    let result = (|| -> io::Result<(PathBuf, bool, Option<fs::File>)> {
+        #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
         if before.1.is_none() {
-            copy = copy_unnamed(path, &mut scratch)?;
-            named = false;
-            return Ok(());
+            let (copy, held) = copy_unnamed(path, &dir)?;
+            return Ok((copy, false, Some(held)));
         }
-        copy_owner_only(path, &copy)?;
+        let copy = dir.join(path.file_name().unwrap_or_default());
+        copy_owner_only("store", path, &copy)?;
         if before.1.is_some() {
-            copy_owner_only(&wal, &beside(&copy, "-wal"))?;
+            copy_owner_only("store's -wal", &wal, &beside(&copy, "-wal"))?;
         }
-        Ok(())
+        Ok((copy, true, None))
     })();
-    match result {
-        Ok(()) => {}
+    let (copy, named, held) = match result {
+        Ok(done) => done,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             let _ = fs::remove_dir_all(&dir);
             return Ok(None);
@@ -516,7 +564,14 @@ fn snapshot(path: &Path) -> Result<Option<(Scratch, PathBuf, bool, bool)>, Store
             let _ = fs::remove_dir_all(&dir);
             return Err(e.into());
         }
-    }
+    };
+    #[cfg(any(target_vendor = "apple", target_os = "freebsd"))]
+    let scratch = Scratch {
+        _held: held,
+        ..scratch
+    };
+    #[cfg(not(any(target_vendor = "apple", target_os = "freebsd")))]
+    debug_assert!(held.is_none());
     if (stamp(path)?, stamp(&wal)?) != before {
         let _ = fs::remove_dir_all(&dir);
         return Ok(None);
@@ -530,11 +585,32 @@ fn file_uri(path: &Path) -> String {
     // would name another file.
     #[cfg(unix)]
     let bytes = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()).to_vec();
+    #[cfg(unix)]
+    let keep: &[u8] = b"/-._~";
+    // Windows: `canonicalize` gives a verbatim path (`\\?\C:\x`, or
+    // `\\?\UNC\server\share\x`); SQLite wants `file:///C:/x` or
+    // `file:////server/share/x`, with `/` separators and the colon kept.
     #[cfg(not(unix))]
-    let bytes = path.to_string_lossy().into_owned().into_bytes();
+    let bytes = {
+        let text = path.to_string_lossy().into_owned();
+        let text = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else {
+            text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned()
+        };
+        let text = text.replace('\\', "/");
+        let text = if text.starts_with("//") {
+            format!("//{text}")
+        } else {
+            format!("///{text}")
+        };
+        text.into_bytes()
+    };
+    #[cfg(not(unix))]
+    let keep: &[u8] = b"/-._~:";
     let mut out = String::from("file:");
     for &b in &bytes {
-        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+        if b.is_ascii_alphanumeric() || keep.contains(&b) {
             out.push(b as char);
         } else {
             out.push_str(&format!("%{b:02X}"));
@@ -556,7 +632,11 @@ impl Drop for StoreFile {
         // The connection closes before its copy is removed.
         drop(self.conn.take());
         if let Some(scratch) = self.scratch.take() {
-            let _ = fs::remove_dir_all(&scratch.dir);
+            // The lock (and an unnamed copy) closes first: Windows removes
+            // no file that is open.
+            let dir = scratch.dir.clone();
+            drop(scratch);
+            let _ = fs::remove_dir_all(&dir);
         }
     }
 }
@@ -580,7 +660,7 @@ impl StoreFile {
     /// (`admission::admit`); a refused file is [`StoreError::Admission`].
     pub fn open(path: &Path) -> Result<StoreFile, StoreError> {
         sweep_private_copies();
-        let resolved = fs::canonicalize(path)?;
+        let resolved = step("resolve the store's path", fs::canonicalize(path))?;
         if !resolved.is_file() {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no store file").into());
         }
