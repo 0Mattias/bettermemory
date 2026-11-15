@@ -1,0 +1,156 @@
+{
+ "backup": {
+  "bundle": "store/backups/20010203T040506Z",
+  "files": [
+   {
+    "kind": "dir",
+    "mode": "0700",
+    "path": "store/backups/20010203T040506Z"
+   },
+   {
+    "mode": "0600",
+    "path": "store/backups/20010203T040506Z/0123456789abcdef0123456789abcdef.head",
+    "text": "{\"seq\": 1, \"mac\": \"<hex64:1>\", \"ts\": \"2001-02-03T04:05:06Z\"}"
+   },
+   {
+    "mode": "0600",
+    "path": "store/backups/20010203T040506Z/0123456789abcdef0123456789abcdef.key"
+   },
+   {
+    "mode": "0600",
+    "path": "store/backups/20010203T040506Z/memory.sqlite"
+   }
+  ],
+  "manifest_mode": "0600",
+  "manifest_text": "{\n  \"bettermemory_version\": \"0.0.0+fixture\",\n  \"counts\": {\n    \"checkout_views\": 0,\n    \"checkouts\": 0,\n    \"conflicts\": 0,\n    \"declared_remotes\": 0,\n    \"episodes\": 0,\n    \"homes\": 0,\n    \"imports\": 0,\n    \"log\": 1,\n    \"machines\": 0,\n    \"memories\": 0,\n    \"memory_links\": 0,\n    \"meta\": 10,\n    \"native_membership_rows\": 0,\n    \"project_blobs\": 0,\n    \"project_files\": 0,\n    \"project_remotes\": 0,\n    \"project_witnesses\": 0,\n    \"projects\": 0,\n    \"proposals\": 0,\n    \"quarantine\": 0,\n    \"returned\": 0,\n    \"standing\": 0,\n    \"tombstones\": 0,\n    \"verifications\": 0\n  },\n  \"created_at\": \"2001-02-03T04:05:06Z\",\n  \"files\": {\n    \"0123456789abcdef0123456789abcdef.head\": {\n      \"sha256\": \"<hex64:2>\",\n      \"size\": 115\n    },\n    \"0123456789abcdef0123456789abcdef.key\": {\n      \"sha256\": \"630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd\",\n      \"size\": 32\n    },\n    \"memory.sqlite\": {\n      \"sha256\": \"<hex64:3>\",\n      \"size\": <snapshot_size>\n    }\n  },\n  \"format\": \"bettermemory.backup\",\n  \"format_version\": 1,\n  \"head\": {\n    \"mac\": \"<hex64:1>\",\n    \"seq\": 1\n  },\n  \"key_fingerprint\": \"630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd\",\n  \"key_fingerprints\": [\n    \"630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd\"\n  ],\n  \"key_included\": true,\n  \"mac\": \"<hex64:4>\",\n  \"origin\": {\n    \"key_fingerprint\": \"630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd\",\n    \"mac\": \"<hex64:1>\",\n    \"seq\": 1\n  },\n  \"schema_version\": 1,\n  \"source\": \"<scratch>/mem/store/memory.sqlite\",\n  \"store_id\": \"0123456789abcdef0123456789abcdef\"\n}\n"
+ },
+ "daemon_state": {
+  "directory_mode": "0700",
+  "fields": {
+   "health_proof": "integer",
+   "pid": "integer",
+   "port": "integer",
+   "started": "string",
+   "store": "string",
+   "token": "string",
+   "version": "string"
+  },
+  "mode": "0600",
+  "path": "daemon-<digest16>.json",
+  "siblings": {
+   "lock": "daemon-<digest16>.lock",
+   "log": "daemon-<digest16>.log",
+   "spawn_lock": "daemon-<digest16>.spawn.lock"
+  },
+  "text": "{\"health_proof\": 1, \"pid\": <pid>, \"port\": 7397, \"started\": \"<timestamp>\", \"store\": \"<scratch>/mem/store/memory.sqlite\", \"token\": \"fixture-token-not-a-secret\", \"version\": \"0.0.0+fixture\"}"
+ },
+ "fixture": "state_files",
+ "key_fingerprint": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+ "key_ring": [
+  {
+   "holds": "the key: 32 raw bytes (here the fixed test key 000102...1f); its fingerprint is sha256 of the bytes",
+   "mode": "0600",
+   "path": "0123456789abcdef0123456789abcdef.key"
+  },
+  {
+   "holds": "the head checkpoint: JSON {seq, mac, ts}, the last row's seq and MAC and the time it was written; rewritten on every append",
+   "mode": "0600",
+   "path": "0123456789abcdef0123456789abcdef.head",
+   "text": "{\"seq\": 1, \"mac\": \"<hex64:1>\", \"ts\": \"<timestamp>\"}"
+  },
+  {
+   "holds": "an empty lock file, locked while .head is rewritten",
+   "mode": "0600",
+   "path": "0123456789abcdef0123456789abcdef.head.lock"
+  },
+  {
+   "holds": "the binding: JSON {path}, the canonical store file this key belongs to",
+   "mode": "0600",
+   "path": "0123456789abcdef0123456789abcdef.path",
+   "text": "{\"path\": \"<scratch>/mem/store/memory.sqlite\"}"
+  },
+  {
+   "holds": "an empty lock file, locked while .path is rewritten",
+   "mode": "0600",
+   "path": "0123456789abcdef0123456789abcdef.path.lock"
+  },
+  {
+   "holds": "the origin anchor: JSON {seq, mac, key_fingerprint}, the first row this machine signed",
+   "mode": "0600",
+   "path": "0123456789abcdef0123456789abcdef.origin",
+   "text": "{\"seq\": 1, \"mac\": \"<hex64:1>\", \"key_fingerprint\": \"630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd\"}"
+  },
+  {
+   "holds": "an empty lock file, locked while .origin is written",
+   "mode": "0600",
+   "path": "0123456789abcdef0123456789abcdef.origin.lock"
+  }
+ ],
+ "name_derivation": {
+  "examples": [
+   {
+    "canonical": "/home/fixture/.local/share/bettermemory/store/memory.sqlite",
+    "observed": false,
+    "state_file": "daemon-6d94a5fba4b834f2.json"
+   },
+   {
+    "canonical": "/srv/repo/.claude-memory/store/memory.sqlite",
+    "observed": false,
+    "state_file": "daemon-653107358acd8474.json"
+   },
+   {
+    "canonical": "C:\\Users\\fixture\\AppData\\Local\\bettermemory\\store\\memory.sqlite",
+    "observed": false,
+    "state_file": "daemon-01334b8c5d3796c8.json"
+   }
+  ],
+  "examples_note": "observed false: each example is the rule computed over the given string as if it were already canonical (the canonicalising function replaced by the identity), not a path observed on that platform",
+  "rule": "daemon-<first 16 hex of sha256(UTF-8 of the canonical store file path)>.json; the lock, spawn lock and log replace .json with .lock, .spawn.lock, .log. Canonical: realpath, then on POSIX each existing component spelled as its directory lists it where the directory folds case or normalization (_daemon_client.canonical_store_path); on Windows realpath."
+ },
+ "placeholders": {
+  "<digest16>": "the first 16 hex digits of sha256 over the scratch store's canonical path (name_derivation shows the rule over fixed paths)",
+  "<hex64:N>": "a 64-hex-digit value the run cannot fix: an HMAC-SHA256 over the store_created row, whose time is the run's clock, or a digest of a file holding it; N numbers distinct values in order of first appearance in the file. The key fingerprint, from the fixed key, stays literal",
+  "<pid>": "the writing process's id (an integer in the file)",
+  "<scratch>": "the run's temporary directory (an absolute path); the path after it is written with / whatever the platform's separator",
+  "<snapshot_size>": "the byte size of the store snapshot (an integer)",
+  "<timestamp>": "an ISO-8601 time on a date within 31 days of the run's clock (YYYY-MM-DDTHH:MM:SS, optional fraction, Z or offset)"
+ },
+ "read": "Each file: path relative to its root (store: <scratch>/mem, the BETTERMEMORY_DIR; keys: <scratch>/keys, the BETTERMEMORY_KEYS_DIR; the daemon's files: the state directory), mode as an octal string (the mode asked for; POSIX only), and for a text file its exact text with the run's values as placeholders. writers_readers names the components that write and read each. Every JSON text here is written by Python's json.dumps with its default separators (\", \", \": \"); the state file and the manifest sort their keys, the key ring's files keep the order shown.",
+ "setup": "_sandbox.world; Store.create(<scratch>/mem/store, keys_dir=<scratch>/keys) with secrets.token_hex answering 0123456789abcdef0123456789abcdef (the store id) then fedcba9876543210fedcba9876543210 (the membership id) and secrets.token_bytes(32) answering the log fixture's KEY_A (bytes 0..31); then daemon._write_daemon_state(<scratch>/state/daemon, store, token 'fixture-token-not-a-secret', port 7397, '127.0.0.1') with the version '0.0.0+fixture'; then create_backup(store file, include_key=True, now=2001-02-03T04:05:06Z) with bettermemory.__version__ = '0.0.0+fixture'.",
+ "state_directory_names": {
+  "git_ask_folder": "git-ask",
+  "git_config_record": "git-config-sources-v5.json",
+  "git_probe_folder": "git-probe-db0b7b6ac9a10835",
+  "gitdir_pins_folder": "gitdir-pins",
+  "machine_facts": "machine.json",
+  "machine_id": "machine-id",
+  "note": "names only: these files hold host facts (git's config sources, gitdir pins, the machine's id and facts) and are not written by this fixture"
+ },
+ "store": [
+  {
+   "kind": "dir",
+   "mode": "0700",
+   "path": "store"
+  },
+  {
+   "kind": "sqlite store",
+   "mode": "0600",
+   "path": "store/memory.sqlite"
+  }
+ ],
+ "store_id": "0123456789abcdef0123456789abcdef",
+ "timestamp_format": {
+  "applies_to": [
+   "daemon_state.started",
+   "key_ring .head ts"
+  ],
+  "regex": "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{6})?Z",
+  "rule": "UTC written with Z (never +00:00), seconds, then a fraction of exactly six digits unless the microsecond is 0, when the fraction is left out (Python's datetime.isoformat). The backup's created_at and its head ts are fixed values of the same writer, here without a fraction."
+ },
+ "writers_readers": {
+  "backup": "written by backup create; read by backup verify and restore",
+  "daemon_state": "written by the daemon at start, removed at a clean stop; read by the hook client, the shim and up/down/status, which trust it only after /health?nonce= proves the token",
+  "key_ring": "written by Store.create, every append (.head), a rekey (.key, .origin) and a store move (.path); read by every opener, security audit and backup",
+  "store": "written by every opener of the store (daemon, CLI, stdio server); read by the same"
+ }
+}

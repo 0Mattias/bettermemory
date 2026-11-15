@@ -1,0 +1,4592 @@
+{
+ "contract": "What a native CLI must reproduce: command and subcommand names and aliases, their order, flags, dest where it is user-visible (a positional's name in usage and errors, choices of a subcommands argument), defaults, choices, required, nargs, the value rules in type_rules, exit codes and the recorded output lines and prefixes. Reference only, a description of the Python reference rather than a contract: action names (argparse classes), type names (Python converter names), metavar, and help and description texts (argparse %-format, unexpanded).",
+ "fixture": "cli_surface",
+ "parsers": [
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "version",
+     "dest": "version",
+     "flags": [
+      "--version"
+     ],
+     "help": "show program's version number and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "health",
+      "init",
+      "migrate",
+      "export",
+      "tombstones",
+      "rollback",
+      "episodes",
+      "log",
+      "index",
+      "key",
+      "project",
+      "memory",
+      "membership",
+      "eval",
+      "review",
+      "capture",
+      "recall",
+      "rename-scope",
+      "try",
+      "backup",
+      "service",
+      "doctor",
+      "security",
+      "stats",
+      "completion",
+      "config",
+      "up",
+      "down",
+      "status",
+      "serve",
+      "hook"
+     ],
+     "dest": "cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [],
+   "description": "MCP memory for coding agents, checked against your files and git history on every read. Run with no arguments to start the MCP server over stdio.",
+   "help": null
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON instead of human-readable text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 30,
+     "dest": "days",
+     "flags": [
+      "--days"
+     ],
+     "help": "Window in days for the dead-weight cutoff. Memories created more than this many days ago with no `applied` events are flagged. Default: 30.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 10,
+     "dest": "top_k",
+     "flags": [
+      "--top-k"
+     ],
+     "help": "How many heavily-used memories to list; zero or negative values list none. Default: 10.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "min_applied",
+     "flags": [
+      "--min-applied"
+     ],
+     "help": "Minimum applied_count for inclusion in heavily_used. Default: 3. Lower to 1 on a fresh store to see anything that's been applied at least once.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    }
+   ],
+   "command": [
+    "health"
+   ],
+   "description": "Print the aggregate memory health report.",
+   "help": "Print the aggregate memory health report."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": [
+      "claude-code",
+      "claude-desktop",
+      "cursor",
+      "continue",
+      "cline",
+      "hermes"
+     ],
+     "default": null,
+     "dest": "client",
+     "flags": [
+      "--client"
+     ],
+     "help": "Auto-patch the named client's MCP config. Without this flag, init runs in show-and-tell mode: prints the snippet and the common config locations so you can copy by hand.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "print_only",
+     "flags": [
+      "--print-only"
+     ],
+     "help": "Just print the JSON snippet (and target path, when --client is set) without writing anything. Useful for piping into jq or for review before applying.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit a structured JSON view (binary path, snippet, known clients).",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "name",
+     "flags": [
+      "--name"
+     ],
+     "help": "Server key under `mcpServers`. Default: `bettermemory` (specific enough to never collide with another MCP server). Override only if you have a strong reason \u2014 Claude Code's tool names are prefixed with this key.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "with_addendum",
+     "flags": [
+      "--with-addendum"
+     ],
+     "help": "Also print docs/system_prompt.md (the long-form policy). The MCP `instructions` block carries the core rules at the system-prompt level on every compliant client, but Claude Code truncates it at ~1.8KB. Print the addendum and paste into your CLAUDE.md to keep the writing-discipline / scope-hygiene / verification-ceremony detail in scope. The Claude Code plugin ships the same content as a SKILL.md \u2014 you don't need both.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "config_path",
+     "flags": [
+      "--config-path"
+     ],
+     "help": "Override the default target file for --client. Use this to write into a project-scoped MCP config instead of the user-scoped default.",
+     "metavar": "PATH",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    }
+   ],
+   "command": [
+    "init"
+   ],
+   "description": "Onboard a fresh install: print the MCP config snippet, or auto-patch a known client's config. Idempotent.",
+   "help": "Onboard a fresh install: print the MCP config snippet, or auto-patch a known client's config. Idempotent."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "v8"
+     ],
+     "dest": "migrate_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "migrate"
+   ],
+   "description": "One-shot data migrations. `migrate v8` reads a v8 store directory into a bettermemory 9 store.",
+   "help": "One-shot data migrations. `migrate v8` reads a v8 store directory into a bettermemory 9 store."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "source",
+     "flags": [
+      "--from"
+     ],
+     "help": "The v8 store directory. Default: the resolved store directory.",
+     "metavar": "DIR",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "target",
+     "flags": [
+      "--to"
+     ],
+     "help": "The store file to create or open. Default: memory.sqlite inside the v8 directory. A file inside a backup bundle, or one with other names (hard links), is refused (exit 1).",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "dry_run",
+     "flags": [
+      "--dry-run"
+     ],
+     "help": "Report what a run would import and write nothing.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Print the report as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "migrate",
+    "v8"
+   ],
+   "description": "Read a v8 store directory (memories, tombstones, episodes, every event shard and archive, conflicts, the ingest watermark) into a bettermemory 9 store, one SQLite file. The directory is never written. Idempotent: a re-run imports what is new and reports the rest as present. Pending writes and proposals are dropped with a count; sidecars with no place in the store are left with a count; unknown files are named.",
+   "help": "Read a v8 store directory (memories, tombstones, episodes, every event shard and archive, conflicts, the ingest watermark) into a bettermemory 9 store, one SQLite file. The directory is never written. Idempotent: a re-run imports what is new and reports the rest as present. Pending writes and proposals are dropped with a count; sidecars with no place in the store are left with a count; unknown files are named."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "output",
+     "flags": [
+      "--output",
+      "-o"
+     ],
+     "help": "Write the export to PATH instead of stdout (`bettermemory export -o memories.json`).",
+     "metavar": "PATH",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "no_tombstones",
+     "flags": [
+      "--no-tombstones"
+     ],
+     "help": "Skip tombstoned memories. By default the export includes them, with their removal reasons; use this when you only want the live set.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "append",
+     "choices": null,
+     "default": [],
+     "dest": "scope",
+     "flags": [
+      "--scope"
+     ],
+     "help": "Filter to memories tagged with at least one of the given scopes. Repeat to widen the filter. Applies to both active and tombstoned records.",
+     "metavar": "SCOPE",
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "strict",
+     "flags": [
+      "--strict"
+     ],
+     "help": "Exit non-zero when a memory or tombstone row could not be loaded and was left out of the export. The document is still written; only the exit status changes. Use this in a scheduled export so a short document fails the job instead of passing silently. Under --no-tombstones the tombstone half is never read, so --strict cannot fire on it \u2014 the export records null there rather than a zero nobody checked. The store loads every row it holds, so this fires only when a `memory_restore` lands between the export's count of the tombstones and its read of them; run the export again.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "mirror",
+     "flags": [
+      "--mirror"
+     ],
+     "help": "Write the bettermemory 9 store as a v8 directory under DIR: each active memory at its filename, tombstones under .tombstones/, episodes under episodes/<session>/, byte for byte what v8 wrote. DIR must be absent, empty, or a mirror this command made before; inside a mirror, unchanged files are left alone and files the store no longer holds are removed. Not combined with the JSON export's flags.",
+     "metavar": "DIR",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "store",
+     "flags": [
+      "--store"
+     ],
+     "help": "With --mirror: the store file to read. Default: memory.sqlite in the resolved store directory. A file inside a backup bundle, or one with other names (hard links), is refused: opening it would change it and fail the bundle's hash, so copy it out first.",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    }
+   ],
+   "command": [
+    "export"
+   ],
+   "description": "Dump all active memories (and tombstones, by default) to a self-describing JSON document, with each record's home, for reading or for an external indexer. It is not a backup: it leaves out the signed log, episodes, conflicts and the other tables, and no command restores a store from it. `bettermemory backup create` makes a backup. Writes to stdout unless --output is given.",
+   "help": "Dump all active memories (and tombstones, by default) to a self-describing JSON document, with each record's home, for reading or for an external indexer. It is not a backup: it leaves out the signed log, episodes, conflicts and the other tables, and no command restores a store from it. `bettermemory backup create` makes a backup. Writes to stdout unless --output is given."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "list",
+      "restore",
+      "prune"
+     ],
+     "dest": "tombstones_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "tombstones"
+   ],
+   "description": "Inspect, restore, and prune the tombstone (removed-memory) audit log. Subcommands: list, restore, prune.",
+   "help": "Inspect, restore, and prune the tombstone (removed-memory) audit log. Subcommands: list, restore, prune."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON instead of human-readable text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "append",
+     "choices": null,
+     "default": [],
+     "dest": "scope",
+     "flags": [
+      "--scope"
+     ],
+     "help": "Filter to tombstones tagged with at least one of the given scopes. Repeat to widen the filter.",
+     "metavar": "SCOPE",
+     "nargs": null,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "tombstones",
+    "list"
+   ],
+   "description": "Print all tombstones with removal metadata.",
+   "help": "Print all tombstones with removal metadata."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "id",
+     "flags": [],
+     "help": "Id of the tombstoned memory to restore.",
+     "metavar": "ID",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON instead of human-readable text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "tombstones",
+    "restore"
+   ],
+   "description": "Bring a tombstoned memory back to the active set by id. Strips removal metadata and preserves original timestamps. The CLI counterpart of memory_admin's restore action.",
+   "help": "Bring a tombstoned memory back to the active set by id. Strips removal metadata and preserves original timestamps. The CLI counterpart of memory_admin's restore action."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "older_than",
+     "flags": [
+      "--older-than"
+     ],
+     "help": "Cutoff in days. Tombstones whose `removed` timestamp is older than this are deleted. Required if no default is configured.",
+     "metavar": "DAYS",
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "dry_run",
+     "flags": [
+      "--dry-run"
+     ],
+     "help": "Print what would be pruned and prune nothing.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON instead of human-readable text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "tombstones",
+    "prune"
+   ],
+   "description": "Delete the tombstones removed more than --older-than days ago from the tombstones table, so they can no longer be restored. Each prune is a signed tombstone_delete row; the log keeps every earlier version of the record, body included, and no command erases a log row. Active memories are unaffected. Default value comes from config.toml `behavior.tombstone_retention_days`; if that's 0 (the default), --older-than is required.",
+   "help": "Delete the tombstones removed more than --older-than days ago from the tombstones table, so they can no longer be restored. Each prune is a signed tombstone_delete row; the log keeps every earlier version of the record, body included, and no command erases a log row. Active memories are unaffected. Default value comes from config.toml `behavior.tombstone_retention_days`; if that's 0 (the default), --older-than is required."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "by_actor",
+     "flags": [
+      "--by-actor"
+     ],
+     "help": "Select records whose writer declared this client (exact, case-sensitive \u2014 the same rule search and memory_list filter on). Required: there is no default, because a rollback with no selector would mean the whole store. Records that declared NO client are never selected \u2014 an absent actor is not evidence of some other writer \u2014 and the report says how many were passed over for that reason.",
+     "metavar": "CLIENT",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "since",
+     "flags": [
+      "--since"
+     ],
+     "help": "Only records CREATED at or after this timestamp, e.g. '2026-09-01T00:00:00Z'. Filters `created` rather than `updated`, because the actor and the creation timestamp are stamped by the same write event. Requires an explicit UTC offset or trailing Z. Omit to select everything the actor ever wrote.",
+     "metavar": "ISO_TS",
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "apply",
+     "flags": [
+      "--apply"
+     ],
+     "help": "Actually remove the selected records. Requires --yes as well; without it nothing is committed and the command exits non-zero.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "yes",
+     "flags": [
+      "--yes"
+     ],
+     "help": "Confirm a batch removal. Required alongside --apply: a bulk removal must not commit silently.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON instead of human-readable text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "rollback"
+   ],
+   "description": "Remove the memories one actor wrote, leaving every other actor's in place. Dry-run by default; --apply --yes commits. Every removal is a tombstone, so `tombstones restore` puts a record back.",
+   "help": "Remove the memories one actor wrote, leaving every other actor's in place. Dry-run by default; --apply --yes commits. Every removal is a tombstone, so `tombstones restore` puts a record back."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "list",
+      "prune"
+     ],
+     "dest": "episodes_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "episodes"
+   ],
+   "description": "Inspect and prune the episode (journal) store \u2014 the sibling-to-memory tier for loop-iteration takeaways. Subcommands: list, prune.",
+   "help": "Inspect and prune the episode (journal) store \u2014 the sibling-to-memory tier for loop-iteration takeaways. Subcommands: list, prune."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "session_id",
+     "flags": [],
+     "help": "If given, only print episodes belonging to this session_id.",
+     "metavar": null,
+     "nargs": "?",
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON instead of human-readable text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "episodes",
+    "list"
+   ],
+   "description": "Print episodes. Without arguments, prints every session's episodes oldest-first within each session.",
+   "help": "Print episodes. Without arguments, prints every session's episodes oldest-first within each session."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 30,
+     "dest": "ttl_days",
+     "flags": [
+      "--ttl-days"
+     ],
+     "help": "TTL in days. Default 30. Session directories whose newest file mtime is older than this are deleted in full.",
+     "metavar": "DAYS",
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "dry_run",
+     "flags": [
+      "--dry-run"
+     ],
+     "help": "Print what would be deleted without touching disk.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON instead of human-readable text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "episodes",
+    "prune"
+   ],
+   "description": "Hard-delete episode session directories whose newest file is older than --ttl-days (default 30). Episodes are normally pruned on each `episode_write` call; this is the manual surface for an offline cleanup pass.",
+   "help": "Hard-delete episode session directories whose newest file is older than --ttl-days (default 30). Episodes are normally pruned on each `episode_write` call; this is the manual surface for an offline cleanup pass."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "verify",
+      "export",
+      "anchor",
+      "accept-history"
+     ],
+     "dest": "log_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "log"
+   ],
+   "description": "The bettermemory 9 store's hash-chained log. `log verify` checks every row's MAC against the key kept outside the store, the chain between rows, the head checkpoint against the last row, the origin anchor against the row where this host's history begins, and every table against a replay of the log. Exit 0 when the log verifies, 1 when it is tampered or cannot be verified. `log export` writes the log as JSON Lines for an audit pipeline, `log anchor` takes an anchor to keep off this host for `log verify --anchor`, and `log accept-history` accepts a replaced history on the record.",
+   "help": "The bettermemory 9 store's hash-chained log. `log verify` checks every row's MAC against the key kept outside the store, the chain between rows, the head checkpoint against the last row, the origin anchor against the row where this host's history begins, and every table against a replay of the log. Exit 0 when the log verifies, 1 when it is tampered or cannot be verified. `log export` writes the log as JSON Lines for an audit pipeline, `log anchor` takes an anchor to keep off this host for `log verify --anchor`, and `log accept-history` accepts a replaced history on the record."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "append",
+     "choices": null,
+     "default": null,
+     "dest": "anchor",
+     "flags": [
+      "--anchor"
+     ],
+     "help": "Also check the anchors in FILE (written by `log anchor`; one JSON object, or JSON Lines of them): the log must still hold each anchor's seq with the same MAC and the same chain digest. A failed anchor adds the problem anchor_mismatch. An anchor of another store is listed as other_store and changes nothing. Repeat for several files. Without it the report is unchanged.",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "log",
+    "verify"
+   ],
+   "description": "Verify the log: MACs, chain, head, the origin anchor and fold, and every --anchor given. The origin anchor, kept beside the key outside the store (<store_id>.origin in the keys directory), names the row where this host's history of the store begins and the key that signed it: that row must still be in the log with the same MAC and verify under that key. A row gone or changed, or one that key does not verify while it is still held here, adds the problem origin_mismatch and the log reads tampered. When that key is no longer held (its key file was lost) or no key is held at all, nothing here can check the row: the origin reads unverifiable, and so does the log, until the key is filed back (`bettermemory key import`). `bettermemory log accept-history --yes` accepts a replaced history on purpose, on the record. Prints a report and exits 0 only when every check passes; 1 when the log is tampered or cannot be verified (an anchor or an origin that no longer matches is tampering); 2 when there is no store or an anchor file cannot be read.",
+   "help": "Verify the log: MACs, chain, head, the origin anchor and fold, and every --anchor given. The origin anchor, kept beside the key outside the store (<store_id>.origin in the keys directory), names the row where this host's history of the store begins and the key that signed it: that row must still be in the log with the same MAC and verify under that key. A row gone or changed, or one that key does not verify while it is still held here, adds the problem origin_mismatch and the log reads tampered. When that key is no longer held (its key file was lost) or no key is held at all, nothing here can check the row: the origin reads unverifiable, and so does the log, until the key is filed back (`bettermemory key import`). `bettermemory log accept-history --yes` accepts a replaced history on purpose, on the record. Prints a report and exits 0 only when every check passes; 1 when the log is tampered or cannot be verified (an anchor or an origin that no longer matches is tampering); 2 when there is no store or an anchor file cannot be read."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 0,
+     "dest": "since_seq",
+     "flags": [
+      "--since-seq"
+     ],
+     "help": "Export only the rows after seq N. A cron job passes the last seq it exported (the through_seq --out reports). Default 0: from the first row.",
+     "metavar": "N",
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "until_seq",
+     "flags": [
+      "--until-seq"
+     ],
+     "help": "Export only the rows up to and including seq M.",
+     "metavar": "M",
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "kinds",
+     "flags": [
+      "--kinds"
+     ],
+     "help": "Export only rows of these kinds, comma-separated (memory_put,tombstone_put,rekey for example).",
+     "metavar": "K1,K2",
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "include_bodies",
+     "flags": [
+      "--include-bodies"
+     ],
+     "help": "Keep every payload as the log holds it, memory bodies, takeaways and episode bodies included, every version of each. The output is then as sensitive as the store file. Warns on stderr.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "out",
+     "flags": [
+      "--out"
+     ],
+     "help": "Write the lines to FILE (owner-only, 0600, replaced atomically when the export completes) instead of stdout, and print a summary: rows written, the seq range, and the through_seq to pass as the next --since-seq.",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "With --out, print the summary as JSON. The rows themselves are always JSON Lines.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "log",
+    "export"
+   ],
+   "description": "Write the log as JSON Lines, one object per row in seq order, for a SIEM or an audit archive: seq, ts, kind, class, session, actor, record ids, the payload, the MAC and the MAC it chains to, the segment's key fingerprint and whether the row's MAC verifies under the key held here (null when it is not held). Bodies and other free text are replaced by their sha256 and length unless --include-bodies. Read-only and deterministic: the same log gives the same bytes. Exit 0 when the export is written, 1 when the output closed before it was, 2 when there is no store it can read, an argument is wrong or --out cannot be written (or names the store's own files or the keys directory). The export is a trail, not a verdict: run `log verify` for that.",
+   "help": "Write the log as JSON Lines, one object per row in seq order, for a SIEM or an audit archive: seq, ts, kind, class, session, actor, record ids, the payload, the MAC and the MAC it chains to, the segment's key fingerprint and whether the row's MAC verifies under the key held here (null when it is not held). Bodies and other free text are replaced by their sha256 and length unless --include-bodies. Read-only and deterministic: the same log gives the same bytes. Exit 0 when the export is written, 1 when the output closed before it was, 2 when there is no store it can read, an argument is wrong or --out cannot be written (or names the store's own files or the keys directory). The export is a trail, not a verdict: run `log verify` for that."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "out",
+     "flags": [
+      "--out"
+     ],
+     "help": "Write the anchor to FILE (owner-only, 0600, replaced atomically) and print where it went, instead of printing the anchor.",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "With --out, print {anchor, out} as JSON. Without it the anchor is printed as JSON either way.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "log",
+    "anchor"
+   ],
+   "description": "Take an anchor of the log: the store id, the last row's seq and MAC, a SHA-256 over every row's MAC up to it, and the time. Keep it off this host (a ticket, a git repository, a WORM bucket); `log verify --anchor FILE` then shows whether history up to that seq was rewritten since, even by a process that holds the key. Prints the anchor as one JSON line, or writes it to --out. Exit 0 when the anchor is taken, 2 when there is no store it can read, its log is empty or --out cannot be written (or names the store's own files or the keys directory).",
+   "help": "Take an anchor of the log: the store id, the last row's seq and MAC, a SHA-256 over every row's MAC up to it, and the time. Keep it off this host (a ticket, a git repository, a WORM bucket); `log verify --anchor FILE` then shows whether history up to that seq was rewritten since, even by a process that holds the key. Prints the anchor as one JSON line, or writes it to --out. Exit 0 when the anchor is taken, 2 when there is no store it can read, its log is empty or --out cannot be written (or names the store's own files or the keys directory)."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "yes",
+     "flags": [
+      "--yes"
+     ],
+     "help": "Accept the history; without it, plan.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "log",
+    "accept-history"
+   ],
+   "description": "Accept the store file's history as it stands, on the record, when the origin anchor reads origin_mismatch or unverifiable or the head checkpoint names a row the log does not hold: a store file copied over this host's copy again, an anchor from before 9.0.0rc13 whose key was lost, an older copy put back by hand. With the daemon stopped, the key ring is bound to this file and the store opened as its owner opens it (a missing or foreign key is settled as any writing command settles it); a history_accepted row, signed with the store's key, names the anchor, head and binding before and after; then this host's history is anchored at the first row of the earliest segment a key it holds signs and the head moved to the row, so a crash leaves the acceptance recorded or none; last the rewind record beside the head (<store_id>.backup_restore.json) gets the same entry. Refused while a daemon serves or starts for the store, or when the key file cannot be read. Without --yes prints the plan. Exit 0 accepted (or nothing to accept), 1 refused, failed or the log still tampered after it, 2 no store, 3 the plan.",
+   "help": "Accept the store file's history as it stands, on the record, when the origin anchor reads origin_mismatch or unverifiable or the head checkpoint names a row the log does not hold: a store file copied over this host's copy again, an anchor from before 9.0.0rc13 whose key was lost, an older copy put back by hand. With the daemon stopped, the key ring is bound to this file and the store opened as its owner opens it (a missing or foreign key is settled as any writing command settles it); a history_accepted row, signed with the store's key, names the anchor, head and binding before and after; then this host's history is anchored at the first row of the earliest segment a key it holds signs and the head moved to the row, so a crash leaves the acceptance recorded or none; last the rewind record beside the head (<store_id>.backup_restore.json) gets the same entry. Refused while a daemon serves or starts for the store, or when the key file cannot be read. Without --yes prints the plan. Exit 0 accepted (or nothing to accept), 1 refused, failed or the log still tampered after it, 2 no store, 3 the plan."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "rebuild"
+     ],
+     "dest": "index_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "index"
+   ],
+   "description": "The store's full-text search index. `index rebuild` spells every memory's index text again from its body and scopes and rebuilds the FTS5 table from it, the repair doctor and backup verify name for an index drift.",
+   "help": "The store's full-text search index. `index rebuild` spells every memory's index text again from its body and scopes and rebuilds the FTS5 table from it, the repair doctor and backup verify name for an index drift."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit {status, path, reason, memories, respelled, old_fingerprint, new_fingerprint, seq, seconds} as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "index",
+    "rebuild"
+   ],
+   "description": "Rebuild the store's full-text search index in one write transaction: every memory's index text spelled again from its body and scopes by this build's tokenizer, the FTS5 table rebuilt from it, and one index_rebuilt log row. No record changes. Exit 0 when rebuilt, 1 when the store cannot be written (busy, full, or open for reading only).",
+   "help": "Rebuild the store's full-text search index in one write transaction: every memory's index text spelled again from its body and scopes by this build's tokenizer, the FTS5 table rebuilt from it, and one index_rebuilt log row. No record changes. Exit 0 when rebuilt, 1 when the store cannot be written (busy, full, or open for reading only)."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "show",
+      "export",
+      "import",
+      "adopt",
+      "rotate"
+     ],
+     "dest": "key_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "key"
+   ],
+   "description": "The store's key ring: the key outside the store that signs its log, the retired keys earlier segments verify under, the head checkpoint, the origin anchor and the binding to one store file. `key show` reads it; `key export` and `key import` keep and file back keys; `key adopt` binds the ring to this store file; `key rotate` writes a new key. Every change is a row in the store's log, signed with its key. No key file is placed or deleted by hand.",
+   "help": "The store's key ring: the key outside the store that signs its log, the retired keys earlier segments verify under, the head checkpoint, the origin anchor and the binding to one store file. `key show` reads it; `key export` and `key import` keep and file back keys; `key adopt` binds the ring to this store file; `key rotate` writes a new key. Every change is a row in the store's log, signed with its key. No key file is placed or deleted by hand."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "key",
+    "show"
+   ],
+   "description": "Show the store's key as the open, doctor and the audit read it (present, unreadable, missing, foreign or bound elsewhere), the keys the ring holds by fingerprint (never a key), the head checkpoint and the origin anchor against the store's log, and the binding. Read-only. Exit 0 when the key is present, 1 when it is not, 2 when there is no store.",
+   "help": "Show the store's key as the open, doctor and the audit read it (present, unreadable, missing, foreign or bound elsewhere), the keys the ring holds by fingerprint (never a key), the head checkpoint and the origin anchor against the store's log, and the binding. Read-only. Exit 0 when the key is present, 1 when it is not, 2 when there is no store."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "out",
+     "flags": [
+      "--out"
+     ],
+     "help": "Where the export goes.",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "key",
+    "export"
+   ],
+   "description": "Write every key the ring holds for the store, current and retired, to FILE (JSON, owner-only 0600, replaced atomically), to keep where the keys directory is not: `key import FILE` files them back. Whoever holds the file can sign the store's rows. Refused when the ring is bound to another store file, a key file cannot be read, or FILE is the store's own file or in the keys directory. Warns when FILE is in a git working tree or a synced folder, and writes it all the same. Writes no row. Exit 0 written, 1 refused, 2 no store or a bad --out.",
+   "help": "Write every key the ring holds for the store, current and retired, to FILE (JSON, owner-only 0600, replaced atomically), to keep where the keys directory is not: `key import FILE` files them back. Whoever holds the file can sign the store's rows. Refused when the ring is bound to another store file, a key file cannot be read, or FILE is the store's own file or in the keys directory. Warns when FILE is in a git working tree or a synced folder, and writes it all the same. Writes no row. Exit 0 written, 1 refused, 2 no store or a bad --out."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "file",
+     "flags": [],
+     "help": "The export or key file.",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "key",
+    "import"
+   ],
+   "description": "File the keys in FILE back into the ring: an export (`key export`) or a key file as a keys directory holds it (`<store_id>.key`, `<store_id>.<prefix>.key`). Each key is filed only when it signs a segment of this store's log; the key the store names becomes the current key when the ring has none or holds another (which is retired, never deleted), every other key a retired key, so the rows it signed verify again. Writes a key_imported row. Refused for another store's key, a key that signs nothing here, a ring bound elsewhere, a file that cannot be read, or an import that leaves the ring without the store's own key. Exit 0 filed (or held already), 1 refused or failed, 2 no store.",
+   "help": "File the keys in FILE back into the ring: an export (`key export`) or a key file as a keys directory holds it (`<store_id>.key`, `<store_id>.<prefix>.key`). Each key is filed only when it signs a segment of this store's log; the key the store names becomes the current key when the ring has none or holds another (which is retired, never deleted), every other key a retired key, so the rows it signed verify again. Writes a key_imported row. Refused for another store's key, a key that signs nothing here, a ring bound elsewhere, a file that cannot be read, or an import that leaves the ring without the store's own key. Exit 0 filed (or held already), 1 refused or failed, 2 no store."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "yes",
+     "flags": [
+      "--yes"
+     ],
+     "help": "Adopt; without it, plan.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "key",
+    "adopt"
+   ],
+   "description": "Bind the key ring to this store file, whatever it is bound to now, and write a key_adopted row naming the binding before and after: for a store copied or moved with its keys directory, which opens for reading only while the ring is bound to its original. The original, if it still holds the store id, opens for reading only from then on. Refused when the ring's key is not the store's, when this file's log does not carry the ring's origin anchor and reach its head (`bettermemory log accept-history` accepts such a history on purpose), or while a daemon serves this file or the bound one. Without --yes prints the plan. Exit 0 adopted (or bound here already), 1 refused or failed, 2 no store, 3 the plan.",
+   "help": "Bind the key ring to this store file, whatever it is bound to now, and write a key_adopted row naming the binding before and after: for a store copied or moved with its keys directory, which opens for reading only while the ring is bound to its original. The original, if it still holds the store id, opens for reading only from then on. Refused when the ring's key is not the store's, when this file's log does not carry the ring's origin anchor and reach its head (`bettermemory log accept-history` accepts such a history on purpose), or while a daemon serves this file or the bound one. Without --yes prints the plan. Exit 0 adopted (or bound here already), 1 refused or failed, 2 no store, 3 the plan."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "yes",
+     "flags": [
+      "--yes"
+     ],
+     "help": "Rotate; without it, plan.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "key",
+    "rotate"
+   ],
+   "description": "Write a new key for the store and append the rekey row that opens its segment, signed with the new key, keeping the old key under its fingerprint so the rows it signed still verify. The current key file is never absent while it runs: the new key is written beside it, the rotation committed, then the new key renamed over it (an open that finds a committed rotation unfinished finishes it). Refused while a daemon serves the store (run `bettermemory down` first) and unless the key is present. Without --yes prints the plan. Exit 0 rotated, 1 refused or failed, 2 no store, 3 the plan.",
+   "help": "Write a new key for the store and append the rekey row that opens its segment, signed with the new key, keeping the old key under its fingerprint so the rows it signed still verify. The current key file is never absent while it runs: the new key is written beside it, the rotation committed, then the new key renamed over it (an open that finds a committed rotation unfinished finishes it). Refused while a daemon serves the store (run `bettermemory down` first) and unless the key is present. Without --yes prints the plan. Exit 0 rotated, 1 refused or failed, 2 no store, 3 the plan."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "list",
+      "show",
+      "why",
+      "pending",
+      "folder",
+      "join",
+      "new",
+      "init"
+     ],
+     "dest": "project_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "project"
+   ],
+   "description": "The projects membership knows (list, show, why, pending, folder) and the declarations that settle a checkout's project (join, new, init).",
+   "help": "The projects membership knows (list, show, why, pending, folder) and the declarations that settle a checkout's project (join, new, init)."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    }
+   ],
+   "command": [
+    "project",
+    "list"
+   ],
+   "description": "Every project with its id and name, its checkouts and their live views; provisional and unresolved projects marked.",
+   "help": "Every project with its id and name, its checkouts and their live views; provisional and unresolved projects marked."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "id",
+     "flags": [],
+     "help": "The project id (P001).",
+     "metavar": "ID",
+     "nargs": null,
+     "required": true,
+     "type": null
+    }
+   ],
+   "command": [
+    "project",
+    "show"
+   ],
+   "description": "One project: its witness commits, remotes, file ids, checkouts and open questions.",
+   "help": "One project: its witness commits, remotes, file ids, checkouts and open questions."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "record",
+     "flags": [],
+     "help": "A memory or episode id.",
+     "metavar": "RECORD_ID",
+     "nargs": null,
+     "required": true,
+     "type": null
+    }
+   ],
+   "command": [
+    "project",
+    "why"
+   ],
+   "description": "Why a record is where it is: its project, the checkout it was written in, the rule that decided it and every log row behind it.",
+   "help": "Why a record is where it is: its project, the checkout it was written in, the rule that decided it and every log row behind it."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    }
+   ],
+   "command": [
+    "project",
+    "pending"
+   ],
+   "description": "Every open question with its line, which names the call that answers it, and the checkout it is about.",
+   "help": "Every open question with its line, which names the call that answers it, and the checkout it is about."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "id",
+     "flags": [],
+     "help": "An open question's id (Q12) or a project file's id (bmp_...).",
+     "metavar": "ID",
+     "nargs": null,
+     "required": true,
+     "type": null
+    }
+   ],
+   "command": [
+    "project",
+    "folder"
+   ],
+   "description": "Read a membership command's stored working directory as JSON, never shell text. For an open question, its part's folder or its checkout's latest folder on this machine; for a project file id, the nearest ancestor holding that file. Set a tool's working directory from path, or decode path_bytes_base64 with the filesystem codec when path is null. Does not resolve a checkout or change the store or project files.",
+   "help": "Read a membership command's stored working directory as JSON, never shell text. For an open question, its part's folder or its checkout's latest folder on this machine; for a project file id, the nearest ancestor holding that file. Set a tool's working directory from path, or decode path_bytes_base64 with the filesystem codec when path is null. Does not resolve a checkout or change the store or project files."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "id",
+     "flags": [],
+     "help": "The project id (P001).",
+     "metavar": "ID",
+     "nargs": null,
+     "required": true,
+     "type": null
+    }
+   ],
+   "command": [
+    "project",
+    "join"
+   ],
+   "description": "Declare this checkout part of project ID: answers the checkout's open question, or with none moves the checkout there.",
+   "help": "Declare this checkout part of project ID: answers the checkout's open question, or with none moves the checkout there."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    }
+   ],
+   "command": [
+    "project",
+    "new"
+   ],
+   "description": "Declare this checkout a project of its own: answers the checkout's open question with 'separate', or with none takes the checkout and what was written there out of its project, and re-mints its checkout token.",
+   "help": "Declare this checkout a project of its own: answers the checkout's open question with 'separate', or with none takes the checkout and what was written there out of its project, and re-mints its checkout token."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "new",
+     "flags": [
+      "--new"
+     ],
+     "help": "A project of its own with a file id of its own: for this checkout at its root, for this folder alone below it.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "rebind",
+     "flags": [
+      "--rebind"
+     ],
+     "help": "Replace the existing file with a new id bound to the project it named here: this checkout's at its root (the 'keep' answer when the file names another project), the folder's part below it.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "name",
+     "flags": [
+      "--name"
+     ],
+     "help": "The display name the file carries. Default: the folder's name.",
+     "metavar": "N",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "boundary",
+     "flags": [
+      "--boundary"
+     ],
+     "help": "Make the project the file names a tenant boundary that nothing crosses, at a repository's root, below it or in a plain folder; a replaced file keeps its boundary.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "project",
+    "init"
+   ],
+   "description": "Write bettermemory.toml in this directory (the only file bettermemory writes into a working tree; commit it). At a repository's root it is bound to the repository's project; below the root it names a new sub-project of the project around this folder (the checkout keeps its own); in a plain folder it makes a folder project. --new gives the file a project of its own (at the root the checkout's too; below it a sub-project with an id of its own); --rebind replaces an existing file with a new id bound to the project it named.",
+   "help": "Write bettermemory.toml in this directory (the only file bettermemory writes into a working tree; commit it). At a repository's root it is bound to the repository's project; below the root it names a new sub-project of the project around this folder (the checkout keeps its own); in a plain folder it makes a folder project. --new gives the file a project of its own (at the root the checkout's too; below it a sub-project with an id of its own); --rebind replaces an existing file with a new id bound to the project it named."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "move",
+      "history"
+     ],
+     "dest": "memory_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "memory"
+   ],
+   "description": "One record at a time. `memory move` re-homes a record to another project (or global); `memory history` lists every log row that made, changed or removed it.",
+   "help": "One record at a time. `memory move` re-homes a record to another project (or global); `memory history` lists every log row that made, changed or removed it."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "record",
+     "flags": [],
+     "help": "A memory or episode id.",
+     "metavar": "RECORD_ID",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "project",
+     "flags": [
+      "--project"
+     ],
+     "help": "The project id (P001), or `global`.",
+     "metavar": "ID",
+     "nargs": null,
+     "required": true,
+     "type": null
+    }
+   ],
+   "command": [
+    "memory",
+    "move"
+   ],
+   "description": "Move one memory or episode to project ID (or `global`): its home names that project from here on, with a log row naming you.",
+   "help": "Move one memory or episode to project ID (or `global`): its home names that project from here on, with a log row naming you."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "record",
+     "flags": [],
+     "help": "A memory or episode id.",
+     "metavar": "RECORD_ID",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "diff",
+     "flags": [
+      "--diff"
+     ],
+     "help": "Add a unified diff of the body under every version that changed it, the first version against nothing. Bodies are printed as stored.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the history as JSON (format bettermemory-history, version 1).",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "memory",
+    "history"
+   ],
+   "description": "Every log row that made, changed, verified, removed or restored one memory or episode, in log order: seq, time, kind, what the row did, the actor of the tool call (or the record's author on a put row) and whether the row's MAC checks under this host's key. Links and conflicts from other records that name it are listed as references. Read-only. Exit 0 when the history reads clean, 1 when a row fails its MAC or the live record has no log row that put it as it stands, 2 when no store or no record by that id is found, or the config or the store file cannot be read.",
+   "help": "Every log row that made, changed, verified, removed or restored one memory or episode, in log order: seq, time, kind, what the row did, the actor of the tool call (or the record's author on a put row) and whether the row's MAC checks under this host's key. Links and conflicts from other records that name it are listed as references. Read-only. Exit 0 when the history reads clean, 1 when a row fails its MAC or the live record has no log row that put it as it stands, 2 when no store or no record by that id is found, or the config or the store file cannot be read."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "export",
+      "import",
+      "migrate"
+     ],
+     "dest": "membership_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "membership"
+   ],
+   "description": "Membership across stores: export the projects' portable identities and the records' homes, import them into this store, and migrate a store's records into projects.",
+   "help": "Membership across stores: export the projects' portable identities and the records' homes, import them into this store, and migrate a store's records into projects."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "output",
+     "flags": [
+      "-o",
+      "--output"
+     ],
+     "help": "Write the document to FILE instead of stdout.",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    }
+   ],
+   "command": [
+    "membership",
+    "export"
+   ],
+   "description": "Write this store's id, every project's portable identity (file ids, witness commits, remote keys; no local id and no path) and every record's home, as JSON to stdout or to FILE.",
+   "help": "Write this store's id, every project's portable identity (file ids, witness commits, remote keys; no local id and no path) and every record's home, as JSON to stdout or to FILE."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "file",
+     "flags": [],
+     "help": "The exported document.",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": true,
+     "type": null
+    }
+   ],
+   "command": [
+    "membership",
+    "import"
+   ],
+   "description": "Home the records a membership export (or a `bettermemory export` document) names that are in this store and homed nowhere, mapping each project by its file id, or its history and remote together; one of them asks once in the checkout that holds it.",
+   "help": "Home the records a membership export (or a `bettermemory export` document) names that are in this store and homed nowhere, mapping each project by its file id, or its history and remote together; one of them asks once in the checkout that holds it."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "dry_run",
+     "flags": [
+      "--dry-run"
+     ],
+     "help": "Print the report of a run rolled back; write nothing.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "membership",
+    "migrate"
+   ],
+   "description": "Build the membership tables from the store's own records (design 8.6): every memory and episode homed once, with the rule it was homed by, writing no record row and no file into any repository; a second run homes nothing. Prints the report.",
+   "help": "Build the membership tables from the store's own records (design 8.6): every memory and episode homed once, with the rule it was homed by, writing no record row and no file into any repository; a second run homes nothing. Prints the report."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": "30d",
+     "dest": "since",
+     "flags": [
+      "--since"
+     ],
+     "help": "Window for events to include. Accepts 'Ns'/'Nm'/'Nh'/'Nd', 'all', or an absolute ISO-8601 UTC timestamp such as 2026-10-01T00:00:00Z. Default: 30d, mirroring the verification-staleness default so the eval window and freshness threshold tell a consistent story.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "until",
+     "flags": [
+      "--until"
+     ],
+     "help": "End of the window, exclusive, in the same forms as --since. Default: now. Review chains issued inside the window are judged from rows up to 30 minutes after it. Rate mode only.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "scope",
+     "flags": [
+      "--scope"
+     ],
+     "help": "Filter to events that reference memories tagged with this scope. The silent-miss rate is NOT filtered (it's per-turn, not per-memory) and stays global regardless.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "min_retrievals",
+     "flags": [
+      "--min-retrievals"
+     ],
+     "help": "Floor for cold-endorsement row inclusion. Default 30; below this, the absence of explicit endorsement is treated as insufficient signal rather than debt.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 20,
+     "dest": "silent_miss_limit",
+     "flags": [
+      "--silent-miss-limit"
+     ],
+     "help": "How many recent silent-miss events to surface inline. The full series stays in the event log. Default: 20.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "tool_usage",
+     "flags": [
+      "--tool-usage"
+     ],
+     "help": "Switch to the per-MCP-tool call-count rollup instead of the rate trio. One row per tool with absolute counts and share of total, plus a tally of any unmapped event kinds. Use to answer 'which tools is the model actually reaching for?' without running compute_health. Honours `--since` and `--json`; ignores `--scope`, `--min-retrievals`, and `--silent-miss-limit` (those are rate-mode knobs).",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "threshold_sweep",
+     "flags": [
+      "--threshold-sweep"
+     ],
+     "help": "Switch to a counterfactual replay of logged search_miss events against alternative threshold rules. Reports how many misses each rule (v1_top1_high, v2_top1_high_score_50, v3_top1_high_dominant, v4_top1_high_strict_combined) would have flagged. Honours `--since` and `--json`; ignores the rate-mode knobs. Useful for calibrating whether v1 is over-firing on borderline hits \u2014 see docs/eval.md for the caveat about absolute-vs-relative miss rates under differently-strict rules.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "widening_preview",
+     "flags": [
+      "--widening-preview"
+     ],
+     "help": "Switch to a replay of candidate LOOSER threshold rules over the turn_audited stream (3.14+ events carry per-turn top_hits with the raw coverage features). Reports how many audited turns each widening candidate (w1_top1_v2_high, w2_top1_v2_high_from_medium \u2014 the shadow relevance label) would flag beyond the replayed v1 baseline. The forward-looking counterpart to --threshold-sweep, which can only compare rules at least as strict as v1. Honours `--since` and `--json`; add --detail for the per-turn labeling surface.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "detail",
+     "flags": [
+      "--detail"
+     ],
+     "help": "With --widening-preview: dump each flagged turn's evidence (redacted probe-query preview, top-hit coverage features, both relevance labels, the hit's memory summary) plus a per-memory concentration rollup, instead of just counts. This is the precision-labeling surface the relevance-v2 flip decision reads. Errors when used without --widening-preview.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "report",
+     "flags": [
+      "--report"
+     ],
+     "help": "Switch to a publishable, self-contained markdown report: the rate trio over the `--since` window AND all time side by side (Wilson 95%% CIs), per-model audit telemetry, the threshold-sweep counterfactual, and the tool-usage top 10, plus a reading guide and methodology footer. Aggregates only by tested contract \u2014 no memory bodies, queries, scopes, paths, or session ids ever land in the output, so it is safe to publish as-is. Honours `--since` (the window column); errors when combined with `--json` or any other mode flag. `--output FILE` writes it to a file instead of stdout.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "output",
+     "flags": [
+      "--output"
+     ],
+     "help": "With --report: write the markdown to FILE instead of stdout. Errors when used without --report.",
+     "metavar": "FILE",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON instead of human-readable text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "eval"
+   ],
+   "description": "Compute the three memory-effectiveness rates (memory_helped_rate, endorsement_rate, silent_miss_rate) from the event log + active store. Methodology in docs/eval.md.",
+   "help": "Compute the three memory-effectiveness rates (memory_helped_rate, endorsement_rate, silent_miss_rate) from the event log + active store. Methodology in docs/eval.md."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "samples",
+      "grade"
+     ],
+     "dest": "review_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "review"
+   ],
+   "description": "The write review's grading surface. `review samples` draws reviewed writes from a window and shows each one's related set, answers and action; `review grade` records the owner's grade of one as a review_grade event, which `bettermemory eval` counts.",
+   "help": "The write review's grading surface. `review samples` draws reviewed writes from a window and shows each one's related set, answers and action; `review grade` records the owner's grade of one as a review_grade event, which `bettermemory eval` counts."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": "30d",
+     "dest": "since",
+     "flags": [
+      "--since"
+     ],
+     "help": "Window start: an ISO-8601 UTC timestamp (2026-10-01T00:00:00Z), a relative span ('Ns'/'Nm'/'Nh'/'Nd') or 'all'. Default: 30d.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "until",
+     "flags": [
+      "--until"
+     ],
+     "help": "Window end, in the same forms as --since. Default: now.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 40,
+     "dest": "n",
+     "flags": [
+      "--n"
+     ],
+     "help": "How many samples to draw. Default: 40.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 0,
+     "dest": "seed",
+     "flags": [
+      "--seed"
+     ],
+     "help": "The draw's random seed. Default: 0.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "transcripts",
+     "flags": [
+      "--transcripts"
+     ],
+     "help": "The transcripts directory. Default: projects in Claude Code's config directory (~/.claude/projects).",
+     "metavar": "DIR",
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "review",
+    "samples"
+   ],
+   "description": "Draw reviewed writes to grade: every refusal, link and filing up to half the sample, then pre-answered writes up to 10 where that many exist, then random draws. A committed write shows its body from the store; a secret refusal shows kinds only; another refusal shows the body from the transcripts under ~/.claude/projects, found by review_id, and a refusal from any other host shows no body.",
+   "help": "Draw reviewed writes to grade: every refusal, link and filing up to half the sample, then pre-answered writes up to 10 where that many exist, then random draws. A committed write shows its body from the store; a secret refusal shows kinds only; another refusal shows the body from the transcripts under ~/.claude/projects, found by review_id, and a refusal from any other host shows no body."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "review_id",
+     "flags": [],
+     "help": "The sample's review_id.",
+     "metavar": null,
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": [
+      "right",
+      "wrong"
+     ],
+     "default": null,
+     "dest": "answers",
+     "flags": [
+      "--answers"
+     ],
+     "help": null,
+     "metavar": null,
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": [
+      "right",
+      "wrong"
+     ],
+     "default": null,
+     "dest": "action",
+     "flags": [
+      "--action"
+     ],
+     "help": null,
+     "metavar": null,
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "review",
+    "grade"
+   ],
+   "description": "Record the grade of one sampled write as a review_grade event: whether the answers were right and whether the action was right.",
+   "help": "Record the grade of one sampled write as a review_grade event: whether the answers were right and whether the action was right."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "review",
+      "undo",
+      "sample",
+      "grade"
+     ],
+     "dest": "capture_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "capture"
+   ],
+   "description": "Session capture's batches. `capture review` lists each batch with its outcome, how many memories it saved, its refusals by rule and what was undone; `capture undo BATCH` tombstones a batch's memories (dry-run unless --apply); `capture sample` and `capture grade` draw captured memories and record the owner's grade of each against the ten rules. Calls no model.",
+   "help": "Session capture's batches. `capture review` lists each batch with its outcome, how many memories it saved, its refusals by rule and what was undone; `capture undo BATCH` tombstones a batch's memories (dry-run unless --apply); `capture sample` and `capture grade` draw captured memories and record the owner's grade of each against the ten rules. Calls no model."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "capture",
+    "review"
+   ],
+   "description": "List capture batches.",
+   "help": "List capture batches."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "batch",
+     "flags": [],
+     "help": "The batch id, as `capture review` lists it.",
+     "metavar": null,
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "apply",
+     "flags": [
+      "--apply"
+     ],
+     "help": "Commit the undo.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "skip_changed",
+     "flags": [
+      "--skip-changed"
+     ],
+     "help": "Undo the unchanged members and leave the changed ones.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "capture",
+    "undo"
+   ],
+   "description": "Tombstone the memories one capture batch saved and record the undo, so the same body is not captured again; `tombstones restore` puts one back. Refuses while a member was since updated, verified, linked to from outside the batch or filed in a conflict its own write did not file, unless --skip-changed, which leaves those and reports them.",
+   "help": "Tombstone the memories one capture batch saved and record the undo, so the same body is not captured again; `tombstones restore` puts one back. Refuses while a member was since updated, verified, linked to from outside the batch or filed in a conflict its own write did not file, unless --skip-changed, which leaves those and reports them."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 20,
+     "dest": "n",
+     "flags": [
+      "--n"
+     ],
+     "help": "How many to draw. Default: 20.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 0,
+     "dest": "seed",
+     "flags": [
+      "--seed"
+     ],
+     "help": "The draw's random seed. Default: 0.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "tally",
+     "flags": [
+      "--tally"
+     ],
+     "help": "Print the weekly grade tally.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "capture",
+    "sample"
+   ],
+   "description": "Draw captured memories still active and not undone, each with its id and body, to grade with `capture grade`. --tally prints instead how many were graded and how many met all ten rules, per ISO week.",
+   "help": "Draw captured memories still active and not undone, each with its id and body, to grade with `capture grade`. --tally prints instead how many were graded and how many met all ten rules, per ISO week."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "memory_id",
+     "flags": [],
+     "help": "The memory id, as `capture sample` shows.",
+     "metavar": null,
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "meets",
+     "flags": [
+      "--meets"
+     ],
+     "help": "Meets all ten rules.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "fails",
+     "flags": [
+      "--fails"
+     ],
+     "help": "Breaks a rule.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "append",
+     "choices": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+     ],
+     "default": null,
+     "dest": "rule",
+     "flags": [
+      "--rule"
+     ],
+     "help": "A rule it breaks, 1 to 10 (with --fails; repeatable).",
+     "metavar": "RULE",
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "note",
+     "flags": [
+      "--note"
+     ],
+     "help": "A note to keep with the grade.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "capture",
+    "grade"
+   ],
+   "description": "Record the owner's grade of one captured memory as a capture_grade event: it meets all ten rules, or it fails, with the rules it breaks by number.",
+   "help": "Record the owner's grade of one captured memory as a capture_grade event: it meets all ten rules, or it fails, with the rules it breaks by number."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "review",
+      "grade"
+     ],
+     "dest": "recall_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "recall"
+   ],
+   "description": "The recall surface's grading surface. `recall review` draws prompt recall deliveries, session briefs and silent prompts from a window and shows each one's pointers and the prompt it answered; `recall grade` records the owner's grade of a sample's pointers as a recall_grade event, which `bettermemory eval` counts.",
+   "help": "The recall surface's grading surface. `recall review` draws prompt recall deliveries, session briefs and silent prompts from a window and shows each one's pointers and the prompt it answered; `recall grade` records the owner's grade of a sample's pointers as a recall_grade event, which `bettermemory eval` counts."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": "7d",
+     "dest": "since",
+     "flags": [
+      "--since"
+     ],
+     "help": "Window start: an ISO-8601 UTC timestamp (2026-10-01T00:00:00Z), a relative span ('Ns'/'Nm'/'Nh'/'Nd') or 'all'. Default: 7d.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "until",
+     "flags": [
+      "--until"
+     ],
+     "help": "Window end, in the same forms as --since. Default: now.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 12,
+     "dest": "deliveries",
+     "flags": [
+      "--deliveries"
+     ],
+     "help": "Deliveries to draw. Default: 12.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 4,
+     "dest": "briefs",
+     "flags": [
+      "--briefs"
+     ],
+     "help": "Briefs to draw. Default: 4.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 4,
+     "dest": "silent",
+     "flags": [
+      "--silent"
+     ],
+     "help": "Silent prompts to draw. Default: 4.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 0,
+     "dest": "seed",
+     "flags": [
+      "--seed"
+     ],
+     "help": "The draw's random seed. Default: 0.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "transcripts",
+     "flags": [
+      "--transcripts"
+     ],
+     "help": "The transcripts directory. Default: projects in Claude Code's config directory (~/.claude/projects).",
+     "metavar": "DIR",
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "recall",
+    "review"
+   ],
+   "description": "Draw samples to grade: prompt recall deliveries (12), session briefs (4), and silent prompts (4), turns the recall delivered nothing on before the model retrieved a project memory itself. Samples already graded are not drawn again. Each prompt is read from the session's transcript under ~/.claude/projects at review time and never stored, a delivery's by its probe hash, and named by kind (owner, task_notification, agent_message, cross_session, unknown); a sample whose prompt is in no row is passed over for the next in the seeded order and listed as ungradeable.",
+   "help": "Draw samples to grade: prompt recall deliveries (12), session briefs (4), and silent prompts (4), turns the recall delivered nothing on before the model retrieved a project memory itself. Samples already graded are not drawn again. Each prompt is read from the session's transcript under ~/.claude/projects at review time and never stored, a delivery's by its probe hash, and named by kind (owner, task_notification, agent_message, cross_session, unknown); a sample whose prompt is in no row is passed over for the next in the seeded order and listed as ungradeable."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "sample_id",
+     "flags": [],
+     "help": "The sample's id, as the review printed it.",
+     "metavar": null,
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": [],
+     "dest": "relevant",
+     "flags": [
+      "--relevant"
+     ],
+     "help": "Relevant ids.",
+     "metavar": "ID",
+     "nargs": "+",
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": [],
+     "dest": "irrelevant",
+     "flags": [
+      "--irrelevant"
+     ],
+     "help": "Irrelevant ids.",
+     "metavar": "ID",
+     "nargs": "+",
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "recall",
+    "grade"
+   ],
+   "description": "Record the grade of one sample's pointers as a recall_grade event: each id relevant or not, with the rule that made the sample as sample_rule. For a silent prompt, relevant means the recall should have pointed at it. A later grade of an id replaces an earlier one.",
+   "help": "Record the grade of one sample's pointers as a recall_grade event: each id relevant or not, with the rule that made the sample as sample_rule. For a silent prompt, relevant means the recall should have pointed at it. A later grade of an id replaces an earlier one."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "old",
+     "flags": [],
+     "help": "The scope to rename.",
+     "metavar": "OLD",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "new",
+     "flags": [],
+     "help": "The replacement scope.",
+     "metavar": "NEW",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "no_tombstones",
+     "flags": [
+      "--no-tombstones"
+     ],
+     "help": "Leave the tombstone (removed-memory) audit log untouched. By default tombstones are renamed too so the curation view stays consistent.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit JSON instead of human-readable text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "rename-scope"
+   ],
+   "description": "Replace OLD with NEW across every memory's scope list \u2014 the cheap fix for a typo'd or deprecated scope (e.g. `infra` -> `infrastructure`). The CLI counterpart of memory_admin's rename_scope action. Bumps `updated` but preserves `last_verified_at`; tombstones are renamed too unless --no-tombstones.",
+   "help": "Replace OLD with NEW across every memory's scope list \u2014 the cheap fix for a typo'd or deprecated scope (e.g. `infra` -> `infrastructure`). The CLI counterpart of memory_admin's rename_scope action. Bumps `updated` but preserves `last_verified_at`; tombstones are renamed too unless --no-tombstones."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the raw search hit (the exact MCP-shaped dict) instead of the narrated walkthrough.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "try"
+   ],
+   "description": "Instant offline demo: watch a memory go stale when a file it cites moves.",
+   "help": "Instant offline demo: watch a memory go stale when a file it cites moves."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "create",
+      "verify",
+      "restore",
+      "unlock"
+     ],
+     "dest": "backup_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "backup"
+   ],
+   "description": "Verified backups of the bettermemory 9 store. `backup create` writes a consistent snapshot bundle while the daemon runs, `backup verify` checks a bundle's files, signature and log on a temporary copy, and `backup restore` puts one back with the daemon stopped, rewinding the head checkpoint on the record so `log verify` passes.",
+   "help": "Verified backups of the bettermemory 9 store. `backup create` writes a consistent snapshot bundle while the daemon runs, `backup verify` checks a bundle's files, signature and log on a temporary copy, and `backup restore` puts one back with the daemon stopped, rewinding the head checkpoint on the record so `log verify` passes."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "out",
+     "flags": [
+      "--out"
+     ],
+     "help": "Write the bundle under DIR, as DIR/<UTC timestamp>/. DIR is created owner-only when missing and left as it is when it exists. Default: the backups directory beside the store file.",
+     "metavar": "DIR",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "include_key",
+     "flags": [
+      "--include-key"
+     ],
+     "help": "Copy the store's keys into the bundle (0600), so it can be checked and restored on a machine without them (there it reads unverifiable, self-signed, and restores with --trust-bundle-key). Anyone holding such a bundle can sign rows as this store.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the result as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "backup",
+    "create"
+   ],
+   "description": "Write a bundle of the store: memory.sqlite (an online snapshot, safe while the daemon writes), the head checkpoint at the snapshot and a manifest signed with the store's key (version, store id, key fingerprints, head seq and MAC, row counts, a SHA-256 of every file). The bundle directory is 0700 and its files 0600. Without --include-key the keys stay out of the bundle and the manifest names the fingerprint they must match: keep a copy of the keys directory somewhere apart from the bundles. Exit 0 when the bundle is written, 1 when it could not be (--include-key with no key held, a write error, a store that is itself inside a backup bundle, refused before anything is written), 2 when there is no store.",
+   "help": "Write a bundle of the store: memory.sqlite (an online snapshot, safe while the daemon writes), the head checkpoint at the snapshot and a manifest signed with the store's key (version, store id, key fingerprints, head seq and MAC, row counts, a SHA-256 of every file). The bundle directory is 0700 and its files 0600. Without --include-key the keys stay out of the bundle and the manifest names the fingerprint they must match: keep a copy of the keys directory somewhere apart from the bundles. Exit 0 when the bundle is written, 1 when it could not be (--include-key with no key held, a write error, a store that is itself inside a backup bundle, refused before anything is written), 2 when there is no store."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "bundle",
+     "flags": [],
+     "help": "The bundle directory.",
+     "metavar": "BUNDLE",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "keys_dir",
+     "flags": [
+      "--keys-dir"
+     ],
+     "help": "Read keys the bundle does not carry from DIR instead of the store's keys directory (BETTERMEMORY_KEYS_DIR or the default).",
+     "metavar": "DIR",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "backup",
+    "verify"
+   ],
+   "description": "Check a bundle: every file's size and SHA-256 against the manifest, the manifest's signature, then the log (MACs, chain, segments, the head and the fold) on a temporary copy; the bundle itself is never opened in place. Keys come from the keys directory, else from the bundle when it carries them; a signature counts only under a key the keys directory holds, since anyone who can write a bundle can sign it with a key they put in it. Exit 0 when the bundle verifies, 1 when it is tampered or does not match its manifest, 2 when it cannot be verified (a key is held nowhere, the manifest is unsigned or signed only by a key the bundle carries) or on a usage error.",
+   "help": "Check a bundle: every file's size and SHA-256 against the manifest, the manifest's signature, then the log (MACs, chain, segments, the head and the fold) on a temporary copy; the bundle itself is never opened in place. Keys come from the keys directory, else from the bundle when it carries them; a signature counts only under a key the keys directory holds, since anyone who can write a bundle can sign it with a key they put in it. Exit 0 when the bundle verifies, 1 when it is tampered or does not match its manifest, 2 when it cannot be verified (a key is held nowhere, the manifest is unsigned or signed only by a key the bundle carries) or on a usage error."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "bundle",
+     "flags": [],
+     "help": "The bundle directory.",
+     "metavar": "BUNDLE",
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "yes",
+     "flags": [
+      "--yes"
+     ],
+     "help": "Carry out the restore; without it, plan.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "trust_bundle_key",
+     "flags": [
+      "--trust-bundle-key"
+     ],
+     "help": "Restore a bundle whose manifest is signed only by a key it carries (an --include-key bundle on a machine whose keys directory does not hold that key). The bundle's key becomes the store's current key, retiring any other, so use it only for a bundle kept where no one else can write. A bundle whose log goes on from a key the keys directory holds under a key only the bundle carries reads tampered and is refused even so.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the result as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "backup",
+    "restore"
+   ],
+   "description": "Restore a bundle over the store this command resolves. Refuses while a daemon holds the store (close every session, run `bettermemory down`), refuses a store that is itself inside a backup bundle, and refuses a bundle that does not verify, including one signed only by a key it carries unless --trust-bundle-key. Moves the current store file and its -wal and -shm aside as <store>.pre-restore-<UTC timestamp> (never deleted), copies the bundle's database in, installs any key it needs from the bundle, rewinds the head checkpoint to the bundle's and records the rewind in <store_id>.backup_restore.json beside it, then runs log verify on the restored store. Without --yes prints the plan and changes nothing. Exit 0 when restored and the log verifies, 1 when refused or failed, 2 on a usage error, 3 when --yes was not given.",
+   "help": "Restore a bundle over the store this command resolves. Refuses while a daemon holds the store (close every session, run `bettermemory down`), refuses a store that is itself inside a backup bundle, and refuses a bundle that does not verify, including one signed only by a key it carries unless --trust-bundle-key. Moves the current store file and its -wal and -shm aside as <store>.pre-restore-<UTC timestamp> (never deleted), copies the bundle's database in, installs any key it needs from the bundle, rewinds the head checkpoint to the bundle's and records the rewind in <store_id>.backup_restore.json beside it, then runs log verify on the restored store. Without --yes prints the plan and changes nothing. Exit 0 when restored and the log verifies, 1 when refused or failed, 2 on a usage error, 3 when --yes was not given."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "yes",
+     "flags": [
+      "--yes"
+     ],
+     "help": "Clear the lock; without it, show it.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the result as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "backup",
+    "unlock"
+   ],
+   "description": "Remove the record a restore that did not finish left beside the store (<store>.restore-lock): while it is there, every writing open of the store is refused, since the store may be part restored. Running the restore again finishes it instead. Without --yes prints the record and changes nothing. Exit 0 when there is nothing to clear or it was cleared, 1 while a restore holds the lock or a command reads or opens the store, 2 on a usage error, 3 when --yes was not given.",
+   "help": "Remove the record a restore that did not finish left beside the store (<store>.restore-lock): while it is there, every writing open of the store is refused, since the store may be part restored. Running the restore again finishes it instead. Without --yes prints the record and changes nothing. Exit 0 when there is nothing to clear or it was cleared, 1 while a restore holds the lock or a command reads or opens the store, 2 on a usage error, 3 when --yes was not given."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "install",
+      "uninstall",
+      "status",
+      "print"
+     ],
+     "dest": "service_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "service"
+   ],
+   "description": "Run the local daemon as a supervised service: a launchd LaunchAgent on macOS, a systemd user unit on Linux, started at login and again after a crash. `install` writes and loads the unit, `uninstall` unloads and removes it, `status` reports it, `print` writes it to stdout only. Exit 2 on other platforms, with the command to supervise yourself, and when the config (config.toml or the managed file) does not load, with the loader's message.",
+   "help": "Run the local daemon as a supervised service: a launchd LaunchAgent on macOS, a systemd user unit on Linux, started at login and again after a crash. `install` writes and loads the unit, `uninstall` unloads and removes it, `status` reports it, `print` writes it to stdout only. Exit 2 on other platforms, with the command to supervise yourself, and when the config (config.toml or the managed file) does not load, with the loader's message."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "no_load",
+     "flags": [
+      "--no-load"
+     ],
+     "help": "Write the unit only; print the commands that load it.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Print JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "service",
+    "install"
+   ],
+   "description": "Write the unit for this install and this store, stop a daemon of the store running outside the supervisor, and load the unit, which starts the daemon. Exit 0 when written and loaded, 1 when loading failed, the interpreter lives in a package manager's cache or the store is inside a backup bundle (nothing is written then), 2 when the config does not load.",
+   "help": "Write the unit for this install and this store, stop a daemon of the store running outside the supervisor, and load the unit, which starts the daemon. Exit 0 when written and loaded, 1 when loading failed, the interpreter lives in a package manager's cache or the store is inside a backup bundle (nothing is written then), 2 when the config does not load."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "no_load",
+     "flags": [
+      "--no-load"
+     ],
+     "help": "Remove the file only; leave the supervisor's state alone.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Print JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "service",
+    "uninstall"
+   ],
+   "description": "Unload the unit, which stops its daemon, and remove the file. Exit 0 when removed or not installed, 1 when the file could not be removed, 2 when the config does not load.",
+   "help": "Unload the unit, which stops its daemon, and remove the file. Exit 0 when removed or not installed, 1 when the file could not be removed, 2 when the config does not load."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Print JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "service",
+    "status"
+   ],
+   "description": "Report the unit: installed or not, whether it matches what `install` would write now, whether the supervisor has it loaded, and the daemon's state. Changes nothing. Exit 0 installed and loaded, 1 not installed, 3 installed but not loaded, 2 when the config does not load.",
+   "help": "Report the unit: installed or not, whether it matches what `install` would write now, whether the supervisor has it loaded, and the daemon's state. Changes nothing. Exit 0 installed and loaded, 1 not installed, 3 installed but not loaded, 2 when the config does not load."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Print the unit and its resolved inputs as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "service",
+    "print"
+   ],
+   "description": "Write the unit `install` would write to stdout, for review or for deployment by other means. Writes no file. Exit 0, or 2 when the config does not load.",
+   "help": "Write the unit `install` would write to stdout, for review or for deployment by other means. Writes no file. Exit 0, or 2 when the config does not load."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit {checks: [{id, status, summary, remedy, details}], status} as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "clear_orphan_keys",
+     "flags": [
+      "--clear-orphan-keys"
+     ],
+     "help": "Print the plan for the key rings whose store is shown gone (the orphan_keys check: no file at the bound path, and the nearest directory on the way up that is there readable and not empty; a disk unplugged reads the same); with --yes, move them to the keys directory's quarantine/<store_id>/, each read again under its lock first. Nothing is deleted, and `bettermemory key import` takes a key back. Every other ring is kept and named.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "yes",
+     "flags": [
+      "--yes"
+     ],
+     "help": "With --clear-orphan-keys: move the rings the plan names.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "doctor"
+   ],
+   "description": "Check the install, the config, the store and its key, the daemon, the client wiring, the disk and the key rings whose store is gone, read-only, each ok, warn or fail with a one-line fix. Exit 0 when every check is ok, 1 on any failure, 2 on warnings only. Posture (file modes, the sandbox) is `bettermemory security audit`'s.",
+   "help": "Check the install, the config, the store and its key, the daemon, the client wiring, the disk and the key rings whose store is gone, read-only, each ok, warn or fail with a one-line fix. Exit 0 when every check is ok, 1 on any failure, 2 on warnings only. Posture (file modes, the sandbox) is `bettermemory security audit`'s."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "audit",
+      "sandbox",
+      "scan"
+     ],
+     "dest": "security_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "security"
+   ],
+   "description": "Security checks for this install. `security audit` reports whether the store, the key and the daemon's files are as SECURITY.md assumes; `security sandbox` prints Claude Code sandbox settings for this host's paths; `security scan` finds credentials and chat-template control tokens kept in the store. None writes a row, a key or a file of its own.",
+   "help": "Security checks for this install. `security audit` reports whether the store, the key and the daemon's files are as SECURITY.md assumes; `security sandbox` prints Claude Code sandbox settings for this host's paths; `security scan` finds credentials and chat-template control tokens kept in the store. None writes a row, a key or a file of its own."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the findings as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "security",
+    "audit"
+   ],
+   "description": "Read-only posture audit: the modes and owners of the store, its WAL files, the keys, the head checkpoint, the daemon's state file and log; the key present and matching the store; the store and the keys outside git working trees and synced folders; a store chosen by ./.claude-memory; the daemon on 127.0.0.1 only; the config's telemetry and policy settings; and Claude Code's sandbox settings against `security sandbox`. Never chmods, rekeys or writes. Exit 0 when nothing needs attention, 1 when any finding is high, 2 when the worst is a warning.",
+   "help": "Read-only posture audit: the modes and owners of the store, its WAL files, the keys, the head checkpoint, the daemon's state file and log; the key present and matching the store; the store and the keys outside git working trees and synced folders; a store chosen by ./.claude-memory; the daemon on 127.0.0.1 only; the config's telemetry and policy settings; and Claude Code's sandbox settings against `security sandbox`. Never chmods, rekeys or writes. Exit 0 when nothing needs attention, 1 when any finding is high, 2 when the worst is a warning."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": [
+      "settings",
+      "managed"
+     ],
+     "default": "settings",
+     "dest": "format",
+     "flags": [
+      "--format"
+     ],
+     "help": "Which Claude Code settings file the block is for: `settings`, the user's settings (~/.claude/settings.json, or $CLAUDE_CONFIG_DIR/settings.json when that is set; the default), or `managed`, the managed-settings.json nothing below overrides. The keys are the same; the notes name the file.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit one JSON object: the block under `settings`, with the directories it was built from, the daemon's port and the notes.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "security",
+    "sandbox"
+   ],
+   "description": "Print the Claude Code sandbox settings for this host: sandbox on and locked, and the store, keys, config and state directories denied to the agent's shell and to Claude Code's Read and Edit tools, spelled for this platform (macOS keeps them under ~/Library/Application Support) and with any BETTERMEMORY_* override applied. The block goes to stdout and the notes to stderr; nothing is written. Exit 0, or 1 when the config does not load.",
+   "help": "Print the Claude Code sandbox settings for this host: sandbox on and locked, and the store, keys, config and state directories denied to the agent's shell and to Claude Code's Read and Edit tools, spelled for this platform (macOS keeps them under ~/Library/Application Support) and with any BETTERMEMORY_* override applied. The block goes to stdout and the notes to stderr; nothing is written. Exit 0, or 1 when the config does not load."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "scan_log",
+     "flags": [
+      "--log"
+     ],
+     "help": "Also scan the payload of every log row, whatever its kind: every version of every record, the membership rows and the telemetry events. Slower on a large log.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "scan_store",
+     "flags": [
+      "--store"
+     ],
+     "help": "The store to scan instead of the configured one: a directory holding memory.sqlite, or that file itself, such as a copy of a backup bundle's memory.sqlite in a directory of its own or a copy from another machine (it needs no key). A file inside a backup bundle, or one with other names (hard links), is refused: opening it would change it and fail the bundle's hash. Default: memory.sqlite in the resolved store directory.",
+     "metavar": "PATH",
+     "nargs": null,
+     "required": false,
+     "type": "str"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "scan_json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": [
+      "credentials",
+      "control-tokens"
+     ],
+     "default": null,
+     "dest": "scan_only",
+     "flags": [
+      "--only"
+     ],
+     "help": "Look for one kind alone, and exit 1 only on it: credentials, or control tokens. A log row from before 9.0.0rc18 can hold a control token no command erases, so a scheduled credential scan with --log passes --only credentials. Default: both.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "security",
+    "scan"
+   ],
+   "description": "Find where a credential-shaped string or a model's chat-template control token persists in the store, using the write gates' own detectors: every text field and JSON string of the memories, tombstones, episodes and conflicts tables, and with --log every log row's payload (the log keeps every version of every record, after an edit, a removal and a prune). Each finding names the table or log seq, the record, the field, the detector kind (a control token's template family), the record's state and, for a credential, whether the write was acknowledged; it never prints the value or the token, only an offset into the field; --only looks for one kind alone. Read-only: the store is opened without rekeying and no row, record or key is written; opening a store file does switch one saved in rollback-journal mode to WAL, so a backup bundle's own file is refused (scan a copy of it). Exit 0 when nothing is found, 1 when anything is, 2 on a usage error or when there is no store it can read.",
+   "help": "Find where a credential-shaped string or a model's chat-template control token persists in the store, using the write gates' own detectors: every text field and JSON string of the memories, tombstones, episodes and conflicts tables, and with --log every log row's payload (the log keeps every version of every record, after an edit, a removal and a prune). Each finding names the table or log seq, the record, the field, the detector kind (a control token's template family), the record's state and, for a credential, whether the write was acknowledged; it never prints the value or the token, only an offset into the field; --only looks for one kind alone. Read-only: the store is opened without rekeying and no row, record or key is written; opening a store file does switch one saved in rollback-journal mode to WAL, so a backup bundle's own file is refused (scan a copy of it). Exit 0 when nothing is found, 1 when anything is, 2 on a usage error or when there is no store it can read."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit the report as JSON (format bettermemory-stats, version 1).",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": 30,
+     "dest": "since",
+     "flags": [
+      "--since"
+     ],
+     "help": "The activity window: the last DAYS days in UTC, today included. Default 30.",
+     "metavar": "DAYS",
+     "nargs": null,
+     "required": false,
+     "type": "_days"
+    }
+   ],
+   "command": [
+    "stats"
+   ],
+   "description": "Usage and growth of the store, read-only: file sizes, rows per table, memories by project, scope, client, model and category, records created and removed and log rows written per day over the last DAYS days, tombstones, episodes, log rows by kind, and the oldest and newest records. Aggregate SQL only: no MAC is checked (`log verify` does that). Exit 0 with the report, 2 when no store is found or the config or the store file cannot be read.",
+   "help": "Usage and growth of the store, read-only: file sizes, rows per table, memories by project, scope, client, model and category, records created and removed and log rows written per day over the last DAYS days, tombstones, episodes, log rows by kind, and the oldest and newest records. Aggregate SQL only: no MAC is checked (`log verify` does that). Exit 0 with the report, 2 when no store is found or the config or the store file cannot be read."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": [
+      "bash",
+      "zsh",
+      "fish"
+     ],
+     "default": null,
+     "dest": "shell",
+     "flags": [],
+     "help": "The shell to complete for.",
+     "metavar": null,
+     "nargs": null,
+     "required": true,
+     "type": null
+    }
+   ],
+   "command": [
+    "completion"
+   ],
+   "description": "Print a completion script for bash, zsh or fish, generated from this build's own parser, so it completes every subcommand and flag this version has. Prints only; regenerate it after an upgrade. bash: add `eval \"$(bettermemory completion bash)\"` to ~/.bashrc. zsh: after compinit in ~/.zshrc, add `eval \"$(bettermemory completion zsh)\"`, or save the output as _bettermemory in a directory on $fpath. fish: `bettermemory completion fish > ~/.config/fish/completions/bettermemory.fish`.",
+   "help": "Print a completion script for bash, zsh or fish, generated from this build's own parser, so it completes every subcommand and flag this version has. Prints only; regenerate it after an upgrade. bash: add `eval \"$(bettermemory completion bash)\"` to ~/.bashrc. zsh: after compinit in ~/.zshrc, add `eval \"$(bettermemory completion zsh)\"`, or save the output as _bettermemory in a directory on $fpath. fish: `bettermemory completion fish > ~/.config/fish/completions/bettermemory.fish`."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "subcommands",
+     "aliases": {},
+     "choices": [
+      "path",
+      "show",
+      "check"
+     ],
+     "dest": "config_cmd",
+     "flags": [],
+     "help": null,
+     "required": false
+    }
+   ],
+   "command": [
+    "config"
+   ],
+   "description": "Where the config lives (`config path`), the settings in force and where each came from (`config show`), and the lines that do not do what they say (`config check`). Read-only: never creates the config file, the store or the keys.",
+   "help": "Where the config lives (`config path`), the settings in force and where each came from (`config show`), and the lines that do not do what they say (`config check`). Read-only: never creates the config file, the store or the keys."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit {config, managed, store, keys, state, error} as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "config",
+    "path"
+   ],
+   "description": "Print the config file, the organisation's managed file (on Windows the registry value HKLM\\SOFTWARE\\Policies\\bettermemory\\ManagedConfig), the store directory with the rule that chose it, and the keys and state directories. Exit 0, or 1 when the config does not load (the store is then resolved only from BETTERMEMORY_DIR).",
+   "help": "Print the config file, the organisation's managed file (on Windows the registry value HKLM\\SOFTWARE\\Policies\\bettermemory\\ManagedConfig), the store directory with the rule that chose it, and the keys and state directories. Exit 0, or 1 when the config does not load (the store is then resolved only from BETTERMEMORY_DIR)."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit {config, managed, settings: {section: {key: {value, source, user_value?}}}, notices} as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "config",
+    "show"
+   ],
+   "description": "Print every setting in force, each labelled default, user (your config.toml) or managed (pinned by the managed file, which your config cannot change; a value of yours it overrides is named, as is one the loader could not read and took the default for). Exit 0, or 1 when the config does not load (`config check` says why).",
+   "help": "Print every setting in force, each labelled default, user (your config.toml) or managed (pinned by the managed file, which your config cannot change; a value of yours it overrides is named, as is one the loader could not read and took the default for). Exit 0, or 1 when the config does not load (`config check` says why)."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Emit {status, exit_code, loads, load_error, files, counts, findings: [{level, code, file, section, key, message, suggestion}]} as JSON.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "config",
+    "check"
+   ],
+   "description": "Check config.toml and the managed file: unknown sections and keys (with a did-you-mean), removed keys, keys that are fixed values now, values that do not load or fall back to the default, [scopes] allowed entries outside the scope grammar, [policy] forbid_acknowledge names, the [daemon] port range, and your lines a managed pin overrides. Exit 0 when nothing needs attention, 1 on any error (the config does not load, or a setting can never take effect as written), 2 on warnings only.",
+   "help": "Check config.toml and the managed file: unknown sections and keys (with a did-you-mean), removed keys, keys that are fixed values now, values that do not load or fall back to the default, [scopes] allowed entries outside the scope grammar, [policy] forbid_acknowledge names, the [daemon] port range, and your lines a managed pin overrides. Exit 0 when nothing needs attention, 1 on any error (the config does not load, or a setting can never take effect as written), 2 on warnings only."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "foreground",
+     "flags": [
+      "--foreground"
+     ],
+     "help": "Run the daemon in this process instead of detaching it.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "port",
+     "flags": [
+      "--port"
+     ],
+     "help": "The port to bind on 127.0.0.1 (default: [daemon] port, 7397); 0 or a held port falls back to an ephemeral one.",
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": "int"
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Print the running daemon as JSON (the object `status --json` prints, plus `newly_started`), or the failure. Not with --foreground.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "up"
+   ],
+   "description": "Start the local daemon for this store, detached, or report the one already running. --foreground runs it in this process, for supervisors. Exit 0 when a daemon runs, 1 when none could be started.",
+   "help": "Start the local daemon for this store, detached, or report the one already running. --foreground runs it in this process, for supervisors. Exit 0 when a daemon runs, 1 when none could be started."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Print the outcome as JSON instead of text.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "down"
+   ],
+   "description": "Stop the local daemon for this store. Exit 0 when it stopped or was not running, 1 when it did not stop; its state file is then kept while its process holds the store's lock.",
+   "help": "Stop the local daemon for this store. Exit 0 when it stopped or was not running, 1 when it did not stop; its state file is then kept while its process holds the store's lock."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "json",
+     "flags": [
+      "--json"
+     ],
+     "help": "Print the report as JSON: state, port, pid, version, store, the state, lock and log files, uptime, health. Never the token.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "check",
+     "flags": [
+      "--check"
+     ],
+     "help": "Exit with the code that answers the question (see above), for monitors and scripts.",
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "status"
+   ],
+   "description": "Report whether the local daemon for this store is running. Exit 0; with --check the exit code is the answer: 0 running and answering as this store's daemon, 1 not running, 2 a state file whose daemon does not answer but may be alive (it holds the store's lock), 3 the port answers, but not as this store's healthy daemon (another store or process, or a reply that is not a daemon's /health).",
+   "help": "Report whether the local daemon for this store is running. Exit 0; with --check the exit code is the answer: 0 running and answering as this store's daemon, 1 not running, 2 a state file whose daemon does not answer but may be alive (it holds the store's lock), 3 the port answers, but not as this store's healthy daemon (another store or process, or a reply that is not a daemon's /health)."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    }
+   ],
+   "command": [
+    "serve"
+   ],
+   "description": null,
+   "help": "Run the MCP server over stdio in this process, without the daemon. `bettermemory` with no arguments is the stdio shim in front of the daemon."
+  },
+  {
+   "arguments": [
+    {
+     "action": "help",
+     "dest": "help",
+     "flags": [
+      "-h",
+      "--help"
+     ],
+     "help": "show this help message and exit",
+     "required": false
+    },
+    {
+     "action": "store",
+     "choices": [
+      "session-start",
+      "stop",
+      "prompt"
+     ],
+     "default": null,
+     "dest": "event",
+     "flags": [],
+     "help": null,
+     "metavar": null,
+     "nargs": null,
+     "required": true,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "quiet",
+     "flags": [
+      "--quiet"
+     ],
+     "help": null,
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store_true",
+     "choices": null,
+     "default": false,
+     "dest": "dry_run",
+     "flags": [
+      "--dry-run"
+     ],
+     "help": null,
+     "metavar": null,
+     "nargs": 0,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "transcript_path",
+     "flags": [
+      "--transcript-path"
+     ],
+     "help": null,
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "session_id",
+     "flags": [
+      "--session-id"
+     ],
+     "help": null,
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    },
+    {
+     "action": "store",
+     "choices": null,
+     "default": null,
+     "dest": "prompt",
+     "flags": [
+      "--prompt"
+     ],
+     "help": null,
+     "metavar": null,
+     "nargs": null,
+     "required": false,
+     "type": null
+    }
+   ],
+   "command": [
+    "hook"
+   ],
+   "description": null,
+   "help": "Run a harness hook through the daemon: session-start, stop or prompt. Reads the hook's stdin JSON, prints the daemon's answer, always exits 0."
+  }
+ ],
+ "placeholders": {
+  "<scratch>": "the run's temporary directory (an absolute path); the path after it is written with / whatever the platform's separator"
+ },
+ "read": "parsers: one entry per parser, depth first in declaration order; command is the words after bettermemory ([] for the root). Each argument: action (store, store_true, append, help, version, subcommands, ...), flags ([] for a positional), dest, required, help (argparse's %-format, unexpanded), and for a value-taking one nargs (null: one value; ?, *, + as strings), default, type (the converter's name: null and \"str\" both take the text as given; any other is ruled in type_rules), choices, metavar. A subcommands argument lists its choices in order and any aliases. type_rules: each converter other than str, run on the probe texts: the value it reads, or the refusal argparse prints after 'argument <flag>: ' (exit 2). runs: argv -> exit_code, the stream written (stdout when anything went there), and its first or last line (words: the whole output's words joined by one space, since argparse wraps the version to the terminal width): exact, or only its prefix where argparse's wording varies (a usage line wraps with the terminal; an invalid choice's list is quoted differently across Python versions).",
+ "runs": [
+  {
+   "argv": [
+    "--version"
+   ],
+   "exit_code": 0,
+   "line": "words",
+   "match": "exact",
+   "stream": "stdout",
+   "text": "bettermemory 0.0.0+fixture"
+  },
+  {
+   "argv": [
+    "config"
+   ],
+   "exit_code": 2,
+   "line": "first",
+   "match": "prefix",
+   "stream": "stdout",
+   "text": "usage: bettermemory config"
+  },
+  {
+   "argv": [
+    "security"
+   ],
+   "exit_code": 2,
+   "line": "first",
+   "match": "prefix",
+   "stream": "stdout",
+   "text": "usage: bettermemory security"
+  },
+  {
+   "argv": [
+    "key"
+   ],
+   "exit_code": 2,
+   "line": "first",
+   "match": "prefix",
+   "stream": "stdout",
+   "text": "usage: bettermemory key"
+  },
+  {
+   "argv": [
+    "nosuch"
+   ],
+   "exit_code": 2,
+   "line": "last",
+   "match": "prefix",
+   "stream": "stderr",
+   "text": "bettermemory: error: argument cmd: invalid choice: "
+  },
+  {
+   "argv": [
+    "config",
+    "nosuch"
+   ],
+   "exit_code": 2,
+   "line": "last",
+   "match": "prefix",
+   "stream": "stderr",
+   "text": "bettermemory config: error: argument config_cmd: invalid choice: "
+  },
+  {
+   "argv": [
+    "rename-scope"
+   ],
+   "exit_code": 2,
+   "line": "last",
+   "match": "exact",
+   "stream": "stderr",
+   "text": "bettermemory rename-scope: error: the following arguments are required: OLD, NEW"
+  },
+  {
+   "argv": [
+    "health",
+    "--min-applied",
+    "many"
+   ],
+   "exit_code": 2,
+   "line": "last",
+   "match": "exact",
+   "stream": "stderr",
+   "text": "bettermemory health: error: argument --min-applied: invalid int value: 'many'"
+  },
+  {
+   "argv": [
+    "stats",
+    "--since",
+    "0"
+   ],
+   "exit_code": 2,
+   "line": "last",
+   "match": "exact",
+   "stream": "stderr",
+   "text": "bettermemory stats: error: argument --since: DAYS must be 1 to 3660, got 0"
+  },
+  {
+   "argv": [
+    "config",
+    "check",
+    "--bogus"
+   ],
+   "exit_code": 2,
+   "line": "last",
+   "match": "exact",
+   "stream": "stderr",
+   "text": "bettermemory: error: unrecognized arguments: --bogus"
+  }
+ ],
+ "setup": "cli.main in process with sys.argv set and bettermemory.__version__ = '0.0.0+fixture'; every location variable points into <scratch> (_sandbox.world), FORCE_COLOR, PYTHON_COLORS, CLICOLOR and CLICOLOR_FORCE cleared, NO_COLOR=1 and TERM=dumb.",
+ "type_rules": {
+  "_days": [
+   {
+    "refused": "DAYS must be 1 to 3660, got 0",
+    "text": "0"
+   },
+   {
+    "text": "1",
+    "value": 1
+   },
+   {
+    "text": "7",
+    "value": 7
+   },
+   {
+    "text": " 7 ",
+    "value": 7
+   },
+   {
+    "text": "+7",
+    "value": 7
+   },
+   {
+    "text": "1_000",
+    "value": 1000
+   },
+   {
+    "refused": "DAYS must be 1 to 3660, got -1",
+    "text": "-1"
+   },
+   {
+    "refused": "not a whole number of days: '1.5'",
+    "text": "1.5"
+   },
+   {
+    "refused": "not a whole number of days: '0x10'",
+    "text": "0x10"
+   },
+   {
+    "refused": "not a whole number of days: 'x'",
+    "text": "x"
+   },
+   {
+    "refused": "not a whole number of days: ''",
+    "text": ""
+   },
+   {
+    "text": "365",
+    "value": 365
+   },
+   {
+    "text": "366",
+    "value": 366
+   },
+   {
+    "text": "3660",
+    "value": 3660
+   },
+   {
+    "refused": "DAYS must be 1 to 3660, got 3661",
+    "text": "3661"
+   },
+   {
+    "text": "\u0661",
+    "value": 1
+   }
+  ],
+  "int": [
+   {
+    "text": "0",
+    "value": 0
+   },
+   {
+    "text": "1",
+    "value": 1
+   },
+   {
+    "text": "7",
+    "value": 7
+   },
+   {
+    "text": " 7 ",
+    "value": 7
+   },
+   {
+    "text": "+7",
+    "value": 7
+   },
+   {
+    "text": "1_000",
+    "value": 1000
+   },
+   {
+    "text": "-1",
+    "value": -1
+   },
+   {
+    "refused": "invalid int value: '1.5'",
+    "text": "1.5"
+   },
+   {
+    "refused": "invalid int value: '0x10'",
+    "text": "0x10"
+   },
+   {
+    "refused": "invalid int value: 'x'",
+    "text": "x"
+   },
+   {
+    "refused": "invalid int value: ''",
+    "text": ""
+   },
+   {
+    "text": "365",
+    "value": 365
+   },
+   {
+    "text": "366",
+    "value": 366
+   },
+   {
+    "text": "3660",
+    "value": 3660
+   },
+   {
+    "text": "3661",
+    "value": 3661
+   },
+   {
+    "text": "\u0661",
+    "value": 1
+   }
+  ]
+ },
+ "version": "0.0.0+fixture"
+}

@@ -20,12 +20,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
 from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver.exceptions import ToolError
 
+from bettermemory import location
 from bettermemory import review as breview
 from bettermemory.config import Config, StorageConfig
 from bettermemory.server import build_server
@@ -559,6 +563,129 @@ async def _script(run: _Run, other: Any, w: World, store: Store) -> None:
         "memory_admin",
         {"action": "unjoin_project", "scope": "projects:zephyrcore"},
     )
+    # A drifted claim: one commit after the verified head that deletes the
+    # README.md the record claims present. It is dated BEFORE the
+    # verification, so only the reachability rule (commits in
+    # verified_head..HEAD) counts it; an author-date count would read 0.
+    # A verification is then refused twice (the stored attestation, then
+    # the claim that no longer holds) and the record reads drifted still.
+    _git(w.checkout, _DRIFT_STAMP, "rm", "README.md")
+    await call("show.claimed_drifted", "memory_show", {"id": claimed["id"]})
+    await call(
+        "verify.claimed_drifted_refused",
+        "memory_verify",
+        {
+            "id": claimed["id"],
+            "note": "README.md is gone",
+            "verified_absent_paths": ["README.md"],
+        },
+    )
+    await call(
+        "verify.claimed_drifted_claim_broken",
+        "memory_verify",
+        {
+            "id": claimed["id"],
+            "note": "README.md is gone",
+            "verified_paths": [],
+            "verified_absent_paths": ["README.md"],
+        },
+    )
+    await call("show.claimed_still_drifted", "memory_show", {"id": claimed["id"]})
+    # The author-date rule: the history is rewritten (an orphan branch),
+    # so the verified head is no ancestor of HEAD any more. Two commits
+    # touch README.md, one dated before the verification and one after;
+    # the author-date count reads 1, where counting every commit reachable
+    # from HEAD would read 2.
+    _git(w.checkout, None, "checkout", "-q", "--orphan", "rewritten")
+    _git(w.checkout, _DRIFT_STAMP, "write", "README.md", "alpha\n")
+    _git(w.checkout, _LATE_STAMP, "write", "README.md", "alpha, rewritten\n")
+    await call("show.author_date_drift", "memory_show", {"id": fact["id"]})
+    # A recorded miss, landed as the Stop hook's audit lands it.
+    store.record_event(
+        "search_miss", **{**MISS, "top_hits": [{**MISS_HIT, "id": fact["id"]}]}
+    )
+    await call(
+        "admin.acknowledge_miss",
+        "memory_admin",
+        {"action": "acknowledge_miss", "id": MISS["event_id"], "reason": "probe noise"},
+    )
+    # A pending question: a clone of alpha under another remote asks.
+    fork = w.root / "fork"
+    _clone(w.checkout, fork, "https://example.invalid/me/fork.git")
+    os.chdir(fork)
+    location.forget()
+    try:
+        answered = await call(
+            "admin.answer_question",
+            "memory_admin",
+            {"action": "answer_question", "answer": "separate"},
+        )
+    finally:
+        os.chdir(w.checkout)
+        location.forget()
+    theirs = answered["project"]
+    await call(
+        "admin.join_project.normal",
+        "memory_admin",
+        {"action": "join_project", "id": theirs, "said": "join the fork into alpha"},
+    )
+    await call(
+        "admin.unjoin_project.normal",
+        "memory_admin",
+        {"action": "unjoin_project", "id": theirs},
+    )
+
+
+#: The search_miss event the script lands before admin.acknowledge_miss
+#: (the fields `audit.search_miss_fields` builds; top_hits[0].id is the
+#: write.committed_after_review record).
+MISS: dict[str, Any] = {
+    "session": "sess_hook",
+    "event_id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+    "session_id": "sess_hook",
+    "threshold_rule": "top_score>=0.5",
+    "lookback_seconds": 120,
+    "recent_retrieval_count": 0,
+    "probe_query": "ruff linting",
+    "triggered_from": "stop_hook",
+}
+MISS_HIT = {"score": 0.9, "relevance": "high"}
+
+
+#: The drift commit's author and committer date: before any run's
+#: verification, so only the reachability rule counts it; fixed, so its
+#: SHA is.
+_DRIFT_STAMP = "2001-01-01T00:00:00Z"
+#: The rewritten history's second commit: after any run's verification.
+_LATE_STAMP = "2099-01-01T00:00:00Z"
+
+
+def _git(repo: Path, stamp: str | None, verb: str, *args: str) -> None:
+    """In `repo`: ``rm NAME`` commits the deletion of NAME, ``write NAME
+    TEXT`` commits NAME holding TEXT, both at `stamp` (author and
+    committer); anything else is a plain git command."""
+    env = dict(os.environ)
+    if stamp is not None:
+        env.update(GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp)
+    if verb == "rm":
+        steps = [["rm", "-q", args[0]], ["commit", "-q", "-m", f"delete {args[0]}"]]
+    elif verb == "write":
+        (repo / args[0]).write_bytes(args[1].encode("ascii"))
+        steps = [["add", args[0]], ["commit", "-q", "-m", f"write {args[0]}"]]
+    else:
+        steps = [[verb, *args]]
+    for step in steps:
+        subprocess.run(
+            ["git", *step], cwd=repo, check=True, capture_output=True, env=env
+        )
+
+
+def _clone(src: Path, dst: Path, url: str) -> None:
+    for args in (
+        ["clone", "-q", src.resolve().as_uri(), str(dst)],
+        ["-C", str(dst), "remote", "set-url", "origin", url],
+    ):
+        subprocess.run(["git", *args], check=True, capture_output=True)
 
 
 #: Health sections whose rendered text holds the checkout's absolute path.
@@ -591,11 +718,32 @@ def responses() -> dict[str, bytes]:
             "counted over the section's compact JSON with the scratch path "
             "written as <scratch> (path_sized_sections): the product's count "
             "is this plus, per occurrence, the JSON-escaped scratch path's "
-            "length less 9."
+            "length less 9. Before show.claimed_drifted it commits, in "
+            "<scratch>/alpha, the deletion of README.md (git rm; author and "
+            "committer Fixture at drift_commit_date, before any run's "
+            "verification: only the reachability rule, commits in "
+            "verified_head..HEAD, counts it). Before show.author_date_drift "
+            "it starts an orphan branch rewritten in <scratch>/alpha (git "
+            "checkout --orphan, so the verified head is no ancestor of HEAD) "
+            "and commits README.md = 'alpha\\n' at drift_commit_date, then "
+            "'alpha, rewritten\\n' at late_commit_date: the author-date rule "
+            "counts only the second. The script appends 9 records after "
+            "admin.unjoin_project. Before admin.acknowledge_miss it lands one "
+            "search_miss event through Store.record_event (miss, with "
+            "top_hits [{id: the write.committed_after_review id, score: 0.9, "
+            "relevance: high}]). Before admin.answer_question it clones "
+            "<scratch>/alpha to <scratch>/fork (git clone of its file URI, "
+            "origin then set to https://example.invalid/me/fork.git), works "
+            "there (location.forget()) so the caller's checkout has the open "
+            "question, and works in <scratch>/alpha again from admin."
+            "join_project.normal on."
         ),
         "setup": SETUP,
         "review_thresholds": _thresholds(),
         "conflict": CONFLICT,
+        "miss": MISS,
+        "drift_commit_date": _DRIFT_STAMP,
+        "late_commit_date": _LATE_STAMP,
         "path_sized_sections": list(_PATH_SIZED),
         "placeholders": PLACEHOLDERS,
     }

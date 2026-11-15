@@ -15,11 +15,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import (
+    gen_cli,
+    gen_config,
     gen_daemon,
     gen_json,
     gen_lexicon,
     gen_log,
     gen_mcp,
+    gen_state,
     gen_store,
     gen_store_path,
     gen_time,
@@ -41,6 +44,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "mcp": gen_mcp.responses,
     "daemon_http": gen_daemon.http_api,
     "hooks": gen_daemon.hooks,
+    "settings": gen_config.generate,
+    "cli_surface": gen_cli.generate,
+    "state_files": gen_state.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The

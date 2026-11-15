@@ -46,6 +46,12 @@ _LOCATION_ENVS = {
 #: Every variable a harness or an earlier bettermemory set is cleared first
 #: (the harness's session id, its attended flag, a config override).
 _CLEARED_PREFIXES = ("CLAUDE", "BETTERMEMORY_")
+#: The variables that turn colour on (Python 3.14's argparse colours
+#: ``usage:`` and ``error:`` under PYTHON_COLORS=1 or FORCE_COLOR, even
+#: into a StringIO) are cleared, and these set: NO_COLOR turns it off
+#: where nothing forces it, TERM=dumb where a reader checks the terminal.
+_COLOUR_CLEARED = ("FORCE_COLOR", "PYTHON_COLORS", "CLICOLOR", "CLICOLOR_FORCE")
+_COLOUR_SET = {"NO_COLOR": "1", "TERM": "dumb"}
 
 
 @dataclass(frozen=True)
@@ -67,8 +73,9 @@ def world() -> Iterator[World]:
         root = Path(raw)
         try:
             for name in list(os.environ):
-                if name.startswith(_CLEARED_PREFIXES):
+                if name.startswith(_CLEARED_PREFIXES) or name in _COLOUR_CLEARED:
                     del os.environ[name]
+            os.environ.update(_COLOUR_SET)
             for name, rel in _LOCATION_ENVS.items():
                 (root / rel).mkdir(parents=True, exist_ok=True)
                 os.environ[name] = str(root / rel)

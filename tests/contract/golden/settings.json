@@ -1,0 +1,5575 @@
+{
+ "cases": [
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "no_files",
+   "check": {
+    "exit_code": 0,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 0,
+      "warning": 0
+     },
+     "exit_code": 0,
+     "files": [
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [],
+     "load_error": null,
+     "loads": true,
+     "status": "ok"
+    }
+   },
+   "config_toml": null,
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": true,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint on, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "clean",
+   "check": {
+    "exit_code": 0,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 0,
+      "warning": 0
+     },
+     "exit_code": 0,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [],
+     "load_error": null,
+     "loads": true,
+     "status": "ok"
+    }
+   },
+   "config_toml": "[behavior]\nprompt_recall = \"everywhere\"\n\n[capture]\nstop_checkpoint = true\n\n[scopes]\nallowed = [\"tools\", \"projects:zephyrcore\"]\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "user",
+        "value": "everywhere"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "user",
+        "value": true
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "user",
+        "value": [
+         "tools",
+         "projects:zephyrcore"
+        ]
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "unknown_key",
+   "check": {
+    "exit_code": 2,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 0,
+      "warning": 2
+     },
+     "exit_code": 2,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "unknown_key",
+       "file": "user",
+       "key": "sesion_brief",
+       "level": "warning",
+       "message": "[behavior] sesion_brief is not a setting bettermemory reads; the line is ignored.",
+       "section": "behavior",
+       "suggestion": "did you mean session_brief?"
+      },
+      {
+       "code": "unknown_section",
+       "file": "user",
+       "key": null,
+       "level": "warning",
+       "message": "[behaviour] is not a section bettermemory reads; every line in it is ignored.",
+       "section": "behaviour",
+       "suggestion": "did you mean [behavior]?"
+      }
+     ],
+     "load_error": null,
+     "loads": true,
+     "status": "warning"
+    }
+   },
+   "config_toml": "[behavior]\nsesion_brief = false\n\n[behaviour]\nx = 1\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "fixed_key_at_fixed_value",
+   "check": {
+    "exit_code": 0,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 1,
+      "warning": 0
+     },
+     "exit_code": 0,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "fixed",
+       "file": "user",
+       "key": "search_mode",
+       "level": "note",
+       "message": "[behavior] search_mode is no longer a setting: its value is fixed at \"hybrid\".",
+       "section": "behavior",
+       "suggestion": "delete the line"
+      }
+     ],
+     "load_error": null,
+     "loads": true,
+     "status": "ok"
+    }
+   },
+   "config_toml": "[behavior]\nsearch_mode = \"hybrid\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "fixed_key_away_from_fixed_value",
+   "check": {
+    "exit_code": 0,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 1,
+      "warning": 0
+     },
+     "exit_code": 0,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "fixed",
+       "file": "user",
+       "key": "search_mode",
+       "level": "note",
+       "message": "[behavior] search_mode is no longer a setting: its value is fixed at \"hybrid\". This file's \"bm25\" is not used.",
+       "section": "behavior",
+       "suggestion": "delete the line"
+      }
+     ],
+     "load_error": null,
+     "loads": true,
+     "status": "ok"
+    }
+   },
+   "config_toml": "[behavior]\nsearch_mode = \"bm25\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": {
+    "does_not_load": "malformed config in <scratch>/user/config.toml: [daemon] port = \"seventy\" must be an integer"
+   },
+   "case": "bad_type_refused",
+   "check": {
+    "exit_code": 1,
+    "json": {
+     "counts": {
+      "error": 1,
+      "note": 0,
+      "warning": 0
+     },
+     "exit_code": 1,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "invalid_value",
+       "file": "user",
+       "key": "port",
+       "level": "error",
+       "message": "[daemon] port = \"seventy\" must be an integer; the config does not load.",
+       "section": "daemon",
+       "suggestion": null
+      }
+     ],
+     "load_error": "malformed config in <scratch>/user/config.toml: [daemon] port = \"seventy\" must be an integer",
+     "loads": false,
+     "status": "error"
+    }
+   },
+   "config_toml": "[daemon]\nport = \"seventy\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 1,
+    "json": {
+     "error": "malformed config in <scratch>/user/config.toml: [daemon] port = \"seventy\" must be an integer"
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "bad_type_falls_back",
+   "check": {
+    "exit_code": 2,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 0,
+      "warning": 1
+     },
+     "exit_code": 2,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "fallback",
+       "file": "user",
+       "key": "session_brief",
+       "level": "warning",
+       "message": "[behavior] session_brief = \"ture\" is not a value it takes, so the default, true, is in force.",
+       "section": "behavior",
+       "suggestion": "write true or false"
+      }
+     ],
+     "load_error": null,
+     "loads": true,
+     "status": "warning"
+    }
+   },
+   "config_toml": "[behavior]\nsession_brief = \"ture\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "user_value": "ture",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "prompt_recall_falls_back",
+   "check": {
+    "exit_code": 2,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 0,
+      "warning": 1
+     },
+     "exit_code": 2,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "fallback",
+       "file": "user",
+       "key": "prompt_recall",
+       "level": "warning",
+       "message": "[behavior] prompt_recall = \"sometimes\" is not a value it takes, so the default, \"project\", is in force.",
+       "section": "behavior",
+       "suggestion": "one of project, everywhere, off"
+      }
+     ],
+     "load_error": null,
+     "loads": true,
+     "status": "warning"
+    }
+   },
+   "config_toml": "[behavior]\nprompt_recall = \"sometimes\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [
+      "[behavior] prompt_recall = \"sometimes\" is not one of project, everywhere, off (in <scratch>/user/config.toml); falling back to \"project\"."
+     ],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "user_value": "sometimes",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "checkpoint_tokens_clamped",
+   "check": {
+    "exit_code": 2,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 0,
+      "warning": 1
+     },
+     "exit_code": 2,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "clamped",
+       "file": "user",
+       "key": "checkpoint_tokens",
+       "level": "warning",
+       "message": "[capture] checkpoint_tokens = 10 is below 500; the loader raises it to 500.",
+       "section": "capture",
+       "suggestion": "write 500 or more"
+      }
+     ],
+     "load_error": null,
+     "loads": true,
+     "status": "warning"
+    }
+   },
+   "config_toml": "[capture]\ncheckpoint_tokens = 10\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [
+      "[capture] checkpoint_tokens = 10 (in <scratch>/user/config.toml) is below 500; using 500."
+     ],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "user",
+        "value": 500
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 70000,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 70000"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "port_out_of_range",
+   "check": {
+    "exit_code": 1,
+    "json": {
+     "counts": {
+      "error": 1,
+      "note": 0,
+      "warning": 0
+     },
+     "exit_code": 1,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "port_out_of_range",
+       "file": "user",
+       "key": "port",
+       "level": "error",
+       "message": "[daemon] port = 70000 is outside 0..65535; the daemon cannot bind it and does not start.",
+       "section": "daemon",
+       "suggestion": "a port from 1024 to 65535, or 0 for an ephemeral one"
+      }
+     ],
+     "load_error": null,
+     "loads": true,
+     "status": "error"
+    }
+   },
+   "config_toml": "[daemon]\nport = 70000\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "user",
+        "value": 70000
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": {
+    "does_not_load": "malformed config in <scratch>/user/config.toml: [policy] forbid_acknowledge = \"credentials\" must be one of credential, transient, scope_mismatch, user_claim, truncation"
+   },
+   "case": "bad_acknowledge_name",
+   "check": {
+    "exit_code": 1,
+    "json": {
+     "counts": {
+      "error": 1,
+      "note": 0,
+      "warning": 0
+     },
+     "exit_code": 1,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "unknown_acknowledge_name",
+       "file": "user",
+       "key": "forbid_acknowledge",
+       "level": "error",
+       "message": "[policy] forbid_acknowledge names \"credentials\", which is not an acknowledge flag of memory_write or memory_update; the config does not load.",
+       "section": "policy",
+       "suggestion": "did you mean \"credential\"?"
+      }
+     ],
+     "load_error": "malformed config in <scratch>/user/config.toml: [policy] forbid_acknowledge = \"credentials\" must be one of credential, transient, scope_mismatch, user_claim, truncation",
+     "loads": false,
+     "status": "error"
+    }
+   },
+   "config_toml": "[policy]\nforbid_acknowledge = [\"credentials\"]\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 1,
+    "json": {
+     "error": "malformed config in <scratch>/user/config.toml: [policy] forbid_acknowledge = \"credentials\" must be one of credential, transient, scope_mismatch, user_claim, truncation"
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": false
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry off, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [
+       "telemetry.enabled"
+      ],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults); 1 key(s) pinned by the managed config"
+    }
+   ],
+   "case": "managed_pins_kept_key",
+   "check": {
+    "exit_code": 0,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 1,
+      "warning": 0
+     },
+     "exit_code": 0,
+     "files": [
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "pinned",
+       "file": "user",
+       "key": "enabled",
+       "level": "note",
+       "message": "[telemetry] enabled = true is ignored: the managed file pins it to false.",
+       "section": "telemetry",
+       "suggestion": "delete the line"
+      }
+     ],
+     "load_error": null,
+     "loads": true,
+     "status": "ok"
+    }
+   },
+   "config_toml": "[telemetry]\nenabled = true\n",
+   "managed_toml": "[telemetry]\nenabled = false\n",
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "managed",
+        "user_value": true,
+        "value": false
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    },
+    {
+     "details": {
+      "fixed_value": 5,
+      "key": "behavior.default_max_results",
+      "managed_value": 8
+     },
+     "fix": "delete the line from the managed config",
+     "id": "config.managed_fixed",
+     "path": "<scratch>/managed/managed.toml",
+     "status": "info",
+     "summary": "the managed config sets [behavior] default_max_results = 8, which pins nothing: it is no longer a setting, and its fixed value 5 is in force; the managed value is not enforced"
+    },
+    {
+     "details": {
+      "fixed_value": 1000000,
+      "key": "behavior.max_content_bytes",
+      "managed_value": 10
+     },
+     "fix": "delete the line from the managed config; the limit is now the fixed 1000000, looser than the one it set",
+     "id": "config.managed_fixed",
+     "path": "<scratch>/managed/managed.toml",
+     "status": "warn",
+     "summary": "the managed config sets [behavior] max_content_bytes = 10, which pins nothing: it is no longer a setting, and its fixed value 1000000 is in force; the managed value is not enforced"
+    }
+   ],
+   "case": "managed_pins_fixed_key",
+   "check": {
+    "exit_code": 0,
+    "json": {
+     "counts": {
+      "error": 0,
+      "note": 2,
+      "warning": 0
+     },
+     "exit_code": 0,
+     "files": [
+      {
+       "error": null,
+       "exists": false,
+       "note": null,
+       "parses": false,
+       "path": "<scratch>/user/config.toml",
+       "role": "user"
+      },
+      {
+       "error": null,
+       "exists": true,
+       "note": null,
+       "parses": true,
+       "path": "<scratch>/managed/managed.toml",
+       "role": "managed"
+      }
+     ],
+     "findings": [
+      {
+       "code": "fixed",
+       "file": "managed",
+       "key": "max_content_bytes",
+       "level": "note",
+       "message": "[behavior] max_content_bytes is no longer a setting: its value is fixed at 1000000. This file's 10 is not used.",
+       "section": "behavior",
+       "suggestion": "delete the line"
+      },
+      {
+       "code": "fixed",
+       "file": "managed",
+       "key": "default_max_results",
+       "level": "note",
+       "message": "[behavior] default_max_results is no longer a setting: its value is fixed at 5. This file's 8 is not used.",
+       "section": "behavior",
+       "suggestion": "delete the line"
+      }
+     ],
+     "load_error": null,
+     "loads": true,
+     "status": "ok"
+    }
+   },
+   "config_toml": null,
+   "managed_toml": "[behavior]\nmax_content_bytes = 10\ndefault_max_results = 8\n",
+   "show": {
+    "exit_code": 0,
+    "json": {
+     "config": {
+      "error": null,
+      "exists": false,
+      "note": null,
+      "parses": false,
+      "path": "<scratch>/user/config.toml",
+      "role": "user"
+     },
+     "managed": {
+      "error": null,
+      "exists": true,
+      "note": null,
+      "parses": true,
+      "path": "<scratch>/managed/managed.toml",
+      "role": "managed"
+     },
+     "notices": [],
+     "settings": {
+      "behavior": {
+       "prompt_recall": {
+        "source": "default",
+        "value": "project"
+       },
+       "session_brief": {
+        "source": "default",
+        "value": true
+       },
+       "tombstone_retention_days": {
+        "source": "default",
+        "value": 0
+       },
+       "write_supersession": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "capture": {
+       "checkpoint_tokens": {
+        "source": "default",
+        "value": 12000
+       },
+       "daily_cap": {
+        "source": "default",
+        "value": 12
+       },
+       "stop_checkpoint": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "daemon": {
+       "port": {
+        "source": "default",
+        "value": 7397
+       }
+      },
+      "membership": {
+       "strict": {
+        "source": "default",
+        "value": false
+       },
+       "write_token": {
+        "source": "default",
+        "value": true
+       }
+      },
+      "policy": {
+       "forbid_acknowledge": {
+        "source": "default",
+        "value": []
+       },
+       "forbid_force": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "scopes": {
+       "allowed": {
+        "source": "default",
+        "value": []
+       },
+       "typo_exceptions": {
+        "source": "default",
+        "value": []
+       }
+      },
+      "security": {
+       "strict_provenance": {
+        "source": "default",
+        "value": false
+       }
+      },
+      "storage": {
+       "cwd_store": {
+        "source": "default",
+        "value": true
+       },
+       "directory": {
+        "source": "default",
+        "value": null
+       }
+      },
+      "telemetry": {
+       "enabled": {
+        "source": "default",
+        "value": true
+       }
+      }
+     }
+    }
+   }
+  }
+ ],
+ "catalogue": [
+  {
+   "default": null,
+   "key": "directory",
+   "managed_may_pin": true,
+   "section": "storage",
+   "type": "string, or absent"
+  },
+  {
+   "default": true,
+   "key": "cwd_store",
+   "managed_may_pin": true,
+   "section": "storage",
+   "type": "boolean"
+  },
+  {
+   "default": true,
+   "key": "write_supersession",
+   "managed_may_pin": true,
+   "section": "behavior",
+   "type": "boolean"
+  },
+  {
+   "default": "project",
+   "key": "prompt_recall",
+   "managed_may_pin": true,
+   "section": "behavior",
+   "type": "string"
+  },
+  {
+   "default": true,
+   "key": "session_brief",
+   "managed_may_pin": true,
+   "section": "behavior",
+   "type": "boolean"
+  },
+  {
+   "default": 0,
+   "key": "tombstone_retention_days",
+   "managed_may_pin": true,
+   "section": "behavior",
+   "type": "integer"
+  },
+  {
+   "default": [],
+   "key": "allowed",
+   "managed_may_pin": true,
+   "section": "scopes",
+   "type": "array of strings"
+  },
+  {
+   "default": [],
+   "key": "typo_exceptions",
+   "managed_may_pin": true,
+   "section": "scopes",
+   "type": "array of strings"
+  },
+  {
+   "default": false,
+   "key": "forbid_force",
+   "managed_may_pin": true,
+   "section": "policy",
+   "type": "boolean"
+  },
+  {
+   "default": [],
+   "key": "forbid_acknowledge",
+   "managed_may_pin": true,
+   "section": "policy",
+   "type": "array of strings"
+  },
+  {
+   "default": true,
+   "key": "enabled",
+   "managed_may_pin": true,
+   "section": "telemetry",
+   "type": "boolean"
+  },
+  {
+   "default": 7397,
+   "key": "port",
+   "managed_may_pin": true,
+   "section": "daemon",
+   "type": "integer"
+  },
+  {
+   "default": false,
+   "key": "stop_checkpoint",
+   "managed_may_pin": true,
+   "section": "capture",
+   "type": "boolean"
+  },
+  {
+   "default": 12000,
+   "key": "checkpoint_tokens",
+   "managed_may_pin": true,
+   "section": "capture",
+   "type": "integer"
+  },
+  {
+   "default": 12,
+   "key": "daily_cap",
+   "managed_may_pin": true,
+   "section": "capture",
+   "type": "integer"
+  },
+  {
+   "default": true,
+   "key": "write_token",
+   "managed_may_pin": true,
+   "section": "membership",
+   "type": "boolean"
+  },
+  {
+   "default": false,
+   "key": "strict",
+   "managed_may_pin": true,
+   "section": "membership",
+   "type": "boolean"
+  },
+  {
+   "default": false,
+   "key": "strict_provenance",
+   "managed_may_pin": true,
+   "section": "security",
+   "type": "boolean"
+  }
+ ],
+ "coercion": [
+  {
+   "key": "directory",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = true must be a string path",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = false must be a string path",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": "on",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": " Off ",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": "ture",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": "",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = 0 must be a string path",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = 1 must be a string path",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = 499 must be a string path",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = 2.5 must be a string path",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": "42",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": "x",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": "Everywhere",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = [] must be a string path",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = [\"credential\"] must be a string path",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = [\"acknowledge_credential\"] must be a string path",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = [1] must be a string path",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] directory = {} must be a string path",
+     "warned": false
+    }
+   ],
+   "section": "storage"
+  },
+  {
+   "key": "cwd_store",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = \"ture\" must be true or false",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = 0 must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = 1 must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = 499 must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = 2.5 must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = \"42\" must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = \"x\" must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = \"Everywhere\" must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = [] must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = [\"credential\"] must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = [\"acknowledge_credential\"] must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = [1] must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [storage] cwd_store = {} must be true or false",
+     "warned": false
+    }
+   ],
+   "section": "storage"
+  },
+  {
+   "key": "write_supersession",
+   "on_bad_value": "default",
+   "reads": [
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    }
+   ],
+   "section": "behavior"
+  },
+  {
+   "key": "prompt_recall",
+   "on_bad_value": "default",
+   "reads": [
+    {
+     "check": [],
+     "value": "project",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": "off",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": "project",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": "off",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [],
+     "value": "off",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [],
+     "value": "everywhere",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": "project",
+     "warned": true
+    }
+   ],
+   "section": "behavior"
+  },
+  {
+   "key": "session_brief",
+   "on_bad_value": "default",
+   "reads": [
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    }
+   ],
+   "section": "behavior"
+  },
+  {
+   "key": "tombstone_retention_days",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = true must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = false must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = \"on\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = \" Off \" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = \"ture\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = \"\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 0,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 1,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 499,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 2,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 42,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = \"x\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = \"Everywhere\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = [] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = [\"credential\"] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = [\"acknowledge_credential\"] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = [1] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [behavior] tombstone_retention_days = {} must be an integer",
+     "warned": false
+    }
+   ],
+   "section": "behavior"
+  },
+  {
+   "key": "allowed",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = true must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = false must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = \"on\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = \" Off \" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = \"ture\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = \"\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = 0 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = 1 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = 499 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = 2.5 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = \"42\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = \"x\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = \"Everywhere\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": [],
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": [
+      "credential"
+     ],
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_scope"
+      ]
+     ],
+     "value": [
+      "acknowledge_credential"
+     ],
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = 1 must be a string (in a list)",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] allowed = {} must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    }
+   ],
+   "section": "scopes"
+  },
+  {
+   "key": "typo_exceptions",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = true must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = false must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = \"on\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = \" Off \" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = \"ture\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = \"\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = 0 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = 1 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = 499 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = 2.5 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = \"42\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = \"x\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = \"Everywhere\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": [],
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": [
+      "credential"
+     ],
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "invalid_scope"
+      ]
+     ],
+     "value": [
+      "acknowledge_credential"
+     ],
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = 1 must be a string (in a list)",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [scopes] typo_exceptions = {} must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    }
+   ],
+   "section": "scopes"
+  },
+  {
+   "key": "forbid_force",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = \"ture\" must be true or false",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = 0 must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = 1 must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = 499 must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = 2.5 must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = \"42\" must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = \"x\" must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = \"Everywhere\" must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = [] must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = [\"credential\"] must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = [\"acknowledge_credential\"] must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = [1] must be true or false",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_force = {} must be true or false",
+     "warned": false
+    }
+   ],
+   "section": "policy"
+  },
+  {
+   "key": "forbid_acknowledge",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = true must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = false must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = \"on\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = \" Off \" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = \"ture\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = \"\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = 0 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = 1 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = 499 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = 2.5 must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = \"42\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = \"x\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = \"Everywhere\" must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": [],
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": [
+      "credential"
+     ],
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "unknown_acknowledge_name"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = \"acknowledge_credential\" must be one of credential, transient, scope_mismatch, user_claim, truncation (write \"credential\", without the acknowledge_ prefix)",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = 1 must be a string (in a list)",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [policy] forbid_acknowledge = {} must be a list of strings \u2014 did you forget the [ ] brackets?",
+     "warned": false
+    }
+   ],
+   "section": "policy"
+  },
+  {
+   "key": "enabled",
+   "on_bad_value": "default",
+   "reads": [
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    }
+   ],
+   "section": "telemetry"
+  },
+  {
+   "key": "port",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = true must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = false must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = \"on\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = \" Off \" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = \"ture\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = \"\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 0,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "privileged_port"
+      ]
+     ],
+     "value": 1,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "privileged_port"
+      ]
+     ],
+     "value": 499,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "privileged_port"
+      ]
+     ],
+     "value": 2,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "privileged_port"
+      ]
+     ],
+     "value": 42,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = \"x\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = \"Everywhere\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = [] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = [\"credential\"] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = [\"acknowledge_credential\"] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = [1] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [daemon] port = {} must be an integer",
+     "warned": false
+    }
+   ],
+   "section": "daemon"
+  },
+  {
+   "key": "stop_checkpoint",
+   "on_bad_value": "default",
+   "reads": [
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    }
+   ],
+   "section": "capture"
+  },
+  {
+   "key": "checkpoint_tokens",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = true must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = false must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = \"on\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = \" Off \" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = \"ture\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = \"\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "clamped"
+      ]
+     ],
+     "value": 500,
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "clamped"
+      ]
+     ],
+     "value": 500,
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "clamped"
+      ]
+     ],
+     "value": 500,
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "clamped"
+      ]
+     ],
+     "value": 500,
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "clamped"
+      ]
+     ],
+     "value": 500,
+     "warned": true
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = \"x\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = \"Everywhere\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = [] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = [\"credential\"] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = [\"acknowledge_credential\"] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = [1] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] checkpoint_tokens = {} must be an integer",
+     "warned": false
+    }
+   ],
+   "section": "capture"
+  },
+  {
+   "key": "daily_cap",
+   "on_bad_value": "refuse",
+   "reads": [
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = true must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = false must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = \"on\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = \" Off \" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = \"ture\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = \"\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 0,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 1,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 499,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 2,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": 42,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = \"x\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = \"Everywhere\" must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = [] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = [\"credential\"] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = [\"acknowledge_credential\"] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = [1] must be an integer",
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "error",
+       "invalid_value"
+      ]
+     ],
+     "refused": "malformed config in config.toml: [capture] daily_cap = {} must be an integer",
+     "warned": false
+    }
+   ],
+   "section": "capture"
+  },
+  {
+   "key": "write_token",
+   "on_bad_value": "default",
+   "reads": [
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": true,
+     "warned": false
+    }
+   ],
+   "section": "membership"
+  },
+  {
+   "key": "strict",
+   "on_bad_value": "default",
+   "reads": [
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    }
+   ],
+   "section": "membership"
+  },
+  {
+   "key": "strict_provenance",
+   "on_bad_value": "default",
+   "reads": [
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": true,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    },
+    {
+     "check": [
+      [
+       "warning",
+       "fallback"
+      ]
+     ],
+     "value": false,
+     "warned": false
+    }
+   ],
+   "section": "security"
+  }
+ ],
+ "config_path": {
+  "exit_code": 0,
+  "json": {
+   "config": {
+    "exists": false,
+    "path": "<scratch>/user/config.toml"
+   },
+   "error": null,
+   "keys": {
+    "exists": true,
+    "path": "<scratch>/keys",
+    "source": "BETTERMEMORY_KEYS_DIR"
+   },
+   "managed": {
+    "exists": false,
+    "note": null,
+    "path": "<scratch>/managed/managed.toml",
+    "pinned": [],
+    "pins_nothing": [],
+    "read": true
+   },
+   "state": {
+    "exists": true,
+    "path": "<scratch>/state",
+    "source": "BETTERMEMORY_STATE_DIR"
+   },
+   "store": {
+    "exists": true,
+    "notes": [],
+    "path": "<scratch>/mem",
+    "rule": "BETTERMEMORY_DIR"
+   }
+  }
+ },
+ "environment": [
+  {
+   "name": "BETTERMEMORY_DIR",
+   "sets": "the store directory (resolution rule 1, before [storage] directory, ./.claude-memory and the user default); the store file is <dir>/store/memory.sqlite"
+  },
+  {
+   "name": "BETTERMEMORY_KEYS_DIR",
+   "sets": "the key ring's directory (else the user config directory's keys)"
+  },
+  {
+   "name": "BETTERMEMORY_STATE_DIR",
+   "sets": "the daemon state directory: daemon-<digest>.json, its locks and log (else the user state directory)"
+  },
+  {
+   "name": "BETTERMEMORY_CLIENT",
+   "sets": "the client name a stdio server records as the caller"
+  },
+  {
+   "name": "BETTERMEMORY_CLIENT_VERSION",
+   "sets": "the client version recorded with it"
+  },
+  {
+   "name": "BETTERMEMORY_MODEL",
+   "sets": "the model name recorded with it"
+  },
+  {
+   "name": "BETTERMEMORY_WORKSPACE",
+   "sets": "the caller's workspace (before MCP roots and the cwd)"
+  },
+  {
+   "name": "CLAUDE_CODE_SESSION_ID",
+   "sets": "Claude Code's session id: the hooks' session; removed from a daemon's environment"
+  },
+  {
+   "name": "CLAUDE_CODE_SESSION_ATTENDED",
+   "sets": "Claude Code's attended flag; \"1\" when a person is at the session (the capture checkpoint asks only then); removed from a daemon's environment"
+  },
+  {
+   "name": "CLAUDE_CONFIG_DIR",
+   "sets": "Claude Code's config directory (else ~/.claude)"
+  },
+  {
+   "name": "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+   "sets": "when set, Claude Code's per-user files carry the -custom-oauth suffix"
+  }
+ ],
+ "fixed": [
+  {
+   "key": "default_max_results",
+   "limit": null,
+   "section": "behavior",
+   "value": 5
+  },
+  {
+   "key": "recency_boost_half_life_days",
+   "limit": null,
+   "section": "behavior",
+   "value": 30.0
+  },
+  {
+   "key": "conversational",
+   "limit": null,
+   "section": "behavior",
+   "value": true
+  },
+  {
+   "key": "search_mode",
+   "limit": null,
+   "section": "behavior",
+   "value": "hybrid"
+  },
+  {
+   "key": "heavily_used_min_applied",
+   "limit": null,
+   "section": "behavior",
+   "value": 3
+  },
+  {
+   "key": "cold_endorsement_ratio_threshold",
+   "limit": null,
+   "section": "behavior",
+   "value": 0.0
+  },
+  {
+   "key": "verification_stale_days",
+   "limit": null,
+   "section": "behavior",
+   "value": 30
+  },
+  {
+   "key": "max_content_bytes",
+   "limit": "below",
+   "section": "behavior",
+   "value": 1000000
+  },
+  {
+   "key": "max_takeaway_bytes",
+   "limit": "below",
+   "section": "behavior",
+   "value": 4096
+  },
+  {
+   "key": "max_scopes_per_write",
+   "limit": "below",
+   "section": "behavior",
+   "value": 64
+  },
+  {
+   "key": "min_content_tokens",
+   "limit": "above",
+   "section": "behavior",
+   "value": 0
+  }
+ ],
+ "fixture": "settings",
+ "placeholders": {
+  "<scratch>": "the run's temporary directory (an absolute path); the path after it is written with / whatever the platform's separator"
+ },
+ "probes": [
+  true,
+  false,
+  "on",
+  " Off ",
+  "ture",
+  "",
+  0,
+  1,
+  499,
+  2.5,
+  "42",
+  "x",
+  "Everywhere",
+  [],
+  [
+   "credential"
+  ],
+  [
+   "acknowledge_credential"
+  ],
+  [
+   1
+  ],
+  {}
+ ],
+ "read": "catalogue: every key the config file accepts, in the loader's order (section, key, type, default, managed_may_pin: a managed file's line for it is in force over the user's). fixed: the keys that are fixed values and no settings (config.FIXED_SETTINGS); limit names the write limits whose managed line was stricter. coercion: each kept key read alone from each value of probes (TOML values, in order): reads[i] is {value, warned} or {refused: the error text, warned}, the error locating the line in config.toml; warned says the loader logged a warning; check is [level, code] of each finding `config check` reports for a config.toml holding that one line (a finding can stand where nothing was logged, e.g. a float truncated to an integer). on_bad_value: refuse when a table stops the load, default when it reads as the default. environment: the variables read; config_path: `config path --json` with the location variables set. cases: config_toml / managed_toml (null: no file) -> check and show, each the exit code and the JSON the CLI printed, and audit_config_findings, the config findings of `security audit` (posture._settings over the config the audit loads). Check exits 0 (nothing above a note), 1 (an error), 2 (warnings only).",
+ "setup": "Every location variable points into <scratch> (_sandbox.world): BETTERMEMORY_DIR=<scratch>/mem, BETTERMEMORY_KEYS_DIR=<scratch>/keys, BETTERMEMORY_STATE_DIR=<scratch>/state, HOME=<scratch>/home. The user's config file is <scratch>/user/config.toml (config.default_config_path answers it) and the managed file <scratch>/managed/managed.toml (managed.managed_config_path answers it); a case that has no text for one has no such file. The CLI runs in process (cli.main with argv set)."
+}
