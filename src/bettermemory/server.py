@@ -34,8 +34,9 @@ consuming model sees an identical list):
              rename_scope, conflicts, acknowledge_miss, disable_scope,
              enable_scope, answer_question, join_project, unjoin_project)
 
-That is 22 ``memory_*`` plus 5 ``episode_*``; 18 of the 27 register by
-default, the rest behind ``[behavior] full_tool_surface``.
+That is nine tools, all registered: seven ``memory_*``, ``episode`` and
+``memory_admin``. ``tests/contract/golden/tool_surface.json`` pins the
+list as the server serves it.
 """
 
 from __future__ import annotations
