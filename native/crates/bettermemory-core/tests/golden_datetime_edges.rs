@@ -14,7 +14,8 @@ mod common;
 
 use bettermemory_core::datetime::{self, DateError, DateTime};
 use bettermemory_core::float_repr;
-use common::{assert_count, jsonl, text_field};
+use common::parity::{self, Ledger};
+use common::{jsonl, text_field};
 use serde_json::{json, Value};
 
 fn formatted(name: &str, dt: &DateTime) -> Value {
@@ -76,7 +77,8 @@ fn datetime_edges_every_case() {
     let lines = jsonl("datetime_edges.jsonl");
     let header = &lines[0];
     assert_eq!(header["fixture"], "datetime_edges");
-    assert_eq!(header["python"], "3.13");
+    // The CPython minor that made the file (3.13 for the committed one).
+    assert_eq!(header["python"], parity::python_minor().as_str());
     let n_formatters = header["formatters"].as_object().unwrap().len();
     let n_parsers = header["parsers"].as_object().unwrap().len();
     let (mut formats, mut texts, mut stamps, mut cells) = (0, 0, 0, 0);
@@ -156,16 +158,13 @@ fn datetime_edges_every_case() {
          {cells} cells compared ({per_platform} of them per platform), \
          {marked} marked cells not pinned by the fixture"
     );
-    assert!(
-        failures.is_empty(),
-        "{} failures:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
-    assert_count(
-        "datetime_edges.jsonl",
+    // CPython 3.13.13's behaviour (class ii): Ledger sets a differing cell
+    // aside, named, where the file was made under another Python.
+    Ledger::new("datetime_edges_every_case", "datetime_edges.jsonl").settle(cells, &failures);
+    assert_eq!(
         formats + texts + stamps,
         lines.len() - 1,
+        "datetime_edges.jsonl cases"
     );
     // 32 datetimes x 7 formatters + 189 texts x 6 parsers + 105 timestamps.
     assert_eq!((formats, texts, stamps), (32, 189, 105));

@@ -9,7 +9,8 @@ use bettermemory_core::json;
 use bettermemory_core::log::{self, KeyRing, LogRow};
 use bettermemory_core::pyvalue::{self, PyError, PyValue};
 use bettermemory_core::unicode;
-use common::{assert_count, json_form, json_form_out, jsonl, neutral, unhex};
+use common::parity::{self, Ledger};
+use common::{json_form, json_form_out, jsonl, neutral, unhex};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -165,7 +166,8 @@ fn json_edges_every_case() {
     let lines = jsonl("json_edges.jsonl");
     let header = &lines[0];
     assert_eq!(header["fixture"], "json_edges");
-    assert_eq!(header["python"], "3.13");
+    // The CPython minor that made the file (3.13 for the committed one).
+    assert_eq!(header["python"], parity::python_minor().as_str());
     let ring = jsonl("log_keyring.jsonl");
     let keys = Keys {
         a: unhex(ring[0]["keys"]["A"].as_str().unwrap()),
@@ -233,11 +235,8 @@ fn json_edges_every_case() {
         depths += 1;
     }
     eprintln!("json_edges: {sorts} sort cases, {depths} depth cases, {cells} cells");
-    assert!(
-        failures.is_empty(),
-        "{} failures:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
-    assert_count("json_edges.jsonl", sorts + depths, lines.len() - 1);
+    // CPython 3.13.13's behaviour (class ii): Ledger sets a differing cell
+    // aside, named, where the file was made under another Python.
+    Ledger::new("json_edges_every_case", "json_edges.jsonl").settle(cells, &failures);
+    assert_eq!(sorts + depths, lines.len() - 1, "json_edges.jsonl cases");
 }

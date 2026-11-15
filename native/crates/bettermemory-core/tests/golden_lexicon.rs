@@ -9,7 +9,8 @@ use bettermemory_core::lexicon::{
     self, ACRONYM_PLURALS, FINGERPRINT_PROBES, STEM_EXCEPTIONS, STOPWORD_LISTS,
 };
 use bettermemory_core::unicode;
-use common::{assert_count, golden_path, hex, jsonl, text_field};
+use common::parity::Ledger;
+use common::{committed_path, golden_path, hex, jsonl, text_field};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -59,17 +60,19 @@ fn lexicon_every_case() {
         }
         checked += 1;
     }
-    assert!(
-        failures.is_empty(),
-        "{} failures:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
-    assert_count("lexicon.jsonl", checked, lines.len() - 1);
+    assert_eq!(checked, lines.len() - 1, "lexicon.jsonl cases");
+    // Unicode 15.1's (class ii): set aside, named, under another Unicode.
+    Ledger::new("lexicon_every_case", "lexicon.jsonl").settle(checked, &failures);
 }
 
 #[test]
 fn lexicon_fingerprint() {
+    let mut ledger = Ledger::new("lexicon_fingerprint", "lexicon.jsonl");
+    ledger.case("the header's fingerprint", fingerprint_of_the_header);
+    ledger.finish(1);
+}
+
+fn fingerprint_of_the_header() {
     let lines = jsonl("lexicon.jsonl");
     let header = &lines[0];
     let probes: Vec<&str> = header["probes"]
@@ -102,11 +105,29 @@ fn lexicon_fingerprint() {
 
 #[test]
 fn spelling_tables_match_the_golden_file_and_the_rust_tables() {
-    let golden = std::fs::read(golden_path("lexicon_spelling_tables.json")).unwrap();
+    // The crate compiles in the committed file's text: pinned to it always.
+    let committed = std::fs::read(committed_path("lexicon_spelling_tables.json")).unwrap();
     assert_eq!(
         lexicon::REFERENCE_SPELLING_TABLES.as_bytes(),
-        golden.as_slice()
+        committed.as_slice(),
+        "the compiled-in copy is the committed file"
     );
+    // The directory under test (BM_GOLDEN_DIR) must hold the same text: the
+    // tables are Python source lists, the same on every platform. A
+    // difference fails, unless its Unicode is not the port's, where it is
+    // set aside and named (the file is in the Unicode-gated generator).
+    let golden = std::fs::read(golden_path("lexicon_spelling_tables.json")).unwrap();
+    let mut ledger = Ledger::new(
+        "spelling_tables_match_the_golden_file_and_the_rust_tables",
+        "lexicon_spelling_tables.json",
+    );
+    ledger.case("the file under test is the compiled-in copy", || {
+        assert!(
+            lexicon::REFERENCE_SPELLING_TABLES.as_bytes() == golden.as_slice(),
+            "lexicon_spelling_tables.json under test differs from the compiled-in copy"
+        );
+    });
+    ledger.finish(1);
     let doc: Value = serde_json::from_slice(&golden).unwrap();
     let tables = &doc["tables"];
     let words = |v: &Value| -> BTreeSet<String> {

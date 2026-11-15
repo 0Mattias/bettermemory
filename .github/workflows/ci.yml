@@ -462,6 +462,94 @@ jobs:
 
 
 
+  # The native build (native/, unit PAR) against the Python reference on
+  # each platform. Everything is native/tools/parity.py, so a local run is
+  # this job: lint (cargo build, clippy -D warnings, fmt --check); step 1,
+  # cargo test against the committed golden files, which were made on
+  # darwin-arm64 under Python 3.13.13, SQLite 3.50.4 and Unicode 15.1.0, so
+  # elsewhere a score-bearing case that differs is set aside and counted
+  # (class iii) while the rest is compared strictly; step 2, the fixtures
+  # regenerated as found with this runner's Python 3.13 (the newest patch;
+  # platform.json records it) and cargo test against them: the parity claim
+  # on this platform. The job fails on any strict difference, on a class
+  # (iii) case step 2 set aside, and on a generator that raised; a class
+  # (ii) difference under a Python or Unicode other than the port's
+  # (3.13.13, 15.1.0) is printed and counted, not failed. The manifest and
+  # the per-test table go to the log and the step summary
+  # (native/README.md, "Parity").
+  #
+  # Not a release gate: the crate is not shipped, and under workflow_call
+  # the github context is the caller's, so `github.workflow` is "Release"
+  # there and release.yml's gate skips this job.
+  native-parity:
+    name: native parity (${{ matrix.os }})
+    if: github.workflow == 'CI'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Sync dependencies
+        run: uv sync --locked --extra dev --python 3.13
+
+      # The runner's own Rust; native/Cargo.toml wants 1.94 or later. An
+      # image that ships an older one gets 1.94 through the preinstalled
+      # rustup, for this job only.
+      - name: Rust toolchain
+        run: |
+          rustc -V
+          cargo -V
+          have=$(rustc -V | cut -d' ' -f2)
+          if ! uv run --no-sync python -c "import sys; v = tuple(map(int, sys.argv[1].split('-')[0].split('.'))); sys.exit(v < (1, 94))" "$have"; then
+            echo "::notice title=native parity::rustc $have is older than 1.94; installing 1.94"
+            rustup toolchain install 1.94 --profile minimal --component clippy,rustfmt
+            echo "RUSTUP_TOOLCHAIN=1.94" >> "$GITHUB_ENV"
+          fi
+
+      - name: Restore cargo's registry and target directory
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            native/target
+          key: native-${{ runner.os }}-${{ hashFiles('native/Cargo.lock') }}
+
+      - name: Native parity
+        run: uv run --no-sync python native/tools/parity.py --lint --work "$RUNNER_TEMP/native-parity"
+
+      - name: Keep cargo's registry and target directory
+        if: ${{ !cancelled() && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            native/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
   commit-lint:
     name: commit messages
     runs-on: ubuntu-latest

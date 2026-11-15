@@ -9,7 +9,8 @@ mod common;
 use bettermemory_core::lexicon::{fts_index_text, fts_match_query};
 use bettermemory_core::store::sqlite_version;
 use bettermemory_core::unicode;
-use common::{assert_count, jsonl};
+use common::jsonl;
+use common::parity::Ledger;
 
 #[test]
 fn fts5_prefilter_matches_the_reference_sqlite() {
@@ -43,47 +44,58 @@ fn fts5_prefilter_matches_the_reference_sqlite() {
     let sql = header["fts_sql"].as_str().expect("fts_sql");
     let mut checked = 0;
     let mut rows_compared = 0;
+    // bm25 bits are one platform's (class iii): set aside, named, where the
+    // file was made elsewhere.
+    let mut ledger = Ledger::new(
+        "fts5_prefilter_matches_the_reference_sqlite",
+        "search.jsonl",
+    );
     for record in &records[1..] {
         let query = record["query"].as_str().expect("query");
         let match_query = fts_match_query(&unicode::cps(query));
-        assert_eq!(
-            match_query,
-            record["match_query"].as_str().expect("mq"),
-            "{query}"
-        );
-        let got: Vec<(i64, String)> = if match_query.is_empty() {
-            Vec::new()
-        } else {
-            let mut statement = conn.prepare(sql).expect("prepare");
-            statement
-                .query_map([&match_query], |r| {
-                    Ok((
-                        r.get::<_, i64>(0)?,
-                        format!("{:016x}", r.get::<_, f64>(1)?.to_bits()),
-                    ))
+        let mut case_rows = 0;
+        ledger.case(query, || {
+            assert_eq!(
+                match_query,
+                record["match_query"].as_str().expect("mq"),
+                "{query}"
+            );
+            let got: Vec<(i64, String)> = if match_query.is_empty() {
+                Vec::new()
+            } else {
+                let mut statement = conn.prepare(sql).expect("prepare");
+                statement
+                    .query_map([&match_query], |r| {
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            format!("{:016x}", r.get::<_, f64>(1)?.to_bits()),
+                        ))
+                    })
+                    .expect("query")
+                    .map(|r| r.expect("row"))
+                    .collect()
+            };
+            let want: Vec<(i64, String)> = record["fts"]
+                .as_array()
+                .expect("fts")
+                .iter()
+                .map(|r| {
+                    (
+                        r["rowid"].as_i64().expect("rowid"),
+                        r["bits"].as_str().expect("bits").to_owned(),
+                    )
                 })
-                .expect("query")
-                .map(|r| r.expect("row"))
-                .collect()
-        };
-        let want: Vec<(i64, String)> = record["fts"]
-            .as_array()
-            .expect("fts")
-            .iter()
-            .map(|r| {
-                (
-                    r["rowid"].as_i64().expect("rowid"),
-                    r["bits"].as_str().expect("bits").to_owned(),
-                )
-            })
-            .collect();
-        assert_eq!(got, want, "{query}: rows, order or score bits differ");
-        rows_compared += want.len();
+                .collect();
+            assert_eq!(got, want, "{query}: rows, order or score bits differ");
+            case_rows = want.len();
+        });
+        rows_compared += case_rows;
         checked += 1;
     }
     eprintln!(
         "SQLite {}: {checked} queries, {rows_compared} rows, every rowid, order and bm25 bit equal",
         sqlite_version()
     );
-    assert_count("search.jsonl fts", checked, records.len() - 1);
+    assert_eq!(checked, records.len() - 1, "search.jsonl fts");
+    ledger.finish(checked);
 }

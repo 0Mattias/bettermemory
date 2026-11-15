@@ -8,7 +8,8 @@
 mod common;
 
 use bettermemory_core::unicode::{self, Form};
-use common::{assert_count, cps_of, jsonl};
+use common::parity::{self, Ledger};
+use common::{cps_of, jsonl};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -110,7 +111,12 @@ fn unicode_every_part() {
     assert_eq!(lines.len(), 1, "unicode.jsonl is one record");
     let doc = &lines[0];
     assert_eq!(doc["fixture"], "unicode");
-    assert_eq!(doc["unidata_version"], unicode::UNIDATA_VERSION);
+    // The Unicode that made the file; the port carries UNIDATA_VERSION, and
+    // under another a differing part is set aside, named (class ii).
+    assert_eq!(
+        doc["unidata_version"],
+        parity::provenance().unicode.as_str()
+    );
     assert_eq!(doc["block_size"], 4096);
     let mut parts = 0;
     let mut in_file = 0;
@@ -173,13 +179,8 @@ fn unicode_every_part() {
         sequences.len(),
         predicates.len()
     );
-    assert!(
-        failures.is_empty(),
-        "{} failures:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
-    assert_count("unicode.jsonl parts", parts, in_file);
+    assert_eq!(parts, in_file, "unicode.jsonl parts");
+    Ledger::new("unicode_every_part", "unicode.jsonl").settle(parts, &failures);
 }
 
 #[test]
@@ -187,7 +188,10 @@ fn unicode_sequences_every_record() {
     let lines = jsonl("unicode_sequences.jsonl");
     let header = &lines[0];
     assert_eq!(header["fixture"], "unicode_sequences");
-    assert_eq!(header["unidata_version"], unicode::UNIDATA_VERSION);
+    assert_eq!(
+        header["unidata_version"],
+        parity::provenance().unicode.as_str()
+    );
     let maps: Vec<String> = header["maps"]
         .as_array()
         .expect("maps")
@@ -225,15 +229,11 @@ fn unicode_sequences_every_record() {
         sequences += 1;
     }
     eprintln!("unicode_sequences: {tables} tables, {sequences} sequences, {cells} cells");
-    assert!(
-        failures.is_empty(),
-        "{} failures:\n{}",
-        failures.len(),
-        failures.join("\n")
-    );
-    assert_count(
-        "unicode_sequences.jsonl",
+    assert_eq!(
         tables + sequences,
         lines.len() - 1,
+        "unicode_sequences.jsonl"
     );
+    Ledger::new("unicode_sequences_every_record", "unicode_sequences.jsonl")
+        .settle(cells, &failures);
 }

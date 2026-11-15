@@ -2,15 +2,28 @@
 
 ``python -m tests.contract.generate`` rewrites ``tests/contract/golden``;
 ``tests/test_contract_golden.py`` regenerates every file in memory and
-compares it byte for byte. Nothing here reads the network, the clock or a
+compares it byte for byte.
+
+``python -m tests.contract.generate --out DIR --as-found`` writes the whole
+set as this interpreter, its SQLite, its Unicode data and this platform
+make it, into DIR, with a manifest (``platform.json``) saying what made it
+and how each file compares with the committed one. It refuses nothing: a
+generator that raises is recorded in the manifest and the run goes on. The
+native build's tests read such a directory through ``BM_GOLDEN_DIR``
+(native/README.md, "Parity"). Nothing here reads the network, the clock or a
 random source in a way that reaches a golden byte.
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import json
+import os
 import platform
 import sqlite3
 import sys
+import traceback
 import unicodedata
 from collections.abc import Callable
 from pathlib import Path
@@ -113,7 +126,120 @@ PLATFORM_GATED = frozenset(
 
 
 def platform_key() -> str:
+    """``sys.platform``-``machine``; ``BM_PLATFORM_KEY`` overrides it, to
+    simulate another platform (the native tests read it too)."""
+    override = os.environ.get("BM_PLATFORM_KEY")
+    if override:
+        return override
     return f"{sys.platform}-{platform.machine().lower()}"
+
+
+def _libc() -> str | None:
+    if not sys.platform.startswith("linux"):
+        return None
+    name, version = platform.libc_ver()
+    return f"{name} {version}".strip() or None
+
+
+def drift(name: str) -> list[str]:
+    """The pins generator ``name``'s committed files were made under that
+    this interpreter and platform do not share."""
+    out = []
+    if name in UNICODE_GATED and unicodedata.unidata_version != UNIDATA_VERSION:
+        out.append(f"Unicode {unicodedata.unidata_version} (files: {UNIDATA_VERSION})")
+    if name in SQLITE_GATED and sqlite3.sqlite_version != SQLITE_VERSION:
+        out.append(f"SQLite {sqlite3.sqlite_version} (files: {SQLITE_VERSION})")
+    if name in PYTHON_GATED and python_version() != PYTHON_VERSION:
+        out.append(f"Python {python_version()} (files: {PYTHON_VERSION})")
+    if name in PLATFORM_GATED and platform_key() != PLATFORM:
+        out.append(f"platform {platform_key()} (files: {PLATFORM})")
+    return out
+
+
+def as_found(out: Path) -> int:
+    """Every generator under whatever is present, into ``out``, with
+    ``platform.json``. Exit 0 when every generator ran, 1 when one raised
+    (the files of the others are written all the same)."""
+    from ._diff import _differing
+
+    out.mkdir(parents=True, exist_ok=True)
+    generators: dict[str, dict[str, object]] = {}
+    files: dict[str, object] = {}
+    failed = 0
+    for name, generate in GENERATORS.items():
+        entry: dict[str, object] = {"gated_by": drift(name)}
+        try:
+            produced = generate()
+        except Exception as exc:  # recorded, and the run goes on
+            failed += 1
+            entry["raised"] = f"{type(exc).__name__}: {exc}"
+            entry["traceback"] = traceback.format_exc().splitlines()[-12:]
+            generators[name] = entry
+            print(f"{name}: raised {type(exc).__name__}: {exc}", file=sys.stderr)
+            continue
+        entry["files"] = sorted(produced)
+        generators[name] = entry
+        for filename, data in sorted(produced.items()):
+            (out / filename).write_bytes(data)
+            committed_path = GOLDEN / filename
+            committed = committed_path.read_bytes() if committed_path.exists() else None
+            info: dict[str, object] = {
+                "generator": name,
+                "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "identical": data == committed,
+            }
+            if committed is None:
+                info["committed"] = None
+            elif data != committed:
+                if filename.endswith(".sqlite"):
+                    # A store file as this SQLite wrote it: its bytes are
+                    # not lines; store_real.json records its answers.
+                    info["differs"] = (
+                        f"binary, {len(data)} bytes here, {len(committed)} committed"
+                    )
+                else:
+                    ours, theirs = data.splitlines(), committed.splitlines()
+                    info["lines_differing"] = sum(
+                        1
+                        for i in range(max(len(ours), len(theirs)))
+                        if (ours[i] if i < len(ours) else None)
+                        != (theirs[i] if i < len(theirs) else None)
+                    )
+                    info["differs"] = _differing(data, committed)
+            files[filename] = info
+            print(
+                f"{filename}: {len(data)} bytes, "
+                f"{'identical' if info['identical'] else 'differs'}"
+            )
+    manifest = {
+        "platform": platform_key(),
+        "machine": platform.machine(),
+        "system": platform.platform(),
+        "libc": _libc(),
+        "python": python_version(),
+        "python_build": sys.version,
+        "sqlite": sqlite3.sqlite_version,
+        "unicode": unicodedata.unidata_version,
+        "committed": {
+            "platform": PLATFORM,
+            "python": PYTHON_VERSION,
+            "sqlite": SQLITE_VERSION,
+            "unicode": UNIDATA_VERSION,
+        },
+        "generators": generators,
+        "raised": sorted(n for n, e in generators.items() if "raised" in e),
+        "files": files,
+    }
+    (out / "platform.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(
+        f"platform.json: {platform_key()}, Python {python_version()}, "
+        f"SQLite {sqlite3.sqlite_version}, Unicode {unicodedata.unidata_version}; "
+        f"{failed} generator(s) raised"
+    )
+    return 1 if failed else 0
 
 
 def python_version() -> str:
@@ -121,7 +247,25 @@ def python_version() -> str:
     return f"{v.major}.{v.minor}.{v.micro}"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m tests.contract.generate")
+    parser.add_argument("--out", type=Path, help="write into this directory")
+    parser.add_argument(
+        "--as-found",
+        action="store_true",
+        help="run under whatever is present, write platform.json (needs --out)",
+    )
+    args = parser.parse_args(argv)
+    if args.as_found:
+        if args.out is None:
+            parser.error("--as-found needs --out DIR")
+        if args.out.resolve() == GOLDEN.resolve():
+            parser.error("--as-found never writes the committed directory")
+        return as_found(args.out)
+    if args.out is not None:
+        parser.error(
+            "--out without --as-found: the pinned run writes the committed set"
+        )
     if unicodedata.unidata_version != UNIDATA_VERSION:
         print(
             f"refusing: Unicode {unicodedata.unidata_version}, golden files are "

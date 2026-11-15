@@ -69,3 +69,11 @@ bench/**/*.jsonl -text
 # them as the Python reference wrote them, and tests/test_contract_golden.py
 # compares them with the reference on every platform.
 tests/contract/golden/** -text
+
+# The native build's compiled-in copies of golden files (`include_str!`),
+# byte for byte: `golden_lexicon` compares the spelling tables' copy with the
+# golden file's bytes and hashes it into the tokenizer fingerprint, and
+# `golden_store_files` reads the schema copy. `include_str!` does not
+# normalize line endings as the Rust lexer does for `.rs` files, so a CRLF
+# checkout (Windows runners set core.autocrlf) would change the bytes.
+native/crates/bettermemory-core/src/**/reference_*.json -text

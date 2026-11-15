@@ -6,7 +6,9 @@ open unchanged in the other. The reference behaviour is pinned by the golden
 files in `tests/contract/golden`, which `tests/contract/gen_*.py` generate
 from the Python code; every test here reads them from there.
 
-Nothing here is wired into the Python product, packaged or run in CI yet.
+Nothing here is wired into the Python product or packaged. CI builds and
+tests it on Linux, macOS and Windows against fixtures made on each
+("Parity on every platform").
 
 ## What the crate holds
 
@@ -393,6 +395,128 @@ On an Apple M-series laptop at 200 repetitions: the reference 7.22 ms per
 repetition, native 0.91 ms (7.9x). The 10x target is not met; what remains
 is mostly one `String` per output token and the NFKC pass over non-ASCII
 text.
+
+## Parity on every platform
+
+The committed golden files were made on one machine: darwin-arm64, Python
+3.13.13, SQLite 3.50.4, Unicode 15.1.0 (`tests/contract/generate.py`'s
+pins). Three things tie some of their values to that machine. Ranking
+score bits go through the platform's `log`, `exp` and `log1p` and its
+double arithmetic, in Python and in SQLite's `bm25()` (10 of
+`search_ranker.jsonl`'s 208 queries score other bits on Linux x86-64); a
+CPython patch release can change what `python_edges` pins (3.13.18 reads
+three sub-second-offset texts otherwise than 3.13.13); and the port itself
+carries Unicode 15.1's tables and CPython 3.13.13's datetime parser, sort
+and nesting budget. So the native build is held to the reference on the
+platform it runs on, against fixtures made there.
+
+**`BM_GOLDEN_DIR`.** Every test reads its golden files through
+`tests/common`'s `golden_path`, which reads the directory `BM_GOLDEN_DIR`
+names, else the committed one. Two files are also compiled into the crate
+(`include_str!`): `src/lexicon/reference_spelling_tables.json` and
+`src/store/reference_schema.json`. They stay compiled from the committed
+text: a test pins each copy to the committed file always, and then
+compares it with the directory under test, where a difference fails unless
+that file's gate is open (below). Both are the reference's source strings,
+not anything a platform computes, so a set made anywhere under the pinned
+Unicode holds the same text.
+
+**The as-found set.** `python -m tests.contract.generate --out DIR
+--as-found` runs every generator under whatever Python, SQLite, Unicode and
+platform is present and writes the whole set into DIR with `platform.json`:
+the platform key (`sys.platform`-`machine`, as `PLATFORM` spells it), the
+machine, the libc where Python knows it, the Python, SQLite and Unicode
+versions, the committed set's pins, each generator's files or the error it
+raised (a generator that raises is recorded and the run goes on, exit 1),
+the gates under which it differs from the committed files, and for each
+file its size, SHA-256, whether it is byte-identical to the committed one
+and, if not, how many lines differ and where (the `_differing` detail of
+`tests/test_contract_golden.py`, now `tests/contract/_diff.py`).
+`store_real.sqlite` is a store file as the generating Python's SQLite wrote
+it; the as-found set holds that platform's file, its manifest entry names
+the SQLite and says whether the bytes are the committed ones, and
+`store_real.json` beside it records its SHA-256 and its answers, which the
+native test reads the file against (its SQLite pin is then the manifest's,
+not 3.50.4). On this Mac the as-found set is byte-identical to the
+committed one, `store_real.sqlite` included.
+
+**Three classes.** A test's class is that of the golden file it compares
+with, by the generator that writes it, mirroring the Python side's
+`*_GATED` sets (`tests/common/parity.rs`, `gates_of`):
+
+- (i) platform- and version-independent: compared strictly, always.
+- (ii) tied by design to the Python patch release (3.13.13) or the Unicode
+  (15.1.0) the port reproduces: strict where the files were made under
+  those; under another, a differing case is set aside.
+- (iii) floating-point score bits: strict where the files were made on this
+  platform; elsewhere, a differing case is set aside. (These files are also
+  Unicode-gated.)
+
+SQLite is no gate: the native build links its own (3.54.1), so the
+reference's SQLite version is recorded, and its effects compared strictly.
+
+**Nothing is hidden.** Where a test's gates are all shut (the files were
+made here, under the port's versions) a difference fails as it always did.
+Where one is open, every case is still compared: an equal case counts as
+compared, a differing one prints `NOT COMPARABLE HERE` with the case, its
+difference and the reason, and counts as set aside. Every gated test prints
+one `PARITY` line (`N compared, M set aside (why)`) and appends it as JSON
+to `BM_PARITY_LOG` when set. A gate opens only on the files' provenance:
+the committed set is darwin-arm64/3.13.13/15.1.0, an as-found set says what
+it is in `platform.json`, and `BM_PLATFORM_KEY` makes both sides report
+another platform (for trying the gates locally, nothing else).
+`unicode_tables_regen` under a `BM_REFERENCE_PYTHON` of another Unicode is
+set aside the same way, but only when the files under test were made under
+that Unicode too.
+
+| test (file: function) | golden file | class |
+| --- | --- | --- |
+| `golden_canonical_json`: `canonical_json_every_case` | `canonical_json.jsonl` | i |
+| `golden_datetime`: `datetime_every_case` | `datetime.jsonl` | i |
+| `golden_log_chain`: `log_chain_every_row_and_variant` | `log_chain.jsonl` | i |
+| `golden_log_keyring`: `log_keyring_every_case` | `log_keyring.jsonl` | i |
+| `golden_search`: `search_ranker_tables` | `search_ranker.jsonl` header (word lists) | i |
+| `parity_provenance`: both tests | `generate.py`, the manifest | i |
+| `robustness` (5), `search_robustness` (8), `store_robustness` (3), `store_read_only` (11), the library's unit tests | none, or `store_bases.json` / `store_files.jsonl` as input only | i |
+| `golden_datetime_edges`: `datetime_edges_every_case` | `datetime_edges.jsonl` | ii (Python) |
+| `golden_json_edges`: `json_edges_every_case` | `json_edges.jsonl` | ii (Python) |
+| `golden_lexicon`: `lexicon_every_case`, `lexicon_fingerprint` | `lexicon.jsonl` | ii (Unicode) |
+| `golden_lexicon`: `spelling_tables_match_the_golden_file_and_the_rust_tables` | `lexicon_spelling_tables.json` (compiled-in copy pinned to the committed file) | ii (Unicode) |
+| `golden_unicode`: `unicode_every_part`, `unicode_sequences_every_record` | `unicode.jsonl`, `unicode_sequences.jsonl` | ii (Unicode) |
+| `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs` | ii (Unicode) |
+| `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
+| `golden_search`: `search_ranker_every_query_every_mode` | `search_ranker.jsonl` | iii |
+| `sqlite_spike`: `fts5_prefilter_matches_the_reference_sqlite` | `search.jsonl` (bm25 bits) | iii |
+| `golden_store_files`: `every_case_every_answer` | `store_files.jsonl` | iii |
+| `golden_store_files`: `the_reference_written_file_reads_the_same` | `store_real.json`, `store_real.sqlite` | iii |
+| `golden_store_files`: `the_crates_schema_texts_are_the_references` | `store_admission.json` (compiled-in copy pinned to the committed file) | iii (by its generator; its text is platform-independent) |
+| `bench_search`, `bench_tokenize`, `search_differential_files`, `cases_from_env`, `answers_of_env_store`, `time_reads_of_env_store` | files an environment variable names | tools, `#[ignore]`d, not part of parity |
+
+The pinned literal counts (`CASES`, `RANKER_*`, `datetime_edges`' 32/189/105
+and 77 per-platform cells, the 4 FTS shadow rows, 32 FTS rows) count cases
+the generators enumerate from fixed inputs, so a set regenerated anywhere
+has the same counts. Under a Python minor other than 3.13 the version-gated
+files' headers say so (`"python"`), and the tests read it from the manifest.
+
+**The CI job** `native parity (<os>)` (`.github/workflows/ci.yml`) runs
+`tools/parity.py --lint` on ubuntu-latest, macos-latest and windows-latest,
+and the same command runs it here:
+
+```sh
+uv run python native/tools/parity.py --lint     # what CI runs
+```
+
+It lints (`cargo build --locked`, `clippy --all-targets -D warnings`, `fmt
+--check`); step 1 runs `cargo test --locked` against the committed files;
+step 2 regenerates the set as found with the running Python and runs
+`cargo test --locked` with `BM_GOLDEN_DIR` at it and `BM_REFERENCE_PYTHON`
+at that Python: the parity claim on that platform. It prints the manifest
+and a per-test table (compared, set aside, why) to the log and to
+`$GITHUB_STEP_SUMMARY`, and fails on any strict difference, a generator that
+raised, a class (i) or (iii) case step 2 set aside, or a step 2 set not made
+on this platform. A class (ii) difference under a Python or Unicode other
+than the port's is printed and counted, and does not fail. The job is not
+a release gate (release.yml skips it).
 
 ## Regenerating the Unicode tables
 

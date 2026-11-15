@@ -1,8 +1,10 @@
 //! Reading the golden files of `tests/contract/golden` (relative to
-//! `native/`, i.e. `../tests/contract/golden`).
+//! `native/`, i.e. `../tests/contract/golden`), or of the directory
+//! `BM_GOLDEN_DIR` names (`parity`).
 
 #![allow(dead_code)]
 
+pub mod parity;
 pub mod stores;
 
 use std::path::PathBuf;
@@ -14,10 +16,16 @@ use bettermemory_core::pyvalue::{PyError, PyStr, PyValue};
 use bettermemory_core::unicode;
 use serde_json::Value;
 
+/// A golden file in the directory under test: `BM_GOLDEN_DIR`, else the
+/// committed one. Every test reads its golden files through here.
 pub fn golden_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../tests/contract/golden")
-        .join(name)
+    parity::golden_dir().join(name)
+}
+
+/// A golden file as committed, whatever `BM_GOLDEN_DIR` says: for the
+/// copies compiled into the crate, which are pinned to the committed text.
+pub fn committed_path(name: &str) -> PathBuf {
+    parity::committed_dir().join(name)
 }
 
 /// Every line of a `.jsonl` golden file, parsed: the header first.
@@ -113,6 +121,9 @@ pub fn assert_count(name: &str, checked: usize, in_file: usize) {
         "{name}: checked {checked} of {in_file} cases"
     );
     eprintln!("{name}: {checked} of {in_file} cases checked, all passing");
+    let file = name.split_whitespace().next().unwrap_or(name);
+    let class = parity::class_of(parity::gates_of(file));
+    parity::record(name, file, class, checked, &[], &[]);
 }
 
 /// What a JSON form of `canonical_json.jsonl` returns: a `str` or bytes.

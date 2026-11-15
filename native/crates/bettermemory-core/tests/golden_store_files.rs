@@ -23,8 +23,9 @@ use bettermemory_core::store::{
     admission, open_checks, CandidateFilters, SqlValue, StoreError, StoreFile,
 };
 use bettermemory_core::unicode;
+use common::parity::{self, Ledger};
 use common::stores::{cases, materialize, scratch};
-use common::{assert_count, golden_path};
+use common::{assert_count, committed_path, golden_path};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -381,7 +382,7 @@ fn every_case_every_answer() {
     let (header, cases) = cases();
     let checked = run_cases(&header, &cases);
     // Pinned as literals: a line deleted from the file fails here.
-    assert_count("store_files.jsonl", checked, CASES);
+    assert_eq!(checked, CASES, "store_files.jsonl cases");
     let outcomes = |o: &str| cases.iter().filter(|c| c["open"]["outcome"] == o).count();
     assert_eq!(
         (outcomes("refused_store"), outcomes("raised")),
@@ -415,6 +416,9 @@ fn run_cases(header: &Value, cases: &[Value]) -> usize {
         .collect();
     let mut checked = 0;
     let mut lines = Vec::new();
+    // bm25 bits are one platform's (class iii): a differing case is set
+    // aside, named, where the file was made elsewhere.
+    let mut ledger = Ledger::new("every_case_every_answer", "store_files.jsonl");
     for case in cases {
         let name = case["case"].as_str().expect("case").to_owned();
         let dir = scratch(&name);
@@ -453,7 +457,9 @@ fn run_cases(header: &Value, cases: &[Value]) -> usize {
             .clone();
         }
         let mut leaves = 0;
-        compare(&name, &Value::Object(want), &got, &mut leaves);
+        ledger.case(&name, || {
+            compare(&name, &Value::Object(want), &got, &mut leaves)
+        });
         lines.push(format!(
             "{name}: {} {leaves} values in {:.1} ms",
             got["open"]["outcome"].as_str().unwrap_or("?"),
@@ -462,15 +468,30 @@ fn run_cases(header: &Value, cases: &[Value]) -> usize {
         checked += 1;
     }
     eprintln!("{}", lines.join("\n"));
+    ledger.finish(checked);
     checked
 }
 
 #[test]
 fn the_crates_schema_texts_are_the_references() {
-    let committed = std::fs::read_to_string(golden_path("store_admission.json")).expect("golden");
-    let a: Value = serde_json::from_str(&committed).expect("JSON");
+    // The crate compiles in `reference_schema.json`: pinned to the
+    // committed file always.
     let b: Value = serde_json::from_str(admission::reference_schema_json()).expect("JSON");
-    assert_eq!(a, b);
+    let committed =
+        std::fs::read_to_string(committed_path("store_admission.json")).expect("golden");
+    let a: Value = serde_json::from_str(&committed).expect("JSON");
+    assert_eq!(a, b, "the compiled-in schema is the committed file's");
+    // And the directory under test holds the same schema texts: they are
+    // the reference's source strings, not the platform's. Set aside, named,
+    // only where a gate of the file is open.
+    let under_test = std::fs::read_to_string(golden_path("store_admission.json")).expect("golden");
+    let a: Value = serde_json::from_str(&under_test).expect("JSON");
+    let mut ledger = Ledger::new(
+        "the_crates_schema_texts_are_the_references",
+        "store_admission.json",
+    );
+    ledger.case("store_admission.json under test", || assert_eq!(a, b));
+    ledger.finish(1);
 }
 
 /// One store file as the reference's SQLite (3.50.4) wrote it, not rebuilt:
@@ -479,13 +500,25 @@ fn the_crates_schema_texts_are_the_references() {
 /// rows included.
 #[test]
 fn the_reference_written_file_reads_the_same() {
+    let mut ledger = Ledger::new(
+        "the_reference_written_file_reads_the_same",
+        "store_real.sqlite",
+    );
+    ledger.case("store_real.sqlite", reference_written_file);
+    ledger.finish(1);
+}
+
+/// The committed file is SQLite 3.50.4's; an as-found set's is the SQLite
+/// its Python links, which its manifest names.
+fn reference_written_file() {
     let doc: Value = serde_json::from_str(
         &std::fs::read_to_string(golden_path("store_real.json")).expect("golden"),
     )
     .expect("JSON");
     let bytes = std::fs::read(golden_path("store_real.sqlite")).expect("store_real.sqlite");
     assert_eq!(
-        doc["sqlite_version"], "3.50.4",
+        doc["sqlite_version"],
+        parity::provenance().sqlite.as_str(),
         "written by the reference's SQLite"
     );
     assert_eq!(

@@ -18,7 +18,8 @@ use bettermemory_core::search::{
     expansion, lane, Corpus, CorpusStats, Hit, Mode, Options, Record, SearchError,
 };
 use bettermemory_core::{float_repr, lexicon, unicode};
-use common::{assert_count, jsonl, text_field};
+use common::parity::Ledger;
+use common::{jsonl, text_field};
 use serde_json::{json, Value};
 
 fn dt(text: &str) -> DateTime {
@@ -206,6 +207,9 @@ fn check_lines(name: &str, lines: &[Value], fixture: &str) -> (usize, usize) {
     let mut in_file = 0;
     let mut checked = 0;
     let mut failures = Vec::new();
+    // Score bits are one platform's (class iii): Ledger sets a differing
+    // case aside, named, where the file was made elsewhere.
+    let mut ledger = Ledger::new(fixture, name);
     for record in &lines[1..] {
         let query = text_field(record, "query");
         // search.jsonl carries the lexicon's match query; the ranker file
@@ -226,7 +230,11 @@ fn check_lines(name: &str, lines: &[Value], fixture: &str) -> (usize, usize) {
                 &run(&corpus, &whole, &query, header, &modes[mode_name]),
                 compact,
             );
-            if &got != expected {
+            let label = format!(
+                "{:?} [{mode_name}]: expected {expected} got {got}",
+                unicode::to_string(&query)
+            );
+            if ledger.differs_fatally(label, &got == expected) {
                 failures.push(format!(
                     "{:?} [{mode_name}]\n  expected {expected}\n  got      {got}",
                     unicode::to_string(&query)
@@ -246,6 +254,7 @@ fn check_lines(name: &str, lines: &[Value], fixture: &str) -> (usize, usize) {
             .collect::<Vec<_>>()
             .join("\n")
     );
+    ledger.finish(in_file);
     (checked, in_file)
 }
 
@@ -254,7 +263,7 @@ fn search_every_query_every_mode() {
     let (checked, in_file) = check_file("search.jsonl", "search");
     // 27 queries in five modes.
     assert_eq!(in_file, 27 * 5);
-    assert_count("search.jsonl", checked, in_file);
+    assert_eq!(checked, in_file, "search.jsonl");
 }
 
 const RANKER_RECORDS: usize = 324;
@@ -280,7 +289,7 @@ fn search_ranker_every_query_every_mode() {
     assert_eq!(counts["records"], RANKER_RECORDS);
     assert_eq!(counts["queries"], RANKER_QUERIES);
     assert_eq!(counts["cases"], RANKER_CASES);
-    assert_count("search_ranker.jsonl", checked, in_file);
+    assert_eq!(checked, in_file, "search_ranker.jsonl");
 }
 
 #[test]
