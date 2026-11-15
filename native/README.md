@@ -380,7 +380,11 @@ reference's pass for the thread that holds the lock itself (no native
 restore exists), its one-time log line and process-wide memory of
 record-mode directories. Pinned by `store_restore_lock.json`: 4 plain
 cases, 3 record-mode cases, 4 path cases, a restore meeting a read, the
-wait, poll and exit status.
+wait, poll and exit status. The fixture is POSIX only: on Windows its generator is
+not run (`POSIX_ONLY` in `tests/contract/generate.py`, named in the
+manifest), `golden_restore_lock.rs` is not compiled, and
+`restore_lock_not_posix.rs` records the gap as a class (os) case. The
+Windows lock is exercised there only by the tests that open a store.
 
 A finding about the reference, shared by both builds (to be filed): a
 read through a symbolic link to the store file from another directory
@@ -575,7 +579,7 @@ on the runners) and reads the file against those answers; its PARITY line
 names both SQLites. On this Mac the as-found set is byte-identical to the
 committed one.
 
-**Three classes.** A test's class is that of the golden file it compares
+**Four classes.** A test's class is that of the golden file it compares
 with, by the generator that writes it, mirroring the Python side's
 `*_GATED` sets (`tests/common/parity.rs`, `gates_of`):
 
@@ -586,6 +590,12 @@ with, by the generator that writes it, mirroring the Python side's
 - (iii) floating-point score bits: strict where the files were made on this
   platform; elsewhere, a differing case is set aside. (These files are also
   Unicode-gated.)
+- (os) an expectation the operating system cannot meet, whatever made the
+  files: on Windows the private copy keeps its name while it is open (an
+  open file cannot be removed there) and has no mode bits. The test checks
+  what does hold there, and the case is named and counted as set aside in
+  both steps. No golden file has this class; only the two private-copy
+  tests in `store_read_only.rs` record it.
 
 SQLite is no gate: the native build links its own (3.54.1), so the
 reference's SQLite version is recorded, and its effects compared strictly.
@@ -652,7 +662,8 @@ and a per-test table (compared, set aside, why) to the log and to
 `$GITHUB_STEP_SUMMARY`, and fails on any strict difference, a generator that
 raised, a class (i) or (iii) case step 2 set aside, or a step 2 set not made
 on this platform. A class (ii) difference under a Python or Unicode other
-than the port's is printed and counted, and does not fail. The job is not
+than the port's, and a class (os) case, is printed and counted, and does
+not fail. The job is not
 a release gate (release.yml skips it).
 
 ## Regenerating the Unicode tables

@@ -135,6 +135,13 @@ PLATFORM_GATED = frozenset(
 )
 
 
+#: Generators that drive a POSIX directory ``flock`` and have no case on
+#: Windows (the lock there is a record file and a handle on the store,
+#: ENG-321). Under ``--as-found`` on Windows they are named in the manifest
+#: (``not_here``) and write no file; that is no raise.
+POSIX_ONLY = frozenset({"store_restore_lock"})
+
+
 def platform_key() -> str:
     """``sys.platform``-``machine``; ``BM_PLATFORM_KEY`` overrides it, to
     simulate another platform (the native tests read it too)."""
@@ -178,6 +185,11 @@ def as_found(out: Path) -> int:
     failed = 0
     for name, generate in GENERATORS.items():
         entry: dict[str, object] = {"gated_by": drift(name)}
+        if name in POSIX_ONLY and sys.platform == "win32":
+            entry["not_here"] = "POSIX only: no case on Windows"
+            generators[name] = entry
+            print(f"{name}: not generated here (POSIX only)")
+            continue
         try:
             produced = generate()
         except Exception as exc:  # recorded, and the run goes on
@@ -239,6 +251,7 @@ def as_found(out: Path) -> int:
         },
         "generators": generators,
         "raised": sorted(n for n, e in generators.items() if "raised" in e),
+        "not_here": sorted(n for n, e in generators.items() if "not_here" in e),
         "files": files,
     }
     (out / "platform.json").write_text(

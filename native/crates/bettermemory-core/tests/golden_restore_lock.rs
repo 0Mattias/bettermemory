@@ -4,7 +4,11 @@
 //! makes nothing; a marker with no lock held refuses no read; a read holds
 //! a restore off until the store drops. Gated on the platform: the lock
 //! is a directory `flock` on POSIX and a record file and a handle on
-//! Windows, and the committed files were made on POSIX.
+//! Windows, and the committed files were made on POSIX. The fixture has
+//! no Windows case (its generator drives a directory `flock`), so this
+//! file is POSIX only; `restore_lock_not_posix.rs` records that on Windows.
+
+#![cfg(unix)]
 
 mod common;
 
@@ -101,7 +105,6 @@ fn reads_meet_the_restore_lock_as_the_reference() {
 
 /// A read refused during a restore creates nothing in the store's
 /// directory or its keys directory, and leaves no private copy.
-#[cfg(unix)]
 #[test]
 fn a_read_during_a_restore_refuses_and_creates_nothing() {
     let (dir, _) = case_store("intact");

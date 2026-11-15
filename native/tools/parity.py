@@ -22,7 +22,10 @@ Steps:
 It prints the manifest and a table of every gated test's counts, appends
 them to ``$GITHUB_STEP_SUMMARY`` when that is set, and exits non-zero when
 step 0, 1 or 2 fails, a generator raised, or step 2 set aside a class (i) or
-(iii) case.
+(iii) case. A class (os) case is an expectation the operating system cannot
+meet (Windows cannot remove an open file and has no mode bits); the test
+checks what holds there instead, and the case is named and counted, never
+failed.
 
 ``--golden DIR`` skips the generation and uses DIR (made earlier with
 ``--as-found``): how a perturbed or foreign set is tried locally.
@@ -309,6 +312,8 @@ def summary(
     for name, entry in sorted(manifest["generators"].items()):
         if "raised" in entry:
             out.append(f"- generator {name} raised: {entry['raised']}")
+        if "not_here" in entry:
+            out.append(f"- generator {name} not run here: {entry['not_here']}")
     out += ["", "Verdict: " + ("FAIL" if failures else "pass")]
     out += [f"- {f}" for f in failures]
     out += ["", "<details><summary>platform.json</summary>", "", "```json"]

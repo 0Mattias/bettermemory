@@ -161,7 +161,7 @@ fn read_only_wal_store_with_orphan_wal() {
         common::parity::record(
             "read_only_wal_store_with_orphan_wal",
             "private copy",
-            "i",
+            "os",
             1,
             &["the copy's names are removed once open".to_owned()],
             &["Windows cannot remove an open file".to_owned()],
@@ -544,7 +544,7 @@ fn a_copy_without_wal_never_has_a_name() {
     common::parity::record(
         "a_copy_without_wal_never_has_a_name",
         "private copy",
-        "i",
+        "os",
         1,
         &["no name before the first write; 0600/0700 modes".to_owned()],
         &["Windows cannot remove an open file and has no mode bits".to_owned()],

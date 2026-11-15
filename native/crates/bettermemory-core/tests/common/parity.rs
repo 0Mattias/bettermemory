@@ -9,7 +9,7 @@
 //! as the `COMMITTED_*` constants say (pinned against `tests/contract/generate.py` by
 //! `the_committed_provenance_is_generate_py_s`).
 //!
-//! The tests sort into three classes (native/README.md, "Parity"):
+//! The tests sort into four classes (native/README.md, "Parity"):
 //!
 //! - (i) platform- and version-independent: always compared strictly.
 //! - (ii) tied by design to the Python or Unicode version the port
@@ -19,6 +19,10 @@
 //! - (iii) floating-point score bits, a property of one platform: strict
 //!   where the files were made on this platform; elsewhere a case that
 //!   differs is set aside and named.
+//! - (os) an expectation the operating system cannot meet, whatever made
+//!   the files (Windows cannot remove an open file and has no mode bits):
+//!   the test checks what holds there instead and records the case as set
+//!   aside. No gate gives this class; a test passes it to [`record`] itself.
 //!
 //! A gate opens only on the files' recorded provenance, file by file, as
 //! `tests/contract/generate.py`'s `*_GATED` sets gate the Python side. With
