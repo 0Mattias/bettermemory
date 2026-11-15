@@ -1,0 +1,1083 @@
+{
+ "commit": "3d1cee5133d15bb14db7b0501297ecdbf53c56f8",
+ "kind": "instrument-panel",
+ "latency": {
+  "source": "bench/scale, cited, not re-run",
+  "x1": {
+   "arms": {
+    "api_sessions": {
+     "n": 5,
+     "p50_ms": 150.75,
+     "p95_ms": 1453.25
+    },
+    "brief_probed": {
+     "n": 60,
+     "p50_ms": 32.96,
+     "p95_ms": 48.01
+    },
+    "hook_prompt": {
+     "n": 90,
+     "p50_ms": 13.01,
+     "p95_ms": 15.77
+    },
+    "hook_session_start": {
+     "n": 60,
+     "p50_ms": 24.54,
+     "p95_ms": 62.51
+    },
+    "memory_search": {
+     "n": 60,
+     "p50_ms": 11.45,
+     "p95_ms": 18.2
+    },
+    "memory_write.first_call": {
+     "n": 30,
+     "p50_ms": 29.49,
+     "p95_ms": 59.52
+    },
+    "memory_write.reviewed_write": {
+     "n": 30,
+     "p50_ms": 54.41,
+     "p95_ms": 123.38
+    },
+    "resolution_first_sight": {
+     "n": 15,
+     "p50_ms": 5.01,
+     "p95_ms": 5.17
+    },
+    "resolution_first_sight_commitless": {
+     "n": 10,
+     "p50_ms": 4.64,
+     "p95_ms": 4.84
+    },
+    "resolution_hook": {
+     "n": 60,
+     "p50_ms": 0.5,
+     "p95_ms": 3.16
+    }
+   },
+   "at": "2026-11-14T12:02:32.309462Z",
+   "commit": "d403d3daa462f8fe2ee2710aec3f6d2cd3e1859e",
+   "file": "scale-2026-11-14-x1-measure-2.json"
+  },
+  "x10": {
+   "arms": {
+    "api_sessions": {
+     "n": 5,
+     "p50_ms": 864.89,
+     "p95_ms": 3747.56
+    },
+    "brief_probed": {
+     "n": 60,
+     "p50_ms": 199.23,
+     "p95_ms": 323.1
+    },
+    "hook_prompt": {
+     "n": 90,
+     "p50_ms": 35.88,
+     "p95_ms": 65.19
+    },
+    "hook_session_start": {
+     "n": 60,
+     "p50_ms": 171.59,
+     "p95_ms": 322.28
+    },
+    "memory_search": {
+     "n": 60,
+     "p50_ms": 22.07,
+     "p95_ms": 32.45
+    },
+    "memory_write.first_call": {
+     "n": 30,
+     "p50_ms": 169.74,
+     "p95_ms": 408.34
+    },
+    "memory_write.reviewed_write": {
+     "n": 30,
+     "p50_ms": 239.05,
+     "p95_ms": 642.62
+    },
+    "resolution_first_sight": {
+     "n": 15,
+     "p50_ms": 5.5,
+     "p95_ms": 5.8
+    },
+    "resolution_first_sight_commitless": {
+     "n": 10,
+     "p50_ms": 5.26,
+     "p95_ms": 20.08
+    },
+    "resolution_hook": {
+     "n": 60,
+     "p50_ms": 0.63,
+     "p95_ms": 3.27
+    }
+   },
+   "at": "2026-11-14T12:03:50.371574Z",
+   "commit": "d403d3daa462f8fe2ee2710aec3f6d2cd3e1859e",
+   "file": "scale-2026-11-14-x10-measure-2.json"
+  },
+  "x100": {
+   "arms": {
+    "api_sessions": {
+     "n": 1,
+     "p50_ms": 4724.4,
+     "p95_ms": 4724.4
+    },
+    "brief_probed": {
+     "n": 10,
+     "p50_ms": 1853.76,
+     "p95_ms": 3905.99
+    },
+    "hook_prompt": {
+     "n": 15,
+     "p50_ms": 167.64,
+     "p95_ms": 212.4
+    },
+    "hook_session_start": {
+     "n": 10,
+     "p50_ms": 1133.57,
+     "p95_ms": 4354.59
+    },
+    "memory_search": {
+     "n": 10,
+     "p50_ms": 102.1,
+     "p95_ms": 135.05
+    },
+    "memory_write.first_call": {
+     "n": 10,
+     "p50_ms": 1040.89,
+     "p95_ms": 5209.17
+    },
+    "memory_write.reviewed_write": {
+     "n": 10,
+     "p50_ms": 632.2,
+     "p95_ms": 5365.98
+    },
+    "resolution_first_sight": {
+     "n": 8,
+     "p50_ms": 6.94,
+     "p95_ms": 7.39
+    },
+    "resolution_first_sight_commitless": {
+     "n": 5,
+     "p50_ms": 6.45,
+     "p95_ms": 6.62
+    },
+    "resolution_hook": {
+     "n": 10,
+     "p50_ms": 3.84,
+     "p95_ms": 4.69
+    }
+   },
+   "at": "2026-11-14T12:07:26.869191Z",
+   "commit": "d403d3daa462f8fe2ee2710aec3f6d2cd3e1859e",
+   "file": "scale-2026-11-14-x100-measure-2.json"
+  }
+ },
+ "machine": {
+  "python": "3.11.15",
+  "system": "Darwin"
+ },
+ "program_sha256": "e71ab0305dd8c13d004bbadfbb5ec400e6cb39828d9b479f282b51da7489459a",
+ "run_at": "2026-11-15T07:45:10.454556+00:00",
+ "src_dirty": false,
+ "store": {
+  "eval": {
+   "counts": {
+    "applied_explicit": 175,
+    "applied_hook": 175,
+    "applied_model": 0,
+    "applied_total": 902,
+    "explicit_endorsements_with_excerpt": 175,
+    "repeat_audits": 1,
+    "retrieval_occurrences": 1504,
+    "silent_misses": 3,
+    "turns_audited": 114,
+    "turns_no_signal": 315
+   },
+   "endorsement_rate": {
+    "ci95_lower": 0.1695263726229845,
+    "ci95_upper": 0.22109556392751165,
+    "denominator": 902,
+    "numerator": 175,
+    "rate": 0.19401330376940132,
+    "torn_read": false
+   },
+   "events_in_window": 2749,
+   "memory_helped_rate": {
+    "ci95_lower": 0.10111935341593638,
+    "ci95_upper": 0.13354826684338,
+    "denominator": 1504,
+    "numerator": 175,
+    "rate": 0.1163563829787234,
+    "torn_read": false
+   },
+   "review": {
+    "actions": {
+     "committed": 133,
+     "refused_secret": 0,
+     "refused_standing": 6,
+     "refused_unsafe": 0,
+     "restates": 0
+    },
+    "calls_per_committed_write": 2.917,
+    "chains": {
+     "answered": 139,
+     "closed_by_call": 0,
+     "issued": 146,
+     "pending": 0,
+     "unanswered": 7
+    },
+    "committed_chains": {
+     "calls": 388,
+     "chains": 133
+    },
+    "refused_chains": {
+     "calls": 21,
+     "chains": 0
+    },
+    "response_chars_n": 260,
+    "response_chars_p50": 8381.0,
+    "unanswered_chains": {
+     "calls": 25,
+     "chains": 7
+    },
+    "unanswered_share": 0.0479,
+    "update_suggested": 14
+   },
+   "silent_miss_rate": {
+    "ci95_lower": 0.008989398451945727,
+    "ci95_upper": 0.07452610031928616,
+    "denominator": 114,
+    "numerator": 3,
+    "rate": 0.02631578947368421,
+    "torn_read": false
+   },
+   "surfaces": {
+    "brief": {
+     "chars_p50": 2129,
+     "deliveries": 16,
+     "deliveries_helped": 13,
+     "delivery_helped_rate": {
+      "ci95_lower": 0.5699064013154177,
+      "ci95_upper": 0.9340852122641324,
+      "denominator": 16,
+      "numerator": 13,
+      "rate": 0.8125,
+      "torn_read": false
+     },
+     "ignored": 0,
+     "ignored_rate": {
+      "ci95_lower": 0.0,
+      "ci95_upper": 0.01595073276377503,
+      "denominator": 237,
+      "numerator": 0,
+      "rate": 0.0,
+      "torn_read": false
+     },
+     "opened": 78,
+     "shown": 237,
+     "shown_opened_rate": {
+      "ci95_lower": 0.27243161170736435,
+      "ci95_upper": 0.39124775265493855,
+      "denominator": 237,
+      "numerator": 78,
+      "rate": 0.3291139240506329,
+      "torn_read": false
+     },
+     "shown_used_rate": {
+      "ci95_lower": 0.10814045697244351,
+      "ci95_upper": 0.19845773868810684,
+      "denominator": 237,
+      "numerator": 35,
+      "rate": 0.14767932489451477,
+      "torn_read": false
+     },
+     "used": 35
+    },
+    "recall": {
+     "chars_p50": 561,
+     "deliveries": 94,
+     "deliveries_helped": 32,
+     "delivery_helped_rate": {
+      "ci95_lower": 0.2525882883005792,
+      "ci95_upper": 0.4407936678407758,
+      "denominator": 94,
+      "numerator": 32,
+      "rate": 0.3404255319148936,
+      "torn_read": false
+     },
+     "ignored": 0,
+     "ignored_rate": {
+      "ci95_lower": 0.0,
+      "ci95_upper": 0.022098277972591136,
+      "denominator": 170,
+      "numerator": 0,
+      "rate": 0.0,
+      "torn_read": false
+     },
+     "opened": 27,
+     "shown": 170,
+     "shown_opened_rate": {
+      "ci95_lower": 0.11150729412985383,
+      "ci95_upper": 0.2212185896632083,
+      "denominator": 170,
+      "numerator": 27,
+      "rate": 0.1588235294117647,
+      "torn_read": false
+     },
+     "shown_used_rate": {
+      "ci95_lower": 0.13154390973943275,
+      "ci95_upper": 0.24720087861962514,
+      "denominator": 170,
+      "numerator": 31,
+      "rate": 0.18235294117647058,
+      "torn_read": false
+     },
+     "suppressed": {
+      "other_project": 41,
+      "seen_in_segment": 61,
+      "superseded": 10
+     },
+     "used": 31
+    },
+    "segments": {
+     "opened": 74,
+     "sessions": 20
+    },
+    "settlements": {
+     "brief": 86,
+     "recall": 86
+    }
+   }
+  },
+  "log_rows": 45592,
+  "pointers": {
+   "brief": {
+    "1": {
+     "applied": {
+      "denominator": 4,
+      "numerator": 1,
+      "rate": 0.25
+     },
+     "outcomes": {
+      "applied": 1,
+      "unused": 3
+     },
+     "settled": 4
+    },
+    "2": {
+     "applied": {
+      "denominator": 4,
+      "numerator": 0,
+      "rate": 0.0
+     },
+     "outcomes": {
+      "unused": 4
+     },
+     "settled": 4
+    },
+    "3": {
+     "applied": {
+      "denominator": 7,
+      "numerator": 1,
+      "rate": 0.1429
+     },
+     "outcomes": {
+      "applied": 1,
+      "unused": 6
+     },
+     "settled": 7
+    },
+    "4": {
+     "applied": {
+      "denominator": 3,
+      "numerator": 1,
+      "rate": 0.3333
+     },
+     "outcomes": {
+      "applied": 1,
+      "unused": 2
+     },
+     "settled": 3
+    },
+    "5": {
+     "applied": {
+      "denominator": 5,
+      "numerator": 2,
+      "rate": 0.4
+     },
+     "outcomes": {
+      "applied": 2,
+      "unused": 3
+     },
+     "settled": 5
+    },
+    "6": {
+     "applied": {
+      "denominator": 6,
+      "numerator": 1,
+      "rate": 0.1667
+     },
+     "outcomes": {
+      "applied": 1,
+      "unused": 5
+     },
+     "settled": 6
+    },
+    "7": {
+     "applied": {
+      "denominator": 7,
+      "numerator": 1,
+      "rate": 0.1429
+     },
+     "outcomes": {
+      "applied": 1,
+      "unused": 6
+     },
+     "settled": 7
+    },
+    "8": {
+     "applied": {
+      "denominator": 7,
+      "numerator": 2,
+      "rate": 0.2857
+     },
+     "outcomes": {
+      "applied": 2,
+      "unused": 5
+     },
+     "settled": 7
+    },
+    ">8": {
+     "applied": {
+      "denominator": 43,
+      "numerator": 7,
+      "rate": 0.1628
+     },
+     "outcomes": {
+      "applied": 7,
+      "unused": 36
+     },
+     "settled": 43
+    }
+   },
+   "recall": {
+    "1": {
+     "applied": {
+      "denominator": 45,
+      "numerator": 12,
+      "rate": 0.2667
+     },
+     "outcomes": {
+      "applied": 12,
+      "unused": 33
+     },
+     "settled": 45
+    },
+    "2": {
+     "applied": {
+      "denominator": 31,
+      "numerator": 5,
+      "rate": 0.1613
+     },
+     "outcomes": {
+      "applied": 5,
+      "unused": 26
+     },
+     "settled": 31
+    },
+    "3": {
+     "applied": {
+      "denominator": 10,
+      "numerator": 3,
+      "rate": 0.3
+     },
+     "outcomes": {
+      "applied": 3,
+      "unused": 7
+     },
+     "settled": 10
+    }
+   },
+   "unmatched_settlements": 0
+  },
+  "records": {
+   "groups": [
+    {
+     "age": "0-7d",
+     "chars_total": 66371,
+     "never_applied_explicitly": {
+      "denominator": 23,
+      "numerator": 15,
+      "rate": 0.6522
+     },
+     "never_opened": {
+      "denominator": 23,
+      "numerator": 6,
+      "rate": 0.2609
+     },
+     "never_retrieved": {
+      "denominator": 23,
+      "numerator": 6,
+      "rate": 0.2609
+     },
+     "records": 23,
+     "standing": true,
+     "uses": {
+      "applied": 41,
+      "applied_explicit": 12,
+      "briefed": 40,
+      "contradicted": 0,
+      "ignored": 0,
+      "opened": 46,
+      "recalled": 5,
+      "searched": 23,
+      "unused": 13
+     }
+    },
+    {
+     "age": "0-7d",
+     "chars_total": 454983,
+     "never_applied_explicitly": {
+      "denominator": 100,
+      "numerator": 72,
+      "rate": 0.72
+     },
+     "never_opened": {
+      "denominator": 100,
+      "numerator": 28,
+      "rate": 0.28
+     },
+     "never_retrieved": {
+      "denominator": 100,
+      "numerator": 12,
+      "rate": 0.12
+     },
+     "records": 100,
+     "standing": false,
+     "uses": {
+      "applied": 140,
+      "applied_explicit": 40,
+      "briefed": 67,
+      "contradicted": 0,
+      "ignored": 0,
+      "opened": 153,
+      "recalled": 17,
+      "searched": 36,
+      "unused": 31
+     }
+    },
+    {
+     "age": "7-30d",
+     "chars_total": 193082,
+     "never_applied_explicitly": {
+      "denominator": 53,
+      "numerator": 22,
+      "rate": 0.4151
+     },
+     "never_opened": {
+      "denominator": 53,
+      "numerator": 15,
+      "rate": 0.283
+     },
+     "never_retrieved": {
+      "denominator": 53,
+      "numerator": 1,
+      "rate": 0.0189
+     },
+     "records": 53,
+     "standing": true,
+     "uses": {
+      "applied": 308,
+      "applied_explicit": 123,
+      "briefed": 268,
+      "contradicted": 0,
+      "ignored": 3,
+      "opened": 268,
+      "recalled": 87,
+      "searched": 362,
+      "unused": 76
+     }
+    },
+    {
+     "age": "7-30d",
+     "chars_total": 1134906,
+     "never_applied_explicitly": {
+      "denominator": 243,
+      "numerator": 135,
+      "rate": 0.5556
+     },
+     "never_opened": {
+      "denominator": 243,
+      "numerator": 71,
+      "rate": 0.2922
+     },
+     "never_retrieved": {
+      "denominator": 243,
+      "numerator": 22,
+      "rate": 0.0905
+     },
+     "records": 243,
+     "standing": false,
+     "uses": {
+      "applied": 915,
+      "applied_explicit": 325,
+      "briefed": 852,
+      "contradicted": 0,
+      "ignored": 10,
+      "opened": 575,
+      "recalled": 162,
+      "searched": 1017,
+      "unused": 138
+     }
+    },
+    {
+     "age": "30-90d",
+     "chars_total": 227150,
+     "never_applied_explicitly": {
+      "denominator": 90,
+      "numerator": 46,
+      "rate": 0.5111
+     },
+     "never_opened": {
+      "denominator": 90,
+      "numerator": 9,
+      "rate": 0.1
+     },
+     "never_retrieved": {
+      "denominator": 90,
+      "numerator": 1,
+      "rate": 0.0111
+     },
+     "records": 90,
+     "standing": true,
+     "uses": {
+      "applied": 898,
+      "applied_explicit": 162,
+      "briefed": 123,
+      "contradicted": 0,
+      "ignored": 23,
+      "opened": 575,
+      "recalled": 112,
+      "searched": 1699,
+      "unused": 43
+     }
+    },
+    {
+     "age": "30-90d",
+     "chars_total": 2651513,
+     "never_applied_explicitly": {
+      "denominator": 687,
+      "numerator": 424,
+      "rate": 0.6172
+     },
+     "never_opened": {
+      "denominator": 687,
+      "numerator": 122,
+      "rate": 0.1776
+     },
+     "never_retrieved": {
+      "denominator": 687,
+      "numerator": 28,
+      "rate": 0.0408
+     },
+     "records": 687,
+     "standing": false,
+     "uses": {
+      "applied": 5994,
+      "applied_explicit": 649,
+      "briefed": 583,
+      "contradicted": 0,
+      "ignored": 231,
+      "opened": 2607,
+      "recalled": 411,
+      "searched": 14530,
+      "unused": 122
+     }
+    },
+    {
+     "age": "90d+",
+     "chars_total": 129633,
+     "never_applied_explicitly": {
+      "denominator": 40,
+      "numerator": 8,
+      "rate": 0.2
+     },
+     "never_opened": {
+      "denominator": 40,
+      "numerator": 0,
+      "rate": 0.0
+     },
+     "never_retrieved": {
+      "denominator": 40,
+      "numerator": 0,
+      "rate": 0.0
+     },
+     "records": 40,
+     "standing": true,
+     "uses": {
+      "applied": 1034,
+      "applied_explicit": 93,
+      "briefed": 201,
+      "contradicted": 0,
+      "ignored": 65,
+      "opened": 439,
+      "recalled": 42,
+      "searched": 2166,
+      "unused": 18
+     }
+    },
+    {
+     "age": "90d+",
+     "chars_total": 845919,
+     "never_applied_explicitly": {
+      "denominator": 218,
+      "numerator": 77,
+      "rate": 0.3532
+     },
+     "never_opened": {
+      "denominator": 218,
+      "numerator": 0,
+      "rate": 0.0
+     },
+     "never_retrieved": {
+      "denominator": 218,
+      "numerator": 0,
+      "rate": 0.0
+     },
+     "records": 218,
+     "standing": false,
+     "uses": {
+      "applied": 4806,
+      "applied_explicit": 426,
+      "briefed": 115,
+      "contradicted": 1,
+      "ignored": 236,
+      "opened": 2185,
+      "recalled": 98,
+      "searched": 9809,
+      "unused": 36
+     }
+    }
+   ],
+   "records": 1454,
+   "standing": {
+    "chars_total": 616236,
+    "never_applied_explicitly": {
+     "denominator": 206,
+     "numerator": 91,
+     "rate": 0.4417
+    },
+    "records": 206
+   }
+  },
+  "verdicts": {
+   "by_verdict": {
+    "fresh": {
+     "unchecked": 62,
+     "updated": 12
+    },
+    "spot_check_recommended": {
+     "unchecked": 12,
+     "updated": 7
+    },
+    "spot_check_required": {
+     "unchecked": 294,
+     "updated": 27,
+     "verified": 19
+    }
+   },
+   "check_window_hours": 2.0,
+   "flagged": {
+    "outcomes": {
+     "unchecked": 306,
+     "updated": 34,
+     "verified": 19
+    },
+    "shows": 359,
+    "updated_share": {
+     "denominator": 359,
+     "numerator": 34,
+     "rate": 0.0947
+    },
+    "verified_share": {
+     "denominator": 359,
+     "numerator": 19,
+     "rate": 0.0529
+    }
+   },
+   "flagged_path_drift_reported": {
+    "no_path_missing": 279,
+    "path_missing": 80
+   },
+   "flagged_share": {
+    "denominator": 433,
+    "numerator": 359,
+    "rate": 0.8291
+   },
+   "fresh": {
+    "outcomes": {
+     "unchecked": 62,
+     "updated": 12
+    },
+    "shows": 74,
+    "updated_share": {
+     "denominator": 74,
+     "numerator": 12,
+     "rate": 0.1622
+    },
+    "verified_share": {
+     "denominator": 74,
+     "numerator": 0,
+     "rate": 0.0
+    }
+   },
+   "note": "a verify after a show is read as a check that found the record held; a committed update follows a show for any edit, drift or not, so the update share is read against the fresh shows' (the lift), never alone; a check made without a tool call is not seen",
+   "shows": 433,
+   "update_lift_flagged_over_fresh": 0.584
+  }
+ },
+ "transcripts": {
+  "files": {
+   "bad_lines": 0,
+   "read": 340,
+   "skipped_older_than_window": 5678
+  },
+  "hook_launchers": {
+   "installed": 26,
+   "unknown": 100
+  },
+  "hooks": {
+   "prompt (UserPromptSubmit)": {
+    "injected_chars": {
+     "max": 891,
+     "mean": 535.5,
+     "n": 92,
+     "p50": 561,
+     "p90": 802,
+     "total": 49266
+    },
+    "wall_ms": {
+     "max": 1320.0,
+     "mean": 316.9,
+     "n": 92,
+     "p50": 223.0,
+     "p90": 608.0,
+     "total": 29153.0
+    }
+   },
+   "session-start (SessionStart:compact)": {
+    "injected_chars": {
+     "max": 131,
+     "mean": 131.0,
+     "n": 17,
+     "p50": 131,
+     "p90": 131,
+     "total": 2227
+    },
+    "wall_ms": {
+     "max": 498.0,
+     "mean": 243.2,
+     "n": 17,
+     "p50": 173.0,
+     "p90": 471.0,
+     "total": 4135.0
+    }
+   },
+   "session-start (SessionStart:resume)": {
+    "injected_chars": {
+     "max": 131,
+     "mean": 131.0,
+     "n": 2,
+     "p50": 131,
+     "p90": 131,
+     "total": 262
+    },
+    "wall_ms": {
+     "max": 399.0,
+     "mean": 264.0,
+     "n": 2,
+     "p50": 129.0,
+     "p90": 399.0,
+     "total": 528.0
+    }
+   },
+   "session-start (SessionStart:startup)": {
+    "injected_chars": {
+     "max": 2631,
+     "mean": 2204.6,
+     "n": 14,
+     "p50": 2293,
+     "p90": 2590,
+     "total": 30865
+    },
+    "wall_ms": {
+     "max": 1501.0,
+     "mean": 523.7,
+     "n": 14,
+     "p50": 383.0,
+     "p90": 752.0,
+     "total": 7332.0
+    }
+   },
+   "stop (Stop)": {
+    "injected_chars": {
+     "max": 0,
+     "mean": 0.0,
+     "n": 1,
+     "p50": 0,
+     "p90": 0,
+     "total": 0
+    },
+    "wall_ms": {
+     "max": 608.0,
+     "mean": 608.0,
+     "n": 1,
+     "p50": 608.0,
+     "p90": 608.0,
+     "total": 608.0
+    }
+   }
+  },
+  "other_hooks_wall_ms": {
+   "Stop (no output)": {
+    "max": 1686.0,
+    "mean": 678.0,
+    "n": 5,
+    "p50": 438.0,
+    "p90": 1686.0,
+    "total": 3390.0
+   }
+  },
+  "sessions": {
+   "bettermemory_chars_per_session": {
+    "max": 1251003,
+    "mean": 412316.4,
+    "n": 17,
+    "p50": 244309,
+    "p90": 1134068,
+    "total": 7009379
+   },
+   "bettermemory_hook_chars": 82620,
+   "bettermemory_share": 0.1098,
+   "bettermemory_tool_result_chars": 6926759,
+   "tool_calls_per_session": {
+    "max": 249,
+    "mean": 66.8,
+    "n": 17,
+    "p50": 43,
+    "p90": 142,
+    "total": 1136
+   },
+   "tool_result_chars_all_tools": 63739758,
+   "with_bettermemory": 17
+  },
+  "tool_responses": {
+   "episode": {
+    "max": 1225,
+    "mean": 539.0,
+    "n": 29,
+    "p50": 499,
+    "p90": 674,
+    "total": 15631
+   },
+   "memory_admin": {
+    "max": 9035,
+    "mean": 3393.6,
+    "n": 8,
+    "p50": 629,
+    "p90": 9035,
+    "total": 27149
+   },
+   "memory_remove": {
+    "max": 40,
+    "mean": 40.0,
+    "n": 8,
+    "p50": 40,
+    "p90": 40,
+    "total": 320
+   },
+   "memory_search": {
+    "max": 38636,
+    "mean": 12656.4,
+    "n": 106,
+    "p50": 10582,
+    "p90": 20890,
+    "total": 1341575
+   },
+   "memory_show": {
+    "max": 32701,
+    "mean": 7998.8,
+    "n": 380,
+    "p50": 5792,
+    "p90": 16687,
+    "total": 3039558
+   },
+   "memory_update": {
+    "max": 22177,
+    "mean": 2334.3,
+    "n": 129,
+    "p50": 522,
+    "p90": 4661,
+    "total": 301122
+   },
+   "memory_verify": {
+    "max": 1007,
+    "mean": 510.4,
+    "n": 22,
+    "p50": 451,
+    "p90": 683,
+    "total": 11228
+   },
+   "memory_write": {
+    "max": 21649,
+    "mean": 4824.2,
+    "n": 454,
+    "p50": 3189,
+    "p90": 8426,
+    "total": 2190176
+   }
+  },
+  "unit": "characters of context text; no figure here is a token count",
+  "window": {
+   "since": "2026-11-04T00:00:00+00:00",
+   "until": null
+  },
+  "writes": {
+   "memory_update": {
+    "calls": 129,
+    "calls_per_committed": 2.115,
+    "chars_per_committed": 4936.4,
+    "committed": 61,
+    "statuses": {
+     "committed": 61,
+     "refused_standing": 7,
+     "review": 55,
+     "transient_warning": 6
+    }
+   },
+   "memory_write": {
+    "calls": 454,
+    "calls_per_committed": 3.752,
+    "chars_per_committed": 18100.6,
+    "committed": 121,
+    "statuses": {
+     "committed": 121,
+     "refused_standing": 3,
+     "review": 273,
+     "scope_mismatch": 20,
+     "text": 12,
+     "transient_warning": 20,
+     "user_claim_warning": 5
+    }
+   }
+  }
+ },
+ "version": "v9.0.0rc18-265-g3d1cee51",
+ "window": {
+  "since": "2026-11-04",
+  "until": null
+ }
+}
