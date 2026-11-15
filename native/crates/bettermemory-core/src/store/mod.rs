@@ -488,8 +488,12 @@ pub fn sweep_private_copies() -> usize {
             {
                 // Windows makes the directory under its swept name and locks
                 // it after ([`private_dir`]): there a lock that can be taken
-                // means a dead reader only once the directory is a minute old.
-                Ok(lock) => lock.try_lock().is_ok() && (cfg!(unix) || older(&meta, 60)),
+                // means a dead reader only once its lock file is a minute
+                // old (the file is written once, when the directory is made).
+                Ok(lock) => {
+                    lock.try_lock().is_ok()
+                        && (cfg!(unix) || lock.metadata().is_ok_and(|m| older(&m, 60)))
+                }
                 Err(e) if e.kind() == io::ErrorKind::NotFound => old(&meta),
                 Err(_) => false,
             }

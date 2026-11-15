@@ -146,12 +146,27 @@ fn read_only_wal_store_with_orphan_wal() {
         .expect("private dir")
         .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
         .collect();
+    // Windows removes no open file: there the copy keeps its names while
+    // the reader lives, and the check is set aside, counted.
+    #[cfg(unix)]
     assert!(
         !left
             .iter()
             .any(|n| n == "memory.sqlite" || n == "memory.sqlite-wal"),
         "the copy's names are removed once open: {left:?}"
     );
+    #[cfg(not(unix))]
+    {
+        assert!(left.iter().any(|n| n == "memory.sqlite"), "{left:?}");
+        common::parity::record(
+            "read_only_wal_store_with_orphan_wal",
+            "private copy",
+            "i",
+            1,
+            &["the copy's names are removed once open".to_owned()],
+            &["Windows cannot remove an open file".to_owned()],
+        );
+    }
     // Many reads and transactions after the names are gone.
     for _ in 0..20 {
         assert!(sees_frame(&store));
@@ -290,6 +305,15 @@ fn sweep_removes_only_dead_readers_copies() {
     }
     fs::write(dead.join(".lock"), b"").expect("lock");
     fs::write(live.join(".lock"), b"").expect("lock");
+    // Windows takes a lockable directory for a dead reader's only once its
+    // lock file is a minute old: this one is made two minutes old.
+    #[cfg(not(unix))]
+    fs::OpenOptions::new()
+        .write(true)
+        .open(dead.join(".lock"))
+        .expect("open the dead lock")
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(120))
+        .expect("age the dead lock");
     let held = fs::OpenOptions::new()
         .write(true)
         .open(live.join(".lock"))

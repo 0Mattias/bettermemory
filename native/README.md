@@ -250,7 +250,8 @@ name another user could take first. The reference's own `bettermemory-read-*`
 directories are never touched. On Windows a directory that holds an open
 file cannot be renamed (the first CI run's "Access is denied"), so the
 directory is made under its swept name and locked in place, and a sweeper
-counts it dead only when its lock can be taken and it is over a minute old;
+counts it dead only when its lock can be taken and its lock file is over a
+minute old;
 names cannot be removed while open, so the named copy (and `-wal`) stays
 for the reader's whole life, and a killed reader leaves the directory with
 the copy until the next open sweeps it. An I/O failure on this path names
