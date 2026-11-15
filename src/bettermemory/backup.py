@@ -172,6 +172,7 @@ from .log import (
     KeyUnreadableError,
     canonical_payload,
     fingerprint,
+    is_fingerprint,
     last_row,
     parse_origin,
 )
@@ -754,6 +755,9 @@ def _unreadable_key_files(
                     f"the key file {exc.path} is there and cannot be read ({exc.reason})"
                 )
                 continue
+        if not is_fingerprint(fp):
+            # No key has such a name, and it is not made into a path.
+            continue
         path = ring.retired_path(fp)
         try:
             path.read_bytes()

@@ -174,7 +174,7 @@ def test_an_unreadable_retired_key_is_named(tmp_path: Path) -> None:
 
     ring = KeyRing(tmp_path, "a" * 32)
     ring.ensure_dir()
-    current, retired, absent = "c" * 64, "r" * 64, "0" * 64
+    current, retired, absent = "c" * 64, "d" * 64, "0" * 64
     ring.current_path().mkdir()
     ring.retired_path(retired).mkdir()
     found = _unreadable_key_files(ring, current, [current, retired, absent])
@@ -199,7 +199,7 @@ def test_a_fingerprint_no_file_name_can_hold_is_no_finding(
 
     ring = KeyRing(tmp_path, "a" * 32)
     ring.ensure_dir()
-    current, refused, retired = "c" * 64, "\x1b]52;c;aGk=\x07", "r" * 64
+    current, refused, retired = "c" * 64, "\x1b]52;c;aGk=\x07", "d" * 64
     ring.retired_path(retired).mkdir()
     real = Path.read_bytes
 

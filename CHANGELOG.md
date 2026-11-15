@@ -86,6 +86,19 @@ default behaviour moves.
   names the merged project and then the surviving one. Found while
   pinning the tool responses for the contract fixtures.
   (`handlers/questions.py`, `tests/test_membership_questions.py`)
+- **A key name that is no fingerprint opens no file.** A rekey row
+  names the keys before and after it, and a store's meta names its
+  current one; `KeyRing.key_for_fingerprint` looked each up under a file
+  name holding the name's first 16 characters. A row in a store from
+  elsewhere could spell those to step out of the keys directory to a
+  file ending in `.key`, on Windows above all, where `..` is resolved
+  as text. The file's bytes were used only if their SHA-256 equalled
+  the name, which such a name never does, so nothing was disclosed; a
+  large or blocking file could stall `log verify`, and a lone surrogate
+  in the name raised out of it. A name that is not 64 lowercase hex
+  digits now matches no key and is never made into a path. Found by the
+  native build's port of the chain verifier. (`log.is_fingerprint`,
+  `backup.py`, `tests/test_log.py`)
 - **Two drift messages agree with a single commit.** "1 commit since
   the last verify touch the claims" reads "touched", as its sibling line
   does, and the claim-drift recommendation reads "1 commit ...

@@ -299,6 +299,17 @@ def fingerprint(key: bytes) -> str:
     return hashlib.sha256(key).hexdigest()
 
 
+_FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def is_fingerprint(text: object) -> bool:
+    """Is ``text`` spelled as `fingerprint` spells one: 64 lowercase hex
+    digits? A name a log row or a store's meta gives is read from data
+    another party may have written; one that is not a fingerprint names
+    no key, and is never made into a file name."""
+    return isinstance(text, str) and _FINGERPRINT.match(text) is not None
+
+
 def _utcnow_iso() -> str:
     return isoformat_utc(datetime.now(timezone.utc))
 
@@ -576,7 +587,15 @@ class KeyRing:
             return []
 
     def key_for_fingerprint(self, key_fingerprint: str) -> bytes | None:
-        """The key with this fingerprint, current or retired, or None."""
+        """The key with this fingerprint, current or retired, or None.
+
+        A name that is not a fingerprint (`is_fingerprint`) matches no
+        key, since a key's fingerprint is always one, and no file is
+        opened for it: a rekey row in a store from elsewhere could
+        otherwise spell a path out of the keys directory in the 16
+        characters `retired_path` puts in a file name."""
+        if not is_fingerprint(key_fingerprint):
+            return None
         for path in (self.current_path(), self.retired_path(key_fingerprint)):
             try:
                 key = path.read_bytes()

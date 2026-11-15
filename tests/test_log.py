@@ -105,6 +105,36 @@ def test_fingerprint_is_sha256_of_the_key_bytes() -> None:
     assert chain.fingerprint(key) == hashlib.sha256(key).hexdigest()
 
 
+def test_a_name_that_is_no_fingerprint_names_no_key_and_opens_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rekey row in a store from elsewhere may name its keys as it
+    likes. A name that is not 64 lowercase hex digits matches no key and
+    is never made into a path: `retired_path` keeps 16 characters of it,
+    enough to step out of the keys directory to a file ending in .key."""
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    ring = chain.KeyRing(keys, "0123456789abcdef0123456789abcdef")
+    outside = tmp_path / "x.key"
+    outside.write_bytes(b"not a key of this store")
+    opened: list[Path] = []
+    real = Path.read_bytes
+
+    def spy(self: Path) -> bytes:
+        opened.append(self)
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", spy)
+    for name in ("/../x", "..\\x", "", "A" * 64, "f" * 63, "f" * 65, "file\udcff"):
+        assert not chain.is_fingerprint(name)
+        assert ring.key_for_fingerprint(name) is None
+    assert opened == []
+    key = bytes(range(32))
+    ring.current_path().write_bytes(key)
+    assert chain.is_fingerprint(chain.fingerprint(key))
+    assert ring.key_for_fingerprint(chain.fingerprint(key)) == key
+
+
 def test_genesis_mac_is_thirty_two_zero_bytes() -> None:
     assert chain.GENESIS_MAC == "00" * 32
 
