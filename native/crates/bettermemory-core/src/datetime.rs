@@ -45,7 +45,7 @@ fn is_leap(year: i64) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
-fn days_in_month(year: i64, month: u32) -> u32 {
+pub(crate) fn days_in_month(year: i64, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -65,11 +65,11 @@ fn days_before_month(year: i64, month: u32) -> i64 {
 }
 
 /// The proleptic Gregorian ordinal (0001-01-01 is 1).
-fn ymd_to_ord(year: i64, month: u32, day: u32) -> i64 {
+pub(crate) fn ymd_to_ord(year: i64, month: u32, day: u32) -> i64 {
     days_before_year(year) + days_before_month(year, month) + i64::from(day)
 }
 
-fn ord_to_ymd(ordinal: i64) -> (i64, u32, u32) {
+pub(crate) fn ord_to_ymd(ordinal: i64) -> (i64, u32, u32) {
     // Python's _ord2ymd.
     let mut n = ordinal - 1;
     let n400 = n.div_euclid(146_097);
@@ -140,7 +140,7 @@ impl DateTime {
     }
 
     /// Microseconds since 0001-01-01T00:00 of the wall-clock fields.
-    fn wall_us(&self) -> i128 {
+    pub(crate) fn wall_us(&self) -> i128 {
         let days = i128::from(ymd_to_ord(i64::from(self.year), self.month, self.day) - 1);
         ((days * 86_400
             + i128::from(self.hour) * 3600

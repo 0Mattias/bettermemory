@@ -25,6 +25,7 @@ from . import (
     gen_log_ring,
     gen_mcp,
     gen_state,
+    gen_search_ranker,
     gen_store,
     gen_store_path,
     gen_time,
@@ -39,6 +40,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "log_chain": gen_log.generate,
     "log_keyring": gen_log_ring.generate,
     "store": gen_store.generate,
+    "search_ranker": gen_search_ranker.generate,
     "store_path": gen_store_path.generate,
     "datetime": gen_time.generate,
     "unicode": gen_unicode.generate,
@@ -59,7 +61,16 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
 #: their output; under another version they are not compared.
 UNIDATA_VERSION = "15.1.0"
 UNICODE_GATED = frozenset(
-    {"lexicon", "unicode", "unicode_sequences", "store", "store_path", "mcp", "hooks"}
+    {
+        "lexicon",
+        "unicode",
+        "unicode_sequences",
+        "store",
+        "store_path",
+        "search_ranker",
+        "mcp",
+        "hooks",
+    }
 )
 
 #: The SQLite the golden files were generated under: the store fixture
