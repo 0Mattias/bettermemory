@@ -1,0 +1,103 @@
+{
+  "commit": "06ec7b2fcfd54ce05b5db64a243f5402195cf491",
+  "derived_p50_ms": {
+    "client_import": 18.99,
+    "daemon_work": 81.96,
+    "hook_process": 111.23,
+    "hook_process_rest": -10.28,
+    "http_round_trip": 4.64,
+    "interpreter_start": 7.48,
+    "launcher_start": 4.22
+  },
+  "kind": "daemon-latency-breakdown",
+  "machine": {
+    "cpu_count": 12,
+    "machine": "arm64",
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "method": {
+    "cwd": "the repository root",
+    "derived": "differences of p50s, not a split of one call: launcher_start = shell; interpreter_start = interpreter - shell; client_import = client_import - interpreter; daemon_work = service - http_round_trip (keeps the POST's own framing and JSON); hook_process_rest = hook_process - shell - client_import - service (stdin, location probe, state file, identification, output)",
+    "environment": "PATH and locale kept; HOME, BETTERMEMORY_DIR, BETTERMEMORY_KEYS_DIR and BETTERMEMORY_STATE_DIR in the scratch",
+    "gap_seconds": 3.0,
+    "hook": "prompt",
+    "launcher": "the installed bettermemory script of the bench's environment",
+    "n": 50,
+    "order": "a gap before each daemon call; http_round_trip and service swap order every round",
+    "parts": {
+      "client_import": "python -c 'import bettermemory._entry, bettermemory._daemon_client'",
+      "hook_process": "sh -c '<launcher> hook prompt', payload on stdin",
+      "http_round_trip": "_daemon_client.identify, warm client in the bench",
+      "interpreter": "python -c pass",
+      "service": "_daemon_client.post to /api/v1/hook/prompt, warm client",
+      "shell": "sh -c :"
+    },
+    "sessions": "one session per prompt and per caller: each call is the first prompt of its session, with nothing delivered yet to withhold",
+    "warm_up_rounds": 2
+  },
+  "results": {
+    "client_import": {
+      "max_ms": 31.62,
+      "min_ms": 30.13,
+      "n": 50,
+      "p50_ms": 30.69,
+      "p95_ms": 31.15
+    },
+    "hook_process": {
+      "max_ms": 168.65,
+      "min_ms": 86.45,
+      "n": 50,
+      "p50_ms": 111.23,
+      "p95_ms": 160.17
+    },
+    "http_round_trip": {
+      "max_ms": 5.87,
+      "min_ms": 1.45,
+      "n": 50,
+      "p50_ms": 4.64,
+      "p95_ms": 5.6
+    },
+    "interpreter": {
+      "max_ms": 12.14,
+      "min_ms": 11.16,
+      "n": 50,
+      "p50_ms": 11.7,
+      "p95_ms": 11.99
+    },
+    "service": {
+      "max_ms": 135.16,
+      "min_ms": 53.82,
+      "n": 50,
+      "p50_ms": 86.6,
+      "p95_ms": 131.84
+    },
+    "shell": {
+      "max_ms": 4.48,
+      "min_ms": 3.95,
+      "n": 50,
+      "p50_ms": 4.22,
+      "p95_ms": 4.44
+    }
+  },
+  "run_at": "2026-11-15T13:54:24.234194Z",
+  "scratch_removed": true,
+  "stop": {
+    "down_ok": true,
+    "store_released": true
+  },
+  "store": {
+    "bytes": 93732864,
+    "daemon_log_warnings": 1,
+    "rows": {
+      "log": 45951,
+      "memories": 1458
+    },
+    "rows_after": {
+      "log": 46063,
+      "memories": 1458
+    },
+    "source": "read-only snapshot without keys"
+  },
+  "version": "9.0.0rc18"
+}

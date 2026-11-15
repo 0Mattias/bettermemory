@@ -1,0 +1,45 @@
+{
+  "commit": "06ec7b2fcfd54ce05b5db64a243f5402195cf491",
+  "kind": "daemon-latency-uvx",
+  "machine": {
+    "cpu_count": 12,
+    "machine": "arm64",
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "method": {
+    "command": "sh -c 'uvx --offline bettermemory hook prompt', UV_OFFLINE=1",
+    "gap_seconds": 3.0,
+    "n": 50,
+    "sessions": "one session per prompt",
+    "warm_up_rounds": 2
+  },
+  "resolution": {
+    "resolved": true,
+    "version": "9.0.0rc18"
+  },
+  "results": {
+    "uvx_hook_process": {
+      "max_ms": 235.78,
+      "min_ms": 114.02,
+      "n": 50,
+      "p50_ms": 148.54,
+      "p95_ms": 196.49
+    }
+  },
+  "run_at": "2026-11-15T13:57:33.773593Z",
+  "scratch_removed": true,
+  "stop": {
+    "down_ok": true,
+    "store_released": true
+  },
+  "store": {
+    "bytes": 93732864,
+    "rows": {
+      "log": 45952,
+      "memories": 1458
+    },
+    "source": "read-only snapshot without keys"
+  },
+  "version": "9.0.0rc18"
+}
