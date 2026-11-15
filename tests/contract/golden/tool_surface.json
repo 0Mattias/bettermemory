@@ -1,0 +1,630 @@
+{
+ "fixture": "tool_surface",
+ "instructions": "Memory between sessions lives in these tools, not in files.\nSearch when the user refers to shared context you lack or a stored preference could settle an ambiguity; otherwise do not.\nWrite unasked whenever something durable appears: a preference, a decision, a tool or config fact, finished work and its reason.\nA staleness_verdict other than fresh means a check failed or a record objects; `reason` names it and its remedy. Act on it before relying on the memory.\nSay briefly when a memory shaped your reply. In a loop, call episode(action='handoff') at each iteration's start.",
+ "read": "tools: the tools/list result in served order, each as the wire spells it (name, description, inputSchema, outputSchema); instructions: the initialize result's instructions string; server_name: serverInfo.name. Default configuration.",
+ "server_name": "bettermemory",
+ "tools": [
+  {
+   "description": "Rank stored memories for `query`. Auto-scoped to the caller's project (auto_scope=False: cross-project). `scopes` keeps tags, `exclude_scopes` drops them; `since_prior_session`: this session's changes; `expand_top`: the top hit's body; `client`, `model`: one declared writer. A staleness_verdict other than fresh: `reason` names the failed check or objection and its remedy.",
+   "inputSchema": {
+    "properties": {
+     "auto_scope": {
+      "default": true,
+      "type": "boolean"
+     },
+     "client": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "exclude_scopes": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "expand_top": {
+      "default": false,
+      "type": "boolean"
+     },
+     "max_results": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "mode": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "model": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "query": {
+      "type": "string"
+     },
+     "scopes": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "since_prior_session": {
+      "default": false,
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object"
+   },
+   "name": "memory_search",
+   "outputSchema": {
+    "properties": {
+     "result": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "result"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "One memory in full: body, links both ways, verification and drift. A staleness_verdict other than fresh: act on what `reason` names first.",
+   "inputSchema": {
+    "properties": {
+     "id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id"
+    ],
+    "type": "object"
+   },
+   "name": "memory_show",
+   "outputSchema": {
+    "additionalProperties": true,
+    "type": "object"
+   }
+  },
+  {
+   "description": "Store a durable memory. `scopes`: narrow tags (projects:<name>, tools), never general. `category`: fact, user-inference (about the user) or ambient (context, never cited). Refuses control tokens (content, claims), among others; each refusal names its fix. `claims`: path or path::symbol, watched for drift. `supersedes`: ids this replaces. The unsafe, secret and standing scores may go with the first call; a standing write declares itself there.",
+   "inputSchema": {
+    "properties": {
+     "acknowledge_credential": {
+      "default": false,
+      "type": "boolean"
+     },
+     "acknowledge_scope_mismatch": {
+      "default": false,
+      "type": "boolean"
+     },
+     "acknowledge_transient": {
+      "default": false,
+      "type": "boolean"
+     },
+     "acknowledge_user_claim": {
+      "default": false,
+      "type": "boolean"
+     },
+     "category": {
+      "default": "fact",
+      "type": "string"
+     },
+     "claims": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "confidence": {
+      "default": "medium",
+      "type": "string"
+     },
+     "content": {
+      "type": "string"
+     },
+     "force": {
+      "default": false,
+      "type": "boolean"
+     },
+     "review": {
+      "additionalProperties": true,
+      "type": "object"
+     },
+     "scopes": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "source": {
+      "default": "explicit-statement",
+      "type": "string"
+     },
+     "supersedes": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "content",
+     "scopes"
+    ],
+    "type": "object"
+   },
+   "name": "memory_write",
+   "outputSchema": {
+    "additionalProperties": true,
+    "type": "object"
+   }
+  },
+  {
+   "description": "Edit a memory; pass what changes. `content` needs `standing`, resets verification. `links` replaces all edges (supersedes, contradicts, extends, depends_on).",
+   "inputSchema": {
+    "properties": {
+     "acknowledge_credential": {
+      "default": false,
+      "type": "boolean"
+     },
+     "acknowledge_transient": {
+      "default": false,
+      "type": "boolean"
+     },
+     "acknowledge_truncation": {
+      "default": false,
+      "type": "boolean"
+     },
+     "acknowledge_user_claim": {
+      "default": false,
+      "type": "boolean"
+     },
+     "category": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "confidence": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "content": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "id": {
+      "type": "string"
+     },
+     "links": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "review": {
+      "additionalProperties": true,
+      "type": "object"
+     },
+     "said": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "scopes": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "standing": {
+      "type": [
+       "number",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "id"
+    ],
+    "type": "object"
+   },
+   "name": "memory_update",
+   "outputSchema": {
+    "additionalProperties": true,
+    "type": "object"
+   }
+  },
+  {
+   "description": "Tombstone a memory with a reason; memory_admin restore undoes it.",
+   "inputSchema": {
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "reason": {
+      "type": "string"
+     },
+     "said": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "id",
+     "reason"
+    ],
+    "type": "object"
+   },
+   "name": "memory_remove",
+   "outputSchema": {
+    "additionalProperties": true,
+    "type": "object"
+   }
+  },
+  {
+   "description": "Attest checks you ran; resets last_verified_at. verified_paths anchor drift; verified_absent_paths assert absence; claims replaces bindings. path_mode: read paths as typed (literal) or as code refs (reference). Evidence required.",
+   "inputSchema": {
+    "properties": {
+     "claims": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "id": {
+      "type": "string"
+     },
+     "note": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "path_mode": {
+      "default": "auto",
+      "enum": [
+       "auto",
+       "literal",
+       "reference"
+      ],
+      "type": "string"
+     },
+     "verified_absent_paths": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "verified_commits": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "verified_paths": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "verified_versions": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "id"
+    ],
+    "type": "object"
+   },
+   "name": "memory_verify",
+   "outputSchema": {
+    "additionalProperties": true,
+    "type": "object"
+   }
+  },
+  {
+   "description": "Override a retrieval's automatic applied outcome: ignored (off-topic), contradicted (wrong and not fixed; flags it until an update or verify) or corrected (fixed this turn). `claim_excerpts`: per id, the sentence it shaped.",
+   "inputSchema": {
+    "properties": {
+     "claim_excerpts": {
+      "items": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "memory_ids": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "note": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "outcome": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "memory_ids",
+     "outcome"
+    ],
+    "type": "object"
+   },
+   "name": "memory_record_use",
+   "outputSchema": {
+    "additionalProperties": true,
+    "type": "object"
+   }
+  },
+  {
+   "description": "Run-state journal, pruned after 30 days. write: `body` and a one-line `takeaway`; a sub-agent passes `swarm_id`. handoff: the prior session's takeaways in this worktree (`prior_session_id` picks one, `max_episodes` up to 50); never `include_bodies` for an unaccounted episode.",
+   "inputSchema": {
+    "properties": {
+     "action": {
+      "enum": [
+       "write",
+       "handoff"
+      ],
+      "type": "string"
+     },
+     "body": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "include_bodies": {
+      "default": false,
+      "type": "boolean"
+     },
+     "max_episodes": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "prior_session_id": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "scopes": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "swarm_id": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "takeaway": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "episode",
+   "outputSchema": {
+    "additionalProperties": true,
+    "type": "object"
+   }
+  },
+  {
+   "description": "restore: `id`. rename_scope: `old_scope` to `new_scope`. disable_scope, enable_scope: `scope`, this session; disable projects:X when the user says the work is unrelated to X. conflicts: scan=True detects; `id`, `verdict` (contradiction|compatible), `note` resolve one; memory_show reads a member. acknowledge_miss: `id` and `reason`, or all before ISO `before`. tombstones, health: a summary; `scopes` or `query`, and `section` (names, comma-separated), return detail. relations: a capture's closing call. answer_question (`id` Qnnn, else the first here; `target` picks among several), join_project: answer separate on your judgement; join needs the user's words in `said`. unjoin_project: undo a join. answer_standing: `standing` {id: 0 to 1}.",
+   "inputSchema": {
+    "properties": {
+     "action": {
+      "enum": [
+       "restore",
+       "tombstones",
+       "health",
+       "rename_scope",
+       "conflicts",
+       "acknowledge_miss",
+       "disable_scope",
+       "enable_scope",
+       "relations",
+       "answer_question",
+       "join_project",
+       "unjoin_project",
+       "answer_standing"
+      ],
+      "type": "string"
+     },
+     "answer": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "before": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "id": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "new_scope": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "note": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "old_scope": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "query": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "reason": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "relations": {
+      "additionalProperties": true,
+      "type": "object"
+     },
+     "said": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "scan": {
+      "default": false,
+      "type": "boolean"
+     },
+     "scope": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "scopes": {
+      "items": {
+       "type": "string"
+      },
+      "type": [
+       "array",
+       "null"
+      ]
+     },
+     "section": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "standing": {
+      "additionalProperties": true,
+      "type": "object"
+     },
+     "target": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "verdict": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "memory_admin",
+   "outputSchema": {
+    "additionalProperties": true,
+    "type": "object"
+   }
+  }
+ ]
+}

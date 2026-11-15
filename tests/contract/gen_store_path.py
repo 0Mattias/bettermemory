@@ -70,7 +70,9 @@ _SURFACES = {"auto_scope": SEARCH_AUTO_SCOPE, "unscoped": SEARCH_UNSCOPED}
 def _neutral_git(tmp: Path) -> Iterator[None]:
     saved = dict(os.environ)
     empty = tmp / "gitconfig-empty"
-    empty.write_text("")
+    # No user or system configuration, and no line-ending conversion, so a
+    # fixture commit's SHA is the same on every platform.
+    empty.write_bytes(b"[core]\n\tautocrlf = false\n\teol = lf\n")
     try:
         for var in _GIT_CLEAR:
             os.environ.pop(var, None)
@@ -100,7 +102,7 @@ def _repo(path: Path, remote: str, day: int) -> None:
         )
 
     git("init", "-q", "-b", "main")
-    (path / "README.md").write_text(f"{path.name}\n")
+    (path / "README.md").write_bytes(f"{path.name}\n".encode("ascii"))
     git("add", "-A")
     git("commit", "-q", "-m", f"{path.name} initial")
     git("remote", "add", "origin", remote)

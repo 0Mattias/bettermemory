@@ -15,10 +15,12 @@ import json
 import sqlite3
 import tempfile
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+from tests.contract._sandbox import Scrubber
 from tests.contract.kinds import call_sites, writable_kinds
 from tests.contract.payloads import LEGACY_SHAPES
 from tests.contract.generate import (
@@ -29,6 +31,10 @@ from tests.contract.generate import (
     UNICODE_GATED,
     UNIDATA_VERSION,
 )
+
+#: The tool-response fixture records the review the package ships
+#: (`review.TAU_UNSAFE`, `TAU_SECRET`), which the suite turns off by default.
+pytestmark = pytest.mark.shipped_tau
 
 
 @pytest.fixture(autouse=True)
@@ -123,3 +129,58 @@ _FORWARDING = frozenset(
         "store_membership.py _append(kind)",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# The placeholders (`tests/contract/_sandbox.Scrubber`), on every platform's
+# spelling of a scratch path, since each CI leg only meets its own.
+# ---------------------------------------------------------------------------
+
+_SCRUB_NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("root", "text", "expected"),
+    [
+        (
+            "/tmp/abc",
+            "/tmp/abc/mem/store/memory.sqlite",
+            "<scratch>/mem/store/memory.sqlite",
+        ),
+        (
+            "/private/var/folders/x/T/abc",
+            "cwd /private/var/folders/x/T/abc/alpha.",
+            "cwd <scratch>/alpha.",
+        ),
+        (
+            "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\abc",
+            "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\abc\\mem\\store\\memory.sqlite",
+            "<scratch>/mem/store/memory.sqlite",
+        ),
+        (
+            "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\abc",
+            '{"cwd": "C:\\\\Users\\\\RUNNER~1\\\\AppData\\\\Local\\\\Temp\\\\abc\\\\alpha\\\\x.md"}',
+            '{"cwd": "<scratch>/alpha/x.md"}',
+        ),
+        (
+            "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\abc",
+            "C:/Users/RUNNER~1/AppData/Local/Temp/abc/alpha",
+            "<scratch>/alpha",
+        ),
+    ],
+)
+def test_scrubber_writes_every_scratch_path_alike(
+    root: str, text: str, expected: str
+) -> None:
+    assert Scrubber(root, now=_SCRUB_NOW).text(text) == expected
+
+
+def test_scrubber_keeps_what_the_run_did_not_mint() -> None:
+    scrub = Scrubber("/tmp/abc", now=_SCRUB_NOW)
+    fixed = "01ARZ3NDEKTSV4RRFFQ69G5FAV 2016-07-30 2026-01-01T00:00:00Z"
+    assert scrub.text(fixed) == fixed
+    minted = "01KT1GW6G00000000000000000 2026-06-01 2026-06-02T03:04:05.6Z"
+    assert scrub.text(minted) == "<ulid:1> <date> <timestamp>"
+    assert scrub.text("8081851b1353b84897f648a4c366460539280d68") == (
+        "8081851b1353b84897f648a4c366460539280d68"
+    )

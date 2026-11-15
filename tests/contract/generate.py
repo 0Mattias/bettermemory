@@ -15,9 +15,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import (
+    gen_daemon,
     gen_json,
     gen_lexicon,
     gen_log,
+    gen_mcp,
     gen_store,
     gen_store_path,
     gen_time,
@@ -34,18 +36,26 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_path": gen_store_path.generate,
     "datetime": gen_time.generate,
     "unicode": gen_unicode.generate,
+    "mcp_surface": gen_mcp.surface,
+    "mcp_plain": gen_mcp.plain,
+    "mcp": gen_mcp.responses,
+    "daemon_http": gen_daemon.http_api,
+    "hooks": gen_daemon.hooks,
 }
 
 #: The Unicode data version the golden files were generated under. The
 #: generators gated on it read `unicodedata` or `re`'s word class for
 #: their output; under another version they are not compared.
 UNIDATA_VERSION = "15.1.0"
-UNICODE_GATED = frozenset({"lexicon", "unicode", "store", "store_path"})
+UNICODE_GATED = frozenset({"lexicon", "unicode", "store", "store_path", "mcp", "hooks"})
 
 #: The SQLite the golden files were generated under: the store fixture
-#: holds FTS5's shadow-table definitions and ``bm25()`` scores.
+#: holds FTS5's shadow-table definitions and ``bm25()`` scores. The tool
+#: responses rank hits through FTS5 and tokenize through `re`'s word class,
+#: so ``mcp`` is gated on both; so is ``hooks``, whose hooks rank the
+#: prompt recall's pointers and the Stop audit's hits the same way.
 SQLITE_VERSION = "3.50.4"
-SQLITE_GATED = frozenset({"store", "store_path"})
+SQLITE_GATED = frozenset({"store", "store_path", "mcp", "hooks"})
 
 
 def main() -> int:
