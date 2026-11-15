@@ -508,7 +508,12 @@ async def test_write_stores_absence_claim_when_path_is_gone(
     shown = await _call(server, "memory_show", id=memory_id)
     # An absence claim names a path, so memory_show carries it in `paths`.
     assert "claims" not in shown
-    (finding,) = [f for p, f in shown["paths"].items() if p.endswith("pkg/legacy.py")]
+    # The read's key for the path is spelled with the platform's separator.
+    (finding,) = [
+        f
+        for p, f in shown["paths"].items()
+        if p.replace("\\", "/").endswith("pkg/legacy.py")
+    ]
     assert "claimed absent" in finding
 
 
