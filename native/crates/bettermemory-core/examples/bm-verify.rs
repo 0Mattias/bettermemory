@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use bettermemory_core::log::{ReportDict, ReportValue, VerifyError};
+use bettermemory_core::log::{KeyRing, ReportDict, ReportValue, VerifyError};
 use bettermemory_core::store::keys::load_key_ring;
 use bettermemory_core::store::{open_checks, sqlite_version, StoreError, StoreFile};
 use bettermemory_core::unicode;
@@ -200,10 +200,39 @@ fn run() -> i32 {
         ring.origin_file.is_some()
     ));
 
+    // The chain outside that transaction: on a rollback-journal file read
+    // in place it is read in short batches, and loaded again (meta, the
+    // ring) if a rotation or a writer moves the store on meanwhile.
+    drop(ring);
+    let _ = store.connection().execute_batch("COMMIT");
     let t = Instant::now();
-    let report = match store.verify_chain(&ring, &opened.key_fingerprint) {
+    let mut load = |s: &StoreFile| -> Result<(KeyRing, String), StoreError> {
+        let meta = s.meta()?;
+        let get = |k: &str| {
+            meta.iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.clone())
+        };
+        let id = get("store_id").ok_or_else(|| StoreError::Refused("no store_id".into()))?;
+        let fp = get("key_fingerprint")
+            .ok_or_else(|| StoreError::Refused("no key_fingerprint".into()))?;
+        let ring = load_key_ring(keys_dir, &id)
+            .map_err(|e| StoreError::Refused(format!("key ring: {e:?}")))?;
+        Ok((ring, fp))
+    };
+    let report = match store.verify_loading(None, &mut load) {
         Ok(r) => r,
         Err(VerifyError::Py(e)) => return fail(&mut fields, "verify_chain", e.name()),
+        Err(VerifyError::Source(StoreError::KeptChanging)) => {
+            // Neither ok (0) nor a log that does not verify (1), nor a
+            // failure (2): the store moved on under every try.
+            fields.push(format!(
+                "\"chain\": {{\"status\": \"kept_changing\", \"detail\": {}}}",
+                quote(&StoreError::KeptChanging.to_string())
+            ));
+            println!("{{{}}}", fields.join(", "));
+            return 3;
+        }
         Err(VerifyError::Source(e)) => return fail(&mut fields, "verify_chain", &e.to_string()),
     };
     let verify_ms = t.elapsed().as_secs_f64() * 1000.0;

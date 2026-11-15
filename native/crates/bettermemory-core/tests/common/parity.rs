@@ -164,6 +164,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_admission.json"
         | "store_real.json"
         | "store_real.sqlite" => &[Unicode, Platform],
+        // The restore lock is a directory `flock` on POSIX, a record file
+        // and a handle on Windows; the generator runs on POSIX only.
+        "store_restore_lock.json" => &[Platform],
         _ => &[],
     }
 }

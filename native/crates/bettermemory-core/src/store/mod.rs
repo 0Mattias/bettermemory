@@ -38,6 +38,7 @@
 
 pub mod admission;
 pub mod keys;
+pub mod restore_lock;
 
 use std::fs;
 use std::io;
@@ -65,8 +66,12 @@ const SNAPSHOT_TRIES: usize = 3;
 pub enum StoreError {
     Io(io::Error),
     Sqlite(rusqlite::Error),
-    /// The file changed every time it was copied to be read.
+    /// The file changed every time it was copied to be read; within a
+    /// batched verify pass, the log moved past what the pass could verify.
     Changed,
+    /// [`StoreFile::verify_loading`] met a store moving on under it on
+    /// every try: nothing was found wrong; run the check again.
+    KeptChanging,
     /// A text column that is not UTF-8 (Python's sqlite3 raises
     /// OperationalError "Could not decode to UTF-8").
     NotUtf8 {
@@ -88,6 +93,9 @@ pub enum StoreError {
     Version(StoreVersionError),
     /// The reference raises (a JSON column, a timestamp): which.
     Py(PyError),
+    /// `restore_lock.RestoreRunningError`: a restore holds the store's
+    /// restore lock (exit [`restore_lock::RESTORE_RUNNING_STATUS`]).
+    RestoreRunning,
 }
 
 impl From<io::Error> for StoreError {
@@ -114,6 +122,11 @@ impl std::fmt::Display for StoreError {
             StoreError::Io(e) => write!(f, "{e}"),
             StoreError::Sqlite(e) => write!(f, "{e}"),
             StoreError::Changed => write!(f, "changed every time it was copied to be read"),
+            StoreError::KeptChanging => write!(
+                f,
+                "the store kept changing while it was checked; nothing was found wrong; \
+                 run the check again"
+            ),
             StoreError::NotUtf8 { table, column } => {
                 write!(f, "{table}.{column}: Could not decode to UTF-8")
             }
@@ -128,6 +141,9 @@ impl std::fmt::Display for StoreError {
             StoreError::Admission(r) => write!(f, "is not opened: {}", r.why),
             StoreError::Version(e) => write!(f, "{}", e.message),
             StoreError::Py(e) => write!(f, "{}", e.name()),
+            StoreError::RestoreRunning => {
+                write!(f, "is not opened: {}", restore_lock::RESTORE_RUNNING_WHY)
+            }
         }
     }
 }
@@ -629,6 +645,10 @@ pub struct StoreFile {
     deadline: std::sync::Arc<admission::Deadline>,
     scratch: Option<Scratch>,
     path: PathBuf,
+    /// The restore lock held shared (`restore_lock.reading`), let go after
+    /// the connection closes.
+    hold: Option<restore_lock::ReadHold>,
+    longest_hold: std::cell::Cell<std::time::Duration>,
 }
 
 impl Drop for StoreFile {
@@ -642,6 +662,7 @@ impl Drop for StoreFile {
             drop(scratch);
             let _ = fs::remove_dir_all(&dir);
         }
+        drop(self.hold.take());
     }
 }
 
@@ -668,6 +689,31 @@ impl StoreFile {
         if !resolved.is_file() {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no store file").into());
         }
+        Self::open_held(path, &resolved, restore_lock::OPEN_WAIT)
+    }
+
+    /// [`StoreFile::open`] with the restore lock's wait given (tests).
+    pub fn open_waiting(path: &Path, wait: std::time::Duration) -> Result<StoreFile, StoreError> {
+        sweep_private_copies();
+        let resolved = fs::canonicalize(path)?;
+        if !resolved.is_file() {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no store file").into());
+        }
+        Self::open_held(path, &resolved, wait)
+    }
+
+    fn open_held(
+        path: &Path,
+        resolved: &Path,
+        wait: std::time::Duration,
+    ) -> Result<StoreFile, StoreError> {
+        // Before SQLite opens the file, as `Store.open` takes it before
+        // `connect_read_only`; on the path as given, as the reference.
+        let mut hold = match restore_lock::reading(path, wait) {
+            Ok(h) => h,
+            Err(restore_lock::Refused::Running) => return Err(StoreError::RestoreRunning),
+        };
+        let resolved = resolved.to_path_buf();
         for _ in 0..SNAPSHOT_TRIES {
             let wal = beside(&resolved, "-wal");
             let shm = beside(&resolved, "-shm");
@@ -701,6 +747,8 @@ impl StoreFile {
                 deadline: Default::default(),
                 scratch,
                 path: path.to_path_buf(),
+                hold: hold.take(),
+                longest_hold: Default::default(),
             };
             let mut conn = Connection::open_with_flags(&uri, flags)?;
             conn.busy_timeout(BUSY_TIMEOUT)?;
@@ -1184,15 +1232,185 @@ impl StoreFile {
     /// reference's single `SELECT` gives them (a writer's commits after it
     /// began are not seen). The head and origin files are read as the
     /// reference reads them, outside SQLite, after the rows.
+    ///
+    /// Except on a rollback-journal file read in place outside any open
+    /// transaction ([`StoreFile::reads_in_batches`]): there one snapshot
+    /// is a SHARED lock that holds every writer's commit off for the whole
+    /// pass, so the rows are read in batches of [`VERIFY_BATCH`] by seq,
+    /// each batch its own statement (its own short read), the chain state
+    /// carried across them in `verify_chain_from` ([`Batched`]). A batched
+    /// pass that meets a rekey row it has no segment for gives
+    /// [`StoreError::Changed`]: the ring and the fingerprint the caller
+    /// loaded are older than the log, and only a caller that loads them
+    /// again can verify it. [`StoreFile::verify_loading`] does that.
     pub fn verify_chain(
         &self,
         ring: &KeyRing,
         current_fingerprint: &str,
     ) -> Result<crate::log::ChainReport, VerifyError<StoreError>> {
+        if self.reads_in_batches().map_err(VerifyError::Source)? {
+            return self.verify_chain_in_batches(ring, current_fingerprint, VERIFY_BATCH);
+        }
         self.read_transaction(|store| {
             crate::log::verify_chain_from(store, ring, current_fingerprint)
         })
         .map_err(VerifyError::Source)?
+    }
+
+    /// One batched pass with `batch` rows per statement, whatever the
+    /// file's mode (tests compare it with the one-snapshot verify).
+    /// [`StoreError::Changed`] when a rekey row lands past the pass's
+    /// rekey read; never retried here (the ring would be the same).
+    pub fn verify_chain_in_batches(
+        &self,
+        ring: &KeyRing,
+        current_fingerprint: &str,
+        batch: i64,
+    ) -> Result<crate::log::ChainReport, VerifyError<StoreError>> {
+        self.verify_chain_in_batches_with(ring, current_fingerprint, batch, &mut || {})
+    }
+
+    /// [`StoreFile::verify_chain_in_batches`] with `between` run after
+    /// each batch is read (a test appends rows there, as a writer would).
+    #[doc(hidden)]
+    pub fn verify_chain_in_batches_with(
+        &self,
+        ring: &KeyRing,
+        current_fingerprint: &str,
+        batch: i64,
+        between: &mut dyn FnMut(),
+    ) -> Result<crate::log::ChainReport, VerifyError<StoreError>> {
+        let source = Batched {
+            store: self,
+            between: std::cell::RefCell::new(between),
+            batch: batch.max(1),
+            cap: std::cell::Cell::new(0),
+            rekeys: std::cell::RefCell::new(None),
+            longest_hold: std::cell::Cell::new(std::time::Duration::ZERO),
+        };
+        let out = crate::log::verify_chain_from(&source, ring, current_fingerprint);
+        self.longest_hold.set(source.longest_hold.get());
+        out
+    }
+
+    /// The verify a command runs: `load` reads the key ring and the
+    /// fingerprint meta names (`store_id`, `key_fingerprint`), then the
+    /// chain is verified (`verify_chain`, or batches of `batch` rows when
+    /// given). Loaded again and verified again, at most [`LOAD_TRIES`]
+    /// times, when the store moved on under a batched pass:
+    ///
+    /// - the pass met a rekey row past its rekey read (a key rotation
+    ///   committed meanwhile): `Changed`;
+    /// - after a `Changed`, the ring's current key is not yet the one
+    ///   meta names (a rotation renames its pending key in after its
+    ///   commit, `key_lifecycle._rotate` step 5): looked at again 50 ms on;
+    /// - the head file names a row past the rows read, and the log now
+    ///   holds that row (a writer committed and moved the head between
+    ///   the last batch and the head read): what the reference reports as
+    ///   `tail_deleted`, and is not.
+    ///
+    /// Past the tries, [`StoreError::KeptChanging`]: "the store kept
+    /// changing; nothing was found wrong; run it again", never a tampered
+    /// report. A report that names a row, segment or origin problem is
+    /// returned at once, whatever the head reads. A one-snapshot verify (WAL, a
+    /// copy, a caller's transaction) is run once, as the reference runs.
+    pub fn verify_loading(
+        &self,
+        batch: Option<i64>,
+        load: &mut KeyLoader<'_>,
+    ) -> Result<crate::log::ChainReport, VerifyError<StoreError>> {
+        self.verify_loading_with(batch, load, &mut || {})
+    }
+
+    /// [`StoreFile::verify_loading`] with `between` run after each batch
+    /// of a batched pass (a test appends rows there, as a writer would).
+    #[doc(hidden)]
+    pub fn verify_loading_with(
+        &self,
+        batch: Option<i64>,
+        load: &mut KeyLoader<'_>,
+        between: &mut dyn FnMut(),
+    ) -> Result<crate::log::ChainReport, VerifyError<StoreError>> {
+        let batched = batch.is_some() || self.reads_in_batches().map_err(VerifyError::Source)?;
+        let mut changed = false;
+        for _ in 0..LOAD_TRIES {
+            let (ring, fingerprint) = load(self).map_err(VerifyError::Source)?;
+            if changed {
+                let current = ring
+                    .current
+                    .as_ref()
+                    .map(|k| crate::log::fingerprint(k.bytes()));
+                if current.as_deref() != Some(fingerprint.as_str()) {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    continue;
+                }
+            }
+            let report = match batch {
+                Some(b) => self.verify_chain_in_batches_with(&ring, &fingerprint, b, between),
+                None if batched => {
+                    self.verify_chain_in_batches_with(&ring, &fingerprint, VERIFY_BATCH, between)
+                }
+                None => self.verify_chain(&ring, &fingerprint),
+            };
+            match report {
+                Err(VerifyError::Source(StoreError::Changed)) if batched => changed = true,
+                Ok(report) if batched && self.head_moved_on(&report, &ring)? => {}
+                other => return other,
+            }
+        }
+        Err(VerifyError::Source(StoreError::KeptChanging))
+    }
+
+    /// The report's head reads `tail_deleted` and the row the head file
+    /// names now is in the log with the head's MAC: a writer appended it
+    /// after the last batch was read.
+    fn head_moved_on(
+        &self,
+        report: &crate::log::ChainReport,
+        ring: &KeyRing,
+    ) -> Result<bool, VerifyError<StoreError>> {
+        // A row, segment or origin problem is no writer's doing: another
+        // pass cannot heal it, so the report stands.
+        if !report.problems.is_empty() {
+            return Ok(false);
+        }
+        let tail_deleted = report.head.iter().any(|(k, v)| {
+            *k == "status"
+                && matches!(v, crate::log::ReportValue::Str(s) if *s == unicode::cps("tail_deleted"))
+        });
+        if !tail_deleted {
+            return Ok(false);
+        }
+        let Some(head) = ring.read_head()? else {
+            return Ok(false);
+        };
+        let PyValue::Int(text) = &head.seq else {
+            return Ok(false);
+        };
+        let Ok(seq) = text.parse::<i64>() else {
+            return Ok(false);
+        };
+        let row = self.at_seq(seq).map_err(VerifyError::Source)?;
+        Ok(row.is_some_and(|r| unicode::cps(&r.mac) == head.mac))
+    }
+
+    /// Whether `verify_chain` reads the log in batches: the file is read
+    /// in place (no private copy), is not in WAL mode (a WAL reader holds
+    /// no writer off, so it keeps its one snapshot), and no transaction is
+    /// open on the connection (a caller's `read_transaction` asked for one
+    /// snapshot).
+    pub fn reads_in_batches(&self) -> Result<bool, StoreError> {
+        if self.scratch.is_some() || !self.conn().is_autocommit() {
+            return Ok(false);
+        }
+        let mode = self.pragma("journal_mode")?;
+        Ok(!matches!(mode, SqlValue::Text(ref m) if m.eq_ignore_ascii_case("wal")))
+    }
+
+    /// The longest a single statement of the last batched verify held the
+    /// store's read lock (rows fetched; zero after an unbatched verify).
+    pub fn longest_verify_hold(&self) -> std::time::Duration {
+        self.longest_hold.get()
     }
 
     /// Run `body` in one read transaction (one snapshot of the store), or
@@ -1207,6 +1425,161 @@ impl StoreFile {
         // A read transaction: ending it changes nothing.
         let _ = conn.execute_batch("COMMIT");
         Ok(out)
+    }
+}
+
+/// What [`StoreFile::verify_loading`] loads with: the key ring and the
+/// fingerprint meta names.
+pub type KeyLoader<'a> = dyn FnMut(&StoreFile) -> Result<(KeyRing, String), StoreError> + 'a;
+
+/// Rows per statement of a batched verify: about 1 ms of reading each.
+pub const VERIFY_BATCH: i64 = 1024;
+/// How many times [`StoreFile::verify_loading`] loads and verifies again
+/// while the store moves on under it.
+pub const LOAD_TRIES: usize = 20;
+/// Batches a pass reads past `cap` (the log's end when it began) before it
+/// stops: a writer appending as fast as batches are read cannot keep a
+/// pass going. Rows past where it stops are not read; the head file then
+/// names a row past them, which [`StoreFile::verify_loading`] reads as the
+/// store having moved on.
+pub const EXTRA_BATCHES: usize = 8;
+
+/// The log as a batched verify reads it.
+///
+/// Consistency. The log is append-only for every writer this package
+/// runs: rows are inserted at the end and never updated or deleted (only
+/// a restore replaces the file, and it is held off by the restore lock
+/// this read holds). `first`, the rekey rows and the highest seq then
+/// (`cap`) are read in one short read transaction (at `first`); the
+/// segment map `verify_chain_from` builds from them is that snapshot's.
+/// `each` then reads every row by seq in batches, each its own statement,
+/// through `cap` and on past it to the log's end as it stands when a batch
+/// comes back short, at most [`EXTRA_BATCHES`] batches past `cap`. A row
+/// past `cap` whose kind is `rekey` is a segment the map does not hold:
+/// the pass stops with [`StoreError::Changed`].
+///
+/// What holds: under writers that only append, every row read is the row
+/// the log holds at the end of the pass, so a report names a MAC, link or
+/// seq problem only where one snapshot taken at the end of the pass would;
+/// on a quiescent store every batch reads the one state there is, so the
+/// report is the one-snapshot report (`golden_store_files` compares the
+/// two on every case at 1, 2, 3, 7 and 1,024 rows a batch). What does not:
+/// the rows are not one snapshot. A row changed or deleted in place, by a
+/// writer that is not this package's, after its batch was read is not
+/// seen, and one changed before is reported as what it is; the end of a
+/// pass does not read the rows behind it again (that would be a second
+/// pass). The head and origin files are read after the rows, as in the
+/// reference; a head that names a row past them is told apart from a
+/// deleted tail by [`StoreFile::verify_loading`].
+struct Batched<'a> {
+    store: &'a StoreFile,
+    between: std::cell::RefCell<&'a mut dyn FnMut()>,
+    batch: i64,
+    cap: std::cell::Cell<i64>,
+    rekeys: std::cell::RefCell<Option<Vec<LogRow>>>,
+    longest_hold: std::cell::Cell<std::time::Duration>,
+}
+
+impl Batched<'_> {
+    fn timed<T>(&self, body: impl FnOnce() -> T) -> T {
+        let started = std::time::Instant::now();
+        let out = body();
+        let took = started.elapsed();
+        if took > self.longest_hold.get() {
+            self.longest_hold.set(took);
+        }
+        out
+    }
+
+    /// `first`, `cap` and the rekey rows through `cap`, in one read.
+    fn snapshot(&self) -> Result<Option<LogRow>, StoreError> {
+        self.timed(|| {
+            self.store.read_transaction(|store| {
+                let cap: Option<i64> =
+                    store
+                        .conn()
+                        .query_row("SELECT max(seq) FROM log", [], |r| r.get(0))?;
+                self.cap.set(cap.unwrap_or(0));
+                let first = LogSource::first(store)?;
+                let mut out = Vec::new();
+                store
+                    .log_query(
+                        "WHERE seq > ? AND seq <= ? AND kind = 'rekey' ORDER BY seq",
+                        &[&0i64, &self.cap.get()],
+                        &mut |row| {
+                            if row.kind == crate::log::REKEY {
+                                out.push(row);
+                            }
+                            Ok(true)
+                        },
+                    )?
+                    .map_err(StoreError::Py)?;
+                *self.rekeys.borrow_mut() = Some(out);
+                Ok(first)
+            })?
+        })
+    }
+}
+
+impl LogSource for Batched<'_> {
+    type Error = StoreError;
+
+    fn first(&self) -> Result<Option<LogRow>, StoreError> {
+        self.snapshot()
+    }
+
+    fn rekeys(&self) -> Result<Vec<LogRow>, StoreError> {
+        // `verify_chain_from` reads `first` first; read here only if not.
+        if self.rekeys.borrow().is_none() {
+            self.snapshot()?;
+        }
+        Ok(self.rekeys.borrow_mut().take().unwrap_or_default())
+    }
+
+    fn at_seq(&self, seq: i64) -> Result<Option<LogRow>, StoreError> {
+        self.timed(|| self.store.at_seq(seq))
+    }
+
+    fn each(
+        &self,
+        visit: &mut dyn FnMut(&LogRow) -> Result<(), PyError>,
+    ) -> Result<Result<(), PyError>, StoreError> {
+        let mut after = 0i64;
+        let mut past_cap = 0usize;
+        loop {
+            if after >= self.cap.get() {
+                if past_cap == EXTRA_BATCHES {
+                    return Ok(Ok(()));
+                }
+                past_cap += 1;
+            }
+            let mut batch = Vec::with_capacity(self.batch.min(VERIFY_BATCH) as usize);
+            self.timed(|| {
+                self.store.log_query(
+                    "WHERE seq > ? ORDER BY seq LIMIT ?",
+                    &[&after, &self.batch],
+                    &mut |row| {
+                        batch.push(row);
+                        Ok(true)
+                    },
+                )
+            })?
+            .map_err(StoreError::Py)?;
+            let short = (batch.len() as i64) < self.batch;
+            (self.between.borrow_mut())();
+            for row in &batch {
+                if row.seq > self.cap.get() && row.kind == crate::log::REKEY {
+                    return Err(StoreError::Changed);
+                }
+                if let Err(e) = visit(row) {
+                    return Ok(Err(e));
+                }
+            }
+            match batch.last() {
+                Some(row) if !short => after = row.seq,
+                _ => return Ok(Ok(())),
+            }
+        }
     }
 }
 

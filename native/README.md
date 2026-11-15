@@ -274,20 +274,138 @@ writes of its own GIL-bound writer, gave 35 `ok`, 2 `stale` and 3
 `tail_deleted`). One order differs: the native verify reads the origin file
 before the rows, the reference after; only a rekey moves that file.
 
-The cost of that snapshot to a writer. On a rollback-journal store read in
-place, a read transaction holds SQLite's SHARED lock, and a writer's COMMIT
-waits for it. The reference fetches the log rows in one `SELECT` and hashes
-them after the lock is gone; the native verify hashes inside its
-transaction. Measured with a writer committing one small row every 5 ms on
-a 300,008-row store (416 MB) while verifies ran back to back for 20 s: no
-reader, median 2.2 ms and worst 5.4 ms per commit; the reference's verify
-(16 runs of 1.3 s), median 0.2 ms and worst 496 ms over 1,827 commits; the
-native bm-verify (21 runs), median 0.5 ms and worst 966 ms, and only 90
-commits got through. The native read holds out a writer for a whole verify
-(about 0.85 s per 300,000 rows); a WAL store, the store's own mode, is not
-affected (readers never block a WAL writer). Not changed here: fetching
-the rows first as the reference does would cost what it costs the
-reference in memory (413 MB peak against 9 MB).
+The cost of that snapshot to a writer, and the batches. On a
+rollback-journal store read in place, a read transaction holds SQLite's
+SHARED lock, and a writer must wait for it. When this arises: every
+reference writing open switches the store to WAL (`store._connect`), so
+with the reference's own writers a rollback-journal store exists only
+until the first writer opens it: a restored or backed-up file (`backup`
+writes DELETE mode), or a store a foreign writer keeps in that mode. The
+real case is that first open: it switches the file to WAL and waits for
+the reader's lock to do it. Measured (`rotation_race`'s
+`a_reference_writers_first_open_under_a_native_verify`, release, the intact
+base in DELETE mode with 300,000 rows appended, the reference's
+`Store.open` started 0.1 to 0.4 s into a native verify, 10 runs each): under
+a one-snapshot verify the open took median 723 ms, worst 853 ms; under the
+batched verify median 11.2 ms, worst 12.4 ms (the open's own work
+included). `writer_stall` measures the other case with a native writer
+held in DELETE mode, standing in for a foreign writer: one small commit
+every 5 ms while verifies ran back to back for 20 s, three runs; N1b's
+one-snapshot verify let it wait up to 966 ms, the batched verify median
+0.32 to 0.34 ms, p99 1.9 to 2.0 ms, worst 4.6, 6.8 and 9.7 ms, longest
+single read-lock hold 2.0 to 5.0 ms.
+
+How the batches work. `verify_chain` on such a file (no private copy, not
+WAL, no transaction open: `reads_in_batches`) reads the log in batches of
+1,024 rows by seq, each its own statement, the chain state carried across
+them (`Batched`). The first row, the highest seq (`cap`) and the rekey rows
+through `cap` are read in one short transaction. The rows are then read
+through `cap` and on to the log's end as it stands when a batch comes back
+short, at most `EXTRA_BATCHES` (8) batches past `cap`, so a writer
+appending as fast as batches are read cannot keep a pass going
+(`a_fast_writer_cannot_keep_a_pass_going`: one row a batch, two rows
+appended after every batch, the pass stops after the rows there were and
+8 more). A `rekey` row past `cap` is a segment the pass has no key for: it
+stops with `StoreError::Changed`. `StoreFile::verify_loading` is what a
+command calls (`bm-verify` does): it loads meta's fingerprint and the key
+ring through the caller's loader, verifies, and on `Changed` loads them
+again (waiting 50 ms at a time while the ring's current key is not yet
+the one meta names: a rotation renames its new key in after its commit),
+and also verifies again when the head reads `tail_deleted` while the log
+now holds the head's row with the head's MAC (a writer appended between
+the last batch and the head read). A report that names a row, segment or
+origin problem is returned at once: another pass cannot heal it
+(`a_tampered_store_under_a_writer_ends_tampered`). At most 20 tries, then
+`StoreError::KeptChanging`: "the store kept changing while it was checked;
+nothing was found wrong; run the check again", never `tampered`;
+`bm-verify` prints it as chain status `kept_changing` and exits 3 (0 ok, 1
+a log that does not verify, 2 a failure). The time bound: one pass over
+300,000 rows measured 0.83 to 0.90 s, so 20 tries with their 50 ms waits
+come to about 18 s on that size in the worst case, with the restore lock
+held throughout (a restore is held off that long). A quiet store takes one
+pass.
+WAL files, copies and a caller's transaction keep one snapshot and run
+once, as the reference.
+
+What the batches guarantee, and what not. Every row read is the row the
+log held when its batch was read. Under writers that only append (every
+writer this package runs), the rows read are a prefix of the log as of the
+end of the pass, so a MAC, link or seq problem is named only where one
+snapshot at the end of the pass would name it, and on a quiescent store
+the report is the one-snapshot report (`golden_store_files` verifies every
+case both ways at 1, 2, 3, 7 and 1,024 rows a batch and compares). Not
+guaranteed: the rows are not one snapshot. A row changed or deleted in
+place, by a writer that is not this package's, after its batch was read is
+not seen; one changed before is reported as it is read. The end of a pass
+does not read `cap` or the rows behind it again: that would be a second
+pass, and only the head-row check above is cheap enough to make.
+
+A rotation during a batched verify (`rotation_race`, release, 300,000
+rows, the reference's `rotate_key(apply=True)` started 0 to 1 s into the
+verify, 30 runs each): retried with the same ring, as N1b did, 23 of 30
+were `tampered` (`foreign_segment`, `final_key_mismatch`); through
+`verify_loading`, 30 of 30 `ok`.
+
+A finding about the reference, not changed here: its `log verify` reads
+the head file after the rows, so under a concurrent rotation or a writer
+on a DELETE-mode store it reports `tampered` with head `tail_deleted` (an
+independent review measured 6 of 20 under rotation and 20 of 20 under a
+5 ms writer).
+
+The restore lock (`store::restore_lock`, `restore_lock.reading`). An open
+takes it before SQLite opens the file and holds it until the `StoreFile`
+drops: on POSIX the parent of the store path as given (not resolved)
+locked shared with `flock` (`File::try_lock_shared`), tried every 50 ms
+for 2 s; held exclusively past that (a restore), the open is refused with
+`StoreError::RestoreRunning` (`RestoreRunningError`, "<store> is not
+opened: a restore is running; try again when it has finished", exit 75
+from the reference's read-only commands). A restore's marker with no lock
+held refuses no read. Nothing is created. A directory `flock` cannot lock
+falls to the record file `<store>.restore-lock` (checked, never created,
+never held). The path as given decides the lock, as in the reference: a
+relative path, one through `..` and a linked directory reach the store's
+directory, but a link to the store file from another directory locks that
+other directory, so a restore of the real store does not see the read
+(pinned as the reference does it). Windows: the record file locked and
+let go, then the store file held open without delete sharing and the
+record checked again behind it; compiled only under `cfg(windows)` and
+untested. Known open item: std's `try_lock` on Windows locks the whole
+record file (a mandatory `LockFileEx` lock), where the reference locks one
+byte at 1 MiB so the marker stays readable; while a native read checks,
+a reference restore's marker read or write can fail with a lock
+violation. A byte-range lock is out of reach without `unsafe` or a crate
+outside `Cargo.lock` (no `windows-sys` there); the hold is kept as short
+as the reference's (taken, then let go at once). Not ported: the
+reference's pass for the thread that holds the lock itself (no native
+restore exists), its one-time log line and process-wide memory of
+record-mode directories. Pinned by `store_restore_lock.json`: 4 plain
+cases, 3 record-mode cases, 4 path cases, a restore meeting a read, the
+wait, poll and exit status.
+
+A finding about the reference, shared by both builds (to be filed): a
+read through a symbolic link to the store file from another directory
+locks the link's directory, not the store's, so a restore of the real
+store does not see that read.
+
+The native verify reads the origin file before the rows, the reference
+after (only a rekey moves that file). The native key ring reader reads a
+key file over 1 MiB as unreadable.
+
+"Not found" instead of waiting: `StoreFile::open` canonicalizes the path
+and checks `is_file` before it takes the restore lock, so a read that lands
+in the gap of a restore's swap fails with io NotFound instead of waiting or
+being refused (seen once in 23,095 native reads). Left as is: the
+reference has the same order (`store.py`: `is_file` before `reading`).
+
+The record file is opened read-write without creating it, as the
+reference opens it `O_RDWR`: where it is readable but not writable both
+builds read that as nothing to hold. (Opened read-only, as the first
+version of this port did, the native build would still check the lock
+there: stricter than the reference.)
+
+Left open after N1c: the fold check (`refold`, `log verify`'s `fold` and
+`unaccounted_ids`), validated records (the models), and with them
+`bm-verify`'s fold report; see the reader notes below.
 
 Readers. `meta`, every table's rows (`each_row`), `store_rows`' memory,
 tombstone and episode readers (`MemoryRow`, `EpisodeRow`), the log walked

@@ -38,6 +38,7 @@ from . import (
     gen_log,
     gen_log_ring,
     gen_mcp,
+    gen_restore_lock,
     gen_state,
     gen_search_ranker,
     gen_store,
@@ -70,6 +71,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "cli_surface": gen_cli.generate,
     "state_files": gen_state.generate,
     "store_files": gen_store_files.generate,
+    "store_restore_lock": gen_restore_lock.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -121,7 +123,15 @@ PYTHON_GATED = frozenset({"python_edges"})
 #: platform it runs on, and elsewhere a difference is skipped and named.
 PLATFORM = "darwin-arm64"
 PLATFORM_GATED = frozenset(
-    {"search_ranker", "store", "store_path", "store_files", "mcp", "hooks"}
+    {
+        "search_ranker",
+        "store",
+        "store_path",
+        "store_files",
+        "store_restore_lock",
+        "mcp",
+        "hooks",
+    }
 )
 
 

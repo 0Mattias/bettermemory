@@ -310,6 +310,18 @@ fn native_answers(dir: &std::path::Path, case: &Value, version: &str, full: bool
     let report = store
         .verify_chain(&ring, &get("key_fingerprint"))
         .expect("report");
+    // The batched verify (a rollback-journal store read in place) gives
+    // the same report at every batch size, boundaries on every row.
+    for batch in [1, 2, 3, 7, 1024] {
+        let batched = store
+            .verify_chain_in_batches(&ring, &get("key_fingerprint"), batch)
+            .expect("batched report");
+        assert_eq!(
+            report_json(&batched),
+            report_json(&report),
+            "batched verify, {batch} rows a statement"
+        );
+    }
     out.insert("chain".into(), report_json(&report));
     let replaced = store.history_replaced().expect("history_replaced");
     out.insert(

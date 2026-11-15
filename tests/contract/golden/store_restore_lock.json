@@ -1,0 +1,154 @@
+{
+ "cases": [
+  {
+   "error": "RestoreRunningError",
+   "held": true,
+   "marker": true,
+   "message": "<store> is not opened: a restore is running; try again when it has finished",
+   "name": "running",
+   "names_after": [
+    "memory.sqlite",
+    "memory.sqlite.restore-lock"
+   ],
+   "names_before": [
+    "memory.sqlite",
+    "memory.sqlite.restore-lock"
+   ],
+   "refused": true,
+   "status": 75
+  },
+  {
+   "error": "RestoreRunningError",
+   "held": true,
+   "marker": false,
+   "message": "<store> is not opened: a restore is running; try again when it has finished",
+   "name": "running_no_marker",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "names_before": [
+    "memory.sqlite"
+   ],
+   "refused": true,
+   "status": 75
+  },
+  {
+   "held": false,
+   "holds": true,
+   "marker": true,
+   "name": "unfinished",
+   "names_after": [
+    "memory.sqlite",
+    "memory.sqlite.restore-lock"
+   ],
+   "names_before": [
+    "memory.sqlite",
+    "memory.sqlite.restore-lock"
+   ],
+   "refused": false,
+   "restore_kept_off": true
+  },
+  {
+   "held": false,
+   "holds": true,
+   "marker": false,
+   "name": "clear",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "names_before": [
+    "memory.sqlite"
+   ],
+   "refused": false,
+   "restore_kept_off": true
+  }
+ ],
+ "lock_suffix": ".restore-lock",
+ "open_wait_seconds": 2.0,
+ "paths": [
+  {
+   "error": "RestoreRunningError",
+   "name": "relative",
+   "path": "real/memory.sqlite",
+   "real_dir_held": true,
+   "refused": true
+  },
+  {
+   "error": "RestoreRunningError",
+   "name": "dotdot",
+   "path": "other/../real/memory.sqlite",
+   "real_dir_held": true,
+   "refused": true
+  },
+  {
+   "holds": true,
+   "name": "symlinked_file",
+   "path": "linkdir/memory.sqlite",
+   "real_dir_held": true,
+   "refused": false
+  },
+  {
+   "error": "RestoreRunningError",
+   "name": "symlinked_dir",
+   "path": "ldir/memory.sqlite",
+   "real_dir_held": true,
+   "refused": true
+  }
+ ],
+ "poll_seconds": 0.05,
+ "record_mode": [
+  {
+   "held": false,
+   "holds": false,
+   "name": "record_absent",
+   "names_after": [
+    "memory.sqlite"
+   ],
+   "names_before": [
+    "memory.sqlite"
+   ],
+   "record": false,
+   "refused": false
+  },
+  {
+   "error": "RestoreRunningError",
+   "held": true,
+   "name": "record_held",
+   "names_after": [
+    "memory.sqlite",
+    "memory.sqlite.restore-lock"
+   ],
+   "names_before": [
+    "memory.sqlite",
+    "memory.sqlite.restore-lock"
+   ],
+   "record": true,
+   "refused": true
+  },
+  {
+   "held": false,
+   "holds": false,
+   "name": "record_free",
+   "names_after": [
+    "memory.sqlite",
+    "memory.sqlite.restore-lock"
+   ],
+   "names_before": [
+    "memory.sqlite",
+    "memory.sqlite.restore-lock"
+   ],
+   "record": true,
+   "refused": false
+  }
+ ],
+ "restore_meets_reader": {
+  "detail": "another restore of <store> is running, or a process is opening or reading the store (it holds <lock>; a read-only command such as `log verify` or `doctor` holds it while it reads); run the restore again when it has finished",
+  "name": "restore_meets_reader",
+  "names_after": [
+   "memory.sqlite"
+  ],
+  "reader_holds": true,
+  "restore_took_lock": false
+ },
+ "restore_running_status": 75
+}
