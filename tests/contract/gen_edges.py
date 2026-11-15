@@ -694,6 +694,21 @@ def _python_recursion(call: Callable[[str, int], Any], shape: str) -> dict[str, 
     }
 
 
+def _large_stack() -> int:
+    """Ask for the largest thread stack the platform grants, and return
+    the previous setting. 256 MiB is what the pinned files were made
+    with; Windows refuses a stack of 256 MiB or more (`ValueError: size
+    not valid`), so smaller sizes are tried in turn. A smaller stack can
+    only lower a limit this generator records, which the version gate
+    then reads as a difference."""
+    for mib in (256, 192, 128, 64, 32):
+        try:
+            return threading.stack_size(mib * 1024 * 1024)
+        except ValueError:
+            continue
+    return threading.stack_size()
+
+
 def _in_fresh_thread(work: Callable[[], Any]) -> Any:
     """``work()`` at the top of a new thread with a large stack: the
     recursion budget is then the version's, not what the caller left."""
@@ -705,7 +720,7 @@ def _in_fresh_thread(work: Callable[[], Any]) -> Any:
         except BaseException as exc:  # noqa: BLE001 - re-raised below
             box["e"] = exc
 
-    old = threading.stack_size(256 * 1024 * 1024)
+    old = _large_stack()
     try:
         thread = threading.Thread(target=target)
         thread.start()

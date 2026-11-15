@@ -8,6 +8,7 @@ random source in a way that reaches a golden byte.
 
 from __future__ import annotations
 
+import platform
 import sqlite3
 import sys
 import unicodedata
@@ -91,6 +92,22 @@ SQLITE_GATED = frozenset({"store", "store_path", "mcp", "hooks"})
 #: skipped (CI run 43752288601).
 PYTHON_VERSION = "3.13.13"
 PYTHON_GATED = frozenset({"python_edges"})
+
+
+#: The platform the files that hold floating-point score bits were
+#: generated on. A ranking's scores go through the platform's `log`,
+#: `exp` and `log1p` and its compiler's double arithmetic, in Python and
+#: in SQLite's ``bm25()``, and CI run 43759029312 showed 10 of
+#: search_ranker.jsonl's 208 queries scoring other bits on Linux x86-64
+#: under the same Python minor and Unicode. So bit-equality of scores is a
+#: property of one platform: a build is held to the reference on the
+#: platform it runs on, and elsewhere a difference is skipped and named.
+PLATFORM = "darwin-arm64"
+PLATFORM_GATED = frozenset({"search_ranker", "store", "store_path", "mcp", "hooks"})
+
+
+def platform_key() -> str:
+    return f"{sys.platform}-{platform.machine().lower()}"
 
 
 def python_version() -> str:

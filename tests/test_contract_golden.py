@@ -28,11 +28,14 @@ from tests.contract.generate import (
     GENERATORS,
     GOLDEN,
     PYTHON_GATED,
+    PLATFORM,
+    PLATFORM_GATED,
     PYTHON_VERSION,
     SQLITE_GATED,
     SQLITE_VERSION,
     UNICODE_GATED,
     UNIDATA_VERSION,
+    platform_key,
     python_version,
 )
 
@@ -57,14 +60,26 @@ def _drift(name: str) -> list[str]:
         out.append(f"SQLite {sqlite3.sqlite_version} (files: {SQLITE_VERSION})")
     if name in PYTHON_GATED and python_version() != PYTHON_VERSION:
         out.append(f"Python {python_version()} (files: {PYTHON_VERSION})")
+    if name in PLATFORM_GATED and platform_key() != PLATFORM:
+        out.append(f"platform {platform_key()} (files: {PLATFORM})")
     return out
 
 
 @pytest.mark.parametrize("name", sorted(GENERATORS))
 def test_golden_files_match_the_reference(name: str) -> None:
-    produced = GENERATORS[name]()
-    assert produced, name
     drift = _drift(name)
+    try:
+        produced = GENERATORS[name]()
+    except Exception as exc:
+        # Under the pinned versions a generator that raises is a failure.
+        # Under others it has met something those versions do otherwise,
+        # which is the difference the gate exists to skip.
+        if not drift:
+            raise
+        reason = f"{name} raised {type(exc).__name__}: {exc} under {', '.join(drift)}"
+        warnings.warn(reason, stacklevel=1)
+        pytest.skip(reason)
+    assert produced, name
     for filename, data in sorted(produced.items()):
         committed = (GOLDEN / filename).read_bytes()
         if data != committed and drift:
@@ -100,22 +115,67 @@ def _differing(data: bytes, committed: bytes, shown: int = 12) -> str:
             except ValueError:
                 record = None
             if isinstance(record, dict):
-                for key in ("name", "case", "text", "id"):
+                for key in ("name", "case", "text", "query", "id"):
                     if isinstance(record.get(key), str):
                         label = f"{number} ({key} {record[key]!r:.60})"
                         break
         names.append(label)
     more = f", and {len(lines) - shown} more" if len(lines) > shown else ""
+    detail = []
+    for number in lines[:3]:
+        if number <= len(ours) and number <= len(theirs):
+            try:
+                a, b = json.loads(theirs[number - 1]), json.loads(ours[number - 1])
+            except ValueError:
+                continue
+            paths = _paths(a, b)
+            detail.append(
+                f"line {number}: {len(paths)} values differ, first "
+                + "; ".join(
+                    f"{where} committed {x} produced {y}" for where, x, y in paths[:3]
+                )
+            )
     return (
         f"{len(lines)} of {len(theirs)} lines, at {', '.join(names)}{more}"
-        f"; produced {len(ours)} lines"
+        f"; produced {len(ours)} lines" + (". " + " | ".join(detail) if detail else "")
     )
 
 
+def _paths(a: object, b: object, at: str = "") -> list[tuple[str, str, str]]:
+    """Where two JSON values differ: each differing leaf's path with both
+    values, cut to 48 characters."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        out: list[tuple[str, str, str]] = []
+        for key in sorted(set(a) | set(b)):
+            out += _paths(a.get(key), b.get(key), f"{at}.{key}")
+        return out
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        out = []
+        for i, (x, y) in enumerate(zip(a, b, strict=True)):
+            out += _paths(x, y, f"{at}[{i}]")
+        return out
+    if a == b:
+        return []
+    return [(at or ".", f"{json.dumps(a)!s:.48}", f"{json.dumps(b)!s:.48}")]
+
+
 def test_every_golden_file_has_a_generator() -> None:
-    made = {f for generate in GENERATORS.values() for f in generate()}
+    made: set[str] = set()
+    unknown = False
+    for name, generate in GENERATORS.items():
+        try:
+            made |= set(generate())
+        except Exception:
+            # A gated generator that raises under another version than its
+            # files' names no files here; under the pinned ones it fails.
+            if not _drift(name):
+                raise
+            unknown = True
     on_disk = {p.name for p in GOLDEN.iterdir() if p.is_file()}
-    assert on_disk == made
+    if unknown:
+        assert made <= on_disk
+    else:
+        assert on_disk == made
 
 
 def test_golden_files_stay_small() -> None:
