@@ -70,6 +70,19 @@ _STANDING_HINT = (
     "statement holds of the new content."
 )
 
+#: The key under which a refusal carries its ``update`` row's fields to
+#: `_owed_reply`, which records one row per reply; never sent.
+_ROW = "_row"
+
+#: The ``update`` row status of a reply that asks the standing question.
+_STANDING_QUESTION = "standing_question"
+
+#: The standing ask that follows a refusal's hint in the same reply.
+_STANDING_ALSO = (
+    "In that same call add standing=<0 to 1>: the probability that the "
+    "statement holds of the new content."
+)
+
 #: The control-token refusal's hint. No flag passes the refusal, so the
 #: hint names the remedies and no flag, as memory_write's does: the bare
 #: name for a delimited token, and for a turn marker, which has no
@@ -87,8 +100,8 @@ _CONTROL_TOKEN_HINT = (
 )
 
 DESC_MEMORY_UPDATE = (
-    "Edit a memory in place; pass only what changes. New `content` resets "
-    "verification. `links` replaces every edge (supersedes, contradicts, "
+    "Edit a memory; pass what changes. `content` needs `standing`, resets "
+    "verification. `links` replaces all edges (supersedes, contradicts, "
     "extends, depends_on)."
 )
 
@@ -122,21 +135,20 @@ def _guarded_change(
     )
     guarded = set(_standing.guarded_ids(deps.store, [existing.id, *added]))
     edited = new_body != existing.body
-    # An edit with no answer yet is asked the standing question first and
-    # read again with its answer: whether it stands is known then.
-    stands: bool | None = None
-    if standing_answer is not None or not edited:
-        answer = (
-            standing_answer.probability
-            if standing_answer is not None
-            else _standing.answers(deps.store, [existing.id]).get(existing.id)
-        )
-        category = new_category.value if new_category is not None else None
-        stands = _standing.is_standing(category, answer)
+    # An edit still owing its answer is read on the record's current one,
+    # as its roster is, so the reply that asks for the answer names every
+    # memory the words are owed for.
+    answer = (
+        standing_answer.probability
+        if standing_answer is not None
+        else _standing.answers(deps.store, [existing.id]).get(existing.id)
+    )
+    category = new_category.value if new_category is not None else None
+    stands = _standing.is_standing(category, answer)
     out: list[str] = []
     if existing.id in guarded:
         lost = set(existing.scopes) - set(new_scopes)
-        if edited or lost or stands is False:
+        if edited or lost or not stands:
             out.append(existing.id)
     out += [target for target in added if target in guarded]
     # A link to a memory the store does not hold takes nothing out of force.
@@ -208,12 +220,14 @@ async def memory_update(
         acknowledge_user_claim=acknowledge_user_claim,
         acknowledge_truncation=acknowledge_truncation,
     )
-    if body_edit.refusal is not None:
-        return body_edit.refusal
+    refusal = body_edit.refusal
+    if refusal is not None and refusal["status"] == "control_token_warning":
+        return _owed_reply(deps, id, [refusal], False, None)
     new_body = body_edit.body
     new_links = _new_links(id, existing, links)
 
-    refusal, held = _guard_or_ask_standing(
+    refusals = [] if refusal is None else [refusal]
+    guard_refusal, held = _guard_change(
         deps,
         id,
         existing,
@@ -224,21 +238,28 @@ async def memory_update(
         standing_answer=standing_answer,
         said=said,
     )
-    if refusal is not None:
-        return refusal
+    if guard_refusal is not None:
+        refusals.append(guard_refusal)
+    asks_standing = _asks_standing(existing, new_body, standing_answer)
 
     # A change that makes a standing statement is read against the
-    # standing roster first (ENG-112, `standing_review`).
+    # standing roster (ENG-112, `standing_review`). An edit still owing
+    # its standing answer is read on the record's current one, so the
+    # page that asks for the answer carries the roster too.
     roster = _standing_review.review_change(
         deps,
         state,
         existing,
         body=new_body,
         category=new_category.value if new_category is not None else None,
-        probability=_answer_for(deps, existing, new_body, standing_answer),
+        probability=_answer_for(deps, existing, standing_answer),
         review=review,
         said=said,
+        scopes=new_scopes,
+        links=new_links,
     )
+    if refusals or asks_standing:
+        return _owed_reply(deps, id, refusals, asks_standing, roster)
     early = _standing_review.early_response(deps, id, roster)
     if early is not None:
         return early
@@ -322,16 +343,77 @@ def _words_written(
 def _answer_for(
     deps: ToolHandlers,
     existing: Memory,
-    new_body: str,
     standing_answer: StandingAnswer | None,
 ) -> float | None:
-    """The standing answer for the body an edit leaves: the call's own,
-    else the record's current one when the body is unchanged, else none."""
+    """The standing answer the roster reads the edit on: the call's own,
+    else the record's current one."""
     if standing_answer is not None:
         return standing_answer.probability
-    if new_body != existing.body:
-        return None
     return _standing.answers(deps.store, [existing.id]).get(existing.id)
+
+
+def _owed_reply(
+    deps: ToolHandlers,
+    id: str,
+    refusals: list[dict[str, Any]],
+    asks_standing: bool,
+    roster: _standing_review.StandingReview | None,
+) -> dict[str, Any]:
+    """Write nothing; return one reply carrying everything the change still
+    owes, so the next call can commit: the gate's and the guard's refusals
+    (the first one's status), the standing question, and the roster's page.
+    A decision the roster reached is not acted on while anything else is
+    owed; the call that pays the rest is decided again on the same chain.
+    The reply leaves one ``update`` row: the first refusal's status and
+    fields, else ``standing_question``, with ``owed`` naming every status
+    the reply carries when it carries more than one."""
+    paged = roster if roster is not None and roster.page is not None else None
+    page = paged.page if paged is not None else None
+    parts = [dict(r) for r in refusals]
+    row: dict[str, Any] = {}
+    owed: list[str] = []
+    for part in parts:
+        fields = part.pop(_ROW)
+        owed.append(fields["status"])
+        for key, value in fields.items():
+            row.setdefault(key, value)
+    if asks_standing:
+        owed.append(_STANDING_QUESTION)
+        row.setdefault("status", _STANDING_QUESTION)
+    if paged is not None and page is not None:
+        owed.append(_standing_review.ROSTER_STATUS)
+        row.setdefault("status", _standing_review.ROSTER_STATUS)
+    if len(owed) > 1:
+        row["owed"] = owed
+    deps.recorder.record("update", id=id, **row)
+    if not parts and page is None:
+        return {
+            "status": "review",
+            "written": False,
+            "questions": {"standing": _standing_question()},
+            "hint": _STANDING_HINT,
+        }
+    out: dict[str, Any] = {}
+    for part in [*parts, *([page] if page is not None else [])]:
+        for key, value in part.items():
+            if key != "hint":
+                out.setdefault(key, value)
+    if asks_standing:
+        out["questions"] = {"standing": _standing_question()}
+    hints = [part["hint"] for part in parts]
+    if paged is not None:
+        hints.append(
+            _standing_review.page_hint(paged, standing=asks_standing, lead=not parts)
+        )
+    elif asks_standing:
+        hints.append(_STANDING_ALSO)
+    out["hint"] = " ".join(hints)
+    return out
+
+
+def _standing_question() -> dict[str, str]:
+    """The standing question, as the review form states it."""
+    return {"type": "probability", "instructions": _review.STANDING_STATEMENT}
 
 
 class _BodyEdit(NamedTuple):
@@ -442,8 +524,7 @@ def _answer_standing_only(
     )
     refusal, held = _guard.check(deps, "memory_update", records, said)
     if refusal is not None:
-        deps.recorder.record("update", id=id, status="refused_standing")
-        return refusal
+        refusal = {_ROW: {"status": "refused_standing"}, **refusal}
     roster = _standing_review.review_change(
         deps,
         state,
@@ -453,7 +534,11 @@ def _answer_standing_only(
         probability=standing_answer.probability,
         review=review,
         said=said,
+        scopes=existing.scopes,
+        links=existing.links,
     )
+    if refusal is not None:
+        return _owed_reply(deps, id, [refusal], False, roster)
     early = _standing_review.early_response(deps, id, roster)
     if early is not None:
         return early
@@ -652,13 +737,11 @@ def _credential_gate(
     # (kind only), exactly as on the write path.
     credential_hits = find_credential_markers(new_body)
     if credential_hits and not acknowledge_credential:
-        deps.recorder.record(
-            "update",
-            id=id,
-            status="credential_warning",
-            credential_kinds=[h.kind for h in credential_hits],
-        )
         return {
+            _ROW: {
+                "status": "credential_warning",
+                "credential_kinds": [h.kind for h in credential_hits],
+            },
             "status": "credential_warning",
             "markers": [deps.responses.credential_to_dict(h) for h in credential_hits],
             "hint": (
@@ -701,13 +784,11 @@ def _control_token_gate(
     # event names the template families only.
     token_hits = find_control_tokens(new_body)
     if token_hits:
-        deps.recorder.record(
-            "update",
-            id=id,
-            status="control_token_warning",
-            control_token_kinds=list(dict.fromkeys(h.kind for h in token_hits)),
-        )
         return {
+            _ROW: {
+                "status": "control_token_warning",
+                "control_token_kinds": list(dict.fromkeys(h.kind for h in token_hits)),
+            },
             "status": "control_token_warning",
             "markers": [h.to_dict() for h in token_hits],
             "hint": _CONTROL_TOKEN_HINT,
@@ -730,13 +811,11 @@ def _transient_gate(
     # identically.
     transient_hits = find_transient_markers(new_body)
     if transient_hits and not acknowledge_transient:
-        deps.recorder.record(
-            "update",
-            id=id,
-            status="transient_warning",
-            markers=[h.marker for h in transient_hits],
-        )
         return {
+            _ROW: {
+                "status": "transient_warning",
+                "markers": [h.marker for h in transient_hits],
+            },
             "status": "transient_warning",
             "markers": [deps.responses.transient_to_dict(h) for h in transient_hits],
             "hint": (
@@ -814,14 +893,12 @@ def _user_claim_gate(
         _find_user_claims(new_body) if new_category != Category.USER_INFERENCE else []
     )
     if claim_hits and not acknowledge_user_claim:
-        deps.recorder.record(
-            "update",
-            id=id,
-            status="user_claim_warning",
-            category=(new_category.value if new_category is not None else None),
-            claim_phrases=[h.phrase for h in claim_hits],
-        )
         return {
+            _ROW: {
+                "status": "user_claim_warning",
+                "category": new_category.value if new_category is not None else None,
+                "claim_phrases": [h.phrase for h in claim_hits],
+            },
             "status": "user_claim_warning",
             "markers": [
                 {"phrase": h.phrase, "sentence": h.sentence} for h in claim_hits
@@ -890,14 +967,12 @@ def _truncation_gate(
         # Lengths only, never body text — same redaction discipline
         # `_credential_gate` keeps, since a truncated body is exactly
         # as likely to carry a secret as any other.
-        deps.recorder.record(
-            "update",
-            id=id,
-            status="truncation_warning",
-            previous_length=len(existing.body.strip()),
-            new_length=len(new_body.strip()),
-        )
         return {
+            _ROW: {
+                "status": "truncation_warning",
+                "previous_length": len(existing.body.strip()),
+                "new_length": len(new_body.strip()),
+            },
             "status": "truncation_warning",
             "previous_length": len(existing.body.strip()),
             "new_length": len(new_body.strip()),
@@ -927,6 +1002,50 @@ def _truncation_gate(
     return None, truncation_acknowledged
 
 
+#: The shape of one entry of `links`, as its errors state it.
+_LINK_FORMAT = (
+    '{"type": "supersedes" | "contradicts" | "extends" | "depends_on", '
+    '"target_id": "<memory id>", "note": "<optional why>"}'
+)
+
+
+def _parse_link(i: int, entry: Any) -> MemoryLink:
+    """Take `links[i]`; return the link, or raise a teaching ValueError
+    naming the format and the offending key."""
+    where = f"links[{i}] invalid:"
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"{where} it must be an object {_LINK_FORMAT}, got {type(entry).__name__}"
+        )
+    unknown = sorted(str(k) for k in entry if k not in ("type", "target_id", "note"))
+    if unknown:
+        raise ValueError(
+            f"{where} key {unknown[0]!r} is not a link key; each link is {_LINK_FORMAT}"
+        )
+    for key in ("type", "target_id"):
+        if key not in entry:
+            raise ValueError(
+                f"{where} key {key!r} is missing; each link is {_LINK_FORMAT}"
+            )
+    if entry["type"] not in {t.value for t in LinkType}:
+        raise ValueError(
+            f"{where} key 'type' is {entry['type']!r}; each link is {_LINK_FORMAT}"
+        )
+    note = entry.get("note")
+    if note is not None and not isinstance(note, str):
+        raise ValueError(
+            f"{where} key 'note' must be text; each link is {_LINK_FORMAT}"
+        )
+    try:
+        return MemoryLink.model_validate(entry)
+    except ValueError as exc:
+        raise ValueError(
+            f"{where} key 'target_id': target_id must be a valid ULID, a "
+            f"memory id, got {entry['target_id']!r}; "
+            f"each link is {_LINK_FORMAT}"
+        ) from exc
+
+
 def _new_links(
     id: str, existing: Memory, links: list[dict[str, Any]] | None
 ) -> list[MemoryLink]:
@@ -938,18 +1057,9 @@ def _new_links(
     # unchanged".
     new_links = existing.links
     if links is not None:
-        from ..models import MemoryLink as _MemoryLink
-
-        parsed_links: list[_MemoryLink] = []
+        parsed_links: list[MemoryLink] = []
         for i, entry in enumerate(links):
-            if not isinstance(entry, dict):
-                raise ValueError(
-                    f"links[{i}] must be a dict with 'type' and 'target_id'"
-                )
-            try:
-                parsed_links.append(_MemoryLink.model_validate(entry))
-            except (ValueError, KeyError) as exc:
-                raise ValueError(f"links[{i}] invalid: {exc}") from exc
+            parsed_links.append(_parse_link(i, entry))
             # The note is kept on the record, and memory_show reads it back
             # on both ends of the link (ENG-189).
             refuse_control_tokens(f"links[{i}].note", parsed_links[-1].note)
@@ -975,7 +1085,7 @@ def _new_links(
     return new_links
 
 
-def _guard_or_ask_standing(
+def _guard_change(
     deps: ToolHandlers,
     id: str,
     existing: Memory,
@@ -987,9 +1097,9 @@ def _guard_or_ask_standing(
     standing_answer: StandingAnswer | None,
     said: str | None,
 ) -> tuple[dict[str, Any] | None, _guard.Held | None]:
-    """Take the resolved edit; return the guard's refusal or the standing
-    question, or None, and the words the change rests on, whose row is
-    written once it commits (`_guard.check`)."""
+    """Take the resolved edit; return the guard's refusal, or None, and
+    the words the change rests on, whose row is written once it commits
+    (`_guard.check`)."""
     # A change that takes a guarded record out of force or out of standing,
     # or edits it, rests on the user's words (unit RS-F7 part 5).
     records, rule_s = _guarded_change(
@@ -1003,31 +1113,23 @@ def _guard_or_ask_standing(
     )
     refusal, held = _guard.check(deps, "memory_update", records, said, rule_s=rule_s)
     if refusal is not None:
-        deps.recorder.record(
-            "update",
-            id=id,
-            status="refused_standing",
-            **({"standing_write": True} if refusal.get("standing_write") else {}),
-        )
-        return refusal, None
-
-    # An edit of the body is answered for the new body in this call while
-    # the question is asked (`standing.asking`, the review's switch), so
-    # no edited record waits for its standing answer.
-    if standing_answer is None and new_body != existing.body and _standing.asking():
-        deps.recorder.record("update", id=id, status="standing_question")
-        return {
-            "status": "review",
-            "written": False,
-            "questions": {
-                "standing": {
-                    "type": "probability",
-                    "instructions": _review.STANDING_STATEMENT,
-                }
-            },
-            "hint": _STANDING_HINT,
-        }, None
+        row: dict[str, Any] = {"status": "refused_standing"}
+        if refusal.get("standing_write"):
+            row["standing_write"] = True
+        return {_ROW: row, **refusal}, None
     return None, held
+
+
+def _asks_standing(
+    existing: Memory,
+    new_body: str,
+    standing_answer: StandingAnswer | None,
+) -> bool:
+    """Whether the edit owes its standing answer: an
+    edit of the body is answered for the new body in the call that makes
+    it while the question is asked (`standing.asking`, the review's
+    switch), so no edited record waits for its standing answer."""
+    return standing_answer is None and new_body != existing.body and _standing.asking()
 
 
 def _update_fields(

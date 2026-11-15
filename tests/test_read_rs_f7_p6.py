@@ -285,8 +285,7 @@ async def test_a_write_that_is_not_standing_is_not_counted(
     ambient_text = FACTS[0]
     first = await h.write(ambient_text, category="ambient")
     sent = h.answers(first, standing=0.0)
-    page = await h.write(ambient_text, category="ambient", review=sent)
-    ambient = await h.name(page, ambient_text, sent, [], category="ambient")
+    ambient = await h.name(first, ambient_text, sent, [], category="ambient")
     assert ambient["status"] == "committed", ambient
 
     _, replay, lines = _measure(h, tmp_path)

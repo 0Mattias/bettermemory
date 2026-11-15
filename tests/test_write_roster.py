@@ -174,9 +174,9 @@ async def test_a_write_that_is_not_standing_is_shown_no_roster(h: Harness) -> No
 async def test_an_ambient_write_is_shown_the_roster(h: Harness) -> None:
     ruling, _, _ = _seed_case(h)
     first = await h.write(PLAN, category="ambient")
-    res = await h.write(PLAN, category="ambient", review=h.answers(first, standing=0.0))
-    assert is_roster(res), res
-    assert ruling in _roster_ids(res)
+    assert is_roster(first), first
+    assert first["review"]["related"]
+    assert ruling in _roster_ids(first)
 
 
 async def test_with_no_other_standing_record_a_standing_write_commits(

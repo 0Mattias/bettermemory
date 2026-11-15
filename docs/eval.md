@@ -254,7 +254,14 @@ log holds no open chain for (one no review returned, or one a write
 already answered) is recorded as pre-answered, with the sent id kept on
 its `review_issued` row as `sent_review_id`, so every reviewed write is
 in some chain; when such a call is a standing write with a roster due,
-the roster page follows that pre-answered row in its chain. The p50 of
+the roster page follows that pre-answered row in its chain. A call
+whose subject (content, scopes, category, worktree, declared targets)
+differs from its chain's is recorded the same way. A write refused for a
+standing record leaves its chain open for the retry with the user's
+words: the chain is decided by its last write row, each refused call
+counts as a call of the chain, and a chain refused that way and dropped
+counts as refused, not unanswered. A gate refusal records no review, so
+its retry is a pre-answered chain of one call. The p50 of
 review response sizes leaves roster pages out: a roster page's size
 follows the count of standing memories in force, and stays on its own
 row's `response_chars`. The rows of an update's standing roster

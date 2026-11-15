@@ -518,7 +518,14 @@ def review_unanswered(
         if root in view.review_roots or root in roots:
             continue
         roots.append(root)
-    open_roots = [root for root in roots if find_chain(store, root).open]
+    # A chain refused for a standing record stays open for its retry, and
+    # one dropped there is counted as refused, as it was before it stayed
+    # open, not as unanswered.
+    open_roots = [
+        root
+        for root in roots
+        if (found := find_chain(store, root)).open and not found.standing_refused
+    ]
     if not open_roots:
         return []
     recorder.record(

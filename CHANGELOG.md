@@ -32,6 +32,38 @@ eighteenth was built.
 
 #### Fixed
 
+- **A reviewed write takes fewer calls.** A re-sent write owes answers
+  for the records its chain showed, the cue code's targets and any
+  standing record newly found; a record that moved into the related set
+  by rank opens no page. Each `review_issued` row records a `subject`
+  digest of the content, scopes, category, worktree and declared targets
+  (`review.subject_digest`), and a call with another subject is decided
+  as pre-answered against its own related set. The transient, user-claim
+  and scope-mismatch refusals carry the related statements and the
+  questions without opening a review, so the flag and the answers go in
+  one retry; the credential refusal carries nothing. A write that
+  declares itself standing on its first call gets its related records and
+  the standing roster on one page. A `refused_standing` reply keeps its
+  chain open and names its `review_id`, so the retry with `said` is one
+  call; the review counters read the chain's last decision, and a chain
+  dropped there counts as refused. An answer error names the format it
+  expected. The review's questions and constants are unchanged.
+  (`handlers/write.py`, `review.py`, `review_counters.py`,
+  `recall_settle.py`, `docs/api.md`, `docs/eval.md`,
+  `tests/test_write_protocol.py`)
+
+- **The write description says the scores may go with the first
+  call.** `memory_write`'s description adds that the unsafe, secret and
+  standing scores may be sent with the first call and that a standing
+  write declares itself there. (`handlers/write.py`)
+
+- **A replay of the window's write chains.** `bench/panel/replay_writes.py`
+  replays the harness transcripts' `memory_write` chains over a scratch
+  copy of the store, set back per chain to the records created before
+  it, and reports calls and characters per committed write, outcome
+  kinds and the chains it could not replay, as aggregates only.
+  (`bench/panel/replay_writes.py`)
+
 - **Windows capture regression checks the change-time field.** The
   filesystem oracle uses NTFS's ChangeTime for init stamps, as the capture
   does, instead of comparing it with `os.stat`'s creation time. The two
@@ -583,6 +615,24 @@ eighteenth was built.
   `tests/test_unread_history.py`, `tests/test_health.py`)
 
 #### Changed
+
+- **An update's reply carries everything the change still owes.** A
+  body edit that sends `standing` and owes nothing else commits in one
+  call, and the tool description says `standing` goes with `content`. A
+  reply that stops an update (a gate's warning, `refused_standing`, the
+  standing question) carries the standing question and, for a standing
+  memory, the roster page as well, so the retry that adds the flag, the
+  user's words and the answers commits. The roster for an edit without
+  its answer is read on the memory's current one. Each reply leaves one
+  `update` row with the first refusal's status and `owed` naming every
+  status it carried. A roster chain holds only for the change it was
+  shown for: its `review_issued` rows carry a `subject` digest of the
+  body, scopes, category and links, and a retry that changes any of
+  them gets a fresh roster. A malformed link names the expected format
+  and the offending key. On the owner's window replay a committed update
+  went from 1.75 to 1.67 calls. (`handlers/update.py`,
+  `handlers/standing_review.py`, `events.py`, `docs/api.md`,
+  `tests/test_update_protocol.py`)
 
 - **A search hit carries what choosing it needs.** `id`, `snippet`,
   `relevance`, `staleness_verdict`, `reason` when the verdict is not

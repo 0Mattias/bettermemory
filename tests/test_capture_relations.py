@@ -818,8 +818,9 @@ async def test_a_standing_capture_write_defers_only_when_no_roster_is_due(
 ) -> None:
     """ENG-112: a standing capture write is shown the standing roster
     before it commits. With no standing record outside its related set it
-    defers its relations as any capture write does; with one, it gets the
-    two-call review and then the roster, and commits with nothing pending."""
+    defers its relations as any capture write does; with one, its first
+    page shows the related records and the roster, and the answers to both
+    commit it with nothing pending."""
     old = world.seed(BACKUP_OLD)
     batch = world.open()
     source = f"capture:{batch.token}"
@@ -833,15 +834,14 @@ async def test_a_standing_capture_write_defers_only_when_no_roster_is_due(
     assert first["status"] == "review", first
     related = [e["id"] for e in first["review"]["related"]]
     assert ruling not in related
-    answers = {
+    assert [line.split(" ", 1)[0] for line in first["review"]["roster"]] == [ruling]
+    named = {
         **SCORES,
         "standing": 0.9,
         "review_id": first["review"]["review_id"],
         "relation": {i: "unrelated" for i in related},
+        "named": [],
     }
-    page = await world.write(BACKUP_PRUNED, source=source, review=answers)
-    assert [line.split(" ", 1)[0] for line in page["review"]["roster"]] == [ruling]
-    named = {**answers, "review_id": page["review"]["review_id"], "named": []}
     res = await world.write(BACKUP_PRUNED, source=source, review=named)
     assert res["status"] == "committed", res
     assert "relations_pending" not in res

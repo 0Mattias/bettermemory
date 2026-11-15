@@ -18,6 +18,13 @@ memory that came back while it was not standing standing: its read drops
 the mark that would hold it. Each door that holds one names it in its
 reply (`held_reply`).
 
+An edit that still owes its standing answer is read on the record's
+current one, so the reply that asks for the answer, or that refuses the
+edit at a gate or at the guard, carries the roster too
+(`update._owed_reply`, `page_hint`): the call that pays everything owed
+commits, and an answer that leaves the memory not standing makes the
+review moot.
+
 The page, its lines and its question are the write's
 (`write._issue_roster`, `review.roster_for`): every other admitted
 standing record in force outside the session's disabled scopes, each line
@@ -44,7 +51,7 @@ memory, and a write's chain never answers an update.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -71,17 +78,23 @@ if TYPE_CHECKING:
     from ..session import SessionState
 
 __all__ = [
+    "ROSTER_STATUS",
     "UPDATE_DOOR",
     "StandingReview",
     "after_commit",
     "early_response",
     "held_reply",
+    "page_hint",
     "releasing",
     "release",
     "with_held",
     "review_change",
     "review_links",
 ]
+
+#: The ``update`` row status of a reply that carries a roster page.
+ROSTER_STATUS = "standing_roster"
+
 
 #: The ``door`` an update's standing roster rows carry: the tool whose
 #: call the chain answers.
@@ -93,45 +106,101 @@ UPDATE_DOOR = "memory_update"
 _LINK_CAP = 64
 
 
-def _roster_hint(review_id: str, follow_up: bool, *, held: bool = False) -> str:
+#: What a reply adds when the edit also owes its standing answer.
+_STANDING_ASK = (
+    "standing=<0 to 1>, the probability that the statement holds of the new "
+    "content, and "
+)
+
+
+def _roster_hint(
+    review_id: str,
+    follow_up: bool,
+    *,
+    held: bool = False,
+    standing: bool = False,
+    lead: bool = True,
+) -> str:
     """The roster page's hint on an update: what to send back. `held`
-    leads a held memory's first page (ENG-200)."""
-    if follow_up:
-        lead = (
+    leads a held memory's first page (ENG-200); `standing` asks for the
+    edit's standing answer in the same call, the roster read on the
+    record's current one; without `lead` the hint follows a refusal's,
+    which leads."""
+    if not lead:
+        lead_text = "In that same call answer `review.question`, "
+    elif follow_up:
+        lead_text = (
             "Not updated. Standing memories came into force since your last "
             "roster; they are listed below. Keep review.named and add any id "
             "below the change touches. "
         )
     elif held:
-        lead = (
+        lead_text = (
             "Not updated. This standing memory came back into force (the "
             "memory replacing it was removed or unlinked, or it was "
             "restored) and is held out of force until it is read against "
             "every other standing memory in force, one line each, under "
             "`roster`; any change that leaves it standing reads it. "
         )
+    elif standing:
+        lead_text = (
+            "Not updated. This memory is standing, so the edit is shown every "
+            "other standing memory in force, one line each, under `roster`. "
+        )
     else:
-        lead = (
+        lead_text = (
             "Not updated. This change makes the memory standing, so it is "
             "shown every other standing memory in force, one line each, "
             "under `roster`. "
         )
+    if lead:
+        lead_text += (
+            "Answer `question` and re-send this same call, with the same "
+            "arguments and acknowledge flags, adding "
+        )
+    else:
+        lead_text += "adding "
     return (
-        lead + "Answer `question` and re-send this same call, with the same "
-        "arguments and acknowledge flags, adding "
-        f'review={{"review_id": "{review_id}", "named": [<roster id>, ...]}} '
+        lead_text + (_STANDING_ASK if standing else "") + "review="
+        f'{{"review_id": "{review_id}", "named": [<roster id>, ...]}} '
         "([] when the change touches none)."
     )
 
 
-def _full_hint(review_id: str) -> str:
-    """The hint of the page that shows named roster records in full."""
+def _full_hint(review_id: str, *, standing: bool = False, lead: bool = True) -> str:
+    """The hint of the page that shows named roster records in full;
+    `standing` and `lead` as `_roster_hint`'s."""
+    text = (
+        "Below in full are roster memories this review now holds: keep every "
+        "answer, review.named included, and answer each id below. "
+    )
+    if lead:
+        text = (
+            "Not updated. "
+            + text
+            + (
+                "Re-send this same call, with the same arguments and acknowledge "
+                "flags: "
+            )
+        )
+    else:
+        text += "In that same call add "
     return (
-        "Not updated. Below in full are roster memories this review now "
-        "holds: keep every answer, review.named included, and answer each id "
-        "below. Re-send this same call, with the same arguments and "
-        f'acknowledge flags: review={{"review_id": "{review_id}", "named": '
-        f'[...], "relation": {{<id>: {_review.LABEL_CHOICES}}}}}.'
+        text + (_STANDING_ASK if standing else "") + "review="
+        f'{{"review_id": "{review_id}", "named": [...], "relation": '
+        f"{{<id>: {_review.LABEL_CHOICES}}}}}."
+    )
+
+
+def page_hint(review: StandingReview, *, standing: bool, lead: bool) -> str:
+    """The hint of `review`'s page when the reply owes more than the page
+    (`_roster_hint`'s `standing` and `lead`)."""
+    page = review.page or {}
+    review_id = page.get("review", {}).get("review_id", "")
+    if review.full:
+        return _full_hint(review_id, standing=standing, lead=lead)
+    return _roster_hint(
+        review_id, review.follow_up, held=review.held, standing=standing, lead=lead
     )
 
 
@@ -175,6 +244,9 @@ class StandingReview:
     words: _guard.Words | None = None
     rests: list[str] = field(default_factory=list)
     releases: bool = False
+    full: bool = False
+    follow_up: bool = False
+    held: bool = False
 
     def fields(self) -> dict[str, Any]:
         """The update row's review fields: ids and labels, never a body.
@@ -220,9 +292,10 @@ def _issue_full(
     *,
     chain: _review.Chain,
     record_id: str,
+    subject: str,
 ) -> dict[str, Any]:
     """Write nothing; return the named roster records in full and the
-    relation question, a page of the chain."""
+    relation question, a page of the chain computed for `subject`."""
     review_id = generate_ulid()
     questions = {"relation": _review.questions_payload()["relation"]}
     response = deps.responses.review(
@@ -240,6 +313,7 @@ def _issue_full(
         response_chars=len(json.dumps(response, ensure_ascii=False)),
         door=UPDATE_DOOR,
         record=record_id,
+        subject=subject,
     )
     return response
 
@@ -254,6 +328,8 @@ def review_change(
     probability: float | None,
     review: Mapping[str, Any] | None,
     said: str | None,
+    scopes: Sequence[str],
+    links: Sequence[MemoryLink],
 ) -> StandingReview | None:
     """Take an update of `memory` that leaves `body`, `category` and the
     standing answer `probability`; return None when it makes no standing
@@ -282,6 +358,18 @@ def review_change(
     _, caller = caller_anchoring(deps.store, deps.config)
     admission = Admission.of(REVIEW_STRATA, caller)
     chain = _chain(deps, answers, memory.id)
+    checkout = caller.resolution.checkout
+    subject = _review.subject_digest(
+        UPDATE_DOOR,
+        content=body,
+        scopes=scopes,
+        category=category,
+        worktree=checkout,
+        targets=[f"{link.type.value}:{link.target_id}" for link in links],
+    )
+    if chain is not None and chain.subject != subject:
+        chain = None
+        answers = None
     if answers is None:
         answers = _review.ReviewAnswers(relation={}, unsafe=0.0, secret=0.0)
     related = _review.RelatedSet(entries=())
@@ -303,11 +391,15 @@ def review_change(
                 related.only([*missing, *unseen]),
                 chain=chain,
                 record_id=memory.id,
+                subject=subject,
             )
-            return StandingReview(page=full)
-    page = _due_roster(deps, state, memory, body, related, admission, chain, held)
+            return StandingReview(page=full, full=True)
+    page = _due_roster(
+        deps, state, memory, body, related, admission, chain, held, subject
+    )
     if page is not None:
-        return StandingReview(page=page)
+        follow_up = bool(chain is not None and chain.roster)
+        return StandingReview(page=page, follow_up=follow_up, held=held)
     if chain is None:
         return StandingReview(releases=True) if marked else None
     decided = _decide(deps, caller, answers, related, body=body, tau=tau, said=said)
@@ -324,11 +416,13 @@ def _due_roster(
     admission: Admission,
     chain: _review.Chain | None,
     held: bool,
+    subject: str,
 ) -> dict[str, Any] | None:
     """The roster page due for this chain, or None: every other standing
     record in force on the first page, then only those that came into
     force since (`write._roster_due`). `held` leads the hint of a held
-    memory's first page."""
+    memory's first page; `subject` is the digest the page is computed for
+    (`update._subject`), which binds the chain's answers to the change."""
     candidates, due = _roster_due(
         deps,
         state,
@@ -351,6 +445,7 @@ def _due_roster(
         hint=lambda review_id, follow_up: _roster_hint(review_id, follow_up, held=held),
         door=UPDATE_DOOR,
         record=memory.id,
+        subject=subject,
     )
 
 
@@ -402,7 +497,7 @@ def early_response(
     if review is None:
         return None
     if review.page is not None:
-        deps.recorder.record("update", id=record_id, status="standing_roster")
+        deps.recorder.record("update", id=record_id, status=ROSTER_STATUS)
         return review.page
     decision = review.decision
     if decision is None or decision.action != _review.ACTION_STANDING:

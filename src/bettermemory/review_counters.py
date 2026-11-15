@@ -309,6 +309,9 @@ class ReviewChain:
     closed: bool = False
     absorbed: bool = False
     state: str = "pending"
+    #: Calls refused for a standing record before the chain's last
+    #: decision, each a call of the chain.
+    standing_retries: int = 0
 
     @property
     def root(self) -> IssuedRow:
@@ -356,7 +359,8 @@ class ReviewChain:
         answer to a call, plus the call that decided it. A pre-answered
         row is the deciding call's own row, so it adds nothing."""
         issued_calls = sum(1 for row in self.issued if not row.pre_answered)
-        return issued_calls + (1 if self.decided is not None else 0)
+        decided = 1 if self.decided is not None else 0
+        return issued_calls + decided + self.standing_retries
 
     @property
     def outcome(self) -> str | None:
@@ -407,10 +411,18 @@ def build_chains(
         if key is None:
             continue
         chain = chains[key]
-        if chain.decided is not None:
+        # A write refused for a standing record leaves its chain open for
+        # the retry with the user's words: the chain's decision is its last
+        # row then. A chain refused that way and dropped stays refused.
+        if (
+            chain.decided is not None
+            and chain.decided.action != _review.ACTION_STANDING
+        ):
             continue
         last = chain.last_issued_before(decided.ts)
         if decided.ts - last.ts <= ANSWER_WINDOW:
+            if chain.decided is not None:
+                chain.standing_retries += 1
             chain.decided = decided
             chain.state = "answered"
 

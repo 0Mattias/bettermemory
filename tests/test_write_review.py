@@ -38,7 +38,7 @@ from bettermemory.models import generate_ulid
 from bettermemory.origin import Origin
 from bettermemory.search import search as run_search
 from bettermemory.session import SessionState
-from bettermemory.store import MUTATION_KINDS, Store
+from bettermemory.store import MUTATION_KINDS, StandingAnswer, Store
 
 from ._mcp import call_tool
 from .test_membership_security import checkout, stand_in_checkout
@@ -285,13 +285,46 @@ async def test_regex_secret_refused_before_any_review(
     res = await harness.write(f"The deploy key for the ledger app is {_AWS} today.")
     assert res["status"] == "credential_warning"
     assert "aws-access-key-id" in [m["kind"] for m in res["markers"]]
+    assert "related" not in res and "questions" not in res
     assert harness.events(review.REVIEW_ISSUED) == []
 
 
-async def test_transient_refusal_precedes_review(harness: Harness, tau: float) -> None:
-    res = await harness.write("The ledger deploy is currently blocked on the runner.")
+def _unrelated(page: dict[str, Any]) -> dict[str, Any]:
+    """Answers to `page` with every shown id unrelated and every score 0,
+    under its review_id when it has one."""
+    return {
+        **({"review_id": page["review_id"]} if "review_id" in page else {}),
+        "relation": {entry["id"]: "unrelated" for entry in page["related"]},
+        "unsafe": 0,
+        "secret": 0,
+        "standing": 0,
+    }
+
+
+async def test_transient_refusal_and_its_review_take_one_retry(
+    harness: Harness, tau: float
+) -> None:
+    content = "The ledger deploy is currently blocked on the runner."
+    res = await harness.write(content)
     assert res["status"] == "transient_warning"
+    assert res["questions"] == review.questions_payload()
+    assert "acknowledge_transient" in res["hint"]
     assert harness.events(review.REVIEW_ISSUED) == []
+    answers = _unrelated({"related": res["related"]})
+    done = await harness.write(content, acknowledge_transient=True, review=answers)
+    assert done["status"] == "committed"
+    (issued,) = harness.events(review.REVIEW_ISSUED)
+    assert issued["pre_answered"] is True
+
+
+async def test_a_refused_call_that_already_answers_carries_no_page(
+    harness: Harness, tau: float
+) -> None:
+    content = "The ledger deploy is currently blocked on the runner."
+    first = await harness.write("The ledger deploy runs on the runner.")
+    res = await harness.write(content, review=_unrelated(first["review"]))
+    assert res["status"] == "transient_warning"
+    assert "related" not in res
 
 
 async def test_duplicate_refused_without_review(harness: Harness, tau: float) -> None:
@@ -329,7 +362,7 @@ _GATE_CASES: dict[str, tuple[str, list[str], str]] = {
 
 
 @pytest.mark.parametrize("gate", list(_GATE_CASES))
-async def test_gate_refusals_all_precede_review(
+async def test_gate_refusals_precede_review_and_carry_its_page(
     harness: Harness, tau: float, gate: str
 ) -> None:
     harness.seed("A foo project fact.", scopes=["projects:foo"])
@@ -339,7 +372,12 @@ async def test_gate_refusals_all_precede_review(
     content, scopes, status = _GATE_CASES[gate]
     res = await harness.write(content, scopes=scopes)
     assert res["status"] == status
+    assert "review" not in res
     assert harness.events(review.REVIEW_ISSUED) == []
+    if status in ("duplicate", "previously_removed", "credential_warning"):
+        assert "questions" not in res and "related" not in res
+    else:
+        assert res["questions"] == review.questions_payload()
 
 
 async def test_force_skips_dedup_not_review(harness: Harness, tau: float) -> None:
@@ -606,13 +644,31 @@ async def test_partial_answers_return_review_for_missing_ids_only(
     assert harness.events("write") == []
 
 
-async def test_store_change_between_calls_reviews_new_ids_only(
+def _stand(harness: Harness, memory_id: str) -> None:
+    harness.store.put_standing(memory_id, StandingAnswer(0.9, "asked", "test/test"))
+
+
+async def test_rank_drift_between_calls_opens_no_page(
     harness: Harness, tau: float
 ) -> None:
     old = harness.seed(BACKUP_OLD)
     first = await harness.write(BACKUP_NEW)
     assert _related_ids(first) == [old]
     added = harness.seed("Borg archive volumes are pruned weekly by the backup job.")
+    assert added in _related_now(harness, BACKUP_NEW)
+    second = await harness.answer(first, BACKUP_NEW)
+    assert second["status"] == "committed"
+    assert len(harness.events(review.REVIEW_ISSUED)) == 1
+
+
+async def test_a_standing_record_new_to_the_chain_is_reviewed_alone(
+    harness: Harness, tau: float
+) -> None:
+    old = harness.seed(BACKUP_OLD)
+    first = await harness.write(BACKUP_NEW)
+    assert _related_ids(first) == [old]
+    added = harness.seed("Borg archive volumes are pruned weekly by the backup job.")
+    _stand(harness, added)
     second = await harness.answer(first, BACKUP_NEW)
     assert second["status"] == "review"
     assert _related_ids(second) == [added]
@@ -636,8 +692,10 @@ async def test_follow_up_review_carries_parent_review_id(
     first = await harness.write(BACKUP_NEW)
     root = first["review"]["review_id"]
     added = harness.seed("Borg archive volumes are pruned weekly by the backup job.")
+    _stand(harness, added)
     second = await harness.answer(first, BACKUP_NEW)
     later = harness.seed("The archive volumes for Borg sit on the cold storage tier.")
+    _stand(harness, later)
     third = await harness.write(
         BACKUP_NEW,
         review={
@@ -750,7 +808,7 @@ async def test_stray_review_id_with_missing_answers_gets_a_fresh_root_review(
     )
     assert res["status"] == "review"
     assert _related_ids(res) == [old]
-    assert "keep them" in res["hint"]
+    assert "keep your answers" in res["hint"]
     (issued,) = harness.events(review.REVIEW_ISSUED)
     assert issued["review_id"] == res["review"]["review_id"] != fabricated
     assert issued["parent_review_id"] is None
@@ -1453,6 +1511,7 @@ async def test_responses_name_no_model(harness: Harness, tau: float) -> None:
     first = await harness.write(BACKUP_NEW)
     _no_model_named(first)
     follow = harness.seed("Borg archive volumes are pruned weekly by the backup job.")
+    _stand(harness, follow)
     second = await harness.answer(first, BACKUP_NEW)
     _no_model_named(second)
     content = "The ledger app deploys from the tools folder."

@@ -779,7 +779,7 @@ def _chain_keys(
     ):
         raise ReviewAnswerError(
             f"review.review_id must be the review_id a review returned, got "
-            f"{review_id!r}. Omit it if you have none."
+            f"{review_id!r}. Omit it if you have none. Format: {fmt}"
         )
     relation_raw = raw.get("relation", {})
     if relation_raw is None:
@@ -797,7 +797,7 @@ def _chain_keys(
         if label not in LABELS:
             raise ReviewAnswerError(
                 f"review.relation[{memory_id!r}] is {label!r}, which is not a label; "
-                f"use one of {', '.join(LABELS)}."
+                f"use one of {', '.join(LABELS)}. Format: {fmt}"
             )
         relation[memory_id] = label
     named_raw = raw.get("named")
@@ -837,7 +837,8 @@ def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
     if said is not None and (not isinstance(said, str) or not said.strip()):
         raise ReviewAnswerError(
             "review.said quotes the user's words as they typed them, as a "
-            "string; omit it when the user said nothing about this."
+            "string; omit it when the user said nothing about this. Format: "
+            '"said": "<the user\'s words>"'
         )
     return ReviewAnswers(
         relation=MappingProxyType(relation),
@@ -893,7 +894,7 @@ def check_answered_ids(answers: ReviewAnswers, allowed: Iterable[str]) -> None:
     if foreign:
         raise ReviewAnswerError(
             f"review.relation names ids no review of this write showed: {foreign}. "
-            "Answer only the related ids the review listed."
+            "Answer only the related ids the review listed. Format: " + ANSWER_FORMAT
         )
 
 
@@ -927,7 +928,7 @@ def check_named(
     if foreign:
         raise ReviewAnswerError(
             f"review.named names ids the roster did not list: {foreign}. "
-            "Name only ids from the roster."
+            f"Name only ids from the roster. Format: {NAMED_FORMAT}"
         )
     unnamed = sorted(
         i for i in answers.relation if i in roster and i not in named and i not in shown
@@ -936,7 +937,7 @@ def check_named(
         raise ReviewAnswerError(
             f"review.relation answers roster ids not named: {unnamed}. Add them "
             "to review.named; each named record is shown in full before its "
-            "answer counts."
+            f"answer counts. Format: {NAMED_FORMAT}"
         )
     return named
 
@@ -1198,7 +1199,12 @@ class Chain:
     whether a write or update row already carries one of the chain's
     review_ids. `door` and `record` are the update's standing roster's
     (ENG-112): ``memory_update`` and the memory it reviews; a write's
-    chain has neither, and each door takes only its own chains."""
+    chain has neither, and each door takes only its own chains. `subject`
+    is the digest of what the chain's pages were computed for
+    (`subject_digest`), None on rows recorded without one; a call whose
+    digest differs is not on the chain. `standing_refused` marks a chain
+    whose last write row refused it for a standing record, which leaves
+    it open for the retry."""
 
     root: str
     shown: frozenset[str]
@@ -1207,6 +1213,8 @@ class Chain:
     roster: frozenset[str] = frozenset()
     door: str | None = None
     record: str | None = None
+    subject: str | None = None
+    standing_refused: bool = False
 
     @property
     def open(self) -> bool:
@@ -1216,15 +1224,46 @@ class Chain:
         return self.found and not self.decided
 
 
+def subject_digest(
+    door: str,
+    *,
+    content: str,
+    scopes: Iterable[str],
+    category: str | None,
+    worktree: str | None,
+    targets: Iterable[str] = (),
+) -> str:
+    """The digest of what a review page is computed for, recorded as the
+    ``subject`` of its review_issued row: the door (``memory_write`` or
+    ``memory_update``), the content, the scopes, the category, the
+    caller's worktree (which decides admission) and the targets (a write's
+    declared `supersedes`, an update's links; an update's record is bound by
+    its chain). Answers given on a chain
+    hold only for a call with the same digest."""
+    blob = canonical_json(
+        {
+            "door": door,
+            "content": content,
+            "scopes": sorted(scopes),
+            "category": category,
+            "worktree": worktree,
+            "targets": sorted(targets),
+        }
+    )
+    return hashlib.sha256(blob).hexdigest()
+
+
 def find_chain(store: Store, review_id: str) -> Chain:
     """Read the review_issued rows of `review_id`'s chain, newest first,
     back to a little before the root was minted, and the write and update
     rows that carry one of its review_ids (an update carries one when its
-    standing roster decided it, ENG-112). A review_id the log does not
+    standing roster decided it, ENG-112); a write refused for a standing
+    record does not close its chain. A review_id the log does not
     hold (fabricated, telemetry off, or another store) is its own root,
     showed nothing and is not found. Reads ids only."""
     rows: list[dict[str, Any]] = []
     written: set[str] = set()
+    refused_standing: set[str] = set()
     cutoff = ulid_time(review_id)
     root = review_id
     found = False
@@ -1237,6 +1276,13 @@ def find_chain(store: Store, review_id: str) -> Chain:
         kind = event.get("kind")
         if kind in ("write", "update"):
             sent = event.get("review_id")
+            if kind == "write" and event.get("status") == ACTION_STANDING:
+                # A write refused for a standing record leaves its chain
+                # open: the retry carries the user's words under the same
+                # review_id.
+                if isinstance(sent, str):
+                    refused_standing.add(sent)
+                continue
             if isinstance(sent, str):
                 written.add(sent)
             continue
@@ -1256,6 +1302,7 @@ def find_chain(store: Store, review_id: str) -> Chain:
     chain_ids: set[str] = {root}
     door: str | None = None
     record: str | None = None
+    subject: str | None = None
     for event in rows:
         if event.get("review_id") == root or event.get("parent_review_id") == root:
             member = event.get("review_id")
@@ -1271,6 +1318,8 @@ def find_chain(store: Store, review_id: str) -> Chain:
                 door = event["door"]
             if isinstance(event.get("record"), str):
                 record = event["record"]
+            if subject is None and isinstance(event.get("subject"), str):
+                subject = event["subject"]
     return Chain(
         root=root,
         shown=frozenset(shown),
@@ -1279,6 +1328,8 @@ def find_chain(store: Store, review_id: str) -> Chain:
         roster=frozenset(roster),
         door=door,
         record=record,
+        subject=subject,
+        standing_refused=bool(chain_ids & refused_standing) and not chain_ids & written,
     )
 
 
@@ -1334,6 +1385,7 @@ __all__ = [
     "roster_candidates",
     "roster_for",
     "seal_shas",
+    "subject_digest",
     "tau_override",
     "tau_unset",
     "ulid_time",
