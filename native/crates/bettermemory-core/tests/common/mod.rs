@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 use bettermemory_core::datetime::DateTime;
 use bettermemory_core::float_repr;
-use bettermemory_core::pyvalue::{PyStr, PyValue};
+use bettermemory_core::json::{self, DumpOptions};
+use bettermemory_core::pyvalue::{PyError, PyStr, PyValue};
 use bettermemory_core::unicode;
 use serde_json::Value;
 
@@ -110,4 +111,74 @@ pub fn assert_count(name: &str, checked: usize, in_file: usize) {
         "{name}: checked {checked} of {in_file} cases"
     );
     eprintln!("{name}: {checked} of {in_file} cases checked, all passing");
+}
+
+/// What a JSON form of `canonical_json.jsonl` returns: a `str` or bytes.
+pub enum FormOut {
+    Text(PyStr),
+    Bytes(Vec<u8>),
+}
+
+impl FormOut {
+    /// `_common.output` of it.
+    pub fn value(&self) -> Value {
+        match self {
+            FormOut::Text(text) => str_output(text),
+            FormOut::Bytes(bytes) => serde_json::json!({ "hex": hex(bytes) }),
+        }
+    }
+
+    /// Its bytes: a `str` as UTF-8 (surrogates passed through).
+    pub fn bytes(&self) -> Vec<u8> {
+        match self {
+            FormOut::Text(text) => {
+                let mut out = Vec::with_capacity(text.len());
+                for &cp in text {
+                    match char::from_u32(cp) {
+                        Some(c) => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+                        // surrogatepass: the three-byte form.
+                        None => out.extend_from_slice(&[
+                            0xE0 | (cp >> 12) as u8,
+                            0x80 | ((cp >> 6) & 0x3F) as u8,
+                            0x80 | (cp & 0x3F) as u8,
+                        ]),
+                    }
+                }
+                out
+            }
+            FormOut::Bytes(bytes) => bytes.clone(),
+        }
+    }
+}
+
+fn with_newline(mut text: PyStr) -> PyStr {
+    text.push(u32::from(b'\n'));
+    text
+}
+
+/// A form of `canonical_json.jsonl`'s header: the call site's exact call.
+pub fn json_form_out(name: &str, value: &PyValue) -> Result<FormOut, PyError> {
+    let text = |options: DumpOptions| json::dumps(value, options);
+    Ok(match name {
+        "log_payload" => FormOut::Bytes(json::canonical_payload(value)?.into_bytes()),
+        "native_ascii" => FormOut::Text(text(DumpOptions::SORTED_ASCII_COMPACT)?),
+        "column_text" => FormOut::Text(text(DumpOptions::SORTED_UNICODE_SPACED)?),
+        "ascii_spaced" => FormOut::Text(text(DumpOptions::SORTED_ASCII_SPACED)?),
+        "ascii_compact_line" => {
+            FormOut::Text(with_newline(text(DumpOptions::SORTED_ASCII_COMPACT)?))
+        }
+        "review_sha_bytes" => FormOut::Bytes(json::review_canonical_json(value)?),
+        "spelling_tables" => FormOut::Text(text(DumpOptions::SORTED_UNICODE_COMPACT)?),
+        "document_indent2" => FormOut::Text(with_newline(text(DumpOptions::DOCUMENT_INDENT2)?)),
+        "keyring_file" => FormOut::Text(text(DumpOptions::DEFAULT)?),
+        "unsorted_compact_line" => {
+            FormOut::Text(with_newline(text(DumpOptions::UNSORTED_ASCII_COMPACT)?))
+        }
+        other => panic!("form {other} is not ported"),
+    })
+}
+
+/// [`json_form_out`] as the fixture records it, or `{"error": type}`.
+pub fn json_form(name: &str, value: &PyValue) -> Result<Value, PyError> {
+    json_form_out(name, value).map(|out| out.value())
 }

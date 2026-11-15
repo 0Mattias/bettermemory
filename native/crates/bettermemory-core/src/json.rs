@@ -9,7 +9,9 @@
 use std::collections::HashMap;
 
 use crate::float_repr;
-use crate::pyvalue::{cmp_keys, py_str, PyError, PyStr, PyValue};
+use crate::pyvalue::{
+    cmp_keys, lt_keys, py_str, python_small_sort, PyError, PyStr, PyValue, SMALL_SORT,
+};
 use crate::unicode;
 
 /// The keyword arguments a `json.dumps` call site passes.
@@ -258,15 +260,18 @@ impl Encoder {
                         if order.iter().any(|(k, _)| cmp_keys(first, k).is_none()) {
                             return Err(PyError::TypeError);
                         }
-                        let mut refused = false;
-                        order.sort_by(|a, b| {
-                            cmp_keys(&a.0, &b.0).unwrap_or_else(|| {
-                                refused = true;
-                                std::cmp::Ordering::Equal
-                            })
-                        });
-                        if refused {
-                            return Err(PyError::TypeError);
+                        // Every pair now compares. Few keys sort as
+                        // CPython 3.13's binary insertion leaves them, NaN
+                        // included; many by a total order that agrees with
+                        // `<` on every pair without a NaN.
+                        if order.len() < SMALL_SORT {
+                            python_small_sort(&mut order, |a, b| {
+                                lt_keys(&a.0, &b.0).unwrap_or(false)
+                            });
+                        } else {
+                            order.sort_by(|a, b| {
+                                cmp_keys(&a.0, &b.0).unwrap_or(std::cmp::Ordering::Equal)
+                            });
                         }
                     }
                     push(&mut self.out, "{");
@@ -359,6 +364,48 @@ pub fn utf8_text(text: &[u32]) -> String {
 /// covers.
 pub fn canonical_payload(payload: &PyValue) -> Result<String, PyError> {
     Ok(utf8_text(&dumps(payload, DumpOptions::LOG_PAYLOAD)?))
+}
+
+/// `review._thawed` recurses in Python through directly nested dicts, so
+/// `review.canonical_json` stops at `sys.getrecursionlimit()` (1000) less
+/// the frames its caller holds, a limit with no fixed depth. Native takes
+/// a chain of fewer than 1000 dicts, which the reference takes from a
+/// shallow enough caller, and refuses 1000, which it refuses from any.
+pub const REVIEW_THAW_LIMIT: usize = 1000;
+
+/// The dict chain below `value`, counted iteratively and capped at
+/// `limit` (only whether it reaches the limit matters).
+fn dict_chain_bounded(value: &PyValue, limit: usize) -> usize {
+    let mut stack: Vec<(&PyValue, usize)> = vec![(value, 1)];
+    let mut best = 0;
+    while let Some((v, d)) = stack.pop() {
+        if let PyValue::Dict(items) = v {
+            best = best.max(d);
+            if best >= limit {
+                return best;
+            }
+            stack.extend(
+                items
+                    .iter()
+                    .filter(|(_, x)| matches!(x, PyValue::Dict(_)))
+                    .map(|(_, x)| (x, d + 1)),
+            );
+        }
+    }
+    best
+}
+
+/// `review.canonical_json`: sorted keys, compact, non-ASCII kept, as UTF-8
+/// bytes; RecursionError for a chain of [`REVIEW_THAW_LIMIT`] dicts
+/// (`_thawed`), UnicodeEncodeError for a lone surrogate.
+pub fn review_canonical_json(value: &PyValue) -> Result<Vec<u8>, PyError> {
+    if dict_chain_bounded(value, REVIEW_THAW_LIMIT) >= REVIEW_THAW_LIMIT {
+        return Err(PyError::RecursionError);
+    }
+    let text = dumps(value, DumpOptions::SORTED_UNICODE_COMPACT)?;
+    unicode::to_string(&text)
+        .map(String::into_bytes)
+        .ok_or(PyError::UnicodeEncodeError)
 }
 
 enum Open {

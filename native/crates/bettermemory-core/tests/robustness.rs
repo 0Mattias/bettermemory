@@ -1,86 +1,16 @@
 //! Input from rows, payloads, head files and origin files is data an
 //! attacker may have written: no public entry point may panic on it (the
 //! test profile keeps debug assertions, so an overflow panics here too).
-//! Also: seqs at the ends of i64 against the reference's reports, key
-//! bytes kept out of every `Debug`, the fingerprint guard, and the
-//! nesting limit at [`json::MAX_DEPTH`].
-//!
-//! `data/seq_bounds.json` holds rows signed with a fixed test key and the
-//! report `log.verify_chain` gave for each (Python 3.13, an in-memory
-//! `log` table, a key ring whose current key is that key and which holds
-//! no head or origin file). `iter_rows` reads seq > 0 only, so the rows
-//! below 1 are left out of the native call as well.
+//! Also: `next_row` past i64::MAX, key bytes kept out of every `Debug`,
+//! the fingerprint guard, and the nesting limit at [`json::MAX_DEPTH`].
+//! Seqs at the ends of i64 against the reference's reports are cases of
+//! the golden `log_keyring.jsonl` (`golden_log_keyring.rs`).
 
 use bettermemory_core::datetime::{self, DateTime};
 use bettermemory_core::json::{self, DumpOptions, MAX_DEPTH};
-use bettermemory_core::log::{self, Key, KeyRing, LogRow, ReportDict, ReportValue};
+use bettermemory_core::log::{self, Key, KeyRing, LogRow};
 use bettermemory_core::pyvalue::{self, PyError, PyValue};
 use bettermemory_core::{float_repr, lexicon, unicode};
-use serde_json::{json, Map, Value};
-
-fn report_value(v: &ReportValue) -> Value {
-    match v {
-        ReportValue::Null => Value::Null,
-        ReportValue::Int(i) => json!(i),
-        ReportValue::BigInt(text) => json!(text.parse::<i128>().expect("an int")),
-        ReportValue::Str(s) => json!(unicode::to_string(s).expect("UTF-8")),
-    }
-}
-
-fn dict(d: &ReportDict) -> Value {
-    Value::Object(
-        d.iter()
-            .map(|(k, v)| ((*k).to_owned(), report_value(v)))
-            .collect::<Map<_, _>>(),
-    )
-}
-
-fn unhex(text: &str) -> Vec<u8> {
-    (0..text.len() / 2)
-        .map(|i| u8::from_str_radix(&text[2 * i..2 * i + 2], 16).expect("hex"))
-        .collect()
-}
-
-#[test]
-fn seq_at_the_ends_of_i64_reports_as_the_reference_does() {
-    let data: Value =
-        serde_json::from_str(include_str!("data/seq_bounds.json")).expect("the data file");
-    let key = unhex(data["key_hex"].as_str().expect("key_hex"));
-    let fp = log::fingerprint(&key);
-    let cases = data["cases"].as_array().expect("cases");
-    assert_eq!(cases.len(), 6);
-    for case in cases {
-        let rows: Vec<LogRow> = case["rows"]
-            .as_array()
-            .expect("rows")
-            .iter()
-            .map(|r| LogRow {
-                seq: r["seq"].as_i64().expect("seq"),
-                ts: r["ts"].as_str().expect("ts").to_owned(),
-                session: None,
-                kind: r["kind"].as_str().expect("kind").to_owned(),
-                payload: r["payload"].as_str().expect("payload").to_owned(),
-                prev_mac: r["prev_mac"].as_str().expect("prev_mac").to_owned(),
-                mac: r["mac"].as_str().expect("mac").to_owned(),
-            })
-            .filter(|r| r.seq > 0)
-            .collect();
-        let ring = KeyRing {
-            current: Some(Key::new(key.clone())),
-            ..KeyRing::default()
-        };
-        let r = log::verify_chain(&rows, &ring, &fp).expect("a report");
-        let got = json!({
-            "status": r.status,
-            "rows": r.rows,
-            "segments": r.segments.iter().map(dict).collect::<Vec<_>>(),
-            "problems": r.problems.iter().map(dict).collect::<Vec<_>>(),
-            "head": dict(&r.head),
-            "origin": dict(&r.origin),
-        });
-        assert_eq!(got, case["report"], "case {}", case["name"]);
-    }
-}
 
 #[test]
 fn next_row_past_i64_max_is_overflow_error() {

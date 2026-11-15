@@ -26,10 +26,13 @@ from tests.contract.payloads import LEGACY_SHAPES
 from tests.contract.generate import (
     GENERATORS,
     GOLDEN,
+    PYTHON_GATED,
+    PYTHON_VERSION,
     SQLITE_GATED,
     SQLITE_VERSION,
     UNICODE_GATED,
     UNIDATA_VERSION,
+    python_version,
 )
 
 #: The tool-response fixture records the review the package ships
@@ -51,6 +54,8 @@ def _drift(name: str) -> list[str]:
         out.append(f"Unicode {unicodedata.unidata_version} (files: {UNIDATA_VERSION})")
     if name in SQLITE_GATED and sqlite3.sqlite_version != SQLITE_VERSION:
         out.append(f"SQLite {sqlite3.sqlite_version} (files: {SQLITE_VERSION})")
+    if name in PYTHON_GATED and python_version() != PYTHON_VERSION:
+        out.append(f"Python {python_version()} (files: {PYTHON_VERSION})")
     return out
 
 

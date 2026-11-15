@@ -121,24 +121,60 @@ fn cmp_int_text(a: &str, b: &str) -> Ordering {
     }
 }
 
-/// An int against a float, exactly while the int fits an i128 (beyond
-/// that through the int's nearest double).
+/// The exact decimal text of an integer-valued finite double.
+fn integer_decimal(w: f64) -> String {
+    if w.abs() < 9_223_372_036_854_775_808.0 {
+        return (w as i64).to_string();
+    }
+    // |w| >= 2^63: w = mantissa * 2^exponent with exponent >= 11.
+    let bits = w.to_bits();
+    let exponent = ((bits >> 52) & 0x7ff) as i32 - 1075;
+    let mantissa = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
+    // Little-endian base-10^9 limbs, doubled `exponent` times.
+    let mut limbs: Vec<u64> = vec![mantissa % 1_000_000_000, mantissa / 1_000_000_000];
+    for _ in 0..exponent.max(0) {
+        let mut carry = 0;
+        for limb in &mut limbs {
+            let v = *limb * 2 + carry;
+            *limb = v % 1_000_000_000;
+            carry = v / 1_000_000_000;
+        }
+        if carry > 0 {
+            limbs.push(carry);
+        }
+    }
+    while limbs.len() > 1 && limbs.last() == Some(&0) {
+        limbs.pop();
+    }
+    let mut out = String::new();
+    if w < 0.0 {
+        out.push('-');
+    }
+    let mut iter = limbs.iter().rev();
+    if let Some(top) = iter.next() {
+        out.push_str(&top.to_string());
+    }
+    for limb in iter {
+        out.push_str(&format!("{limb:09}"));
+    }
+    out
+}
+
+/// An int (canonical decimal text) against a float, exactly, as Python
+/// compares them; None against NaN.
 fn cmp_int_float(int: &str, float: f64) -> Option<Ordering> {
     if float.is_nan() {
         return None;
     }
-    let Ok(i) = int.parse::<i128>() else {
-        return int.parse::<f64>().ok()?.partial_cmp(&float);
-    };
-    const LIMIT: f64 = 170_141_183_460_469_231_731_687_303_715_884_105_728.0;
-    if float >= LIMIT {
-        return Some(Ordering::Less);
-    }
-    if float < -LIMIT {
-        return Some(Ordering::Greater);
+    if float.is_infinite() {
+        return Some(if float > 0.0 {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        });
     }
     let whole = float.trunc();
-    let ordering = i.cmp(&(whole as i128));
+    let ordering = cmp_int_text(int, &integer_decimal(whole));
     if ordering != Ordering::Equal {
         return Some(ordering);
     }
@@ -152,9 +188,10 @@ fn cmp_int_float(int: &str, float: f64) -> Option<Ordering> {
     })
 }
 
-/// Python's ordering of two dict keys as `sorted` compares them, or None
-/// for a pair `<` refuses (TypeError). NaN orders after every number here,
-/// where Python's sort leaves its place to the algorithm.
+/// A total order on two dict keys that `<` compares, or None for a pair
+/// `<` refuses (TypeError). It agrees with `<` on every pair without a
+/// NaN, and puts a NaN after every number. Sorts many keys
+/// ([`python_small_sort`] sorts few).
 pub fn cmp_keys(a: &PyValue, b: &PyValue) -> Option<Ordering> {
     match (a, b) {
         (PyValue::Str(x), PyValue::Str(y)) => Some(x.cmp(y)),
@@ -169,6 +206,92 @@ pub fn cmp_keys(a: &PyValue, b: &PyValue) -> Option<Ordering> {
                 }
             })
         }
+    }
+}
+
+/// `a < b` of two dict keys, as Python answers it: None when `<` refuses
+/// (TypeError); false both ways for a NaN.
+pub fn lt_keys(a: &PyValue, b: &PyValue) -> Option<bool> {
+    match (a, b) {
+        (PyValue::Str(x), PyValue::Str(y)) => Some(x < y),
+        _ => {
+            let (x, y) = (number(a)?, number(b)?);
+            Some(match (x, y) {
+                (Number::Int(x), Number::Int(y)) => cmp_int_text(x, y) == Ordering::Less,
+                (Number::Float(x), Number::Float(y)) => x < y,
+                (Number::Int(x), Number::Float(y)) => cmp_int_float(x, y) == Some(Ordering::Less),
+                (Number::Float(x), Number::Int(y)) => {
+                    cmp_int_float(y, x) == Some(Ordering::Greater)
+                }
+            })
+        }
+    }
+}
+
+/// CPython's minimum run length: below it `list.sort` is one binary
+/// insertion sort ([`python_small_sort`]).
+pub const SMALL_SORT: usize = 64;
+
+/// CPython 3.13's `list.sort` of fewer than [`SMALL_SORT`] items under
+/// `lt`: `count_run` (an ascending run, or a descending one whose groups of
+/// items equal under `lt` keep their order), then binary insertion of the
+/// rest. With a consistent `lt` this is any stable sort; with one that is
+/// not (a NaN key, false both ways against everything) it leaves each
+/// item where CPython 3.13 does (3.11 and 3.12 read runs otherwise).
+pub fn python_small_sort<T>(v: &mut [T], mut lt: impl FnMut(&T, &T) -> bool) {
+    let n = v.len();
+    if n < 2 {
+        return;
+    }
+    let mut m = 1;
+    while m < n && !lt(&v[m], &v[m - 1]) {
+        m += 1;
+    }
+    if m < n {
+        let mut descending = true;
+        if m > 1 {
+            if lt(&v[0], &v[m - 1]) {
+                descending = false;
+            } else {
+                v[..m].reverse();
+            }
+        }
+        if descending {
+            let mut neq = 0;
+            m += 1;
+            while m < n {
+                if lt(&v[m], &v[m - 1]) {
+                    if neq > 0 {
+                        v[m - neq - 1..m].reverse();
+                        neq = 0;
+                    }
+                } else if lt(&v[m - 1], &v[m]) {
+                    break;
+                } else {
+                    neq += 1;
+                }
+                m += 1;
+            }
+            if neq > 0 {
+                v[m - neq - 1..m].reverse();
+            }
+            v[..m].reverse();
+            while m < n && !lt(&v[m], &v[m - 1]) {
+                m += 1;
+            }
+        }
+    }
+    for start in m..n {
+        let (mut l, mut r) = (0, start);
+        while l < r {
+            let mid = l + (r - l) / 2;
+            if lt(&v[start], &v[mid]) {
+                r = mid;
+            } else {
+                l = mid + 1;
+            }
+        }
+        v[l..=start].rotate_right(1);
     }
 }
 
@@ -218,8 +341,10 @@ pub fn repr_str(text: &[u32]) -> PyStr {
 
 /// `repr(value)` for the values JSON parsing yields (and datetimes and
 /// paths, as Python spells them), without native recursion. RecursionError
-/// past [`crate::json::MAX_DEPTH`] nested containers, as CPython 3.13's
-/// `repr` raises on the 9,999th.
+/// past [`crate::json::MAX_DEPTH`] nested objects, as CPython 3.13's `repr`
+/// raises on the 9,999th: every object `PyObject_Repr` spells counts, a
+/// scalar at the bottom too, so 9,997 lists around an int are the most it
+/// writes (9,998 around an empty list).
 pub fn repr(value: &PyValue) -> Result<PyStr, PyError> {
     enum Piece<'a> {
         Value(&'a PyValue, usize),
@@ -235,13 +360,13 @@ pub fn repr(value: &PyValue) -> Result<PyStr, PyError> {
             }
             Piece::Value(value, depth) => (value, depth),
         };
+        // `PyObject_Repr` counts a level for every object it spells, a
+        // scalar or an empty container at the bottom included.
+        if depth + 1 > crate::json::MAX_DEPTH {
+            return Err(PyError::RecursionError);
+        }
         match value {
             PyValue::Str(s) => out.extend(repr_str(s)),
-            PyValue::List(_) | PyValue::Tuple(_) | PyValue::Dict(_)
-                if depth + 1 > crate::json::MAX_DEPTH =>
-            {
-                return Err(PyError::RecursionError);
-            }
             PyValue::List(items) | PyValue::Tuple(items) => {
                 let list = matches!(value, PyValue::List(_));
                 push_ascii(&mut out, if list { "[" } else { "(" });

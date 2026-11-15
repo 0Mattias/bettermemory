@@ -154,3 +154,143 @@ def generate() -> dict[str, bytes]:
         ],
     }
     return {"unicode.jsonl": jsonl([doc])}
+
+
+# ---------------------------------------------------------------------------
+# unicode_sequences.jsonl: NFKD, and case mappings that read context or
+# produce more than one code point, on sequences.
+# ---------------------------------------------------------------------------
+
+_SEQ_MAPS: dict[str, Callable[[str], str]] = {
+    **_MAPS,
+    "nfkd": lambda s: unicodedata.normalize("NFKD", s),
+}
+
+_SIGMA = "\u03a3"
+
+
+def _sigma_contexts() -> list[str]:
+    """``str.lower`` maps capital sigma to final sigma when a cased
+    letter precedes it and none follows, skipping case-ignorable code
+    points both ways (Unicode's Final_Sigma). Every way that reads."""
+    alpha, latin = "\u0391", "a"
+    ignorable = [
+        "'",
+        ".",
+        ":",
+        "\u00ad",
+        "\u0301",
+        "\u0345",
+        "\u02b0",
+        "\u2019",
+        "\u200d",
+    ]
+    out = [
+        _SIGMA,
+        alpha + _SIGMA,
+        _SIGMA + alpha,
+        alpha + _SIGMA + alpha,
+        latin + _SIGMA,
+        "1" + _SIGMA,
+        alpha + _SIGMA + "1",
+        alpha + _SIGMA + " ",
+        alpha + " " + _SIGMA,
+        alpha + _SIGMA + _SIGMA,
+        alpha + _SIGMA + _SIGMA + alpha,
+        _SIGMA + _SIGMA,
+        _SIGMA + " " + _SIGMA,
+        "\u01c5" + _SIGMA,
+        "\u1f88" + _SIGMA,
+        "\u2160" + _SIGMA,
+        "\u24b6" + _SIGMA,
+        "\U0001d400" + _SIGMA,
+        "\U00010400" + _SIGMA,
+        "\u00aa" + _SIGMA,
+        "\u02b0" + _SIGMA,
+        alpha + "\U0001f600" + _SIGMA,
+        alpha + "\udc80" + _SIGMA,
+        alpha + _SIGMA + "\udc80",
+        "\u03c3" + _SIGMA,
+        "\u03c2" + _SIGMA + "\u03c2",
+        alpha + _SIGMA + "\u0345" + alpha,
+        alpha + "\u0345" + _SIGMA,
+    ]
+    for ig in ignorable:
+        out += [
+            alpha + ig + _SIGMA,
+            alpha + _SIGMA + ig,
+            alpha + _SIGMA + ig + alpha,
+            alpha + ig + ig + _SIGMA + ig + ig,
+            ig + _SIGMA,
+        ]
+    out = list(dict.fromkeys(out))
+    words = [
+        "\u039f\u0394\u03a5\u03a3\u03a3\u0395\u03a5\u03a3",
+        "\u03a3\u0399\u03a3\u03a5\u03a6\u039f\u03a3.",
+    ]
+    return out + words
+
+
+_MULTI = [
+    "stra\u00dfe",
+    "STRASSE \u1e9e",
+    "\u0130STANBUL",
+    "\u0130\u0307",
+    "i\u0307\u0130",
+    "\ufb00\ufb01\ufb02\ufb03\ufb04\ufb05\ufb06",
+    "\u0149n",
+    "\u01f0\u0323",
+    "\u0390\u03b0",
+    "\u1f80\u1f88\u1fb3\u1fbc\u1fc3\u1fcc\u1ff3\u1ffc",
+    "\u1fb2\u1fb4\u1fb6\u1fb7",
+    "\u0587\ufb13\ufb17",
+    "\u1e96\u1e97\u1e98\u1e99\u1e9a",
+    "\u0130\u03a3",
+    "\u00df\u03a3",
+    "A\u0130\u03a3",
+    "\u03a3\u0345",
+    "\u2126\u212a\u212b",
+    "\u01c4\u01c5\u01c6\u01c7\u01c8\u01c9",
+    "\u0131i\u0130I",
+    "\U00010400\U00010428\U0001e900\U0001e922",
+    "\u1e9b\u0323\u017f",
+    "\u3392\u33a1\ufdfa",
+    "\ufdfa\u03a3",
+    "\u00bd\u2075\u2082\u2460",
+    "\uac00\u11a8\u1100\u1161",
+    "\u0f77\u0f79",
+    "\u2fa1d\u2f800",
+]
+
+
+def sequences() -> dict[str, bytes]:
+    records: list[Any] = [
+        {
+            "fixture": "unicode_sequences",
+            "unidata_version": unicodedata.unidata_version,
+            "maps": sorted(_SEQ_MAPS),
+            "map_table": (
+                "nfkd over every scalar value, as _map_table in unicode.jsonl "
+                "(Hangul syllables changed by the algorithm are left out of "
+                "changed, kept in the hashes)"
+            ),
+            "sequences": (
+                "input (code points) through every map: final sigma in every "
+                "context str.lower distinguishes, multi-code-point case "
+                "mappings next to each other and to sigma"
+            ),
+        },
+        {"map": "nfkd", **_map_table(_SEQ_MAPS["nfkd"], hangul_exempt=True)},
+    ]
+    inputs = _sigma_contexts() + _MULTI
+    assert len(set(inputs)) == len(inputs)
+    for kind, group in (("sigma", _sigma_contexts()), ("multi", _MULTI)):
+        for s in group:
+            records.append(
+                {
+                    "kind": kind,
+                    "input": [ord(c) for c in s],
+                    **{name: [ord(c) for c in fn(s)] for name, fn in _SEQ_MAPS.items()},
+                }
+            )
+    return {"unicode_sequences.jsonl": jsonl(records)}

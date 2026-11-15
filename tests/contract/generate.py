@@ -18,9 +18,11 @@ from . import (
     gen_cli,
     gen_config,
     gen_daemon,
+    gen_edges,
     gen_json,
     gen_lexicon,
     gen_log,
+    gen_log_ring,
     gen_mcp,
     gen_state,
     gen_store,
@@ -35,10 +37,13 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "lexicon": gen_lexicon.generate,
     "canonical_json": gen_json.generate,
     "log_chain": gen_log.generate,
+    "log_keyring": gen_log_ring.generate,
     "store": gen_store.generate,
     "store_path": gen_store_path.generate,
     "datetime": gen_time.generate,
     "unicode": gen_unicode.generate,
+    "unicode_sequences": gen_unicode.sequences,
+    "python_edges": gen_edges.generate,
     "mcp_surface": gen_mcp.surface,
     "mcp_plain": gen_mcp.plain,
     "mcp": gen_mcp.responses,
@@ -53,7 +58,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
 #: generators gated on it read `unicodedata` or `re`'s word class for
 #: their output; under another version they are not compared.
 UNIDATA_VERSION = "15.1.0"
-UNICODE_GATED = frozenset({"lexicon", "unicode", "store", "store_path", "mcp", "hooks"})
+UNICODE_GATED = frozenset(
+    {"lexicon", "unicode", "unicode_sequences", "store", "store_path", "mcp", "hooks"}
+)
 
 #: The SQLite the golden files were generated under: the store fixture
 #: holds FTS5's shadow-table definitions and ``bm25()`` scores. The tool
@@ -62,6 +69,17 @@ UNICODE_GATED = frozenset({"lexicon", "unicode", "store", "store_path", "mcp", "
 #: prompt recall's pointers and the Stop audit's hits the same way.
 SQLITE_VERSION = "3.50.4"
 SQLITE_GATED = frozenset({"store", "store_path", "mcp", "hooks"})
+
+#: The CPython the golden files were generated under. ``python_edges``
+#: records what changes between versions (`datetime.fromisoformat`'s C
+#: parser, where `list.sort` leaves a NaN key, the recursion budget JSON
+#: stops at); under another version it is not compared.
+PYTHON_VERSION = "3.13"
+PYTHON_GATED = frozenset({"python_edges"})
+
+
+def python_version() -> str:
+    return f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
 def main() -> int:
@@ -76,6 +94,12 @@ def main() -> int:
         print(
             f"refusing: SQLite {sqlite3.sqlite_version}, golden files are "
             f"{SQLITE_VERSION}",
+            file=sys.stderr,
+        )
+        return 1
+    if python_version() != PYTHON_VERSION:
+        print(
+            f"refusing: Python {python_version()}, golden files are {PYTHON_VERSION}",
             file=sys.stderr,
         )
         return 1

@@ -219,6 +219,164 @@ def values() -> list[tuple[str, Any]]:
         out.append((f"float {f!r}", {"f": f}))
     out.append(("float_list", _floats()))
     out.append(("float_int_mix", [1, 1.0, -0, -0.0]))
+    out.extend(more_values())
+    return out
+
+
+#: Exact ties of `float.__repr__` (17 significant digits, the exact value
+#: one digit longer and ending in 5): CPython rounds them half to even. A
+#: tie rounded down (the last kept digit even) and one rounded up (odd,
+#: to the even digit above). Only values in fixed notation have them: a
+#: double of 17 or more integer digits is even and ends in no 5, and one
+#: below 1e-4 has a much longer exact expansion.
+_TIES_DOWN = [
+    254209913874244.625,
+    17200606963.3828125,
+    137480429030.765625,
+    137646331265.828125,
+    1099594578893.53125,
+    1099926383363.65625,
+    8796093041844.6875,
+    17592186064052.6875,
+    70368744216937.375,
+]
+_TIES_UP = [
+    137563380148.296875,
+    1099760481128.59375,
+    1100092285598.71875,
+    1100424090068.84375,
+    1100755894538.96875,
+    1099511637594.34375,
+    2199023265370.34375,
+    8796093068026.9375,
+    17592186090234.9375,
+]
+
+
+def _edge_floats() -> list[float]:
+    """Around the switch between fixed and exponent notation (exponent
+    below -4 or from 16 on), the subnormal range and the largest values."""
+    out = [
+        9999999999999998.0,
+        1e16,
+        1.0000000000000002e16,
+        9007199254740992.0,
+        9007199254740994.0,
+        18446744073709551616.0,
+        9223372036854775808.0,
+        123456789012345678.0,
+        1e22,
+        1e23,
+        9.999999999999999e22,
+        0.0001,
+        math.nextafter(0.0001, 0.0),
+        math.nextafter(0.0001, 1.0),
+        0.00009999999999999999,
+        0.001,
+        0.1 + 0.7,
+        2.2250738585072009e-308,
+        2.225073858507201e-308,
+        2.2250738585072014e-308,
+        math.nextafter(2.2250738585072014e-308, 1.0),
+        1e-323,
+        1.5e-323,
+        2e-323,
+        2.5e-323,
+        4.9e-322,
+        math.nextafter(1.7976931348623157e308, 0.0),
+        -5e-324,
+        -9999999999999998.0,
+        1e15 + 0.3,
+        999999999999999.9,
+        0.30000000000000004,
+    ]
+    return out
+
+
+def _chunks(name: str, values: list[float], size: int = 40) -> list[tuple[str, Any]]:
+    return [
+        (f"{name} {i // size}", values[i : i + size])
+        for i in range(0, len(values), size)
+    ]
+
+
+def _float_lists() -> list[tuple[str, Any]]:
+    twos = sorted(
+        {math.ldexp(1.0, e) for e in range(-1074, 1024, 11)}
+        | {
+            math.ldexp(1.0, e)
+            for e in (-1074, -1073, -1023, -1022, -1, 0, 52, 53, 54, 63, 64, 1023)
+        }
+    )
+    tens = [float(f"1e{e}") for e in range(-323, 309, 3)] + [
+        float(f"1e{e}") for e in range(-7, 24)
+    ]
+    subnormals = [
+        k * 5e-324 for k in (1, 2, 3, 7, 10, 99, 1000, 2**20, 2**51 - 1, 2**52 - 1)
+    ]
+    big_ints = [
+        float(n)
+        for n in (
+            2**53 - 1,
+            2**53 + 1,
+            2**60 + 3,
+            10**17 + 1,
+            10**18,
+            10**21,
+            10**21 - 1,
+            2**63 - 1,
+            2**64 - 1,
+            10**308,
+        )
+    ]
+    out: list[tuple[str, Any]] = []
+    out.extend(_chunks("floats powers_of_two", twos))
+    out.extend(_chunks("floats powers_of_ten", tens))
+    out.append(("floats subnormal_multiples", subnormals))
+    out.append(("floats large_integers", big_ints))
+    return out
+
+
+def _mixed_keys() -> list[tuple[str, Any]]:
+    """`sort_keys` sorts the items as Python compares their keys: a str
+    with any non-str raises TypeError, numbers sort numerically and
+    exactly (an int against a float, past i128 too), bool among them as 0
+    and 1. Where a NaN key lands depends on the Python version (3.13
+    changed `list.sort`'s runs); those cases are in ``json_edges.jsonl``."""
+    return [
+        ("keys str_and_int", {"a": 1, 1: 2}),
+        ("keys int_then_str_equal_text", {1: "a", "1": "b"}),
+        ("keys bool_and_str", {True: 1, "a": 2}),
+        ("keys none_and_int", {None: 1, 0: 2}),
+        ("keys none_and_str", {"a": 1, None: 2}),
+        ("keys tuple", {(1, 2): 3}),
+        ("keys bool_only", {True: 1, False: 2}),
+        (
+            "keys numbers",
+            {2: "a", 0.5: "b", True: "c", -1: "d", 1.5: "e", False: "f", -0.25: "g"},
+        ),
+        ("keys int_beyond_float", {2**53 + 1: "a", 9007199254740992.0: "b"}),
+        ("keys big_ints", {2**64: "a", -(2**64): "b", 1e20: "c", 10**30: "d"}),
+        ("keys infinities", {float("inf"): 1, float("-inf"): 2, 0: 3}),
+        (
+            "keys int_beyond_i128",
+            {1e40: "a", 10**40: "b", -1e300: "c", -(10**300): "d", 2.0**127: "e"},
+        ),
+        ("keys int_and_float_past_i128", {2**130: "a", -1.5: "b", 2.0**129: "c"}),
+        ("keys nested", {"z": [{2: "a", 1: "b"}], "a": {1.5: {True: None}}}),
+    ]
+
+
+def more_values() -> list[tuple[str, Any]]:
+    out: list[tuple[str, Any]] = []
+    for f in _TIES_DOWN:
+        out.append((f"float tie_down {f!r}", {"f": f}))
+    for f in _TIES_UP:
+        out.append((f"float tie_up {f!r}", {"f": f}))
+    for f in _edge_floats():
+        out.append((f"float edge {f!r}", {"f": f}))
+    out.extend(_float_lists())
+    out.extend(_mixed_keys())
     return out
 
 

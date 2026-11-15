@@ -1,7 +1,9 @@
 //! Every part of `unicode.jsonl` (one record): each map's full-table
 //! SHA-256, per-block SHA-256 and changed code points; the category and
 //! combining-class runs; each predicate's ranges; each multi-code-point
-//! sequence through each map.
+//! sequence through each map. And every record of `unicode_sequences.jsonl`:
+//! the NFKD table, and final sigma and multi-code-point case mappings on
+//! sequences through each map.
 
 mod common;
 
@@ -19,6 +21,7 @@ fn map(name: &str, text: &[u32]) -> Vec<u32> {
         "nfc" => unicode::normalize(Form::Nfc, text),
         "nfd" => unicode::normalize(Form::Nfd, text),
         "nfkc" => unicode::normalize(Form::Nfkc, text),
+        "nfkd" => unicode::normalize(Form::Nfkd, text),
         "casefold" => unicode::casefold(text),
         "lower" => unicode::lower(text),
         "upper" => unicode::upper(text),
@@ -64,7 +67,7 @@ fn map_table(name: &str) -> Value {
         let line = format!("{cp:X}\t{}\n", hexes.join(" "));
         whole.update(line.as_bytes());
         block.update(line.as_bytes());
-        if result != [cp] && !(name == "nfd" && (0xAC00..=0xD7A3).contains(&cp)) {
+        if result != [cp] && !(matches!(name, "nfd" | "nfkd") && (0xAC00..=0xD7A3).contains(&cp)) {
             changed.push(json!([cp, result]));
         }
     }
@@ -177,4 +180,60 @@ fn unicode_every_part() {
         failures.join("\n")
     );
     assert_count("unicode.jsonl parts", parts, in_file);
+}
+
+#[test]
+fn unicode_sequences_every_record() {
+    let lines = jsonl("unicode_sequences.jsonl");
+    let header = &lines[0];
+    assert_eq!(header["fixture"], "unicode_sequences");
+    assert_eq!(header["unidata_version"], unicode::UNIDATA_VERSION);
+    let maps: Vec<String> = header["maps"]
+        .as_array()
+        .expect("maps")
+        .iter()
+        .map(|m| m.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(maps.len(), 7);
+    let mut failures = Vec::new();
+    let (mut tables, mut sequences, mut cells) = (0, 0, 0);
+    for record in &lines[1..] {
+        if let Some(name) = record.get("map") {
+            let name = name.as_str().unwrap();
+            let got = map_table(name);
+            for key in ["sha256", "block_sha256", "changed"] {
+                if got[key] != record[key] {
+                    failures.push(format!("table {name}.{key}"));
+                }
+                cells += 1;
+            }
+            tables += 1;
+            continue;
+        }
+        let input = cps_of(&record["input"]);
+        for name in &maps {
+            let got = json!(map(name, &input));
+            if got != record[name.as_str()] {
+                failures.push(format!(
+                    "{} {input:X?} / {name}: expected {}, got {got}",
+                    record["kind"],
+                    record[name.as_str()]
+                ));
+            }
+            cells += 1;
+        }
+        sequences += 1;
+    }
+    eprintln!("unicode_sequences: {tables} tables, {sequences} sequences, {cells} cells");
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    assert_count(
+        "unicode_sequences.jsonl",
+        tables + sequences,
+        lines.len() - 1,
+    );
 }

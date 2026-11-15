@@ -14,12 +14,12 @@ One library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 
 | module | reproduces | pinned by |
 | --- | --- | --- |
-| `json` | `json.dumps` as each call site spells values (`log.canonical_payload` and nine more forms), `json.loads` | `canonical_json.jsonl` |
+| `json` | `json.dumps` as each call site spells values (`log.canonical_payload` and nine more forms, `review.canonical_json`), `json.loads` | `canonical_json.jsonl`, `json_edges.jsonl` |
 | `float_repr` | `float.__repr__` (shortest round trip, CPython's tie and layout rules) | `canonical_json.jsonl` |
-| `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns, pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl` |
-| `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl` |
+| `datetime` | `datetime.fromisoformat` (CPython 3.13's C parser), `isoformat`, `str`, the `strftime` patterns, pydantic's JSON spelling, `parse_event_ts`, `store_rows._dt`, `v8._as_dt`, `origin_history.instant`/`seconds`, `review.ulid_time` | `datetime.jsonl`, `datetime_edges.jsonl` |
+| `unicode` | NFC/NFD/NFKC/NFKD, `str.lower`/`upper`/`casefold` (final sigma included), `unicodedata.category`/`combining`, `str.isalpha` and kin, `re`'s `\w` and `\d` | `unicode.jsonl`, `unicode_sequences.jsonl` |
 | `lexicon` | `search_lexicon.tokenize`, `_tokenize_unstemmed`, `_strip_stopwords`, `fts_index_text`, `fts_match_query`, `_kebab_parts`, the diacritic fold, `tokenizer_fingerprint` | `lexicon.jsonl`, `lexicon_spelling_tables.json` |
-| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl` |
+| `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -47,16 +47,30 @@ stack: on Python 3.13.13, `json.loads`, `json.dumps` (compact, indented,
 `default=str`), `log.canonical_payload` (its outer dict included),
 `repr`, and the head file, origin file and rekey payload reads under
 `verify_chain` all take 9998 and raise RecursionError at 9999 (CPython's C
-recursion budget, not `sys.getrecursionlimit()`). The one difference left:
-the reference's limit is that budget less whatever its caller's stack
-already used, so it can stop lower when called deep in a stack, while the
-native limit is fixed. Native never rejects what the reference accepts.
+recursion budget, not `sys.getrecursionlimit()`). `repr` counts every
+object it spells, a scalar at the bottom too, so it writes 9997 lists
+around an int. `review.canonical_json` first walks nested dicts in Python
+(`review._thawed`), so a chain of 1000 dicts is RecursionError there from
+any caller (`sys.getrecursionlimit()`); native refuses 1000 and takes 999.
+`json_edges.jsonl` pins each site's deepest depth and the next one. The
+one difference left: the reference's limit is that budget less whatever
+its caller's stack already used, so it can stop lower when called deep in
+a stack, while the native limit is fixed. Native never rejects what the
+reference accepts.
+
+`sort_keys` sorts as Python compares keys: exactly between an int and a
+float at any size, and, for fewer than 64 keys, as CPython 3.13's
+`list.sort` leaves a NaN key, which compares false both ways (its run
+detection changed in 3.13; `json_edges.jsonl`). Past 63 keys with a NaN
+among them the order is a fixed total order, not pinned to CPython's.
 
 Seqs are i64, as SQLite stores them; `verify_chain` counts the expected seq
 in i128, so a chain that runs to `i64::MAX` reports as the reference does,
 and `next_row` after `i64::MAX` is OverflowError (where SQLite refuses the
-reference's insert). `tests/robustness.rs` pins both against reports the
-reference gave, and feeds every public entry point malformed text, JSON,
+reference's insert). `log_keyring.jsonl` pins the first against reports
+the reference gave, with the head and origin files, the key ring and the
+rekey payloads `verify_chain` reads; `tests/robustness.rs` pins the
+second, and feeds every public entry point malformed text, JSON,
 numbers, head and origin files and rows under debug assertions.
 
 `log::Key` holds key bytes. Its `Debug` prints the length and a

@@ -302,14 +302,19 @@ impl DateTime {
         self.isoformat().replace("+00:00", "Z")
     }
 
-    /// pydantic's `mode="json"` spelling: `Z` for a zero offset, an offset
-    /// as `±HH:MM` of its whole minutes (its seconds dropped).
+    /// pydantic's `mode="json"` spelling: the offset's `total_seconds()`
+    /// rounded half away from zero to whole seconds (pydantic-core's
+    /// `f64::round`), then `Z` when that is zero, else `±HH:MM` of its whole
+    /// minutes (the seconds dropped). An offset of half a second is
+    /// `+00:00`, of 59.999999 seconds `+00:01`.
     pub fn pydantic_json(&self) -> String {
         let mut out = format!("{}T{}", self.date_text(), self.time_text());
         match self.offset_us {
             None => {}
             Some(offset) => {
-                let seconds = offset / 1_000_000;
+                // |offset| < 86400e6 < 2^53: both exact, the quotient
+                // correctly rounded as Python's true division is.
+                let seconds = ((offset as f64) / 1e6).round() as i64;
                 if seconds == 0 {
                     out.push('Z');
                 } else {
