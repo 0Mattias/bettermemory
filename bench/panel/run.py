@@ -20,6 +20,13 @@ transcripts. It prints and writes one receipt of aggregates:
               write, and bettermemory's share of the context that tools and
               hooks added in the sessions it took part in
               (`transcripts.read`).
+  workflow_usage
+              provider-reported token usage per completed workflow (a
+              committed write chain, a search and the shows it led to, a
+              hook pointer opened), summed over the assistant turns that
+              carried it (`transcripts.workflow_usage`, whose note says what
+              it includes and does not); the per-workflow rows go only to
+              `--private-out`.
   latency     Y3: the newest bench/scale receipt at 1x, 10x and 100x, cited
               by file and commit, not re-run.
 
@@ -194,6 +201,13 @@ def render(receipt: dict[str, Any]) -> str:
             lines.append(
                 f"  {tool}: {block['calls_per_committed']} calls and {block['chars_per_committed']} chars per committed"
             )
+    usage = receipt.get("workflow_usage") or {}
+    for kind, block in (usage.get("kinds") or {}).items():
+        lines.append(
+            f"usage {kind}: {block['workflows']} workflows, input+cache p50 "
+            f"{block['input']['p50']}/{block['cache_read']['p50']}/"
+            f"{block['cache_creation']['p50']}, output p50 {block['output']['p50']}"
+        )
     latency = receipt.get("latency") or {}
     for scale in SCALES:
         block = latency.get(scale)
@@ -261,6 +275,13 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             conn.close()
 
+    usage: dict[str, Any] | None = None
+    usage_rows: list[dict[str, Any]] = []
+    if not args.no_transcripts:
+        usage, usage_rows = transcripts.workflow_usage(
+            args.transcripts, since=since, until=until
+        )
+
     receipt: dict[str, Any] = {
         "kind": "instrument-panel",
         "run_at": now.isoformat(),
@@ -274,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
         "transcripts": None
         if args.no_transcripts
         else transcripts.read(args.transcripts, since=since, until=until),
+        "workflow_usage": usage,
         "latency": latency_section(args.scale_results),
     }
     print(render(receipt))
@@ -288,6 +310,9 @@ def main(argv: list[str] | None = None) -> int:
         args.private_out.mkdir(parents=True, exist_ok=True)
         (args.private_out / "records.json").write_text(
             store_side.dumps_rows(rows), encoding="utf-8"
+        )
+        (args.private_out / "workflow_usage.json").write_text(
+            json.dumps(usage_rows, indent=1) + "\n", encoding="utf-8"
         )
     return 0
 

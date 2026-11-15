@@ -38,10 +38,10 @@ with it.
 | Program | Measures |
 |---|---|
 | `capture/` | Session capture at the Stop hook: the gates, the one-call review, the attended switch, undo and the served surface. |
-| `daemon/` | Daemon latency: the hook round trip and `memory_search` through the stdio shim, on a scratch copy of a real store. |
+| `daemon/` | Daemon latency: the hook round trip and `memory_search` through the stdio shim, on a scratch copy of a real store. `--arm breakdown` splits the prompt hook's round trip into launcher, interpreter, client import, HTTP and daemon work on a copy of a v9 store; `--arm uvx` times the plugin's `uvx --offline` launch and times nothing when the cache holds another version. |
 | `decisions/` | The decision models behind the write and recall gates, graded blind. |
 | `integrity/` | The integrity benchmark: planted and forged memories against five systems under one protocol. |
-| `panel/` | The instrument panel: over a read-only copy of a store and the local Claude Code transcripts, the helped rate, characters per tool response and per hook injection, the hooks' wall time as the harness measured it, calls and characters per committed write, verdict precision, pointer outcomes by rank, and every record's use by age and standing. Aggregates only; the per-record rows go to a private directory. |
+| `panel/` | The instrument panel: over a read-only copy of a store and the local Claude Code transcripts, the helped rate, characters per tool response and per hook injection, the hooks' wall time as the harness measured it, calls and characters per committed write, verdict precision, pointer outcomes by rank, and every record's use by age and standing, and the provider-reported token usage of the turns that carried each completed workflow. Aggregates only; the per-record rows go to a private directory. |
 | `parity/` | The v8 migration round trip, and rank parity of the search step alone. |
 | `recall/` | The session brief and prompt recall on a sealed copy of a real store. |
 | `retrieval/` | recall@k on a committed, blind-authored gold set. |

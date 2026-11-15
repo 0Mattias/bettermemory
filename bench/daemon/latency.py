@@ -54,6 +54,14 @@ under the user's directories is read or written.
     python bench/daemon/latency.py --v8 ~/.cache/bettermemory-v9/live-copy \\
         --out bench/daemon/results/latency-9.0.0-2026-09-26.json
 
+The breakdown arm (`--arm breakdown`) and the uvx arm (`--arm uvx`, ENG-111)
+run on a v9 store copied into the scratch, from `--store-copy` or through a
+read-only snapshot (`--snapshot`); bench/daemon/breakdown.py says what each
+part times:
+
+    python bench/daemon/latency.py --arm breakdown \\
+        --snapshot ~/.bettermemory/memory.sqlite --n 50 --out <file>
+
 The write arm (`--arm write`, unit D1's P10) is a separate run with its own
 file:
 
@@ -1921,20 +1929,68 @@ def run_stop_arm(*, v8: Path, scratch: Path, n: int) -> dict[str, Any]:
     }
 
 
+def run_v9_arm(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """The breakdown and uvx arms (bench/daemon/breakdown.py) on a v9 store
+    copy; the scratch is removed afterwards."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import breakdown
+
+    if (args.store_copy is None) == (args.snapshot is None):
+        parser.error(f"the {args.arm} arm needs one of --store-copy and --snapshot")
+    if args.n < 1:
+        parser.error("--n must be at least 1")
+    scratch = args.scratch or Path(
+        tempfile.mkdtemp(prefix=f"bettermemory-daemon-{args.arm}-bench-")
+    )
+    run = breakdown.run_breakdown if args.arm == "breakdown" else breakdown.run_uvx
+    try:
+        artifact = run(
+            scratch=scratch,
+            store_copy=args.store_copy,
+            snapshot_from=args.snapshot,
+            n=args.n,
+            gap=breakdown.BREAKDOWN_GAP_SECONDS if args.gap is None else args.gap,
+            prompts=prompt_workload(args.n + breakdown.BREAKDOWN_WARM_UPS),
+            refuse=refuse_live_store,
+        )
+    except BaseException:
+        print(f"the scratch is kept at {scratch}", file=sys.stderr)
+        raise
+    # The scratch is the bench's own (`--scratch` must not exist before the
+    # run), and the daemon over it has stopped and released its lock.
+    shutil.rmtree(scratch, ignore_errors=True)
+    from bettermemory import __version__
+
+    artifact = {
+        "kind": f"daemon-latency-{args.arm}",
+        "version": __version__,
+        "commit": _git("rev-parse", "HEAD"),
+        "run_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "machine": _machine(),
+        **artifact,
+        "scratch_removed": not scratch.exists(),
+    }
+    write_artifact(args.out, artifact)
+    print(f"wrote {args.out}", file=sys.stderr)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         "--arm",
-        choices=("read", "write", "prompt", "stop", "brief"),
+        choices=("read", "write", "prompt", "stop", "brief", "breakdown", "uvx"),
         default="read",
         help=(
             "read: the hook and memory_search arms (the default); write: the "
             "memory_write arm on a copy imported from --tgz; prompt: the "
             "per-prompt recall, prompts spaced 3 s apart; stop: the /hook/stop "
             "service time with capture off and on, and the capture open decision; "
-            "brief: the session brief, standing off and on"
+            "brief: the session brief, standing off and on; breakdown: the "
+            "prompt hook's round trip split into its parts on a v9 store copy "
+            "(bench/daemon/breakdown.py); uvx: the same hook launched through "
+            "`uvx --offline`, as the plugin launches it"
         ),
     )
     parser.add_argument(
@@ -1942,6 +1998,27 @@ def main() -> None:
         type=Path,
         default=None,
         help="the v8 store directory to migrate into the scratch store (read and prompt arms)",
+    )
+    parser.add_argument(
+        "--store-copy",
+        type=Path,
+        default=None,
+        help="a v9 store file to copy into the scratch (breakdown and uvx arms)",
+    )
+    parser.add_argument(
+        "--snapshot",
+        type=Path,
+        default=None,
+        help=(
+            "a v9 store file to copy through a read-only backup connection "
+            "(bench/panel/store_side.snapshot) into the scratch (breakdown and uvx arms)"
+        ),
+    )
+    parser.add_argument(
+        "--gap",
+        type=float,
+        default=None,
+        help="seconds between rounds (breakdown and uvx arms; default 3)",
     )
     parser.add_argument(
         "--tgz",
@@ -1976,6 +2053,10 @@ def main() -> None:
         help="scratch directory (default: a fresh temp dir)",
     )
     args = parser.parse_args()
+    if args.scratch is not None and args.scratch.exists():
+        # The arms remove their scratch afterwards; they only ever remove
+        # a directory they created.
+        parser.error(f"--scratch {args.scratch} exists; name a new directory")
 
     if args.arm == "write":
         if args.tgz is None:
@@ -1992,6 +2073,9 @@ def main() -> None:
         )
         write_artifact(args.out, artifact)
         print(f"wrote {args.out}", file=sys.stderr)
+        return
+    if args.arm in ("breakdown", "uvx"):
+        run_v9_arm(args, parser)
         return
     if args.v8 is None:
         parser.error(f"the {args.arm} arm needs --v8")

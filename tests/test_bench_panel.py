@@ -450,3 +450,251 @@ def test_the_receipt_names_no_record_and_the_rows_stay_out_of_the_repository(
                 str(_ROOT / "x"),
             ]
         )
+
+
+# -- usage per workflow ---------------------------------------------------
+
+_BM = "mcp__bettermemory__"
+_PTR = "01KTESTPOINTERID00000000AA"
+_HIT = "01KTESTSEARCHHIT00000000BB"
+_HIT2 = "01KTESTSEARCHHIT00000000CC"
+
+
+class _Script:
+    """Transcript lines with increasing timestamps."""
+
+    def __init__(self, session: str = "s1") -> None:
+        self.session = session
+        self.tick = 0
+
+    def ts(self) -> str:
+        self.tick += 1
+        return f"2026-11-05T10:{self.tick // 60:02d}:{self.tick % 60:02d}Z"
+
+    def turn(
+        self,
+        message_id: str,
+        uses: list[tuple[str, str, dict[str, Any]]],
+        usage: dict[str, int],
+    ) -> str:
+        return _line(
+            type="assistant",
+            sessionId=self.session,
+            timestamp=self.ts(),
+            message={
+                "id": message_id,
+                "usage": usage,
+                "content": [
+                    {"type": "tool_use", "id": u, "name": _BM + n, "input": i}
+                    for u, n, i in uses
+                ],
+            },
+        )
+
+    def result(self, use_id: str, text: str) -> str:
+        return _line(
+            type="user",
+            sessionId=self.session,
+            timestamp=self.ts(),
+            message={
+                "content": [
+                    {"type": "tool_result", "tool_use_id": use_id, "content": text}
+                ]
+            },
+        )
+
+    def hook(self, uuid: str, text: str) -> str:
+        return _line(
+            type="attachment",
+            uuid=uuid,
+            sessionId=self.session,
+            timestamp=self.ts(),
+            attachment={
+                "type": "hook_success",
+                "hookName": "UserPromptSubmit",
+                "command": "bettermemory hook prompt",
+                "content": text,
+                "durationMs": 9,
+            },
+        )
+
+
+def _usage(base: int, output: int | None = None) -> dict[str, int]:
+    return {
+        "input_tokens": base,
+        "cache_read_input_tokens": 10 * base,
+        "cache_creation_input_tokens": 100 * base,
+        "output_tokens": 1000 * base if output is None else output,
+    }
+
+
+def _usage_of(tmp_path: Path, *files: list[str]) -> tuple[dict[str, Any], Any]:
+    root = tmp_path / "projects"
+    (root / "p").mkdir(parents=True, exist_ok=True)
+    for index, lines in enumerate(files):
+        (root / "p" / f"{index}.jsonl").write_text("".join(lines), encoding="utf-8")
+    return transcripts.workflow_usage(root, since=_SINCE)
+
+
+_COMMITTED = json.dumps({"status": "committed"})
+_REVIEW = json.dumps({"status": "review"})
+
+
+def test_usage_is_summed_per_completed_workflow(tmp_path: Path) -> None:
+    t = _Script()
+    lines = [
+        t.turn("m1", [("w1", "memory_write", {})], _usage(1)),
+        t.result("w1", _REVIEW),
+        t.turn("m2", [("w2", "memory_write", {})], _usage(2)),
+        t.result("w2", _COMMITTED),
+        t.turn("m3", [("s1", "memory_search", {"query": "q"})], _usage(3)),
+        t.result("s1", f"hits: {_HIT}"),
+        t.turn("m4", [("v1", "memory_show", {"id": _HIT})], _usage(4)),
+        t.result("v1", "body"),
+        t.turn("m5", [("s2", "memory_search", {"query": "q"})], _usage(5)),
+        t.result("s2", "no hits"),
+        t.hook("hp", f"bettermemory recall: {_PTR}"),
+        t.turn("m6", [("v2", "memory_show", {"id": _PTR})], _usage(6)),
+        t.result("v2", "body"),
+        t.turn("m7", [("w3", "memory_write", {})], _usage(7)),
+        t.result("w3", _REVIEW),
+    ]
+    out, rows = _usage_of(tmp_path, lines)
+    kinds = out["kinds"]
+    write = kinds["write_committed"]
+    assert (write["workflows"], write["turns"]["p50"]) == (1, 2)
+    assert write["input"]["total"] == 1 + 2
+    assert kinds["search_then_show"]["cache_read"]["total"] == 30 + 40
+    hook = kinds["hook_pointer_opened"]
+    assert (hook["workflows"], hook["cache_creation"]["total"]) == (1, 600)
+    assert out["incomplete"] == {
+        "write_chains_without_commit": 1,
+        "searches_without_show": 1,
+        "injections_without_show": 0,
+    }
+    assert "not included" in out["note"].lower()
+    text = json.dumps([out, rows])
+    assert _PTR not in text and _HIT not in text
+
+
+def test_a_split_message_counts_once_at_its_largest_usage(tmp_path: Path) -> None:
+    t = _Script()
+    lines = [
+        t.turn("m1", [], _usage(1, output=5)),
+        t.turn("m1", [("w1", "memory_write", {})], _usage(1, output=50)),
+        t.turn("m1", [], _usage(1, output=20)),
+        t.result("w1", _COMMITTED),
+    ]
+    out, _ = _usage_of(tmp_path, lines)
+    write = out["kinds"]["write_committed"]
+    assert (write["output"]["total"], write["input"]["total"]) == (50, 1)
+
+
+def test_a_turn_shared_by_two_workflows_is_flagged(tmp_path: Path) -> None:
+    t = _Script()
+    lines = [
+        t.turn("m1", [("s1", "memory_search", {"query": "q"})], _usage(1)),
+        t.result("s1", f"hits: {_HIT}"),
+        t.turn(
+            "m2",
+            [("v1", "memory_show", {"id": _HIT}), ("w1", "memory_write", {})],
+            _usage(2),
+        ),
+        t.result("v1", "body"),
+        t.result("w1", _COMMITTED),
+    ]
+    out, _ = _usage_of(tmp_path, lines)
+    kinds = out["kinds"]
+    assert kinds["write_committed"]["shared_turns"] == 1
+    assert kinds["search_then_show"]["shared_turns"] == 1
+    assert out["distinct_turns"]["turns"] == 2
+    assert out["distinct_turns"]["input"] == 1 + 2
+
+
+@pytest.mark.parametrize("show_first", [True, False])
+def test_a_show_beside_a_new_search_credits_the_previous_one(
+    tmp_path: Path, show_first: bool
+) -> None:
+    t = _Script()
+    show = ("v1", "memory_show", {"id": _HIT})
+    search = ("s2", "memory_search", {"query": "q"})
+    lines = [
+        t.turn("m1", [("s1", "memory_search", {"query": "q"})], _usage(1)),
+        t.result("s1", f"hits: {_HIT}"),
+        t.turn("m2", [show, search] if show_first else [search, show], _usage(2)),
+        t.result("v1", "body"),
+        t.result("s2", f"hits: {_HIT2}"),
+        t.turn("m3", [("v2", "memory_show", {"id": _HIT2})], _usage(3)),
+        t.result("v2", "body"),
+    ]
+    out, rows = _usage_of(tmp_path, lines)
+    searches = out["kinds"]["search_then_show"]
+    assert searches["workflows"] == 2
+    assert sorted(row["input"] for row in rows) == [1 + 2, 2 + 3]
+
+
+def test_a_resumed_session_across_two_files_is_one_lineage(tmp_path: Path) -> None:
+    first = _Script("old")
+    head = [
+        first.turn("m1", [("s1", "memory_search", {"query": "q"})], _usage(1)),
+        first.result("s1", f"hits: {_HIT}"),
+    ]
+    resumed = _Script("new")
+    resumed.tick = first.tick
+    tail = [
+        resumed.turn("m2", [("v1", "memory_show", {"id": _HIT})], _usage(2)),
+        resumed.result("v1", "body"),
+    ]
+    # The resumed file repeats the old lines under the new session id and
+    # sorts first by name.
+    copied = [line.replace('"old"', '"new"') for line in head]
+    out, _ = _usage_of(tmp_path, copied + tail, head)
+    assert out["kinds"]["search_then_show"]["workflows"] == 1
+    assert out["lineages"] == 1
+
+
+def test_the_panel_prints_usage_and_keeps_its_rows_private(
+    written: dict[str, Any], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    t = _Script()
+    root = tmp_path / "projects"
+    (root / "p").mkdir(parents=True)
+    (root / "p" / "a.jsonl").write_text(
+        t.turn("m1", [("w1", "memory_write", {})], _usage(1))
+        + t.result("w1", _COMMITTED),
+        encoding="utf-8",
+    )
+    private = tmp_path / "private"
+    out = tmp_path / "receipt.json"
+    code = run.main(
+        [
+            "--store",
+            str(written["path"]),
+            "--transcripts",
+            str(root),
+            "--since",
+            "2026-11-04",
+            "--out",
+            str(out),
+            "--private-out",
+            str(private),
+        ]
+    )
+    assert code == 0
+    assert "usage write_committed: 1 workflows" in capsys.readouterr().out
+    receipt = json.loads(out.read_text(encoding="utf-8"))
+    assert receipt["workflow_usage"]["kinds"]["write_committed"]["workflows"] == 1
+    rows = json.loads((private / "workflow_usage.json").read_text(encoding="utf-8"))
+    assert rows == [
+        {
+            "kind": "write_committed",
+            "turns": 1,
+            "calls": 1,
+            "turns_with_usage": 1,
+            "shared_turns": 0,
+            "input": 1,
+            "cache_read": 10,
+            "cache_creation": 100,
+            "output": 1000,
+        }
+    ]

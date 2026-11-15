@@ -435,3 +435,369 @@ def _summary(
 
 def default_root() -> Path:
     return Path(os.path.expanduser("~/.claude/projects"))
+
+
+# ---------------------------------------------------------------------------
+# Provider-reported usage per completed workflow
+# ---------------------------------------------------------------------------
+
+#: The usage fields an assistant message carries, as the provider reported
+#: them, and the names the receipt gives them.
+USAGE_FIELDS = (
+    ("input_tokens", "input"),
+    ("cache_read_input_tokens", "cache_read"),
+    ("cache_creation_input_tokens", "cache_creation"),
+    ("output_tokens", "output"),
+)
+
+#: The workflow kinds.
+WORKFLOWS = ("write_committed", "search_then_show", "hook_pointer_opened")
+
+USAGE_NOTE = (
+    "Provider-reported usage (the `usage` of each assistant message, one "
+    "figure per message id: the largest of each field over the entries that "
+    "repeat it), summed over the assistant turns that carried one completed "
+    "workflow, then p50 and p90 across workflows of a kind. A turn carries a "
+    "workflow when it holds one of its tool calls: write_committed, the "
+    "memory_write calls of a session from the first after the previous "
+    "commit through the call whose response says committed; search_then_show, "
+    "one memory_search and the memory_show calls of ids its response named, "
+    "before the next memory_search, counted only with at least one show; "
+    "hook_pointer_opened, the memory_show calls of ids a bettermemory hook "
+    "injected, counted per injection with at least one show (the hook itself "
+    "has no assistant turn). A show is credited to the newest search or "
+    "injection that named its id. Sessions are read by lineage (a resumed or "
+    "forked session joined to the one whose lines it repeats), in timestamp "
+    "order. Included: each such turn's whole request, the full input context "
+    "it was sent with (input, cache read, cache creation) and everything it "
+    "generated (output, thinking and any other tool calls in the same turn). "
+    "Not included: the turn after the last tool result, which reads it; "
+    "turns between the workflow's calls that made no workflow call; hook "
+    "injections' cost, which lands in the next turn's input. A turn that "
+    "carries calls of two workflows is counted in both (`shared_turns` per "
+    "kind), so figures of different kinds must not be added; "
+    "`distinct_turns` sums each turn once. Usage cannot be attributed to one "
+    "tool response: a figure is what the turns cost, not what bettermemory "
+    "added to them."
+)
+
+
+def usage_of(message: dict[str, Any]) -> dict[str, int] | None:
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    out: dict[str, int] = {}
+    for key, name in USAGE_FIELDS:
+        value = usage.get(key)
+        out[name] = int(value) if isinstance(value, (int, float)) else 0
+    return out
+
+
+@dataclass
+class _Flow:
+    kind: str
+    messages: list[str] = field(default_factory=list)
+    calls: int = 0
+
+    def add(self, message: str) -> None:
+        self.calls += 1
+        if message not in self.messages:
+            self.messages.append(message)
+
+
+@dataclass
+class _Entry:
+    """One line the usage reading needs, reduced to what it reads."""
+
+    order: tuple[str, int, int]
+    session: str
+    kind: str  # "turn", "result" or "hook"
+    message_id: str = ""
+    # turn: (use id, tool, shown id); result: (use id, status, text).
+    items: list[tuple[str, str, str]] = field(default_factory=list)
+    text: str = ""
+
+
+@dataclass
+class _Lineage:
+    chain: _Flow | None = None
+    # (sequence, text, flow) for searches and hook injections not yet closed.
+    sources: list[tuple[int, str, _Flow]] = field(default_factory=list)
+    seq: int = 0
+
+
+@dataclass
+class _UsageTally:
+    usage: dict[str, dict[str, int]] = field(default_factory=dict)
+    uses: dict[str, tuple[str, str]] = field(default_factory=dict)
+    results_seen: set[str] = field(default_factory=set)
+    hook_runs_seen: set[str] = field(default_factory=set)
+    done: list[_Flow] = field(default_factory=list)
+    open_at_end: Counter[str] = field(default_factory=Counter)
+    searches_without_show: int = 0
+    injections_without_show: int = 0
+
+
+class _Sessions:
+    """Union-find over session ids: two sessions that carry the same
+    message, call or hook run are one lineage."""
+
+    def __init__(self) -> None:
+        self.parent: dict[str, str] = {}
+        self.first: dict[str, str] = {}
+
+    def root(self, session: str) -> str:
+        self.parent.setdefault(session, session)
+        while self.parent[session] != session:
+            self.parent[session] = self.parent[self.parent[session]]
+            session = self.parent[session]
+        return session
+
+    def seen(self, key: str, session: str) -> None:
+        other = self.first.setdefault(key, session)
+        a, b = self.root(other), self.root(session)
+        if a != b:
+            self.parent[max(a, b)] = min(a, b)
+
+
+def _collect_turn(
+    tally: _UsageTally, entry: dict[str, Any], order: tuple[str, int, int], session: str
+) -> _Entry | None:
+    message = entry.get("message") or {}
+    message_id = message.get("id")
+    if not isinstance(message_id, str):
+        return None
+    usage = usage_of(message)
+    if usage is not None:
+        known = tally.usage.setdefault(message_id, usage)
+        for name, value in usage.items():
+            known[name] = max(known[name], value)
+    items: list[tuple[str, str, str]] = []
+    content = message.get("content")
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        use_id = block.get("id")
+        tool = tool_of(str(block.get("name") or ""))
+        if not isinstance(use_id, str) or tool is None:
+            continue
+        shown = (block.get("input") or {}).get("id") if tool == "memory_show" else ""
+        items.append((use_id, tool, shown if isinstance(shown, str) else ""))
+    return _Entry(order, session, "turn", message_id, items)
+
+
+def _collect_result(
+    entry: dict[str, Any], order: tuple[str, int, int], session: str
+) -> _Entry | None:
+    content = (entry.get("message") or {}).get("content")
+    items: list[tuple[str, str, str]] = []
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        use_id = block.get("tool_use_id")
+        if not isinstance(use_id, str):
+            continue
+        text = result_text(block.get("content"))
+        items.append((use_id, status_of(text), text))
+    return _Entry(order, session, "result", items=items) if items else None
+
+
+def _collect_hook(
+    entry: dict[str, Any], order: tuple[str, int, int], session: str
+) -> _Entry | None:
+    attachment = entry.get("attachment") or {}
+    if attachment.get("type") != "hook_success":
+        return None
+    content = attachment.get("content")
+    text = injected_text(content if isinstance(content, str) else "")
+    event = str(attachment.get("hookName") or attachment.get("hookEvent") or "")
+    command = str(attachment.get("command") or "")
+    if not text or bettermemory_hook(command, event, text) is None:
+        return None
+    run_id = entry.get("uuid")
+    return _Entry(order, session, "hook", str(run_id or ""), text=text)
+
+
+def _close_source(tally: _UsageTally, flow: _Flow) -> None:
+    if flow.calls > (1 if flow.kind == "search_then_show" else 0):
+        tally.done.append(flow)
+    elif flow.kind == "search_then_show":
+        tally.searches_without_show += 1
+    else:
+        tally.injections_without_show += 1
+
+
+def _play_turn(tally: _UsageTally, state: _Lineage, entry: _Entry) -> None:
+    fresh = [item for item in entry.items if item[0] not in tally.uses]
+    for use_id, tool, _ in fresh:
+        tally.uses[use_id] = (tool, entry.message_id)
+    # Shows first: a show in the same message as a new search opens the
+    # previous search's hit, which the new search must not close away.
+    for _, tool, shown in fresh:
+        if tool != "memory_show" or len(shown) < 6:
+            continue
+        for _, text, flow in sorted(state.sources, key=lambda s: -s[0]):
+            if shown in text:
+                flow.add(entry.message_id)
+                break
+    for _, tool, _ in fresh:
+        if tool == "memory_write":
+            if state.chain is None:
+                state.chain = _Flow("write_committed")
+            state.chain.add(entry.message_id)
+    if any(tool == "memory_search" for _, tool, _ in fresh):
+        for _, _, flow in state.sources:
+            if flow.kind == "search_then_show":
+                _close_source(tally, flow)
+        state.sources = [s for s in state.sources if s[2].kind != "search_then_show"]
+
+
+def _play_result(tally: _UsageTally, state: _Lineage, entry: _Entry) -> None:
+    for use_id, status, text in entry.items:
+        if use_id in tally.results_seen or use_id not in tally.uses:
+            continue
+        tally.results_seen.add(use_id)
+        tool, message_id = tally.uses[use_id]
+        if tool == "memory_write" and state.chain is not None:
+            if status == "committed":
+                tally.done.append(state.chain)
+                state.chain = None
+        elif tool == "memory_search":
+            flow = _Flow("search_then_show")
+            flow.add(message_id)
+            state.seq += 1
+            state.sources.append((state.seq, text, flow))
+
+
+def _play_hook(tally: _UsageTally, state: _Lineage, entry: _Entry) -> None:
+    if entry.message_id:
+        if entry.message_id in tally.hook_runs_seen:
+            return
+        tally.hook_runs_seen.add(entry.message_id)
+    state.seq += 1
+    state.sources.append((state.seq, entry.text, _Flow("hook_pointer_opened")))
+
+
+def _flow_usage(tally: _UsageTally, messages: Iterable[str]) -> dict[str, int]:
+    total = {name: 0 for _, name in USAGE_FIELDS}
+    for message_id in messages:
+        for name, value in (tally.usage.get(message_id) or {}).items():
+            total[name] += value
+    return total
+
+
+def _collect(
+    root: Path, tally: _UsageTally, since: datetime | None, until: datetime | None
+) -> tuple[list[_Entry], _Sessions]:
+    entries: list[_Entry] = []
+    sessions = _Sessions()
+    markers = (*_MARKERS, '"usage"')
+    for file_index, (path, may_hold) in enumerate(_files(root, since)):
+        if not may_hold:
+            continue
+        try:
+            handle = path.open(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with handle:
+            for line_index, line in enumerate(handle):
+                if not any(marker in line for marker in markers):
+                    continue
+                try:
+                    raw = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(raw, dict) or not _in_window(raw, since, until):
+                    continue
+                session = str(raw.get("sessionId") or path.stem)
+                sessions.root(session)
+                order = (str(raw.get("timestamp") or ""), file_index, line_index)
+                kind = raw.get("type")
+                found: _Entry | None = None
+                if kind == "assistant":
+                    found = _collect_turn(tally, raw, order, session)
+                    if found is not None:
+                        sessions.seen("m:" + found.message_id, session)
+                elif kind == "user":
+                    found = _collect_result(raw, order, session)
+                    for use_id, _, _ in found.items if found else []:
+                        sessions.seen("u:" + use_id, session)
+                elif kind == "attachment":
+                    found = _collect_hook(raw, order, session)
+                    if found is not None and found.message_id:
+                        sessions.seen("h:" + found.message_id, session)
+                if found is not None:
+                    entries.append(found)
+    return entries, sessions
+
+
+def workflow_usage(
+    root: Path, *, since: datetime | None = None, until: datetime | None = None
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Provider-reported usage per completed workflow (`USAGE_NOTE`): the
+    aggregate for the receipt and one row per workflow (kind, turns, calls,
+    usage; no id or text) for the private directory."""
+    tally = _UsageTally()
+    entries, sessions = _collect(root, tally, since, until)
+    lineages: dict[str, list[_Entry]] = defaultdict(list)
+    for entry in entries:
+        lineages[sessions.root(entry.session)].append(entry)
+    for lineage in lineages.values():
+        state = _Lineage()
+        for entry in sorted(lineage, key=lambda e: e.order):
+            if entry.kind == "turn":
+                _play_turn(tally, state, entry)
+            elif entry.kind == "result":
+                _play_result(tally, state, entry)
+            else:
+                _play_hook(tally, state, entry)
+        if state.chain is not None:
+            tally.open_at_end["write_committed"] += 1
+        for _, _, flow in state.sources:
+            _close_source(tally, flow)
+    carriers: Counter[str] = Counter()
+    for flow in tally.done:
+        carriers.update(set(flow.messages))
+    rows = [
+        {
+            "kind": flow.kind,
+            "turns": len(flow.messages),
+            "calls": flow.calls,
+            "turns_with_usage": sum(1 for m in flow.messages if m in tally.usage),
+            "shared_turns": sum(1 for m in flow.messages if carriers[m] > 1),
+            **_flow_usage(tally, flow.messages),
+        }
+        for flow in tally.done
+    ]
+    kinds: dict[str, Any] = {}
+    for kind in WORKFLOWS:
+        mine = [row for row in rows if row["kind"] == kind]
+        block: dict[str, Any] = {
+            "workflows": len(mine),
+            "turns": quantiles(row["turns"] for row in mine),
+            "calls": quantiles(row["calls"] for row in mine),
+            "shared_turns": sum(row["shared_turns"] for row in mine),
+            "turns_missing_usage": sum(
+                row["turns"] - row["turns_with_usage"] for row in mine
+            ),
+        }
+        for _, name in USAGE_FIELDS:
+            q = quantiles(row[name] for row in mine)
+            block[name] = {k: q[k] for k in ("n", "total", "p50", "p90")}
+        kinds[kind] = block
+    aggregate = {
+        "unit": "provider-reported tokens",
+        "note": USAGE_NOTE,
+        "kinds": kinds,
+        "distinct_turns": {
+            "turns": len(carriers),
+            **_flow_usage(tally, carriers),
+        },
+        "lineages": len(lineages),
+        "incomplete": {
+            "write_chains_without_commit": tally.open_at_end["write_committed"],
+            "searches_without_show": tally.searches_without_show,
+            "injections_without_show": tally.injections_without_show,
+        },
+    }
+    return aggregate, rows
