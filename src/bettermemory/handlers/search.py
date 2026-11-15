@@ -178,8 +178,8 @@ def clamp_search_width(value: int) -> int:
     """Narrow a result width to the range a search can actually serve:
     `[1, MAX_SEARCH_RESULTS]`.
 
-    The single arithmetic site for that range: `memory_search`'s request
-    and `config set`'s check of `default_max_results` both read it.
+    The single arithmetic site for that range, for `memory_search`'s
+    request (`default_max_results` is a fixed 5 since 9.0.0rc20).
     """
     return max(1, min(int(value), MAX_SEARCH_RESULTS))
 

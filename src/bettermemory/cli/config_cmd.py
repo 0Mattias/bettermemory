@@ -36,7 +36,10 @@ Three subcommands, each with ``--json``:
   a key or section a release removed; a value that did not
   parse and fell back to the default; a value clamped where it is read; a
   `[storage] directory` under a system directory.
-  Notes are user lines a managed pin overrides. Exit 0 when there is
+  Notes are user lines a managed pin overrides, and lines that set a
+  fixed setting (`config.FIXED_SETTINGS`): a key that is no longer a
+  setting, named with its fixed value, in either file. Only `check`
+  mentions such a line; the loader drops it without a word. Exit 0 when there is
   nothing above a note, 1 on any error, 2 on warnings only.
 
 Read-only, all three. The config is loaded with ``create=False``
@@ -56,7 +59,7 @@ by `config._config_from_data` on its own, so a check and a load cannot
 disagree about whether a value is valid. Only the silent fallbacks, which
 the loader by design does not report, are recognised here: a boolean
 setting whose value is not one of the spellings `_coerce_bool` reads, and
-the two string settings that normalise (`search_mode`, `prompt_recall`).
+the string setting that normalises (`prompt_recall`).
 """
 
 from __future__ import annotations
@@ -113,13 +116,20 @@ def settings_catalogue() -> dict[str, tuple[str, ...]]:
     """Every section `Config` reads and the keys of each, in the
     dataclasses' own order: the walk `config._apply_managed` makes to find
     what a managed file can pin, so a section a later release adds is
-    listed, shown and checked the moment it parses."""
+    listed, shown and checked the moment it parses. A fixed setting
+    (`config.FIXED_SETTINGS`) is a field of its dataclass but no setting,
+    and is left out."""
     defaults = _config.Config()
     catalogue: dict[str, tuple[str, ...]] = {}
     for section_field in fields(defaults):
-        section = getattr(defaults, section_field.name)
+        name = section_field.name
+        section = getattr(defaults, name)
         if is_dataclass(section) and not isinstance(section, type):
-            catalogue[section_field.name] = tuple(f.name for f in fields(section))
+            catalogue[name] = tuple(
+                f.name
+                for f in fields(section)
+                if (name, f.name) not in _config.FIXED_SETTINGS
+            )
     return catalogue
 
 
@@ -360,6 +370,8 @@ def path_report() -> dict[str, Any]:
         # where no managed file was read. The registry value is read now.
         "read": True,
         "pinned": None if config is None else sorted(config.managed_keys),
+        # Managed lines for keys that are fixed values now: they pin nothing.
+        "pins_nothing": None if config is None else sorted(config.managed_fixed),
         "note": None,
     }
     keys_dir = _store.resolve_keys_dir().expanduser()
@@ -409,6 +421,13 @@ def render_path(report: Mapping[str, Any]) -> str:
     else:
         pinned = managed["pinned"]
         count = "" if pinned is None else f", pins {_plural(len(pinned), 'setting')}"
+        lapsed = managed.get("pins_nothing") or []
+        if lapsed:
+            count += (
+                f"; {_plural(len(lapsed), 'line')} "
+                f"{'pins' if len(lapsed) == 1 else 'pin'} nothing, no longer "
+                "settings: `bettermemory security audit` names them"
+            )
         row("managed file", f"{managed['path']} (present{count})")
     store = report["store"]
     if store["path"] is None:
@@ -546,7 +565,7 @@ class Finding:
     """One line of `check`'s report.
 
     `code` is stable for scripts: unreadable, not_a_table, unknown_section,
-    unknown_key, removed, invalid_value, unknown_acknowledge_name,
+    unknown_key, removed, fixed, invalid_value, unknown_acknowledge_name,
     fallback, clamped, invalid_scope, port_out_of_range, privileged_port,
     system_directory, pinned, does_not_load. `file` is the role of the file the line is in
     (``user`` or ``managed``), None for the load as a whole. `message` is
@@ -707,8 +726,6 @@ def _is_bool_spelling(value: object) -> bool:
 def _fell_back(section: str, key: str, value: object) -> bool:
     """Whether the loader read `value` as the default because it could not
     read it at all, the one outcome it never reports."""
-    if (section, key) == ("behavior", "search_mode"):
-        return str(value).strip().lower() not in _config._SEARCH_MODES
     if (section, key) == ("behavior", "prompt_recall"):
         if isinstance(value, bool):
             return False
@@ -844,24 +861,7 @@ def _value_findings(
             )
         ]
     findings: list[Finding] = []
-    if (section, key) == ("behavior", "default_max_results"):
-        from ..handlers.search import MAX_SEARCH_RESULTS, clamp_search_width
-
-        clamped = clamp_search_width(parsed)
-        if clamped != parsed:
-            findings.append(
-                Finding(
-                    WARNING,
-                    "clamped",
-                    role,
-                    section,
-                    key,
-                    f"{label} = {_shown(value)} is outside 1..{MAX_SEARCH_RESULTS}; "
-                    f"searches read it as {clamped}.",
-                    f"write a value from 1 to {MAX_SEARCH_RESULTS}",
-                )
-            )
-    elif (section, key) == ("capture", "checkpoint_tokens"):
+    if (section, key) == ("capture", "checkpoint_tokens"):
         written = _config._coerce_int(value, parsed, label=label, config_path=path)
         if written < _config.MIN_CHECKPOINT_TOKENS:
             findings.append(
@@ -877,8 +877,6 @@ def _value_findings(
                     f"write {_config.MIN_CHECKPOINT_TOKENS} or more",
                 )
             )
-    elif (section, key) == ("behavior", "cold_endorsement_ratio_threshold"):
-        findings.extend(_ratio_threshold_findings(role, label, value, parsed))
     elif (section, key) == ("daemon", "port"):
         findings.extend(_port_findings(role, value, parsed))
     elif section == "scopes" and isinstance(parsed, list):
@@ -916,35 +914,7 @@ def _system_dir_findings(role: str, directory: str) -> list[Finding]:
     ]
 
 
-def _ratio_threshold_findings(
-    role: str, label: str, value: object, parsed: float
-) -> list[Finding]:
-    """`[behavior] cold_endorsement_ratio_threshold` outside 0 to 1, or
-    NaN: both reports read it through `health_model.clamp_ratio_threshold`
-    as the nearer end, or 0, which the line does not say (ENG-192, review
-    R3). `value` is the line as written, `parsed` the number it loads as."""
-    from ..health_model import clamp_ratio_threshold
-
-    read = clamp_ratio_threshold(parsed)
-    if read == parsed:
-        return []
-    return [
-        Finding(
-            WARNING,
-            "clamped",
-            role,
-            "behavior",
-            "cold_endorsement_ratio_threshold",
-            f"{label} = {_shown(value)} is not a fraction from 0 to 1; the "
-            f"health report and `bettermemory eval` read it as {_shown(read)}.",
-            "write a fraction from 0.0 to 1.0",
-        )
-    ]
-
-
 def _fallback_hint(section: str, key: str) -> str:
-    if (section, key) == ("behavior", "search_mode"):
-        return "one of " + ", ".join(_config._SEARCH_MODES)
     if (section, key) == ("behavior", "prompt_recall"):
         return "one of " + ", ".join(_config.PROMPT_RECALL_MODES)
     return "write true or false"
@@ -1003,7 +973,9 @@ def _section_findings(
     lines = dict(table)
     removed = _removed_keys(section)
     for key, value in lines.items():
-        if key in removed:
+        if (section, key) in _config.FIXED_SETTINGS:
+            findings.append(_fixed_finding(file.role, section, key, value))
+        elif key in removed:
             removed_in, why = removed[key]
             findings.append(
                 Finding(
@@ -1043,6 +1015,22 @@ def _section_findings(
         else:
             findings.extend(_value_findings(file.role, path, section, key, value))
     return findings
+
+
+def _fixed_finding(role: str, section: str, key: str, value: object) -> Finding:
+    """A note on a line that sets a fixed setting (`config.FIXED_SETTINGS`):
+    the key is no longer a setting, its value is fixed, and a value
+    9.0.0rc19 would have read as another value is not used
+    (`config.fixed_line_restates`). A note, so it never moves the exit
+    code: the line loads, and does what every config does."""
+    fixed = _config.FIXED_SETTINGS[(section, key)]
+    message = (
+        f"[{section}] {key} is no longer a setting: its value is fixed at "
+        f"{_shown(fixed)}."
+    )
+    if not _config.fixed_line_restates(section, key, value):
+        message += f" This file's {_shown(value)} is not used."
+    return Finding(NOTE, "fixed", role, section, key, message, "delete the line")
 
 
 def _file_findings(
@@ -1273,7 +1261,8 @@ def add_subparser(
 
     check_text = (
         "Check config.toml and the managed file: unknown sections and keys "
-        "(with a did-you-mean), removed keys, values that do not "
+        "(with a did-you-mean), removed keys, keys that are fixed values now, "
+        "values that do not "
         "load or fall back to the default, [scopes] allowed entries outside "
         "the scope grammar, [policy] forbid_acknowledge names, the [daemon] "
         "port range, and your lines a managed pin overrides. Exit 0 when "

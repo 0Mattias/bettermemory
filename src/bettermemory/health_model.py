@@ -789,11 +789,12 @@ def explicit_ratio(applied: int, explicit_applied: int) -> float | None:
 
 
 def clamp_ratio_threshold(value: float) -> float:
-    """`[behavior] cold_endorsement_ratio_threshold` as both reports read
+    """`BehaviorConfig.cold_endorsement_ratio_threshold` (fixed at 0.0
+    since 9.0.0rc20; a code-only field) as both reports read
     it (`health._cold_endorsement_bucket` and `eval.compute_eval`, one
     reading, not two copies): the nearer end of 0 to 1 for a value outside
-    it, ``inf`` included, and 0 (off) for NaN. The config takes any number
-    TOML spells, ``inf`` and ``nan`` included. Above 1 every applied
+    it, ``inf`` included, and 0 (off) for NaN. Code can set any float,
+    ``inf`` and ``nan`` included. Above 1 every applied
     memory was listed, one wholly explicit included, and eval's JSON wrote
     an infinite threshold as ``Infinity``, which strict JSON cannot read
     (ENG-192, review F3); 1 lists every applied memory not wholly

@@ -427,5 +427,5 @@ async def test_an_oversized_episode_never_reaches_the_control_token_detector(
 
     monkeypatch.setattr(episode_write, "find_control_tokens", boom)
     server, _ = episode_server
-    with pytest.raises(ToolError, match="max_content_bytes"):
+    with pytest.raises(ToolError, match="is too long"):
         await _episode(server, body="x" * (2 * 1024 * 1024))

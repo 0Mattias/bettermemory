@@ -25,6 +25,58 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc20
+
+The twentieth candidate takes off the config file every setting no user
+or administrator decides, each fixed at the default it had, so no
+default behaviour moves.
+
+#### Removed
+
+- **Eleven `[behavior]` keys are fixed values, not settings.**
+  `default_max_results` (5), `recency_boost_half_life_days` (30.0),
+  `conversational` (true), `search_mode` (`"hybrid"`),
+  `heavily_used_min_applied` (3), `cold_endorsement_ratio_threshold`
+  (0.0), `verification_stale_days` (30), `max_content_bytes` (1000000),
+  `max_takeaway_bytes` (4096), `max_scopes_per_write` (64) and
+  `min_content_tokens` (0). A config.toml or managed file that still
+  carries one loads: the line is dropped unread and nothing is logged,
+  and a managed file's line pins nothing. `bettermemory config check`
+  names each such line once, as a note that leaves the exit code 0, with
+  the fixed value, and says the file's value is not used when it
+  differs. `config show` and the shipped config no longer list them, and
+  the write refusals no longer tell the caller to raise a setting.
+  (`config.FIXED_SETTINGS`, `config_sections.py`, `cli/config_cmd.py`,
+  `handlers/_shared.py`)
+- **`BETTERMEMORY_FLOCK_TIMEOUT` is no longer read.** The Windows lock
+  wait is the constant `_fsutil.FLOCK_TIMEOUT_SECONDS` (30.0 seconds),
+  and a service unit no longer pins the variable. (`_fsutil.py`,
+  `service_units.py`)
+
+#### Upgrading
+
+- Run `bettermemory config check` after upgrading: it names every line
+  that is no longer read, and says when the file's value is not used.
+- A file value that differed from the fixed value is no longer in force.
+  The consequential ones: a raised or disabled (0) `max_content_bytes`,
+  `max_takeaway_bytes` or `max_scopes_per_write`, which is now the fixed
+  cap; a `search_mode` other than `"hybrid"`, which steered not only
+  memory_search's default but the write review's related set, the
+  prompt recall, the session brief and the Stop hook's audit probe;
+  `conversational = false`, which gave the plain ranking on temporal
+  queries; and `verification_stale_days`, which moves when a verified
+  memory reads stale.
+- A record stored under a raised cap stays readable. A `memory_update`
+  that passes `content` longer than 1,000,000 bytes of UTF-8 is refused,
+  and one that passes `scopes` with more than 64 entries is refused; an
+  update that leaves the content or the scopes as they are is not
+  checked against them (`handlers/update.py`).
+- A managed file's line for a removed key no longer pins anything;
+  `bettermemory security audit` names each such line (a warning where it
+  set a stricter write limit) and `bettermemory config path` counts them.
+- A daemon started before the upgrade keeps the old values until it
+  restarts.
+
 ### 9.0.0rc19
 
 The nineteenth candidate closes the residuals filed while the

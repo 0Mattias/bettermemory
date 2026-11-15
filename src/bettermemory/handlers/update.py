@@ -579,7 +579,7 @@ def _new_scopes(
         # Mirror the cap memory_write / episode_write enforce so an update
         # can't smuggle past the handler-boundary ceiling memory_write closes.
         # Without this, retag-then-update would let a caller bypass the
-        # configurable cap by writing under-cap then updating to ~2200 scopes,
+        # cap (a fixed 64 since 9.0.0rc20, code-only) by writing under-cap then updating to ~2200 scopes,
         # corrupting the YAML frontmatter and erasing the record from every
         # read surface — same silent-data-loss path the takeaway cap closed
         # in t16.

@@ -198,7 +198,7 @@ state directory, with an owner-only umask, its output appended to the
 daemon log. It is started at login and again after an exit with a
 failure status, 30 s apart; an exit 0 (a `down`, or a newer client
 replacing it) is final. It pins `BETTERMEMORY_DIR`,
-`BETTERMEMORY_KEYS_DIR`, `XDG_CONFIG_HOME`, `BETTERMEMORY_FLOCK_TIMEOUT`
+`BETTERMEMORY_KEYS_DIR`, `XDG_CONFIG_HOME`
 and `PATH` as the installing shell had them, and always `BETTERMEMORY_STATE_DIR`; the identity variables
 (`BETTERMEMORY_CLIENT`, `_MODEL` and the rest) are never pinned. With no
 `BETTERMEMORY_DIR` the unit serves the store a daemon resolves from its
@@ -1295,6 +1295,24 @@ and `config show` names its value, by the same comparison against the
 pin: `1` under a pinned `true` is in both, `"true"` in neither. Such a file also keeps those values for the user where
 nothing pins them: delete the lines nobody chose, and a later release's
 changed default reaches the account.
+
+A managed file that sets a key 9.0.0rc20 made a fixed value (the eleven
+`[behavior]` keys `config.FIXED_SETTINGS` lists, `max_content_bytes`
+and `search_mode` among them) pins nothing: the line is dropped unread,
+the fixed value is in force, `config show` lists no such setting, and
+`config check` names the line in the managed file as a note, as it does
+in config.toml, saying the file's value is not used when it differs.
+`bettermemory security audit` names each such line as
+`config.managed_fixed`, with the fixed value in force and whether the
+managed value is not enforced: a warning where the line set a write
+limit stricter than the fixed one (`max_content_bytes`,
+`max_takeaway_bytes` or `max_scopes_per_write` below its cap,
+`min_content_tokens` above 0), since that limit no longer holds, and
+an info otherwise. `bettermemory config path` counts the lines that pin
+nothing. Nothing is logged on a start. After upgrading, run `config
+check` and `security audit` against the deployed file, delete the
+lines, and restart the daemons: one started before the upgrade keeps
+the old values until it restarts.
 
 The managed config binds the user's config, not the account: a process
 running as the user can still set `BETTERMEMORY_DIR`, which decides the

@@ -127,18 +127,21 @@ def test_shipped_config_round_trips_to_the_dataclass_default(tmp_path: Path) -> 
 
 
 def test_floor_rejects_a_body_under_the_configured_count() -> None:
-    with pytest.raises(ValueError, match="min_content_tokens"):
+    with pytest.raises(ValueError, match="content is too short"):
         _validate("zsh", min_content_tokens=6)
 
 
-def test_rejection_names_the_setting_that_lifts_it() -> None:
-    """A refused write has to tell the caller which knob to turn — the same
-    contract `_validate_content_size`'s message holds up for the byte cap."""
+def test_rejection_names_the_floor_and_no_setting() -> None:
+    """A refused write states the floor and the count in plain words. It
+    names no key: `min_content_tokens` is a fixed value since 9.0.0rc20,
+    set only by code that builds its own `Config`."""
     with pytest.raises(ValueError) as excinfo:
         _validate_content_floor("zsh", 6)
     message = str(excinfo.value)
-    assert "1 tokens < 6 tokens" in message
-    assert "[behavior] min_content_tokens" in message
+    assert message == (
+        "content is too short: 1 tokens, fewer than the minimum of 6. "
+        "Expand the content."
+    )
 
 
 def test_a_body_exactly_at_the_floor_is_admitted() -> None:
@@ -152,7 +155,7 @@ def test_a_body_exactly_at_the_floor_is_admitted() -> None:
 def test_one_token_below_the_floor_is_refused() -> None:
     body = "deploy runs through GitHub Actions"
     assert len(body.split()) == 5
-    with pytest.raises(ValueError, match="min_content_tokens"):
+    with pytest.raises(ValueError, match="content is too short"):
         _validate(body, min_content_tokens=6)
 
 
@@ -162,7 +165,7 @@ def test_tokens_are_counted_across_arbitrary_whitespace() -> None:
     four-token body clear a six-token floor."""
     body = "  ships\tzsh\n\n   not   bash  "
     assert len(body.split()) == 4
-    with pytest.raises(ValueError, match="4 tokens < 6 tokens"):
+    with pytest.raises(ValueError, match="4 tokens, fewer than the minimum of 6"):
         _validate_content_floor(body, 6)
 
 
@@ -182,44 +185,17 @@ def test_empty_content_still_reports_the_original_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Loader coercion — same family as the other [behavior] int knobs.
+# The loader: a fixed value since 9.0.0rc20, never read from a file.
 # ---------------------------------------------------------------------------
 
 
-def test_load_config_reads_and_coerces_the_floor(tmp_path: Path) -> None:
+@pytest.mark.parametrize("spelled", ["6", "6.9", '"six"'])
+def test_load_config_does_not_read_the_floor(tmp_path: Path, spelled: str) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\nmin_content_tokens = 6\n",
-        encoding="utf-8",
+        f"[behavior]\nmin_content_tokens = {spelled}\n", encoding="utf-8"
     )
-    cfg = load_config(config_path)
-    assert cfg.behavior.min_content_tokens == 6
-    assert isinstance(cfg.behavior.min_content_tokens, int)
-
-
-def test_load_config_truncates_a_float_floor(tmp_path: Path) -> None:
-    """A TOML float would otherwise survive as a float and compare oddly
-    against an integer token count."""
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "[behavior]\nmin_content_tokens = 6.9\n",
-        encoding="utf-8",
-    )
-    cfg = load_config(config_path)
-    assert cfg.behavior.min_content_tokens == 6
-    assert isinstance(cfg.behavior.min_content_tokens, int)
-
-
-def test_load_config_locates_a_malformed_floor(tmp_path: Path) -> None:
-    """Non-numeric values raise a located error naming the key, rather than
-    letting a bare `int(...)` escape `load_config` unlabelled."""
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        '[behavior]\nmin_content_tokens = "six"\n',
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match=r"\[behavior\] min_content_tokens"):
-        load_config(config_path)
+    assert load_config(config_path).behavior.min_content_tokens == 0
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +250,7 @@ async def test_memory_write_refuses_a_short_body_when_the_floor_is_configured(
     """
     server = _server(memory_dir, min_content_tokens=6)
 
-    with pytest.raises(Exception, match="below min_content_tokens"):
+    with pytest.raises(Exception, match="content is too short"):
         await _call(server, "memory_write", content="x", scopes=["tools"])
 
     assert _stored(memory_dir) == []
@@ -308,7 +284,7 @@ async def test_the_refusal_boundary_tracks_the_configured_number(
     assert len(body.split()) == 4
 
     strict = _server(memory_dir, min_content_tokens=6)
-    with pytest.raises(Exception, match="4 tokens < 6 tokens"):
+    with pytest.raises(Exception, match="4 tokens, fewer than the minimum of 6"):
         await _call(strict, "memory_write", content=body, scopes=["tools"])
 
     lenient_dir = tmp_path / "lenient"

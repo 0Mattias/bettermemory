@@ -169,7 +169,7 @@ async def test_an_oversized_episode_is_refused_by_size_before_any_detector(
 
     monkeypatch.setattr(episode_write, "find_credential_markers", boom)
     server, _ = episode_server
-    with pytest.raises(ToolError, match="max_content_bytes"):
+    with pytest.raises(ToolError, match="is too long"):
         await _episode(server, body="x" * (2 * 1024 * 1024))
 
 

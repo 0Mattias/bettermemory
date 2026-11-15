@@ -202,7 +202,8 @@ def validate_scope(scope: str) -> str:
 # per-record scope count (1-5 in practice) but low enough that an
 # uncontrolled-append regression surfaces as an immediate write-time failure
 # instead of slow on-disk bloat. The model-layer cap is defense-in-depth: the
-# handler layer applies a configurable cap via `BehaviorConfig.max_scopes_per_write`,
+# handler layer applies its own cap, `BehaviorConfig.max_scopes_per_write` (a fixed
+# 64 since 9.0.0rc20, code-only),
 # but a programmatic caller that bypasses the handler (sync, migration, future
 # in-process API) still can't smuggle an unbounded list onto disk.
 _MAX_SCOPES_PER_RECORD = 64

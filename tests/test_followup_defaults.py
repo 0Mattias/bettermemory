@@ -96,16 +96,10 @@ def test_a_pinned_line_choosing_another_value_still_draws_the_notice(
     [
         # The default spelled as written in an earlier DEFAULT_CONFIG.
         ("[daemon]\nport = 7400\n", "[daemon]\nport = 7397\n", False),
-        # An int restates a float default of the same value.
-        (
-            "[behavior]\nrecency_boost_half_life_days = 7.0\n",
-            "[behavior]\nrecency_boost_half_life_days = 30\n",
-            False,
-        ),
         ('[scopes]\nallowed = ["corp"]\n', "[scopes]\nallowed = []\n", False),
         (
-            '[behavior]\nsearch_mode = "bm25"\n',
-            '[behavior]\nsearch_mode = "hybrid"\n',
+            '[behavior]\nprompt_recall = "off"\n',
+            '[behavior]\nprompt_recall = "project"\n',
             False,
         ),
         # A boolean restates only a boolean, though Python takes False == 0.
@@ -166,13 +160,18 @@ def test_check_and_show_still_report_a_pinned_line_restating_the_default(
 
 
 def _setting_keys() -> list[tuple[str, str]]:
-    """Every (section, key) `Config` reads, from its dataclasses."""
-    keys: list[tuple[str, str]] = []
-    for section in dataclasses.fields(Config):
-        value = getattr(Config(), section.name)
-        if dataclasses.is_dataclass(value) and not isinstance(value, type):
-            keys.extend((section.name, f.name) for f in dataclasses.fields(value))
-    return keys
+    """Every (section, key) `Config` reads from a file: its dataclasses'
+    fields less the fixed ones (`config.FIXED_SETTINGS`)."""
+    return [
+        (section, key)
+        for section, keys in config_cmd.settings_catalogue().items()
+        for key in keys
+    ]
+
+
+def test_no_fixed_key_is_in_the_shipped_config() -> None:
+    for section, key in _config.FIXED_SETTINGS:
+        assert f"# {key} = " not in DEFAULT_CONFIG, (section, key)
 
 
 def test_the_shipped_config_sets_no_key() -> None:
@@ -233,7 +232,8 @@ def test_an_existing_config_is_never_rewritten(tmp_path: Path) -> None:
     path = _user_config(tmp_path, earlier)
     before = path.stat().st_mtime_ns
     loaded = load_config(path)
-    assert loaded.behavior.search_mode == "keyword"
+    # `search_mode` is a fixed value since 9.0.0rc20: the line is not read.
+    assert loaded.behavior.search_mode == "hybrid"
     assert path.read_text(encoding="utf-8") == earlier
     assert path.stat().st_mtime_ns == before
 

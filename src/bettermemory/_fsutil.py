@@ -466,6 +466,12 @@ def bounded_read(path: Path, max_bytes: int) -> bytes:
 # logs now.
 _FLOCK_WARNED = False
 
+#: How long `flock_excl`'s Windows branch waits for a contended lock
+#: before it raises TimeoutError. A constant since 9.0.0rc20, when the
+#: BETTERMEMORY_FLOCK_TIMEOUT variable that overrode it stopped being
+#: read; a test that needs a shorter wait patches this name.
+FLOCK_TIMEOUT_SECONDS = 30.0
+
 
 @contextlib.contextmanager
 def flock_excl(
@@ -486,7 +492,7 @@ def flock_excl(
     ``LOCK_EX`` with no ``LOCK_NB``, no retry loop and no deadline
     check, so contention alone does not end the wait — it lasts as
     long as the current holder keeps the lock.
-    ``BETTERMEMORY_FLOCK_TIMEOUT`` does NOT bound this path; it is
+    ``FLOCK_TIMEOUT_SECONDS`` does NOT bound this path; it is
     read only by ``_flock_windows``. A caller that cannot afford an
     open-ended wait has to impose its own bound above this helper,
     because this branch offers none.
@@ -528,7 +534,7 @@ def flock_excl(
     ABOVE, this wait IS bounded: once the deadline passes with the
     lock still contended the loop stops retrying and raises
     ``TimeoutError`` instead of yielding. Default timeout is
-    30 seconds (overridable via ``BETTERMEMORY_FLOCK_TIMEOUT``);
+    30 seconds (``FLOCK_TIMEOUT_SECONDS``, a constant since 9.0.0rc20);
     backoff caps at 100ms per sleep.
 
     If the Windows branch can't load ``msvcrt`` (extremely unusual —
@@ -585,9 +591,8 @@ def _flock_windows(
 
     That deadline is specific to THIS branch. ``flock_excl``'s POSIX
     path takes a blocking ``fcntl.flock(fd, LOCK_EX)`` with no
-    deadline of any kind, so neither this timeout nor
-    ``BETTERMEMORY_FLOCK_TIMEOUT`` describes how long a POSIX caller
-    can be made to wait.
+    deadline of any kind, so this timeout does not describe how long a
+    POSIX caller can be made to wait.
     """
     import logging
     import time
@@ -607,11 +612,7 @@ def _flock_windows(
         yield
         return
 
-    timeout_str = os.environ.get("BETTERMEMORY_FLOCK_TIMEOUT", "30")
-    try:
-        timeout = float(timeout_str)
-    except ValueError:
-        timeout = 30.0
+    timeout = FLOCK_TIMEOUT_SECONDS
 
     try:
         fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
@@ -644,8 +645,7 @@ def _flock_windows(
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
                         f"flock_excl: could not acquire {lock_path} within "
-                        f"{timeout:.1f}s (set BETTERMEMORY_FLOCK_TIMEOUT to "
-                        f"raise the ceiling)"
+                        f"{timeout:.1f}s"
                     )
                 time.sleep(backoff)
                 # Cap at 100ms — keeps the retry interval bounded so a

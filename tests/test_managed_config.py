@@ -232,12 +232,12 @@ def test_keys_the_managed_file_leaves_out_stay_the_users(
         _user_config(
             tmp_path,
             '[behavior]\nsession_brief = true\nprompt_recall = "off"\n'
-            "default_max_results = 9\n",
+            "tombstone_retention_days = 9\n",
         )
     )
     assert loaded.behavior.session_brief is False
     assert loaded.behavior.prompt_recall == "off"
-    assert loaded.behavior.default_max_results == 9
+    assert loaded.behavior.tombstone_retention_days == 9
     assert loaded.managed_keys == frozenset({"behavior.session_brief"})
 
 
@@ -328,25 +328,27 @@ def test_a_managed_files_pre_3_2_threshold_key_pins_nothing(
     tmp_path: Path, managed_config_path: Path
 ) -> None:
     """The pre-3.2 name is a removed key in the managed file too: dropped
-    with its notice, it pins nothing, and the user's line is in force."""
+    with its notice, it pins nothing. The user's line for the 3.2 name is
+    a fixed value since 9.0.0rc20 and is not read either."""
     managed_config_path.write_text(
         "[behavior]\nendorsement_debt_ratio_threshold = 0.25\n", encoding="utf-8"
     )
     loaded = load_config(
         _user_config(tmp_path, "[behavior]\ncold_endorsement_ratio_threshold = 0.5\n")
     )
-    assert loaded.behavior.cold_endorsement_ratio_threshold == 0.5
+    assert loaded.behavior.cold_endorsement_ratio_threshold == 0.0
     assert loaded.managed_keys == frozenset()
 
 
-def test_a_users_pre_3_2_threshold_key_under_a_pin_is_a_removed_key(
+def test_a_managed_file_pinning_a_fixed_key_pins_nothing(
     tmp_path: Path,
     managed_config_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The user's file spells the pinned key by its pre-3.2 name: the line
-    is a removed key, dropped unread (a value that would not parse cannot
-    fail the load) with the removal notice, and the pin is in force."""
+    """A managed file that pins a key fixed in 9.0.0rc20 enforces
+    nothing: the line is dropped unread, without a notice, the fixed value
+    is in force and `managed_keys` does not list it. The user's line for
+    the pre-3.2 name is still a removed key with its notice."""
     managed_config_path.write_text(
         "[behavior]\ncold_endorsement_ratio_threshold = 0.25\n", encoding="utf-8"
     )
@@ -356,11 +358,12 @@ def test_a_users_pre_3_2_threshold_key_under_a_pin_is_a_removed_key(
                 tmp_path, '[behavior]\nendorsement_debt_ratio_threshold = "abc"\n'
             )
         )
-    assert loaded.behavior.cold_endorsement_ratio_threshold == 0.25
-    notices = [
-        r.getMessage() for r in caplog.records if "was removed" in r.getMessage()
-    ]
+    assert loaded.behavior.cold_endorsement_ratio_threshold == 0.0
+    assert loaded.managed_keys == frozenset()
+    messages = [r.getMessage() for r in caplog.records]
+    notices = [m for m in messages if "was removed" in m]
     assert len(notices) == 1, notices
+    assert len(messages) == 1, messages
     assert "`endorsement_debt_ratio_threshold`" in notices[0]
 
 

@@ -643,10 +643,10 @@ def test_a_config_value_that_does_not_load_fails_and_stops_the_store_rule(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("BETTERMEMORY_DIR")
-    env.config('[behavior]\ndefault_max_results = "many"\n')
+    env.config('[behavior]\ntombstone_retention_days = "many"\n')
     checks = env.checks()
     assert checks["config"].status == "fail"
-    assert "default_max_results" in checks["config"].summary
+    assert "tombstone_retention_days" in checks["config"].summary
     for check_id in ("store_location", "store", "key", "daemon", "disk"):
         assert checks[check_id].status == "warn", check_id
         assert checks[check_id].summary.startswith("not checked:")
@@ -666,7 +666,8 @@ def test_a_config_that_cannot_be_read_fails(
 def test_removed_keys_and_loader_fallbacks_warn(env: Env) -> None:
     env.config(
         "[behavior]\n"
-        'search_mode = "semantic"\n'
+        'prompt_recall = "semantic"\n'
+        'search_mode = "bm25"\n'
         "endorsement_debt_ratio_threshold = 0.1\n"
         "[telemetry]\n"
         "max_bytes = 5\n"
@@ -680,7 +681,10 @@ def test_removed_keys_and_loader_fallbacks_warn(env: Env) -> None:
     assert "[consolidate] (removed in 9.0.0)" in removed
     assert "[behavior] endorsement_debt_ratio_threshold (removed in 9.0.0)" in removed
     notices = check.details["notices"]
-    assert any("search_mode" in notice for notice in notices)
+    assert any("prompt_recall" in notice for notice in notices)
+    # A fixed key (9.0.0rc20) is reported by `config check` alone.
+    assert not any("search_mode" in str(v) for v in check.details.values())
+    assert "search_mode" not in check.summary
     # A removed key's notice is the removed list's, by its " was removed in
     # bettermemory " wording, whatever key it names.
     assert not any("endorsement_debt_ratio_threshold" in n for n in notices)

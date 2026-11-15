@@ -476,7 +476,7 @@ def test_show_labels_default_user_and_managed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _write_user(
-        "[behavior]\nsearch_mode = 'bm25'\n"
+        "[behavior]\nprompt_recall = 'off'\n"
         "[telemetry]\nenabled = true\n"
         "[security]\nstrict_provenance = true\n"
     )
@@ -487,8 +487,8 @@ def test_show_labels_default_user_and_managed(
     code, out, _err = _run_cli(["config", "show", "--json"], monkeypatch, capsys)
     assert code == 0
     settings = json.loads(out)["settings"]
-    assert settings["behavior"]["search_mode"] == {"value": "bm25", "source": "user"}
-    assert settings["behavior"]["conversational"] == {
+    assert settings["behavior"]["prompt_recall"] == {"value": "off", "source": "user"}
+    assert settings["behavior"]["session_brief"] == {
         "value": True,
         "source": "default",
     }
@@ -508,7 +508,7 @@ def test_show_labels_default_user_and_managed(
     assert code == 0
     assert "[telemetry]" in text
     assert "# managed (your config's true is ignored)" in text
-    assert 'search_mode = "bm25"' in text
+    assert 'prompt_recall = "off"' in text
     assert "directory = (not set)" in text
 
 
@@ -550,12 +550,22 @@ def test_show_labels_a_value_the_loader_could_not_read_as_the_default() -> None:
     assert '# default (your config\'s "ture" is ignored)' in text
 
 
-def test_show_does_not_count_a_removed_spelling_as_the_users(tmp_path: Path) -> None:
-    _write_user("[behavior]\nendorsement_debt_ratio_threshold = 0.25\n")
-    entry = config_cmd.show_report()["settings"]["behavior"][
-        "cold_endorsement_ratio_threshold"
-    ]
-    assert entry == {"value": 0.0, "source": "default"}
+def test_show_does_not_list_a_fixed_or_removed_key(tmp_path: Path) -> None:
+    """A fixed setting (`config.FIXED_SETTINGS`) is no setting: `show`
+    lists neither it nor the removed key renamed to it, and says nothing
+    about either line."""
+    _write_user(
+        "[behavior]\nendorsement_debt_ratio_threshold = 0.25\n"
+        "cold_endorsement_ratio_threshold = 0.5\nsearch_mode = 'bm25'\n"
+    )
+    report = config_cmd.show_report()
+    behavior = report["settings"]["behavior"]
+    assert "cold_endorsement_ratio_threshold" not in behavior
+    assert "search_mode" not in behavior
+    assert not any("search_mode" in n for n in report["notices"])
+    assert not any(
+        "cold_endorsement" in n.split("renamed")[0] for n in report["notices"]
+    )
 
 
 def test_show_with_no_config_file_shows_the_managed_pins(
@@ -575,9 +585,9 @@ def test_show_with_no_config_file_shows_the_managed_pins(
 
 
 def test_show_lists_the_loaders_notices() -> None:
-    _write_user("[behavior]\nsearch_mode = 'semantic-unique-show'\n")
+    _write_user("[behavior]\nprompt_recall = 'unique-show'\n")
     report = config_cmd.show_report()
-    assert any("semantic-unique-show" in n for n in report["notices"])
+    assert any("unique-show" in n for n in report["notices"])
     assert "# notice:" in config_cmd.render_show(report)
 
 
@@ -693,11 +703,10 @@ def test_unknown_sections_and_keys_are_warnings_with_a_guess(
 @pytest.mark.parametrize(
     ("line", "default"),
     [
-        ('[behavior]\nconversational = "flase"\n', "true"),
+        ('[behavior]\nsession_brief = "flase"\n', "true"),
         ("[security]\nstrict_provenance = 1\n", "false"),
         ('[security]\nstrict_provenance = "ture"\n', "false"),
         ("[telemetry]\nenabled = 0\n", "true"),
-        ('[behavior]\nsearch_mode = "semantic"\n', '"hybrid"'),
         ('[behavior]\nprompt_recall = "always"\n', '"project"'),
         ("[behavior]\nprompt_recall = 3\n", '"project"'),
     ],
@@ -718,8 +727,7 @@ def test_a_value_that_falls_back_to_the_default_is_a_warning(
     [
         '[security]\nstrict_provenance = "yes"\n',
         "[security]\nstrict_provenance = true\n",
-        '[behavior]\nconversational = "OFF"\n',
-        '[behavior]\nsearch_mode = " BM25 "\n',
+        '[behavior]\nsession_brief = "OFF"\n',
         "[behavior]\nprompt_recall = false\n",
         '[behavior]\nprompt_recall = "everywhere"\n',
         '[behavior]\nprompt_recall = "no"\n',
@@ -727,7 +735,6 @@ def test_a_value_that_falls_back_to_the_default_is_a_warning(
         "[daemon]\nport = 7397\n",
         '[scopes]\nallowed = ["projects:foo", "lang-py"]\n',
         '[policy]\nforbid_acknowledge = ["credential", "truncation"]\n',
-        "[behavior]\ndefault_max_results = 50\n",
         "[capture]\ncheckpoint_tokens = 500\n",
     ],
 )
@@ -751,40 +758,12 @@ def test_a_value_the_loader_refuses_is_an_error_without_the_file_prefix() -> Non
         ("[daemon]\nport = 70000\n", "error", "port_out_of_range"),
         ("[daemon]\nport = -1\n", "error", "port_out_of_range"),
         ("[daemon]\nport = 80\n", "warning", "privileged_port"),
-        ("[behavior]\ndefault_max_results = 80\n", "warning", "clamped"),
-        ("[behavior]\ndefault_max_results = 0\n", "warning", "clamped"),
         ("[capture]\ncheckpoint_tokens = 100\n", "warning", "clamped"),
     ],
 )
 def test_ranges(line: str, level: str, code: str) -> None:
     finding = _only(_check(line))
     assert (finding["level"], finding["code"]) == (level, code)
-
-
-@pytest.mark.parametrize(
-    ("written", "read"),
-    [("inf", "1.0"), ("1.5", "1.0"), ("-inf", "0.0"), ("nan", "0.0"), ("-0.5", "0.0")],
-)
-def test_a_ratio_threshold_outside_0_to_1_is_named_with_the_value_read(
-    written: str, read: str
-) -> None:
-    """`[behavior] cold_endorsement_ratio_threshold` loads whatever number
-    TOML spells; both reports read it as the nearer end of 0 to 1, or 0
-    for NaN (`health_model.clamp_ratio_threshold`), so the check names
-    the value they use (ENG-192, review R3). 0, 1 and a fraction between
-    are read as written."""
-    finding = _only(
-        _check(f"[behavior]\ncold_endorsement_ratio_threshold = {written}\n")
-    )
-    assert (finding["level"], finding["code"]) == ("warning", "clamped")
-    assert finding["message"] == (
-        f"[behavior] cold_endorsement_ratio_threshold = {written} is not a "
-        "fraction from 0 to 1; the health report and `bettermemory eval` read "
-        f"it as {read}."
-    )
-    for line in ("0.0", "0.25", "1.0"):
-        report = _check(f"[behavior]\ncold_endorsement_ratio_threshold = {line}\n")
-        assert report["findings"] == []
 
 
 def test_a_port_out_of_range_loads_but_still_fails_the_check() -> None:
@@ -867,8 +846,7 @@ def test_the_pre_3_2_threshold_key_is_removed_and_names_its_successor() -> None:
     parse: each is one removed line, its value never read, and the
     finding names the key it was renamed to."""
     for text in (
-        "[behavior]\nendorsement_debt_ratio_threshold = 0.1\n"
-        "cold_endorsement_ratio_threshold = 0.2\n",
+        "[behavior]\nendorsement_debt_ratio_threshold = 0.1\n",
         "[behavior]\nendorsement_debt_ratio_threshold = 'abc'\n",
     ):
         finding = _only(_check(text))

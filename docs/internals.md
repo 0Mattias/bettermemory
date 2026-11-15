@@ -2824,42 +2824,78 @@ Most installs never edit it. The first command that loads the config
 writes it with every setting commented out (`# key = value` under its
 `[section]`, `config.DEFAULT_CONFIG`), so the code's defaults apply,
 a later release's changed default included, until a line is
-uncommented; a file that exists is never rewritten. `[behavior]` holds
-the knobs (`default_max_results`, `recency_boost_half_life_days`,
-`search_mode`, `conversational`, `write_supersession`, `prompt_recall`,
-`session_brief`, `heavily_used_min_applied`,
-`cold_endorsement_ratio_threshold`, `verification_stale_days`,
-`tombstone_retention_days`, the bounds `max_content_bytes`,
-`max_takeaway_bytes` and `max_scopes_per_write`, and the floor
-`min_content_tokens`),
-`[scopes]` the allowed list and typo exceptions, `[telemetry]` the one
-switch, `enabled` (false switches off the measurement rows; the state
-rows the product reads back and the audit rows are recorded either way,
-with only the fields their readers read, `events.STATE_FIELDS`,
-operations.md's "Telemetry and product state"),
-`[daemon]` the port (7397 by
-default), and
-`[capture]` session capture's switch and bounds (`stop_checkpoint`,
-`checkpoint_tokens`, `daily_cap`), and `[membership]` the token's
-policy switch and the strict switch (`write_token`, `strict`). Since
-9.0.0rc12:
+uncommented; a file that exists is never rewritten. A setting exists
+only where a user or an administrator must decide it; each one, with
+the decision it serves:
 
-- `[storage] cwd_store = true`: false skips the store-directory rule's
-  third step, `./.claude-memory/` in the working directory.
-- `[policy] forbid_force = false` and `forbid_acknowledge = []`: true
-  refuses a `memory_write` with `force=true`; the list names acknowledge
-  flags (`credential`, `transient`, `scope_mismatch`, `user_claim`,
-  `truncation`) whose `acknowledge_<name>=true` refuses the call. The
-  refusal starts `policy_refused:` and says whether the switch is
-  managed; since 9.0.0rc14 it leaves one audit row, a `write` or `update`
-  row with `status = "policy_refused"` and the flags, the switches and
-  the managed ones (`policy_flags`, `policy_keys`, `policy_managed`),
-  recorded with telemetry off too. These three switches take only a
-  boolean spelling, and the list only known names: anything else stops
-  the load.
-- `[security] strict_provenance = false`: true reads every row in a log
-  segment whose key this machine does not hold `unaccounted`
-  (Provenance, above).
+- `[storage] directory`: where the store lives when the home store will
+  not do.
+- `[storage] cwd_store = true`: whether a repository's own
+  `./.claude-memory/` may become the store (the store-directory rule's
+  third step; false skips it, and an organisation pins it false).
+- `[behavior] write_supersession = true`: whether a write that says a
+  value changed may mark the stored claim superseded on its own (false
+  takes that lever away from the writer, SECURITY.md).
+- `[behavior] prompt_recall = "project"`: how much memory reaches the
+  model unasked at each prompt (`"everywhere"`, `"off"`).
+- `[behavior] session_brief = true`: whether a session opens with
+  pointers to the project's records.
+- `[behavior] tombstone_retention_days = 0`: how long `tombstones prune`
+  keeps tombstones when no `--older-than` is given (0: the flag is
+  required).
+- `[scopes] allowed = []`: which scopes a write may carry.
+- `[scopes] typo_exceptions = []`: which look-alike scopes are the
+  owner's on purpose, so the health check stops flagging them.
+- `[policy] forbid_force = false`: whether the agent may skip the
+  duplicate gates with `force=true`.
+- `[policy] forbid_acknowledge = []`: which gates the agent may not wave
+  a write past. The list names acknowledge flags (`credential`,
+  `transient`, `scope_mismatch`, `user_claim`, `truncation`) whose
+  `acknowledge_<name>=true` refuses the call. The refusal starts
+  `policy_refused:` and says whether the switch is managed; since
+  9.0.0rc14 it leaves one audit row, a `write` or `update` row with
+  `status = "policy_refused"` and the flags, the switches and the
+  managed ones (`policy_flags`, `policy_keys`, `policy_managed`),
+  recorded with telemetry off too. `forbid_force` and `[storage]
+  cwd_store` take only a boolean spelling (a TOML boolean or one of the
+  strings below), and `forbid_acknowledge` only known names: anything
+  else stops the load. Every other boolean (`write_supersession`,
+  `session_brief`, `[telemetry] enabled`, `[security]
+  strict_provenance`, `[capture] stop_checkpoint`, `[membership]
+  write_token` and `strict`) falls back to its default on an
+  unrecognised value, which `config check` reports as a warning.
+- `[daemon] port = 7397`: the port when 7397 is taken or barred.
+- `[telemetry] enabled = true`: whether usage is measured in the
+  store's log (false switches off the measurement rows; the state rows
+  the product reads back and the audit rows are recorded either way,
+  with only the fields their readers read, `events.STATE_FIELDS`,
+  operations.md's "Telemetry and product state").
+- `[security] strict_provenance = false`: whether a store from elsewhere
+  is trusted as written here (true reads every row in a log segment
+  whose key this machine does not hold `unaccounted`; Provenance,
+  above).
+- `[capture] stop_checkpoint`, `checkpoint_tokens`, `daily_cap`: whether
+  the Stop hook asks the model to save what a stretch of the
+  conversation established, how long a stretch is, and how many asks a
+  day may make.
+- `[membership] write_token = true`: whether bettermemory may write its
+  checkout token into the user's repositories.
+- `[membership] strict = false`: whether a join resting on shared
+  history asks first.
+
+Since 9.0.0rc20 eleven `[behavior]` keys are fixed values, not
+settings (`config.FIXED_SETTINGS`): `default_max_results` (5),
+`recency_boost_half_life_days` (30.0), `conversational` (true),
+`search_mode` (`"hybrid"`), `heavily_used_min_applied` (3),
+`cold_endorsement_ratio_threshold` (0.0), `verification_stale_days`
+(30), `max_content_bytes` (1000000), `max_takeaway_bytes` (4096),
+`max_scopes_per_write` (64) and `min_content_tokens` (0). A config.toml
+or managed file that still carries one loads; the loader drops the line
+unread and logs nothing, a managed line pins nothing, and only
+`bettermemory config check` names it, as a note that leaves the exit
+code 0, with the fixed value and, when the file's differs, that the
+file's value is not used. The fields stay on `BehaviorConfig` for code
+that builds a `Config` itself (tests, benches).
 
 A removed key or section
 (`full_tool_surface`, `[consolidate]`, `[proposals]` and the rest
@@ -2868,14 +2904,14 @@ release that removed it and why. It is then ignored. A section written
 as anything but a table, a TOML syntax error, or a file that is not
 UTF-8 stops the load with a `ValueError` that names the file (`malformed
 config in <path>: ...`); a leading byte-order mark is accepted. A
-numeric key (`port`, `default_max_results`, `checkpoint_tokens` and the
+numeric key (`port`, `checkpoint_tokens` and the
 rest) takes a TOML integer or float, or a string that reads as one, and
 anything else stops the load the same way, a boolean among them since
 9.0.0rc19: Python counts `true` as 1, and the loader read it so without
 a word. A misspelled section or key is ignored without a word, and a switch
 written as anything but a TOML boolean or one of the strings `"true"`,
 `"false"`, `"yes"`, `"no"`, `"on"`, `"off"`, `"1"` and `"0"` falls back
-to its default the same way (an unknown `search_mode` or `prompt_recall`
+to its default the same way (an unknown `prompt_recall`
 and a clamped `checkpoint_tokens` log a notice):
 `bettermemory config check` reports each, with a did-you-mean, and
 `config show` prints every setting in force and where it came from.

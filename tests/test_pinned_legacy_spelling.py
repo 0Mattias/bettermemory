@@ -158,15 +158,13 @@ def test_an_unrecognised_value_draws_the_notice_and_no_fallback_warning(
     [
         # A boolean's string spelling stays a coercion the user chose.
         ("[telemetry]\nenabled = false\n", '[telemetry]\nenabled = "true"\n'),
-        # The pre-4.0 mode 4.0 removed falls back as a typo does.
+        # Compared as written: a number in quotes is not the default's
+        # spelling, though the loader reads it as the default.
+        ("[daemon]\nport = 7400\n", '[daemon]\nport = "7397"\n'),
         (
-            '[behavior]\nsearch_mode = "bm25"\n',
-            '[behavior]\nsearch_mode = "semantic"\n',
+            "[behavior]\ntombstone_retention_days = 9\n",
+            '[behavior]\ntombstone_retention_days = "0"\n',
         ),
-        # 2.x wrote "keyword", a mode of its own.
-        ('[behavior]\nsearch_mode = "bm25"\n', '[behavior]\nsearch_mode = "keyword"\n'),
-        # Compared as written: another case is not the default's spelling.
-        ('[behavior]\nsearch_mode = "bm25"\n', '[behavior]\nsearch_mode = "Hybrid"\n'),
     ],
 )
 def test_keys_without_a_legacy_spelling_are_compared_as_written(

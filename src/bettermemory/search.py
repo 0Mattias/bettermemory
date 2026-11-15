@@ -326,7 +326,8 @@ _BASE_LEG_TRAILING_WITHHOLD = False
 #
 # Two deterministic repairs for conversation-shaped stores, behind
 # `search(conversational=...)`, hybrid-mode only. Shipped DEFAULT ON at
-# 6.1.0 on the L1 gate read (`[behavior] conversational` opts out) —
+# 6.1.0 on the L1 gate read (always on since 9.0.0rc20: a code-only
+# `BehaviorConfig.conversational`, no file opts out) —
 # unlike `rescue_expansion`, whose held-out check kept it opt-in — and
 # byte-stable for every query with no temporal reading:
 #
@@ -368,8 +369,9 @@ _BASE_LEG_TRAILING_WITHHOLD = False
 # byte-identical, no question type regressed, and the untouched
 # holdout half generalizing stronger than the tuning half. The
 # reference line (0.916) is NOT met — the shipped reading is
-# 0.9062, stated plainly in the record. `[behavior]
-# conversational = false` is the supported opt-out; the module
+# 0.9062, stated plainly in the record. Since
+# 9.0.0rc20 no config opts out (`conversational` is a fixed true,
+# code-only, for benches); the module
 # constants carry the tuned finals the gate ranked with.
 
 # Near-tie band for L1-T: items whose fused score is at least this

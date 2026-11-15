@@ -428,8 +428,8 @@ class _NoticeCapture(logging.Handler):
 @contextlib.contextmanager
 def _config_notices() -> Iterator[list[str]]:
     """The warnings the config module logs inside the block, held here
-    rather than printed: the loader's fallbacks (`search_mode`,
-    `prompt_recall`, `checkpoint_tokens`) and the store under a system
+    rather than printed: the loader's fallbacks (`prompt_recall`,
+    `checkpoint_tokens`) and the store under a system
     directory are each logged once and never raised, so a report built
     from them is the only place doctor can show them."""
     logger = logging.getLogger("bettermemory.config")

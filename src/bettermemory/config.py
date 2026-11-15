@@ -74,16 +74,19 @@ DEFAULT_CONFIG = """\
 # default reaches you. To choose a value, remove the "# " in front of its
 # line, under its [section] header, and edit it. Most lines show the
 # default; a few show the value that changes it, and the comment above
-# such a line says what the default is.
+# such a line says what the default is. Every setting here is one a
+# person decides; the first sentence above each line names the decision.
 
 [storage]
-# Where memories live. The resolution rule:
+# Decide where your memories live when the default home store will not do.
+# The resolution rule:
 #   1. $BETTERMEMORY_DIR
 #   2. this key, when set
 #   3. ./.claude-memory if cwd has one
 #   4. ~/.claude-memory
 # directory = "~/.claude-memory"
 
+# Decide whether a repository's own .claude-memory/ may be your store.
 # Rule 3 lets the directory a client starts in supply the store, and a
 # cloned repository that commits a .claude-memory/ directory then becomes
 # your store: its memories reach the session brief and the prompt recall,
@@ -93,38 +96,9 @@ DEFAULT_CONFIG = """\
 # cwd_store = false
 
 [behavior]
-# Default cap on memory_search results. Clamped to 1..50 where it is read
-# (the same range an explicit max_results is clamped to), not rejected
-# here: a value outside the range is a harmless typo, and erroring at load
-# would take the whole server down over one knob.
-# default_max_results = 5
-
-# Recency boost decay. Larger = older memories get a meaningful bump.
-# recency_boost_half_life_days = 30
-
-# Retrieval ranker for memory_search. One of:
-#   "keyword" — the original TF + coverage + recency scorer (legacy default
-#       in 1.6.0). No IDF weighting, so rare-term queries underperform.
-#   "bm25"    — Okapi BM25 with the same scope-bonus + recency boost
-#   "hybrid"  — reciprocal-rank-fusion of keyword + BM25. Default since
-#       2.6.8; a strict improvement over either alone. Every mode is
-#       deterministic code — the project ships no embedding models
-#       (removed in 4.0.0). The MCP `mode` parameter on memory_search
-#       overrides this per-call.
-# search_mode = "hybrid"
-
-# The Lane L conversational repairs (6.1.0): when a query has a temporal
-# reading ("how many weeks ago did I…", "what did I do in March?"), its
-# temporal-scaffold words (day/week/ago/last/many and kin) are priced as
-# common words in the BM25 legs so the question's own syntax cannot
-# outprice its content, and date-anchored items matching an explicit
-# window are boosted. ON BY DEFAULT: the L1 gate read measured +1.27
-# LongMemEval macro-recall@5 points (+0.93 at @1) with the dev
-# instrument byte-identical and no question type regressed
-# (the L1 record). Queries with no temporal reading are untouched
-# byte for byte. Set false to reproduce the pre-6.1.0 ranking exactly.
-# conversational = true
-
+# Decide whether a write that says a value changed may mark the stored
+# claim superseded on its own; false removes that lever from the writer
+# (SECURITY.md, "Write-time supersession is a lever").
 # Write-time supersession. When a claim-sized memory_write carries a
 # change cue (moved, switched, renamed, raised, no longer, the previous,
 # ...) and diverges on a value from a stored claim about the same
@@ -138,6 +112,7 @@ DEFAULT_CONFIG = """\
 # false to leave links to the writer's explicit `supersedes=` list.
 # write_supersession = true
 
+# Decide how much memory reaches the model unasked at each prompt.
 # Recall at prompt time. The plugin's UserPromptSubmit hook probes every
 # submitted prompt with the production ranker (the pool and ranking the
 # silent-miss audit uses) and puts up to three pointers in front of the
@@ -160,6 +135,7 @@ DEFAULT_CONFIG = """\
 # read as "project" / "off".
 # prompt_recall = "project"
 
+# Decide whether a session opens with pointers to the project's records.
 # The session brief: on SessionStart inside a project, two lists of
 # pointers (id and an 80-character summary): the project's standing records
 # in force, each marked in force, and the records the conversation so far
@@ -170,32 +146,7 @@ DEFAULT_CONFIG = """\
 # too. Set false to open sessions with nothing.
 # session_brief = true
 
-# Floor on `applied_count` for inclusion in `memory_health.heavily_used`.
-# Default 3 — at 1 the bucket is dominated by one-off acknowledgements
-# rather than repeat-use patterns. Lower it on a fresh store; raise it
-# once the event log has weeks of data.
-# heavily_used_min_applied = 3
-
-# Cold-endorsement ratio threshold (0.0-1.0). When > 0, the
-# `cold_endorsement_memories` bucket in `memory_health` ALSO flags
-# memories whose explicit-applied / total-applied ratio falls below
-# this fraction — catching the "1 explicit endorsement out of 50
-# auto" case the strict "explicit == 0" check misses. Default 0.0
-# keeps the strict behaviour (only zero-explicit memories surface).
-# Set to 0.1 to additionally surface memories where less than 10% of
-# applies are explicit endorsements. A value outside 0.0-1.0 is read as
-# the nearer end (inf as 1.0), nan as 0.0; `bettermemory config check`
-# warns of either.
-# cold_endorsement_ratio_threshold = 0.0
-
-# Days after `last_verified_at` past which a memory's verification is
-# considered "stale" — the retrieval surface attaches a re-spot-check
-# recommendation to the response. 30 days mirrors the recency-boost
-# half-life: memories the ranker no longer treats as fresh for ordering
-# also stop counting as fresh for verification. Set 0 to mark every
-# verified memory stale immediately (useful in tests, rarely in practice).
-# verification_stale_days = 30
-
+# Decide how long deleted memories' tombstones are kept by default.
 # Default retention for `bettermemory tombstones prune` (days). Tombstones
 # are never auto-pruned; this is just the default for the CLI subcommand,
 # which still requires an explicit invocation. 0 means "no default" — the
@@ -204,45 +155,8 @@ DEFAULT_CONFIG = """\
 # retention. Active memories are unaffected.
 # tombstone_retention_days = 0
 
-# Hard cap on a single memory body's UTF-8 byte length at `memory_write`
-# / `memory_update` time. Existing memories on disk are never re-validated
-# — this is a write-time bound that protects against a runaway model or a
-# hostile client filling disk with a multi-gigabyte body. The default of
-# 1 MB is ~1000x a typical memory (which sits at 1–2 KB); raise it if you
-# legitimately curate very long context dumps as single memories, lower
-# it for stricter resource boundaries. Set to 0 to disable the cap.
-# max_content_bytes = 1000000
-
-# Hard cap on a single episode takeaway's UTF-8 byte length at
-# `episode(action="write")` time, checked at the handler boundary.
-# Separate from `max_content_bytes` because the takeaway is the one-line
-# summary `episode(action="handoff")` delivers ahead of any body, so it
-# has a bound of its own. 4 KB is generous for a one-sentence summary and
-# keeps an 8.x mirror's frontmatter (`bettermemory export --mirror`,
-# capped at 64 KB by `_frontmatter._MAX_YAML_BYTES`) well inside its cap.
-# Set to 0 to disable the cap.
-# max_takeaway_bytes = 4096
-
-# Hard cap on the number of scopes accepted by a single memory_write,
-# memory_update or episode(action="write") call, checked at the handler
-# boundary alongside the model-layer cap (also 64). 64 matches the
-# verified_paths cap and is well above any realistic per-record scope
-# count (1 to 5 in practice). Set to 0 to disable the handler-boundary
-# cap (the model-layer cap still fires at 64).
-# max_scopes_per_write = 64
-
-# Opt-in floor on a memory body's whitespace-separated token count at
-# `memory_write` time. 0 (the default) disables it: the only shipped lower
-# bound is "non-empty after stripping", so a one-word body still commits,
-# which is correct for a caller storing an identifier, a path, or a version
-# pin. Set it (5 to 8 is a reasonable band for a self-contained statement)
-# when writes arrive from unattended or bulk callers, where a fragment costs
-# a durable record plus the curation pass that later removes it. The floor
-# binds `memory_write` only; `memory_update` does NOT, so a body edit can
-# still take an existing memory below the floor.
-# min_content_tokens = 0
-
 [scopes]
+# Decide which scopes a write may carry.
 # If non-empty, writes with caller-supplied scopes outside this list fail.
 # Empty = anything. One narrow exemption, and it is not a property of
 # the scopes themselves: `memory_update`, whose `scopes` argument REPLACES
@@ -252,6 +166,7 @@ DEFAULT_CONFIG = """\
 # name, so the exemption cannot be borrowed to plant an unallowed scope.
 # allowed = []
 
+# Decide which look-alike scopes are yours on purpose.
 # Singleton scopes the `fix_typo_scopes` health check must stop flagging.
 # That check looks for a one-memory scope that resembles a more common one
 # ("projct:foo" against "projects:foo") and recommends folding it with
@@ -275,9 +190,11 @@ DEFAULT_CONFIG = """\
 # call that passes a forbidden flag as true is refused whole, naming the
 # switch, and writes nothing. Both are off by default.
 #
+# Decide whether the agent may skip the duplicate gates.
 # Refuse memory_write calls with force=true.
 # forbid_force = true
 #
+# Decide which gates the agent may not wave a write past.
 # Refuse calls that pass any of these acknowledge flags as true. Names:
 # credential, transient, scope_mismatch and user_claim (memory_write),
 # credential, transient, user_claim and truncation (memory_update). An
@@ -285,6 +202,7 @@ DEFAULT_CONFIG = """\
 # forbid_acknowledge = ["credential"]
 
 [daemon]
+# Decide the port when 7397 is taken or barred on this machine.
 # The port the local daemon binds on 127.0.0.1. `bettermemory up` falls
 # back to an ephemeral port when this one is held by something else and
 # records the port it got in the state file, which is how the stdio
@@ -292,6 +210,7 @@ DEFAULT_CONFIG = """\
 # port = 7397
 
 [telemetry]
+# Decide whether usage is measured in your store's log.
 # Telemetry events are rows of the store's own signed log: one per tool
 # call (search queries redacted to a hash and a short preview, returned
 # ids, write, update and remove events). The health report and
@@ -307,6 +226,7 @@ DEFAULT_CONFIG = """\
 # enabled = true
 
 [security]
+# Decide whether a store from elsewhere is trusted as written here.
 # Which rows of the signed log this machine trusts. A record reads
 # `unaccounted` when the log row behind it does not verify under a key
 # this machine holds. Rows added to the log after this machine's own
@@ -326,6 +246,9 @@ DEFAULT_CONFIG = """\
 # strict_provenance = true
 
 [capture]
+# Decide whether the Stop hook asks the model to save what a stretch of
+# the conversation established, how long a stretch is, and how many asks
+# a day may make.
 # Session capture at a turn end, Claude Code only, and off by default.
 # With `stop_checkpoint = true`, once the conversation since the last
 # capture holds `checkpoint_tokens` of your prompts and the assistant's
@@ -340,6 +263,9 @@ DEFAULT_CONFIG = """\
 # daily_cap = 12
 
 [membership]
+# Decide whether bettermemory may write its token into your repositories
+# (`write_token`), and whether a join by shared history asks first
+# (`strict`).
 # Which project a session belongs to is decided from what its checkout
 # shows: its git directory, its commits, its remotes, its
 # bettermemory.toml, and a checkout token. The token is the one file
@@ -374,23 +300,31 @@ class StorageConfig:
 
 @dataclass
 class BehaviorConfig:
-    # Coerced to an int at load and NOT range-checked. Every consumer
-    # narrows it through `handlers.search.clamp_search_width` instead,
-    # so an out-of-range knob is a width a search can serve.
+    """The `[behavior]` section. Only `write_supersession`, `prompt_recall`,
+    `session_brief` and `tombstone_retention_days` are read from a file;
+    every other field is a fixed setting since 9.0.0rc20 (`FIXED_SETTINGS`): it keeps its
+    default whatever a config file says, and stays a field so that code
+    (a test, a bench) can build a `Config` with another value."""
+
+    # FIXED (9.0.0rc20, code-only): memory_search's default width. Not
+    # range-checked; every consumer narrows it through
+    # `handlers.search.clamp_search_width`.
     default_max_results: int = 5
+    # FIXED (9.0.0rc20, code-only): the recency boost's half-life.
     recency_boost_half_life_days: float = 30.0
-    # The Lane L conversational repairs: the temporal-scaffold df-floor
+    # FIXED (9.0.0rc20, code-only): the Lane L conversational repairs: the temporal-scaffold df-floor
     # plus boost-only date-anchor windows (see `search.search`'s
     # `conversational` parameter; unit contract the L1 declaration,
     # gate read the L1 record). DEFAULT ON since 6.1.0 — the gate
     # measured +1.27 LongMemEval macro@5 / +0.93 @1 on the full 500 with
     # the dev instrument byte-identical, no question type regressed, and
     # the untouched holdout half generalizing stronger than the tuning
-    # half. False reproduces the pre-6.1.0 ranking exactly (the repairs
-    # engage only on queries with a temporal reading, so non-temporal
+    # half. False, from code only, reproduces the pre-6.1.0 ranking (the
+    # repairs engage only on queries with a temporal reading, so non-temporal
     # queries are byte-identical either way).
     conversational: bool = True
-    # Retrieval ranker for `memory_search`. One of `keyword` (the
+    # FIXED (9.0.0rc20, code-only): the ranker for `memory_search` and
+    # the recall, brief, review and audit probes. One of `keyword` (the
     # original TF + coverage + recency scorer; legacy), `bm25` (Okapi
     # BM25), or `hybrid` (RRF fusion of both; default since 2.6.8 —
     # the keyword scorer lacks IDF weighting, so rare-term queries
@@ -424,61 +358,58 @@ class BehaviorConfig:
     # each at most. Default ON; its `session_brief` row is product state,
     # like the prompt recall's.
     session_brief: bool = True
-    # Floor on `applied_count` for inclusion in the heavily_used report.
-    # Default is 3 — at 1 the bucket is mostly noise (one acknowledgement
-    # is not a usage pattern). Raising it sharpens the signal at the cost
-    # of seeing fewer rows when the event log is young; lowering it makes
-    # the bucket more inclusive for fresh stores. Tune to taste.
+    # FIXED (9.0.0rc20, code-only): floor on `applied_count` for the
+    # heavily_used report; at 1 the bucket is mostly noise. The CLI's
+    # `health --min-applied` overrides it per run.
     heavily_used_min_applied: int = 3
-    # Cold-endorsement ratio threshold (0.0-1.0). When > 0, the
+    # FIXED (9.0.0rc20, code-only): cold-endorsement ratio threshold
+    # (0.0-1.0). When > 0 (code only), the
     # cold_endorsement_memories bucket also flags memories whose
     # explicit/total-applied ratio falls below this fraction, catching
     # the "1 explicit out of 50 auto" case the binary "explicit == 0"
     # check misses. Default 0.0 preserves the original strict
     # semantics (must have ZERO explicit endorsements to land in the
-    # bucket). Try 0.1 to surface memories where less than 10% of
-    # applies are explicit endorsements.
+    # bucket).
     cold_endorsement_ratio_threshold: float = 0.0
     # Default --older-than (days) for `bettermemory tombstones prune`.
     # 0 means "no default" — the CLI requires the flag explicitly.
     # Tombstones are never auto-pruned at runtime; this only affects
     # the human-driven CLI subcommand.
     tombstone_retention_days: int = 0
-    # Days after `last_verified_at` past which the retrieval surface
+    # FIXED (9.0.0rc20, code-only): days after `last_verified_at` past
+    # which the retrieval surface
     # marks a memory's verification "stale" and attaches a spot-check
     # recommendation. See `verify.compute_verification_status`. The
     # default mirrors `recency_boost_half_life_days` so freshness for
     # ranking and freshness for verification stay aligned.
     verification_stale_days: int = 30
-    # Hard cap on a memory body's UTF-8 byte length at write/update time.
-    # Default 1 MB — ~1000x the typical 1–2 KB memory body. 0 disables
-    # the cap entirely (legacy behaviour). The check runs at the handler
-    # boundary; existing on-disk memories are never re-validated, so
-    # raising the cap downward doesn't reject already-stored data.
+    # FIXED (9.0.0rc20, code-only): cap on a memory body's UTF-8 byte
+    # length at write/update time, 1 MB, ~1000x the typical body. 0, from
+    # code only, disables it. Checked at the handler boundary; stored
+    # memories are never re-validated.
     max_content_bytes: int = 1_000_000
-    # Hard cap on an episode takeaway's UTF-8 byte length at write time,
+    # FIXED (9.0.0rc20, code-only): cap on an episode takeaway's UTF-8
+    # byte length at write time,
     # checked at the handler boundary (`handlers.episode_write`). Separate
     # from `max_content_bytes` because the takeaway is the one-line
     # summary the handoff delivers ahead of any body. Default 4 KB, which
     # also keeps an 8.x mirror's frontmatter inside the 64 KB cap
-    # `_frontmatter` holds it to. 0 disables the cap.
+    # `_frontmatter` holds it to. 0 (code only) disables the cap.
     max_takeaway_bytes: int = 4_096
-    # Hard cap on the number of scopes accepted by a single memory_write /
+    # FIXED (9.0.0rc20, code-only): cap on the number of scopes accepted
+    # by a single memory_write /
     # memory_update / episode write call, checked at the handler boundary
     # (`handlers._shared._validate_scope_count`) alongside the model-layer
     # cap (`models._MAX_SCOPES_PER_RECORD`, also 64). 64 matches
     # `verified_paths` and is well above the typical 1 to 5 scopes used in
-    # practice. Set to 0 to disable the handler-boundary cap (the
+    # practice. 0 (code only) disables the handler-boundary cap (the
     # model-layer cap still fires).
     max_scopes_per_write: int = 64
-    # Opt-in floor on a memory body's whitespace-token count at write time.
-    # 0 (default, and the loader default too, so this is NOT one of the
-    # deliberate asymmetries) leaves the shipped "non-empty after strip"
-    # bound, so a one-word body commits exactly as it always has. Enabling
-    # it binds `memory_write` through `_validate_write_payload`, but not
-    # `memory_update`, which size-checks a replacement body without
-    # routing through that validator. See DEFAULT_CONFIG for the
-    # recommendation.
+    # FIXED (9.0.0rc20, code-only): floor on a memory body's
+    # whitespace-token count at write time. 0 leaves the "non-empty after
+    # strip" bound alone. A positive value, from code only, binds
+    # `memory_write` through `_validate_write_payload`, but not
+    # `memory_update`.
     min_content_tokens: int = 0
 
 
@@ -597,6 +528,11 @@ class Config:
     # a value came from labels these managed.
     managed_path: _managed.ManagedSource | None = None
     managed_keys: frozenset[str] = frozenset()
+    # The managed config's lines for fixed settings (`FIXED_SETTINGS`), as
+    # "section.key" -> the value as written. They pin nothing (the loader
+    # drops them unread); `security audit` and `config path` name them so
+    # an administrator learns the pin lapsed, and nothing logs them.
+    managed_fixed: dict[str, object] = field(default_factory=dict)
 
     # ---- methods ----------------------------------------------------------
 
@@ -874,8 +810,8 @@ MIN_CHECKPOINT_TOKENS = 500
 
 def _clamp_checkpoint_tokens(value: int, *, config_path: ConfigSource | None) -> int:
     """Raise `[capture] checkpoint_tokens` to `MIN_CHECKPOINT_TOKENS`,
-    loudly, rather than reject it: by `default_max_results`' rule a bad
-    value in one knob must not take the server down."""
+    loudly, rather than reject it: a bad value in one knob must not take
+    the server down."""
     if value >= MIN_CHECKPOINT_TOKENS:
         return value
     _trial_note(f"checkpoint_tokens {value} clamped")
@@ -891,59 +827,12 @@ def _clamp_checkpoint_tokens(value: int, *, config_path: ConfigSource | None) ->
     return MIN_CHECKPOINT_TOKENS
 
 
-#: The four modes `search.search` dispatches on. Duplicated from the
-#: `SearchMode` Literal rather than imported because `config` is imported
-#: by `search`, not the other way round; `test_config.py` cross-pins the
-#: two so the copy cannot drift.
+#: The modes `search.search` dispatches on, for the fixed `search_mode`
+#: (`FIXED_SETTINGS`). Duplicated from the `SearchMode` Literal rather
+#: than imported because `config` is imported by `search`, not the other
+#: way round; `test_config.py` cross-pins the two so the copy cannot
+#: drift.
 _SEARCH_MODES = ("keyword", "bm25", "hybrid")
-
-
-def _coerce_search_mode(value: object, *, config_path: ConfigSource | None) -> str:
-    """Normalise `[behavior] search_mode`, falling back to `hybrid`.
-
-    Unlike the scalars above this does NOT raise, and unlike the old bare
-    `str(...)` it does not pass the value through untouched. Both of those
-    were wrong for this knob, because its consumers each made a different
-    assumption about what it holds: `handlers.search.memory_search` passed
-    `search_mode or "hybrid"` through unnormalised, `search.search` raises
-    on anything outside the three literals, and the since-removed web UI
-    silently ranked with its own hybrid fallback. Historically a config
-    saying `search_mode = "Semantic"` loaded an embedding model, made
-    EVERY `memory_search` call raise, and served a working lexical web
-    page — three behaviours from one string. Normalising here makes every
-    consumer agree. Falling back rather
-    than raising follows `default_max_results`' rule that a bad value in
-    one knob must not take the server down — and the fallback is loud.
-    The legacy pre-4.0 value `"semantic"` lands here too: the lane was
-    removed outright, so the warning below is that config's one
-    migration notice.
-
-    Scope, stated so it is not mistaken for a whole-system invariant:
-    this runs in `load_config`, so it covers config FILES. A programmatic
-    embedder building `BehaviorConfig(search_mode=...)` directly still
-    reaches the consumers unnormalised. That is deliberate — these are
-    value types and the loader is the policy layer — and it is why
-    downstream consumers keep their own guards rather than trusting
-    every constructor path was normalised.
-    """
-    if value is None:
-        return "hybrid"
-    normalised = str(value).strip().lower()
-    if normalised in _SEARCH_MODES:
-        return normalised
-    _trial_note(f"search_mode {value!r} fell back")
-    import logging
-
-    logging.getLogger("bettermemory.config").warning(
-        "[behavior] search_mode = %s is not one of %s%s; falling back to "
-        '"hybrid" (keyword + BM25 fused). The pre-4.0 "semantic" mode was '
-        "removed with the embedding lane — delete the line to silence "
-        "this; nothing else will report it.",
-        toml_spelling(value),
-        ", ".join(_SEARCH_MODES),
-        f" (in {config_path})" if config_path is not None else "",
-    )
-    return "hybrid"
 
 
 PROMPT_RECALL_MODES: tuple[str, ...] = ("project", "everywhere", "off")
@@ -977,9 +866,8 @@ def _coerce_prompt_recall(value: object, *, config_path: ConfigSource | None) ->
     boolean: ``true`` reads as ``"project"`` (the delivery it now names)
     and ``false`` as ``"off"``, and the boolean spellings `_coerce_bool`
     accepts in a string read the same way. Anything else falls back to
-    ``"project"`` with a warning, by `_coerce_search_mode`'s rule that a
-    bad value in one knob must not take the server down, and that the
-    fallback is loud."""
+    ``"project"`` with a warning: a bad value in one knob must not take
+    the server down, and the fallback is loud."""
     if value is None:
         return "project"
     mode = _prompt_recall_spelling(value)
@@ -995,29 +883,6 @@ def _coerce_prompt_recall(value: object, *, config_path: ConfigSource | None) ->
         f" (in {config_path})" if config_path is not None else "",
     )
     return "project"
-
-
-def _coerce_float(
-    value: object, default: float, *, label: str, config_path: ConfigSource | None
-) -> float:
-    """Coerce a TOML value to ``float``, raising a located ValueError on a
-    non-numeric value (cf. ``_coerce_int``). Valid-input behaviour matches
-    the prior bare ``float(...)``; a boolean, which read as 1.0 or 0.0,
-    is refused as `_coerce_int` refuses one (ENG-221)."""
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        raise ValueError(_malformed_config_msg(label, value, config_path, "a number"))
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value.strip())
-        except ValueError as exc:
-            raise ValueError(
-                _malformed_config_msg(label, value, config_path, "a number")
-            ) from exc
-    raise ValueError(_malformed_config_msg(label, value, config_path, "a number"))
 
 
 def _coerce_str_list(
@@ -1128,11 +993,105 @@ def default_config_path() -> Path:
 _DEPRECATED_KEY_WARNED_PATHS: set[tuple[ConfigSource, str]] = set()
 
 
+#: Keys that left the config file in 9.0.0rc20 because no user decides
+#: them: (section, key) -> the fixed value, which is the field's default
+#: (`tests/test_config_fixed.py` pins the two equal). A file, the managed
+#: one included, that still carries one loads: the loader drops the line
+#: unread and says nothing (`_drop_fixed_keys`), so no command but
+#: `bettermemory config check` mentions it, and a managed file's line pins
+#: nothing. The fields stay on the dataclasses for code that builds a
+#: `Config` itself.
+FIXED_SETTINGS: dict[tuple[str, str], object] = {
+    ("behavior", "default_max_results"): 5,
+    ("behavior", "recency_boost_half_life_days"): 30.0,
+    ("behavior", "conversational"): True,
+    ("behavior", "search_mode"): "hybrid",
+    ("behavior", "heavily_used_min_applied"): 3,
+    ("behavior", "cold_endorsement_ratio_threshold"): 0.0,
+    ("behavior", "verification_stale_days"): 30,
+    ("behavior", "max_content_bytes"): 1_000_000,
+    ("behavior", "max_takeaway_bytes"): 4_096,
+    ("behavior", "max_scopes_per_write"): 64,
+    ("behavior", "min_content_tokens"): 0,
+}
+
+
+def _drop_fixed_keys(section_raw: dict[str, object], *, section: str) -> None:
+    """Drop, unread and without a notice, every fixed setting
+    (`FIXED_SETTINGS`) one section of a parsed file still carries."""
+    for fixed_section, key in FIXED_SETTINGS:
+        if fixed_section == section:
+            section_raw.pop(key, None)
+
+
+#: A fixed setting's line that 9.0.0rc19 refused to load.
+_UNREADABLE = object()
+
+
+def fixed_line_reading(section: str, key: str, value: object) -> object:
+    """What 9.0.0rc19, the last build that read a fixed setting
+    (`FIXED_SETTINGS`), loaded a file's line for it as, or `_UNREADABLE`
+    for a line rc19 refused: `search_mode` lower-cased and stripped,
+    anything outside the modes falling back to "hybrid"; a boolean through
+    `_coerce_bool`'s spellings with the fixed value as the fallback; a
+    number through rc19's coercion, a boolean refused."""
+    fixed = FIXED_SETTINGS[(section, key)]
+    if key == "search_mode":
+        token = str(value).strip().lower()
+        return token if token in _SEARCH_MODES else "hybrid"
+    if isinstance(fixed, bool):
+        return _coerce_bool(value, fixed)
+    if isinstance(value, bool):
+        return _UNREADABLE
+    try:
+        if isinstance(fixed, float):
+            text = value.strip() if isinstance(value, str) else value
+            return float(text)  # type: ignore[arg-type]
+        return _coerce_int(value, int(fixed), label=key, config_path=None)  # type: ignore[call-overload]
+    except (TypeError, ValueError, OverflowError):
+        return _UNREADABLE
+
+
+def fixed_line_restates(section: str, key: str, value: object) -> bool:
+    """Whether a file's line for a fixed setting would have loaded as the
+    fixed value under 9.0.0rc19 (`fixed_line_reading`): the line restates
+    the value in force, and nothing it chose is lost."""
+    fixed = FIXED_SETTINGS[(section, key)]
+    read = fixed_line_reading(section, key, value)
+    return type(read) is type(fixed) and read == fixed
+
+
+#: The fixed settings that bound what a write may carry, each with the
+#: direction a stricter value takes: "below" for a cap (a lower positive
+#: number refuses more; 0 disabled it), "above" for a floor. A managed
+#: line that set one stricter than the fixed value was a limit the
+#: administrator imposed, and lapsed (`posture`).
+FIXED_LIMITS: dict[tuple[str, str], str] = {
+    ("behavior", "max_content_bytes"): "below",
+    ("behavior", "max_takeaway_bytes"): "below",
+    ("behavior", "max_scopes_per_write"): "below",
+    ("behavior", "min_content_tokens"): "above",
+}
+
+
+def fixed_line_was_stricter(section: str, key: str, value: object) -> bool:
+    """Whether a line for a limit in `FIXED_LIMITS` set it stricter than
+    the fixed value, as 9.0.0rc19 read it."""
+    direction = FIXED_LIMITS.get((section, key))
+    read = fixed_line_reading(section, key, value)
+    if direction is None or not isinstance(read, int) or isinstance(read, bool):
+        return False
+    fixed = FIXED_SETTINGS[(section, key)]
+    assert isinstance(fixed, int)
+    if direction == "below":
+        return 0 < read < fixed
+    return read > fixed
+
+
 # [behavior] keys a major release removed after a deprecation cycle:
 # key -> (the release that removed it, why). A config written for the
 # earlier line can still carry the line, and the upgrade must not turn
-# that into a failed load — the same rule `_coerce_search_mode` applies
-# to a stale `search_mode = "semantic"`. The key is ignored and the
+# that into a failed load. The key is ignored and the
 # operator is told once, since nothing else will ever report it.
 _REMOVED_BEHAVIOR_KEYS: dict[str, tuple[str, str]] = {
     "corroboration_boost": (
@@ -1186,8 +1145,8 @@ _REMOVED_BEHAVIOR_KEYS: dict[str, tuple[str, str]] = {
     "endorsement_debt_ratio_threshold": (
         "9.0.0",
         "it was renamed `cold_endorsement_ratio_threshold` in 3.2.0 and read "
-        "under that name until 9.0; set `cold_endorsement_ratio_threshold` "
-        "to keep the threshold",
+        "under that name until 9.0; that key is a fixed value (0.0) since "
+        "9.0.0rc20",
     ),
 }
 
@@ -1468,6 +1427,11 @@ def _apply_managed(
     choice, and the managed file binds the user's config, not a process
     running as the user.
     """
+    lapsed = {
+        f"{section}.{key}": managed_data[section][key]
+        for section, key in FIXED_SETTINGS
+        if isinstance(managed_data.get(section), dict) and key in managed_data[section]
+    }
     pinned = _config_from_data(managed_data, managed_path)
     keys: list[tuple[str, str]] = []
     for section, section_raw in managed_data.items():
@@ -1509,6 +1473,7 @@ def _apply_managed(
         setattr(getattr(config, section), key, getattr(getattr(pinned, section), key))
     config.managed_path = managed_path
     config.managed_keys = frozenset(f"{section}.{key}" for section, key in keys)
+    config.managed_fixed = lapsed
     return config
 
 
@@ -1525,11 +1490,9 @@ def _apply_managed(
 #: a form the loader now translates: v3.41.0 to v8.0.0 wrote ``true``, which
 #: reads as ``"project"``, the default. Not here, on purpose:
 #: `endorsement_debt_ratio_threshold`, renamed in 3.2.0, is a removed key
-#: (`_REMOVED_BEHAVIOR_KEYS`), dropped unread; a pre-4.0
-#: ``search_mode = "semantic"`` named a mode 4.0 removed, which the loader
-#: replaces with the default through the fallback a typo takes, so it
-#: spells no current value; ``search_mode = "keyword"``, which 2.x wrote,
-#: is a mode of its own; and a boolean's string spellings (``"true"``) are
+#: (`_REMOVED_BEHAVIOR_KEYS`), dropped unread; `search_mode`, which 2.x
+#: wrote as ``"keyword"``, is a fixed setting since 9.0.0rc20
+#: (`FIXED_SETTINGS`), dropped unread too; and a boolean's string spellings (``"true"``) are
 #: a coercion the user chose, compared with the default as written.
 _LEGACY_SPELLINGS: dict[tuple[str, str], Callable[[object], object | None]] = {
     ("behavior", "prompt_recall"): _prompt_recall_spelling,
@@ -1584,7 +1547,7 @@ def _reads_as_pin(
     One the loader refuses (``forbid_force = 1``, ``port = "seven"``,
     ``port = inf``), or reads only through a fallback, a clamp or a lossy
     coercion (``enabled = 1``, which a boolean reads as its default;
-    ``search_mode = "semantic"``; ``checkpoint_tokens = 100``; ``port =
+    ``prompt_recall = "sometimes"``; ``checkpoint_tokens = 100``; ``port =
     7400.9``), is not read as written and restates no pin, even where what
     it lands on is the pinned value."""
     try:
@@ -1781,6 +1744,8 @@ def _config_from_data(data: dict[str, Any], config_path: ConfigSource) -> Config
         config_path=config_path,
     )
     _drop_removed_sections(data, config_path)
+    # Settings that are fixed values now: dropped unread, without a word.
+    _drop_fixed_keys(behavior_raw, section="behavior")
 
     return Config(
         storage=_storage_config(storage_raw, config_path),

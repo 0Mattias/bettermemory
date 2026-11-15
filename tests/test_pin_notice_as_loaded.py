@@ -86,8 +86,8 @@ def _pin_notices(caplog: pytest.LogCaptureFixture) -> list[str]:
         ("[telemetry]\nenabled = true\n", '[telemetry]\nenabled = "ture"\n', True),
         # Spellings the loader normalises to the pinned value.
         (
-            '[behavior]\nsearch_mode = "bm25"\n',
-            '[behavior]\nsearch_mode = "BM25"\n',
+            '[behavior]\nprompt_recall = "off"\n',
+            '[behavior]\nprompt_recall = " OFF "\n',
             False,
         ),
         ("[daemon]\nport = 7400\n", '[daemon]\nport = "7400"\n', False),
@@ -111,13 +111,8 @@ def _pin_notices(caplog: pytest.LogCaptureFixture) -> list[str]:
         ("[daemon]\nport = 7400\n", "[daemon]\nport = 7400.9\n", True),
         ("[daemon]\nport = 7400\n", "[daemon]\nport = 7400.0\n", False),
         (
-            "[behavior]\ndefault_max_results = 1\n",
-            "[behavior]\ndefault_max_results = true\n",
-            True,
-        ),
-        (
-            "[behavior]\nrecency_boost_half_life_days = 1.0\n",
-            "[behavior]\nrecency_boost_half_life_days = true\n",
+            "[behavior]\ntombstone_retention_days = 1\n",
+            "[behavior]\ntombstone_retention_days = true\n",
             True,
         ),
     ],
@@ -171,11 +166,6 @@ def test_one_under_a_pinned_true_names_the_line_and_both_files(
     ("managed", "user", "silenced"),
     [
         (
-            '[behavior]\nsearch_mode = "bm25"\n',
-            '[behavior]\nsearch_mode = "Semantic"\n',
-            "falling back",
-        ),
-        (
             "[capture]\ncheckpoint_tokens = 500\n",
             "[capture]\ncheckpoint_tokens = 100\n",
             "is below",
@@ -218,7 +208,7 @@ def test_outside_the_read_every_warning_is_logged_as_before(
         load_config(
             _user_config(
                 tmp_path,
-                '[daemon]\nport = "7400"\n[behavior]\nsearch_mode = "Semantic"\n',
+                '[daemon]\nport = "7400"\n[behavior]\nprompt_recall = "Semantic"\n',
             )
         )
     messages = [r.getMessage() for r in caplog.records]
@@ -276,7 +266,6 @@ def warnings_off(request: pytest.FixtureRequest) -> Iterator[None]:
 @pytest.mark.parametrize(
     ("section", "key", "raw", "pinned"),
     [
-        ("behavior", "search_mode", "Semantic", "hybrid"),
         ("behavior", "prompt_recall", "sometimes", "project"),
         ("capture", "checkpoint_tokens", 100, 500),
     ],

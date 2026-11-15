@@ -35,9 +35,9 @@ have found.
 
 Design notes:
 
-- **Probe matches the model's configured search mode.** The default is
-  whatever `config.behavior.search_mode` resolves to (typically
-  `"hybrid"` since 2.6.8; was `"keyword"` in 1.6.0). Probing with a
+- **Probe matches the model's search mode.** The default is
+  `config.behavior.search_mode`, a fixed `"hybrid"` since 9.0.0rc20
+  (code-only; a config file chose it before, `"keyword"` in 1.6.0). Probing with a
   different scorer than the model would have used measures the wrong
   thing — a BM25 hit the model on keyword mode would never have seen
   is not a miss the model could have caught. Callers can override the `mode` parameter on the
@@ -962,7 +962,8 @@ def probe_for_miss(
     cross-project audits.
 
     `mode` is forwarded to `search`. Production callers pass
-    `config.behavior.search_mode` so the probe sees the same ranker
+    `config.behavior.search_mode` (fixed `"hybrid"`, code-only) so the
+    probe sees the same ranker
     the model would have used — probing with a different scorer
     measures "would a different ranker have hit" rather than "did the
     model miss what its ranker would have shown." Default falls to
@@ -977,8 +978,8 @@ def probe_for_miss(
     production retrieval uses — the same probe-matches-the-ranker rule
     the `mode` parameter exists for. Production callers thread
     `config.behavior.recency_boost_half_life_days` and
-    `config.behavior.conversational` (the Lane L temporal repairs,
-    default ON since 6.1.0); offline callers can leave the defaults,
+    `config.behavior.conversational` (the Lane L temporal repairs; both
+    are fixed values since 9.0.0rc20, code-only); offline callers can leave the defaults,
     which match the package-default ranker. The verdict reads only the
     rank-1 hit, so a probe ranking with different inputs than
     production disagrees with it in both directions (a masked miss

@@ -286,21 +286,25 @@ def _seed_weakly_endorsed_memory(store: Store) -> str:
 def _config_with_ratio_threshold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
-    """Point `default_config_path` at a temp config.toml whose
-    `cold_endorsement_ratio_threshold` is `value`. Real file, real
-    `load_config()` — the CLI reaches the knob the way a user's install
-    does, so a regression that stops reading config is caught too."""
-    from bettermemory.config import DEFAULT_CONFIG
+    """Make every `Config` the CLI loads carry
+    `cold_endorsement_ratio_threshold = value`. The key is a fixed value
+    since 9.0.0rc20 (`config.FIXED_SETTINGS`), so no file can set it; the
+    field stays for code, and this patches the section builder the loader
+    calls, so the CLI still reaches the value through `load_config()` and a
+    regression that stops threading it from the config is caught."""
+    from bettermemory import config_sections
+
+    real = config_sections._behavior_config
+
+    def with_threshold(raw: Any, config_path: Any) -> Any:
+        behavior = real(raw, config_path)
+        behavior.cold_endorsement_ratio_threshold = float(value)
+        return behavior
 
     cfg_dir = tmp_path / "bm-config"
     cfg_dir.mkdir(exist_ok=True)
     cfg_path = cfg_dir / "config.toml"
-    original = "# cold_endorsement_ratio_threshold = 0.0"
-    assert original in DEFAULT_CONFIG, "DEFAULT_CONFIG key drifted"
-    cfg_path.write_text(
-        DEFAULT_CONFIG.replace(original, f"cold_endorsement_ratio_threshold = {value}"),
-        encoding="utf-8",
-    )
+    monkeypatch.setattr(config_sections, "_behavior_config", with_threshold)
     monkeypatch.setattr("bettermemory.config.default_config_path", lambda: cfg_path)
 
 

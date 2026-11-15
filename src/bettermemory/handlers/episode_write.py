@@ -200,7 +200,6 @@ async def episode_write(
             takeaway,
             deps.config.behavior.max_takeaway_bytes,
             field_name="takeaway",
-            config_key="max_takeaway_bytes",
         )
     # Cap the scope list alongside the body + takeaway byte caps. Same
     # silent-data-loss class as t16: scopes serialise into YAML

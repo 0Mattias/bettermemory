@@ -52,10 +52,9 @@ def add_subparser(
         type=int,
         default=None,
         help=(
-            "Minimum applied_count for inclusion in heavily_used. Default "
-            "comes from config.toml `behavior.heavily_used_min_applied` "
-            "(typically 3). Lower to 1 on a fresh store to see anything "
-            "that's been applied at least once."
+            "Minimum applied_count for inclusion in heavily_used. Default: "
+            "3. Lower to 1 on a fresh store to see anything that's been "
+            "applied at least once."
         ),
     )
     return parser

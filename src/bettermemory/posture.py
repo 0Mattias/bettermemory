@@ -1353,6 +1353,53 @@ def _settings(config: Config) -> Iterator[Finding]:
             "managed_keys": managed,
         },
     )
+    yield from _lapsed_pins(config)
+
+
+def _lapsed_pins(config: Config) -> Iterator[Finding]:
+    """One finding per managed line that pins nothing because its key is
+    a fixed value since 9.0.0rc20 (`config.FIXED_SETTINGS`): the
+    administrator's pin lapsed, and only this audit and `config path` say
+    so. A `warn` where the line set a write limit stricter than the fixed
+    one (`config.fixed_line_was_stricter`: a lower size or scope cap, a
+    token floor), since a limit the organisation imposed is no longer
+    enforced, the audit's convention for a policy that does not hold; an
+    `info` for any other line, which loosens nothing the administrator
+    tightened."""
+    from .config import (
+        FIXED_SETTINGS,
+        fixed_line_restates,
+        fixed_line_was_stricter,
+        toml_spelling,
+    )
+
+    lapsed: dict[str, object] = getattr(config, "managed_fixed", None) or {}
+    for name in sorted(lapsed):
+        section, key = name.split(".", 1)
+        value = lapsed[name]
+        fixed = FIXED_SETTINGS[(section, key)]
+        summary = (
+            f"the managed config sets [{section}] {key} = {toml_spelling(value)}, "
+            f"which pins nothing: it is no longer a setting, and its fixed value "
+            f"{toml_spelling(fixed)} is in force"
+        )
+        if not fixed_line_restates(section, key, value):
+            summary += "; the managed value is not enforced"
+        stricter = fixed_line_was_stricter(section, key, value)
+        yield Finding(
+            "config.managed_fixed",
+            "warn" if stricter else "info",
+            summary,
+            path=str(config.managed_path) if config.managed_path is not None else None,
+            fix="delete the line from the managed config"
+            + (
+                f"; the limit is now the fixed {toml_spelling(fixed)}, looser "
+                "than the one it set"
+                if stricter
+                else ""
+            ),
+            details={"key": name, "managed_value": value, "fixed_value": fixed},
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -183,9 +183,10 @@ class TestBoundedStreamRead:
 # ``msvcrt`` module into ``sys.modules`` so the branch runs end-to-end
 # on macOS / Linux dev boxes: every call to ``msvcrt.locking`` is
 # observable, the retry / backoff loop runs against real ``time.monotonic``
-# (with ``time.sleep`` shimmed to a no-op for speed), and the env-var
-# parsing is exercised by mutating ``BETTERMEMORY_FLOCK_TIMEOUT`` and
-# observing the next acquisition's behaviour.
+# (with ``time.sleep`` shimmed to a no-op for speed), and the timeout is
+# exercised by patching ``_fsutil.FLOCK_TIMEOUT_SECONDS`` (since 9.0.0rc20
+# the ``BETTERMEMORY_FLOCK_TIMEOUT`` variable is not read) and observing
+# the next acquisition's behaviour.
 #
 # These tests do NOT need ``@pytest.mark.skipif(win32)`` — the whole
 # point of the fake-``msvcrt`` posture is that the branch is testable
@@ -326,7 +327,6 @@ class TestFlockWindows:
         import time
 
         monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
-        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "30")
         # Capture every backoff sleep so we can assert on the actual
         # durations rather than just call counts. Default sleep shim
         # from ``fake_msvcrt`` fixture is a no-op that throws the
@@ -389,7 +389,7 @@ class TestFlockWindows:
     def test_timeout_raises_after_deadline(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When ``BETTERMEMORY_FLOCK_TIMEOUT`` is exhausted with the
+        """When ``FLOCK_TIMEOUT_SECONDS`` is exhausted with the
         lock still contended, the loop raises ``TimeoutError`` rather
         than spinning forever. We set timeout to 0 so the very first
         deadline check (after attempt 1) trips, regardless of clock
@@ -399,7 +399,7 @@ class TestFlockWindows:
         # Always-failing fake — every LK_NBLCK call raises.
         fake = _FakeMsvcrt(always_fail=True)
         monkeypatch.setitem(sys.modules, "msvcrt", fake)
-        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "0")
+        monkeypatch.setattr(_fsutil, "FLOCK_TIMEOUT_SECONDS", 0.0)
         lock_path = tmp_path / "thing.md.lock"
 
         with pytest.raises(TimeoutError, match="could not acquire"):
@@ -411,20 +411,18 @@ class TestFlockWindows:
         assert fake.lock_attempts >= 1
         assert all(mode == _FakeMsvcrt.LK_NBLCK for _, mode, _ in fake.calls)
 
-    def test_env_var_timeout_honors_valid_integer_string(
+    def test_timeout_constant_is_the_ceiling(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A valid numeric env-var value is parsed and used as the
-        timeout ceiling. We verify this indirectly: a timeout of 0
-        forces a TimeoutError after one failed attempt, but a timeout
-        of (say) 5 lets the retry loop succeed when the fake yields
-        on attempt 2. The contrast pins env-var influence on the next
-        acquisition."""
+        """The patched constant is used as the timeout ceiling. A timeout
+        of 0 forces a TimeoutError after one failed attempt, but a
+        timeout of 5 lets the retry loop succeed when the fake yields on
+        attempt 2."""
         monkeypatch.setattr("time.sleep", lambda _s: None)
         monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
         fake = _FakeMsvcrt(fail_first=1)
         monkeypatch.setitem(sys.modules, "msvcrt", fake)
-        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "5")
+        monkeypatch.setattr(_fsutil, "FLOCK_TIMEOUT_SECONDS", 5.0)
         lock_path = tmp_path / "thing.md.lock"
 
         with _drive(_fsutil._flock_windows(lock_path)):
@@ -432,18 +430,17 @@ class TestFlockWindows:
 
         # One failed attempt + one success = 2 calls before exit; +1
         # unlock on exit = 3 total. Crucially the loop did NOT
-        # short-circuit to TimeoutError — the env-var was honoured.
+        # short-circuit to TimeoutError — the ceiling was honoured.
         assert fake.lock_attempts == 2
         assert len(fake.calls) == 3
         assert fake.calls[-1][1] == _FakeMsvcrt.LK_UNLCK
 
-    def test_env_var_invalid_string_falls_back_to_default(
+    def test_env_var_is_not_read_and_the_default_is_30s(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A non-numeric ``BETTERMEMORY_FLOCK_TIMEOUT`` must fall back
-        to the documented 30s default — not propagate ``ValueError``,
-        not silently degrade to ``timeout = 0`` (which would instantly
-        time out under any real contention).
+        """``BETTERMEMORY_FLOCK_TIMEOUT`` is no longer read (9.0.0rc20):
+        set to ``0``, which would time out at once if it were read, the
+        wait is still the 30s constant.
 
         Round-1 fortification proved only ``timeout > 0`` via
         ``fake.lock_attempts > 1``: with ``time.sleep`` no-op'd and
@@ -491,7 +488,7 @@ class TestFlockWindows:
         # to — the original weakness.
         fake = _FakeMsvcrt(always_fail=True)
         monkeypatch.setitem(sys.modules, "msvcrt", fake)
-        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "not-a-number")
+        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "0")
         lock_path = tmp_path / "thing.md.lock"
 
         # If the helper propagated ValueError from float() this would
@@ -520,21 +517,19 @@ class TestFlockWindows:
             f"expected EXACTLY 30 lock attempts under the documented "
             f"30s default ceiling with a deterministic monotonic "
             f"counter (one tick per call); got {fake.lock_attempts}. "
-            f"A mismatch means the env-var fallback did not parse to "
-            f"30.0 — could be 0 (instant trip → 1 attempt), a small "
+            f"A mismatch means the wait was not the 30.0 constant (the "
+            f"variable read as 0 would give 1 attempt) — could be 0 (instant trip → 1 attempt), a small "
             f"nonzero (still 1 attempt under integer-tick counter), "
             f"or a different default value entirely (5, 60, etc)."
         )
 
-    def test_env_var_change_takes_effect_on_next_acquisition(
+    def test_constant_change_takes_effect_on_next_acquisition(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The env-var is re-read on every call to ``_flock_windows``
-        (not cached at module load). Mutating it between two
-        acquisitions on the same lockfile must change the second call's
-        behaviour. This catches a subtle regression where someone
-        caches the value at import time and breaks operator-runtime
-        reconfiguration."""
+        """The constant is read through the module on every call to
+        ``_flock_windows`` (not bound at import), so a test that patches
+        it between two acquisitions changes the second call's
+        behaviour."""
         monkeypatch.setattr("time.sleep", lambda _s: None)
         monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
         # Always-failing fake — every LK_NBLCK call raises so the
@@ -544,7 +539,7 @@ class TestFlockWindows:
         lock_path = tmp_path / "thing.md.lock"
 
         # First call: timeout 0 → TimeoutError after one attempt.
-        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "0")
+        monkeypatch.setattr(_fsutil, "FLOCK_TIMEOUT_SECONDS", 0.0)
         with pytest.raises(TimeoutError):
             with _drive(_fsutil._flock_windows(lock_path)):
                 pytest.fail("body must not run on first call")
@@ -552,11 +547,11 @@ class TestFlockWindows:
         assert first_call_attempts >= 1
 
         # Second call: same fake (still always failing), but now we
-        # flip the env-var to a tiny-but-nonzero ceiling. If the
+        # flip the constant to a tiny-but-nonzero ceiling. If the
         # helper had cached the prior value of 0, this would still
         # raise on attempt 1; instead it must enter at least one retry
-        # before raising — proving the env-var is re-read.
-        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "0.05")
+        # before raising — proving the constant is re-read.
+        monkeypatch.setattr(_fsutil, "FLOCK_TIMEOUT_SECONDS", 0.05)
         with pytest.raises(TimeoutError):
             with _drive(_fsutil._flock_windows(lock_path)):
                 pytest.fail("body must not run on second call either")
@@ -569,7 +564,7 @@ class TestFlockWindows:
             f"second call should have retried more than once under a "
             f"0.05s ceiling (with sleep no-op'd, retries are essentially "
             f"free until time.monotonic crosses the deadline); got "
-            f"{second_call_attempts} attempts. If this is 1, the env-var "
+            f"{second_call_attempts} attempts. If this is 1, the constant "
             f"was cached from the first call rather than re-read."
         )
 
@@ -579,8 +574,8 @@ class TestFlockWindows:
 # ---------------------------------------------------------------------------
 #
 # ``flock_excl``'s POSIX branch is a plain blocking ``fcntl.flock(fd,
-# LOCK_EX)``. It carries no deadline, and ``BETTERMEMORY_FLOCK_TIMEOUT``
-# — the knob the Windows branch reads — never reaches it. That
+# LOCK_EX)``. It carries no deadline, and ``FLOCK_TIMEOUT_SECONDS``
+# — the ceiling the Windows branch reads — never reaches it. That
 # asymmetry is easy to miss when reading the helper, because the only
 # timeout figure in its docstring sits in the Windows paragraph, and a
 # caller that carried that figure over to describe its own POSIX lock
@@ -589,9 +584,9 @@ class TestFlockWindows:
 # The tests below pin the halves that the docstring now states
 # explicitly, so a future edit that softens either one turns red:
 #   * behavioural — a real second interpreter holds the lock while this
-#     process acquires with the env-var ceiling set to 0; the acquire
+#     process acquires with the ceiling patched to 0; the acquire
 #     must block through it rather than raise.
-#   * structural — the env-var is read in exactly one function, and the
+#   * structural — the retired variable is read nowhere, and the
 #     POSIX branch names no non-blocking flock flag. Neither assertion
 #     depends on wall-clock, so neither can rot the way a measured
 #     figure would.
@@ -640,7 +635,7 @@ class TestFlockPosixWaitIsUnbounded:
     @pytest.mark.skipif(
         sys.platform == "win32",
         reason="the win32 branch routes to _flock_windows, which is bounded "
-        "by BETTERMEMORY_FLOCK_TIMEOUT — the opposite of what this pins",
+        "by FLOCK_TIMEOUT_SECONDS — the opposite of what this pins",
     )
     def test_acquire_blocks_past_the_flock_timeout_env_ceiling(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -648,12 +643,12 @@ class TestFlockPosixWaitIsUnbounded:
         """The POSIX acquire waits for the holder, not for a deadline.
 
         A second interpreter takes the same lock and holds it. This
-        process then acquires with ``BETTERMEMORY_FLOCK_TIMEOUT`` set
+        process then acquires with ``FLOCK_TIMEOUT_SECONDS`` patched
         to ``0`` — a ceiling so tight that any code path consulting it
         would give up on the first contended attempt. The acquire must
         instead block until the holder releases.
 
-        Two failure modes this catches. If someone wires the env-var
+        Two failure modes this catches. If someone wires the ceiling
         into the POSIX branch, the ``TimeoutError`` branch below fires.
         If the lock stops excluding at all, the acquire returns
         immediately and the elapsed-time assertion fires. Only the
@@ -698,7 +693,7 @@ class TestFlockPosixWaitIsUnbounded:
                 )
                 time.sleep(0.01)
 
-            monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "0")
+            monkeypatch.setattr(_fsutil, "FLOCK_TIMEOUT_SECONDS", 0.0)
             start = time.monotonic()
             try:
                 with _fsutil.flock_excl(target):
@@ -708,7 +703,7 @@ class TestFlockPosixWaitIsUnbounded:
                     f"POSIX flock_excl raised TimeoutError after "
                     f"{time.monotonic() - start:.2f}s ({exc}). The POSIX "
                     f"branch must block in fcntl.flock(fd, LOCK_EX) with no "
-                    f"deadline; BETTERMEMORY_FLOCK_TIMEOUT is documented as "
+                    f"deadline; FLOCK_TIMEOUT_SECONDS is documented as "
                     f"bounding the Windows branch only."
                 )
         finally:
@@ -717,63 +712,36 @@ class TestFlockPosixWaitIsUnbounded:
         assert waited >= min_blocked, (
             f"acquire returned after only {waited:.3f}s while another "
             f"process held the lock for {hold_seconds}s. Either the wait was "
-            f"cut short by a deadline (the env-var was set to 0), or the "
+            f"cut short by a deadline (the ceiling was set to 0), or the "
             f"sidecar lock stopped excluding across processes."
         )
 
-    def test_flock_timeout_env_is_read_in_one_function_only(self) -> None:
-        """``BETTERMEMORY_FLOCK_TIMEOUT`` is looked up only inside
-        ``_flock_windows``, which is what makes "it does not bound the
-        POSIX path" true rather than incidental.
-
-        Scanning the whole package, not just one module, is the point:
-        the claim in ``flock_excl``'s docstring is about where the
-        variable is honoured, and a lookup added in any other module
-        would falsify it just as squarely as one added next door.
+    def test_flock_timeout_env_is_read_nowhere(self) -> None:
+        """``BETTERMEMORY_FLOCK_TIMEOUT`` is not looked up anywhere in the
+        package since 9.0.0rc20: the Windows wait is the constant
+        ``FLOCK_TIMEOUT_SECONDS``, and no service unit pins the variable.
+        Only an exact string literal counts, so prose naming it does not.
         """
         package_root = Path(bettermemory.__file__).parent
         modules = sorted(package_root.rglob("*.py"))
         assert modules, f"found no modules under {package_root}"
-
-        sites: list[tuple[str, int, str]] = []
-        for module in modules:
+        sites = [
+            (module.relative_to(package_root).as_posix(), lineno, scope)
+            for module in modules
             for lineno, scope in _scoped_string_sites(
                 module.read_text(encoding="utf-8"),
                 str(module),
                 "BETTERMEMORY_FLOCK_TIMEOUT",
-            ):
-                sites.append(
-                    (module.relative_to(package_root).as_posix(), lineno, scope)
-                )
-
-        # Guard against the whole test passing for the wrong reason: if
-        # the extractor stopped matching, `offenders` would be empty too.
-        assert sites, (
-            "no lookup of BETTERMEMORY_FLOCK_TIMEOUT found anywhere in the "
-            "package — either the variable was renamed (update the docstring "
-            "in _fsutil.flock_excl too) or this extractor stopped matching."
-        )
-        # `service_units.PINNED_VARIABLES` names the variable among those a
-        # service unit copies from the installing shell into the daemon's
-        # environment, where `_flock_windows` is what reads it: a
-        # pass-through, not a lookup.
-        passed_through = {("service_units.py", "")}
-        offenders = [
-            site
-            for site in sites
-            if site[2] != "_flock_windows" and (site[0], site[2]) not in passed_through
-        ]
-        assert not offenders, (
-            "BETTERMEMORY_FLOCK_TIMEOUT is read outside `_flock_windows`:\n  "
-            + "\n  ".join(
-                f"{path}:{lineno} in {scope or '<module>'}"
-                for path, lineno, scope in offenders
             )
-            + "\n\n`flock_excl`'s docstring tells callers this variable bounds "
-            "the Windows branch and nothing else. If a POSIX wait is now "
-            "bounded too, that paragraph is false and has to be rewritten "
-            "before this exemption changes."
+        ]
+        assert not sites, f"BETTERMEMORY_FLOCK_TIMEOUT is read again: {sites}"
+        # The extractor still finds a variable the package does read, so
+        # the empty result above is not an extractor that stopped matching.
+        config_py = package_root / "config.py"
+        assert _scoped_string_sites(
+            config_py.read_text(encoding="utf-8"), str(config_py), "BETTERMEMORY_DIR"
         )
+        assert _fsutil.FLOCK_TIMEOUT_SECONDS == 30.0
 
     def test_posix_branch_takes_a_blocking_lock_with_no_deadline(self) -> None:
         """The POSIX branch names ``LOCK_EX`` and no non-blocking flag.

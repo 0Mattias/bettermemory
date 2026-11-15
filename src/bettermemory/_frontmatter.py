@@ -467,8 +467,8 @@ def _check_file_cap(final: str, max_file_bytes: int) -> None:
     # the frontmatter region, but `load` rejects the WHOLE file (frontmatter +
     # body) against `_MAX_FILE_BYTES` via `bounded_read`'s stat check. A
     # legal-sized frontmatter (dense `verified_paths` etc.) plus a body near
-    # the handler-boundary `max_content_bytes` cap (config-tunable, default
-    # 1 MB) can push the serialized total over that read cap — whereupon the
+    # the handler-boundary `max_content_bytes` cap (fixed at 1 MB since
+    # 9.0.0rc20; code-only) can push the serialized total over that read cap — whereupon the
     # store's malformed-file skip silently drops the record from every read
     # surface (load_all / load_one / search / health) while the write reported
     # committed. The byte count here matches exactly what `bounded_read` will

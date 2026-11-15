@@ -109,17 +109,12 @@ PINNED_PATH_VARIABLES: tuple[str, ...] = (
 #: Variables carried over as they are. PATH because the daemon runs
 #: `git` by name (`_git`), and launchd's PATH is /usr/bin:/bin:/usr/sbin:
 #: /sbin: a git the user installed elsewhere would be missed.
-#: BETTERMEMORY_FLOCK_TIMEOUT tunes the daemon's own lock waits, which a
-#: spawned daemon inherits from the shell that started it. The
-#: identity variables (BETTERMEMORY_CLIENT, _CLIENT_VERSION, _MODEL,
+#: The identity variables (BETTERMEMORY_CLIENT, _CLIENT_VERSION, _MODEL,
 #: _WORKSPACE) are left out on purpose: they describe the client a
 #: process serves, and one daemon serves every client, the reason
 #: `_daemon_client.daemon_env_for` drops the harness session id from a
 #: spawned daemon's environment.
-PINNED_VARIABLES: tuple[str, ...] = (
-    "BETTERMEMORY_FLOCK_TIMEOUT",
-    "PATH",
-)
+PINNED_VARIABLES: tuple[str, ...] = ("PATH",)
 
 # Path components of an interpreter that a package manager may delete:
 # uv's cache (`uvx`, `uv run --with`: archive-v0, builds-v0,

@@ -149,10 +149,8 @@ def _validate_scope_count(scopes: list[str], max_count: int) -> None:
         return
     if len(scopes) > max_count:
         raise ValueError(
-            f"scopes exceeds max_scopes_per_write "
-            f"({len(scopes)} entries > {max_count} entries). "
-            f"Shorten the scope list or raise the "
-            f"[behavior] max_scopes_per_write config setting."
+            f"too many scopes: {len(scopes)} entries, more than the limit of "
+            f"{max_count} per write. Shorten the scope list."
         )
 
 
@@ -161,7 +159,6 @@ def _validate_content_size(
     max_bytes: int,
     *,
     field_name: str = "content",
-    config_key: str = "max_content_bytes",
 ) -> None:
     """Reject memory bodies whose UTF-8 byte length exceeds `max_bytes`.
 
@@ -172,22 +169,18 @@ def _validate_content_size(
     lands on disk and in the JSONL event log — a body of CJK or emoji
     characters expands meaningfully under UTF-8 encoding.
 
-    `field_name` and `config_key` are message-only knobs so the
-    `episode_write` takeaway path can raise the same `ValueError`
-    shape with a takeaway-specific message ("takeaway exceeds
-    max_takeaway_bytes …") instead of misleadingly mentioning the
-    body cap. The defaults preserve the legacy message verbatim so
-    existing tests pinning `match="max_content_bytes"` keep passing.
+    `field_name` is message-only, so the `episode_write` takeaway path
+    raises the same `ValueError` shape naming the takeaway ("takeaway is
+    too long: …") instead of the body. The message states the limit as a
+    number: the caps are fixed values since 9.0.0rc20, not settings.
     """
     if max_bytes <= 0:
         return
     encoded_size = len(content.encode("utf-8"))
     if encoded_size > max_bytes:
         raise ValueError(
-            f"{field_name} exceeds {config_key} "
-            f"({encoded_size} bytes > {max_bytes} bytes). "
-            f"Shorten the {field_name} or raise the "
-            f"[behavior] {config_key} config setting."
+            f"{field_name} is too long: {encoded_size} bytes of UTF-8, more "
+            f"than the limit of {max_bytes} bytes. Shorten the {field_name}."
         )
 
 
@@ -217,10 +210,8 @@ def _validate_content_floor(content: str, min_tokens: int) -> None:
     token_count = len(content.split())
     if token_count < min_tokens:
         raise ValueError(
-            f"content is below min_content_tokens "
-            f"({token_count} tokens < {min_tokens} tokens). "
-            f"Expand the content or lower the "
-            f"[behavior] min_content_tokens config setting."
+            f"content is too short: {token_count} tokens, fewer than the "
+            f"minimum of {min_tokens}. Expand the content."
         )
 
 
@@ -244,7 +235,8 @@ def _validate_write_payload(
 
     `min_content_tokens` defaults to 0 (floor disabled) so an omitted
     argument is byte-identical to the pre-floor behaviour; callers thread
-    `[behavior] min_content_tokens` in. See `_validate_content_floor` for
+    `BehaviorConfig.min_content_tokens` in, fixed at 0 since 9.0.0rc20
+    (a code-only field: no file sets it). See `_validate_content_floor` for
     which tools the floor reaches when it is enabled.
     """
     if not content or not content.strip():

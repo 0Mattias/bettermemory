@@ -30,6 +30,7 @@ import stat
 import subprocess
 import sys
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1509,3 +1510,41 @@ def test_the_text_report_escapes_what_a_finding_quotes() -> None:
     assert "(target /x\\nok  fake)" in text
     assert "\\x1b[2J" in text and "\\x1b[31m" in text
     assert len(text.splitlines()) == 5
+
+
+def test_a_managed_pin_on_a_fixed_key_is_named_and_a_lapsed_limit_warns(
+    layout: Layout,
+    managed_config_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A managed line for a key fixed in 9.0.0rc20 pins nothing; the audit
+    names each one, a `warn` where it set a write limit stricter than the
+    fixed value and an `info` otherwise, and nothing is logged."""
+    from bettermemory import posture
+
+    managed_config_path.write_text(
+        "[behavior]\nmax_content_bytes = 100\nmin_content_tokens = 5\n"
+        'search_mode = "HYBRID"\nmax_scopes_per_write = 0\n',
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.DEBUG, logger="bettermemory.config"):
+        report = audit()
+    assert caplog.records == []
+    lapsed = {
+        f.details["key"]: f for f in report.findings if f.id == "config.managed_fixed"
+    }
+    assert {k: f.status for k, f in lapsed.items()} == {
+        "behavior.max_content_bytes": "warn",
+        "behavior.min_content_tokens": "warn",
+        "behavior.search_mode": "info",
+        "behavior.max_scopes_per_write": "info",
+    }
+    assert lapsed["behavior.max_content_bytes"].summary == (
+        "the managed config sets [behavior] max_content_bytes = 100, which pins "
+        "nothing: it is no longer a setting, and its fixed value 1000000 is in "
+        "force; the managed value is not enforced"
+    )
+    assert "not enforced" not in lapsed["behavior.search_mode"].summary
+    assert "0 key(s) pinned" not in _by_id(report, "config.policy").summary
+    text = posture.render(report)
+    assert "  warn  config.managed_fixed  the managed config sets [behavior] " in text

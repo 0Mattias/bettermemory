@@ -81,17 +81,13 @@ settlement out), one honesty gate (with zero
 Stop-hook settlement telemetry in the log the bucket is suppressed and
 says so, rather than reporting an unwired hook as acknowledge-debt), and
 one predicate (`health_model.weakly_endorsed`): applied at least once and
-never explicitly, or, with `[behavior] cold_endorsement_ratio_threshold`
-above 0, explicitly less often than that fraction of the applies. Eval
-reads the knob the health report reads, within 0 and 1 as it does
-(`inf` as 1, NaN as 0, and `bettermemory config check` warns of a value
-outside them), for rate mode and for the two
-replays `--report` composes, and publishes it as
+never explicitly. The predicate also takes a ratio threshold, fixed at
+0 since 9.0.0rc20 (the config key `cold_endorsement_ratio_threshold` is
+gone), which eval publishes as
 `cold_endorsement_memories.ratio_threshold`; each row carries its
 `auto_applied_count`, its `explicit_applied_count` and its
 `endorsement_ratio`, the explicit fraction a health row reports under
-that name, so a threshold can be checked against a replayed log before
-it is set.
+that name.
 
 ### `silent_miss_rate`
 

@@ -101,8 +101,8 @@ def test_unit_paths(tmp_path: Path) -> None:
 
 def test_the_pinned_environment(tmp_path: Path) -> None:
     """The path variables the shell sets are carried absolute, against the
-    directory `install` ran in and with ``~`` as home; PATH and the
-    daemon's tuning variables as they are; the state directory always;
+    directory `install` ran in and with ``~`` as home; PATH as
+    it is; the state directory always;
     the identity variables, which describe a client and not the daemon,
     never."""
     home, cwd, state_dir = tmp_path / "home", tmp_path / "cwd", tmp_path / "state"
@@ -111,6 +111,7 @@ def test_the_pinned_environment(tmp_path: Path) -> None:
         "BETTERMEMORY_KEYS_DIR": "~/keys",
         "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
         "PATH": "/usr/local/bin:/usr/bin",
+        # No longer read since 9.0.0rc20, so no longer pinned.
         "BETTERMEMORY_FLOCK_TIMEOUT": "5",
         "BETTERMEMORY_STATE_DIR": "elsewhere",
         "BETTERMEMORY_CLIENT": "claude-code",
@@ -122,7 +123,6 @@ def test_the_pinned_environment(tmp_path: Path) -> None:
     pinned = units.pinned_environment(env, state_dir=state_dir, cwd=cwd, home=home)
     assert pinned == {
         "BETTERMEMORY_DIR": str(cwd / "store"),
-        "BETTERMEMORY_FLOCK_TIMEOUT": "5",
         "BETTERMEMORY_KEYS_DIR": str(home / "keys"),
         "BETTERMEMORY_STATE_DIR": str(state_dir),
         "PATH": "/usr/local/bin:/usr/bin",

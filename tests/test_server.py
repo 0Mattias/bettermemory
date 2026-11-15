@@ -338,7 +338,7 @@ async def test_write_rejects_oversized_content(memory_dir: Path) -> None:
     )
     server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     big_body = "x" * 500
-    with pytest.raises(Exception, match="max_content_bytes"):
+    with pytest.raises(Exception, match="is too long"):
         await _call(server, "memory_write", content=big_body, scopes=["tools"])
 
 
@@ -373,7 +373,7 @@ async def test_update_rejects_oversized_content(memory_dir: Path) -> None:
     small = await _call(server, "memory_write", content="ok body", scopes=["tools"])
     memory_id = small["id"]
     big_body = "x" * 500
-    with pytest.raises(Exception, match="max_content_bytes"):
+    with pytest.raises(Exception, match="is too long"):
         await _call(server, "memory_update", id=memory_id, content=big_body)
 
 
@@ -1378,7 +1378,7 @@ async def test_episode_write_rejects_oversized_body(memory_dir: Path) -> None:
     # field rather than hardcoding so the test stays correct if the
     # default ever shifts.
     big_body = "x" * (cap + 1)
-    with pytest.raises(Exception, match="max_content_bytes"):
+    with pytest.raises(Exception, match="is too long"):
         await _call(server, "episode", action="write", body=big_body)
 
 
@@ -1419,7 +1419,7 @@ async def test_episode_write_rejects_oversized_takeaway(memory_dir: Path) -> Non
     # from the config field rather than hardcoding so the test stays
     # correct if the default ever shifts.
     big_takeaway = "x" * (cap + 1)
-    with pytest.raises(Exception, match="max_takeaway_bytes"):
+    with pytest.raises(Exception, match="takeaway is too long"):
         await _call(
             server,
             "episode",
@@ -1490,7 +1490,7 @@ async def test_episode_write_rejects_oversized_scope_list(memory_dir: Path) -> N
     # cap + 1 short scope names — derive from the config field rather than
     # hardcoding so the test stays correct if the default ever shifts.
     big_scopes = [f"scope-{i}" for i in range(cap + 1)]
-    with pytest.raises(Exception, match="max_scopes_per_write"):
+    with pytest.raises(Exception, match="too many scopes"):
         await _call(
             server,
             "episode",
@@ -1538,7 +1538,7 @@ async def test_memory_write_rejects_oversized_scope_list(memory_dir: Path) -> No
     )
     server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     big_scopes = [f"scope-{i}" for i in range(cap + 1)]
-    with pytest.raises(Exception, match="max_scopes_per_write"):
+    with pytest.raises(Exception, match="too many scopes"):
         await _call(
             server,
             "memory_write",
@@ -1568,7 +1568,7 @@ async def test_memory_update_rejects_oversized_scope_list(memory_dir: Path) -> N
     )
     memory_id = small["id"]
     big_scopes = [f"scope-{i}" for i in range(cap + 1)]
-    with pytest.raises(Exception, match="max_scopes_per_write"):
+    with pytest.raises(Exception, match="too many scopes"):
         await _call(server, "memory_update", id=memory_id, scopes=big_scopes)
 
 

@@ -944,9 +944,9 @@ def compute_health(
     `verification_stale_days` controls the staleness threshold for the
     `verification_debt` bucket: a memory whose `last_verified_at` is older
     than this many days lands in the `stale` list; never-verified memories
-    land in `never_verified` regardless of age. Should match the
-    `behavior.verification_stale_days` config value the rest of the system
-    uses for the per-row `verification.status` field, so a "stale" hit
+    land in `never_verified` regardless of age. Should match
+    `behavior.verification_stale_days` (a fixed 30 since 9.0.0rc20,
+    code-only), which the rest of the system uses for the per-row `verification.status` field, so a "stale" hit
     in search results and a "stale" entry in this bucket mean the same
     thing.
 

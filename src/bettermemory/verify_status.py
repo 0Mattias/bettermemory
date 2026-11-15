@@ -43,8 +43,8 @@ from typing import Any
 # from "fresh" to "stale" and gets a re-spot-check recommendation. 30 days
 # matches the recency-boost half-life (`recency_boost_half_life_days`) —
 # memories the ranker is no longer treating as "fresh" for ordering also
-# stop counting as "fresh" for verification. Override via
-# `behavior.verification_stale_days` in config.toml.
+# stop counting as "fresh" for verification. A fixed value since
+# 9.0.0rc20: `BehaviorConfig.verification_stale_days` is code-only.
 DEFAULT_VERIFICATION_STALE_DAYS = 30
 
 

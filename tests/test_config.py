@@ -285,35 +285,32 @@ def test_load_config_coerces_behavior_int_fields(tmp_path: Path) -> None:
     survive as a float and silently round at use-site."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\n"
-        "default_max_results = 7\n"
-        "heavily_used_min_applied = 5\n"
-        "tombstone_retention_days = 365\n"
-        "verification_stale_days = 14\n"
-        "max_takeaway_bytes = 8192\n",
-        encoding="utf-8",
+        "[behavior]\ntombstone_retention_days = 365.0\n", encoding="utf-8"
     )
     cfg = load_config(config_path)
-    assert cfg.behavior.default_max_results == 7
-    assert isinstance(cfg.behavior.default_max_results, int)
-    assert cfg.behavior.heavily_used_min_applied == 5
     assert cfg.behavior.tombstone_retention_days == 365
-    assert cfg.behavior.verification_stale_days == 14
-    assert cfg.behavior.max_takeaway_bytes == 8192
-    assert isinstance(cfg.behavior.max_takeaway_bytes, int)
+    assert isinstance(cfg.behavior.tombstone_retention_days, int)
 
 
-def test_load_config_coerces_behavior_float_fields(tmp_path: Path) -> None:
-    """Half-life is a float. A TOML integer (`14`) is still accepted
-    and coerced via `float(...)`."""
+def test_fixed_behavior_keys_in_a_file_are_not_read(tmp_path: Path) -> None:
+    """The keys 9.0.0rc20 fixed (`FIXED_SETTINGS`) load from a file
+    without error and without effect: each keeps its fixed value, a value
+    that would not parse included."""
+    from bettermemory.config import FIXED_SETTINGS
+
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\nrecency_boost_half_life_days = 14\n",  # integer — must coerce
+        "[behavior]\n"
+        "default_max_results = 7\n"
+        "recency_boost_half_life_days = 14\n"
+        'search_mode = "bm25"\n'
+        "conversational = false\n"
+        'max_takeaway_bytes = "not a number"\n',
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.behavior.recency_boost_half_life_days == 14.0
-    assert isinstance(cfg.behavior.recency_boost_half_life_days, float)
+    for (section, key), fixed in FIXED_SETTINGS.items():
+        assert getattr(getattr(cfg, section), key) == fixed, key
 
 
 def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
@@ -325,13 +322,11 @@ def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
     pass every default-shaped test in this file)."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\nsession_brief = false\n"
-        "conversational = false\nwrite_supersession = false\n",
+        "[behavior]\nsession_brief = false\nwrite_supersession = false\n",
         encoding="utf-8",
     )
     cfg = load_config(config_path)
     assert cfg.behavior.session_brief is False
-    assert cfg.behavior.conversational is False
     assert cfg.behavior.write_supersession is False
 
 
@@ -361,15 +356,16 @@ def test_load_config_quoted_false_bool_keeps_the_opt_out(tmp_path: Path) -> None
 
     config_path.write_text(
         "[behavior]\n"
-        'conversational = "false"\n'
-        'write_supersession = "off"\n'
         'session_brief = "0"\n'
+        'write_supersession = "off"\n'
+        "[membership]\n"
+        'write_token = "off"\n'
         "[telemetry]\n"
         'enabled = "False"\n',
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.behavior.conversational is False
+    assert cfg.membership.write_token is False
     assert cfg.behavior.write_supersession is False
     assert cfg.behavior.session_brief is False
     assert cfg.telemetry.enabled is False
@@ -396,12 +392,12 @@ def test_load_config_unrecognized_bool_string_falls_back_to_default(
 
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        '[telemetry]\nenabled = "maybe"\n[behavior]\nconversational = "sometimes"\n',
+        '[telemetry]\nenabled = "maybe"\n[behavior]\nsession_brief = "sometimes"\n',
         encoding="utf-8",
     )
     cfg = load_config(config_path)
     assert cfg.telemetry.enabled is True
-    assert cfg.behavior.conversational is True
+    assert cfg.behavior.session_brief is True
     assert _coerce_bool("maybe", False) is False
     assert _coerce_bool("maybe", True) is True
 
@@ -476,11 +472,12 @@ def test_the_pre_3_2_threshold_key_is_removed_with_a_notice_naming_its_successor
     assert load_config(config_path).behavior.cold_endorsement_ratio_threshold == 0.0
 
 
-def test_the_threshold_key_by_its_3_2_name_still_works(
+def test_the_threshold_key_by_its_3_2_name_is_a_fixed_value(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """`cold_endorsement_ratio_threshold` is read, alone with no notice,
-    and beside the removed old name, which is dropped with its notice."""
+    """`cold_endorsement_ratio_threshold` is a fixed value since 9.0.0rc20:
+    a file's line is dropped unread and without a notice, beside the
+    removed old name, which is dropped with its notice."""
     _reset_deprecated_key_guard()
     config_path = tmp_path / "config.toml"
     config_path.write_text(
@@ -488,8 +485,8 @@ def test_the_threshold_key_by_its_3_2_name_still_works(
     )
     with caplog.at_level("WARNING", logger="bettermemory.config"):
         cfg = load_config(config_path)
-    assert cfg.behavior.cold_endorsement_ratio_threshold == 0.15
-    assert _old_key_notices(caplog) == []
+    assert cfg.behavior.cold_endorsement_ratio_threshold == 0.0
+    assert caplog.records == []
 
     config_path.write_text(
         "[behavior]\nendorsement_debt_ratio_threshold = 0.99\n"
@@ -498,7 +495,7 @@ def test_the_threshold_key_by_its_3_2_name_still_works(
     )
     with caplog.at_level("WARNING", logger="bettermemory.config"):
         cfg = load_config(config_path)
-    assert cfg.behavior.cold_endorsement_ratio_threshold == 0.15
+    assert cfg.behavior.cold_endorsement_ratio_threshold == 0.0
     (notice,) = _old_key_notices(caplog)
     assert "was removed in bettermemory 9.0.0" in notice
 
@@ -780,75 +777,25 @@ def test_search_modes_match_the_ranker_literal() -> None:
     )
 
 
-def test_search_mode_normalises_case_and_whitespace(tmp_path: Path) -> None:
-    """The consumers of this knob disagreed about normalisation:
-    `handlers.search` passed the raw string to a dispatcher that raises
-    on anything outside the literals, while the web UI silently rewrote
-    an unknown value to `hybrid` — so a capitalised value broke every
-    `memory_search` call while rendering a working lexical page.
-    Normalise once, at the source, so every consumer sees one value.
-    The legacy pre-4.0 value `"semantic"` normalises to the `hybrid`
-    fallback — the migration path for configs that predate the
-    embedding lane's removal."""
-    import json
-
-    for raw in ("Hybrid", " hybrid ", "BM25", "\tKeyword  "):
-        # `json.dumps` for the TOML string literal: both grammars escape
-        # basic strings the same way, so a tab survives the round trip
-        # instead of being written raw and breaking the parse.
-        (tmp_path / "config.toml").write_text(
-            f"[behavior]\nsearch_mode = {json.dumps(raw)}\n", encoding="utf-8"
-        )
-        cfg = load_config(tmp_path / "config.toml")
-        expected = raw.strip().lower()
-        assert cfg.behavior.search_mode == expected, (
-            f"{raw!r} did not normalise to {expected!r}"
-        )
-
-    for legacy in ("semantic", "Semantic", " SEMANTIC "):
-        (tmp_path / "config.toml").write_text(
-            f"[behavior]\nsearch_mode = {json.dumps(legacy)}\n", encoding="utf-8"
-        )
-        cfg = load_config(tmp_path / "config.toml")
-        assert cfg.behavior.search_mode == "hybrid", (
-            f"legacy {legacy!r} must fall back to 'hybrid'"
-        )
-
-
-def test_search_mode_falls_back_loudly_on_an_unknown_value(
+def test_search_mode_in_a_file_is_not_read_and_logs_nothing(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A typo must not take the server down (the `default_max_results`
-    rule) and must not pass through either — passing through is what made
-    every `memory_search` call raise `unknown search mode` mid-conversation
-    while the web page looked healthy.
-
-    The warning is the whole point of the fallback. A user who wrote
-    `serantic` asked for semantic ranking and is about to get lexical, and
-    no other surface reports that: `doctor`'s retrieval check reads the
-    resolved mode, so once the fallback lands it sees a legitimate
-    `hybrid`."""
-    (tmp_path / "config.toml").write_text(
-        '[behavior]\nsearch_mode = "serantic"\n', encoding="utf-8"
-    )
+    """`search_mode` is a fixed value since 9.0.0rc20 (`FIXED_SETTINGS`):
+    a valid mode, a typo and the pre-4.0 `"semantic"` all load as
+    `hybrid`, and the loader logs nothing about any of them (only
+    `bettermemory config check` names the line)."""
     caplog.set_level("WARNING", logger="bettermemory.config")
-
-    cfg = load_config(tmp_path / "config.toml")
-
-    assert cfg.behavior.search_mode == "hybrid"
-    # `getMessage()` and not `.message`: the warning is logged lazily with
-    # %-args, so the offending value only appears once they are applied.
-    assert any("serantic" in record.getMessage() for record in caplog.records), (
-        "unknown search_mode fell back silently; got: "
-        f"{[r.getMessage() for r in caplog.records]}"
-    )
+    for raw in ('"bm25"', '"keyword"', '"serantic"', '"semantic"', "5"):
+        (tmp_path / "config.toml").write_text(
+            f"[behavior]\nsearch_mode = {raw}\n", encoding="utf-8"
+        )
+        assert load_config(tmp_path / "config.toml").behavior.search_mode == "hybrid"
+    assert caplog.records == []
 
 
 @pytest.mark.parametrize(
     ("line", "shown"),
     [
-        ('search_mode = "serantic"', 'search_mode = "serantic" is not one of'),
-        ("search_mode = 5", "search_mode = 5 is not one of"),
         ('prompt_recall = "sometimes"', 'prompt_recall = "sometimes" is not one of'),
         ('prompt_recall = ["on"]', 'prompt_recall = ["on"] is not one of'),
     ],
@@ -867,23 +814,9 @@ def test_a_fallback_prints_the_line_as_config_toml_writes_it(
     assert 'falling back to "' in messages[0]
 
 
-def test_search_mode_absent_and_valid_values_are_untouched(tmp_path: Path) -> None:
-    """No warning and no rewriting on the happy paths — otherwise the
-    fallback's warning becomes noise every load and stops being read."""
-    (tmp_path / "config.toml").write_text("[behavior]\n", encoding="utf-8")
-    assert load_config(tmp_path / "config.toml").behavior.search_mode == "hybrid"
-
-    for mode in _SEARCH_MODES:
-        (tmp_path / "config.toml").write_text(
-            f'[behavior]\nsearch_mode = "{mode}"\n', encoding="utf-8"
-        )
-        assert load_config(tmp_path / "config.toml").behavior.search_mode == mode
-
-
 # ---------------------------------------------------------------------------
 # Removed [behavior] keys: a key a major removed must not fail the load of a
-# config written for the previous line — the rule `search_mode = "semantic"`
-# already follows. The line is ignored and the operator is told once per
+# config written for the previous line. The line is ignored and the operator is told once per
 # (config, key) on the log lane. `corroboration_boost` is the first:
 # deprecated in 7.6.0, removed in 8.0.0, because the ranking nudge it gated
 # provably could not fire.
@@ -918,15 +851,15 @@ def test_removed_behavior_key_is_ignored_with_one_warning(
     _reset_deprecated_key_guard()
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        f"[behavior]\n{line}\ndefault_max_results = 9\nconversational = false\n",
+        f"[behavior]\n{line}\ntombstone_retention_days = 9\nsession_brief = false\n",
         encoding="utf-8",
     )
     with caplog.at_level("WARNING", logger="bettermemory.config"):
         cfg = load_config(config_path)
 
     # The neighbouring keys load exactly as they would without the line.
-    assert cfg.behavior.default_max_results == 9
-    assert cfg.behavior.conversational is False
+    assert cfg.behavior.tombstone_retention_days == 9
+    assert cfg.behavior.session_brief is False
     assert not hasattr(cfg.behavior, "corroboration_boost")
 
     messages = _removed_key_warnings(caplog, "corroboration_boost")
@@ -940,7 +873,7 @@ def test_removed_behavior_key_is_ignored_with_one_warning(
     caplog.clear()
     with caplog.at_level("WARNING", logger="bettermemory.config"):
         reloaded = load_config(config_path)
-    assert reloaded.behavior.default_max_results == 9
+    assert reloaded.behavior.tombstone_retention_days == 9
     assert not _removed_key_warnings(caplog, "corroboration_boost")
 
 
@@ -989,7 +922,7 @@ def test_every_9_0_removal_loads_with_one_warning_and_no_error(
     that still exists loads as written."""
     _reset_deprecated_key_guard()
     config_path = tmp_path / "config.toml"
-    body = "[behavior]\ndefault_max_results = 9\n"
+    body = "[behavior]\ntombstone_retention_days = 9\n"
     if section == "behavior":
         body += f"{line}\n"
     else:
@@ -997,7 +930,7 @@ def test_every_9_0_removal_loads_with_one_warning_and_no_error(
     config_path.write_text(body, encoding="utf-8")
     with caplog.at_level("WARNING", logger="bettermemory.config"):
         cfg = load_config(config_path)
-    assert cfg.behavior.default_max_results == 9
+    assert cfg.behavior.tombstone_retention_days == 9
     if section == "behavior":
         assert not hasattr(cfg.behavior, key)
     elif section == "telemetry":

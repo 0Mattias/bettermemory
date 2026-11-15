@@ -209,8 +209,9 @@ class EvalReport:
     )
     cold_endorsement_memories_total: int = 0
     endorsement_min_retrievals: int = DEFAULT_ENDORSEMENT_MIN_RETRIEVALS
-    # The ratio threshold the bucket was read under (`[behavior]
-    # cold_endorsement_ratio_threshold`, `health_model.weakly_endorsed`),
+    # The ratio threshold the bucket was read under
+    # (`BehaviorConfig.cold_endorsement_ratio_threshold`, fixed at 0.0
+    # since 9.0.0rc20 and code-only; `health_model.weakly_endorsed`),
     # serialised as `ratio_threshold` beside `min_retrievals` so a replay
     # says which bucket it published (ENG-192). 0.0 is the strict
     # "never explicitly" bucket.

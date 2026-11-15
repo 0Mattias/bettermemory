@@ -62,7 +62,7 @@ def test_the_schema_yields_the_numeric_keys(tmp_path: Path) -> None:
     below by covering nothing."""
     assert ("daemon", "port", "an integer") in NUMERIC
     assert ("capture", "checkpoint_tokens", "an integer") in NUMERIC
-    assert ("behavior", "cold_endorsement_ratio_threshold", "a number") in NUMERIC
+    assert ("behavior", "tombstone_retention_days", "an integer") in NUMERIC
     assert len({section for section, _, _ in NUMERIC}) >= 3
     # Each one is a number the loader reads: its default, written out,
     # loads as the default.
@@ -168,12 +168,8 @@ def _essentials(finding: dict[str, Any]) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("section", "key", "spelled", "code"),
     [
-        ("behavior", "default_max_results", '"80"', "clamped"),
-        ("behavior", "default_max_results", "0.5", "clamped"),
         ("capture", "checkpoint_tokens", '"100"', "clamped"),
         ("capture", "checkpoint_tokens", "100.9", "clamped"),
-        ("behavior", "cold_endorsement_ratio_threshold", '"inf"', "clamped"),
-        ("behavior", "cold_endorsement_ratio_threshold", '" 1.5"', "clamped"),
         ("daemon", "port", '"80"', "privileged_port"),
         ("daemon", "port", "70000.5", "port_out_of_range"),
         ("daemon", "port", '"x"', "invalid_value"),

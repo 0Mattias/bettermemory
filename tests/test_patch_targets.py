@@ -471,9 +471,9 @@ REVIEW_CASES = (
     ),
     (
         f"{PACKAGE}.config",
-        "_coerce_float",
+        "_coerce_int",
         f"{PACKAGE}.config_sections",
-        "from .config import _coerce_float",
+        "from .config import _coerce_int",
     ),
     (
         f"{PACKAGE}.store",
@@ -533,7 +533,7 @@ def test_a_patch_on_config_reaches_the_section_builders(
     # The part is loaded before the patch, as in a process that read a config.
     assert config_sections.__name__ in sys.modules
     callers: list[str] = []
-    monkeypatch.setattr(config, "_coerce_float", _spy(config._coerce_float, callers))
+    monkeypatch.setattr(config, "_coerce_int", _spy(config._coerce_int, callers))
     config_sections._behavior_config({}, tmp_path / "config.toml")
     assert f"{PACKAGE}.config_sections" in callers
 

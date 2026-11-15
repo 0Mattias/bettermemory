@@ -576,6 +576,7 @@ def test_config_path_names_the_registry_value(windows: FakeRegistry) -> None:
         "exists": False,
         "read": True,
         "pinned": [],
+        "pins_nothing": [],
         "note": None,
     }
     text = config_cmd.render_path(report)
