@@ -42,6 +42,7 @@ pub mod create;
 pub mod digest;
 pub mod fold;
 pub mod keys;
+pub mod mint;
 pub mod open;
 pub mod pool;
 pub mod restore_lock;

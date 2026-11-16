@@ -56,6 +56,7 @@ from . import (
     gen_store_path,
     gen_time,
     gen_toml,
+    gen_ulid,
     gen_unicode,
 )
 
@@ -98,6 +99,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "caller_admission": gen_caller_admission.generate,
     "gitconfig_wildmatch": gen_gitconfig_wildmatch.generate,
     "gitconfig_remote_rules": gen_gitconfig_remote_rules.generate,
+    "ulid": gen_ulid.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The

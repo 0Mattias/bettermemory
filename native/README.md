@@ -35,6 +35,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
+| `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
 is the reference's digest (the one the golden header pins), and
@@ -1270,6 +1271,7 @@ that Unicode too.
 | `gitconfig_wildmatch_robustness` (8) | none | i |
 | `golden_gitconfig_remote_rules`: `gitconfig_remote_rules_every_case` | `gitconfig_remote_rules.jsonl` | i |
 | `gitconfig_remote_rules_robustness` (2) | none | i |
+| `golden_ulid`: `ulid_every_case`, `ulid_order_and_round_trip` | `ulid.jsonl` (the second none) | i |
 | `golden_settings`: `settings_catalogue_and_fixed`, `settings_coercion`, `settings_cases`, `settings_config_path` | `settings.json` | i |
 | `golden_settings`: `settings_python_cases`, `settings_pure_paths` | `settings_python.json` | ii (Python) |
 | `golden_settings`: `settings_paths` (unix) | `settings_paths.json` | i; os elsewhere (`settings_paths_not_posix`) |
@@ -2320,6 +2322,45 @@ remotes (`gitconfig.py` at a983e3bb).
   `settings_paths_python.json` are. Also, a folder opened as a file fails
   at the open on Windows and at the fstat on POSIX; `_accessible` exists
   for the Windows path (343-351).
+
+## A record id's text
+
+`store::mint` is `models.generate_ulid` (`models.py:56-64`) with its clock
+and its randomness taken as arguments; it reads neither. Pure:
+
+- `mint::ulid(ms: u64, random: &[u8; 10]) -> String`: the milliseconds
+  masked to 48 bits, as the reference does before writing them (so
+  `2^48` writes as `0`: the reference wraps, it does not refuse), then
+  `_encode_crockford` (48-53), ten characters of time and sixteen of the
+  bytes read big-endian.
+- `mint::millis(seconds: f64) -> Result<u64, NotAnInstant>`:
+  `int(time.time() * 1000) & ((1 << 48) - 1)` from the float: one IEEE
+  product, truncated toward zero (not rounded: `0.0015` s is 1 ms, and
+  `0.0009999999999999998` s is 0 ms), a negative value wrapping as
+  Python's `&` of a negative int (`-0.5` s is `2^48 - 500`), a finite
+  product of any size exact to its low 48 bits. An infinite product
+  (`1.7976931348623157e308` included) is `Overflow` (the reference's
+  OverflowError) and NaN `NotANumber` (ValueError).
+- `mint::is_valid_ulid` (the `records` one, `models.py:71-75`) and
+  `mint::ulid_ms`, the milliseconds `review.ulid_time` (`review.py:1184`)
+  reads, which `datetime::ulid_time` now calls (its own copy of the
+  alphabet and of the check is gone). The pattern takes the 32 capitals of
+  Crockford's alphabet only: no lowercase, no I, L, O or U, no
+  trailing newline (`\Z`), and any of the 32 first, so a valid text can
+  name 50 bits of milliseconds that `ulid` never writes.
+
+`ulid.jsonl` (`tests/contract/gen_ulid.py`, about 144 KB, not gated: the
+same bytes under 3.11 and 3.13) drives `generate_ulid` itself with
+`time.time` and `secrets.token_bytes` patched on the module: 2,028 pairs
+(time 0, 1, 2^48 - 1 and past it, bytes all 0x00 and all 0xFF, each single
+bit, each 5-bit group at every position taking every value over both
+fills, and 400 pairs of a fixed congruential walk), 255 clock floats at
+the truncation edges (each side of `m / 1000`, `(m + 0.5) / 1000`,
+`(m + 1) / 1000`, negatives, `2^63`, infinities, NaN) and 669 texts
+(every one of 24 bad characters at each of the 26 places, lengths 0, 25
+and 27, lowercase, each first character). `ulid_order_and_round_trip`
+checks that text order is the order of `(ms, bytes)` and that `ulid_ms`
+reads back the milliseconds, over 3,004 rule-built pairs.
 
 ## Not built yet
 

@@ -793,32 +793,15 @@ pub fn git_seconds(text: &[u32]) -> Option<i64> {
     digits.parse().ok()
 }
 
-const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-
-/// `models.is_valid_ulid`: 26 Crockford base-32 capitals (the pattern
-/// ends in `\Z`, so no trailing newline passes).
-pub fn is_valid_ulid(text: &[u32]) -> bool {
-    text.len() == 26
-        && text
-            .iter()
-            .all(|&c| c < 0x80 && CROCKFORD.contains(&(c as u8)))
-}
-
 /// `review.ulid_time`: when a ULID was minted, from its first ten
-/// characters as milliseconds through `fromtimestamp(ms / 1000, utc)`;
-/// None for a value that is not a ULID, ValueError past year 9999 (the
-/// result on every platform but Windows, where CPython raises OSError).
+/// characters as milliseconds (`store::mint::ulid_ms`) through
+/// `fromtimestamp(ms / 1000, utc)`; None for a value that is not a ULID,
+/// ValueError past year 9999 (the result on every platform but Windows,
+/// where CPython raises OSError).
 pub fn ulid_time(text: &[u32]) -> Result<Option<DateTime>, DateError> {
-    if !is_valid_ulid(text) {
+    let Some(ms) = crate::store::mint::ulid_ms(text) else {
         return Ok(None);
-    }
-    let mut ms: u64 = 0;
-    for &c in &text[..10] {
-        let Some(index) = CROCKFORD.iter().position(|&x| u32::from(x) == c) else {
-            return Ok(None);
-        };
-        ms = ms * 32 + index as u64;
-    }
+    };
     DateTime::from_timestamp_utc(ms as f64 / 1000.0).map(Some)
 }
 
