@@ -30,6 +30,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
+| `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl` |
 
@@ -1153,6 +1154,8 @@ that Unicode too.
 | `golden_search`: `search_ranker_tables` | `search_ranker.jsonl` header (word lists) | i |
 | `parity_provenance`: both tests | `generate.py`, the manifest | i |
 | `golden_toml`: `toml_every_document` | `toml.jsonl` | ii (Python) |
+| `golden_gitconfig`: `gitconfig_every_case` | `gitconfig.jsonl` | i |
+| `gitconfig_robustness` (7) | none | i |
 | `golden_settings`: `settings_catalogue_and_fixed`, `settings_coercion`, `settings_cases`, `settings_config_path` | `settings.json` | i |
 | `golden_settings`: `settings_python_cases`, `settings_pure_paths` | `settings_python.json` | ii (Python) |
 | `golden_settings`: `settings_paths` (unix) | `settings_paths.json` | i; os elsewhere (`settings_paths_not_posix`) |
@@ -1709,6 +1712,71 @@ the reference's admission.
 Not ported here, and found on the way: the CLI's and the daemon's
 `ensure_backfilled` after the open (`store_returned.py:371`), which is not
 part of `Store.open`.
+
+## A git config file's text
+
+`gitconfig` is the text half of `src/bettermemory/gitconfig.py`: bytes in,
+the ordered entries out, or a plain refusal. It is pure: no file, no git, no
+store. Where the text half lies in the reference (line numbers at v9's
+052fb76c):
+
+- `git_entries` (1675-1735) and `_value` (1738-1785), with their patterns
+  and constants (1537-1560): `gitconfig::git_entries`, which returns
+  `Result<Vec<Entry>, Refused>`. `Refused` carries no reason, since the
+  reference returns None there and words no reason.
+- `_spelled` (389-400) and `subsection_bytes` (403-405): `Entry::spelled`
+  and `gitconfig::spelled`, giving a `Name` (section, subsection as
+  bytes, key).
+- The NUL cut `_parse_config` makes of each value (427), outside
+  `git_entries`: `Entry::value_cut`.
+- `KEEPS_SPACES_SINCE` and `spaced` (447-460), and the rule their callers
+  apply (`location_git.py:673`, `gitfile_rule.py:346`, `_include` at
+  `gitconfig.py:493`): `gitconfig::spaced` and
+  `gitconfig::reads_as_written(value, version)`, with the version as data
+  (`None` where git has not named it). This is the only place the text half
+  depends on git's version. `git_entries` reads every version alike, so it
+  takes no version.
+- `git_int` (1788-1831) and `git_bool` (1834-1850).
+
+The tree half starts with `_Name`/`Values`/`ConfigValues` (51-117) and is
+everything else: `config_tree` (255), `_config_bytes` (292),
+`_read_config` (358), `_parse_config` (408) apart from its cut,
+`_include` and the include targets (463-680), the remote rules
+(`_remote_rule`, 744; `refname_valid`, `refspec_valid`), the legacy remote
+files (893-1075), the `includeIf` conditions and `wildmatch` (1078-1535),
+`read_git_config` and its memo (1564-1672). Not ported here, and left to
+that next unit: the 2 MiB bound `_FORMAT_LIMIT` (1536), which only the
+readers of files apply (`gitconfig::FORMAT_LIMIT` is the constant, and
+`git_entries` reads any size, as the reference's does); and every worded
+reason (`"{path} holds a line git's parser refuses"`, 424; `"{path} is a
+config git cannot parse"`, 1650 and 1661), all of which name a file.
+An `include` or `includeIf` line comes back as an entry and is not acted on.
+For the next unit: apply the 2 MiB bound before parsing, not after. The
+entries take about 40 times their input at peak (2.1 GB for a 50 MB file of
+one-letter keys). Also, `Entry::name` builds the name, copying the
+header's part on every call. `Entry`'s equality is the reference's
+`(name, value)`, compared on the built name.
+`Entry` shares its header's part of the name among the entries under it, so
+a long subsection over many keys costs its length once.
+
+`gitconfig.jsonl` (`tests/contract/gen_gitconfig.py`, about 244 KB, not
+gated: `re` over bytes with ASCII classes, no interpreter wording, and the
+same bytes under 3.11.15 and 3.13.13) holds 2,874 texts (1,230 refused)
+and 69 values. The cases are built by rule: each header, key and value form
+alone and in pairs, under each line ending; every escape byte; every byte
+as a value, key and subsection; each quoting state at the end of a line and
+of the file; NUL bytes in values (with the cut value recorded where it
+differs) and in subsections; the byte order mark; real-shaped configs mutated byte by byte;
+errors at the start, middle and end of a file; boundary sizes and hostile
+recipes. Each text's reading is recorded under git none, 2.34.8, 2.44.4,
+2.45.0 and 2.56.0. The generator's texts were cross-checked against
+`git config --list -z --file` (git 2.54.0, outside the fixture), with no
+disagreement in 2,848 distinct texts of 1 MiB or less.
+`gitconfig_robustness` covers a 50 MB file, a 10 MB line, 4 Mi quotes,
+escapes, backslashes, NULs, 0xFF bytes and a 4 MiB subsection over 1 Mi
+keys. It also checks that six shapes read in time linear in their size:
+1M pieces take at most 30 times as long as 100k, plus 50 ms, the best of
+five runs each. Linear growth is 10 times and quadratic 100 times.
 
 ## Not built yet
 

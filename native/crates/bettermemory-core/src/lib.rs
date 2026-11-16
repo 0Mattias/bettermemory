@@ -18,13 +18,15 @@
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter;
-//! - [`toml`]: `tomllib.loads`, its values and its refusals.
+//! - [`toml`]: `tomllib.loads`, its values and its refusals;
+//! - [`gitconfig`]: the text of a git config file as the reference reads it.
 
 #![forbid(unsafe_code)]
 
 pub mod config;
 pub mod datetime;
 pub mod float_repr;
+pub mod gitconfig;
 pub mod json;
 pub mod lexicon;
 pub mod log;

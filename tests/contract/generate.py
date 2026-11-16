@@ -35,6 +35,7 @@ from . import (
     gen_daemon,
     gen_edges,
     gen_fold,
+    gen_gitconfig,
     gen_json,
     gen_lexicon,
     gen_log,
@@ -88,6 +89,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "fold": gen_fold.generate,
     "store_create": gen_store_create.generate,
     "store_open": gen_store_open.generate,
+    "gitconfig": gen_gitconfig.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The
