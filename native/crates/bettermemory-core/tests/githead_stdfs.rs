@@ -17,12 +17,17 @@ impl Drop for Scratch {
     }
 }
 
+/// A directory of this call's own: the process id, the clock, and a count,
+/// because two tests of this file run at once and a clock that ticks in
+/// microseconds gave both the same name on a CI runner.
 fn scratch() -> Scratch {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("a clock")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("bm-githead-{}-{nanos}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("bm-githead-{}-{nanos}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     Scratch(dir)
 }

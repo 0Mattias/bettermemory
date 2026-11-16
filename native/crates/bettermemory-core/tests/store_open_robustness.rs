@@ -328,6 +328,7 @@ if mode == "writer":
     print(store.log_verify()["status"])
     store.close()
 else:
+    flag.write_text("opening")
     started = time.monotonic()
     store = Store.open(store_file, keys_dir=keys, allow_rekey=True)
     waited = time.monotonic() - started
@@ -435,6 +436,15 @@ fn a_reference_open_waits_for_a_native_write_lock() {
                 ],
             )
         });
+        // The lock is held for a second and a half from the moment the
+        // reference says it is about to open, not from its spawn: how long
+        // the interpreter takes to start is then no part of the wait
+        // asserted below (on a slow runner it was 0.55 s of the 1.5).
+        let asked = std::time::Instant::now();
+        while !flag.exists() && asked.elapsed() < Duration::from_secs(120) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(flag.exists(), "the reference never reached its open");
         std::thread::sleep(Duration::from_millis(1500));
         held.connection().execute_batch("COMMIT").expect("unlock");
         let out = reader.join().expect("reader");
