@@ -212,6 +212,18 @@ pub fn standing_row(
     body: &[u32],
     answer: &Answer,
 ) -> Result<PyValue, WriteError> {
+    standing_row_at(record_id, body, answer, || tx.wall_now())
+}
+
+/// [`standing_row`] outside a transaction, `wall` read once after the
+/// checks: `put_memory` runs `_standing_row` before its transaction
+/// begins (`store_records.py` 143-144).
+pub fn standing_row_at(
+    record_id: &[u32],
+    body: &[u32],
+    answer: &Answer,
+    wall: impl FnOnce() -> Result<crate::datetime::DateTime, WriteError>,
+) -> Result<PyValue, WriteError> {
     let bad = || {
         refused(
             "ValueError",
@@ -251,7 +263,7 @@ pub fn standing_row(
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    let answered = tx.wall_now()?.isoformat_utc();
+    let answered = wall()?.isoformat_utc();
     Ok(dict(vec![
         ("record_id", PyValue::Str(record_id.to_vec())),
         ("probability", PyValue::Float(probability)),

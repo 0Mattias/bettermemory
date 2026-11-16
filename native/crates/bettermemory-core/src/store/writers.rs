@@ -12,6 +12,7 @@
 use rusqlite::{params, Connection};
 
 use super::create::Provider;
+use super::home::{self, Answer, Home};
 use super::open::WritableStore;
 use super::tx::{Committed, Transaction};
 use super::write::{WriteBoundary, WriteError};
@@ -38,10 +39,6 @@ const MEMORY_ONE: &str =
 /// What a writer is asked for that this build does not port.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WriterNotPorted {
-    /// `put_memory(home=...)`: `_home_row` and the `home_put` row.
-    Home,
-    /// `put_memory(standing=...)`: `_standing_row` and the `standing_put` row.
-    Standing,
     /// A column read as a Python value that this build does not carry (a
     /// blob where the reference would hold `bytes`).
     Blob(&'static str),
@@ -109,12 +106,6 @@ impl std::fmt::Display for RecordWriteError {
                 write!(f, "{class}: {}", json::utf8_text(message))
             }
             RecordWriteError::Record(e) => write!(f, "the stored record raised {}", e.class()),
-            RecordWriteError::NotPorted(WriterNotPorted::Home) => {
-                f.write_str("the native build does not write a record's home")
-            }
-            RecordWriteError::NotPorted(WriterNotPorted::Standing) => {
-                f.write_str("the native build does not write a standing answer")
-            }
             RecordWriteError::NotPorted(WriterNotPorted::Blob(column)) => {
                 write!(f, "the native build does not read a blob in {column}")
             }
@@ -166,8 +157,7 @@ pub struct Done<T> {
     pub committed: Committed,
 }
 
-/// `put_memory`'s keyword arguments. `home` and `standing` are refused as
-/// not ported when given.
+/// `put_memory`'s keyword arguments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Put<'a> {
     /// None keeps the row's label (`local` for a new row). Any Python
@@ -177,8 +167,8 @@ pub struct Put<'a> {
     /// None keeps the row's name.
     pub filename: Option<&'a str>,
     pub session: Option<&'a str>,
-    pub home: Option<&'a PyValue>,
-    pub standing: Option<&'a PyValue>,
+    pub home: Option<&'a Home>,
+    pub standing: Option<&'a Answer>,
 }
 
 /// The first value `hash()` refuses inside `value`, in the order CPython
@@ -323,16 +313,16 @@ fn check_targets(fields: &RecordFields) -> Result<(), RecordWriteError> {
 }
 
 /// `_put_memory` (157-199) inside `tx`: the tombstone check, the row's
-/// label and name kept, one `memory_put`. `marks` are payload fields
-/// beside the record.
+/// label and name kept, the home decided, then `memory_put`, `home_put`
+/// and `standing_put` in the reference's order.
 fn put_in(
     tx: &mut Transaction<'_>,
     memory: &Memory,
     provenance: Option<String>,
     filename: Option<&str>,
     session: Option<&str>,
-    marks: Vec<(&str, PyValue)>,
-    refuse: Option<WriterNotPorted>,
+    home: Option<&Home>,
+    standing: Option<PyValue>,
 ) -> Result<(), RecordWriteError> {
     let id = text_id(&memory.fields.id)?;
     if let Some(reason) = removed_reason(tx.connection(), &id)? {
@@ -364,15 +354,58 @@ fn put_in(
     };
     check_targets(&memory.fields)?;
     let record = memory.record_payload().map_err(py_failed)?;
-    if let Some(why) = refuse {
-        return Err(RecordWriteError::NotPorted(why));
-    }
-    let mut items = marks;
-    items.push(("memory", record));
-    items.push(("provenance", PyValue::Str(label)));
-    items.push(("filename", name));
+    let home_row = home::home_row(tx, &id, "memory", home)?;
+    let items = vec![
+        ("memory", record),
+        ("provenance", PyValue::Str(label)),
+        ("filename", name),
+    ];
     tx.mutate("memory_put", &dict(items), session)?;
+    if let Some(row) = &home_row {
+        home::put_home(tx, row, session)?;
+    }
+    if let Some(row) = &standing {
+        home::put_standing_row(tx, row, session)?;
+    }
     Ok(())
+}
+
+/// `_standing_row` (202-222) as `put_memory` runs it (143), before its
+/// transaction begins: the checks, then one wall-clock read.
+fn standing_before(
+    provider: &mut dyn Provider,
+    memory: &Memory,
+    put: &Put<'_>,
+) -> Result<Option<PyValue>, RecordWriteError> {
+    match put.standing {
+        Some(answer) => Ok(Some(home::standing_row_at(
+            &memory.fields.id,
+            &memory.fields.body,
+            answer,
+            || provider.wall_now().map_err(WriteError::Clock),
+        )?)),
+        None => Ok(None),
+    }
+}
+
+/// `put_memory` (114-154) inside `tx`, after its provenance check and
+/// `_standing_row`: `_put_memory` with the home and the standing row.
+fn put_checked(
+    tx: &mut Transaction<'_>,
+    memory: &Memory,
+    provenance: Option<String>,
+    put: Put<'_>,
+    standing: Option<PyValue>,
+) -> Result<(), RecordWriteError> {
+    put_in(
+        tx,
+        memory,
+        provenance,
+        put.filename,
+        put.session,
+        put.home,
+        standing,
+    )
 }
 
 /// A boundary hook for the kill test ([`WriteBoundary`]).
@@ -413,34 +446,9 @@ impl WritableStore {
         hook: Hook<'_>,
     ) -> Result<Done<Memory>, RecordWriteError> {
         let provenance = check_provenance(put.provenance)?;
-        // Refused where the reference would first write them: after the
-        // tombstone check and the record's payload (`_put_memory` 172-192),
-        // before any row, so a call it refuses for another reason gets
-        // that reason. `_standing_row`'s own checks (143, 202-222) are not ported.
-        let given = |v: Option<&PyValue>| v.is_some_and(|v| !matches!(v, PyValue::None));
-        let refuse = if given(put.home) {
-            Some(WriterNotPorted::Home)
-        } else if given(put.standing) {
-            Some(WriterNotPorted::Standing)
-        } else {
-            None
-        };
-        if given(put.standing) {
-            // `_standing_row` stamps the answer before the transaction
-            // (`store_records.py:221`): the wall clock is read once here,
-            // whatever the call then does.
-            provider.wall_now().map_err(WriteError::Clock)?;
-        }
+        let standing = standing_before(provider, memory, &put)?;
         let mut tx = start(self, provider, hook)?;
-        put_in(
-            &mut tx,
-            memory,
-            provenance,
-            put.filename,
-            put.session,
-            Vec::new(),
-            refuse,
-        )?;
+        put_checked(&mut tx, memory, provenance, put, standing)?;
         let committed = tx.commit()?;
         Ok(Done {
             value: memory.clone(),
@@ -572,4 +580,300 @@ impl WritableStore {
             committed,
         })
     }
+}
+
+// -- part B: write, update and the active record ----------------------------
+
+/// `Store.write`'s arguments (`store_records.py` 767-782), each as the
+/// Python value a caller passes. None is the reference's default:
+/// `confidence` `medium`, `source` `explicit-statement`, the rest None.
+#[derive(Clone, Copy, Debug)]
+pub struct WriteArgs<'a> {
+    pub content: &'a PyValue,
+    pub scopes: &'a PyValue,
+    pub confidence: Option<&'a PyValue>,
+    pub source: Option<&'a PyValue>,
+    pub origin: Option<&'a PyValue>,
+    pub category: Option<&'a PyValue>,
+    pub claims: Option<&'a PyValue>,
+    pub links: Option<&'a PyValue>,
+    pub actor: Option<&'a PyValue>,
+    pub session: Option<&'a str>,
+    pub home: Option<&'a Home>,
+    pub standing: Option<&'a Answer>,
+}
+
+/// `Store.update`'s keyword arguments (811-819).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Update<'a> {
+    pub force: bool,
+    pub preserve_verification: bool,
+    pub session: Option<&'a str>,
+    pub standing: Option<&'a Answer>,
+}
+
+fn refused(class: &'static str, text: String) -> RecordWriteError {
+    RecordWriteError::raised(class, unicode::cps(&text))
+}
+
+/// `list(value)` for the values a caller can pass: a list or tuple's
+/// items, a str's characters, a dict's keys; TypeError otherwise.
+fn py_list(value: &PyValue) -> Result<Vec<PyValue>, RecordWriteError> {
+    Ok(match value {
+        PyValue::List(items) | PyValue::Tuple(items) => items.clone(),
+        PyValue::Str(s) => s.iter().map(|&c| PyValue::Str(vec![c])).collect(),
+        PyValue::Dict(items) => items.iter().map(|(k, _)| k.clone()).collect(),
+        other => {
+            return Err(refused(
+                "TypeError",
+                format!("'{}' object is not iterable", home::type_name(other)),
+            ))
+        }
+    })
+}
+
+/// `str.strip()`: `str.isspace`'s set (`\x1c`-`\x1f` among it), both ends.
+fn py_strip(text: &[u32]) -> &[u32] {
+    let Some(a) = text.iter().position(|&c| !unicode::is_space(c)) else {
+        return &[];
+    };
+    let b = text
+        .iter()
+        .rposition(|&c| !unicode::is_space(c))
+        .unwrap_or(a);
+    &text[a..=b]
+}
+
+fn write_error(e: WriteError) -> RecordWriteError {
+    RecordWriteError::Write(e)
+}
+
+/// `a != b` for two datetimes: aware ones by instant, naive ones by their
+/// fields, a naive and an aware one always unequal.
+fn dt_differ(a: &DateTime, b: &DateTime) -> bool {
+    match (a.offset_us, b.offset_us) {
+        (Some(x), Some(y)) => a.wall_us() - i128::from(x) != b.wall_us() - i128::from(y),
+        (None, None) => a.wall_us() != b.wall_us(),
+        _ => true,
+    }
+}
+
+/// `Store._active_or_raise(memory_id)` (1011-1026) inside `tx`: the
+/// active record; MemoryNotFoundError "invalid id: {id!r}" for a text that
+/// is not a ULID, TombstonedError "memory {id} was removed: {reason}" for
+/// a removed one, MemoryNotFoundError "no memory with id {id}" otherwise.
+pub fn active_or_raise(
+    tx: &Transaction<'_>,
+    memory_id: &[u32],
+) -> Result<Memory, RecordWriteError> {
+    if !crate::records::is_valid_ulid(memory_id) {
+        let mut message = unicode::cps("invalid id: ");
+        message.extend(repr_str(memory_id));
+        return Err(RecordWriteError::raised("MemoryNotFoundError", message));
+    }
+    let id = text_id(memory_id)?;
+    if let Some(row) = one_row(tx.connection(), MEMORY_ONE, &id)? {
+        return rows::memory(&row).map_err(|e| write_error(home::record_refusal(e)));
+    }
+    if let Some(reason) = removed_reason(tx.connection(), &id)? {
+        let mut message = unicode::cps(&format!("memory {id} was removed: "));
+        message.extend(reason);
+        return Err(RecordWriteError::raised("TombstonedError", message));
+    }
+    Err(refused(
+        "MemoryNotFoundError",
+        format!("no memory with id {id}"),
+    ))
+}
+
+/// `Memory.model_validate(new_memory.model_dump())` as a check only: its
+/// refusal, or nothing.
+fn validate_as_check(memory: &Memory) -> Result<(), RecordWriteError> {
+    Memory::from_payload(&memory.dump())
+        .map(|_| ())
+        .map_err(|e| write_error(home::record_refusal(e)))
+}
+
+impl WritableStore {
+    /// `Store.write(...)` (767-808): one wall-clock read for `created` and
+    /// `updated`, one minted id, the record built and validated as the
+    /// reference builds it, then `put_memory(provenance="local")`. Returns
+    /// the record.
+    pub fn write(
+        &mut self,
+        provider: &mut dyn Provider,
+        args: WriteArgs<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        self.write_hooked(provider, args, None)
+    }
+
+    /// [`WritableStore::write`] with `hook` shown each boundary.
+    #[doc(hidden)]
+    pub fn write_hooked(
+        &mut self,
+        provider: &mut dyn Provider,
+        args: WriteArgs<'_>,
+        hook: Hook<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        let memory = build_memory(provider, &args)?;
+        let put = Put {
+            provenance: None,
+            filename: None,
+            session: args.session,
+            home: args.home,
+            standing: args.standing,
+        };
+        let standing = standing_before(provider, &memory, &put)?;
+        let mut tx = start(self, provider, hook)?;
+        put_checked(&mut tx, &memory, Some(LOCAL.to_owned()), put, standing)?;
+        let committed = tx.commit()?;
+        Ok(Done {
+            value: memory,
+            committed,
+        })
+    }
+
+    /// `Store.update(memory, force=, preserve_verification=, session=,
+    /// standing=)` (811-859): the active record read under the lock, the
+    /// snapshot's `updated` compared unless `force`, `updated` from the
+    /// wall clock, the rollup (and with `preserve_verification` the
+    /// verification fields) carried, the copy validated as a check only,
+    /// then `put_memory`. Returns the copy.
+    pub fn update(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory: &Memory,
+        update: Update<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        self.update_hooked(provider, memory, update, None)
+    }
+
+    /// [`WritableStore::update`] with `hook` shown each boundary.
+    #[doc(hidden)]
+    pub fn update_hooked(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory: &Memory,
+        update: Update<'_>,
+        hook: Hook<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        let mut tx = start(self, provider, hook)?;
+        let current = active_or_raise(&tx, &memory.fields.id)?;
+        if !update.force && dt_differ(&current.fields.updated, &memory.fields.updated) {
+            let id = text_id(&memory.fields.id)?;
+            return Err(refused(
+                "ConcurrentUpdateError",
+                format!(
+                    "memory {id} was updated concurrently (your snapshot is stale; \
+                     stored updated={})",
+                    current.fields.updated.isoformat()
+                ),
+            ));
+        }
+        let mut new = memory.clone();
+        new.fields.updated = tx.wall_now()?;
+        new.corroborations = current.corroborations.clone();
+        new.last_corroborated = current.last_corroborated;
+        if update.preserve_verification {
+            let c = &current.fields;
+            let n = &mut new.fields;
+            n.last_verified_at = c.last_verified_at;
+            n.verified_paths = c.verified_paths.clone();
+            n.verified_commits = c.verified_commits.clone();
+            n.verified_versions = c.verified_versions.clone();
+            n.verified_absent_paths = c.verified_absent_paths.clone();
+            n.verified_path_targets = c.verified_path_targets.clone();
+            n.verified_absent_path_targets = c.verified_absent_path_targets.clone();
+            n.claims = c.claims.clone();
+            n.verified_head = c.verified_head.clone();
+        }
+        validate_as_check(&new)?;
+        let put = Put {
+            session: update.session,
+            standing: update.standing,
+            ..Put::default()
+        };
+        // Inside `update`'s own transaction on both sides (`put_memory`
+        // nested in `_transaction`, 835-859).
+        let standing = match put.standing {
+            Some(answer) => Some(home::standing_row(
+                &mut tx,
+                &new.fields.id,
+                &new.fields.body,
+                answer,
+            )?),
+            None => None,
+        };
+        put_checked(&mut tx, &new, None, put, standing)?;
+        let committed = tx.commit()?;
+        Ok(Done {
+            value: new,
+            committed,
+        })
+    }
+}
+
+/// `write`'s record (788-805), in the reference's order of evaluation:
+/// `utcnow()`, `generate_ulid()`, then each keyword argument left to right
+/// (`list(scopes)`, `content.strip()`, the actor dict, `list(claims)`, each
+/// link), then the model's own validation.
+fn build_memory(
+    provider: &mut dyn Provider,
+    args: &WriteArgs<'_>,
+) -> Result<Memory, RecordWriteError> {
+    let now = provider.wall_now().map_err(WriteError::Clock)?;
+    let id = provider.ulid().map_err(WriteError::Clock)?;
+    let scopes = PyValue::List(py_list(args.scopes)?);
+    let PyValue::Str(content) = args.content else {
+        return Err(refused(
+            "AttributeError",
+            format!(
+                "'{}' object has no attribute 'strip'",
+                home::type_name(args.content)
+            ),
+        ));
+    };
+    let mut body = py_strip(content).to_vec();
+    body.push(u32::from('\n'));
+    let actor = match args.actor {
+        Some(v @ PyValue::Dict(_)) => crate::records::Actor::from_value(v)
+            .map_err(|e| write_error(home::record_refusal(e)))?
+            .dump(),
+        Some(v) => v.clone(),
+        None => PyValue::None,
+    };
+    let claims = match args.claims {
+        Some(v) if home::truthy(v) => PyValue::List(py_list(v)?),
+        _ => PyValue::List(Vec::new()),
+    };
+    let mut links = Vec::new();
+    if let Some(v) = args.links.filter(|v| home::truthy(v)) {
+        for entry in py_list(v)? {
+            let link = crate::records::MemoryLink::from_value(&entry)
+                .map_err(|e| write_error(home::record_refusal(e)))?;
+            links.push(link.dump(false));
+        }
+    }
+    let medium = PyValue::str("medium");
+    let explicit = PyValue::str("explicit-statement");
+    let none = PyValue::None;
+    let values: Vec<(&str, PyValue)> = vec![
+        ("id", PyValue::str(&id)),
+        ("created", PyValue::DateTime(now)),
+        ("updated", PyValue::DateTime(now)),
+        ("scopes", scopes),
+        ("confidence", args.confidence.unwrap_or(&medium).clone()),
+        ("source", args.source.unwrap_or(&explicit).clone()),
+        ("body", PyValue::Str(body)),
+        ("origin", args.origin.unwrap_or(&none).clone()),
+        ("actor", actor),
+        ("category", args.category.unwrap_or(&none).clone()),
+        ("claims", claims),
+        ("links", PyValue::List(links)),
+    ];
+    let mut fields = crate::records::Fields::default();
+    for (name, value) in &values {
+        fields.push(name, crate::records::lax::Arg::Py(value));
+    }
+    Memory::validate(&fields).map_err(|e| write_error(home::record_refusal(e)))
 }

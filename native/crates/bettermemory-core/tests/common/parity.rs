@@ -205,6 +205,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "store_write.jsonl"
         | "store_tx.jsonl"
         | "store_records.jsonl"
+        | "store_records_b.jsonl"
         | "store_rows_written.jsonl" => &[Unicode, Pydantic],
         "models_rows.jsonl" => &[Python, Pydantic],
         "models_stores.jsonl" => &[Python, Sqlite, Pydantic],

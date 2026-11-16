@@ -3253,9 +3253,9 @@ cache and `checkout_token`, which read files.
 The public record writers of `store_records.py` (read at faa1b32e), ported
 as functions on `WritableStore`, each running one `Transaction`
 (`src/store/writers.rs`). Built: `put_memory`, `tombstone`,
-`delete_tombstone` (part A, below). Designed, not built: `write`,
-`update`, `mark_verified`, `record_corroboration`, `_active_or_raise`
-(part B, after the provider gains its mint in another unit). Every writer below runs inside one
+`delete_tombstone` (part A), `write`, `update`, `_active_or_raise` (part
+B1, below). Designed, not built: `mark_verified`, `record_corroboration`
+(part B2). Every writer below runs inside one
 `_transaction`, so every row it appends is followed at commit by the
 returned marks its puts and removals name (`_flush_returns`, one wall
 clock read when anything is named and the `returned` table exists), and
@@ -3381,9 +3381,8 @@ part B `update`, `mark_verified`, `record_corroboration`,
   filename, session, home, standing }) -> Done<Memory>`: `provenance` is
   any Python value a caller can pass (`Option<&PyValue>`): a list or dict
   (also inside a tuple) is TypeError "unhashable type: 'list'", anything
-  but a writable label ValueError with the crate's `repr`. `home` or
-  `standing` given: `WriterNotPorted::Home` / `Standing`, before the
-  transaction. A stored empty label falls back to `local` (the `or`
+  but a writable label ValueError with the crate's `repr`. `home` and
+  `standing` are written as part B1 says. A stored empty label falls back to `local` (the `or`
   chain as written); a blob label is `WriterNotPorted::Blob`.
 - `WritableStore::tombstone(provider, id, reason, session, now:
   Option<DateTime>) -> Done<Tombstone>`: the wall clock through the
@@ -3397,15 +3396,6 @@ part B `update`, `mark_verified`, `record_corroboration`,
   committed }` carries the transaction's rows and head move.
   `*_hooked` forms (hidden) take a boundary hook for the kill test.
 
-- Order of refusals: `home` and `standing` are refused as not ported
-  where the reference would first write them, after the tombstone check
-  and the record's payload (`_put_memory` 172-192) and before any row, so
-  a call the reference refuses for another reason (a bad label, a removed
-  id, a target map) gets that reason. A `standing` answer reads the wall
-  clock once before the transaction, as `_standing_row` stamps it
-  (`store_records.py:221`); `_standing_row`'s own checks (202-213) are not
-  ported, so an answer it refuses over a removed id gets TombstonedError
-  natively.
 - `validate_path_targets` (`models.py` 1157-1175), reached through
   `record_payload` by both writers, is reproduced with its texts: "{field}
   capped at 64 entries (got N)" (reachable only by a hand-built native
@@ -3424,6 +3414,66 @@ calls, classes ii: Unicode and pydantic-core gates, POSIX only as
 `store_tx.jsonl`; `store_records_not_posix.rs` records the gap);
 `store_records_cross.rs` (class i, both directions);
 `store_records_kills.rs` (120 kills, POSIX only); `store_records_robustness.rs`.
+
+### Part B1, built (read at 6b3fcddb; line numbers confirmed)
+
+- `put_memory`'s `home` (`&Home`) and `standing` (`&Answer`) are written
+  through `store::home` where the reference writes them: `_standing_row`
+  first (its checks, then one wall-clock read; the reference runs it
+  before its transaction, which refuses nothing and reads no clock
+  before it, so the order of reads and of refusals is the same), then the
+  tombstone check, the row's label and name, `record_payload`,
+  `_home_row` (one wall read when a new home is written), and the rows
+  `memory_put`, `home_put`, `standing_put` in that order.
+- `WritableStore::write(provider, WriteArgs { content, scopes, confidence,
+  source, origin, category, claims, links, actor, session, home,
+  standing })` (767-808): every argument the Python value a caller
+  passes. `utcnow()` (one wall read) then `generate_ulid()`
+  (`Provider::ulid`), then the keyword arguments left to right:
+  `list(scopes)` (a str's characters, a dict's keys; TypeError "'int'
+  object is not iterable"), `content.strip()` (`str.isspace`'s set,
+  `\x1c`-`\x1f` among it; AttributeError "'int' object has no attribute
+  'strip'"), the actor dict validated as `Actor`, `list(claims)` when
+  truthy, each link validated as `MemoryLink`, then `Memory`'s own
+  validation (pydantic's first line), then `put_memory(provenance=
+  "local")`.
+- `WritableStore::update(provider, &Memory, Update { force,
+  preserve_verification, session, standing })` (811-859):
+  `active_or_raise`, the snapshot compared unless `force` (aware
+  datetimes by instant, naive by fields, a naive and an aware one never
+  equal) with ConcurrentUpdateError "memory {id} was updated concurrently
+  (your snapshot is stale; stored updated={isoformat})" (`datetime.
+  isoformat`, `+00:00`, `store_schema.py` 1049-1052), `updated` from the
+  wall clock, the rollup and (with `preserve_verification`) the
+  verification fields, claims and `verified_head` carried, the copy
+  validated as a check (857-858), then `put_memory`. Returns the copy.
+- `active_or_raise(tx, id)` (1011-1026): MemoryNotFoundError "invalid id:
+  {id!r}" / "no memory with id {id}", TombstonedError "memory {id} was
+  removed: {reason}", each `str()` a `repr` (KeyError).
+- The unvalidated copy (857-859): no native caller can build a record
+  the check would change, since a native `Memory` holds validated values.
+  In the reference, a copy holding non-text claims (`[1, 2.5]`) is refused
+  by the check (pydantic's `str` takes no int), so `_cap_verified_list`'s
+  `str()` (`models.py` 467-485) is reached only by `str` subclasses; the
+  fixture pins that refusal as a reference-only step.
+- `WriterNotPorted::{Home, Standing}` are gone.
+
+Tests: `golden_store_records_b.rs` (`store_records_b.jsonl`: 8 cases, 42
+calls, one reference-only, the ids minted and the order of reads
+compared; classes ii, POSIX only); `store_records_b_cross.rs` (class i,
+both directions, 35 calls with 10 refusals matched);
+`store_records_b_kills.rs` (158 kills); `store_records_b_robustness.rs`
+(68 deep calls on a 512 KiB thread: 60 refused with nothing written, 8
+written where `list()` of a dict gives valid keys; enormous bodies and
+wrong types).
+`_standing_row` runs before the transaction begins in `put_memory` and
+`write`, as in the reference (`store_records.py` 143-144), so with the
+write lock held elsewhere a bad answer is its ValueError and a valid one
+meets the lock after one wall-clock read
+(`store_records_b_robustness.rs`); `update` runs it inside its own
+transaction on both sides. `store_records_b_not_posix.rs` records the
+Windows gap. On Windows an extra wall-clock read is caught by no test,
+because only the POSIX golden test records the order of reads.
 
 ## Text made safe to show, and the membership lines
 
@@ -3945,9 +3995,8 @@ The store's writes past `create`, the writing open's plain states and
 the write transaction (`mutate`, `begin`, its `returned` marks),
 `put_memory`, `tombstone`, `delete_tombstone` and the row writers
 (`store::home`, `store::tables`): the rest of the public record API
-(`write`, `update`, `mark_verified`, `record_corroboration`,
-`put_tombstone`, `restore` with relink, `rename_scope`, the prunes, `batch`,
-provenance, and `put_memory`'s homes and standing answers), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
+(`mark_verified`, `record_corroboration`, `put_tombstone`, `restore` with
+relink, `rename_scope`, the prunes, `batch`), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
 restore's rows, re-spelling the index), membership's writes and
 the caller's resolution (its admission is `store::caller`), and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's

@@ -10,6 +10,7 @@ use std::path::Path;
 use bettermemory_core::pyvalue::PyValue;
 use bettermemory_core::records::Memory;
 use bettermemory_core::store::create;
+use bettermemory_core::store::home::{Answer, Home};
 use bettermemory_core::store::open::{open_for_writing, WritableStore};
 use bettermemory_core::store::writers::{Put, RecordWriteError, WriterNotPorted};
 use common::created::{fixed, fixture};
@@ -105,7 +106,17 @@ fn hostile_arguments_are_typed_errors_with_nothing_written() {
         assert_eq!(snapshot(&store), before, "{}", e.class());
     }
     eprintln!("provenance refusals: {kinds:?}");
-    for (home, standing) in [(Some(&huge_text), None), (None, Some(&PyValue::int(1)))] {
+    let bad_home = Home {
+        project: PyValue::int(1),
+        checkout: huge_text.clone(),
+        rule: PyValue::str("r"),
+    };
+    let bad_answer = Answer {
+        probability: huge_text.clone(),
+        source: PyValue::str("s"),
+        answered_by: PyValue::str("a"),
+    };
+    for (home, standing) in [(Some(&bad_home), None), (None, Some(&bad_answer))] {
         let put = Put {
             home,
             standing,
@@ -113,11 +124,8 @@ fn hostile_arguments_are_typed_errors_with_nothing_written() {
         };
         let e = store
             .put_memory(&mut clock(), &record(2, "two"), put)
-            .expect_err("not ported");
-        assert!(matches!(
-            e,
-            RecordWriteError::NotPorted(WriterNotPorted::Home | WriterNotPorted::Standing)
-        ));
+            .expect_err("refused");
+        assert_eq!(e.class(), "ValueError");
         assert_eq!(snapshot(&store), before);
     }
     let long_id = "0".repeat(1 << 20);

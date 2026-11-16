@@ -17,9 +17,8 @@ as `log.canonical_payload(record_payload(...))` spells it; None for
 KeyError subclass's being its message's ``repr``), and, as
 ``store_tx.jsonl`` records after each transaction, the rows appended
 (every column), the state's digest, the head's text and the FTS5 index as
-queries see it. A call the native unit refuses as not ported
-(``not_ported``: ``home`` and ``standing``) records how many rows the
-reference wrote instead.
+queries see it. ``home`` is ``RecordHome("global", None, "fallback")``
+and ``standing`` ``StandingAnswer(0.5, "explicit", "test")``.
 
 Gates, the same as ``store_tx.jsonl``'s and for the same reasons.
 Unicode: the index text is the tokenizer's spelling and the digest's rows
@@ -237,13 +236,14 @@ def cases() -> list[dict[str, Any]]:
             ],
         },
         {
-            # Last in their cases: the reference writes rows native does not.
-            "name": "not_ported_home",
-            "steps": [put(1), put(2, native="not_ported", home=True)],
-        },
-        {
-            "name": "not_ported_standing",
-            "steps": [put(1), put(3, native="not_ported", standing=True)],
+            # A home and a standing answer written with the record; the same
+            # home again writes no row.
+            "name": "home_and_standing",
+            "steps": [
+                put(2, home=True),
+                put(2, body="the same home again", home=True),
+                put(3, home=True, standing=True),
+            ],
         },
         {
             # `validate_path_targets`' refusal, through a put and through
