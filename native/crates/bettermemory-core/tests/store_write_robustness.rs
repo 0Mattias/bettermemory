@@ -9,7 +9,9 @@ use std::path::Path;
 
 use bettermemory_core::store::create;
 use bettermemory_core::store::open::{open_for_writing, WritableStore};
-use bettermemory_core::store::write::{HeadMove, WriteError, WriteNotPorted};
+#[cfg(unix)]
+use bettermemory_core::store::write::HeadMove;
+use bettermemory_core::store::write::{WriteError, WriteNotPorted};
 use common::created::{fixed, fixture};
 use common::opened;
 use common::stores::scratch;

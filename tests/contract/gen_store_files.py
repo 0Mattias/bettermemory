@@ -1236,6 +1236,19 @@ def _masked(dumped: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _first_difference(want: dict[str, Any], got: dict[str, Any]) -> str:
+    """Where two masked dumps first differ, for the assertion's message:
+    the key, or the statement's position with both texts cut short."""
+    for key in ("page_size", "journal_mode", "keys"):
+        if want[key] != got[key]:
+            return f"{key}: fresh {want[key]!r:.300}, committed {got[key]!r:.300}"
+    fresh, committed = want["statements"], got["statements"]
+    for at, (a, b) in enumerate(zip(fresh, committed)):
+        if a != b:
+            return f"statement {at}: fresh {a!r:.400}, committed {b!r:.400}"
+    return f"{len(fresh)} statements fresh, {len(committed)} committed"
+
+
 def _writer_version(store_file: Path) -> str:
     """The SQLite that last wrote `store_file`: its header's version-valid-for
     number (bytes 96-99), as ``X.Y.Z``."""
@@ -1290,7 +1303,7 @@ def _real_doc(written_by: str) -> bytes:
             if want != got:
                 raise AssertionError(
                     "store_real.sqlite no longer dumps as a fresh build does; "
-                    "rewrite it with --real"
+                    "rewrite it with --real. " + _first_difference(want, got)
                 )
         result = _real_answers(store_bytes, committed["keys"], __version__)
     return json_doc(
