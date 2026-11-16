@@ -43,14 +43,17 @@ far below every recursion limit (3.11's is about 993). Checked identical
 under Python 3.11, 3.12 and 3.13.
 
 ``capture_vocabulary_python.jsonl``, gated on the Python release
-(`PYTHON_GATED`), holds every token whose answer is RecursionError (a key
-item nested 100,000 deep, alone or paired with another field). Whether
-`str()` raises there is a property of the interpreter build and its
-stack, not of the reference: CI showed CPython 3.14 on Linux returning
-None for those tokens where 3.13, and 3.14 on macOS, raise (3.14 checks
-the real C stack, and thread stack sizes differ by platform). No depth is
-portable, so these are compared only under the release the files were
-made with. The native port answers RecursionError at its own fixed depth
+(`PYTHON_GATED`), holds every token with a key item nested 100,000 deep,
+alone or paired with another field, whatever its answer: RecursionError
+where `str()` reaches the item, and the other field's answer where it is
+read first. Whether `str()` raises there is a property of the interpreter
+build and its stack, not of the reference: CI showed CPython 3.14 on
+Linux returning None for those tokens where 3.13, and 3.14 on macOS,
+raise (3.14 checks the real C stack, and thread stack sizes differ by
+platform). No depth is portable, so these are compared only under the
+release the files were made with. A case is sent there by its input, not
+by its answer: sorting by answer put the cases back in the ungated file
+under the one release that answers differently. The native port answers RecursionError at its own fixed depth
 (`STR_DEPTH_TOP`) on every platform, tested natively.
 """
 
@@ -663,9 +666,29 @@ def _location_json(cap: Capture, machine: str, session: str | None) -> dict[str,
     return out
 
 
+#: A value nested at least this deep is past every interpreter's limit
+#: where one applies; the depths the ungated file uses stop at 400.
+_GATED_DEPTH = 100_000
+
+
 def _deep(record: dict[str, Any]) -> bool:
-    """A case whose answer is the interpreter's recursion limit."""
-    return record.get("o") == {"raise": "RecursionError"}
+    """A case whose token holds a value nested `_GATED_DEPTH` deep.
+
+    Decided from the input as written (its ``$n`` items), never from the
+    answer: the file a case goes to must not depend on the interpreter
+    that runs the generator, or a release that answers differently would
+    move the case back into the ungated file."""
+    todo: list[Any] = [record.get("s")]
+    while todo:
+        value = todo.pop()
+        if isinstance(value, list):
+            todo.extend(value)
+        elif isinstance(value, dict):
+            nested = value.get("$n")
+            if isinstance(nested, list) and nested and nested[0] >= _GATED_DEPTH:
+                return True
+            todo.extend(value.values())
+    return False
 
 
 def generate() -> dict[str, bytes]:

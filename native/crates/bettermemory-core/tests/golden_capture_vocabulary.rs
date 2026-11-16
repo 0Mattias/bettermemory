@@ -1,6 +1,7 @@
 //! Every case of `capture_vocabulary.jsonl` (not gated) and
-//! `capture_vocabulary_python.jsonl` (the RecursionError cases, gated on
-//! the Python release, whose interpreter and stack decide them): a
+//! `capture_vocabulary_python.jsonl` (the tokens with an item nested
+//! 100,000 deep, gated on the Python release, whose interpreter and
+//! stack decide what `str()` of one answers): a
 //! capture's token read and written back, hostile tokens, `to_location`,
 //! `remote_key`, `_paths` and `ObjectKey`, against the native `capture`
 //! module. The recipes and the answer's spelling are the generator's

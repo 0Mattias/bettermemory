@@ -3228,15 +3228,20 @@ the `history` reader and `Location`'s properties that read `_same_path`
 are the resolving unit's.
 
 Fixtures (`tests/contract/gen_capture_vocabulary.py`):
-`capture_vocabulary.jsonl` (204,366 bytes, not gated; checked identical
-under 3.11, 3.12 and 3.13) holds 72 captures built through `Capture` and
-read back, 803 hostile tokens (among them every refused field paired
+`capture_vocabulary.jsonl` (198,300 bytes, not gated; checked identical
+under 3.11 and 3.13) holds 72 captures built through `Capture` and
+read back, 749 hostile tokens (among them every refused field paired
 with every field that raises OverflowError, which pins the order
 `from_token` reads in, `int()` and `str()` of floats, texts and ints at
 the digit limit, and nesting 50 to 400 deep), 8 `to_location` cases,
 1,303 URLs, 25 paths (each against all 25 for `inside`) and 56 key
-pairs. `capture_vocabulary_python.jsonl` (17,918 bytes, gated on the
-Python release) holds the 119 tokens whose answer is RecursionError.
+pairs. `capture_vocabulary_python.jsonl` (23,984 bytes, gated on the
+Python release) holds the 173 tokens with a key item nested 100,000
+deep: the 119 whose answer is RecursionError and the 54 where another
+field is read first. A case goes there by its input, not its answer, so
+the split is the same under every interpreter (sorting by answer moved
+the cases back into the ungated file under Python 3.14 on Linux, which
+does not raise).
 Tests: `golden_capture_vocabulary` (class i and ii) and
 `capture_vocabulary_robustness`
 (5: every key with every wrong type, 100,000-deep nesting on a 512 KiB
