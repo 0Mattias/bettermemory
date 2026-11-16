@@ -37,6 +37,8 @@ from . import (
     gen_edges,
     gen_fold,
     gen_gitconfig,
+    gen_gitconfig_remote_rules,
+    gen_gitconfig_wildmatch,
     gen_json,
     gen_lexicon,
     gen_log,
@@ -94,6 +96,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_write": gen_store_write.generate,
     "gitconfig": gen_gitconfig.generate,
     "caller_admission": gen_caller_admission.generate,
+    "gitconfig_wildmatch": gen_gitconfig_wildmatch.generate,
+    "gitconfig_remote_rules": gen_gitconfig_remote_rules.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The

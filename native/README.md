@@ -31,6 +31,8 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
+| `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
+| `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 
@@ -1264,6 +1266,10 @@ that Unicode too.
 | `golden_toml`: `toml_every_document` | `toml.jsonl` | ii (Python) |
 | `golden_gitconfig`: `gitconfig_every_case` | `gitconfig.jsonl` | i |
 | `gitconfig_robustness` (7) | none | i |
+| `golden_gitconfig_wildmatch`: `gitconfig_wildmatch_every_case` | `gitconfig_wildmatch.jsonl` | i |
+| `gitconfig_wildmatch_robustness` (8) | none | i |
+| `golden_gitconfig_remote_rules`: `gitconfig_remote_rules_every_case` | `gitconfig_remote_rules.jsonl` | i |
+| `gitconfig_remote_rules_robustness` (2) | none | i |
 | `golden_settings`: `settings_catalogue_and_fixed`, `settings_coercion`, `settings_cases`, `settings_config_path` | `settings.json` | i |
 | `golden_settings`: `settings_python_cases`, `settings_pure_paths` | `settings_python.json` | ii (Python) |
 | `golden_settings`: `settings_paths` (unix) | `settings_paths.json` | i; os elsewhere (`settings_paths_not_posix`) |
@@ -2090,6 +2096,230 @@ escapes, backslashes, NULs, 0xFF bytes and a 4 MiB subsection over 1 Mi
 keys. It also checks that six shapes read in time linear in their size:
 1M pieces take at most 30 times as long as 100k, plus 50 ms, the best of
 five runs each. Linear growth is 10 times and quadratic 100 times.
+
+## git's wildmatch
+
+`gitconfig::wildmatch` ports the matcher that the `includeIf` conditions
+call (`gitconfig.py` at a983e3bb): `wildmatch`, `_dowild`, `_star`,
+`_bracket` and `_CLASSES` (1227-1520), the budgets `_WM_STEPS` (200,000,
+line 1274) and `_WM_DEPTH` (150, line 1277), and the two helpers
+`_any_match` (1113-1126) and `_literal_head` (1215-1224). The entry points
+are `wildmatch(pattern, text, icase, &mut Steps) -> Result<bool, Spent>`,
+`any_match(pattern, texts, &mut Steps, icase) -> Option<bool>` and
+`literal_head(pattern, text, literal, icase) -> bool`.
+
+The rule is git's `dowild` with `WM_PATHNAME`. `*` and `?` match no `/`,
+and a `**` that is a whole component matches across components. Brackets
+take ranges, `!` or `^`, escapes and the ASCII classes of git's
+`sane_ctype`. A bracket never matches `/`. An unterminated bracket or an
+unknown class aborts the whole match. With `icase`, only ASCII letters
+fold, and only where git folds them: the text byte, the pattern byte
+outside brackets, ranges, and `[:upper:]`. A byte after a backslash and a
+plain byte inside a bracket are compared as written while the text byte
+is folded, so with `icase` `\A` and `[A]` match neither `a` nor `A`, and
+`\a` and `[a]` match both.
+
+The port counts a step wherever the reference counts one (each pattern
+byte `dowild` reads, each turn of a star's walk, each byte of a bracket).
+A match whose step count passes the budget gives `Spent::Steps`, and one
+that nests more than 150 stars gives `Spent::Depth`. The budget is shared:
+`Steps` is passed by the caller, as one `config_tree` read shares it. The
+reference can also fail with `RecursionError`, but its 151 nested stars at
+two frames each stay far inside Python's limit, so that path is not
+ported. Here the recursion is at most 151 `dowild` calls, each with one
+`star` frame: the deepest match the budget allows and the shapes refused
+for depth run on a 512 KiB thread in a debug build. The steps are
+decremented with saturation, so a budget at `i64::MIN` is spent, as the
+reference's unbounded integer is, rather than wrapping.
+
+The work no step counts is the search for the next `/`. The reference does
+it with `text.find(b"/", ti)` (1400) and `_SLASH in text[ti:]` (1396) at
+every star pass that asks, each over the rest of the text. For
+`[!/]***a?**/**/*a` against 200,000 bytes of `a`, that is 43,749 searches
+and 8,749,725,002 bytes, which `memchr` reads in 0.22 s. For `*a\a*/b*`
+against 100,000 `a` and then 100,000 `/`, it is 3,199,980,000 bytes in
+0.11 s. The first port searched byte by byte the same number of times
+(4.7 s and 0.9 s in release). `wildmatch_scanned` now keeps the first
+search's answer. At the first search that answer cannot settle, it indexes
+the text's `/` positions once (a bit a byte, and for each 64-byte block
+the next block holding one), and every later search reads at most two
+words. Those two shapes now read 249,997 and 139,999 bytes, and take
+0.56 ms and 0.53 ms in release, with the same answers and the same steps.
+A star's scan for its next literal byte reads byte by byte, as the
+reference's Python loop does, and the same number of times. The worst
+shape found, `**/**/**/**/****/*/aa****a*/` against `a`, reads six times
+the text in 11 steps in both, and native is faster per byte. The counter
+returned by `wildmatch_scanned` counts both kinds of read.
+
+`gitconfig_wildmatch.jsonl` (`gen_gitconfig_wildmatch.py`, about 155 KB,
+not gated: the reference compares integers and reads no Unicode data,
+locale or platform; the same bytes under Python 3.11.15 and 3.13.13) holds
+5,893 matches and 21 helper cases. The matches are 628 that match, 372
+spent by steps and 4 spent by depth. Each match row records the answer and
+the steps it took. The cases are built by rule: 99 constructs alone
+against 12 texts, 196 pairs of 14 constructs against 7 texts, 22
+case-folding constructs (escaped, bracketed, ranged, negated and named, in
+both cases) alone and inside two longer patterns against 4 texts, each with
+`icase` where a letter is on either side, and every 16th case again at the
+budget it took and one step under it. Shapes built to spend the budget
+include the literal at 199,999, 200,000 and 200,001 bytes and stars nested
+148 to 152 deep. Cross-check, outside the fixture: the 1,473 rows without
+`icase` that are usable as an `includeIf "onbranch:<pattern>"` against a
+HEAD of `ref: refs/heads/<text>` (git 2.54.0, neutral environment) agree
+on 1,469. The 4 that differ are the 199,999- and 200,000-byte literals,
+which git does not match through this route. The independent review
+settled why: git refuses a one-component branch name past 255 bytes, and
+the reference's caller gives `UNSETTLED` for such a name, so those cases
+cannot arise through the caller. `icase` was not
+cross-checked: `gitdir/i:` rewrites the pattern and needs real
+directories.
+
+`gitconfig_wildmatch_robustness` checks the following:
+
+- `**/` 24 times and the literal one byte past the budget are spent at
+  exactly 200,001 steps.
+- 10,000 nested stars are spent by depth.
+- 10 MB patterns and texts end: a run of stars is one star, and an
+  unterminated 10 MB bracket is spent.
+- 10,000 texts share one budget.
+- Steps grow linearly with the text (`?*b`: 2,002 steps for 2,000 bytes,
+  20,002 for 20,000) and stop at the budget for 2 MiB.
+- The bytes the searches read, from `wildmatch_scanned`, for the two
+  shapes above and the worst found, and, for 500 generated star shapes
+  against four texts, at most two readings of the text, one more a star,
+  and 64 bytes a step. That bound is measured, not proved.
+- A budget of `i64::MIN`, `i64::MIN + 1`, -1 or 0 is spent at the first
+  step.
+- The depth test on a 512 KiB thread.
+
+Every number in it was taken from the reference.
+
+## The remote rules
+
+`gitconfig::remote_rules` ports where git's reader of remotes dies on one
+variable (`gitconfig.py` 713-877): `remote_rule(&Name, Option<&[u8]>) ->
+Option<&'static str>` (`_remote_rule`, 744), `refname_valid(name,
+pattern, onelevel)` (806) and `refspec_valid(spec, fetch) ->
+Option<bool>` (831). It is pure: a name as `gitconfig::spelled` splits it
+(a section or key that is not lower case is not recognised, as in the
+reference), and the value cut at a NUL as `_parse_config` keeps it. An
+accepted variable gives `None`. A refused one gives the reference's words:
+
+- `"no boolean"`: `remote.*.promisor` for any name, and the
+  `_REMOTE_BOOLS` keys of a remote whose name does not start with `/`,
+  where `git_bool` refuses the value.
+- `"no value"`: a key with no `=` for `remote.<n>.partialclonefilter` (not
+  a `/` name), `remote.pushdefault`, the `_BRANCH_STRINGS`, `_URL_STRINGS`
+  and `_REMOTE_STRINGS` keys.
+- `"an empty branch name"`: a `branch ""` section, any key.
+- `"a refspec whose reading turns on the object format"`: a negative
+  fetch or push refspec of 40 or 64 hex digits.
+- `"a refspec git refuses"`: any other refspec `parse_refspec` refuses.
+
+`refname_valid` is `check_refname_format`. It refuses an empty name, a
+lone `@`, a trailing dot, `..`, `@{`, control bytes, DEL, space and
+`~^:?[\`, more than one `*` (any `*` without `pattern`), an empty
+component, a component that starts with `.` or ends in `.lock`, and one
+component alone without `onelevel`. Bytes at or above 0x80 are allowed.
+
+`gitconfig_remote_rules.jsonl` (`gen_gitconfig_remote_rules.py`, about
+134 KB, not gated, the same bytes under 3.11.15 and 3.13.13) holds 1,820
+rule cases (270 refused), 368 ref-name cases and 658 refspec cases. The
+cases are built by rule: every key the rule names under each section,
+with each subsection form (named, empty, `/`-named, dotted, upper case,
+non-ASCII, none) and ten values (none, empty, booleans in two
+spellings, `-1`, `2k`, words `git_bool` refuses, a good, a bad and a
+hex-negative refspec). There are also other spellings of the names; ref
+names at each `check_refname_format` edge and with each forbidden byte,
+under each flag; and refspecs of 18 sides with `+`, `^` and none, each
+alone and with 5 right sides, as fetch and as push. Cross-check, outside
+the fixture: `git check-ref-format` (git 2.54.0) agrees on 362 of the 364
+ref-name rows without a NUL. The 2 that differ are `-a`, which that command's
+line reads as an option. git accepts a ref named `-a` (the review showed it
+through the refspec route), as the reference does. `gitconfig_remote_rules_robustness`
+gives 10 MB names, values and refspecs an answer in one pass.
+
+## Design notes for the rest of the tree half
+
+These notes are for the units that build on these two modules: `config_tree` and its includes, and the legacy
+remotes (`gitconfig.py` at a983e3bb).
+
+- Inputs the reference takes from the machine, to become arguments:
+  - HOME, through `_home` (671). On Windows, if HOME is unset or empty, it
+    takes `expanduser("~")`.
+  - `~user` through `pwd.getpwnam` (`_user_home`, 578), which is always
+    none on Windows.
+  - `os.name` and `os.sep`/`altsep`: `_git_absolute` (612), `_native`
+    (654), `_slashed` (1171), and the trailing-separator tests of
+    `_branch_condition` (1145) and `_gitdir_matches` (1198, 1204).
+  - `realpath` of the including file and of the git directory, and
+    `abspath` of the git directory, in `_gitdir_matches` (1199, 1209).
+    These need the current directory and link resolution.
+  - The `IncludeContext` answers, each asked once: the branch HEAD names
+    (`UNSETTLED` where not known), the `%(prefix)` directory (`AS_WRITTEN`
+    or none) and whether git takes `hasconfig`.
+  - The environment variable `GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME`
+    (`_default_branch`, 1045): when it is set and not empty, it names the
+    branch a `branches/` file's remote fetches by default, before the last
+    `init.defaultBranch` and `master`. A name that is not
+    `refs/heads/<name>`-valid gives None.
+  - The legacy reader's `_Legacy` (971): `resets`, from
+    `gitsystem.Sources.resets` (from git 2.46 an empty URL empties the
+    list, `_add_url` at 1033; before that it is kept as an empty URL), and
+    `default`, the default branch above.
+- File-system operations a trait must give:
+  - a non-blocking open;
+  - fstat: directory, FIFO, socket or regular file, and identity (device,
+    inode) for the cycle check (`_read_config`, 380);
+  - a read bounded at `_FORMAT_LIMIT` + 1;
+  - `access(R_OK)` (`_accessible`, 343);
+  - the error kinds: missing (`path_missing`), permission, and other;
+  - stat for stamps (`file_stamp`, 620);
+  - realpath;
+  - listdir of `remotes/` and `branches/` (`_legacy_names`, 947), and
+    reads of their files bounded at 64 KiB.
+- Refusals (`ConfigValues.dies`), with their texts:
+  - `git cannot read {path} ({Exc})` (317, 335)
+  - `{path} is a folder, which git cannot read as a config` (323)
+  - `{path} is included past git's depth of 10` (379)
+  - `{path} is included in itself, which git follows past its depth` (381)
+  - `{path} holds a line git's parser refuses` (424)
+  - `{path} sets {name}: {why}` (433, with the reasons above)
+  - `{including} sets include.path with no value`, or `... an includeIf's
+    path with no value` (492)
+  - `{including} includes {raw!r}, which git cannot expand` (606)
+  - the legacy remotes: `{name}'s legacy refspec turns on the object
+    format` (1005)
+  - `read_git_config`: `{path} could not be read ({Exc})`, `{path} is not
+    a regular file`, `{path} is larger than 2 MiB`, `{path} is a config
+    git cannot parse` (1601-1672)
+  - the legacy files: `cannot be read`, `is not a regular file`, `is
+    larger than 64 KiB`, `cannot be listed`, `the legacy remote folders
+    name more than 256 remotes` (905-970)
+- Incomplete reads (`complete = False`):
+  - a file over 2 MiB;
+  - a FIFO or socket;
+  - more than 64 files read in all (`_INCLUDE_FILES`, 75);
+  - an include value holding a tab or a CR (493);
+  - a `%(prefix)/` whose prefix is not known (556).
+
+  Under an undecided condition these go to `maybe_dies` and `undecided`,
+  not to `dies`: a refusal keeps its text, and an incomplete read is
+  worded `{exc} is not read whole` (517), with `{exc}` the path or value
+  the read stopped at.
+- What changes no answer: the format memo (`_FORMAT_MEMO`, 1590; a digest
+  of the bytes read, so it only spares a parse) and the `_Once` holders.
+  Stamps (`files`, `file_stamp`, `unchanged`) describe what was read for a
+  caller's cache. They are not part of the values, so a port without them
+  answers the same; port them when a caller needs them.
+- Platform split: `_git_absolute`, `_native`, `_home`, `_user_home`,
+  `_slashed` and `_gitdir_matches` call the host's `os.path`, `os.name` and
+  `pwd`. The reference cannot produce its Windows answers on POSIX, so the
+  tree fixture needs a POSIX-only file of real trees, plus a pure-rule file
+  for the Windows path rules, gated as `settings_paths.json` and
+  `settings_paths_python.json` are. Also, a folder opened as a file fails
+  at the open on Windows and at the fstat on POSIX; `_accessible` exists
+  for the Windows path (343-351).
 
 ## Not built yet
 

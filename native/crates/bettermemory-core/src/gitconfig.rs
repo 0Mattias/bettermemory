@@ -10,7 +10,9 @@
 //! - [`spaced`] and [`reads_as_written`]: a value holding a tab or a CR,
 //!   which a git before [`KEEPS_SPACES_SINCE`] reads as a space (lines
 //!   453-460, and the rule the callers apply);
-//! - [`git_int`] and [`git_bool`]: the typed reads (lines 1788-1850).
+//! - [`git_int`] and [`git_bool`]: the typed reads (lines 1788-1850);
+//! - [`wildmatch`]: git's matcher the `includeIf` conditions use;
+//! - [`remote_rules`]: where git's reader of remotes dies on a variable.
 //!
 //! Includes, files, the 2 MiB bound ([`FORMAT_LIMIT`], applied by the
 //! readers of files, not by the parser) and the worded reasons a caller
@@ -18,6 +20,9 @@
 //! like any other here. Every function runs in time linear in its input.
 
 use std::sync::Arc;
+
+pub mod remote_rules;
+pub mod wildmatch;
 
 /// The bound the reference's readers of files set on a config file
 /// (`_FORMAT_LIMIT`, line 1536); [`git_entries`] itself reads any size.
