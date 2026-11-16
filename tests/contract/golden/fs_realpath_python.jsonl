@@ -1,0 +1,5 @@
+{"cases":4,"fixture":"fs_realpath_python"}
+{"f":{},"l":{"s":"s"},"q":[{"a":"=<scratch>/s","p":"=<root>/s","r":"=<scratch>/s"},{"a":"=<scratch>/s/x","p":"=<root>/s/x","r":"=<scratch>/s/x"},{"a":"=<scratch>","p":"=<root>/s/..","r":"=<scratch>"}]}
+{"f":{},"l":{"a":"b","b":"a","into":"a"},"q":[{"a":"=<scratch>/a","p":"=<root>/a","r":"=<scratch>/a"},{"a":"=<scratch>/b/x","p":"=<root>/b/x","r":"=<scratch>/b/x"},{"a":"=<scratch>/into/y","p":"=<root>/into/y","r":"=<scratch>/a/y"}]}
+{"f":{},"l":{"p":"q","q":"r","r":"<root>/p"},"q":[{"a":"=<scratch>/p","p":"=<root>/p","r":"=<scratch>/p"},{"a":"=<scratch>/x","p":"=<root>/q/../x","r":"=<scratch>/x"},{"a":"=<scratch>/r","p":"=<root>/r/","r":"=<scratch>/r"}]}
+{"d":["d"],"f":{},"l":{"d/up":".."},"q":[{"a":"=<scratch>/d/up/d/up/x","p":"=<root>/d/up/d/up/x","r":"=<scratch>/x"}]}

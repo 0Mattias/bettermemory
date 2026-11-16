@@ -37,6 +37,7 @@ from . import (
     gen_daemon,
     gen_edges,
     gen_fold,
+    gen_fs_realpath,
     gen_gitconfig,
     gen_gitconfig_file,
     gen_gitconfig_tree,
@@ -125,6 +126,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
     "gitfile_leaves": gen_gitfile_leaves.generate,
     "gitfile_leaves_posix": gen_gitfile_leaves.generate_posix,
+    "fs_realpath": gen_fs_realpath.generate,
+    "fs_realpath_python": gen_fs_realpath.generate_python,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -188,6 +191,7 @@ PYTHON_GATED = frozenset(
         "settings_python",
         "settings_paths_python",
         "capture_vocabulary_python",
+        "fs_realpath_python",
     }
 )
 
@@ -253,6 +257,8 @@ PLATFORM_GATED = frozenset(
 #: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
 #: otherwise (`gen_githead`); ``gitconfig_file`` reads links, FIFOs and
 #: mode-000 files and opens directories (`gen_gitconfig_file`);
+#: ``fs_realpath`` and ``fs_realpath_python`` resolve links and FIFOs by
+#: ``posixpath`` (`gen_fs_realpath`);
 #: ``gitconfig_tree`` reads real trees with the host's ``os.path`` and ``pwd``;
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`).
@@ -271,6 +277,8 @@ POSIX_ONLY = frozenset(
         "gitconfig_file",
         "gitconfig_tree",
         "gitfile_leaves_posix",
+        "fs_realpath",
+        "fs_realpath_python",
     }
 )
 

@@ -3994,6 +3994,121 @@ that git dies on, or that git reads as another path:
 through `MemFs` and `StdFs`, class i on unix; `gitfile_leaves_not_posix.rs`
 records the gap as os), `gitfile_leaves_robustness.rs` (9 tests).
 
+## The file system's operations for the next readers (fsx)
+
+`fsdata::Fs` gets every operation units 2 to 5 of the `.git` rule and
+the config reader's conditions and legacy remotes need, from one owner,
+so those units can be built side by side. The contract of each is what
+the reference's Python function answers (its error class, and its errno
+where a caller reads it), not what the syscall answers.
+
+### Part 1, built: `readlink`, `realpath`, `abspath`
+
+- `Fs::readlink(path) -> Result<Vec<u8>, PyErr>` (`os.readlink`): the
+  target as stored; a path that is no link is `PyErr::Os` (EINVAL).
+  `StdFs` uses `std::fs::read_link`: bytes as stored on POSIX, UTF-8
+  elsewhere (a target that is not Unicode is `PyErr::Os`). `MemFs`
+  answers the `Node::Link` target. Every `Fs` implementation in the tests
+  got the method.
+- `MemFs::path_max` (default `PATH_MAX` = 1024, macOS's limit; Linux's
+  is 4096): a longer path is ENAMETOOLONG (`PyErr::Os`), after the NUL
+  check, as the OS answers. No fixture path comes near it.
+- `fsdata::realpath::realpath(fs, flavour, path, cwd)` is
+  `os.path.realpath` (non-strict) and `abspath(flavour, path, cwd)` is
+  `os.path.abspath`, with `os.getcwd()` passed in as `cwd`, never read
+  from the process. On POSIX both port CPython 3.13.13's `posixpath`:
+  - the walk goes one component at a time with `lstat` and `readlink`;
+  - every OSError is ignored and the path reached so far stands;
+  - a ValueError (a NUL) is raised (`Unresolved::Raised`);
+  - a link met again while it is still being resolved (a loop) stops
+    there, with the path as reached;
+  - resolved links are cached as the reference caches them.
+
+  One implementation serves `MemFs` and `StdFs`. The walk keeps its own
+  stack, so a chain of links costs memory, not stack. No file is opened,
+  so a FIFO on the path cannot block. The host's link-hop limit plays no
+  part, since no link is followed through the OS.
+- **Windows: refused, not ported.** `ntpath.realpath` (over
+  `_getfinalpathname`, with its fallbacks for paths that do not exist,
+  are inaccessible or are loops) and `ntpath.abspath` (over
+  `_getfullpathname`) answer `Unresolved::NotPorted`, which a caller
+  turns into a decline. From reading alone they cannot be held to the
+  reference: `_getfinalpathname` asks the volume, and its fallback rules
+  differ between 3.11 and 3.13.
+- **Python versions.** 3.11 and 3.12's `realpath` is a recursive walk
+  (`_joinrealpath`). It answers a link loop by joining the rest of the
+  path, and raises RecursionError on a chain of about 1,000 links; 3.13's
+  walk is iterative. So a case whose **tree** holds a link loop goes in
+  the Python-gated file, decided by the tree as written, never by the
+  answer. Every other case keeps its chains short (45 links at most) and
+  answers alike from 3.11 to 3.14. Both files were checked byte for byte
+  under 3.11.15 and 3.13.13.
+
+### Designed, not built (the rest of the cut)
+
+Each is one part: an `Fs` method with `MemFs` and `StdFs`, one POSIX
+fixture from the reference's own call on real trees, and tests through
+both. Any `unsafe` call goes in `bettermemory-sys` behind a safe wrapper,
+with its safety argument beside it.
+
+2. **`stat` with the stamp's fields** (`gitconfig.file_stamp`, 620-637):
+   follows links. It answers the kind, `st_mode`, `st_ino`, `st_size`,
+   `st_mtime_ns` and `st_ctime_ns`, plus the error with its errno (below).
+   `MemFs` needs times and inodes as data; `StdFs` reads them through
+   `MetadataExt` on unix, and on Windows `st_ino` is the file index, which
+   std does not give without `unsafe`, so that one is refused as not
+   ported.
+3. **The errno beside `PyErr::Os`**: ELOOP, ENAMETOOLONG, EIO, ENXIO,
+   EINVAL and ENOTCONN as a field, so `_location_probe.path_gone` reads
+   ELOOP and ENAMETOOLONG as gone (`gitfile_rule::probe::Raised` takes it
+   then). Done as a new error type beside `PyErr`, so existing matches on
+   `PyErr` keep compiling.
+4. **`listdir`** (`gitconfig._legacy_names`, 960): the names in OS order
+   (the caller sorts), with `.` and `..` left out, and the error classes
+   (FileNotFound, NotADirectory, Permission). `MemFs` lists its children
+   by key.
+5. **`access(X_OK)`** (`gitfile_rule._git_found`, 1259): POSIX
+   `access(2)` through a safe wrapper in `bettermemory-sys` (`libc` is
+   already its dependency). On Windows, CPython's `os.access` answers
+   X_OK as R_OK (by the attributes); `MemFs` checks the owner's execute
+   bit.
+6. **The open that does not follow a final link** (`gitfile_rule._read`,
+   1083-1124, `O_NOFOLLOW`): ELOOP on a final link (an OSError, not gone
+   by class but gone by errno, hence part 3 first). On Windows there is
+   no `O_NOFOLLOW` in CPython's `os.open`, so the flag is absent there and
+   the open follows.
+7. **The stat bits** (`_placeholder`, `_is_link`): `st_flags &
+   SF_DATALESS` on macOS (`MetadataExt::st_flags`), and on Windows
+   `st_file_attributes` (recall bits) and `st_reparse_tag` (junction).
+   Std gives the Windows attributes through `MetadataExt::file_attributes`
+   but not the reparse tag, so junctions are refused as not ported until
+   a sys wrapper exists.
+8. **`expanduser("~")`** (`gitconfig`, 679): no `Fs` method. The home is
+   the caller's input, as `gitconfig::paths` takes it already.
+
+Order: 3 before 2 and 6, which report errnos; 4, 5, 7 and 8 stand
+alone. `realpath` of 1199 and 1209 and `abspath` of 1209 are part 1.
+
+### Tests
+
+`golden_fs_realpath.rs` (unix): four tests. `fs_realpath.jsonl` (8
+trees, 67 queries, class i) and `fs_realpath_python.jsonl` (4 trees with
+loops, 10 queries, class ii on the Python release) are each run through
+`MemFs` and through `StdFs` on a tree the test writes.
+`fs_realpath_not_posix.rs` records the gap off unix as os.
+`fs_realpath_robustness.rs` (5 tests, on a 512 KiB thread):
+- a path of 1 MiB;
+- 100,000 components and 100,000 `..`;
+- a chain of 10,000 links and a loop of the same length;
+- file systems that fail every call;
+- NUL and non-UTF-8 paths, and the Windows refusal;
+- a real FIFO on the path, under a wait that only bounds a failure.
+
+The reference's own `realpath` also re-reads the whole path at every
+`lstat` (its NUL check and encoding), so its cost grows with the
+component count; so does this one's.
+
+
 ## Not built yet
 
 The store's writes past `create`, the writing open's plain states and

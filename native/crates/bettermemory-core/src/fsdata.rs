@@ -10,6 +10,8 @@
 //! `follow` flag (`O_NOFOLLOW`) and answers in one call, and moving it
 //! here would change its error mapping; see the README.
 
+pub mod realpath;
+
 use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read};
 
@@ -96,6 +98,9 @@ pub trait Fs {
     fn access_read(&self, path: &[u8]) -> bool;
     /// The kind `os.lstat` answers (the link itself, not its target).
     fn lstat(&self, path: &[u8]) -> Result<Kind, PyErr>;
+    /// `os.readlink(path)`: a symbolic link's target as stored. A path
+    /// that is no link raises OSError (EINVAL).
+    fn readlink(&self, path: &[u8]) -> Result<Vec<u8>, PyErr>;
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +265,30 @@ impl Fs for StdFs {
         let meta = std::fs::symlink_metadata(path).map_err(|e| py_err(&e))?;
         Ok(kind_of(meta.file_type()))
     }
+
+    fn readlink(&self, path: &[u8]) -> Result<Vec<u8>, PyErr> {
+        let path = native_path(path)?;
+        let target = std::fs::read_link(path).map_err(|e| py_err(&e))?;
+        link_bytes(target)
+    }
+}
+
+/// A link's target as bytes: as stored on POSIX.
+#[cfg(unix)]
+fn link_bytes(target: std::path::PathBuf) -> Result<Vec<u8>, PyErr> {
+    use std::os::unix::ffi::OsStringExt;
+    Ok(target.into_os_string().into_vec())
+}
+
+/// A link's target as UTF-8 elsewhere; one that is not Unicode is
+/// refused as an OSError (the reference reads it as `str`).
+#[cfg(not(unix))]
+fn link_bytes(target: std::path::PathBuf) -> Result<Vec<u8>, PyErr> {
+    target
+        .into_os_string()
+        .into_string()
+        .map(String::into_bytes)
+        .map_err(|_| PyErr::Os)
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +322,10 @@ const SEARCH: u32 = 0o100;
 /// so a fixture made on either agrees wherever a chain is shorter.
 pub const LINK_HOPS: usize = 32;
 
+/// macOS's `PATH_MAX` (Linux takes 4096): the default, so a fixture made
+/// on either agrees wherever a path is shorter.
+pub const PATH_MAX: usize = 1024;
+
 /// A file system as data: paths of components to nodes. A component is
 /// split at `/` (and at `\` too under [`Flavour::Windows`]); a leading
 /// separator changes nothing, so `<scratch>/a` and `/<scratch>/a` are one
@@ -307,6 +340,9 @@ pub struct MemFs {
     pub nodes: BTreeMap<Vec<u8>, Node>,
     pub modes: BTreeMap<Vec<u8>, u32>,
     pub link_hops: usize,
+    /// The longest path in bytes the OS takes; a longer one is
+    /// ENAMETOOLONG.
+    pub path_max: usize,
 }
 
 /// An open file of [`MemFs`].
@@ -326,6 +362,7 @@ impl MemFs {
             nodes: BTreeMap::new(),
             modes: BTreeMap::new(),
             link_hops: LINK_HOPS,
+            path_max: PATH_MAX,
         }
     }
 
@@ -428,6 +465,10 @@ impl MemFs {
         }
         if self.flavour == Flavour::Windows && std::str::from_utf8(path).is_err() {
             return Err(PyErr::Value);
+        }
+        // ENAMETOOLONG past the host's path limit (OSError itself).
+        if path.len() > self.path_max {
+            return Err(PyErr::Os);
         }
         // An empty path names nothing (ENOENT; `_wopen("")` too).
         if path.is_empty() {
@@ -595,5 +636,13 @@ impl Fs for MemFs {
 
     fn lstat(&self, path: &[u8]) -> Result<Kind, PyErr> {
         Ok(kind_of_node(&self.walk(path, false)?.1))
+    }
+
+    fn readlink(&self, path: &[u8]) -> Result<Vec<u8>, PyErr> {
+        match self.walk(path, false)?.1 {
+            Node::Link(target) => Ok(target),
+            // EINVAL: no link (OSError itself).
+            _ => Err(PyErr::Os),
+        }
     }
 }

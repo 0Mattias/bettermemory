@@ -44,6 +44,9 @@ impl Fs for Counting {
     fn lstat(&self, _: &[u8]) -> Result<Kind, PyErr> {
         Ok(Kind::Regular)
     }
+    fn readlink(&self, _: &[u8]) -> Result<Vec<u8>, PyErr> {
+        Err(PyErr::Os)
+    }
 }
 
 #[test]
@@ -113,6 +116,9 @@ impl Fs for Generous {
     fn lstat(&self, _: &[u8]) -> Result<Kind, PyErr> {
         Ok(Kind::Regular)
     }
+    fn readlink(&self, _: &[u8]) -> Result<Vec<u8>, PyErr> {
+        Err(PyErr::Os)
+    }
 }
 
 #[test]
@@ -145,6 +151,9 @@ impl Fs for Failing {
         false
     }
     fn lstat(&self, _: &[u8]) -> Result<Kind, PyErr> {
+        Err(self.0)
+    }
+    fn readlink(&self, _: &[u8]) -> Result<Vec<u8>, PyErr> {
         Err(self.0)
     }
 }
@@ -213,10 +222,16 @@ fn hostile_paths_are_typed_outcomes() {
         for _ in 0..10_000 {
             long.extend_from_slice(b"/c/..");
         }
+        // Past the host's path limit the OS answers ENAMETOOLONG; with no
+        // limit the walk itself is bounded.
+        assert_eq!(fs.open(&long).err(), Some(PyErr::Os));
+        let limit = fs.path_max;
+        fs.path_max = usize::MAX;
         assert!(matches!(
             fs.open(&long),
             Err(PyErr::NotADirectory | PyErr::FileNotFound)
         ));
+        fs.path_max = limit;
         fs.insert(b"r/l", Node::Link(b"m".to_vec()));
         fs.insert(b"r/m", Node::Link(b"l".to_vec()));
         assert_eq!(fs.open(b"r/l").err(), Some(PyErr::Os));

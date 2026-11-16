@@ -39,6 +39,9 @@ impl Fs for Counting {
     fn lstat(&self, path: &[u8]) -> Result<Kind, PyErr> {
         self.inner.lstat(path)
     }
+    fn readlink(&self, path: &[u8]) -> Result<Vec<u8>, PyErr> {
+        self.inner.readlink(path)
+    }
 }
 
 /// A file system on which every call fails.
@@ -59,6 +62,9 @@ impl Fs for Failing {
         false
     }
     fn lstat(&self, _: &[u8]) -> Result<Kind, PyErr> {
+        Err(self.0)
+    }
+    fn readlink(&self, _: &[u8]) -> Result<Vec<u8>, PyErr> {
         Err(self.0)
     }
 }
@@ -91,6 +97,9 @@ impl Fs for FailsLater {
     }
     fn lstat(&self, _: &[u8]) -> Result<Kind, PyErr> {
         Ok(Kind::Regular)
+    }
+    fn readlink(&self, _: &[u8]) -> Result<Vec<u8>, PyErr> {
+        Err(PyErr::Os)
     }
 }
 
