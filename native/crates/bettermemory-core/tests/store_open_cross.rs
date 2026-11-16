@@ -33,6 +33,7 @@ const SCRIPT: &str = r#"
 import json, shutil, sqlite3, sys
 from datetime import datetime, timezone
 from pathlib import Path
+from bettermemory._fsutil import sqlite_file_uri
 from bettermemory.models import Confidence, Memory, Source
 from bettermemory.store import Store
 
@@ -46,7 +47,9 @@ def put(store, n, body):
     return m.id
 
 def digest_rows(path):
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    # The product's own spelling of a file URI: a Windows path (and the
+    # verbatim one the test passes) holds characters a URI reads otherwise.
+    conn = sqlite3.connect(sqlite_file_uri(Path(path)) + "?mode=ro", uri=True)
     try:
         out = {}
         for t in ("digest_records", "digest_tokens", "digest_state"):
@@ -100,11 +103,11 @@ fn reference(python: &Path, root: &Path, args: &[&Path]) -> Value {
 }
 
 fn native_digest(store: &Path) -> Value {
-    let conn = rusqlite::Connection::open_with_flags(
-        format!("file:{}?mode=ro", store.display()),
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    )
-    .expect("open");
+    // By path, not by URI: a Windows path holds characters a URI reads
+    // otherwise (the verbatim prefix has a `?`).
+    let conn =
+        rusqlite::Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("open");
     let mut out = serde_json::Map::new();
     for t in ["digest_records", "digest_tokens", "digest_state"] {
         let mut s = conn

@@ -264,11 +264,9 @@ pub fn state(case: &Path, root: &Path, store_id: &str, pragmas: &[Value]) -> Val
         return Value::Object(out);
     }
     out.insert("mode".into(), json!(mode(&store)));
-    let conn = Connection::open_with_flags(
-        format!("file:{}?mode=ro", store.display()),
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    )
-    .expect("open");
+    // By path, not by URI: a Windows path holds characters a URI reads
+    // otherwise (the verbatim prefix has a `?`; CI run on 5d6161e4).
+    let conn = Connection::open_with_flags(&store, OpenFlags::SQLITE_OPEN_READ_ONLY).expect("open");
     let master: Vec<[String; 4]> = match conn
         .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")
     {

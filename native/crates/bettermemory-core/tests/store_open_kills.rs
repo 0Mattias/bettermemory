@@ -160,8 +160,8 @@ fn left(c: &Path, id: &str) -> String {
     let dir = names(c).replace("keys", "").trim().to_owned();
     let ring = names(&c.join("keys"));
     let conn = rusqlite::Connection::open_with_flags(
-        format!("file:{}?mode=ro", c.join("memory.sqlite").display()),
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        c.join("memory.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )
     .expect("open");
     let mode: String = conn
