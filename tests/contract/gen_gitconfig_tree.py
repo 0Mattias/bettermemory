@@ -8,8 +8,10 @@ to `gitconfig.config_tree` without conditions: `_read_config`,
 `_parse_config`, `_include`, `_include_target`, `_interpolate`,
 `_git_absolute`, `_native`, `_home`, `_user_home`, the depth of 10, the
 64 files, cycles by identity and the remote rules where a context asks
-for them. ``includeIf`` is the next unit's: a case holding one records
-the reference's answer, and the native read declines it.
+for them, and the ``gitdir:``, ``gitdir/i:`` and ``onbranch:``
+conditions. A ``hasconfig:remote.*.url:`` one is the next unit's: a case
+holding one records the reference's answer, and the native read declines
+it.
 
 ``gitconfig_tree.jsonl``: each case is a tree as data, written as real
 files in a fresh directory of the scratch world (`_sandbox.world`), and
@@ -19,14 +21,18 @@ for, by name) and the context's ``%(prefix)`` given. A line holds
 ``"t"``, the file read; ``"k"``, the read's keywords (``s``:
 ``stamp_self``, ``g``: ``gentle``, ``c``: whether a context is given,
 ``p``: its prefix, relative to the case's directory, ``"%(prefix)"``, or
-null); ``"hm"``: HOME relative to the case's directory, or null for unset;
+null; ``gd``: the git directory, relative; ``b``: the branch, null for HEAD
+elsewhere, left out for not known); ``"hm"``: HOME relative to the case's directory, or null for unset;
 ``"u"``: accounts, name to home relative to the case's directory; and
 ``"r"``: the answer: ``v`` the values as ``[section, subsection, key,
 [value, ...]]`` (bytes spelled as in ``gitconfig_file.jsonl``), ``c``
-complete, ``d`` why git dies, ``fl`` the files read in order, ``np`` the
+complete, ``ud`` the undecided values and ``md`` ``maybe_dies`` where
+any, ``d`` why git dies, ``fl`` the files read in order, ``np`` the
 ``includeIf`` subsection a native read stops at (computed here from the
-values: the first ``includeif.<sub>.path``, or any key of a
-``hasconfig:remote.*.url:`` one). Texts name the case's directory
+values, then the undecided ones: the first ``hasconfig:remote.*.url:``
+one at ``path``, or at any key under a context). Each case's directory is
+taken as ``realpath`` gives it, so the only links a path passes through
+are the case's own. Texts name the case's directory
 ``<scratch>``. POSIX only (`generate.POSIX_ONLY`): links, FIFOs and
 modes, and the reference's ``os.path`` and ``pwd`` are the host's. No
 case holds 30 links or more, and nothing depends on case folding,
@@ -93,6 +99,8 @@ class Tree:
         gentle: bool = False,
         context: bool = False,
         prefix: str | None = None,
+        git_dir: str | None = None,
+        branch: str | None = "\0",
     ) -> None:
         self.target = target
         self.files = files
@@ -109,6 +117,11 @@ class Tree:
             "c": context,
             "p": prefix,
         }
+        if git_dir is not None:
+            self.ask["gd"] = git_dir
+        if branch != "\0":
+            # A branch name, null for HEAD elsewhere; left out: unsettled.
+            self.ask["b"] = branch
 
     def record(self) -> dict[str, Any]:
         out: dict[str, Any] = {"f": {k: _content(v) for k, v in self.files.items()}}
@@ -131,22 +144,36 @@ class Tree:
 _KNOWN = ("gitdir:", "gitdir/i:", "onbranch:", "hasconfig:remote.*.url:")
 
 
-def _not_ported(values: dict[Any, Any], context: bool) -> str | None:
-    """The first ``includeIf`` the reference acts on (`_parse_config`
-    436-444, `_condition` 1095-1110): a known condition at ``path``, or a
-    ``hasconfig:remote.*.url:`` one at another key where a context is
-    given; any other condition is False and reads nothing."""
-    for section, sub, key in values:
-        if section != "includeif" or sub is None:
-            continue
-        if (key == "path" and sub.startswith(_KNOWN)) or (
-            context and sub.startswith(_KNOWN[3])
-        ):
-            return _b(gitconfig.subsection_bytes(sub))
+def _not_ported(read: gitconfig.ConfigValues, context: bool) -> str | None:
+    """The first ``hasconfig:remote.*.url:`` ``includeIf`` the reference
+    acts on, which a native read declines (the collecting and forbidding
+    pass is not ported): at ``path``, or at another key where a context is
+    given (`_parse_config` 436-444). Values first, then undecided ones."""
+    for names in (read, read.undecided):
+        for section, sub, key in names:
+            if section != "includeif" or sub is None:
+                continue
+            if sub.startswith(_KNOWN[3]) and (key == "path" or context):
+                return _b(gitconfig.subsection_bytes(sub))
     return None
 
 
+def _values(names: dict[Any, Any]) -> list[Any]:
+    return [
+        [
+            section,
+            None if sub is None else _b(gitconfig.subsection_bytes(sub)),
+            key,
+            [None if v is None else _b(v) for v in found_values],
+        ]
+        for (section, sub, key), found_values in names.items()
+    ]
+
+
 def _tree_answer(case: Tree, root: Path) -> dict[str, Any]:
+    # The directory as `realpath` gives it, so a link the case makes is the
+    # only one a path passes through (macOS's /var is a link).
+    root = Path(os.path.realpath(root))
     for d in case.dirs:
         (root / d).mkdir(parents=True, exist_ok=True)
     for rel, data in case.files.items():
@@ -183,9 +210,14 @@ def _tree_answer(case: Tree, root: Path) -> dict[str, Any]:
             if given == "%(prefix)"
             else prefix + "/" + given
         )
-        context = gitconfig.IncludeContext(
-            lambda: gitconfig.UNSETTLED, prefix=lambda: found
+        branch: bytes | None = (
+            gitconfig.UNSETTLED
+            if "b" not in case.ask
+            else None
+            if case.ask["b"] is None
+            else os.fsencode(case.ask["b"])
         )
+        context = gitconfig.IncludeContext(lambda: branch, prefix=lambda: found)
     pwd = __import__("importlib").import_module("pwd")
     try:
         with (
@@ -200,21 +232,17 @@ def _tree_answer(case: Tree, root: Path) -> dict[str, Any]:
                 stamp_self=bool(case.ask["s"]),
                 gentle=bool(case.ask["g"]),
                 context=context,
+                git_dir=None if "gd" not in case.ask else prefix + "/" + case.ask["gd"],
             )
     finally:
         for rel in by_depth:
             os.chmod(root / rel, 0o700)
-    values = [
-        [
-            section,
-            None if sub is None else _b(gitconfig.subsection_bytes(sub)),
-            key,
-            [None if v is None else _b(v) for v in found_values],
-        ]
-        for (section, sub, key), found_values in read.items()
-    ]
-    return {
-        "v": values,
+    out: dict[str, Any] = {"v": _values(read)}
+    if read.undecided:
+        out["ud"] = _values(read.undecided)
+    if read.maybe_dies is not None:
+        out["md"] = _text(os.fsencode(label(read.maybe_dies)))
+    return out | {
         "c": read.complete,
         "d": None if read.dies is None else _text(os.fsencode(label(read.dies))),
         "fl": [_text(os.fsencode(label(p))) for p, _ in read.files or ()],
@@ -223,6 +251,10 @@ def _tree_answer(case: Tree, root: Path) -> dict[str, Any]:
 
 
 P = b"[core]\n\tbare = false\n"
+
+
+def _cond(condition: str, path: bytes = b"x") -> bytes:
+    return b'[includeIf "' + condition.encode() + b'"]\n\tpath = ' + path + b"\n"
 
 
 def _inc(*paths: bytes) -> bytes:
@@ -323,6 +355,183 @@ def _trees() -> Iterator[Tree]:
             {"c": b'[remote "\xff"]\n\tfetch = +refs/heads/*:refs/x/*\n\tpushurl\n'},
             context=context,
         )
+    # gitdir: and gitdir/i: against a git directory `r/g` (and through a
+    # link), the including file `c` at the top; the include names `x`.
+    x = {"x": b"[x]\n\ty = 1\n"}
+    for kind in ("gitdir", "gitdir/i"):
+        for pattern in (
+            "g",
+            "g/",
+            "r/g",
+            "r/g/",
+            "**/g",
+            "**/g/",
+            "*/g",
+            "r/*",
+            "r/",
+            "r",
+            "R/G/",
+            "R/g",
+            "/",
+            "**",
+            "g/**",
+            "r/?",
+            "r/[gh]/",
+            "r/[!g]/",
+            "rg",
+            "~/g",
+            "~/g/",
+            "~",
+            "~u/g/",
+            "~nobody/g/",
+            "./r/g/",
+            "./r/",
+            "./g/",
+            ".\\r/g/",
+            "%(prefix)/g",
+            "r\\g",
+            "r//g/",
+        ):
+            yield Tree(
+                "c",
+                {"c": _cond(kind + ":" + pattern), **x},
+                dirs=("r/g",),
+                git_dir="r/g",
+                home="r",
+                users={"u": "r"},
+            )
+    for pattern in ("r/g/", "lg/", "l/g/", "**/lg", "./l/g/"):
+        yield Tree(
+            "c",
+            {"c": _cond("gitdir:" + pattern), **x},
+            dirs=("r/g",),
+            links={"lg": "r/g", "l": "r"},
+            git_dir="lg",
+        )
+        yield Tree(
+            "c",
+            {"c": _cond("gitdir:" + pattern), **x},
+            dirs=("r/g",),
+            links={"l": "r"},
+            git_dir="l/g",
+        )
+    # `./` from an including file reached through a link, and from an
+    # included file in another directory.
+    yield Tree(
+        "lc",
+        {"r/c": _cond("gitdir:./g/"), "r/x": P},
+        dirs=("r/g",),
+        links={"lc": "r/c"},
+        git_dir="r/g",
+    )
+    yield Tree(
+        "c",
+        {"c": _inc(b"r/i"), "r/i": _cond("gitdir:./g/"), "r/x": P},
+        dirs=("r/g",),
+        git_dir="r/g",
+    )
+    # A held condition whose include is missing, a directory, valueless,
+    # a cycle, or itself conditional; an unsettled one that dies or
+    # overflows (maybe_dies) and nests another.
+    yield Tree(
+        "c", {"c": _cond("gitdir:**/g/", b"missing") + P}, dirs=("r/g",), git_dir="r/g"
+    )
+    yield Tree(
+        "c", {"c": _cond("gitdir:**/g/", b"r") + P}, dirs=("r/g",), git_dir="r/g"
+    )
+    yield Tree(
+        "c",
+        {"c": b'[includeIf "gitdir:**/g/"]\n\tpath\n' + P},
+        dirs=("r/g",),
+        git_dir="r/g",
+    )
+    yield Tree(
+        "c", {"c": _cond("gitdir:**/g/", b"c") + P}, dirs=("r/g",), git_dir="r/g"
+    )
+    yield Tree(
+        "c",
+        {"c": _cond("gitdir:**/g/"), "x": _cond("gitdir:**/g/", b"y") + P, "y": P},
+        dirs=("r/g",),
+        git_dir="r/g",
+    )
+    for target in (b"c", b"r", b"p", b"%(prefix)/x"):
+        yield Tree(
+            "c",
+            {"c": _cond("onbranch:m", target) + P},
+            dirs=("r",),
+            fifos=("p",),
+            context=True,
+        )
+    # Two unsettled includes that die differently, in both orders: the
+    # first refusal is the one kept in maybe_dies.
+    bare = b'[includeIf "onbranch:m"]\n\tpath\n'
+    for first, second in ((b"a", b""), (b"", b"a"), (b"a", b"p"), (b"p", b"a")):
+        text = b"".join(_cond("onbranch:m", t) if t else bare for t in (first, second))
+        yield Tree(
+            "c",
+            {"c": text + P, "a": _cond("onbranch:m", b"a")},
+            fifos=("p",),
+            context=True,
+        )
+    yield Tree(
+        "c",
+        {
+            "c": _cond("onbranch:m"),
+            "x": _cond("onbranch:n", b"y") + P,
+            "y": _inc(b"z"),
+            "z": P,
+        },
+        context=True,
+    )
+    yield Tree(
+        "c", {"c": _cond("gitdir:**/g/", b"x\ty") + P}, dirs=("r/g",), git_dir="r/g"
+    )
+    # The wildmatch steps spent: the condition is not settled.
+    deep = "/".join(["a"] * 30)
+    yield Tree(
+        "c",
+        {"c": _cond("gitdir:" + "*a" * 16 + "b"), **x},
+        dirs=("a" * 48,),
+        git_dir="a" * 48,
+    )
+    yield Tree(
+        "c", {"c": _cond("gitdir:" + "**/" * 24 + "x"), **x}, dirs=(deep,), git_dir=deep
+    )
+    # After the steps are spent, a later pattern that would match is not
+    # settled either: one budget a read.
+    yield Tree(
+        "c",
+        {
+            "c": _cond("gitdir:" + "**/" * 24 + "x") + _cond("gitdir:**/a/", b"y"),
+            **x,
+            "y": P,
+        },
+        dirs=(deep,),
+        git_dir=deep,
+    )
+    # onbranch: with a branch, HEAD elsewhere, unsettled, no context.
+    for branch in ("main", "feature/x", "a*b", "feature/x/y"):
+        for pattern in (
+            "main",
+            "feature/",
+            "feature/*",
+            "feature/**",
+            "*",
+            "f*",
+            "main/",
+            "a\\*b",
+            "Main",
+            "feature",
+        ):
+            yield Tree(
+                "c",
+                {"c": _cond("onbranch:" + pattern), **x},
+                context=True,
+                branch=branch,
+            )
+    for other in (None, "\0"):
+        yield Tree("c", {"c": _cond("onbranch:main"), **x}, context=True, branch=other)
+    yield Tree("c", {"c": _cond("onbranch:main"), **x}, branch="main")
     # includeIf: the reference's answer kept; native declines.
     yield Tree("c", {"c": b'[includeIf "gitdir:x"]\n\tpath = x\n', "x": P})
     yield Tree("c", {"c": b'[includeIf "onbranch:x"]\n\tother = 1\n' + P})

@@ -117,7 +117,9 @@ mod posix {
         let dir =
             std::env::temp_dir().join(format!("bm-gctree-{}-{n}-{nanos}", std::process::id()));
         std::fs::create_dir(&dir).expect("a new scratch directory");
-        dir
+        // As `realpath` gives it (macOS's temporary directory is under a
+        // link), as the generator's is.
+        std::fs::canonicalize(&dir).expect("a canonical scratch directory")
     }
 
     fn write_tree(case: &Value, root: &std::path::Path) -> bool {

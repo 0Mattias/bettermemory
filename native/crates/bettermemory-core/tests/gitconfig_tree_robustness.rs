@@ -2,13 +2,15 @@
 //! stopped at the 64-file bound having opened no more, chains past the
 //! depth, a 50 MB include refused at the bound, a file system that errors
 //! on every call, values with NUL and non-UTF-8 bytes, and hard links
-//! under the Windows flavour, whose identities differ.
+//! under the Windows flavour, whose identities differ; 10,000 conditions,
+//! a pattern, a git directory and a branch of 1 MiB, the wildmatch budget
+//! spent and a git directory behind 25 links, on a 512 KiB stack.
 
 use std::cell::Cell;
 
 use bettermemory_core::fsdata::{Flavour, Fs, Kind, MemFs, Node, PyErr, Stat};
 use bettermemory_core::gitconfig::paths::Machine;
-use bettermemory_core::gitconfig::tree::{config_tree, Ask, ConfigValues};
+use bettermemory_core::gitconfig::tree::{config_tree, Ask, Branch, ConfigValues, Context};
 use bettermemory_core::gitconfig::FORMAT_LIMIT;
 
 fn none(_: &[u8]) -> Option<Vec<u8>> {
@@ -292,7 +294,187 @@ fn an_unknown_include_if_condition_reads_nothing_and_is_not_declined() {
         let mut fs = MemFs::new(Flavour::Posix);
         let text = format!("[includeIf \"{sub}\"]\n\tpath = x\n");
         fs.insert(b"/r/c", Node::File(text.into_bytes()));
+        fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
         let got = read(&fs, Flavour::Posix, b"/r/c");
-        assert_eq!(got.not_ported.as_deref(), Some(sub.as_bytes()));
+        // Evaluated, not settled with no git directory and no context;
+        // `hasconfig:remote.*.url:` is declined.
+        if sub.starts_with("hasconfig") {
+            assert_eq!(got.not_ported.as_deref(), Some(sub.as_bytes()));
+        } else {
+            assert_eq!(got.not_ported, None);
+            assert_eq!(got.undecided.len(), 1, "{sub}");
+        }
+    }
+}
+
+fn on_small_stack(f: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(512 << 10)
+        .spawn(f)
+        .expect("a thread")
+        .join()
+        .expect("no panic");
+}
+
+fn read_with(fs: &MemFs, path: &[u8], git_dir: &[u8], branch: Branch) -> ConfigValues {
+    let machine = Machine {
+        flavour: Flavour::Posix,
+        home: Some(b"/h".to_vec()),
+        profile: None,
+        user_home: &none,
+    };
+    let ask = Ask {
+        stamp_self: true,
+        git_dir: Some(git_dir.to_vec()),
+        cwd: b"/".to_vec(),
+        context: Some(Context {
+            prefix: None,
+            branch,
+        }),
+        ..Ask::default()
+    };
+    config_tree(fs, &machine, path, &ask)
+}
+
+#[test]
+fn ten_thousand_conditions_and_huge_patterns_stay_bounded() {
+    on_small_stack(|| {
+        // 10,000 conditions, all false or spent: one budget, 64 files.
+        let mut text = String::new();
+        for i in 0..10_000 {
+            text.push_str(&format!("[includeIf \"gitdir:**/no{i}/\"]\n\tpath = x\n"));
+            text.push_str(&format!("[includeIf \"onbranch:b{i}\"]\n\tpath = x\n"));
+        }
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.insert(b"/r/c", Node::File(text.into_bytes()));
+        fs.insert(b"/r/g", Node::Dir);
+        let got = read_with(&fs, b"/r/c", b"/r/g", Branch::Name(b"main".to_vec()));
+        assert!(got.dies.is_none() && got.files.len() <= 64);
+        // A pattern and a git directory of 1 MiB, the budget spent: not
+        // settled, read into `undecided`.
+        let long = "a".repeat(1 << 20);
+        // The next pattern, which would hold, is then not settled either.
+        let text = format!(
+            "[includeIf \"gitdir:*{long}*b\"]\n\tpath = x\n\
+             [includeIf \"gitdir:/r/**\"]\n\tpath = y\n"
+        );
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.insert(b"/r/c", Node::File(text.into_bytes()));
+        fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
+        fs.insert(b"/r/y", Node::File(b"[y]\n\tz = 1\n".to_vec()));
+        let dir = format!("/r/{long}").into_bytes();
+        fs.insert(&dir, Node::Dir);
+        let got = read_with(&fs, b"/r/c", &dir, Branch::Unsettled);
+        assert!(got.dies.is_none() && got.maybe_dies.is_none() && got.complete);
+        assert_eq!(got.undecided.len(), 2, "x.y and y.z, both undecided");
+        assert_eq!(got.values.len(), 2, "the two includeIf paths only");
+        // A branch of 1 MiB against a star pattern.
+        let text = "[includeIf \"onbranch:*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*b\"]\n\tpath = x\n";
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.insert(b"/r/c", Node::File(text.as_bytes().to_vec()));
+        fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
+        let got = read_with(&fs, b"/r/c", b"/r", Branch::Name(vec![b'a'; 1 << 20]));
+        // False, or not settled where the budget is spent: a typed answer.
+        assert!(got.dies.is_none() && got.undecided.len() <= 1);
+        // A git directory reached through a chain of 25 links.
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.insert(b"/r/g", Node::Dir);
+        let mut prev = b"g".to_vec();
+        for i in 0..25 {
+            let name = format!("l{i}").into_bytes();
+            fs.insert(
+                &[b"/r/".as_slice(), &name].concat(),
+                Node::Link(prev.clone()),
+            );
+            prev = name;
+        }
+        fs.insert(
+            b"/r/c",
+            Node::File(b"[includeIf \"gitdir:/r/g\"]\n\tpath = x\n".to_vec()),
+        );
+        fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
+        let got = read_with(&fs, b"/r/c", b"/r/l24", Branch::Unsettled);
+        assert_eq!(got.values.len(), 2, "held through the links");
+    });
+}
+
+#[test]
+fn the_windows_flavour_declines_a_gitdir_condition() {
+    let mut fs = MemFs::new(Flavour::Windows);
+    fs.insert(
+        b"/r/c",
+        Node::File(b"[includeIf \"gitdir:**/g/\"]\n\tpath = x\n".to_vec()),
+    );
+    let machine = Machine {
+        flavour: Flavour::Windows,
+        home: None,
+        profile: None,
+        user_home: &none,
+    };
+    let mut ask = Ask {
+        git_dir: Some(b"/r/g".to_vec()),
+        cwd: b"C:\\".to_vec(),
+        ..Ask::default()
+    };
+    let got = config_tree(&fs, &machine, b"/r/c", &ask);
+    assert_eq!(got.not_ported.as_deref(), Some(&b"gitdir:**/g/"[..]));
+    ask.git_dir = None;
+    let got = config_tree(&fs, &machine, b"/r/c", &ask);
+    assert_eq!(got.not_ported, None);
+}
+
+fn read_home(text: &[u8], git_dir: &[u8], home: &[u8]) -> ConfigValues {
+    let mut fs = MemFs::new(Flavour::Posix);
+    fs.insert(b"/r/c", Node::File(text.to_vec()));
+    fs.insert(b"/r/x", Node::File(b"[x]\n\ty = 1\n".to_vec()));
+    fs.insert(b"/r/g", Node::Dir);
+    let machine = Machine {
+        flavour: Flavour::Posix,
+        home: Some(home.to_vec()),
+        profile: None,
+        user_home: &none,
+    };
+    let ask = Ask {
+        stamp_self: true,
+        git_dir: Some(git_dir.to_vec()),
+        cwd: b"/".to_vec(),
+        ..Ask::default()
+    };
+    config_tree(&fs, &machine, b"/r/c", &ask)
+}
+
+#[test]
+fn a_nul_reaching_realpath_raises_and_one_elsewhere_does_not() {
+    let raised = |got: &ConfigValues| {
+        assert_eq!(got.raised, Some(PyErr::Value));
+    };
+    // A NUL in the git directory: realpath raises.
+    raised(&read_home(
+        b"[includeIf \"gitdir:**/g/\"]\n\tpath = x\n",
+        b"/r/g\0q",
+        b"/h",
+    ));
+    // A NUL in HOME, read by a `~/` pattern: realpath raises.
+    raised(&read_home(
+        b"[includeIf \"gitdir:~/g/\"]\n\tpath = x\n",
+        b"/r/g",
+        b"/h\0q",
+    ));
+    // A NUL in the pattern, and one in HOME under a `./` pattern: not
+    // held, nothing raised.
+    for (text, home) in [
+        (
+            &b"[includeIf \"gitdir:./g\0q/\"]\n\tpath = x\n"[..],
+            &b"/h"[..],
+        ),
+        (
+            &b"[includeIf \"gitdir:./g/\"]\n\tpath = y\n"[..],
+            &b"/h\0q"[..],
+        ),
+    ] {
+        let got = read_home(text, b"/r/g", home);
+        assert!(got.raised.is_none() && got.dies.is_none());
+        assert!(got.undecided.is_empty());
+        assert_eq!(got.values.len(), 1, "the includeIf path only");
     }
 }

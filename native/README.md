@@ -2467,7 +2467,7 @@ remotes (`gitconfig.py` at a983e3bb).
   at the open on Windows and at the fstat on POSIX; `_accessible` exists
   for the Windows path (343-351).
 
-## A git config tree with includes (pieces 1 and 2 built)
+## A git config tree with includes (pieces 1, 2 and 3a built)
 
 Design for porting `config_tree`, its includes and conditions, and
 `read_git_config` (`src/bettermemory/gitconfig.py` at 7855277e). Piece 1 of
@@ -2844,6 +2844,120 @@ every platform; trees in memory and on disk under `cfg(unix)`; a declined
 os), `gitconfig_tree_robustness.rs` (cycles, 10,000 includes opening 64
 files, depth, a 50 MB include, failing file systems, hostile values, hard
 links under both flavours).
+
+### Piece 3: the conditions (3a built, 3b designed)
+
+Read at b8a80ad4 (line numbers unchanged): `IncludeContext` 126-178,
+`_Reading` 224-252, `_include` 463-525, `_forbidding` 683-700,
+`_remote_url_names` 703-706, `_condition` 1081-1110, `_any_match`
+1113-1126, `_branch_condition` 1129-1147, `_remote_url_condition`
+1150-1168, `_slashed` 1171-1174, `_gitdir_matches` 1177-1212; callers
+`location_git._read_configs` (363), `remote_config` (576-600: the
+context, then `collect()` and `with_urls()`) and `_head_branch` (406).
+Sized by the rule (a three-state rule is a unit): 3a is `gitdir:`,
+`gitdir/i:`, `onbranch:` and the undecided merge every three-state
+condition needs; 3b is `hasconfig:remote.*.url:` with the collecting and
+forbidding pass. 3a was built first because 3b's pass reads whole trees
+through 3a's machinery (a held or undecided include under `collecting`)
+and cannot be tested without it.
+
+**3a (built, `gitconfig::tree`).**
+
+- Inputs: `Ask.git_dir` (None: every `gitdir` condition is not settled),
+  `Ask.cwd` (what `os.getcwd()` answers to `realpath` and `abspath`), and
+  `Context.branch` (`Branch::{Unsettled, Elsewhere, Name}`: the caller's
+  `IncludeContext.branch`, which `location_git._head_branch` derives from
+  HEAD; reading HEAD is not this unit's, the branch arrives as data, so
+  a HEAD that is a link, unreadable, detached or unborn reaches this
+  reader only as one of the three). The wildmatch [`Steps`] are one
+  budget for the whole read, as `_Reading.steps`.
+- `_condition`: `gitdir:`/`gitdir/i:` (case-sensitive prefixes) with no
+  git directory: not settled; `onbranch:`; `hasconfig:remote.*.url:`:
+  declined (3b); anything else False.
+- `_branch_condition`: no context or `Unsettled`: not settled;
+  `Elsewhere`: False; else the pattern, `**` added after a trailing `/`
+  (or `\` under Windows), matched against the name (`any_match`, a spent
+  budget: not settled).
+- `_gitdir_matches`: the pattern interpolated with HOME resolved
+  (`realpath(HOME)` only where `~` or `~/` reads it), left as written
+  where it cannot expand, not settled where `%(prefix)/` is unknown;
+  `./` replaced by `dirname(realpath(including))` and that head matched
+  literally (`literal_head`); `**/` before any other relative pattern;
+  `**` after a trailing `/`; matched against `realpath(git_dir)` then
+  `abspath(git_dir)` (once where equal), `/i` folding ASCII case.
+- `_include`: False reads nothing (the value not looked at); True reads
+  into the answer; not settled reads into an undecided `ConfigValues`
+  whose values and own undecided ones join `undecided`, a refusal or an
+  incomplete read there becoming `maybe_dies` (`{why}`, or `{what} is
+  not read whole`, `what` the path, value or file at which it stopped),
+  the first kept; its files join `files` in order. A declined condition
+  or a raised error inside one still stops the whole read.
+- `realpath` raising (`ValueError` for a NUL in HOME, the git directory
+  or the including path) is `ConfigValues::raised`: the reference raises
+  out of `config_tree`.
+- Windows flavour: every `gitdir:` and `gitdir/i:` condition with a git
+  directory given is declined (`not_ported`), because it resolves the git
+  directory with `realpath`, which is not ported there; one with no git
+  directory is not settled, as on POSIX. `onbranch:` needs no
+  `realpath` and is evaluated on both flavours.
+- Fixture: `gitconfig_tree.jsonl` grows to 230 trees (103,355 bytes,
+  POSIX only; no link loop, so not Python-gated): every `gitdir:` and
+  `gitdir/i:` shape against `r/g` (trailing slash or not, `**`, `*`,
+  `?`, brackets, case, `~/`, `~`, `~user`, `./` from the including file,
+  from one reached through a link and from an included file, `%(prefix)`,
+  a backslash, `//`), the git directory reached through a link (realpath
+  and abspath differ), the steps spent (and a later pattern then not
+  settled either), held and undecided includes that are missing, a
+  directory, valueless, a cycle, a FIFO, a tab, nested; `onbranch:` with
+  four branch names and ten patterns, HEAD elsewhere, unsettled, no
+  context; two undecided includes that die differently (a cycle beside
+  a valueless path or a FIFO), in both orders, so the first `maybe_dies`
+  is the one kept. New fields: `k.gd`, `k.b`, `r.ud`, `r.md`.
+- Where the reference and git differ (nothing to change in the port,
+  which matches the reference; checked against git 2.54 outside the
+  fixture: a scratch repository, `GIT_CONFIG_NOSYSTEM=1`,
+  `GIT_CONFIG_GLOBAL=/dev/null`, HOME in scratch, on the child only):
+  - `gitdir:%(prefix)/...` with no context is not settled in the
+    reference, where git says false. The safe direction: the include is
+    read into `undecided`, never into the values.
+  - Through a link, git run by discovery spells its git directory
+    resolved (via `getcwd`), so `gitdir:lg/` does not hold for git, while
+    the reference given `<link>/.git` holds it through `abspath`. The
+    reference's caller (`location_git`) passes the resolved spelling on
+    discovery, and the spelling as written only with `GIT_DIR` set, where
+    git keeps it as written too (76 conditions agreed), so no reachable
+    difference was found. Not tested: a `GIT_DIR` holding `..` after a
+    link, which `normpath` folds lexically.
+
+**3b (designed, not built: still declined).** `hasconfig:remote.*.url:`
+(`_condition` 1104-1109, `_remote_url_condition` 1150-1168, `_include`
+497-509, `_forbidding` 683-700, `_remote_url_names` 703-706,
+`_parse_config` 430 and 443-444, `IncludeContext.collect`/`with_urls`
+168-178, `_Reading.remote_rules`/`forbidding`/`asks_remote_urls`/
+`forbidden`).
+
+- Inputs to add to `Context`: `hasconfig` (`Option<bool>`, asked at the
+  first such condition: not True returns that answer, False or not
+  settled), `remote_urls` (`Option<Vec<bytes>>`, sorted as the reference
+  sorts them) and `collecting`.
+- Rule: with no context, not settled; collecting, True; URLs not
+  collected, `asks_remote_urls` set and not settled; else the pattern as
+  written (no `**` added) against each URL in sorted order (`any_match`).
+  It is evaluated at every key of such a section, not only `path`
+  (side effect `asks_remote_urls`).
+- The collecting pass: a held include under a collecting context, not
+  already forbidding, reads its target into a sink whose values are
+  dropped, `forbidding` set (and the remote rules off) for the subtree;
+  the sink's undecided values and first `maybe_dies` join the answer
+  (not its `dies`: a refusal propagates), its files too, and a
+  `remote.<name>.url` among the sink's values or undecided ones sets
+  `forbidden`.
+- The answer gains `asks_remote_urls` and `forbidden`; the caller runs
+  the read three ways (`remote_config` 576-600).
+- Fixture: trees crossed with the three contexts (plain, collecting,
+  with URLs), URLs matching and not, the remote defined before, after,
+  in an included file and in a file whose inclusion depends on it, a
+  `remote.url` with no name, `hasconfig` true, false and not known.
 
 ### Proposed split
 

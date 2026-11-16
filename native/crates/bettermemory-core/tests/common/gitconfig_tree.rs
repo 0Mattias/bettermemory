@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use bettermemory_core::fsdata::{Flavour, Fs};
 use bettermemory_core::gitconfig::paths::{self, Machine};
-use bettermemory_core::gitconfig::tree::{config_tree, include_target, Ask, Context, Unexpanded};
+use bettermemory_core::gitconfig::tree::{
+    config_tree, include_target, Ask, Branch, Context, Unexpanded, Values,
+};
 use serde_json::{json, Value};
 
 pub fn spelled(data: &[u8]) -> String {
@@ -56,7 +58,14 @@ pub fn tree_answer<F: Fs>(fs: &F, case: &Value, root: &str) -> Value {
     let ask = Ask {
         stamp_self: k["s"].as_bool().unwrap(),
         gentle: k["g"].as_bool().unwrap(),
+        git_dir: k.get("gd").and_then(Value::as_str).map(|g| under(root, g)),
+        cwd: root.as_bytes().to_vec(),
         context: k["c"].as_bool().unwrap().then(|| Context {
+            branch: match k.get("b") {
+                None => Branch::Unsettled,
+                Some(Value::Null) => Branch::Elsewhere,
+                Some(b) => Branch::Name(b.as_str().unwrap().as_bytes().to_vec()),
+            },
             prefix: k["p"].as_str().map(|p| {
                 if p == "%(prefix)" {
                     paths::AS_WRITTEN.to_vec()
@@ -79,8 +88,25 @@ pub fn tree_answer<F: Fs>(fs: &F, case: &Value, root: &str) -> Value {
         out.extend_from_slice(rest);
         out
     };
-    let values: Vec<Value> = read
-        .values
+    assert_eq!(read.raised, None, "no case raises");
+    let mut answer = json!({
+        "v": values(&read.values),
+        "c": read.complete,
+        "d": read.dies.as_deref().map(|d| text(&label(d))),
+        "fl": read.files.iter().map(|f| text(&label(f))).collect::<Vec<_>>(),
+        "np": read.not_ported.as_deref().map(spelled),
+    });
+    if !read.undecided.is_empty() {
+        answer["ud"] = json!(values(&read.undecided));
+    }
+    if let Some(md) = &read.maybe_dies {
+        answer["md"] = text(&label(md));
+    }
+    answer
+}
+
+fn values(names: &Values) -> Vec<Value> {
+    names
         .iter()
         .map(|(name, vals)| {
             json!([
@@ -92,14 +118,7 @@ pub fn tree_answer<F: Fs>(fs: &F, case: &Value, root: &str) -> Value {
                     .collect::<Vec<_>>()
             ])
         })
-        .collect();
-    json!({
-        "v": values,
-        "c": read.complete,
-        "d": read.dies.as_deref().map(|d| text(&label(d))),
-        "fl": read.files.iter().map(|f| text(&label(f))).collect::<Vec<_>>(),
-        "np": read.not_ported.as_deref().map(spelled),
-    })
+        .collect()
 }
 
 fn unspelled(text: &str) -> Vec<u8> {
