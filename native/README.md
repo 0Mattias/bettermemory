@@ -2466,7 +2466,7 @@ remotes (`gitconfig.py` at a983e3bb).
   at the open on Windows and at the fstat on POSIX; `_accessible` exists
   for the Windows path (343-351).
 
-## A git config tree with includes (piece 1 built)
+## A git config tree with includes (pieces 1 and 2 built)
 
 Design for porting `config_tree`, its includes and conditions, and
 `read_git_config` (`src/bettermemory/gitconfig.py` at 7855277e). Piece 1 of
@@ -2624,7 +2624,7 @@ legacy remotes, not this unit.
 `location_git.py` 381 and 888 stamp, but no value, refusal or flag depends
 on a stamp) and the format memo. The port leaves them out.
 
-### Findings from reading, for piece 2 (not yet reproduced)
+### Findings from reading, for piece 2 (now reproduced and pinned)
 
 - `_git_absolute` (616) uses `str.isalpha()`, which is true for non-ASCII
   letters, while git's `has_dos_drive_prefix` takes only ASCII letters:
@@ -2742,6 +2742,107 @@ when the stat tells; a file system that gives more than asked; one that
 errors on every call; NUL and non-UTF-8 paths in both flavours; 10,000
 `..` components; link loops; the Windows flavour's directory rules);
 `fsdata_stdfs.rs` (`StdFs` on every platform in a scratch directory).
+
+### Piece 2: built
+
+Plain includes and their bounds, at 6000b993 (line numbers unchanged from
+7855277e): `config_tree` 255-289, `_read_config` 358-386, `_parse_config`
+408-444, `_include` 463-525 for `include.path`, `_interpolate` 535-575
+(without `real_home`), `_user_home` 578-591, `_include_target` 594-609,
+`_git_absolute` 612-617, `_native` 654-668, `_home` 671-680.
+
+- `src/gitconfig/paths.rs`: `Machine { flavour, home, profile, user_home }`
+  (HOME as the environment holds it; Windows' `expanduser("~")` where HOME
+  is unset or empty; the `~user` lookup, never asked on Windows);
+  `git_absolute`, `native`, `home`, `user_home`, `interpolate` (`Err(())`
+  is `_Overflow`, `Ok(None)` cannot expand), `dirname` and `join` for both
+  flavours (`posixpath`, and `ntpath` as Python 3.13 has it, drive and UNC
+  roots; UNC unpinned, below), `code_points` (`os.fsdecode`'s surrogateescape) and
+  `repr_text` (`repr` of that `str`, through `pyvalue::repr_str`).
+- `src/gitconfig/tree.rs`: `config_tree(fs, machine, path, &Ask {
+  stamp_self, gentle, context: Option<Context { prefix }> }) ->
+  ConfigValues { values, complete, dies, files, not_ported }` and
+  `include_target(machine, value, including, prefix) -> Result<_,
+  Unexpanded>`. A context turns on the remote rules (`remote_rule`, as at
+  430-433) and supplies `%(prefix)`. `files` holds the paths the
+  reference stamps, in order; the stamps themselves are cache data and
+  are left out. `maybe_dies`, `undecided`, `asks_remote_urls` and
+  `forbidden` are piece 3's: nothing this piece reads sets them. An
+  `includeIf` stops the read as `not_ported` (its subsection named)
+  exactly where the reference acts on it (`tree::acts_on`, from
+  `_parse_config` 436-444 and `_condition` 1095-1110): at `path`, a
+  subsection starting, case-sensitively, `gitdir:`, `gitdir/i:`,
+  `onbranch:` or `hasconfig:remote.*.url:`; at another key, a
+  `hasconfig:remote.*.url:` one only where a context is given (without
+  one its evaluation does nothing). Any other condition (`foo:bar`, an
+  empty one, `Gitdir:x`, `gitdir :x`, `hasconfig:other:x`,
+  `hasconfig:remote.*.url` without its colon) is False: nothing is read
+  and the value is not looked at, a missing one included, as the
+  reference does. An `includeIf` with no subsection is a value like any
+  other.
+- No `realpath` and no current directory: `_include_target` joins the
+  including path as written (a relative one stays relative), and only the
+  `gitdir:` condition resolves links (piece 3). So nothing here depends on
+  `os.path.realpath`'s changes between 3.11 and 3.13.
+- `spaced` is applied with no git version: `_include` (493) makes any tab
+  or CR incomplete whatever the version.
+- What differs on Windows (none of it is pinned by a fixture; the tree
+  fixture is POSIX only and nothing here has run on a Windows machine):
+  - Values that are not plain UTF-8. The reference decodes a value with
+    UTF-8 and surrogatepass there, so an encoded surrogate (`ED A0 80`) is
+    one code point; native treats it as three bytes in `nt_splitroot` and
+    `code_points`, and `StdFs` refuses the path as `ValueError`, so native
+    dies (`git cannot read ... (ValueError)`) where the reference would
+    skip a missing file or read an existing one. A value like `\xff`
+    raises `UnicodeDecodeError` out of `config_tree` in the reference
+    (`_include_target` 603, nothing catches it); native answers `git
+    cannot read ... (ValueError)`. In these cases native only stops; it
+    never reads more.
+  - Hard-link cycles. `StdFs` identity there is the canonical path, so
+    each hard-link name is its own identity where the reference's file
+    index agrees. The cycle is caught later, on a revisited name or by
+    the depth check, so native can read up to that many more files first,
+    and one of them can change the outcome from `is included in itself`
+    to another refusal text or to `complete = false`. It stays bounded by
+    depth 10 and 64 files, and never goes on where the reference stops.
+    `MemFs`'s Windows flavour gives each hard-link name its own identity
+    to show it.
+  - The Windows path-rule cases are generated with the host's
+    pure-Python `ntpath` and POSIX `fsdecode` standing in; whether
+    CPython 3.13 on Windows gives the same `splitroot` (through
+    `nt._path_splitroot_ex`) on every shape has not been checked on a
+    Windows machine.
+- Where the reference and git differ (nothing to change in the port,
+  which matches the reference): a cycle by file identity dies where git
+  reads on. With `d/f0` holding `include.path = "../hl"` and `hl` a hard
+  link (or a symbolic link) to `d/f0`, the reference says the file is
+  included in itself; git 2.54 resolves `../hl` from `hl`'s own directory,
+  finds nothing and ends the chain. bettermemory declines and could miss
+  a remote git sees; it cannot see one git does not.
+- Findings, reproduced: `_git_absolute` (616) takes any Unicode letter
+  before the colon (`str.isalpha`): `é:x` and `α:\x` are absolute on
+  Windows here, not in git (pinned in the rules fixture); the refusal at
+  606 carries Python's `repr` of the decoded value (`'~\udcff/x'`,
+  quotes chosen as `repr` chooses; pinned in both fixtures). By reading
+  only: on Windows `os.fsdecode` of a value that is not UTF-8 raises
+  `UnicodeDecodeError` out of `config_tree` (nothing catches it); the
+  native read answers `git cannot read ... (ValueError)` there.
+
+Fixtures (`tests/contract/gen_gitconfig_tree.py`): `gitconfig_tree.jsonl`
+(POSIX only: 95 real trees, read by the reference with HOME, accounts and
+the prefix given, among them every unknown `includeIf` shape and each
+known prefix beside its near misses; 54,462 bytes) and `gitconfig_tree_rules.jsonl`
+(ungated: the rules of text alone for both flavours, the reference's own
+code run with its `os` standing in as each platform's; identical under
+3.11 and 3.13; 167 cases, 22,552 bytes; texts spelled as values are, so
+no host-like double backslash appears). UNC roots in `ntpath` are ported
+but not pinned: the golden files' host-fact guard refuses `\\\\` and
+`\\?\`, so a UNC case cannot be committed. Tests: `golden_gitconfig_tree.rs` (rules on
+every platform; trees in memory and on disk under `cfg(unix)`; a declined
+`includeIf` compared as declined), `gitconfig_tree_not_posix.rs` (class
+os), `gitconfig_tree_robustness.rs` (cycles, 10,000 includes opening 64
+files, depth, a 50 MB include, failing file systems, hostile values, hard
+links under both flavours).
 
 ### Proposed split
 

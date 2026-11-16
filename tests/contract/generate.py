@@ -39,6 +39,7 @@ from . import (
     gen_fold,
     gen_gitconfig,
     gen_gitconfig_file,
+    gen_gitconfig_tree,
     gen_gitconfig_remote_rules,
     gen_gitconfig_wildmatch,
     gen_githead,
@@ -116,6 +117,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "capture_vocabulary": gen_capture_vocabulary.generate,
     "capture_vocabulary_python": gen_capture_vocabulary.generate_python,
     "gitconfig_file": gen_gitconfig_file.generate,
+    "gitconfig_tree": gen_gitconfig_tree.generate,
+    "gitconfig_tree_rules": gen_gitconfig_tree.generate_rules,
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
     "gitfile_leaves": gen_gitfile_leaves.generate,
@@ -246,6 +249,7 @@ PLATFORM_GATED = frozenset(
 #: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
 #: otherwise (`gen_githead`); ``gitconfig_file`` reads links, FIFOs and
 #: mode-000 files and opens directories (`gen_gitconfig_file`);
+#: ``gitconfig_tree`` reads real trees with the host's ``os.path`` and ``pwd``;
 #: ``gitfile_leaves_posix`` reads links and mode-000 files
 #: (`gen_gitfile_leaves`).
 POSIX_ONLY = frozenset(
@@ -260,6 +264,7 @@ POSIX_ONLY = frozenset(
         "store_rows_written",
         "githead_posix",
         "gitconfig_file",
+        "gitconfig_tree",
         "gitfile_leaves_posix",
     }
 )

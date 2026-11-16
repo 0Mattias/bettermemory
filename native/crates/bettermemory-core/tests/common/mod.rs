@@ -6,6 +6,7 @@
 
 pub mod created;
 pub mod gitconfig_file;
+pub mod gitconfig_tree;
 pub mod githead;
 pub mod opened;
 pub mod parity;

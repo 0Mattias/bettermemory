@@ -375,9 +375,16 @@ impl MemFs {
         }
         if let Some(node) = self.nodes.get(key) {
             if let Node::Hard(to) = node {
+                // A directory, a missing node or another hard link reads
+                // as nothing there. Windows names a file by its canonical
+                // path (`StdFs`), so there each name is its own identity.
+                let identity = match self.flavour {
+                    Flavour::Posix => to.clone(),
+                    Flavour::Windows => key.to_vec(),
+                };
                 return match self.nodes.get(to) {
-                    Some(target) if !matches!(target, Node::Hard(_)) => {
-                        Some((to.clone(), target.clone()))
+                    Some(target) if !matches!(target, Node::Hard(_) | Node::Dir) => {
+                        Some((identity, target.clone()))
                     }
                     _ => None,
                 };
