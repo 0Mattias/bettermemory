@@ -159,9 +159,14 @@ fn left(c: &Path, id: &str) -> String {
     };
     let dir = names(c).replace("keys", "").trim().to_owned();
     let ring = names(&c.join("keys"));
+    // Read-write, creating nothing: a kill inside a transaction on a
+    // rollback-journal store leaves a hot journal, which the next
+    // connection that may write rolls back, and a read-only one cannot
+    // (SQLITE_READONLY_ROLLBACK; the macOS runner's kill landed there once,
+    // CI run on 908635ec).
     let conn = rusqlite::Connection::open_with_flags(
         c.join("memory.sqlite"),
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
     )
     .expect("open");
     let mode: String = conn
