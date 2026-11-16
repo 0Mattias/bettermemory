@@ -192,6 +192,8 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_real.json"
         | "store_real.sqlite" => &[Unicode, Platform],
         "models.jsonl" => &[Pydantic],
+        // The tokenizer's and the digest's fingerprints read `unicodedata`.
+        "store_create.json" => &[Unicode],
         "fold.jsonl" => &[Unicode, Pydantic],
         "models_rows.jsonl" => &[Python, Pydantic],
         "models_stores.jsonl" => &[Python, Sqlite, Pydantic],

@@ -61,6 +61,7 @@ use std::rc::Rc;
 use rusqlite::types::ValueRef;
 use rusqlite::Statement;
 
+use super::digest::{self, DIGEST_KINDS};
 use super::{sql_value, SqlValue, StoreError, StoreFile};
 use crate::datetime::DateTime;
 use crate::pyvalue::{PyError, PyValue};
@@ -77,14 +78,6 @@ pub const POOL_SIZE: usize = 200;
 
 /// `handlers.search.MAX_SEARCH_RESULTS`.
 pub const MAX_SEARCH_RESULTS: i64 = 50;
-
-/// `store_digest._KINDS`: the log kinds whose last row the digest follows.
-const DIGEST_KINDS: [&str; 4] = [
-    "memory_put",
-    "memory_delete",
-    "tombstone_put",
-    "tombstone_delete",
-];
 
 /// `store_digest.digest_admission_rows`' select, with the record's id.
 const DIGEST_ROWS: &str = "SELECT d.rid, d.scopes, h.project, d.client, d.model, d.dl, d.id \
@@ -491,8 +484,7 @@ impl<'s> PoolReader<'s> {
         let model = get("actor_model")?;
         let memory = rows::memory(&Row { columns: row }).ok()?;
         let body = memory.fields.body.clone();
-        let stream = lexicon::tokenize(&body);
-        let dl = lexicon::strip_stopwords(&lexicon::expand_kebab(&stream)).len();
+        let dl = digest::bm25_length(&body);
         Some(Some(RawInput {
             rid: to_value(rid),
             scopes: rusqlite::types::Value::Text(scopes.py_str()),

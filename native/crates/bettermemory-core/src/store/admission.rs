@@ -514,6 +514,7 @@ struct Reference {
     built: Built,
     shapes: BTreeMap<String, Shape>,
     optional: BTreeMap<String, Vec<String>>,
+    texts: Vec<String>,
 }
 
 /// A cell as `str()` would give it. Text that is not UTF-8 is an error,
@@ -702,6 +703,7 @@ fn reference() -> &'static Reference {
             built,
             shapes,
             optional,
+            texts,
         }
     })
 }
@@ -1311,6 +1313,14 @@ fn refuse_later(
         reader_above: reader_above.is_some(),
         newest,
     })
+}
+
+/// The reference's five schema texts, in `Store.create`'s order
+/// (`SCHEMA`, `MEMBERSHIP_SCHEMA`, `ADDITIVE_SCHEMA`,
+/// `PROPOSALS_INDEX_SCHEMA`, `SESSION_INDEX_SCHEMA`): what a native create
+/// runs.
+pub(crate) fn schema_texts() -> &'static [String] {
+    &reference().texts
 }
 
 /// The pinned copy of the reference's schema texts, for a test.

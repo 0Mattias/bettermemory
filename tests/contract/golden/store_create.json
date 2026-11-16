@@ -1,0 +1,2357 @@
+{
+ "created": {
+  "key_ring": [
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.head",
+    "text": "{\"seq\": 1, \"mac\": \"2db8854d2cacad8ebf062ffbb03f559107cb7d9bf7275b0932c0253e3abd3424\", \"ts\": \"2001-02-03T04:05:07Z\"}"
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.head.lock",
+    "size": 0
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.key",
+    "sha256": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.origin",
+    "text": "{\"seq\": 1, \"mac\": \"2db8854d2cacad8ebf062ffbb03f559107cb7d9bf7275b0932c0253e3abd3424\", \"key_fingerprint\": \"630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd\"}"
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.origin.lock",
+    "size": 0
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.path",
+    "text": "{\"path\": \"<scratch>/store/memory.sqlite\"}"
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.path.lock",
+    "size": 0
+   }
+  ],
+  "keys_dir_mode": "0700",
+  "pragmas": {
+   "application_id": 0,
+   "auto_vacuum": 0,
+   "encoding": "UTF-8",
+   "freelist_count": 0,
+   "journal_mode": "wal",
+   "page_size": 8192,
+   "schema_version": 63,
+   "user_version": 0
+  },
+  "sqlite_master": [
+   [
+    "index",
+    "checkout_views_by_path",
+    "checkout_views",
+    "CREATE INDEX checkout_views_by_path ON checkout_views(machine, path)"
+   ],
+   [
+    "index",
+    "checkouts_by_common",
+    "checkouts",
+    "CREATE INDEX checkouts_by_common\n    ON checkouts(machine, common_device, common_inode)"
+   ],
+   [
+    "index",
+    "checkouts_by_object",
+    "checkouts",
+    "CREATE INDEX checkouts_by_object\n    ON checkouts(machine, object_device, object_inode)"
+   ],
+   [
+    "index",
+    "checkouts_by_project",
+    "checkouts",
+    "CREATE INDEX checkouts_by_project ON checkouts(project)"
+   ],
+   [
+    "index",
+    "checkouts_by_token",
+    "checkouts",
+    "CREATE INDEX checkouts_by_token ON checkouts(token)"
+   ],
+   [
+    "index",
+    "digest_records_by_category",
+    "digest_records",
+    "CREATE INDEX digest_records_by_category\n    ON digest_records(removed, category)"
+   ],
+   [
+    "index",
+    "digest_records_by_id",
+    "digest_records",
+    "CREATE UNIQUE INDEX digest_records_by_id ON digest_records(removed, id)"
+   ],
+   [
+    "index",
+    "episodes_by_session",
+    "episodes",
+    "CREATE INDEX episodes_by_session ON episodes(session_id, created)"
+   ],
+   [
+    "index",
+    "homes_by_checkout",
+    "homes",
+    "CREATE INDEX homes_by_checkout ON homes(checkout)"
+   ],
+   [
+    "index",
+    "homes_by_project",
+    "homes",
+    "CREATE INDEX homes_by_project ON homes(project)"
+   ],
+   [
+    "index",
+    "log_by_kind",
+    "log",
+    "CREATE INDEX log_by_kind ON log(kind, seq)"
+   ],
+   [
+    "index",
+    "log_by_mac",
+    "log",
+    "CREATE INDEX log_by_mac ON log(mac)"
+   ],
+   [
+    "index",
+    "log_by_session",
+    "log",
+    "CREATE INDEX log_by_session ON log(session, seq)"
+   ],
+   [
+    "index",
+    "log_by_ts",
+    "log",
+    "CREATE INDEX log_by_ts ON log(ts)"
+   ],
+   [
+    "index",
+    "log_corroborations",
+    "log",
+    "CREATE INDEX log_corroborations ON log(session)\n    WHERE kind = 'memory_put'"
+   ],
+   [
+    "index",
+    "memories_by_updated",
+    "memories",
+    "CREATE INDEX memories_by_updated ON memories(updated DESC)"
+   ],
+   [
+    "index",
+    "memory_links_by_target",
+    "memory_links",
+    "CREATE INDEX memory_links_by_target ON memory_links(target_id)"
+   ],
+   [
+    "index",
+    "project_blobs_by_witness",
+    "project_blobs",
+    "CREATE INDEX project_blobs_by_witness ON project_blobs(project, witness)"
+   ],
+   [
+    "index",
+    "project_files_by_project",
+    "project_files",
+    "CREATE INDEX project_files_by_project ON project_files(project)"
+   ],
+   [
+    "index",
+    "project_remotes_by_key",
+    "project_remotes",
+    "CREATE INDEX project_remotes_by_key ON project_remotes(remote_key)"
+   ],
+   [
+    "index",
+    "project_witnesses_by_commit",
+    "project_witnesses",
+    "CREATE INDEX project_witnesses_by_commit ON project_witnesses(commit_id)"
+   ],
+   [
+    "index",
+    "project_witnesses_by_fingerprint",
+    "project_witnesses",
+    "CREATE INDEX project_witnesses_by_fingerprint\n    ON project_witnesses(fingerprint)"
+   ],
+   [
+    "index",
+    "projects_by_merged_into",
+    "projects",
+    "CREATE INDEX projects_by_merged_into ON projects(merged_into)"
+   ],
+   [
+    "index",
+    "proposals_by_checkout",
+    "proposals",
+    "CREATE INDEX proposals_by_checkout ON proposals(checkout, state)"
+   ],
+   [
+    "index",
+    "proposals_by_state",
+    "proposals",
+    "CREATE INDEX proposals_by_state ON proposals(state, kind)"
+   ],
+   [
+    "index",
+    "sqlite_autoindex_checkout_views_1",
+    "checkout_views",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_checkouts_1",
+    "checkouts",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_conflicts_1",
+    "conflicts",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_declared_remotes_1",
+    "declared_remotes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_episodes_1",
+    "episodes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_homes_1",
+    "homes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_imports_1",
+    "imports",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_machines_1",
+    "machines",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_memories_1",
+    "memories",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_memory_links_1",
+    "memory_links",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_meta_1",
+    "meta",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_native_membership_rows_1",
+    "native_membership_rows",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_blobs_1",
+    "project_blobs",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_files_1",
+    "project_files",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_remotes_1",
+    "project_remotes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_witnesses_1",
+    "project_witnesses",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_projects_1",
+    "projects",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_proposals_1",
+    "proposals",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_quarantine_1",
+    "quarantine",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_returned_1",
+    "returned",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_standing_1",
+    "standing",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_tombstones_1",
+    "tombstones",
+    null
+   ],
+   [
+    "index",
+    "tombstones_by_removed",
+    "tombstones",
+    "CREATE INDEX tombstones_by_removed ON tombstones(removed)"
+   ],
+   [
+    "index",
+    "verifications_by_memory_machine",
+    "verifications",
+    "CREATE UNIQUE INDEX verifications_by_memory_machine\n    ON verifications(memory_id, COALESCE(machine_id, ''))"
+   ],
+   [
+    "table",
+    "checkout_views",
+    "checkout_views",
+    "CREATE TABLE checkout_views (\n    checkout TEXT NOT NULL,\n    machine TEXT NOT NULL,\n    path TEXT NOT NULL,\n    first_seen TEXT NOT NULL,\n    last_seen TEXT NOT NULL,\n    seen_order INTEGER NOT NULL,\n    PRIMARY KEY (checkout, machine, path)\n)"
+   ],
+   [
+    "table",
+    "checkouts",
+    "checkouts",
+    "CREATE TABLE checkouts (\n    id TEXT PRIMARY KEY,\n    project TEXT NOT NULL,\n    machine TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    object_device TEXT,\n    object_inode TEXT,\n    object_birth TEXT,\n    common_device TEXT,\n    common_inode TEXT,\n    common_birth TEXT,\n    git_dir TEXT,\n    token TEXT,\n    token_status TEXT NOT NULL,\n    stamps_json TEXT NOT NULL DEFAULT '[]',\n    last_head TEXT,\n    branch TEXT,\n    remotes_json TEXT NOT NULL DEFAULT '[]',\n    manifest_json TEXT,\n    legacy INTEGER NOT NULL DEFAULT 0,\n    retired INTEGER NOT NULL DEFAULT 0,\n    registered TEXT NOT NULL,\n    unresolved_json TEXT\n)"
+   ],
+   [
+    "table",
+    "conflicts",
+    "conflicts",
+    "CREATE TABLE conflicts (\n    id TEXT PRIMARY KEY,\n    a_id TEXT NOT NULL,\n    b_id TEXT NOT NULL,\n    summary_a TEXT NOT NULL,\n    summary_b TEXT NOT NULL,\n    similarity REAL NOT NULL,\n    method TEXT NOT NULL,\n    detector TEXT NOT NULL,\n    created TEXT NOT NULL,\n    status TEXT NOT NULL,\n    verdict_ts TEXT,\n    note TEXT,\n    verdict_hash_a TEXT,\n    verdict_hash_b TEXT\n)"
+   ],
+   [
+    "table",
+    "declared_remotes",
+    "declared_remotes",
+    "CREATE TABLE declared_remotes (\n    remote_key TEXT PRIMARY KEY,\n    project TEXT NOT NULL,\n    principal TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "digest_records",
+    "digest_records",
+    "CREATE TABLE digest_records (\n    doc INTEGER PRIMARY KEY,\n    removed INTEGER NOT NULL DEFAULT 0,\n    id TEXT NOT NULL DEFAULT '',\n    rid INTEGER NOT NULL DEFAULT 0,\n    n INTEGER NOT NULL DEFAULT 0,\n    claim INTEGER NOT NULL DEFAULT 0,\n    stamped INTEGER NOT NULL DEFAULT 0,\n    dl INTEGER NOT NULL DEFAULT 0,\n    client TEXT,\n    model TEXT,\n    category TEXT,\n    sha TEXT NOT NULL DEFAULT '',\n    scopes TEXT NOT NULL DEFAULT '[]',\n    cwd TEXT NOT NULL DEFAULT '',\n    tokens TEXT NOT NULL DEFAULT ''\n)"
+   ],
+   [
+    "table",
+    "digest_state",
+    "digest_state",
+    "CREATE TABLE digest_state (\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL DEFAULT ''\n) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "digest_tokens",
+    "digest_tokens",
+    "CREATE TABLE digest_tokens (\n    token TEXT NOT NULL DEFAULT '',\n    doc INTEGER NOT NULL DEFAULT 0,\n    PRIMARY KEY (token, doc)\n) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "episodes",
+    "episodes",
+    "CREATE TABLE episodes (\n    id TEXT PRIMARY KEY,\n    session_id TEXT NOT NULL,\n    created TEXT NOT NULL,\n    body TEXT NOT NULL,\n    scopes_json TEXT NOT NULL DEFAULT '[]',\n    takeaway TEXT,\n    origin_json TEXT,\n    is_floor INTEGER NOT NULL DEFAULT 0,\n    swarm_id TEXT,\n    log_mac TEXT\n)"
+   ],
+   [
+    "table",
+    "homes",
+    "homes",
+    "CREATE TABLE homes (\n    record_id TEXT PRIMARY KEY,\n    kind TEXT NOT NULL,\n    project TEXT NOT NULL,\n    checkout TEXT,\n    rule TEXT NOT NULL,\n    decided TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "imports",
+    "imports",
+    "CREATE TABLE imports (\n    source TEXT PRIMARY KEY,\n    content_hash TEXT NOT NULL,\n    imported_at TEXT NOT NULL,\n    memory_id TEXT\n)"
+   ],
+   [
+    "table",
+    "log",
+    "log",
+    "CREATE TABLE log (\n    seq INTEGER PRIMARY KEY,\n    ts TEXT NOT NULL,\n    session TEXT,\n    kind TEXT NOT NULL,\n    payload TEXT NOT NULL,\n    prev_mac TEXT NOT NULL,\n    mac TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "machines",
+    "machines",
+    "CREATE TABLE machines (\n    id TEXT PRIMARY KEY,\n    facts_json TEXT NOT NULL DEFAULT '{}',\n    predecessor TEXT,\n    minted TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "memories",
+    "memories",
+    "CREATE TABLE memories (\n    rowid INTEGER PRIMARY KEY,\n    id TEXT NOT NULL UNIQUE,\n    created TEXT NOT NULL,\n    updated TEXT NOT NULL,\n    last_verified_at TEXT,\n    confidence TEXT NOT NULL,\n    category TEXT,\n    body TEXT NOT NULL,\n    body_fts TEXT NOT NULL DEFAULT '',\n    scopes_text TEXT NOT NULL,\n    scopes_fts TEXT NOT NULL DEFAULT '',\n    scopes_json TEXT NOT NULL,\n    filename TEXT,\n    origin_repo TEXT,\n    origin_worktree TEXT,\n    provenance TEXT NOT NULL,\n    verified_head TEXT,\n    actor_client TEXT,\n    actor_model TEXT,\n    source TEXT NOT NULL,\n    origin_json TEXT,\n    actor_json TEXT,\n    verified_paths_json TEXT NOT NULL DEFAULT '[]',\n    verified_commits_json TEXT NOT NULL DEFAULT '[]',\n    verified_versions_json TEXT NOT NULL DEFAULT '[]',\n    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]',\n    claims_json TEXT NOT NULL DEFAULT '[]',\n    links_json TEXT NOT NULL DEFAULT '[]',\n    corroborations INTEGER NOT NULL DEFAULT 0,\n    last_corroborated TEXT,\n    log_mac TEXT\n)"
+   ],
+   [
+    "table",
+    "memories_fts",
+    "memories_fts",
+    "CREATE VIRTUAL TABLE memories_fts USING fts5(\n    body_fts, scopes_fts,\n    content='memories', content_rowid='rowid',\n    tokenize='unicode61'\n)"
+   ],
+   [
+    "table",
+    "memories_fts_config",
+    "memories_fts_config",
+    "CREATE TABLE 'memories_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "memories_fts_data",
+    "memories_fts_data",
+    "CREATE TABLE 'memories_fts_data'(id INTEGER PRIMARY KEY, block BLOB)"
+   ],
+   [
+    "table",
+    "memories_fts_docsize",
+    "memories_fts_docsize",
+    "CREATE TABLE 'memories_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)"
+   ],
+   [
+    "table",
+    "memories_fts_idx",
+    "memories_fts_idx",
+    "CREATE TABLE 'memories_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "memory_links",
+    "memory_links",
+    "CREATE TABLE memory_links (\n    source_id TEXT NOT NULL,\n    type TEXT NOT NULL,\n    target_id TEXT NOT NULL,\n    note TEXT,\n    PRIMARY KEY (source_id, type, target_id, note)\n)"
+   ],
+   [
+    "table",
+    "meta",
+    "meta",
+    "CREATE TABLE meta (\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "native_membership_rows",
+    "native_membership_rows",
+    "CREATE TABLE native_membership_rows (\n    member_kind TEXT NOT NULL,\n    key_text TEXT NOT NULL,\n    row_text TEXT NOT NULL,\n    PRIMARY KEY (member_kind, key_text)\n)"
+   ],
+   [
+    "table",
+    "project_blobs",
+    "project_blobs",
+    "CREATE TABLE project_blobs (\n    project TEXT NOT NULL,\n    blob TEXT NOT NULL,\n    witness TEXT NOT NULL,\n    PRIMARY KEY (project, blob)\n)"
+   ],
+   [
+    "table",
+    "project_files",
+    "project_files",
+    "CREATE TABLE project_files (\n    file_id TEXT PRIMARY KEY,\n    project TEXT NOT NULL,\n    evidence TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "project_remotes",
+    "project_remotes",
+    "CREATE TABLE project_remotes (\n    project TEXT NOT NULL,\n    remote_key TEXT NOT NULL,\n    PRIMARY KEY (project, remote_key)\n)"
+   ],
+   [
+    "table",
+    "project_witnesses",
+    "project_witnesses",
+    "CREATE TABLE project_witnesses (\n    project TEXT NOT NULL,\n    commit_id TEXT NOT NULL,\n    arrival INTEGER NOT NULL,\n    source TEXT NOT NULL,\n    fingerprint TEXT,\n    PRIMARY KEY (project, commit_id)\n)"
+   ],
+   [
+    "table",
+    "projects",
+    "projects",
+    "CREATE TABLE projects (\n    id TEXT PRIMARY KEY,\n    name TEXT NOT NULL,\n    merged_into TEXT,\n    provisional TEXT,\n    parent TEXT,\n    tenant TEXT,\n    folder INTEGER NOT NULL DEFAULT 0,\n    boundary INTEGER NOT NULL DEFAULT 0,\n    minted TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "proposals",
+    "proposals",
+    "CREATE TABLE proposals (\n    id TEXT PRIMARY KEY,\n    checkout TEXT,\n    kind TEXT NOT NULL,\n    candidates_json TEXT NOT NULL DEFAULT '[]',\n    evidence_json TEXT NOT NULL DEFAULT '{}',\n    reason TEXT NOT NULL,\n    line TEXT NOT NULL,\n    state TEXT NOT NULL,\n    answer TEXT,\n    answered_by TEXT,\n    signature_json TEXT,\n    opened TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "quarantine",
+    "quarantine",
+    "CREATE TABLE quarantine (\n    name TEXT PRIMARY KEY,\n    reason TEXT NOT NULL,\n    detail TEXT,\n    remote TEXT,\n    at TEXT NOT NULL,\n    size INTEGER,\n    sha256 TEXT\n)"
+   ],
+   [
+    "table",
+    "returned",
+    "returned",
+    "CREATE TABLE returned (\n    record_id TEXT PRIMARY KEY,\n    via TEXT NOT NULL,\n    returned TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "standing",
+    "standing",
+    "CREATE TABLE standing (\n    record_id TEXT PRIMARY KEY,\n    probability REAL NOT NULL,\n    body_sha256 TEXT NOT NULL,\n    source TEXT NOT NULL,\n    answered_by TEXT NOT NULL,\n    answered TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "tombstones",
+    "tombstones",
+    "CREATE TABLE tombstones (\n    id TEXT PRIMARY KEY,\n    created TEXT NOT NULL,\n    updated TEXT NOT NULL,\n    last_verified_at TEXT,\n    confidence TEXT NOT NULL,\n    category TEXT,\n    body TEXT NOT NULL,\n    scopes_json TEXT NOT NULL,\n    filename TEXT,\n    origin_repo TEXT,\n    origin_worktree TEXT,\n    provenance TEXT NOT NULL,\n    verified_head TEXT,\n    actor_client TEXT,\n    actor_model TEXT,\n    source TEXT NOT NULL,\n    origin_json TEXT,\n    actor_json TEXT,\n    verified_paths_json TEXT NOT NULL DEFAULT '[]',\n    verified_commits_json TEXT NOT NULL DEFAULT '[]',\n    verified_versions_json TEXT NOT NULL DEFAULT '[]',\n    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]',\n    claims_json TEXT NOT NULL DEFAULT '[]',\n    links_json TEXT NOT NULL DEFAULT '[]',\n    corroborations INTEGER NOT NULL DEFAULT 0,\n    last_corroborated TEXT,\n    removed TEXT NOT NULL,\n    removed_reason TEXT NOT NULL,\n    removed_session TEXT,\n    log_mac TEXT\n)"
+   ],
+   [
+    "table",
+    "verifications",
+    "verifications",
+    "CREATE TABLE verifications (\n    memory_id TEXT NOT NULL,\n    machine_id TEXT,\n    verified_at TEXT NOT NULL,\n    verified_head TEXT,\n    verified_paths_json TEXT NOT NULL DEFAULT '[]',\n    verified_commits_json TEXT NOT NULL DEFAULT '[]',\n    verified_versions_json TEXT NOT NULL DEFAULT '[]',\n    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]'\n)"
+   ],
+   [
+    "trigger",
+    "memories_ad",
+    "memories",
+    "CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN\n    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)\n    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);\nEND"
+   ],
+   [
+    "trigger",
+    "memories_ai",
+    "memories",
+    "CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN\n    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)\n    VALUES (new.rowid, new.body_fts, new.scopes_fts);\nEND"
+   ],
+   [
+    "trigger",
+    "memories_au",
+    "memories",
+    "CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN\n    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)\n    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);\n    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)\n    VALUES (new.rowid, new.body_fts, new.scopes_fts);\nEND"
+   ],
+   [
+    "trigger",
+    "memory_links_cleanup",
+    "memories",
+    "CREATE TRIGGER memory_links_cleanup AFTER DELETE ON memories BEGIN\n    DELETE FROM memory_links\n    WHERE source_id = old.id OR target_id = old.id;\nEND"
+   ]
+  ],
+  "store_dir": [
+   {
+    "mode": "0600",
+    "name": "memory.sqlite"
+   }
+  ],
+  "store_dir_mode": "0700",
+  "tables": {
+   "checkout_views": {
+    "columns": [
+     "rowid",
+     "checkout",
+     "machine",
+     "path",
+     "first_seen",
+     "last_seen",
+     "seen_order"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "checkouts": {
+    "columns": [
+     "rowid",
+     "id",
+     "project",
+     "machine",
+     "kind",
+     "object_device",
+     "object_inode",
+     "object_birth",
+     "common_device",
+     "common_inode",
+     "common_birth",
+     "git_dir",
+     "token",
+     "token_status",
+     "stamps_json",
+     "last_head",
+     "branch",
+     "remotes_json",
+     "manifest_json",
+     "legacy",
+     "retired",
+     "registered",
+     "unresolved_json"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "conflicts": {
+    "columns": [
+     "rowid",
+     "id",
+     "a_id",
+     "b_id",
+     "summary_a",
+     "summary_b",
+     "similarity",
+     "method",
+     "detector",
+     "created",
+     "status",
+     "verdict_ts",
+     "note",
+     "verdict_hash_a",
+     "verdict_hash_b"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "declared_remotes": {
+    "columns": [
+     "rowid",
+     "remote_key",
+     "project",
+     "principal"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "digest_records": {
+    "columns": [
+     "doc",
+     "doc",
+     "removed",
+     "id",
+     "rid",
+     "n",
+     "claim",
+     "stamped",
+     "dl",
+     "client",
+     "model",
+     "category",
+     "sha",
+     "scopes",
+     "cwd",
+     "tokens"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "digest_state": {
+    "columns": [
+     "key",
+     "value"
+    ],
+    "rowid": false,
+    "rows": [
+     [
+      "fingerprint",
+      "59e8e47cd83bbb95543f0def4de2f4eee3f2c4abaa5cabe2c93b68c5b747687f"
+     ],
+     [
+      "mac",
+      ""
+     ],
+     [
+      "seq",
+      "0"
+     ]
+    ]
+   },
+   "digest_tokens": {
+    "columns": [
+     "token",
+     "doc"
+    ],
+    "rowid": false,
+    "rows": []
+   },
+   "episodes": {
+    "columns": [
+     "rowid",
+     "id",
+     "session_id",
+     "created",
+     "body",
+     "scopes_json",
+     "takeaway",
+     "origin_json",
+     "is_floor",
+     "swarm_id",
+     "log_mac"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "homes": {
+    "columns": [
+     "rowid",
+     "record_id",
+     "kind",
+     "project",
+     "checkout",
+     "rule",
+     "decided"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "imports": {
+    "columns": [
+     "rowid",
+     "source",
+     "content_hash",
+     "imported_at",
+     "memory_id"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "log": {
+    "columns": [
+     "seq",
+     "seq",
+     "ts",
+     "session",
+     "kind",
+     "payload",
+     "prev_mac",
+     "mac"
+    ],
+    "rowid": true,
+    "rows": [
+     [
+      1,
+      1,
+      "2001-02-03T04:05:06.234567Z",
+      null,
+      "store_created",
+      "{\"created\":\"2001-02-03T04:05:06.123456Z\",\"engine_version\":\"0.0.0+fixture\",\"schema_version\":1,\"store_id\":\"0123456789abcdef0123456789abcdef\",\"tokenizer_fingerprint\":\"972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd\"}",
+      "0000000000000000000000000000000000000000000000000000000000000000",
+      "2db8854d2cacad8ebf062ffbb03f559107cb7d9bf7275b0932c0253e3abd3424"
+     ]
+    ]
+   },
+   "machines": {
+    "columns": [
+     "rowid",
+     "id",
+     "facts_json",
+     "predecessor",
+     "minted"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "memories": {
+    "columns": [
+     "rowid",
+     "rowid",
+     "id",
+     "created",
+     "updated",
+     "last_verified_at",
+     "confidence",
+     "category",
+     "body",
+     "body_fts",
+     "scopes_text",
+     "scopes_fts",
+     "scopes_json",
+     "filename",
+     "origin_repo",
+     "origin_worktree",
+     "provenance",
+     "verified_head",
+     "actor_client",
+     "actor_model",
+     "source",
+     "origin_json",
+     "actor_json",
+     "verified_paths_json",
+     "verified_commits_json",
+     "verified_versions_json",
+     "verified_absent_paths_json",
+     "claims_json",
+     "links_json",
+     "corroborations",
+     "last_corroborated",
+     "log_mac"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "memories_fts": {
+    "columns": [
+     "rowid",
+     "body_fts",
+     "scopes_fts"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "memories_fts_config": {
+    "columns": [
+     "k",
+     "v"
+    ],
+    "rowid": false,
+    "rows": [
+     [
+      "version",
+      4
+     ]
+    ]
+   },
+   "memories_fts_data": {
+    "columns": [
+     "id",
+     "id",
+     "block"
+    ],
+    "rowid": true,
+    "rows": [
+     [
+      1,
+      1,
+      {
+       "blob": ""
+      }
+     ],
+     [
+      10,
+      10,
+      {
+       "blob": "00000000000000"
+      }
+     ]
+    ]
+   },
+   "memories_fts_docsize": {
+    "columns": [
+     "id",
+     "id",
+     "sz"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "memories_fts_idx": {
+    "columns": [
+     "segid",
+     "term",
+     "pgno"
+    ],
+    "rowid": false,
+    "rows": []
+   },
+   "memory_links": {
+    "columns": [
+     "rowid",
+     "source_id",
+     "type",
+     "target_id",
+     "note"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "meta": {
+    "columns": [
+     "rowid",
+     "key",
+     "value"
+    ],
+    "rowid": true,
+    "rows": [
+     [
+      1,
+      "store_id",
+      "0123456789abcdef0123456789abcdef"
+     ],
+     [
+      2,
+      "schema_version",
+      "1"
+     ],
+     [
+      3,
+      "schema_revision",
+      "6"
+     ],
+     [
+      4,
+      "min_reader_revision",
+      "1"
+     ],
+     [
+      5,
+      "min_writer_revision",
+      "5"
+     ],
+     [
+      6,
+      "tokenizer_fingerprint",
+      "972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd"
+     ],
+     [
+      7,
+      "engine_version",
+      "0.0.0+fixture"
+     ],
+     [
+      8,
+      "key_fingerprint",
+      "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+     ],
+     [
+      9,
+      "created",
+      "2001-02-03T04:05:06.123456Z"
+     ],
+     [
+      10,
+      "membership_store_id",
+      "fedcba9876543210fedcba9876543210"
+     ]
+    ]
+   },
+   "native_membership_rows": {
+    "columns": [
+     "rowid",
+     "member_kind",
+     "key_text",
+     "row_text"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "project_blobs": {
+    "columns": [
+     "rowid",
+     "project",
+     "blob",
+     "witness"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "project_files": {
+    "columns": [
+     "rowid",
+     "file_id",
+     "project",
+     "evidence"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "project_remotes": {
+    "columns": [
+     "rowid",
+     "project",
+     "remote_key"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "project_witnesses": {
+    "columns": [
+     "rowid",
+     "project",
+     "commit_id",
+     "arrival",
+     "source",
+     "fingerprint"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "projects": {
+    "columns": [
+     "rowid",
+     "id",
+     "name",
+     "merged_into",
+     "provisional",
+     "parent",
+     "tenant",
+     "folder",
+     "boundary",
+     "minted"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "proposals": {
+    "columns": [
+     "rowid",
+     "id",
+     "checkout",
+     "kind",
+     "candidates_json",
+     "evidence_json",
+     "reason",
+     "line",
+     "state",
+     "answer",
+     "answered_by",
+     "signature_json",
+     "opened"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "quarantine": {
+    "columns": [
+     "rowid",
+     "name",
+     "reason",
+     "detail",
+     "remote",
+     "at",
+     "size",
+     "sha256"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "returned": {
+    "columns": [
+     "rowid",
+     "record_id",
+     "via",
+     "returned"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "standing": {
+    "columns": [
+     "rowid",
+     "record_id",
+     "probability",
+     "body_sha256",
+     "source",
+     "answered_by",
+     "answered"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "tombstones": {
+    "columns": [
+     "rowid",
+     "id",
+     "created",
+     "updated",
+     "last_verified_at",
+     "confidence",
+     "category",
+     "body",
+     "scopes_json",
+     "filename",
+     "origin_repo",
+     "origin_worktree",
+     "provenance",
+     "verified_head",
+     "actor_client",
+     "actor_model",
+     "source",
+     "origin_json",
+     "actor_json",
+     "verified_paths_json",
+     "verified_commits_json",
+     "verified_versions_json",
+     "verified_absent_paths_json",
+     "claims_json",
+     "links_json",
+     "corroborations",
+     "last_corroborated",
+     "removed",
+     "removed_reason",
+     "removed_session",
+     "log_mac"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "verifications": {
+    "columns": [
+     "rowid",
+     "memory_id",
+     "machine_id",
+     "verified_at",
+     "verified_head",
+     "verified_paths_json",
+     "verified_commits_json",
+     "verified_versions_json",
+     "verified_absent_paths_json"
+    ],
+    "rowid": true,
+    "rows": []
+   }
+  }
+ },
+ "created_after_orphans": {
+  "key_ring": [
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.head",
+    "text": "{\"seq\": 1, \"mac\": \"2db8854d2cacad8ebf062ffbb03f559107cb7d9bf7275b0932c0253e3abd3424\", \"ts\": \"2001-02-03T04:05:07Z\"}"
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.head.lock",
+    "size": 0
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.key",
+    "sha256": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.origin",
+    "text": "{\"seq\": 1, \"mac\": \"2db8854d2cacad8ebf062ffbb03f559107cb7d9bf7275b0932c0253e3abd3424\", \"key_fingerprint\": \"630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd\"}"
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.origin.lock",
+    "size": 0
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.path",
+    "text": "{\"path\": \"<scratch>/store/memory.sqlite\"}"
+   },
+   {
+    "mode": "0600",
+    "name": "0123456789abcdef0123456789abcdef.path.lock",
+    "size": 0
+   }
+  ],
+  "keys_dir_mode": "0700",
+  "pragmas": {
+   "application_id": 0,
+   "auto_vacuum": 0,
+   "encoding": "UTF-8",
+   "freelist_count": 0,
+   "journal_mode": "wal",
+   "page_size": 8192,
+   "schema_version": 63,
+   "user_version": 0
+  },
+  "sqlite_master": [
+   [
+    "index",
+    "checkout_views_by_path",
+    "checkout_views",
+    "CREATE INDEX checkout_views_by_path ON checkout_views(machine, path)"
+   ],
+   [
+    "index",
+    "checkouts_by_common",
+    "checkouts",
+    "CREATE INDEX checkouts_by_common\n    ON checkouts(machine, common_device, common_inode)"
+   ],
+   [
+    "index",
+    "checkouts_by_object",
+    "checkouts",
+    "CREATE INDEX checkouts_by_object\n    ON checkouts(machine, object_device, object_inode)"
+   ],
+   [
+    "index",
+    "checkouts_by_project",
+    "checkouts",
+    "CREATE INDEX checkouts_by_project ON checkouts(project)"
+   ],
+   [
+    "index",
+    "checkouts_by_token",
+    "checkouts",
+    "CREATE INDEX checkouts_by_token ON checkouts(token)"
+   ],
+   [
+    "index",
+    "digest_records_by_category",
+    "digest_records",
+    "CREATE INDEX digest_records_by_category\n    ON digest_records(removed, category)"
+   ],
+   [
+    "index",
+    "digest_records_by_id",
+    "digest_records",
+    "CREATE UNIQUE INDEX digest_records_by_id ON digest_records(removed, id)"
+   ],
+   [
+    "index",
+    "episodes_by_session",
+    "episodes",
+    "CREATE INDEX episodes_by_session ON episodes(session_id, created)"
+   ],
+   [
+    "index",
+    "homes_by_checkout",
+    "homes",
+    "CREATE INDEX homes_by_checkout ON homes(checkout)"
+   ],
+   [
+    "index",
+    "homes_by_project",
+    "homes",
+    "CREATE INDEX homes_by_project ON homes(project)"
+   ],
+   [
+    "index",
+    "log_by_kind",
+    "log",
+    "CREATE INDEX log_by_kind ON log(kind, seq)"
+   ],
+   [
+    "index",
+    "log_by_mac",
+    "log",
+    "CREATE INDEX log_by_mac ON log(mac)"
+   ],
+   [
+    "index",
+    "log_by_session",
+    "log",
+    "CREATE INDEX log_by_session ON log(session, seq)"
+   ],
+   [
+    "index",
+    "log_by_ts",
+    "log",
+    "CREATE INDEX log_by_ts ON log(ts)"
+   ],
+   [
+    "index",
+    "log_corroborations",
+    "log",
+    "CREATE INDEX log_corroborations ON log(session)\n    WHERE kind = 'memory_put'"
+   ],
+   [
+    "index",
+    "memories_by_updated",
+    "memories",
+    "CREATE INDEX memories_by_updated ON memories(updated DESC)"
+   ],
+   [
+    "index",
+    "memory_links_by_target",
+    "memory_links",
+    "CREATE INDEX memory_links_by_target ON memory_links(target_id)"
+   ],
+   [
+    "index",
+    "project_blobs_by_witness",
+    "project_blobs",
+    "CREATE INDEX project_blobs_by_witness ON project_blobs(project, witness)"
+   ],
+   [
+    "index",
+    "project_files_by_project",
+    "project_files",
+    "CREATE INDEX project_files_by_project ON project_files(project)"
+   ],
+   [
+    "index",
+    "project_remotes_by_key",
+    "project_remotes",
+    "CREATE INDEX project_remotes_by_key ON project_remotes(remote_key)"
+   ],
+   [
+    "index",
+    "project_witnesses_by_commit",
+    "project_witnesses",
+    "CREATE INDEX project_witnesses_by_commit ON project_witnesses(commit_id)"
+   ],
+   [
+    "index",
+    "project_witnesses_by_fingerprint",
+    "project_witnesses",
+    "CREATE INDEX project_witnesses_by_fingerprint\n    ON project_witnesses(fingerprint)"
+   ],
+   [
+    "index",
+    "projects_by_merged_into",
+    "projects",
+    "CREATE INDEX projects_by_merged_into ON projects(merged_into)"
+   ],
+   [
+    "index",
+    "proposals_by_checkout",
+    "proposals",
+    "CREATE INDEX proposals_by_checkout ON proposals(checkout, state)"
+   ],
+   [
+    "index",
+    "proposals_by_state",
+    "proposals",
+    "CREATE INDEX proposals_by_state ON proposals(state, kind)"
+   ],
+   [
+    "index",
+    "sqlite_autoindex_checkout_views_1",
+    "checkout_views",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_checkouts_1",
+    "checkouts",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_conflicts_1",
+    "conflicts",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_declared_remotes_1",
+    "declared_remotes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_episodes_1",
+    "episodes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_homes_1",
+    "homes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_imports_1",
+    "imports",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_machines_1",
+    "machines",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_memories_1",
+    "memories",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_memory_links_1",
+    "memory_links",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_meta_1",
+    "meta",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_native_membership_rows_1",
+    "native_membership_rows",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_blobs_1",
+    "project_blobs",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_files_1",
+    "project_files",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_remotes_1",
+    "project_remotes",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_project_witnesses_1",
+    "project_witnesses",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_projects_1",
+    "projects",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_proposals_1",
+    "proposals",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_quarantine_1",
+    "quarantine",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_returned_1",
+    "returned",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_standing_1",
+    "standing",
+    null
+   ],
+   [
+    "index",
+    "sqlite_autoindex_tombstones_1",
+    "tombstones",
+    null
+   ],
+   [
+    "index",
+    "tombstones_by_removed",
+    "tombstones",
+    "CREATE INDEX tombstones_by_removed ON tombstones(removed)"
+   ],
+   [
+    "index",
+    "verifications_by_memory_machine",
+    "verifications",
+    "CREATE UNIQUE INDEX verifications_by_memory_machine\n    ON verifications(memory_id, COALESCE(machine_id, ''))"
+   ],
+   [
+    "table",
+    "checkout_views",
+    "checkout_views",
+    "CREATE TABLE checkout_views (\n    checkout TEXT NOT NULL,\n    machine TEXT NOT NULL,\n    path TEXT NOT NULL,\n    first_seen TEXT NOT NULL,\n    last_seen TEXT NOT NULL,\n    seen_order INTEGER NOT NULL,\n    PRIMARY KEY (checkout, machine, path)\n)"
+   ],
+   [
+    "table",
+    "checkouts",
+    "checkouts",
+    "CREATE TABLE checkouts (\n    id TEXT PRIMARY KEY,\n    project TEXT NOT NULL,\n    machine TEXT NOT NULL,\n    kind TEXT NOT NULL,\n    object_device TEXT,\n    object_inode TEXT,\n    object_birth TEXT,\n    common_device TEXT,\n    common_inode TEXT,\n    common_birth TEXT,\n    git_dir TEXT,\n    token TEXT,\n    token_status TEXT NOT NULL,\n    stamps_json TEXT NOT NULL DEFAULT '[]',\n    last_head TEXT,\n    branch TEXT,\n    remotes_json TEXT NOT NULL DEFAULT '[]',\n    manifest_json TEXT,\n    legacy INTEGER NOT NULL DEFAULT 0,\n    retired INTEGER NOT NULL DEFAULT 0,\n    registered TEXT NOT NULL,\n    unresolved_json TEXT\n)"
+   ],
+   [
+    "table",
+    "conflicts",
+    "conflicts",
+    "CREATE TABLE conflicts (\n    id TEXT PRIMARY KEY,\n    a_id TEXT NOT NULL,\n    b_id TEXT NOT NULL,\n    summary_a TEXT NOT NULL,\n    summary_b TEXT NOT NULL,\n    similarity REAL NOT NULL,\n    method TEXT NOT NULL,\n    detector TEXT NOT NULL,\n    created TEXT NOT NULL,\n    status TEXT NOT NULL,\n    verdict_ts TEXT,\n    note TEXT,\n    verdict_hash_a TEXT,\n    verdict_hash_b TEXT\n)"
+   ],
+   [
+    "table",
+    "declared_remotes",
+    "declared_remotes",
+    "CREATE TABLE declared_remotes (\n    remote_key TEXT PRIMARY KEY,\n    project TEXT NOT NULL,\n    principal TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "digest_records",
+    "digest_records",
+    "CREATE TABLE digest_records (\n    doc INTEGER PRIMARY KEY,\n    removed INTEGER NOT NULL DEFAULT 0,\n    id TEXT NOT NULL DEFAULT '',\n    rid INTEGER NOT NULL DEFAULT 0,\n    n INTEGER NOT NULL DEFAULT 0,\n    claim INTEGER NOT NULL DEFAULT 0,\n    stamped INTEGER NOT NULL DEFAULT 0,\n    dl INTEGER NOT NULL DEFAULT 0,\n    client TEXT,\n    model TEXT,\n    category TEXT,\n    sha TEXT NOT NULL DEFAULT '',\n    scopes TEXT NOT NULL DEFAULT '[]',\n    cwd TEXT NOT NULL DEFAULT '',\n    tokens TEXT NOT NULL DEFAULT ''\n)"
+   ],
+   [
+    "table",
+    "digest_state",
+    "digest_state",
+    "CREATE TABLE digest_state (\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL DEFAULT ''\n) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "digest_tokens",
+    "digest_tokens",
+    "CREATE TABLE digest_tokens (\n    token TEXT NOT NULL DEFAULT '',\n    doc INTEGER NOT NULL DEFAULT 0,\n    PRIMARY KEY (token, doc)\n) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "episodes",
+    "episodes",
+    "CREATE TABLE episodes (\n    id TEXT PRIMARY KEY,\n    session_id TEXT NOT NULL,\n    created TEXT NOT NULL,\n    body TEXT NOT NULL,\n    scopes_json TEXT NOT NULL DEFAULT '[]',\n    takeaway TEXT,\n    origin_json TEXT,\n    is_floor INTEGER NOT NULL DEFAULT 0,\n    swarm_id TEXT,\n    log_mac TEXT\n)"
+   ],
+   [
+    "table",
+    "homes",
+    "homes",
+    "CREATE TABLE homes (\n    record_id TEXT PRIMARY KEY,\n    kind TEXT NOT NULL,\n    project TEXT NOT NULL,\n    checkout TEXT,\n    rule TEXT NOT NULL,\n    decided TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "imports",
+    "imports",
+    "CREATE TABLE imports (\n    source TEXT PRIMARY KEY,\n    content_hash TEXT NOT NULL,\n    imported_at TEXT NOT NULL,\n    memory_id TEXT\n)"
+   ],
+   [
+    "table",
+    "log",
+    "log",
+    "CREATE TABLE log (\n    seq INTEGER PRIMARY KEY,\n    ts TEXT NOT NULL,\n    session TEXT,\n    kind TEXT NOT NULL,\n    payload TEXT NOT NULL,\n    prev_mac TEXT NOT NULL,\n    mac TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "machines",
+    "machines",
+    "CREATE TABLE machines (\n    id TEXT PRIMARY KEY,\n    facts_json TEXT NOT NULL DEFAULT '{}',\n    predecessor TEXT,\n    minted TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "memories",
+    "memories",
+    "CREATE TABLE memories (\n    rowid INTEGER PRIMARY KEY,\n    id TEXT NOT NULL UNIQUE,\n    created TEXT NOT NULL,\n    updated TEXT NOT NULL,\n    last_verified_at TEXT,\n    confidence TEXT NOT NULL,\n    category TEXT,\n    body TEXT NOT NULL,\n    body_fts TEXT NOT NULL DEFAULT '',\n    scopes_text TEXT NOT NULL,\n    scopes_fts TEXT NOT NULL DEFAULT '',\n    scopes_json TEXT NOT NULL,\n    filename TEXT,\n    origin_repo TEXT,\n    origin_worktree TEXT,\n    provenance TEXT NOT NULL,\n    verified_head TEXT,\n    actor_client TEXT,\n    actor_model TEXT,\n    source TEXT NOT NULL,\n    origin_json TEXT,\n    actor_json TEXT,\n    verified_paths_json TEXT NOT NULL DEFAULT '[]',\n    verified_commits_json TEXT NOT NULL DEFAULT '[]',\n    verified_versions_json TEXT NOT NULL DEFAULT '[]',\n    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]',\n    claims_json TEXT NOT NULL DEFAULT '[]',\n    links_json TEXT NOT NULL DEFAULT '[]',\n    corroborations INTEGER NOT NULL DEFAULT 0,\n    last_corroborated TEXT,\n    log_mac TEXT\n)"
+   ],
+   [
+    "table",
+    "memories_fts",
+    "memories_fts",
+    "CREATE VIRTUAL TABLE memories_fts USING fts5(\n    body_fts, scopes_fts,\n    content='memories', content_rowid='rowid',\n    tokenize='unicode61'\n)"
+   ],
+   [
+    "table",
+    "memories_fts_config",
+    "memories_fts_config",
+    "CREATE TABLE 'memories_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "memories_fts_data",
+    "memories_fts_data",
+    "CREATE TABLE 'memories_fts_data'(id INTEGER PRIMARY KEY, block BLOB)"
+   ],
+   [
+    "table",
+    "memories_fts_docsize",
+    "memories_fts_docsize",
+    "CREATE TABLE 'memories_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)"
+   ],
+   [
+    "table",
+    "memories_fts_idx",
+    "memories_fts_idx",
+    "CREATE TABLE 'memories_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+   ],
+   [
+    "table",
+    "memory_links",
+    "memory_links",
+    "CREATE TABLE memory_links (\n    source_id TEXT NOT NULL,\n    type TEXT NOT NULL,\n    target_id TEXT NOT NULL,\n    note TEXT,\n    PRIMARY KEY (source_id, type, target_id, note)\n)"
+   ],
+   [
+    "table",
+    "meta",
+    "meta",
+    "CREATE TABLE meta (\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "native_membership_rows",
+    "native_membership_rows",
+    "CREATE TABLE native_membership_rows (\n    member_kind TEXT NOT NULL,\n    key_text TEXT NOT NULL,\n    row_text TEXT NOT NULL,\n    PRIMARY KEY (member_kind, key_text)\n)"
+   ],
+   [
+    "table",
+    "project_blobs",
+    "project_blobs",
+    "CREATE TABLE project_blobs (\n    project TEXT NOT NULL,\n    blob TEXT NOT NULL,\n    witness TEXT NOT NULL,\n    PRIMARY KEY (project, blob)\n)"
+   ],
+   [
+    "table",
+    "project_files",
+    "project_files",
+    "CREATE TABLE project_files (\n    file_id TEXT PRIMARY KEY,\n    project TEXT NOT NULL,\n    evidence TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "project_remotes",
+    "project_remotes",
+    "CREATE TABLE project_remotes (\n    project TEXT NOT NULL,\n    remote_key TEXT NOT NULL,\n    PRIMARY KEY (project, remote_key)\n)"
+   ],
+   [
+    "table",
+    "project_witnesses",
+    "project_witnesses",
+    "CREATE TABLE project_witnesses (\n    project TEXT NOT NULL,\n    commit_id TEXT NOT NULL,\n    arrival INTEGER NOT NULL,\n    source TEXT NOT NULL,\n    fingerprint TEXT,\n    PRIMARY KEY (project, commit_id)\n)"
+   ],
+   [
+    "table",
+    "projects",
+    "projects",
+    "CREATE TABLE projects (\n    id TEXT PRIMARY KEY,\n    name TEXT NOT NULL,\n    merged_into TEXT,\n    provisional TEXT,\n    parent TEXT,\n    tenant TEXT,\n    folder INTEGER NOT NULL DEFAULT 0,\n    boundary INTEGER NOT NULL DEFAULT 0,\n    minted TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "proposals",
+    "proposals",
+    "CREATE TABLE proposals (\n    id TEXT PRIMARY KEY,\n    checkout TEXT,\n    kind TEXT NOT NULL,\n    candidates_json TEXT NOT NULL DEFAULT '[]',\n    evidence_json TEXT NOT NULL DEFAULT '{}',\n    reason TEXT NOT NULL,\n    line TEXT NOT NULL,\n    state TEXT NOT NULL,\n    answer TEXT,\n    answered_by TEXT,\n    signature_json TEXT,\n    opened TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "quarantine",
+    "quarantine",
+    "CREATE TABLE quarantine (\n    name TEXT PRIMARY KEY,\n    reason TEXT NOT NULL,\n    detail TEXT,\n    remote TEXT,\n    at TEXT NOT NULL,\n    size INTEGER,\n    sha256 TEXT\n)"
+   ],
+   [
+    "table",
+    "returned",
+    "returned",
+    "CREATE TABLE returned (\n    record_id TEXT PRIMARY KEY,\n    via TEXT NOT NULL,\n    returned TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "standing",
+    "standing",
+    "CREATE TABLE standing (\n    record_id TEXT PRIMARY KEY,\n    probability REAL NOT NULL,\n    body_sha256 TEXT NOT NULL,\n    source TEXT NOT NULL,\n    answered_by TEXT NOT NULL,\n    answered TEXT NOT NULL\n)"
+   ],
+   [
+    "table",
+    "tombstones",
+    "tombstones",
+    "CREATE TABLE tombstones (\n    id TEXT PRIMARY KEY,\n    created TEXT NOT NULL,\n    updated TEXT NOT NULL,\n    last_verified_at TEXT,\n    confidence TEXT NOT NULL,\n    category TEXT,\n    body TEXT NOT NULL,\n    scopes_json TEXT NOT NULL,\n    filename TEXT,\n    origin_repo TEXT,\n    origin_worktree TEXT,\n    provenance TEXT NOT NULL,\n    verified_head TEXT,\n    actor_client TEXT,\n    actor_model TEXT,\n    source TEXT NOT NULL,\n    origin_json TEXT,\n    actor_json TEXT,\n    verified_paths_json TEXT NOT NULL DEFAULT '[]',\n    verified_commits_json TEXT NOT NULL DEFAULT '[]',\n    verified_versions_json TEXT NOT NULL DEFAULT '[]',\n    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]',\n    claims_json TEXT NOT NULL DEFAULT '[]',\n    links_json TEXT NOT NULL DEFAULT '[]',\n    corroborations INTEGER NOT NULL DEFAULT 0,\n    last_corroborated TEXT,\n    removed TEXT NOT NULL,\n    removed_reason TEXT NOT NULL,\n    removed_session TEXT,\n    log_mac TEXT\n)"
+   ],
+   [
+    "table",
+    "verifications",
+    "verifications",
+    "CREATE TABLE verifications (\n    memory_id TEXT NOT NULL,\n    machine_id TEXT,\n    verified_at TEXT NOT NULL,\n    verified_head TEXT,\n    verified_paths_json TEXT NOT NULL DEFAULT '[]',\n    verified_commits_json TEXT NOT NULL DEFAULT '[]',\n    verified_versions_json TEXT NOT NULL DEFAULT '[]',\n    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]'\n)"
+   ],
+   [
+    "trigger",
+    "memories_ad",
+    "memories",
+    "CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN\n    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)\n    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);\nEND"
+   ],
+   [
+    "trigger",
+    "memories_ai",
+    "memories",
+    "CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN\n    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)\n    VALUES (new.rowid, new.body_fts, new.scopes_fts);\nEND"
+   ],
+   [
+    "trigger",
+    "memories_au",
+    "memories",
+    "CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN\n    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)\n    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);\n    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)\n    VALUES (new.rowid, new.body_fts, new.scopes_fts);\nEND"
+   ],
+   [
+    "trigger",
+    "memory_links_cleanup",
+    "memories",
+    "CREATE TRIGGER memory_links_cleanup AFTER DELETE ON memories BEGIN\n    DELETE FROM memory_links\n    WHERE source_id = old.id OR target_id = old.id;\nEND"
+   ]
+  ],
+  "store_dir": [
+   {
+    "mode": "0600",
+    "name": "memory.sqlite"
+   },
+   {
+    "mode": "(not the store's)",
+    "name": "memory.sqlite.orphaned-20010203T040506Z.sqlite"
+   }
+  ],
+  "store_dir_mode": "0700",
+  "tables": {
+   "checkout_views": {
+    "columns": [
+     "rowid",
+     "checkout",
+     "machine",
+     "path",
+     "first_seen",
+     "last_seen",
+     "seen_order"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "checkouts": {
+    "columns": [
+     "rowid",
+     "id",
+     "project",
+     "machine",
+     "kind",
+     "object_device",
+     "object_inode",
+     "object_birth",
+     "common_device",
+     "common_inode",
+     "common_birth",
+     "git_dir",
+     "token",
+     "token_status",
+     "stamps_json",
+     "last_head",
+     "branch",
+     "remotes_json",
+     "manifest_json",
+     "legacy",
+     "retired",
+     "registered",
+     "unresolved_json"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "conflicts": {
+    "columns": [
+     "rowid",
+     "id",
+     "a_id",
+     "b_id",
+     "summary_a",
+     "summary_b",
+     "similarity",
+     "method",
+     "detector",
+     "created",
+     "status",
+     "verdict_ts",
+     "note",
+     "verdict_hash_a",
+     "verdict_hash_b"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "declared_remotes": {
+    "columns": [
+     "rowid",
+     "remote_key",
+     "project",
+     "principal"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "digest_records": {
+    "columns": [
+     "doc",
+     "doc",
+     "removed",
+     "id",
+     "rid",
+     "n",
+     "claim",
+     "stamped",
+     "dl",
+     "client",
+     "model",
+     "category",
+     "sha",
+     "scopes",
+     "cwd",
+     "tokens"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "digest_state": {
+    "columns": [
+     "key",
+     "value"
+    ],
+    "rowid": false,
+    "rows": [
+     [
+      "fingerprint",
+      "59e8e47cd83bbb95543f0def4de2f4eee3f2c4abaa5cabe2c93b68c5b747687f"
+     ],
+     [
+      "mac",
+      ""
+     ],
+     [
+      "seq",
+      "0"
+     ]
+    ]
+   },
+   "digest_tokens": {
+    "columns": [
+     "token",
+     "doc"
+    ],
+    "rowid": false,
+    "rows": []
+   },
+   "episodes": {
+    "columns": [
+     "rowid",
+     "id",
+     "session_id",
+     "created",
+     "body",
+     "scopes_json",
+     "takeaway",
+     "origin_json",
+     "is_floor",
+     "swarm_id",
+     "log_mac"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "homes": {
+    "columns": [
+     "rowid",
+     "record_id",
+     "kind",
+     "project",
+     "checkout",
+     "rule",
+     "decided"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "imports": {
+    "columns": [
+     "rowid",
+     "source",
+     "content_hash",
+     "imported_at",
+     "memory_id"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "log": {
+    "columns": [
+     "seq",
+     "seq",
+     "ts",
+     "session",
+     "kind",
+     "payload",
+     "prev_mac",
+     "mac"
+    ],
+    "rowid": true,
+    "rows": [
+     [
+      1,
+      1,
+      "2001-02-03T04:05:06.234567Z",
+      null,
+      "store_created",
+      "{\"created\":\"2001-02-03T04:05:06.123456Z\",\"engine_version\":\"0.0.0+fixture\",\"schema_version\":1,\"store_id\":\"0123456789abcdef0123456789abcdef\",\"tokenizer_fingerprint\":\"972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd\"}",
+      "0000000000000000000000000000000000000000000000000000000000000000",
+      "2db8854d2cacad8ebf062ffbb03f559107cb7d9bf7275b0932c0253e3abd3424"
+     ]
+    ]
+   },
+   "machines": {
+    "columns": [
+     "rowid",
+     "id",
+     "facts_json",
+     "predecessor",
+     "minted"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "memories": {
+    "columns": [
+     "rowid",
+     "rowid",
+     "id",
+     "created",
+     "updated",
+     "last_verified_at",
+     "confidence",
+     "category",
+     "body",
+     "body_fts",
+     "scopes_text",
+     "scopes_fts",
+     "scopes_json",
+     "filename",
+     "origin_repo",
+     "origin_worktree",
+     "provenance",
+     "verified_head",
+     "actor_client",
+     "actor_model",
+     "source",
+     "origin_json",
+     "actor_json",
+     "verified_paths_json",
+     "verified_commits_json",
+     "verified_versions_json",
+     "verified_absent_paths_json",
+     "claims_json",
+     "links_json",
+     "corroborations",
+     "last_corroborated",
+     "log_mac"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "memories_fts": {
+    "columns": [
+     "rowid",
+     "body_fts",
+     "scopes_fts"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "memories_fts_config": {
+    "columns": [
+     "k",
+     "v"
+    ],
+    "rowid": false,
+    "rows": [
+     [
+      "version",
+      4
+     ]
+    ]
+   },
+   "memories_fts_data": {
+    "columns": [
+     "id",
+     "id",
+     "block"
+    ],
+    "rowid": true,
+    "rows": [
+     [
+      1,
+      1,
+      {
+       "blob": ""
+      }
+     ],
+     [
+      10,
+      10,
+      {
+       "blob": "00000000000000"
+      }
+     ]
+    ]
+   },
+   "memories_fts_docsize": {
+    "columns": [
+     "id",
+     "id",
+     "sz"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "memories_fts_idx": {
+    "columns": [
+     "segid",
+     "term",
+     "pgno"
+    ],
+    "rowid": false,
+    "rows": []
+   },
+   "memory_links": {
+    "columns": [
+     "rowid",
+     "source_id",
+     "type",
+     "target_id",
+     "note"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "meta": {
+    "columns": [
+     "rowid",
+     "key",
+     "value"
+    ],
+    "rowid": true,
+    "rows": [
+     [
+      1,
+      "store_id",
+      "0123456789abcdef0123456789abcdef"
+     ],
+     [
+      2,
+      "schema_version",
+      "1"
+     ],
+     [
+      3,
+      "schema_revision",
+      "6"
+     ],
+     [
+      4,
+      "min_reader_revision",
+      "1"
+     ],
+     [
+      5,
+      "min_writer_revision",
+      "5"
+     ],
+     [
+      6,
+      "tokenizer_fingerprint",
+      "972f56c55c69b89c13d93b370b8cb6801865981e2be1b9233c863e008deb66bd"
+     ],
+     [
+      7,
+      "engine_version",
+      "0.0.0+fixture"
+     ],
+     [
+      8,
+      "key_fingerprint",
+      "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+     ],
+     [
+      9,
+      "created",
+      "2001-02-03T04:05:06.123456Z"
+     ],
+     [
+      10,
+      "membership_store_id",
+      "fedcba9876543210fedcba9876543210"
+     ],
+     [
+      11,
+      "created_after_orphans",
+      "[\"memory.sqlite.orphaned-20010203T040506Z.sqlite\"]"
+     ]
+    ]
+   },
+   "native_membership_rows": {
+    "columns": [
+     "rowid",
+     "member_kind",
+     "key_text",
+     "row_text"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "project_blobs": {
+    "columns": [
+     "rowid",
+     "project",
+     "blob",
+     "witness"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "project_files": {
+    "columns": [
+     "rowid",
+     "file_id",
+     "project",
+     "evidence"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "project_remotes": {
+    "columns": [
+     "rowid",
+     "project",
+     "remote_key"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "project_witnesses": {
+    "columns": [
+     "rowid",
+     "project",
+     "commit_id",
+     "arrival",
+     "source",
+     "fingerprint"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "projects": {
+    "columns": [
+     "rowid",
+     "id",
+     "name",
+     "merged_into",
+     "provisional",
+     "parent",
+     "tenant",
+     "folder",
+     "boundary",
+     "minted"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "proposals": {
+    "columns": [
+     "rowid",
+     "id",
+     "checkout",
+     "kind",
+     "candidates_json",
+     "evidence_json",
+     "reason",
+     "line",
+     "state",
+     "answer",
+     "answered_by",
+     "signature_json",
+     "opened"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "quarantine": {
+    "columns": [
+     "rowid",
+     "name",
+     "reason",
+     "detail",
+     "remote",
+     "at",
+     "size",
+     "sha256"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "returned": {
+    "columns": [
+     "rowid",
+     "record_id",
+     "via",
+     "returned"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "standing": {
+    "columns": [
+     "rowid",
+     "record_id",
+     "probability",
+     "body_sha256",
+     "source",
+     "answered_by",
+     "answered"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "tombstones": {
+    "columns": [
+     "rowid",
+     "id",
+     "created",
+     "updated",
+     "last_verified_at",
+     "confidence",
+     "category",
+     "body",
+     "scopes_json",
+     "filename",
+     "origin_repo",
+     "origin_worktree",
+     "provenance",
+     "verified_head",
+     "actor_client",
+     "actor_model",
+     "source",
+     "origin_json",
+     "actor_json",
+     "verified_paths_json",
+     "verified_commits_json",
+     "verified_versions_json",
+     "verified_absent_paths_json",
+     "claims_json",
+     "links_json",
+     "corroborations",
+     "last_corroborated",
+     "removed",
+     "removed_reason",
+     "removed_session",
+     "log_mac"
+    ],
+    "rowid": true,
+    "rows": []
+   },
+   "verifications": {
+    "columns": [
+     "rowid",
+     "memory_id",
+     "machine_id",
+     "verified_at",
+     "verified_head",
+     "verified_paths_json",
+     "verified_commits_json",
+     "verified_versions_json",
+     "verified_absent_paths_json"
+    ],
+    "rowid": true,
+    "rows": []
+   }
+  }
+ },
+ "created_over_sidecars": {
+  "another_stores_live_wal": {
+   "after_create": [
+    "memory.sqlite"
+   ],
+   "before": [
+    "memory.sqlite-shm",
+    "memory.sqlite-wal"
+   ],
+   "log_verify": "ok",
+   "setup": "store/memory.sqlite-wal and -shm: another WAL database's, live (one table meta, store_id f*32, autocheckpoint off)",
+   "store_id": "0123456789abcdef0123456789abcdef"
+  },
+  "hot_journal": {
+   "after_create": [
+    "memory.sqlite"
+   ],
+   "before": [
+    "memory.sqlite-journal"
+   ],
+   "log_verify": "ok",
+   "setup": "store/memory.sqlite-journal: another database's hot rollback journal",
+   "store_id": "0123456789abcdef0123456789abcdef"
+  },
+  "junk_sidecars": {
+   "after_create": [
+    "memory.sqlite"
+   ],
+   "before": [
+    "memory.sqlite-journal",
+    "memory.sqlite-shm",
+    "memory.sqlite-wal"
+   ],
+   "log_verify": "ok",
+   "setup": "store/memory.sqlite-wal, -shm and -journal: 256 bytes of 'junk'",
+   "store_id": "0123456789abcdef0123456789abcdef"
+  }
+ },
+ "digest_fingerprint": "59e8e47cd83bbb95543f0def4de2f4eee3f2c4abaa5cabe2c93b68c5b747687f",
+ "digest_schema": "\nCREATE TABLE IF NOT EXISTS digest_records (\n    doc INTEGER PRIMARY KEY,\n    removed INTEGER NOT NULL DEFAULT 0,\n    id TEXT NOT NULL DEFAULT '',\n    rid INTEGER NOT NULL DEFAULT 0,\n    n INTEGER NOT NULL DEFAULT 0,\n    claim INTEGER NOT NULL DEFAULT 0,\n    stamped INTEGER NOT NULL DEFAULT 0,\n    dl INTEGER NOT NULL DEFAULT 0,\n    client TEXT,\n    model TEXT,\n    category TEXT,\n    sha TEXT NOT NULL DEFAULT '',\n    scopes TEXT NOT NULL DEFAULT '[]',\n    cwd TEXT NOT NULL DEFAULT '',\n    tokens TEXT NOT NULL DEFAULT ''\n);\nCREATE UNIQUE INDEX IF NOT EXISTS digest_records_by_id ON digest_records(removed, id);\nCREATE INDEX IF NOT EXISTS digest_records_by_category\n    ON digest_records(removed, category);\nCREATE TABLE IF NOT EXISTS digest_tokens (\n    token TEXT NOT NULL DEFAULT '',\n    doc INTEGER NOT NULL DEFAULT 0,\n    PRIMARY KEY (token, doc)\n) WITHOUT ROWID;\nCREATE TABLE IF NOT EXISTS digest_state (\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL DEFAULT ''\n) WITHOUT ROWID;\n",
+ "fixed": {
+  "created": "2001-02-03T04:05:06.123456Z",
+  "engine_version": "0.0.0+fixture",
+  "head_ts": "2001-02-03T04:05:07Z",
+  "key": "the log fixture's KEY_A, bytes 0..31",
+  "key_fingerprint": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+  "log_ts": "2001-02-03T04:05:06.234567Z",
+  "membership_store_id": "fedcba9876543210fedcba9876543210",
+  "store_id": "0123456789abcdef0123456789abcdef"
+ },
+ "fixture": "store_create",
+ "marker": "{\"pid\": 12, \"started_at\": \"2001-02-03T04:05:06Z\", \"bundle\": \"/bundles/b\\u001b1\", \"stage\": \"swap\"}",
+ "read": "created: Store.create(<scratch>/store, keys_dir=<scratch>/keys) under the fixed values; created_after_orphans: the same with an empty store/memory.sqlite.orphaned-20010203T040506Z.sqlite beside it first. tables: every table (sqlite_master type 'table', by name), its columns, and its rows in rowid order (rowid first) or, for a WITHOUT ROWID table, by the first column; a value is JSON, a blob {blob: hex}, a float {real: repr}. key_ring: each file of the keys directory, its mode as asked for (checked on POSIX), the text of head, origin and binding (the scratch directory as <scratch>), the key's sha256. refusals: each case's setup, the class raised, the errno's name for an OSError, else the message, and the entries the refused create left beside the setup's.",
+ "refusals": {
+  "keys_dir_is_a_file": {
+   "before": [
+    "keys"
+   ],
+   "class": "FileExistsError",
+   "errno": "EEXIST",
+   "left": [
+    "store/",
+    "store/memory.sqlite"
+   ],
+   "setup": "keys is a file; create(store, keys)"
+  },
+  "restore_marker_beside": {
+   "before": [
+    "store/",
+    "store/memory.sqlite.restore-lock"
+   ],
+   "class": "RestoreLockedError",
+   "left": [],
+   "message": "<scratch>/store/memory.sqlite is not opened: a restore of it did not finish (started 2001-02-03T04:05:06Z, by process 12, from /bundles/b\\x1b1, stopped at swap; <scratch>/store/memory.sqlite.restore-lock keeps its record), and the store may be part restored. Run the restore again to finish it (`bettermemory backup restore /bundles/b\\x1b1 --yes`), or open the store as it stands after `bettermemory backup unlock --yes`",
+   "setup": "store/memory.sqlite.restore-lock holds the marker MARKER; create(store, keys)"
+  },
+  "store_file_exists": {
+   "before": [
+    "store/",
+    "store/memory.sqlite"
+   ],
+   "class": "FileExistsError",
+   "left": [],
+   "message": "a store already exists at <scratch>/store/memory.sqlite",
+   "setup": "store/memory.sqlite is an empty file; create(store, keys)"
+  },
+  "store_parent_is_a_file": {
+   "before": [
+    "store"
+   ],
+   "class": "FileExistsError",
+   "errno": "EEXIST",
+   "left": [],
+   "setup": "store is a file; create(store, keys)"
+  },
+  "store_path_is_a_directory": {
+   "before": [
+    "store/",
+    "store/memory.sqlite/"
+   ],
+   "class": "FileExistsError",
+   "left": [],
+   "message": "a store already exists at <scratch>/store/memory.sqlite",
+   "setup": "store/memory.sqlite is a directory; create(store, keys)"
+  }
+ }
+}

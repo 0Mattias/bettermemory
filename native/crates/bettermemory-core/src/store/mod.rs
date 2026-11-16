@@ -37,6 +37,8 @@
 //! costs what its rows hold.
 
 pub mod admission;
+pub mod create;
+pub mod digest;
 pub mod fold;
 pub mod keys;
 pub mod pool;

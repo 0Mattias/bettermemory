@@ -187,6 +187,14 @@ impl DateTime {
         })
     }
 
+    /// `datetime.fromtimestamp(us / 1e6, tz=timezone.utc)` of a whole
+    /// number of microseconds since the epoch, exactly (the clock a native
+    /// writer reads; `datetime.now(timezone.utc)` keeps microseconds).
+    pub fn from_unix_micros_utc(us: i64) -> Result<DateTime, DateError> {
+        let epoch_us = (ymd_to_ord(1970, 1, 1) - 1) * 86_400_000_000;
+        DateTime::from_wall_us(i128::from(us) + i128::from(epoch_us), Some(0))
+    }
+
     /// `dt.replace(tzinfo=timezone.utc)` when naive, else `dt`.
     pub fn assume_utc(self) -> DateTime {
         DateTime {

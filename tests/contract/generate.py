@@ -45,6 +45,7 @@ from . import (
     gen_state,
     gen_search_ranker,
     gen_store,
+    gen_store_create,
     gen_store_files,
     gen_store_path,
     gen_time,
@@ -84,6 +85,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_restore_lock": gen_restore_lock.generate,
     "toml": gen_toml.generate,
     "fold": gen_fold.generate,
+    "store_create": gen_store_create.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -102,6 +104,7 @@ UNICODE_GATED = frozenset(
         "mcp",
         "hooks",
         "fold",
+        "store_create",
     }
 )
 

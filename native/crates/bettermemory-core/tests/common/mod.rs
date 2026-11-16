@@ -4,6 +4,7 @@
 
 #![allow(dead_code)]
 
+pub mod created;
 pub mod parity;
 pub mod stores;
 

@@ -27,7 +27,7 @@ One library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
 is the reference's digest (the one the golden header pins), and
@@ -1161,6 +1161,10 @@ that Unicode too.
 | `golden_fold`: `fold_every_case` | `fold.jsonl` | ii (Unicode, pydantic-core) |
 | `golden_fold`: `hostile_inputs_never_panic` | `fold.jsonl` as input only | i |
 | `fold_writer` | `fold.jsonl`'s `populated` prelude as input only | i |
+| `golden_store_create`: `a_native_create_equals_the_references`, `every_refusal_is_the_references`, `stale_sidecars_end_as_the_references` | `store_create.json` | ii (Unicode); modes: os on Windows |
+| `golden_store_create`: `the_pinned_digest_fingerprint_is_the_committed_fixtures` | `store_create.json` as committed | i |
+| `store_create_cross`, `store_create_kills` | `store_create.json` as input; the reference Python (set aside, class i, when `BM_REFERENCE_PYTHON` cannot import `bettermemory`) | i |
+| `store_create_robustness` (12) | `store_create.json` as input only | i |
 | `golden_lexicon`: `spelling_tables_match_the_golden_file_and_the_rust_tables` | `lexicon_spelling_tables.json` (compiled-in copy pinned to the committed file) | ii (Unicode) |
 | `golden_unicode`: `unicode_every_part`, `unicode_sequences_every_record` | `unicode.jsonl`, `unicode_sequences.jsonl` | ii (Unicode) |
 | `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs` | ii (Unicode) |
@@ -1215,9 +1219,234 @@ reference Python's own Unicode data (3.13, Unicode 15.1.0) and committed:
 The generator refuses any other Unicode version. Its output depends only on
 that data, so the same interpreter writes the same bytes.
 
+## The store's writes: the reference's order (N3a design)
+
+Read from `src/bettermemory` at 3cfa9f76; `create` is now ported
+("Creating a store", below), the rest is not. Line numbers are that
+commit's. Checked against the code and by running the reference: the
+random draws are the store id, the key, then the membership id (meta),
+then the digest build's token (`store_digest._build`, never a final
+byte); the clock is read three times (meta's `created`, the row's `ts`,
+the head's `ts`).
+
+`Store.create` (`store.py:576-652`):
+
+1. `store_path`; refuse an existing path (`FileExistsError`, :589).
+2. `prepare_store_dir` (`store_keys.py:125`): refuse a dangling keys-dir
+   link; make the store's directory owner-only.
+3. `orphans_beside` (:592).
+4. `_connect` (`store.py:370-411`): restore-lock admit; `sqlite3.connect`
+   (creates the file, 5 s busy timeout, autocommit); `admit_store`;
+   `PRAGMA page_size = PAGE_SIZE`; `foreign_keys = ON`; `journal_mode =
+   WAL` with `schema_version` in one script; `synchronous = NORMAL`;
+   chmod 0600 on the file, `-wal`, `-shm`; restore-lock confirm.
+5. `executescript` of `SCHEMA`, `MEMBERSHIP_SCHEMA`, `ADDITIVE_SCHEMA`,
+   `PROPOSALS_INDEX_SCHEMA`, `SESSION_INDEX_SCHEMA`, each its own implicit
+   commit (:595-599).
+6. store id (`secrets.token_hex(16)`), `KeyRing.create_key`
+   (`log.py:530`: keys dir made owner-only, 32 random bytes,
+   `atomic_write_bytes` 0600 before rename: tmp, fsync, `os.replace`,
+   dir fsync). The key file exists before any meta row does.
+7. One transaction (`_transaction`, `store.py:1177`): `BEGIN IMMEDIATE`,
+   `require_current_writer`, meta rows, `_append` of `store_created`
+   (`log.append_row`, `log.py:875`: last row read, seq, ts from the clock,
+   canonical payload, MAC, INSERT), `COMMIT`.
+8. `_move_head` after the commit (`store.py:1353`; `write_head`,
+   `log.py:638`: `flock_excl` on `<id>.head.lock`, forward only, JSON with
+   its own clock `ts`, atomic write 0600). An `OSError` is logged, not
+   raised.
+9. `_record_origin` (`KeyRing.write_origin`), then `_claim_key_ring`
+   (`<id>.path`), then chmod 0600, then `digest_mark()` (a digest build:
+   its own transactions on `digest_*` tables, no log row).
+
+`_mutate` (`store.py:1390`), inside the caller's `_transaction`:
+`prepare_mutation` (`store_native.py`), `store_returned.before`, `_append`
+(meta's key read again under the lock, `_signing_key`), `_apply_mutation`
+(the fold's function), the `returned` candidates noted; at the owner's
+end `_flush_returns` appends `returned_put`/`returned_delete` rows before
+`COMMIT`; then the head moves. A failure anywhere up to and including
+`COMMIT` rolls back (`_roll_back`); the head moves only after a commit.
+
+What a kill leaves at each boundary, by that order (read, not yet run):
+
+| killed after | file | keys dir | `log verify` | next `create` / `open` |
+| --- | --- | --- | --- | --- |
+| create 4-5 | schema, no meta | nothing or dir | open fails: no store id | `FileExistsError`; open `ValueError` |
+| create 6 | schema, no meta | an orphan key | as above | as above, by hand only |
+| create 7 (commit) | whole | key, no head | `unverifiable` (head absent) | opens; the next write writes the head |
+| create 8 | whole | key, head | `ok`, no origin | opens; writing open settles origin, binds |
+| write before COMMIT | as before | as before | as before | opens |
+| write after COMMIT, before head | with the row | head one behind | `ok`, head `stale` | the next write moves the head |
+
+Findings about the reference (the first confirmed by running it, the
+kill rows not run against the reference): a refused create leaves
+such a file too: a keys directory that is a file, or one it cannot
+write, fails at step 6 with `store/memory.sqlite` (schema, no meta)
+already there (`store_create.json`, `keys_dir_is_a_file`). A create killed between steps 4 and 7 leaves a file neither
+`create` nor `open` will take, recoverable only by removing it (no
+memory is lost: there are none yet); a create killed between its commit
+and its head write reads `unverifiable` until a write. A writing open
+does not check or repair the head; `write_head` only moves forward, so a
+head ahead of the log stays `tail_deleted` until the log passes it.
+
+Not ported yet, and needed for a write equal to the reference's: the
+writing open's steps (`store_open._open_connected`: `check_versions`,
+`_add_membership_tables`, `key_state` with the binding claim,
+`_close_foreign_tail`, `_settle_origin`, `restore_rows.settle`, and the
+decorators `keeps_digest` and `reconciles_tokenizer`), `store_returned`'s
+marks, `_relink` (which reads `provenance_for`) and the digest's
+record entries (a create indexes none).
+
+## Creating a store
+
+`store::create::create(path, keys_dir, provider) -> Result<Created,
+CreateError>` is `Store.create(path, keys_dir=keys_dir)`: `path` names the
+store file or its directory (`store_path`); every path is the caller's (no
+`~`, no default keys directory). `Provider` gives what the reference draws
+at random or reads from the clock, in its order (`store_id`, `key`,
+`membership_store_id`, `now` three times) and the engine version; tests pass
+`create::Fixed`. `create::System` is the operating system's, on every
+platform: the clock, and random bytes from the `getrandom` crate (0.4.3,
+default features off; no feature is needed for these targets), which calls
+`getentropy(2)` on macOS, the `getrandom(2)` system call on Linux (falling
+back to `/dev/urandom`, after polling `/dev/random`, only on a kernel
+without it) and `ProcessPrng` (bcryptprimitives.dll) on Windows 10 and
+later. Key bytes are drawn into a wiping buffer that moves into the `Key`
+uncopied. SQLite's `randomblob()` is not used.
+
+`CreateError`: `Exists` (anything at the store file's path, a dangling
+link included), `KeysDirUnreadable` (the reference's text), `Io { step }`,
+`Sqlite`, `RestoreRunning`, `RestoreUnfinished` (an unfinished restore's
+marker, `<store>.restore-lock` not blank, lies beside the store: the
+reference's `RestoreLockedError` text, as `restore_lock.admit` refuses it
+before its create opens the file), `Provider` (a store id not 32 lowercase
+hex);
+`class()` names the reference's exception. Every refusal leaves nothing at
+the store path; the store's directory may have been made.
+
+What it writes equals the reference under the same values
+(`store_create.json`): the five schema scripts (`admission::schema_texts`)
+and `store::digest::DIGEST_SCHEMA`, `_connect`'s pragmas in its order, meta
+in its order (with `created_after_orphans` when orphans lie beside it),
+the `store_created` row (`log::next_row`), `digest_state` (`fingerprint`,
+`seq` 0, `mac` empty; `digest::DIGEST_FINGERPRINT` is pinned, not
+computed, since it reads the supersession rules), the key, head, origin and
+binding files with their lock files, modes 0700/0600. The reference's
+digest fingerprint changes whenever the supersession rules, the tokenizer
+or the digest's shape change; `the_pinned_digest_fingerprint_is_the_committed_fixtures`
+then fails and says to port the change and set the constant. `schema_version`
+(63) matches too. `store::digest::bm25_length` is the one record length,
+used by `pool`'s catch-up.
+
+The order, and what a kill after each step leaves (`store_create_kills`:
+104 kills, each of the 14 boundaries ended twice by `abort` and twice by
+`exit`, every run with stale junk `-wal`, `-shm` and `-journal` at the
+store's name, plus 48 kills from outside at fixed pseudo-random delays; every outcome checked
+by the native verify, a fresh create after every no-store kill at a
+boundary and after the first random kill at each, and the resulting stores
+by the reference's `log_verify` in one child process):
+
+| after | store dir | keys dir | outcome |
+| --- | --- | --- | --- |
+| directory made | nothing | nothing | no store; create again |
+| temp locked | `<temp>.lock` | nothing | no store |
+| connected, pragmas | `<temp>`, `-wal`, `-shm`, lock | nothing | no store |
+| five schema scripts | as above | nothing (a kill mid-write: `<id>.key.<n>.tmp`) | no store |
+| key written | as above | `<id>.key` | no store; an orphan key |
+| meta, row, digest committed | as above | key | no store |
+| head written | as above | key, head(.lock) | no store |
+| origin written | as above | key, head, origin(.lock) | no store |
+| connection closed, synced | `<temp>`, lock, stale sidecars | as above | no store |
+| stale sidecars removed | `<temp>`, lock | as above | no store |
+| linked to `memory.sqlite` (no clobber) | store, `<temp>`, lock | as above | store, verifies ok |
+| temp name removed | store, lock | as above | store, verifies ok |
+| binding written | store, lock | all seven files | store, verifies ok |
+| lock removed | store | all seven files | done |
+
+A failed create removes every key ring file it made (its fresh id's key,
+head, origin, binding and their lock files: nothing else can own them).
+Key files and staging files are written create-new (staged, then linked;
+never renamed over a name), and a create refuses (`KeyRingExists`,
+FileExistsError) where any of `<id>.key`, `.head`, `.origin`, `.path`
+already exists; the reference's `create_key` would replace a key there,
+which a random id never meets. A kill can still leave an orphan
+`<id>.key`, `.head`, `.origin` (and lock files) for a store that never came
+to exist: clutter holding a key for nothing. Key files are never swept on a
+guess; this unit's own staging names in the keys directory
+(`<id>.<key|head|origin|path>.<pid>x<n>.tmp`, exactly) are removed by a
+later create once over an hour old.
+
+Stale sidecars. With no file at the store's name, a `-wal`, `-shm` or
+`-journal` there is an orphan (another store's live WAL, a hot journal,
+junk). The reference's create ends with only `memory.sqlite` and its new
+store (SQLite, creating the file there, discards them); a native build
+under a temporary name never met them, and SQLite would replay a valid
+foreign WAL onto the linked file at its first open (the reference then
+reads the old store's id: `unverifiable`). So native removes each, right
+after looking again that no file is at the store's name, before the link
+(`store_create.json`'s `created_over_sidecars`: another store's live WAL,
+junk, a hot journal; the end state is the reference's). The window left: a
+creator that makes `memory.sqlite` and its `-wal` between the look and the
+unlink (microseconds) loses its `-wal` name; only a reference create racing
+at the same path can, its WAL then holds only that create's schema, which
+it still checkpoints through its open handle, and the native link then
+fails `Exists`. Two creates racing at one path is already undefined for the
+reference itself. The sidecars are cleared twice: once as a boundary of its own,
+and again immediately before the link call, with nothing between but the
+link. What remains: a file placed at those names between that last clear
+and the link, a few instructions apart, by something that is not a store
+creator. A sidecar seen after the link belongs to an opener of the new
+store and is left. `DanglingStoreLink` comes before the store's directory
+is made or its mode tightened; `class()` names that refusal where the
+reference raises nothing.
+
+A later create in the same directory removes the temporary files of a
+create whose lock it can take (`sweep_temps`, as `sweep_private_copies`
+decides by its lock file), before anything else, even before refusing an
+existing store: a kill between the link and the temporary name's removal
+leaves a second name of the live store, which goes then. The store-file
+name a link made is never removed. The sweep opens only a regular file as
+a lock, takes it, checks it is still the file at its name, and removes it
+while holding it; a create that opened the same file finds, once locked,
+that it is no longer at its name and takes another. Liveness rests on an
+`flock` held for the create's whole life; where locks are emulated per
+process (NFS on Linux) two creates in one process do not exclude each
+other.
+
+Other differences, named: a dangling symbolic link at the store's name is
+refused (`DanglingStoreLink`, its own words) where the reference follows it
+and creates the store at the link's target; the reference's OSError texts
+(`[Errno 20] Not a directory: '...'`) are not reproduced: native errors
+carry the step and the OS error, with the same class and errno. `Fixed`
+(fixed values, hidden from docs) fails with a typed error when its clock
+holds no reading. `store_create.json` has no SQLite gate: its FTS5 shadow
+rows, `schema_version` and page bookkeeping depend on SQLite, 3.50.4 and
+3.54.1 agree, and a SQLite that differs fails the golden test loudly on
+purpose: then compare the two SQLites' FTS5 and schema changes and decide
+whether the native build follows; do not gate the file. Beside the reference: a kill before the link leaves no
+file at the store path where the reference's (after its connect, before
+its commit) leaves one neither build opens; a kill between commit and head
+cannot leave a head-less store (`unverifiable`): the head is written before
+the link. An orphan key, head and origin for an id no store has are left as
+the reference leaves an orphan key. A store linked before its binding is
+written opens and verifies; the reference's writing open binds it. Where
+the file system has no hard links (FAT, some network shares), `rename`
+is the only move and it replaces an existing file on every platform
+(`rename(2)`; on Windows `std` documents a replacing move), so a
+look-then-rename could overwrite a store another process made in between.
+Instead the name is claimed with an exclusive create of an empty
+placeholder (failing when anything is there) and only that placeholder is
+renamed over. Left undecided: a kill between the claim and the rename
+leaves an empty `memory.sqlite` that neither build opens, as the
+reference's own window does: the one boundary, on such file systems only,
+where native is no better than the reference. Durability: files and the directory are
+synced (`sync_all`, which on macOS is `F_FULLFSYNC`, stronger and slower
+than the reference's `fsync`).
+
 ## Not built yet
 
-The store's writes (schema steps, the digest's ingest), membership and
+The store's writes past `create` (the writing open, mutations, schema
+steps, the digest's ingest), membership and
 the caller's resolution, and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's
 files on disk (the ring here holds their bytes); `datetime.astimezone` of a
