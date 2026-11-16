@@ -21,9 +21,11 @@
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
 //! - [`githead`]: HEAD and refs read from a git directory's files;
-//! - [`fsdata`]: the file system as the config readers ask it, as data.
+//! - [`fsdata`]: the file system as the config readers ask it, as data;
 //! - [`printable`] and [`membership_lines`]: text made safe to show, and
-//!   the lines shown about which project a folder belongs to.
+//!   the lines shown about which project a folder belongs to;
+//! - [`gitfile_rule`]: the rule a `.git` entry is followed by, its first
+//!   unit (the leaves).
 
 #![forbid(unsafe_code)]
 
@@ -33,6 +35,7 @@ pub mod datetime;
 pub mod float_repr;
 pub mod fsdata;
 pub mod gitconfig;
+pub mod gitfile_rule;
 pub mod githead;
 pub mod json;
 pub mod lexicon;

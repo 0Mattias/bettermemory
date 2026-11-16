@@ -34,6 +34,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
+| `gitfile_rule` | unit 1 of the rule a `.git` entry is followed by: `_parse_gitfile` (both flavours of `os.path`), `_gitfile_target`, `_small_text`, `_headref_content`, `_judge_format` and `object_format` (the git on PATH as data), `path_gone`/`path_missing`, the bounded reads with the time bound as data | `gitfile_leaves.jsonl`, `gitfile_leaves_posix.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved` and the lines without a number (all but `line_restated`) | `membership_lines.jsonl`, `membership_lines_unicode.jsonl` |
@@ -1282,6 +1283,9 @@ that Unicode too.
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
 | `githead_robustness` (7), `githead_stdfs` (2 on unix, 1 elsewhere) | none | i |
+| `golden_gitfile_leaves`: `gitfile_leaves_every_case` | `gitfile_leaves.jsonl` | i |
+| `golden_gitfile_leaves_posix`: in memory and on disk (unix) | `gitfile_leaves_posix.jsonl` | i; os elsewhere (`gitfile_leaves_not_posix`) |
+| `gitfile_leaves_robustness` (9; 8 off unix) | none | i |
 | `golden_settings`: `settings_catalogue_and_fixed`, `settings_coercion`, `settings_cases`, `settings_config_path` | `settings.json` | i |
 | `golden_settings`: `settings_python_cases`, `settings_pure_paths` | `settings_python.json` | ii (Python) |
 | `golden_settings`: `settings_paths` (unix) | `settings_paths.json` | i; os elsewhere (`settings_paths_not_posix`) |
@@ -3670,6 +3674,161 @@ takeaways, scopes as a `str` and an `int`, validation refusals;
 conflicts, imports and quarantine put, re-put, deleted, missing, refused;
 rollback-journal mode; the `homes` and `standing` tables dropped; every
 type as a body, scopes, a takeaway, a conflict record and a standing giver.
+
+## The rule a .git entry is followed by
+
+`src/bettermemory/gitfile_rule.py` (1,537 lines, read at v9's 6000b993)
+decides whether a folder's `.git` entry (a directory, a `gitdir:` file or
+a link to either) is followed. A wrong follow keys a folder on another
+checkout's git directory, so "native follows where the reference refuses"
+is the most serious difference this port can have. It is ported unit by
+unit; unit 1 is built.
+
+### Map, by function
+
+Machine facts are in brackets: [os.path] the host's path module, [env]
+the environment, [git] the installed git through `_git_is_at_least` or
+`_reads_compat`, [clock/threads] `location_reads`, [stat] stat fields
+past kind and identity.
+
+| Lines | Function | Reads / depends on |
+|---|---|---|
+| 57-87 | constants: `_GITFILE_LIMIT` 1 MiB, `_REF_LIMIT`, `_READ_CHUNK` 64 KiB, `_HEADREF_READ` 255, `_SPACE`, `_HEX_PREFIX`, `_SF_DATALESS`, `_WINDOWS_RECALL`, `UNREAD_TREE`, `_RECORDED_BUDGET` 0.5 s | none |
+| 90-97 | `_gitfile_target` | a blocking `open()` of the `.git` file; `_parse_gitfile` |
+| 100-114 | `_parse_gitfile` | bytes; [os.path] isabs, join, dirname, normpath |
+| 117-127 | `_small_text` | a blocking `open()` |
+| 130-144 | `_names_here` | `os.stat` twice, `samestat`, `path_missing`; [os.path] |
+| 147-219 | `gitfile_refusal`, `_refusal` | `_common_of`, `_commondir`, `tree_format`, `_small_text` (a worktree's `gitdir`), `_names_folder`, `_tree_refusal`, `_working_tree_of`, `_same_folder`, `_recorded_reading`, `gitdir_pin.recorded` (the pin records) |
+| 222-288 | `TreeFormat`, the format's names and extension tables | none |
+| 291-355 | `tree_format` | `_git_common`, `_common_format`, `gitconfig.read_git_config` (`config.worktree`), `_take`, `_dies`, `gitconfig.spaced`; [git] 2.45 |
+| 358-382 | `_Format`, `_common_format` | `read_git_config`, `_judge_format` |
+| 385-419 | `object_format_at`, `object_format` | `_common_format` / `git_entries`, `_judge_format` |
+| 422-547 | `_judge_format`, `_reads_compat`, `_git_is_at_least`, `_extension_reads` | `git_int`, `git_bool`; [git] |
+| 550-573 | `reads_worktree_config` | `_common_format`; [git] 2.42 |
+| 576-608 | `_take`, `_dies`, `FormatUnknown` | none |
+| 611-699 | `_tree_refusal`, `own_refusal`, `inside_reading`, `inside_refusal` | `tree_format`, `_names_here`; [os.path] |
+| 702-785 | `_recorded_refusal`, `_recorded_reading`, `_spells`, `_read_recorded` | `bounded_read` [clock/threads], `os.path.normcase`, `realpath`, `_same_folder`, `_entry_names` |
+| 788-860 | `earliest_naming`, `_view`, `names_git_dir` | `bounded_reads` [clock/threads], `realpath`, `_entry_names` |
+| 863-905 | `_entry_names` | `lstat`, `_is_link` [stat: reparse tag], `_working_tree_of`, `stat`, `_placeholder` [stat: flags, file attributes], `open()`, `_parse_gitfile`, `_names_here`, `path_gone` |
+| 908-934 | `_names_folder`, `_same_folder` | `lstat`, `stat`, `samestat`, `path_missing` |
+| 937-982 | `_JUNCTION_TAG`, `_is_link`, `_working_tree_of`, `_tree_of` | [stat], `scandir`, `realpath` |
+| 985-1059 | `_common_of`, `_commondir`, `_not_registered`, `_foreign_commondir`, `_registered`, `_is_git_directory` | [env] `GIT_COMMON_DIR`, a blocking `open()`, `realpath`, `samefile`, `isdir`, `lexists` |
+| 1062-1070 | `_placeholder` | [stat] |
+| 1078-1164 | `_Unsettled`, `_read` (non-blocking, `O_NOFOLLOW`), `_is_directory`, `_real`, `_real_to_last` | `os.open`, `fstat`, `os.read`, `realpath(strict=True)`, `path_missing` |
+| 1167-1204 | `_valid_headref`, `_headref_content` | `lstat`, `readlink`, `_read`, `_placeholder` |
+| 1207-1287 | `_git_common`, `_git_directory`, `_git_found`, `_git_reads`, `_git_read` | `_read`, `_real_to_last`, `os.access(X_OK)` |
+| 1295-1388 | `Entry`, `judge` | everything above |
+| 1391-1537 | `Reading`, `reading_at`, `_entry_reading`, `discovery_reading`, `discovery_refusal`, `toplevel_agrees` | `judge`, `_git_reads`, `_foreign_commondir`, `inside_reading`, `realpath`, the walk to the root |
+
+`_location_probe.py` 60-106 (`path_gone`, `path_missing`) and
+`location_reads.py` (all of it: threads, a clock, a process-wide board)
+are leaves under it.
+
+### The cut
+
+1. **Leaves (built).** 57-127, 235-288, 398-419, 422-547 (the facts as
+   data), 576-596, 1197-1204; `_location_probe` 60-106;
+   `location_reads` with the bound as data. About 330 lines of logic.
+2. **git's reading of a git directory and the identity helpers.**
+   1062-1287 and 130-144, 908-982. Needs from `Fs`: an open with
+   `O_NOFOLLOW`, a stat that follows links (kind and identity), the
+   placeholder bits (`SF_DATALESS`, the Windows recall attributes, the
+   junction tag), `readlink`, `realpath` (strict and not), `access(X_OK)`,
+   a directory listing; and an errno beside `PyErr::Os` (ELOOP and
+   ENAMETOOLONG read as gone; see the probe below). About 330 lines.
+3. **The format from files, and the trust of a `commondir`.** 222-232,
+   291-395, 550-573, 599-699, 985-1059. Reads through
+   `gitconfig::file::read_git_config` (built); `GIT_COMMON_DIR` as an
+   argument. About 330 lines.
+4. **Records and the follow.** 147-219, 702-905: the pin records as data,
+   the bounded reads of unit 1 for the recorded trees. About 330 lines.
+5. **Judge and discovery.** 1295-1537. About 250 lines.
+
+Each later unit has one fixture of real trees (POSIX) and, where its
+answer is a function of bytes, a small ungated one.
+
+### Unit 1, as built
+
+`src/gitfile_rule.rs` with `bounded`, `format`, `hostpath` and `probe`:
+
+- `parse_gitfile(data, dotgit, flavour)`, `gitfile_target(fs, dotgit,
+  flavour)`, `small_text(fs, path)`, `headref_content(content)` and the
+  constants. Reads go through `fsdata::Fs` (open, fstat, read), at most
+  `GITFILE_LIMIT + 1` bytes.
+- `format::judge_format(path, entries, &GitFacts)` and
+  `format::object_format(data, &GitFacts)`. `GitFacts { release,
+  reads_compat }` stands for `_git_is_at_least` and `_reads_compat`.
+- `probe::path_gone`, `probe::path_missing` over `Raised` (a ValueError,
+  an OSError with class, errno and Windows code, or another exception).
+  `Raised::from(PyErr)` maps a plain `PyErr::Os` to an unknown errno
+  ("cannot tell"). The reference reads ELOOP and ENAMETOOLONG as gone,
+  so unit 2 must carry the errno before it reads stat errors.
+- `bounded::{Answers, Hung, Read, bounded_read, bounded_reads}`. Whether
+  a path answers is data: `StdFs` and `MemFs` always answer, and `Hung`
+  names paths that do not. No clock, timer or thread decides an answer.
+  A hung path is unanswered for every read of it. The reference's `what`
+  is not taken, since it only shares a flight. On the machine, `StdFs`
+  blocks wherever the OS blocks, so a later unit that reads recorded
+  trees on disk must bound those reads itself.
+- `hostpath`: `posixpath` on bytes, and CPython 3.13's pure-Python
+  `ntpath` over code points (bytes that do not decode are kept,
+  `surrogateescape`). The stack form of `normpath` gives the same answer
+  as the reference's in-place deletes, in linear time.
+
+Nothing was added to `fsdata.rs`. `Answers` is a separate trait in
+`bounded`, so the other unit's edits to `Fs` (`realpath`) merge without
+conflict.
+
+**Where native and the reference part on purpose:** the reference's
+`_gitfile_target` and `_small_text` open with a blocking `open()`, so a
+FIFO waits for a writer. Native's open does not block, and a FIFO or a
+socket reads as None, as a file that cannot be read does. Neither
+fixture holds a FIFO.
+
+**Windows rules that rest on reading only:** the `ntpath` parse is held
+to the reference on every host (the module's `os` swapped for `ntpath`).
+Two readings are left out of the fixture because the reference itself
+changes with the release: `ntpath.isabs` of a target with one leading
+separator (absolute before 3.13), and `normpath` of `\\?\` and `\\.\`
+paths (kept whole before 3.12; on Windows 3.12+ `normpath` is
+`nt._path_normpath`). For these native follows 3.13's pure-Python
+functions. `str.lower` of a drive is applied one code point at a time.
+The real Windows read (open of a directory refused) is held only in
+`MemFs`'s Windows flavour and the robustness test.
+
+### Findings about the reference (reproduced, pinned; native agrees)
+
+Checked against git 2.54.0 (`git rev-parse --absolute-git-dir` in a
+scratch folder, neutral config). The reference follows a `.git` file
+that git dies on, or that git reads as another path:
+
+- `gitfile_rule.py:106-109` strips Python whitespace on both sides of
+  the text and of the target. git reads only `gitdir: ` (one space) at
+  offset 0 and strips only trailing CR/LF. So `gitdir:x`, `  gitdir: x`,
+  a leading newline, `gitdir:\tx`, `gitdir:  x`, a trailing space, tab,
+  VT or NBSP, and junk after a newline (`x\ny` names `x\ny` in both)
+  name a path to the reference where git dies or reads another path.
+- `:113-114` normalizes `..` lexically (`normpath`); git resolves it
+  through the file system. `gitdir: ../w/../x` with no `w` dies in git
+  and names `x` here.
+- `:106` keeps a NUL (git cuts the path there), and replaces bytes that
+  are not UTF-8 with U+FFFD, so it names a path git does not name.
+- In each case the follow still needs git's pointers back from the
+  target, so none is a follow of another checkout by itself. They are
+  differences in which path is judged.
+- `:117-127` (`_small_text`, used at 200 for a worktree's `gitdir`)
+  and `:93` open with a blocking `open()`. A planted pointer whose
+  target's `gitdir` is a FIFO hangs the reader until a writer comes.
+- `:1005` (`_commondir`) reads `_GITFILE_LIMIT` bytes with no `+ 1`, so
+  a `commondir` over 1 MiB is cut and used, not refused (unit 3).
+
+### Tests
+
+`golden_gitfile_leaves.rs` (`gitfile_leaves.jsonl`, ungated, 387 cases:
+236 parses, 20 HEADs, 76 formats, 48 errors, 7 bounded reads, class i),
+`golden_gitfile_leaves_posix.rs` (`gitfile_leaves_posix.jsonl`, 32 trees,
+through `MemFs` and `StdFs`, class i on unix; `gitfile_leaves_not_posix.rs`
+records the gap as os), `gitfile_leaves_robustness.rs` (9 tests).
 
 ## Not built yet
 

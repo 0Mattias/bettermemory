@@ -1,0 +1,33 @@
+{"cases":32,"fixture":"gitfile_leaves_posix"}
+{"f":{".git":"6769746469723a20780a"},"r":{"gt":"=<scratch>/x","st":"=gitdir: x"},"t":".git"}
+{"d":["other"],"f":{"in/.git":"6769746469723a202e2e2f6f746865722f2e6769742f776f726b74726565732f770d0a"},"r":{"gt":"=<scratch>/other/.git/worktrees/w","st":"=gitdir: ../other/.git/worktrees/w"},"t":"in/.git"}
+{"f":{".git":"=gitdir: x/../y/./z//"},"r":{"gt":"=<scratch>/y/z","st":"=gitdir: x/../y/./z//"},"t":".git"}
+{"f":{".git":"20206769746469723a0920e38080737562c2a00a"},"r":{"gt":"=<scratch>/sub","st":"6769746469723a0920e38080737562"},"t":".git"}
+{"f":{".git":"6769746469723a20636166c3a920ff0a"},"r":{"gt":"3c736372617463683e2f636166c3a920efbfbd","st":"6769746469723a20636166c3a920efbfbd"},"t":".git"}
+{"f":{".git":"efbbbf6769746469723a20780a"},"r":{"gt":null,"st":"efbbbf6769746469723a2078"},"t":".git"}
+{"f":{".git":"=gitdir:"},"r":{"gt":null,"st":"=gitdir:"},"t":".git"}
+{"f":{".git":"="},"r":{"gt":null,"st":"="},"t":".git"}
+{"f":{".git":"7265663a20726566732f68656164732f6d61696e0a"},"r":{"gt":null,"st":"=ref: refs/heads/main"},"t":".git"}
+{"f":{".git":"6769746469723a206100620a"},"r":{"gt":"3c736372617463683e2f610062","st":"6769746469723a20610062"},"t":".git"}
+{"f":{".git":[["=gitdir: x",1],["0a",1048567]]},"r":{"gt":"=<scratch>/x","st":"=gitdir: x"},"t":".git"}
+{"f":{".git":[["=gitdir: x",1],["0a",1048568]]},"r":{"gt":null,"st":null},"t":".git"}
+{"f":{".git":[["=gitdir: x",1],["0a",1052672]]},"r":{"gt":null,"st":null},"t":".git"}
+{"f":{"in/.git":"6769746469723a202e2e2f780a"},"r":{"gt":"=<scratch>/x","st":"=gitdir: ../x"},"t":"in/.git"}
+{"f":{"in/deeper/.git":"=gitdir: ../../x"},"r":{"gt":"=<scratch>/x","st":"=gitdir: ../../x"},"t":"in/deeper/.git"}
+{"f":{"f":"6769746469723a20780a"},"l":{".git":"f"},"r":{"gt":"=<scratch>/x","st":"=gitdir: x"},"t":".git"}
+{"d":["in"],"f":{"other/f":"6769746469723a202e2e2f790a"},"l":{"in/.git":"../other/f"},"r":{"gt":"=<scratch>/y","st":"=gitdir: ../y"},"t":"in/.git"}
+{"f":{},"l":{".git":"nothing"},"r":{"gt":null,"st":null},"t":".git"}
+{"f":{},"l":{".git":"loop","loop":".git"},"r":{"gt":null,"st":null},"t":".git"}
+{"d":["d"],"f":{},"l":{".git":"d"},"r":{"gt":null,"st":null},"t":".git"}
+{"f":{"f":"=gitdir: z"},"l":{".git":"l1","l1":"l2","l2":"l3","l3":"f"},"r":{"gt":"=<scratch>/z","st":"=gitdir: z"},"t":".git"}
+{"f":{"real/.git":"6769746469723a20710a"},"l":{"in":"real"},"r":{"gt":"=<scratch>/in/q","st":"=gitdir: q"},"t":"in/.git"}
+{"f":{},"l":{".git":"/dev/null"},"r":{"gt":null,"st":"="},"t":".git"}
+{"d":[".git"],"f":{},"r":{"gt":null,"st":null},"t":".git"}
+{"f":{},"r":{"gt":null,"st":null},"t":".git"}
+{"f":{"f":"=gitdir: x"},"r":{"gt":null,"st":null},"t":"f/.git"}
+{"f":{".git":"6769746469723a20780a"},"m":{".git":"000"},"r":{"gt":null,"st":null},"t":".git"}
+{"f":{"in/.git":"6769746469723a20780a"},"m":{"in":"000"},"r":{"gt":null,"st":null},"t":"in/.git"}
+{"f":{"in/.git":"6769746469723a20780a"},"m":{"in":"600"},"r":{"gt":null,"st":null},"t":"in/.git"}
+{"f":{".git":"6769746469723a20780a"},"m":{".git":"200"},"r":{"gt":null,"st":null},"t":".git"}
+{"f":{"f":"6769746469723a20680a"},"h":{".git":"f"},"r":{"gt":"=<scratch>/h","st":"=gitdir: h"},"t":".git"}
+{"f":{".git":"6769746469723a20780a"},"r":{"gt":null,"st":null},"t":".git/"}

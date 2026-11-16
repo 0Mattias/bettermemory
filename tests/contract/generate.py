@@ -42,6 +42,7 @@ from . import (
     gen_gitconfig_remote_rules,
     gen_gitconfig_wildmatch,
     gen_githead,
+    gen_gitfile_leaves,
     gen_json,
     gen_lexicon,
     gen_log,
@@ -116,6 +117,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitconfig_file": gen_gitconfig_file.generate,
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
+    "gitfile_leaves": gen_gitfile_leaves.generate,
+    "gitfile_leaves_posix": gen_gitfile_leaves.generate_posix,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -240,7 +243,9 @@ PLATFORM_GATED = frozenset(
 #: ``store_records`` after each writer call.
 #: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
 #: otherwise (`gen_githead`); ``gitconfig_file`` reads links, FIFOs and
-#: mode-000 files and opens directories (`gen_gitconfig_file`).
+#: mode-000 files and opens directories (`gen_gitconfig_file`);
+#: ``gitfile_leaves_posix`` reads links and mode-000 files
+#: (`gen_gitfile_leaves`).
 POSIX_ONLY = frozenset(
     {
         "store_restore_lock",
@@ -253,6 +258,7 @@ POSIX_ONLY = frozenset(
         "store_rows_written",
         "githead_posix",
         "gitconfig_file",
+        "gitfile_leaves_posix",
     }
 )
 
