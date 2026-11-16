@@ -47,6 +47,7 @@ from . import (
     gen_store,
     gen_store_create,
     gen_store_files,
+    gen_store_open,
     gen_store_path,
     gen_time,
     gen_toml,
@@ -86,6 +87,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "toml": gen_toml.generate,
     "fold": gen_fold.generate,
     "store_create": gen_store_create.generate,
+    "store_open": gen_store_open.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -105,6 +107,7 @@ UNICODE_GATED = frozenset(
         "hooks",
         "fold",
         "store_create",
+        "store_open",
     }
 )
 
@@ -187,8 +190,10 @@ PLATFORM_GATED = frozenset(
 #: ``settings_paths`` and ``settings_paths_python`` expand, resolve and
 #: print paths by POSIX rules (`~name`, the root, `//`, a NUL), which the
 #: native tests' world reproduces; on Windows the reference's paths differ.
+#: ``store_open`` reads modes and writes the key ring's binding as a
+#: resolved POSIX path under a POSIX ``flock``.
 POSIX_ONLY = frozenset(
-    {"store_restore_lock", "settings_paths", "settings_paths_python"}
+    {"store_restore_lock", "settings_paths", "settings_paths_python", "store_open"}
 )
 
 

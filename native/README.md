@@ -27,7 +27,7 @@ One library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
 is the reference's digest (the one the golden header pins), and
@@ -1286,16 +1286,16 @@ already there (`store_create.json`, `keys_dir_is_a_file`). A create killed betwe
 `create` nor `open` will take, recoverable only by removing it (no
 memory is lost: there are none yet); a create killed between its commit
 and its head write reads `unverifiable` until a write. A writing open
-does not check or repair the head; `write_head` only moves forward, so a
-head ahead of the log stays `tail_deleted` until the log passes it.
+does not repair the head; `write_head` only moves forward, so a head ahead
+of the log stays `tail_deleted` until the log passes it. (Corrected by the
+writing-open unit: the open does read the head, in one place: a key ring
+bound to no file whose head the log does not reach is `unclaimed`, and the
+open goes on as a reader's; see "Opening a store for writing".)
 
-Not ported yet, and needed for a write equal to the reference's: the
-writing open's steps (`store_open._open_connected`: `check_versions`,
-`_add_membership_tables`, `key_state` with the binding claim,
-`_close_foreign_tail`, `_settle_origin`, `restore_rows.settle`, and the
-decorators `keeps_digest` and `reconciles_tokenizer`), `store_returned`'s
-marks, `_relink` (which reads `provenance_for`) and the digest's
-record entries (a create indexes none).
+Not ported yet, and needed for a write equal to the reference's:
+`store_returned`'s marks and `_relink` (which reads `provenance_for`). The
+writing open's plain states and the digest's record entries are ported
+("Opening a store for writing").
 
 ## Creating a store
 
@@ -1443,10 +1443,272 @@ where native is no better than the reference. Durability: files and the director
 synced (`sync_all`, which on macOS is `F_FULLFSYNC`, stronger and slower
 than the reference's `fsync`).
 
+## Opening a store for writing
+
+`store::open::open_for_writing(path, keys_dir, provider) -> Result<WritableStore,
+OpenError>` is `Store.open(path, keys_dir=keys_dir, allow_rekey=True)`, the
+owner's writing open that `open_or_create` makes for the hooks, the daemon
+and the CLI, in its plain states. `provider` gives the engine version
+(`__version__`); nothing is drawn at random that reaches a byte.
+`WritableStore` holds the connection (for reads) and what the open
+established (`store_id`, `key_fingerprint`, `head`, what became of the
+digest, whether it bound the ring); `close()`. Appending and mutating come
+with the next unit, as methods on it. It holds no key: the open reads the
+key only to decide, and the reference signs with the key it reads again at
+write time (`Store._signing_key`, under the write's lock in
+`_finish_for_signing`); the next unit must read it there too, never trust
+a key read at open.
+
+### The reference's order, and what each step writes
+
+Read from `src/bettermemory` at the create unit's tip (4a84448f; line
+numbers are that commit's), and checked by running it
+(`store_open.jsonl`). `open` is wrapped `keeps_digest(reconciles_tokenizer(open))`
+(`store.py:655-657`), so the open's own steps run first, then the
+tokenizer's, then the digest's.
+
+1. `store_path`; not a file: `FileNotFoundError("no store at <path>")`
+   (`store.py:732-734`).
+2. `_connect` (`store.py:370-411`): `restore_lock.admit` (held shared until
+   the connection is made; a running restore or an unfinished one's marker
+   refuses), `sqlite3.connect` (5 s busy timeout, autocommit),
+   `admit_store`, `PRAGMA page_size` (a no-op on a store), `foreign_keys =
+   ON`, `journal_mode = WAL` with `schema_version` (switches a
+   rollback-journal store to WAL: written), `synchronous = NORMAL`, chmod
+   0600 on the file, `-wal`, `-shm` (written).
+3. `_open_connected` (`store_open.py:40-143`): meta read; no store id or
+   fingerprint, an id of another shape, a later `schema_version`: ValueError.
+4. `check_versions(writing=True)` (`store_versions.py:187-247`): a later
+   minimum reader: `StoreVersionError`; a later minimum writer: `PRAGMA
+   query_only` and the open goes on as a reader's; else `run_steps`
+   (`store_steps.py:360-401`: each step above meta's revision applied and
+   recorded in meta, with the clock's `applied`), then `_record_engine`
+   (`store_versions.py:142-182`: `engine_version` set in its own `BEGIN
+   IMMEDIATE` when this build is newer by `version_key`).
+5. `_add_membership_tables` (`store_schema.py:1214-1291`): any membership or
+   additive object missing, the membership store id (minted at random), an
+   optional column: created in one transaction.
+6. `key_state(claim=True)` (`store_keys.py:605-677`): `finish_rotation`
+   (`:935`, renames `<id>.key.pending` over the key when it is the key meta
+   names); `load_current` (a key file there and unreadable, or a dangling
+   link: `KeyUnreadableError`); `_unclaimed_fit` (`:823`: a ring bound to no
+   file that holds an anchor or a head this file's log does not carry is
+   `unclaimed`); `_claim_key_ring` (`:353`, `log.py:771` `bind_store`): no
+   binding, one that does not read, or one naming a file that no longer
+   holds the id: `<id>.path` written under `<id>.path.lock`, atomically,
+   0600, as `{"path": "<the store file, resolved>"}` (`json.dumps`); a
+   binding naming a file that still holds the id: the open goes on as a
+   reader's; a binding that cannot be read or written: logged, nothing
+   written.
+7. Key present: `_close_foreign_tail` (`store.py:795`, a `rekey` row when
+   the last one names another key), `_settle_origin` (`:934`, an anchor
+   written when none is there; `_name_origin_key` names the key of one
+   that names none), `restore_rows.settle` (`restore_rows.py:688`,
+   `store_restored` rows of a restore that could not append them). A key
+   missing or foreign: `_reclaim` (`store.py:847`) or `_open_rekeyed`
+   (`store_open.py:206`), each appending a `rekey` row.
+8. `reconciles_tokenizer` (`store_index.py:1227-1249`, `settle_tokenizer`
+   `:1190`): an index spelled by another tokenizer than the log names
+   (`stored_fingerprint`, `:1071`) is re-spelled and an `index_rebuilt`
+   row appended.
+9. `keeps_digest` (`store_digest.py:520-537`): `digest_mark()` with
+   `build=True` (`:476-509`): current, nothing; built under these rules,
+   one transaction applying the record mutations after its mark
+   (`_ingest`, `:409`: each mutated id's entry rewritten from its row
+   through the model, `_index_record` `:348`, `_put_entry` `:291`, its
+   postings, the state's `seq` and `mac`); else `_build` (`:423`: the
+   tables dropped and made again with a random build token, one
+   transaction per 2,000 records, then the token removed and the state at
+   the log's head at the start), then `_ingest` again. Every failure is
+   logged and the digest left as its last commit left it.
+
+The head file is never written by a writing open (no log row is
+appended in a plain state); it is read in one place, the unclaimed check.
+
+### The native order
+
+Native reads every decision first, on the admitted connection, with
+nothing written (but see "What a refusal can change"): steps 3 to 8 as questions (the version contract, the
+membership step, the rotation, the key, the binding and the fit, the
+foreign tail, the anchor, the restore record, the tokenizer). Any state for
+which the reference would write something this unit does not port is
+`OpenError::NotPorted` (below), with nothing written. Then it writes, in
+the reference's order: step 2's pragmas and modes, `_record_engine`, the
+binding, the digest. A refusal of the reference's own (steps 1 to 4) is its
+class and text; the reference has by then switched the file to WAL and
+made it 0600, native has not (a difference, on purpose: a refusal writes
+nothing).
+
+### Refused states (`NotPorted`), and why
+
+| state | the reference would | 
+| --- | --- |
+| `later_writer` (meta's minimum writer above 6) | open a reader (query_only, no claim) |
+| `schema_steps` (revision below 6) | apply and record steps (clock in meta) |
+| `membership_step` (an object, the membership id or a column missing) | create them, mint an id |
+| `rotation_pending` (`<id>.key.pending` is the key meta names) | rename it over the key |
+| `unclaimed` (no binding; the ring's anchor or head not carried by this file) | open a reader |
+| `bound_elsewhere` (the binding names another file that still holds this store id, or cannot be read to tell) | open a reader |
+| `key_missing`, `key_foreign` | write a new key and a `rekey` row, or reclaim |
+| `foreign_tail` (the last `rekey` row names another key) | append a `rekey` row |
+| `settle_origin` (no anchor, or one that does not read) | write an anchor |
+| `name_origin_key` (an anchor that names no key) | name it |
+| `restore_record` (a restore record entry for this store with a null row) | append `store_restored` rows |
+| `tokenizer_drift` | re-spell the index, append `index_rebuilt` |
+| `unreadable` (a log row, head or payload that does not read here) | (varies) |
+
+The binding follows the reference's rule exactly (`bind_store`,
+`_bound`, `_store_id_at`). Its text is read as `Path(value)` reads it
+(`config::pure_path`: repeated separators collapse, `.` segments and a
+trailing separator go, `..` stays), so `.../memory.sqlite/` names the
+file, never a directory below it. A binding naming this file under any
+spelling (a symbolic link, `..`, a resolved or unresolved prefix:
+`same_file`, equal paths or one device and inode) is left as it is; one naming a file that is not
+there, not a regular file, not a database, a database with no meta or no
+store id, a store refused with no meta table, or a store with another id
+is rebound to this file; one naming a file that holds this store id, or
+that cannot be read to tell (cannot be opened, a read past the 2 s
+admission deadline, a refused file with a meta table, an I/O error) is
+`bound_elsewhere`, whose message carries the reference's words: which
+file, why, and the remedy (move or remove one of the two stores, or
+`bettermemory key adopt --yes`). The other file is read read-only and
+admitted (`mode=ro&immutable=1`, or `mode=ro` first when its `-wal` and
+`-shm` are there, a 2 s busy timeout). The decision reads it once; the
+binding's write reads the binding again under `<id>.path.lock` and asks
+again, and a second opener that bound the ring meanwhile to a file that
+holds the store makes this open refuse there, as `bound_elsewhere`, after
+step 2's writes and `engine_version` (the reference's own writes by then)
+and before the digest is touched, with no store handed out
+(`store_open_robustness`, a hook between the decision and the bind).
+
+Every not-ported refusal says what to do: open the store once with the
+Python build, whose writing open settles the state (a later writer: open
+it with a build at least as new as its last writer; a ring bound
+elsewhere: the reference's remedy above).
+
+One refusal is wider than the reference's writes, on purpose: every
+restore-record entry with a null row is taken as pending, whatever its
+kind.
+
+### What a refusal can change
+
+The decision reads through the read-write connection the open then
+writes with, not through a read-only one: SQLite opens a store with a hot
+rollback journal only to roll it back (a read-only connection fails with
+`SQLITE_READONLY_ROLLBACK`), and a look through a copy or a second
+connection would leave a gap between the decision and the writes that the
+reference does not have. So a refusal (`NotPorted` or the reference's own)
+can change, and changes only:
+
+- a hot rollback journal (a writer in rollback-journal mode died
+  mid-transaction): rolled back at the first read, the journal removed, as
+  the reference's open and any connection that can write do;
+- a `-wal` with frames (a writer has the store open, or died with it
+  open): left in place, not checkpointed (the connection is closed with
+  `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` until the open decides to write); a
+  stale `-shm` beside it has its wal-index rebuilt, a `-wal` without a
+  `-shm` gets one;
+- an empty `-wal` (and its `-shm`) a reader left: removed at the close, as
+  every close of a writing connection removes them.
+
+The fixture holds both sidecar states: `not_ported_live_wal` (a refusal
+beside a live WAL: nothing changes) and `not_ported_hot_journal` (a
+refusal beside a hot journal: exactly what rolling the journal back
+leaves, which the generator records as `rolled_back` from a copy rolled
+back by a plain connection). A pending key meta does
+not name and a restore record with nothing pending are opened as the
+reference opens them (nothing written for them).
+
+### What a kill leaves
+
+`store_open_kills` (debug build, about 5.5 s on an M-series Mac): three
+states that make the open write (`intact`: the ring to bind,
+`engine_version` to record, the digest behind; `fts` with no digest: a
+build of 18 records; `intact` in rollback-journal mode, bound: the WAL
+switch), each ended at every boundary it passes by `abort` and by `exit`,
+plus 60 kills from outside at fixed pseudo-random delays: 108 kills. After
+each: native verify ok with the same record count; a copy opened for
+writing, verified and counted by the reference (all 108 ok); a further
+native writing open succeeds and verifies.
+
+| killed after | store | keys | digest |
+| --- | --- | --- | --- |
+| swept, checked | as before | as before | as before |
+| connected | WAL from here (a rollback store switched) | as before | as before |
+| engine recorded | meta's `engine_version` | as before; a kill inside the bind leaves `<id>.path.<pid>x<n>.tmp` and `.path.lock` (swept by a later open or create after an hour) | as before |
+| bound | | `<id>.path`, `.path.lock` | as before |
+| build begun | | | tables empty; state `fingerprint`, `build` (a later open rebuilds) |
+| build batch | | | some entries; still `build` |
+| build ended | | | whole at the build's start: `fingerprint`, `seq`, `mac` |
+| digest ingested, closed | | | current |
+
+### Two openers
+
+The reference lets two writing opens of one store proceed side by side:
+every write of the open is its own `BEGIN IMMEDIATE` under the 5 s busy
+timeout, read again under the lock (`_record_engine`, the digest's
+transactions; a build that finds another build's token stops), and the
+binding is written under its own `flock`, read again under it. Native does
+the same, tested in `store_open_robustness`: two native opens at once on a
+store with no digest (one builds, the other ingests or finds it current;
+the result equals the fixture's); a native open while a reference process
+holds the store open and writes 20 records (the native open proceeds,
+the reference's writes and verify are ok); a reference open while a native
+connection holds the write lock for 1.5 s (the reference waits, about
+1.2 s, then opens and verifies ok).
+
+### Tests
+
+| test | class | what |
+| --- | --- | --- |
+| `golden_store_open` | ii (Unicode), POSIX | 74 cases of `store_open.jsonl`: same, refused, raises, not ported |
+| `store_open_not_posix` | os | records the fixture's gap off POSIX |
+| `store_open_cross` | i, reference | both directions; the native digest equals the reference's |
+| `store_open_kills` | i, reference, POSIX | 108 kills |
+| `store_open_spellings` | i, reference, POSIX | 504 binding spellings onto this file, a copy, another store and nothing: outcome and `.path` bytes equal the reference's |
+| `store_open_robustness` | i (two need the reference) | hostile files, refusals unchanged byte for byte, two openers, a binding race lost to a copy |
+| `digest::tests`, `open::tests` | unit | the computed digest fingerprint equals the pinned one; provenance, sentences, version order |
+
+`store_open.jsonl` (133 KB) is Unicode-gated and POSIX only (its generator's
+docstring says why).
+
+The digest fingerprint the code reads and writes is computed from the
+ported rules once per process (`digest::fingerprint`); the pinned
+`DIGEST_FINGERPRINT` is only the tests' expectation. What the computed
+fingerprint covers is what the reference's covers: the digest's shape
+string, the tokenizer's fingerprint, and the features of four probe
+sentences. A change to the rules that keeps the same pattern strings and
+the same results on those probes (a rule that only moves a sentence no
+probe holds) does not move it, here or in the reference, and a digest
+built under the old rules is kept.
+
+`digest_state.seq` is read as the reference reads it: `str.isdigit`, then
+`int()` (`pyvalue::int_from_str`: Unicode decimal digits, so Arabic-Indic
+digits read as their value; a superscript is a digit and not a decimal,
+a ValueError the digest catches and leaves the digest as it is); a seq
+past an SQLite INTEGER is the reference's `OverflowError` out of
+`Store.open` (on every writing open, in both builds, until the digest is
+rebuilt; a read-only open still verifies: a finding about the reference) (`OpenError::Overflow`, raised after step 2's writes and
+`engine_version`, as the reference's; fixture case `digest_seq_overflow`).
+
+Not ported on Windows (and on a POSIX directory `flock` cannot lock):
+the writing open's restore-lock admission there (`_RecordCheck`: a handle
+held on the store file, the lock read again behind it, and again at
+`confirm` once the connection has read the store, with the file's
+identity compared on POSIX). Native takes the reader's admission
+(`restore_lock::reading`) for the writing open; on macOS and Linux, where
+the directory `flock` is held shared until the connection is made, that is
+the reference's admission.
+
+Not ported here, and found on the way: the CLI's and the daemon's
+`ensure_backfilled` after the open (`store_returned.py:371`), which is not
+part of `Store.open`.
+
 ## Not built yet
 
-The store's writes past `create` (the writing open, mutations, schema
-steps, the digest's ingest), membership and
+The store's writes past `create` and the writing open's plain states
+(mutations, schema steps, rekey, reclaim, the origin's settling, a
+restore's rows, re-spelling the index), membership and
 the caller's resolution, and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's
 files on disk (the ring here holds their bytes); `datetime.astimezone` of a

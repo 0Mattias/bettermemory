@@ -41,6 +41,7 @@ pub mod create;
 pub mod digest;
 pub mod fold;
 pub mod keys;
+pub mod open;
 pub mod pool;
 pub mod restore_lock;
 
@@ -256,7 +257,7 @@ pub fn sql_value(v: ValueRef<'_>) -> Result<SqlValue, StoreError> {
 
 static SCRATCH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn beside(path: &Path, suffix: &str) -> PathBuf {
+pub(crate) fn beside(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path
         .file_name()
         .map(|n| n.to_os_string())
@@ -607,7 +608,7 @@ fn snapshot(
 }
 
 /// `sqlite_file_uri`: `file:` and the absolute path, percent-encoded.
-fn file_uri(path: &Path) -> String {
+pub(crate) fn file_uri(path: &Path) -> String {
     // The path's own bytes, percent-encoded: never a lossy string, which
     // would name another file.
     #[cfg(unix)]
@@ -975,7 +976,7 @@ pub struct Opened {
     pub verdict: Verdict,
 }
 
-fn meta_get<'a>(meta: &'a [(String, String)], key: &str) -> Option<&'a str> {
+pub(crate) fn meta_get<'a>(meta: &'a [(String, String)], key: &str) -> Option<&'a str> {
     meta.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
@@ -1125,9 +1126,10 @@ pub fn open_checks(
 // The log
 // ---------------------------------------------------------------------------
 
-const LOG_SELECT: &str = "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log";
+pub(crate) const LOG_SELECT: &str =
+    "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log";
 
-fn log_row(row: &rusqlite::Row<'_>) -> Result<LogRow, StoreError> {
+pub(crate) fn log_row(row: &rusqlite::Row<'_>) -> Result<LogRow, StoreError> {
     let text = |i: usize, column: &'static str| -> Result<String, StoreError> {
         Ok(value_of(row.get_ref(i)?, "log", column)?.py_str())
     };

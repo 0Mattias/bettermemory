@@ -55,7 +55,7 @@
 //!   the reference's `int()` would carry it.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use rusqlite::types::ValueRef;
@@ -383,11 +383,13 @@ impl<'s> PoolReader<'s> {
         if seen == head {
             return Some(rows.into_iter().map(|(_, raw)| raw).collect());
         }
-        let ids = self.mutated_ids(seen)?;
+        let (ids, _) = digest::mutated_ids(self.store.connection(), seen).ok()?;
         let mut entries: HashMap<String, Option<RawInput>> = HashMap::new();
         for id in &ids {
             let entry = self.indexed_entry(id)?;
-            self.tombstone_reads(id)?;
+            // `_index_record(conn, True, id)` reads the tombstone through
+            // the model too.
+            digest::read_entry(self.store.connection(), true, id).ok()?;
             entries.insert(id.clone(), entry);
         }
         rows.retain(|(id, _)| !entries.contains_key(id));
@@ -400,116 +402,38 @@ impl<'s> PoolReader<'s> {
         Some(out)
     }
 
-    /// `store_digest._mutated_ids(after)`: the ids the record mutations
-    /// after `after` name, in first-seen order; None where a payload does
-    /// not read (the reference's KeyError, TypeError or ValueError, which
-    /// `digest_mark` catches).
-    fn mutated_ids(&self, after: i64) -> Option<Vec<String>> {
-        let payloads = self
-            .with(
-                "SELECT kind, payload FROM log WHERE kind IN (?, ?, ?, ?) AND seq > ? \
-                 ORDER BY seq",
-                |statement| {
-                    let mut rows = statement.query(rusqlite::params![
-                        DIGEST_KINDS[0],
-                        DIGEST_KINDS[1],
-                        DIGEST_KINDS[2],
-                        DIGEST_KINDS[3],
-                        after
-                    ])?;
-                    let mut out = Vec::new();
-                    while let Some(row) = rows.next()? {
-                        out.push((
-                            sql_value(row.get_ref(0)?).map(|v| v.py_str()),
-                            sql_value(row.get_ref(1)?),
-                        ));
-                    }
-                    Ok(out)
-                },
-            )
-            .ok()?;
-        let mut ids: Vec<String> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        for (kind, payload) in payloads {
-            let Ok(kind) = kind else {
-                return None;
-            };
-            let text = match payload.ok()? {
-                // `json.loads` of a str refuses a leading BOM.
-                SqlValue::Text(t) if t.starts_with('\u{feff}') => return None,
-                SqlValue::Text(t) => unicode::cps(&t),
-                SqlValue::Blob(b) => json_bytes(&b)?,
-                _ => return None,
-            };
-            let value = json::loads(&text).ok()?;
-            let holder = match kind.as_str() {
-                "memory_put" => dict_get(&value, "memory")?,
-                "tombstone_put" => dict_get(&value, "tombstone")?,
-                _ => &value,
-            };
-            let id = py_str_scalar(dict_get(holder, "id")?)?;
-            if seen.insert(id.clone()) {
-                ids.push(id);
-            }
-        }
-        Some(ids)
-    }
-
-    /// `_index_record(conn, False, id)` in memory: the active entry the
-    /// digest holds for `id` once brought forward (None: the memory row is
-    /// gone), or None outright where the record does not read.
+    /// `_index_record(conn, False, id)` in memory ([`digest::read_entry`]):
+    /// the active entry the digest holds for `id` once brought forward
+    /// (None: the memory row is gone), or None outright where the record
+    /// does not read.
     fn indexed_entry(&self, id: &str) -> Option<Option<RawInput>> {
-        let row = self
-            .with(
-                "SELECT memories.*, (SELECT payload FROM log WHERE mac = memories.log_mac \
-                 AND kind = 'memory_put' LIMIT 1) AS attestation_payload, \
-                 memories.rowid AS bm_rowid, \
-                 (SELECT project FROM homes WHERE record_id = memories.id) AS bm_home \
-                 FROM memories WHERE id = ?",
-                |statement| named_row(statement, id),
-            )
-            .ok()?;
-        let Some(mut row) = row else {
+        let Some(entry) = digest::read_entry(self.store.connection(), false, id).ok()? else {
             return Some(None);
         };
-        let take = |row: &mut Vec<(String, SqlValue)>, name: &str| -> Option<SqlValue> {
-            let at = row.iter().position(|(n, _)| n == name)?;
-            Some(row.remove(at).1)
-        };
-        let rid = take(&mut row, "bm_rowid")?;
-        let home = take(&mut row, "bm_home")?;
-        let get = |name: &str| row.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
-        let scopes = get("scopes_json")?;
-        let client = get("actor_client")?;
-        let model = get("actor_model")?;
-        let memory = rows::memory(&Row { columns: row }).ok()?;
-        let body = memory.fields.body.clone();
-        let dl = digest::bm25_length(&body);
+        let home = self
+            .with(
+                "SELECT project FROM homes WHERE record_id = ?",
+                |statement| {
+                    let mut rows = statement.query([&entry.id])?;
+                    Ok(match rows.next()? {
+                        None => Ok(SqlValue::Null),
+                        Some(row) => sql_value(row.get_ref(0)?),
+                    })
+                },
+            )
+            .ok()?
+            .ok()?;
+        let dl = digest::features(&entry.body).dl;
+        // `_put_entry` hashes the body as UTF-8: a lone surrogate raises.
+        unicode::to_string(&entry.body)?;
         Some(Some(RawInput {
-            rid: to_value(rid),
-            scopes: rusqlite::types::Value::Text(scopes.py_str()),
+            rid: rusqlite::types::Value::Integer(entry.rid),
+            scopes: rusqlite::types::Value::Text(entry.scopes),
             home: to_value(home),
-            client: to_value(client),
-            model: to_value(model),
+            client: to_value(entry.client),
+            model: to_value(entry.model),
             dl: rusqlite::types::Value::Integer(i64::try_from(dl).ok()?),
         }))
-    }
-
-    /// `_index_record(conn, True, id)` reads the tombstone through the
-    /// model too; None where it does not read.
-    fn tombstone_reads(&self, id: &str) -> Option<()> {
-        let row = self
-            .with(
-                "SELECT tombstones.*, (SELECT payload FROM log WHERE mac = tombstones.log_mac \
-                 AND kind = 'tombstone_put' LIMIT 1) AS attestation_payload \
-                 FROM tombstones WHERE id = ?",
-                |statement| named_row(statement, id),
-            )
-            .ok()?;
-        match row {
-            None => Some(()),
-            Some(columns) => rows::tombstone(&Row { columns }).ok().map(|_| ()),
-        }
     }
 
     /// `store_index._memory_head`: the log's last memory, home or
@@ -829,49 +753,6 @@ fn py_int(v: &rusqlite::types::Value) -> Result<i64, StoreError> {
     }
 }
 
-/// `json.loads` of bytes as far as a payload needs it: UTF-8, with a
-/// leading BOM dropped (`json.detect_encoding`'s ``utf-8-sig``); None for
-/// bytes that are not UTF-8 (the reference's UnicodeDecodeError, which
-/// `digest_mark` catches) and for the UTF-16 and UTF-32 spellings
-/// `detect_encoding` would also read (not ported: a store never writes
-/// them).
-fn json_bytes(b: &[u8]) -> Option<Vec<u32>> {
-    let utf16_or_32 = b.starts_with(&[0xff, 0xfe])
-        || b.starts_with(&[0xfe, 0xff])
-        || (b.len() >= 4 && (b[0] == 0 || b[1] == 0))
-        || (b.len() == 2 && (b[0] == 0 || b[1] == 0));
-    if utf16_or_32 {
-        return None;
-    }
-    let b = b.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(b);
-    std::str::from_utf8(b).ok().map(unicode::cps)
-}
-
-/// `str()` of a payload's id where it is a scalar: the text itself, an
-/// int's decimal, ``None``, ``True``/``False``, a float's repr. None for
-/// a container (whose `str()` is not ported) and for text holding a lone
-/// surrogate.
-fn py_str_scalar(v: &PyValue) -> Option<String> {
-    match v {
-        PyValue::Str(s) => unicode::to_string(s),
-        PyValue::Int(decimal) => Some(decimal.clone()),
-        PyValue::None => Some("None".to_owned()),
-        PyValue::Bool(b) => Some(if *b { "True" } else { "False" }.to_owned()),
-        PyValue::Float(f) => Some(crate::float_repr::repr(*f)),
-        _ => None,
-    }
-}
-
-fn dict_get<'v>(value: &'v PyValue, key: &str) -> Option<&'v PyValue> {
-    match value {
-        PyValue::Dict(items) => items
-            .iter()
-            .find(|(k, _)| matches!(k, PyValue::Str(k) if unicode::to_string(k).as_deref() == Some(key)))
-            .map(|(_, v)| v),
-        _ => None,
-    }
-}
-
 fn to_value(v: SqlValue) -> rusqlite::types::Value {
     use rusqlite::types::Value;
     match v {
@@ -881,26 +762,6 @@ fn to_value(v: SqlValue) -> rusqlite::types::Value {
         SqlValue::Text(t) => Value::Text(t),
         SqlValue::Blob(b) => Value::Blob(b),
     }
-}
-
-/// The first row `statement` gives for `id`, as named columns.
-fn named_row(
-    statement: &mut Statement<'_>,
-    id: &str,
-) -> Result<Option<Vec<(String, SqlValue)>>, rusqlite::Error> {
-    let names: Vec<String> = statement.column_names().map(str::to_owned).collect();
-    let mut rows = statement.query([id])?;
-    let Some(row) = rows.next()? else {
-        return Ok(None);
-    };
-    let mut columns = Vec::with_capacity(names.len());
-    for (i, name) in names.into_iter().enumerate() {
-        match sql_value(row.get_ref(i)?) {
-            Ok(v) => columns.push((name, v)),
-            Err(_) => return Err(rusqlite::Error::InvalidQuery),
-        }
-    }
-    Ok(Some(columns))
 }
 
 /// Every memory row's admission inputs, by position, and whether they

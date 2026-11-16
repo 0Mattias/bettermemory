@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 pub mod created;
+pub mod opened;
 pub mod parity;
 pub mod stores;
 

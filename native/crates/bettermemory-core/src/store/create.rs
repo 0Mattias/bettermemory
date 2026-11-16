@@ -448,7 +448,7 @@ pub fn create_with(
 /// not finish, refused with the reference's message (`describe`, through
 /// `printable`). A marker that is not UTF-8 JSON holding an object reads
 /// as no record, as the reference reads one that does not parse.
-fn unfinished_restore(file: &Path) -> Option<String> {
+pub(super) fn unfinished_restore(file: &Path) -> Option<String> {
     use std::io::Read;
     let lock = restore_lock::lock_path(file);
     let mut data = Vec::new();
@@ -536,7 +536,7 @@ fn printable(text: &[u32]) -> String {
     out
 }
 
-fn parent_of(file: &Path) -> PathBuf {
+pub(super) fn parent_of(file: &Path) -> PathBuf {
     match file.parent() {
         Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
         _ => PathBuf::from("."),
@@ -585,7 +585,7 @@ fn link_text(target: &Path) -> String {
 
 /// `_fsutil.ensure_owner_only_dir(path, parents=True)`: each directory it
 /// makes is 0700, and the leaf, made or not, loses group and other bits.
-fn owner_only_dir(path: &Path) -> io::Result<()> {
+pub(super) fn owner_only_dir(path: &Path) -> io::Result<()> {
     let mut missing: Vec<&Path> = path
         .ancestors()
         .skip(1)
@@ -638,7 +638,7 @@ fn tighten(_path: &Path) {}
 
 /// A new file, owner-only from its first byte, failing when the name is
 /// taken.
-fn new_private_file(path: &Path) -> io::Result<fs::File> {
+pub(super) fn new_private_file(path: &Path) -> io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.read(true).write(true).create_new(true);
     #[cfg(unix)]
@@ -650,16 +650,16 @@ fn new_private_file(path: &Path) -> io::Result<fs::File> {
 }
 
 #[cfg(unix)]
-fn sync_dir(dir: &Path) {
+pub(super) fn sync_dir(dir: &Path) {
     if let Ok(d) = fs::File::open(dir) {
         let _ = d.sync_all();
     }
 }
 
 #[cfg(not(unix))]
-fn sync_dir(_dir: &Path) {}
+pub(super) fn sync_dir(_dir: &Path) {}
 
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+pub(super) fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(suffix);
     path.with_file_name(name)
@@ -1102,7 +1102,7 @@ fn write_new(path: &Path, data: &[u8], written: &mut Vec<PathBuf>) -> io::Result
 /// Remove this unit's own staging files in the keys directory left by a
 /// dead create (`<32 hex>.<key|head|origin|path>.<pid>x<n>.tmp`, exactly)
 /// once older than the grace period. Never a key file itself.
-fn sweep_ring_temps(keys_dir: &Path) {
+pub(super) fn sweep_ring_temps(keys_dir: &Path) {
     let Ok(entries) = fs::read_dir(keys_dir) else {
         return;
     };

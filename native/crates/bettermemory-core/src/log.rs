@@ -523,6 +523,17 @@ fn check_origin(origin: Option<&HistoryOrigin>, row: Option<&LogRow>, keys: &[Ke
     unverifiable
 }
 
+/// `log.check_origin`'s status for the anchor `origin` and the log row at
+/// its seq (`row`), under the ring's held keys: `absent`, `ok`,
+/// `unverifiable` or `mismatch` (`OriginCheck.broken`).
+pub fn origin_status(
+    origin: Option<&HistoryOrigin>,
+    row: Option<&LogRow>,
+    ring: &KeyRing,
+) -> &'static str {
+    check_origin(origin, row, &ring.held_keys()).status
+}
+
 fn leading_key(ring: &KeyRing, named: &[u32], first_row: &LogRow) -> (PyStr, Option<Key>) {
     let name = unicode::to_string(named);
     let key = match &name {
