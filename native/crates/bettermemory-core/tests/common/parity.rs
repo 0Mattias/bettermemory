@@ -179,6 +179,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "toml.jsonl"
         | "settings_python.json"
         | "settings_paths_python.json"
+        | "membership_lines_python.jsonl"
         | "capture_vocabulary_python.jsonl" => &[Python],
         "lexicon.jsonl"
         | "lexicon_spelling_tables.json"

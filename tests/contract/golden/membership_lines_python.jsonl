@@ -1,0 +1,13 @@
+{"cases":12,"k":"python","python":"3.13","row":{"answer":null,"answered_by":null,"candidates_json":["P001","P002"],"checkout":"K01","evidence_json":{},"id":"Q01","kind":"first_sight","line":"stored","opened":"2001-02-03T04:05:06Z","reason":"one_witness","signature_json":null,"state":"open"}}
+{"at":null,"d":{"id":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"raised":["RecursionError",null]}}
+{"at":null,"d":{"checkout":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"h":"03e345ece706083980b102f2cf3125081ada97d333d20639eed227135426206e","n":583}}
+{"at":null,"d":{"kind":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"raised":["RecursionError",null]}}
+{"at":null,"d":{"candidates_json":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"raised":["RecursionError",null]}}
+{"at":null,"d":{"evidence_json":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"raised":["ValueError","dictionary update sequence element #0 has length 1; 2 is required"]}}
+{"at":null,"d":{"reason":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"raised":["RecursionError",null]}}
+{"at":null,"d":{"line":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"raised":["RecursionError",null]}}
+{"at":null,"d":{"state":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"raised":["RecursionError",null]}}
+{"at":null,"d":{"answer":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"h":"03e345ece706083980b102f2cf3125081ada97d333d20639eed227135426206e","n":583}}
+{"at":null,"d":{"answered_by":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"h":"03e345ece706083980b102f2cf3125081ada97d333d20639eed227135426206e","n":583}}
+{"at":null,"d":{"signature_json":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"h":"03e345ece706083980b102f2cf3125081ada97d333d20639eed227135426206e","n":583}}
+{"at":null,"d":{"opened":{"$n":[100000,1]}},"drop":[],"f":"restated_row","o":{"raised":["RecursionError",null]}}

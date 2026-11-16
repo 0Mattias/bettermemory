@@ -126,6 +126,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitconfig_tree_rules": gen_gitconfig_tree.generate_rules,
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
+    "membership_lines_python": gen_membership_lines.generate_python,
     "gitfile_leaves": gen_gitfile_leaves.generate,
     "gitfile_leaves_posix": gen_gitfile_leaves.generate_posix,
     "fs_realpath": gen_fs_realpath.generate,
@@ -193,6 +194,7 @@ PYTHON_GATED = frozenset(
         "toml",
         "settings_python",
         "settings_paths_python",
+        "membership_lines_python",
         "capture_vocabulary_python",
         "fs_realpath_python",
     }

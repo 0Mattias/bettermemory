@@ -11,8 +11,9 @@
 //! reference tests by truth (`if question:`) is absent when empty too;
 //! one it tests against None (`folder`, `ref`, `machine`, `path`) is not.
 
+use crate::capture::{str_of, STR_DEPTH_TOP};
 use crate::printable::{printable_into, quoted_into};
-use crate::pyvalue::PyStr;
+use crate::pyvalue::{PyError, PyStr, PyValue};
 
 /// A project a line names: (name, id), as `line_first_sight` takes them.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -633,4 +634,435 @@ pub fn line_content_crowded(root: &[u32], count: i64, limit: i64) -> PyStr {
             them, `bettermemory project join <id>` joins one",
         )
         .done()
+}
+
+// ---------------------------------------------------------------------------
+// The restated question (407-595)
+// ---------------------------------------------------------------------------
+
+/// The question kinds (`membership_records`, design 2.1 and 3.4).
+pub const FIRST_SIGHT: &str = "first_sight";
+pub const FILE_CONTRADICTION: &str = "file_contradiction";
+pub const REMOTE_DIVERGED: &str = "remote_diverged";
+pub const SUBPROJECT_CONTRADICTION: &str = "subproject_contradiction";
+pub const DUPLICATE_CHECKOUT: &str = "duplicate_checkout";
+pub const LEGACY: &str = "legacy";
+pub const IMPORT: &str = "import";
+
+/// `REASON_SAID` (416-475): the sentence a restated question says for
+/// each reason, in the reference's order.
+pub const REASON_SAID: [(&str, &str); 16] = [
+    ("several_projects", "the evidence of more than one project holds here and none outranks the others"),
+    ("one_witness", "one witness names it here, and one alone does not join"),
+    ("content_only", "only the folder's name and files match it, which do not join alone"),
+    ("a3_history_join", "this repository holds its history, and under membership.strict a join resting on history asks"),
+    ("token_shared_no_commit", "this checkout carries the checkout token of a live checkout with which it has no commit in common (a template's sibling, or a planted token), so the token is not evidence of the project"),
+    ("file_names_other_history", "its project file names one project while it holds the commits of another and none of the named one's"),
+    ("boundary", "its project file names a project of another boundary"),
+    ("file_contradiction", "its project file names another project than the checkout's own"),
+    ("remote_diverged", "its remote changed while the project elsewhere still names the old remote"),
+    ("subproject_contradiction", "a project file below the checkout's root names a project that is not part of the project around that folder, and the folder is treated as the project around it until answered"),
+    ("duplicate_checkout", "this checkout is a second record of a git directory another machine shares, registered by a sighting that did not read that machine's re-mint of the token as the first record's, while the first record is in the first project named; what was written here since stays in this checkout's project until answered"),
+    ("legacy_no_live_checkout", "the records of a project whose folder is gone may belong to it: this repository holds some of their recorded commits"),
+    ("unresolved_location", "records written at a folder that could not be read may belong to it"),
+    ("import_one_witness", "an imported project has one witness here, and one alone does not join"),
+    ("import_contradiction", "an imported project's file names one project here while another holds its commits"),
+    ("import_several_projects", "an imported project's evidence names more than one project here"),
+];
+
+/// `REASON_UNNAMED` (478): said for a reason the table does not hold.
+pub const REASON_UNNAMED: &str = "a reason this version does not name";
+
+/// A candidate of a restated question: its project's name, None when the
+/// project is gone, and its id (merges followed by the caller).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Named {
+    pub name: Option<PyStr>,
+    pub id: PyStr,
+}
+
+fn eq(text: &[u32], word: &str) -> bool {
+    text.len() == word.len() && word.bytes().map(u32::from).eq(text.iter().copied())
+}
+
+/// `str.replace(old, new)`: every occurrence, left to right, none
+/// overlapping (`old` is never empty here).
+fn replace(text: &[u32], old: &[u32], new: &[u32]) -> PyStr {
+    let mut out = Vec::with_capacity(text.len());
+    let mut i = 0;
+    while i < text.len() {
+        if text[i..].starts_with(old) {
+            out.extend_from_slice(new);
+            i += old.len();
+        } else {
+            out.push(text[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn cps(text: &str) -> PyStr {
+    text.chars().map(u32::from).collect()
+}
+
+/// The sentence `REASON_SAID` holds for `reason`, else `REASON_UNNAMED`.
+pub fn reason_said(reason: &[u32]) -> &'static str {
+    REASON_SAID
+        .iter()
+        .find(|(k, _)| eq(reason, k))
+        .map_or(REASON_UNNAMED, |(_, s)| *s)
+}
+
+/// `line_restated` (481-595): a question shown again from what its row
+/// stores. `kind` and `reason` choose fixed text and are never shown;
+/// the question's id and a gone candidate's id go through `printable`, a
+/// candidate's name, the folder and `at` through `quoted`.
+pub fn line_restated(
+    question: &[u32],
+    kind: &[u32],
+    reason: &[u32],
+    candidates: &[Named],
+    filed: bool,
+    folder: Option<&[u32]>,
+    at: Option<&[u32]>,
+) -> PyStr {
+    let q = Some(question);
+    let mut names = Out::new();
+    names.join(" or ", candidates, |o, c| match &c.name {
+        Some(n) => {
+            o.named(n, &c.id);
+        }
+        None => {
+            o.p(&c.id);
+        }
+    });
+    let mut names = names.done();
+    if names.is_empty() {
+        names = cps("no project");
+    }
+    let mut said = cps(reason_said(reason));
+    let mut joins = Out::new();
+    joins.join(" | ", candidates, |o, c| {
+        o.answer(q, JOIN, Some(&c.id), true);
+    });
+    let mut joins = joins.done();
+    if joins.is_empty() {
+        joins = cps("(no project to join)");
+    }
+    let mut separate = Out::new().answer(q, SEPARATE, None, false).done();
+    let here = match at {
+        Some(a) => Out::new().s("in ").q(a).done(),
+        None => cps("here"),
+    };
+    let there = Out::new().s(", run ").run_in(at, q).done();
+    let this = if at.is_some() { "that" } else { "this" };
+    if at.is_some() {
+        said = replace(&said, &cps("this checkout"), &cps("that checkout"));
+        said = replace(&said, &cps("this repository"), &cps("that repository"));
+        let mut with = vec![u32::from(b' ')];
+        with.extend_from_slice(&here);
+        said = replace(&said, &cps(" here"), &with);
+    }
+    let mut o = Out::new();
+    if eq(kind, FILE_CONTRADICTION) {
+        o.s("Keep: bettermemory project init --rebind")
+            .raw(&there)
+            .s("; move ")
+            .s(this)
+            .s(" checkout, when the user says so: ")
+            .raw(&joins);
+    } else if eq(kind, SUBPROJECT_CONTRADICTION) {
+        let folder = folder.filter(|f| !f.is_empty());
+        o.s("That folder is that project, when the user says so: ")
+            .raw(&joins)
+            .s("; a part with an id of its own: bettermemory project init --new (in ")
+            .folder_said(folder, q)
+            .s(")");
+    } else if eq(kind, REMOTE_DIVERGED) {
+        o.s("Still the same project, when the user says so: ")
+            .raw(&joins)
+            .s("; a project of its own: ")
+            .raw(&separate);
+    } else if eq(kind, DUPLICATE_CHECKOUT) {
+        let pick = |i: usize| match candidates.get(i) {
+            Some(c) => Out::new().answer(q, JOIN, Some(&c.id), true).done(),
+            None => cps("(no project to join)"),
+        };
+        o.s("The first record's project, ")
+            .s(this)
+            .s(" checkout and what was written ")
+            .raw(&here)
+            .s(" moving there, when the user says so: ")
+            .raw(&pick(0))
+            .s("; ")
+            .s(this)
+            .s(" checkout's own, where it is, when the user says so: ")
+            .raw(&pick(1))
+            .s("; a new project of its own, with what was written ")
+            .raw(&here)
+            .s(": ")
+            .raw(&separate);
+    } else if eq(kind, IMPORT) {
+        o.s("Same project, when the user says so: ")
+            .raw(&joins)
+            .s(" (in that checkout); keep apart: ")
+            .raw(&separate);
+    } else {
+        if eq(kind, FIRST_SIGHT) && at.is_some() {
+            separate = Out::new()
+                .raw(&separate)
+                .s(" (refused where the project file ")
+                .raw(&here)
+                .s(" is bound to another project: then bettermemory project init --new")
+                .raw(&there)
+                .s(", a fresh project file)")
+                .done();
+        } else if eq(kind, FIRST_SIGHT) && filed {
+            separate = Out::new()
+                .s("bettermemory project init --new (")
+                .run_in(None, q)
+                .s(", a fresh project file)")
+                .done();
+        }
+        o.s("Same project, when the user says so: ")
+            .raw(&joins)
+            .s("; separate: ")
+            .raw(&separate);
+    }
+    let options = o.done();
+    let mut line = Out::new();
+    line.s("bettermemory: question ")
+        .p(question)
+        .s(", restated from what it stores, asks about project ")
+        .raw(&names)
+        .s(": ")
+        .raw(&said)
+        .s(".");
+    if eq(kind, FIRST_SIGHT) && at.is_some() {
+        line.s(" Until answered, nothing from other projects is shown ")
+            .raw(&here)
+            .s(" and what is written ")
+            .raw(&here)
+            .s(" stays with that folder.");
+    } else if eq(kind, FIRST_SIGHT) {
+        line.s(
+            " Until answered, nothing from other projects is shown here and what is \
+             written here stays with this folder.",
+        );
+    }
+    line.s(" ").raw(&options).done()
+}
+
+// ---------------------------------------------------------------------------
+// A stored row, as far as the restated question reads it
+// ---------------------------------------------------------------------------
+
+/// What the reference raises reading a row: the exception's class and
+/// `str()` of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Raised {
+    pub class: &'static str,
+    pub message: String,
+}
+
+fn raised(class: &'static str, message: impl Into<String>) -> Raised {
+    Raised {
+        class,
+        message: message.into(),
+    }
+}
+
+/// The fields `line_restated` takes from a question's row, read as
+/// `membership_rows._proposal_from` (196-214) reads the row and
+/// `membership_queries._restatement` the folder: `id`, `kind` and `reason`
+/// through `str()`, `candidates` each through `str()`, `folder` the
+/// evidence's `dir` where the kind is a part's question and it is a
+/// non-empty str. `checkout` is the row's value as it is (the caller's
+/// store read of `filed` takes it).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RestatedRow {
+    pub id: PyStr,
+    pub checkout: PyValue,
+    pub kind: PyStr,
+    pub candidates: Vec<PyStr>,
+    pub reason: PyStr,
+    pub folder: Option<PyStr>,
+}
+
+fn type_name(value: &PyValue) -> &'static str {
+    match value {
+        PyValue::None => "NoneType",
+        PyValue::Bool(_) => "bool",
+        PyValue::Int(_) => "int",
+        PyValue::Float(_) => "float",
+        PyValue::Str(_) => "str",
+        PyValue::DateTime(_) => "datetime.datetime",
+        PyValue::Path(_) => "PurePosixPath",
+        PyValue::Tuple(_) => "tuple",
+        PyValue::List(_) => "list",
+        PyValue::Dict(_) => "dict",
+    }
+}
+
+fn truth(value: &PyValue) -> bool {
+    match value {
+        PyValue::None => false,
+        PyValue::Bool(b) => *b,
+        PyValue::Int(t) => t != "0",
+        PyValue::Float(f) => *f != 0.0,
+        PyValue::Str(s) | PyValue::Path(s) => !s.is_empty(),
+        PyValue::DateTime(_) => true,
+        PyValue::Tuple(v) | PyValue::List(v) => !v.is_empty(),
+        PyValue::Dict(v) => !v.is_empty(),
+    }
+}
+
+/// `iter(value)`'s items: a sequence's items, a str's characters, a dict's
+/// keys; TypeError for anything else.
+fn items(value: &PyValue) -> Result<Vec<PyValue>, Raised> {
+    match value {
+        PyValue::List(v) | PyValue::Tuple(v) => Ok(v.clone()),
+        PyValue::Str(s) => Ok(s.iter().map(|&c| PyValue::Str(vec![c])).collect()),
+        PyValue::Dict(v) => Ok(v.iter().map(|(k, _)| k.clone()).collect()),
+        other => Err(raised(
+            "TypeError",
+            format!("'{}' object is not iterable", type_name(other)),
+        )),
+    }
+}
+
+/// `str(value)`, with the port's depth limit (`capture::str_of`).
+fn str_raising(value: &PyValue) -> Result<PyStr, Raised> {
+    str_of(value, STR_DEPTH_TOP).map_err(|e| match e {
+        PyError::RecursionError => raised(
+            "RecursionError",
+            "maximum recursion depth exceeded while getting the repr of an object",
+        ),
+        PyError::ValueError => raised(
+            "ValueError",
+            "Exceeds the limit (4300 digits) for integer string conversion; use \
+             sys.set_int_max_str_digits() to increase the limit",
+        ),
+        other => raised(other.name(), ""),
+    })
+}
+
+/// The hash check a dict makes of a key: a list or a dict (also inside a
+/// tuple) is unhashable.
+fn hashable(key: &PyValue) -> Result<(), Raised> {
+    let mut work = vec![key];
+    while let Some(v) = work.pop() {
+        match v {
+            PyValue::List(_) | PyValue::Dict(_) => {
+                return Err(raised(
+                    "TypeError",
+                    format!("unhashable type: '{}'", type_name(v)),
+                ))
+            }
+            PyValue::Tuple(items) => work.extend(items.iter().rev()),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// `dict(value or {})` reduced to what is read of it: the value of key
+/// `"dir"`, the last one written. Raises as `dict()` does.
+fn evidence_dir(value: &PyValue) -> Result<Option<PyValue>, Raised> {
+    if !truth(value) {
+        return Ok(None);
+    }
+    let pairs: Vec<(PyValue, PyValue)> = match value {
+        PyValue::Dict(v) => v.clone(),
+        PyValue::List(_) | PyValue::Tuple(_) | PyValue::Str(_) => {
+            let mut pairs = Vec::new();
+            for (i, element) in items(value)?.into_iter().enumerate() {
+                let pair = match &element {
+                    PyValue::List(_) | PyValue::Tuple(_) | PyValue::Str(_) | PyValue::Dict(_) => {
+                        items(&element)?
+                    }
+                    _ => {
+                        return Err(raised(
+                            "TypeError",
+                            format!(
+                            "cannot convert dictionary update sequence element #{i} to a sequence"
+                        ),
+                        ))
+                    }
+                };
+                if pair.len() != 2 {
+                    return Err(raised(
+                        "ValueError",
+                        format!(
+                            "dictionary update sequence element #{i} has length {}; 2 is required",
+                            pair.len()
+                        ),
+                    ));
+                }
+                let mut pair = pair.into_iter();
+                let (k, v) = (pair.next().expect("two"), pair.next().expect("two"));
+                hashable(&k)?;
+                pairs.push((k, v));
+            }
+            pairs
+        }
+        other => {
+            return Err(raised(
+                "TypeError",
+                format!("'{}' object is not iterable", type_name(other)),
+            ))
+        }
+    };
+    let dir = cps("dir");
+    Ok(pairs.into_iter().rev().find_map(|(k, v)| match &k {
+        PyValue::Str(s) if *s == dir => Some(v),
+        _ => None,
+    }))
+}
+
+/// A question's row (a dict of its columns, `_json` ones decoded) read
+/// as `_proposal_from` reads it, every column in its order, so the first
+/// exception it raises is the one returned; then the folder
+/// `_restatement` passes.
+pub fn restated_row(row: &PyValue) -> Result<RestatedRow, Raised> {
+    let get = |key: &str| {
+        row.get(key)
+            .ok_or_else(|| raised("KeyError", format!("'{key}'")))
+    };
+    let signature = get("signature_json")?;
+    let id = str_raising(get("id")?)?;
+    let checkout = get("checkout")?.clone();
+    let kind = str_raising(get("kind")?)?;
+    let stored = get("candidates_json")?;
+    let mut candidates = Vec::new();
+    if truth(stored) {
+        for c in items(stored)? {
+            candidates.push(str_raising(&c)?);
+        }
+    }
+    let dir = evidence_dir(get("evidence_json")?)?;
+    let reason = str_raising(get("reason")?)?;
+    str_raising(get("line")?)?;
+    str_raising(get("state")?)?;
+    get("answer")?;
+    get("answered_by")?;
+    if !matches!(signature, PyValue::None) {
+        items(signature)?;
+    }
+    str_raising(get("opened")?)?;
+    let folder = match &dir {
+        Some(PyValue::Str(s)) if !s.is_empty() && eq(&kind, SUBPROJECT_CONTRADICTION) => {
+            Some(s.clone())
+        }
+        _ => None,
+    };
+    Ok(RestatedRow {
+        id,
+        checkout,
+        kind,
+        candidates,
+        reason,
+        folder,
+    })
 }

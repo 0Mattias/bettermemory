@@ -151,3 +151,151 @@ fn a_hundred_thousand_names() {
     let line = ml::line_import(&cps("a"), &cps("s"), &imports, Some(&cps("Q")));
     assert!(line.len() < 2_000 + 3 * n);
 }
+
+use bettermemory_core::membership_lines::{line_restated, restated_row, Named};
+use bettermemory_core::pyvalue::PyValue;
+
+const COLUMNS: [&str; 12] = [
+    "id",
+    "checkout",
+    "kind",
+    "candidates_json",
+    "evidence_json",
+    "reason",
+    "line",
+    "state",
+    "answer",
+    "answered_by",
+    "signature_json",
+    "opened",
+];
+
+fn base_row(field: &str, value: PyValue) -> PyValue {
+    let mut value = Some(value);
+    PyValue::Dict(
+        COLUMNS
+            .iter()
+            .map(|&c| {
+                let v = if c == field {
+                    value.take().expect("one field")
+                } else if c == "candidates_json" {
+                    PyValue::List(vec![PyValue::str("P1")])
+                } else if c == "evidence_json" {
+                    PyValue::Dict(Vec::new())
+                } else if matches!(c, "answer" | "answered_by" | "signature_json") {
+                    PyValue::None
+                } else {
+                    PyValue::str("x")
+                };
+                (PyValue::str(c), v)
+            })
+            .collect(),
+    )
+}
+
+fn nested(depth: usize) -> PyValue {
+    let mut v = PyValue::int(1);
+    for _ in 0..depth {
+        v = PyValue::List(vec![v]);
+    }
+    v
+}
+
+/// Each column holding a list nested 9,998 and 100,000 deep, read on a
+/// 512 KiB thread: an answer or a raise, never a panic or an overflow.
+#[test]
+fn rows_nested_deep_in_each_field() {
+    let worker = std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(|| {
+            let mut outcomes = Vec::new();
+            for depth in [9_998, 100_000] {
+                for field in COLUMNS {
+                    let row = base_row(field, nested(depth));
+                    let got = restated_row(&row).map(|r| {
+                        let named: Vec<Named> = r
+                            .candidates
+                            .iter()
+                            .map(|c| Named {
+                                name: None,
+                                id: c.clone(),
+                            })
+                            .collect();
+                        line_restated(&r.id, &r.kind, &r.reason, &named, false, None, None).len()
+                    });
+                    outcomes.push((depth, field, got.map_err(|e| e.class)));
+                }
+            }
+            outcomes
+        })
+        .expect("a thread");
+    let outcomes = worker.join().expect("no panic");
+    for (depth, field, got) in outcomes {
+        let want_raise = match (depth, field) {
+            (_, "checkout" | "answer" | "answered_by" | "signature_json") => None,
+            (9_998, "evidence_json") | (100_000, "evidence_json") => Some("ValueError"),
+            (9_998, _) => None,
+            (_, _) => Some("RecursionError"),
+        };
+        match (want_raise, got) {
+            (None, Ok(_)) => {}
+            (Some(w), Err(e)) => assert_eq!(e, w, "{depth} {field}"),
+            (w, g) => panic!("{depth} {field}: want {w:?}, got {g:?}"),
+        }
+    }
+}
+
+/// A mebibyte of text in each text argument: the line's length is the
+/// sum of its parts, linear in the input.
+#[test]
+fn restated_line_of_a_mebibyte() {
+    let big = vec![u32::from(b'a'); MIB];
+    let one = |n: &[u32], at: Option<&[u32]>| {
+        line_restated(
+            n,
+            &cps("file_contradiction"),
+            &cps("unknown"),
+            &[Named {
+                name: Some(n.to_vec()),
+                id: n.to_vec(),
+            }],
+            false,
+            None,
+            at,
+        )
+        .len()
+    };
+    let small = vec![u32::from(b'a'); 1];
+    let (l1, lb) = (one(&small, Some(&small)), one(&big, Some(&big)));
+    // The text appears a fixed number of times; each copy grows by MIB - 1.
+    let copies = (lb - l1) / (MIB - 1);
+    assert_eq!((lb - l1) % (MIB - 1), 0);
+    assert!(copies <= 16, "{copies} copies");
+}
+
+/// Every code point once in the question (through `printable`) and in
+/// `at` (through `quoted`): nothing `printable` escapes survives, the tab
+/// aside. A name and an id go through the same two functions.
+#[test]
+fn restated_line_of_every_code_point() {
+    let all: PyStr = (0..0x11_0000).collect();
+    let kind = cps("file_contradiction");
+    let reason = cps("unknown");
+    let lines = [line_restated(
+        &all,
+        &kind,
+        &reason,
+        &[],
+        false,
+        None,
+        Some(&all),
+    )];
+    for line in &lines {
+        for &c in line {
+            assert!(
+                c == 0x09 || !matches!(unicode::category(c), "Cc" | "Cf" | "Cs" | "Zl" | "Zp"),
+                "U+{c:04X} survives"
+            );
+        }
+    }
+}
