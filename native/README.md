@@ -24,6 +24,7 @@ One library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `log` | the row MAC (HMAC-SHA256 written on `sha2`, RFC 4231-checked), `fingerprint`, the key ring (in memory), the head and origin files, rekey rows, `verify_chain` and its report | `log_chain.jsonl`, `log_keyring.jsonl` |
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
+| `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows` | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -686,3 +687,35 @@ search pool it draws, admission and the hit's snippet and drift report),
 the daemon, the MCP tools and the hooks; reading and writing the key ring's
 files on disk (the ring here holds their bytes); `datetime.astimezone` of a
 naive value (the reference reads it as the machine's local time).
+
+## Records and their errors
+
+`records` reproduces what pydantic does with the inputs the reference's
+record models meet, not pydantic in general: `str` (bytes decoded as UTF-8,
+else `string_unicode`), `int` (bools, integral floats inside +-2**63, text
+of an integer optionally followed by `.0...`, trimmed of White_Space, at
+most 4300 bytes), `bool` (0/1, 0.0/1.0, the twelve words in any ASCII
+case), `datetime` (speedate's RFC 3339 grammar with `T`, `t`, space or `_`,
+`.`/`,` fractions truncated past six digits, `Z`/`z`/`+-HH[:]MM` below 24
+hours; unix timestamps as numbers or text, past 2e10 read as milliseconds,
+including speedate's second division for text floats and pydantic-core's
+rounding of a float's fraction; year 0 is `datetime_parsing`, any other text
+failure `datetime_from_date_parsing`), the `str` enums (bytes accepted),
+lists, dicts (a key holding a lone surrogate comes back with each surrogate
+as three U+FFFD, in the record and in the error location, as pydantic-core
+rebuilds it), nested models, and the validators `models` adds.
+
+A refusal is `RecordError::Validation { title, errors }`: the model's class
+name and each error's location and pydantic's `type`, in pydantic's order;
+never pydantic's message text. Anything else the reference raises on the
+way (a row reader's `AttributeError`, `JSONDecodeError`, `IndexError` for
+a missing column ...) is `RecordError::Raised(class name)`.
+
+Validation never recurses: a deep value is matched one level at a time
+and never cloned (`tests/records_robustness.rs`).
+
+Two reference findings the port copies (filed, not changed here): a
+`links_json` column holding a JSON object or string fails the whole read
+as MemoryLink `model_type` (it iterates the keys or characters), and
+`_path_targets` lets a numeric `attestation_payload` raise TypeError out
+of the read (it catches only ValueError and RecursionError).

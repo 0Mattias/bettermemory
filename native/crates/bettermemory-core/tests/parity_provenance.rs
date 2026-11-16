@@ -22,9 +22,15 @@ fn the_committed_provenance_is_generate_py_s() {
     assert_eq!(pin(&source, "PYTHON_VERSION"), parity::COMMITTED_PYTHON);
     assert_eq!(pin(&source, "SQLITE_VERSION"), parity::COMMITTED_SQLITE);
     assert_eq!(pin(&source, "UNIDATA_VERSION"), parity::COMMITTED_UNICODE);
+    assert_eq!(
+        pin(&source, "PYDANTIC_CORE_VERSION"),
+        parity::COMMITTED_PYDANTIC_CORE
+    );
     // The port reproduces the versions the committed files were made under.
     assert_eq!(parity::PORT_PYTHON, parity::COMMITTED_PYTHON);
     assert_eq!(parity::PORT_UNICODE, parity::COMMITTED_UNICODE);
+    assert_eq!(parity::PORT_PYDANTIC_CORE, parity::COMMITTED_PYDANTIC_CORE);
+    assert_eq!(parity::PORT_SQLITE, parity::COMMITTED_SQLITE);
     assert_eq!(
         parity::PORT_UNICODE,
         bettermemory_core::unicode::UNIDATA_VERSION
@@ -36,17 +42,21 @@ fn the_files_under_test_are_named() {
     let p = parity::provenance();
     let open = |gates: &[Gate]| parity::open_gates(gates);
     eprintln!(
-        "PARITY files under test: {} (platform {}, Python {}, SQLite {}, Unicode {}); \
-         this machine {}; open gates: platform {:?}, python {:?}, unicode {:?}",
+        "PARITY files under test: {} (platform {}, Python {}, SQLite {}, Unicode {}, \
+         pydantic-core {}); this machine {}; open gates: platform {:?}, python {:?}, \
+         unicode {:?}, pydantic {:?}, sqlite {:?}",
         parity::golden_dir().display(),
         p.platform,
         p.python,
         p.sqlite,
         p.unicode,
+        p.pydantic_core,
         parity::runner_platform(),
         open(&[Gate::Platform]),
         open(&[Gate::Python]),
         open(&[Gate::Unicode]),
+        open(&[Gate::Pydantic]),
+        open(&[Gate::Sqlite]),
     );
     if !parity::under_test_is_committed() {
         for name in ["search_ranker.jsonl", "store_files.jsonl", "lexicon.jsonl"] {

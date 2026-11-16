@@ -45,12 +45,18 @@ use serde_json::{json, Value};
 /// CPython 3.13.13's datetime parser and `list.sort`, its nesting budget.
 pub const PORT_PYTHON: &str = "3.13.13";
 pub const PORT_UNICODE: &str = "15.1.0";
+/// The pydantic-core whose coercions and errors the record models reproduce.
+pub const PORT_PYDANTIC_CORE: &str = "2.50.1";
+/// The SQLite the record store fixtures were written with: a store another
+/// SQLite writes (its text affinity, its file layout) is a different input.
+pub const PORT_SQLITE: &str = "3.50.4";
 
 /// What made the committed files (`generate.py`'s pins).
 pub const COMMITTED_PLATFORM: &str = "darwin-arm64";
 pub const COMMITTED_PYTHON: &str = "3.13.13";
 pub const COMMITTED_SQLITE: &str = "3.50.4";
 pub const COMMITTED_UNICODE: &str = "15.1.0";
+pub const COMMITTED_PYDANTIC_CORE: &str = "2.50.1";
 
 #[derive(Clone, Debug)]
 pub struct Provenance {
@@ -58,6 +64,7 @@ pub struct Provenance {
     pub python: String,
     pub sqlite: String,
     pub unicode: String,
+    pub pydantic_core: String,
     /// "committed" or the manifest's path.
     pub source: String,
 }
@@ -88,6 +95,7 @@ pub fn provenance() -> &'static Provenance {
                 python: COMMITTED_PYTHON.into(),
                 sqlite: COMMITTED_SQLITE.into(),
                 unicode: COMMITTED_UNICODE.into(),
+                pydantic_core: COMMITTED_PYDANTIC_CORE.into(),
                 source: "committed".into(),
             };
         }
@@ -111,6 +119,11 @@ pub fn provenance() -> &'static Provenance {
             python: field("python"),
             sqlite: field("sqlite"),
             unicode: field("unicode"),
+            // A manifest from before the record models has no entry.
+            pydantic_core: doc["pydantic_core"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_owned(),
             source: path.display().to_string(),
         }
     })
@@ -146,12 +159,18 @@ pub enum Gate {
     Unicode,
     /// Class (iii): floating-point bits of one platform.
     Platform,
+    /// Class (ii): the pydantic-core the record models reproduce.
+    Pydantic,
+    /// Class (ii): the SQLite that wrote the record store fixtures.
+    Sqlite,
 }
 
 /// The gates of each golden file: the Python side's `*_GATED` sets, by
 /// the generator that writes the file. SQLite is not a gate here: the
 /// native build links its own SQLite, so a reference SQLite of another
-/// version is recorded in the manifest and compared strictly.
+/// version is recorded in the manifest and compared strictly. The one
+/// exception is `models_stores.jsonl`, whose stores the reference SQLite
+/// writes: their bytes are the input under test.
 pub fn gates_of(file: &str) -> &'static [Gate] {
     use Gate::*;
     match file {
@@ -168,6 +187,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         | "store_admission.json"
         | "store_real.json"
         | "store_real.sqlite" => &[Unicode, Platform],
+        "models.jsonl" => &[Pydantic],
+        "models_rows.jsonl" => &[Python, Pydantic],
+        "models_stores.jsonl" => &[Python, Sqlite, Pydantic],
         // The restore lock is a directory `flock` on POSIX, a record file
         // and a handle on Windows; the generator runs on POSIX only.
         "store_restore_lock.json" => &[Platform],
@@ -204,6 +226,14 @@ pub fn open_gates(gates: &[Gate]) -> Vec<String> {
                 "files from platform {}, this is {}",
                 p.platform,
                 runner_platform()
+            )),
+            Gate::Pydantic if p.pydantic_core != PORT_PYDANTIC_CORE => out.push(format!(
+                "files from pydantic-core {}, the port reproduces {PORT_PYDANTIC_CORE}",
+                p.pydantic_core
+            )),
+            Gate::Sqlite if p.sqlite != PORT_SQLITE => out.push(format!(
+                "files from SQLite {}, the store fixtures are {PORT_SQLITE}'s",
+                p.sqlite
             )),
             _ => {}
         }

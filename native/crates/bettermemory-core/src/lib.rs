@@ -10,6 +10,9 @@
 //! - [`lexicon`]: the search tokenizer and its fingerprint;
 //! - [`log`]: the row MAC, the key ring and `verify_chain`;
 //! - [`search`]: `search.search` over records in memory, bit for bit;
+//! - [`records`]: the reference's record models (memory, tombstone,
+//!   episode, origin, actor, link) validated from a payload or a row and
+//!   written back, with pydantic's errors;
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter.
@@ -22,6 +25,7 @@ pub mod json;
 pub mod lexicon;
 pub mod log;
 pub mod pyvalue;
+pub mod records;
 pub mod search;
 pub mod store;
 pub mod unicode;

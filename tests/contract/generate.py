@@ -38,6 +38,7 @@ from . import (
     gen_log,
     gen_log_ring,
     gen_mcp,
+    gen_models,
     gen_restore_lock,
     gen_state,
     gen_search_ranker,
@@ -71,6 +72,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "cli_surface": gen_cli.generate,
     "state_files": gen_state.generate,
     "store_files": gen_store_files.generate,
+    "models": gen_models.generate,
+    "models_rows": gen_models.rows,
+    "models_stores": gen_models.stores,
     "store_restore_lock": gen_restore_lock.generate,
 }
 
@@ -99,7 +103,9 @@ UNICODE_GATED = frozenset(
 #: prompt recall's pointers and the Stop audit's hits the same way, and
 #: ``store_files``, whose FTS case records ``bm25()`` score bits.
 SQLITE_VERSION = "3.50.4"
-SQLITE_GATED = frozenset({"store", "store_path", "store_files", "mcp", "hooks"})
+SQLITE_GATED = frozenset(
+    {"store", "store_path", "store_files", "mcp", "hooks", "models_stores"}
+)
 
 #: The CPython the golden files were generated under, to the patch
 #: release. ``python_edges`` records what changes between versions
@@ -110,7 +116,21 @@ SQLITE_GATED = frozenset({"store", "store_path", "store_files", "mcp", "hooks"})
 #: from 3.13.13's, so a minor-version gate compared files it should have
 #: skipped (CI run 43752288601).
 PYTHON_VERSION = "3.13.13"
-PYTHON_GATED = frozenset({"python_edges"})
+#: ``models_rows`` and ``models_stores`` read row datetimes through
+#: `datetime.fromisoformat`, whose grammar is the release's.
+PYTHON_GATED = frozenset({"python_edges", "models_rows", "models_stores"})
+
+
+#: The pydantic-core the record fixtures were generated under (uv.lock pins
+#: pydantic 2.14.1 on it): the models' coercions and errors are its.
+PYDANTIC_CORE_VERSION = "2.50.1"
+PYDANTIC_GATED = frozenset({"models", "models_rows", "models_stores"})
+
+
+def pydantic_core_version() -> str:
+    import pydantic_core
+
+    return str(pydantic_core.__version__)
 
 
 #: The platform the files that hold floating-point score bits were
@@ -170,6 +190,10 @@ def drift(name: str) -> list[str]:
         out.append(f"Python {python_version()} (files: {PYTHON_VERSION})")
     if name in PLATFORM_GATED and platform_key() != PLATFORM:
         out.append(f"platform {platform_key()} (files: {PLATFORM})")
+    if name in PYDANTIC_GATED and pydantic_core_version() != PYDANTIC_CORE_VERSION:
+        out.append(
+            f"pydantic-core {pydantic_core_version()} (files: {PYDANTIC_CORE_VERSION})"
+        )
     return out
 
 
@@ -243,11 +267,13 @@ def as_found(out: Path) -> int:
         "python_build": sys.version,
         "sqlite": sqlite3.sqlite_version,
         "unicode": unicodedata.unidata_version,
+        "pydantic_core": pydantic_core_version(),
         "committed": {
             "platform": PLATFORM,
             "python": PYTHON_VERSION,
             "sqlite": SQLITE_VERSION,
             "unicode": UNIDATA_VERSION,
+            "pydantic_core": PYDANTIC_CORE_VERSION,
         },
         "generators": generators,
         "raised": sorted(n for n, e in generators.items() if "raised" in e),
@@ -306,6 +332,13 @@ def main(argv: list[str] | None = None) -> int:
     if python_version() != PYTHON_VERSION:
         print(
             f"refusing: Python {python_version()}, golden files are {PYTHON_VERSION}",
+            file=sys.stderr,
+        )
+        return 1
+    if pydantic_core_version() != PYDANTIC_CORE_VERSION:
+        print(
+            f"refusing: pydantic-core {pydantic_core_version()}, golden files are "
+            f"{PYDANTIC_CORE_VERSION}",
             file=sys.stderr,
         )
         return 1

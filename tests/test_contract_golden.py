@@ -28,6 +28,8 @@ from tests.contract.payloads import LEGACY_SHAPES
 from tests.contract.generate import (
     GENERATORS,
     GOLDEN,
+    PYDANTIC_CORE_VERSION,
+    PYDANTIC_GATED,
     PYTHON_GATED,
     PLATFORM,
     PLATFORM_GATED,
@@ -37,6 +39,7 @@ from tests.contract.generate import (
     UNICODE_GATED,
     UNIDATA_VERSION,
     platform_key,
+    pydantic_core_version,
     python_version,
 )
 
@@ -61,6 +64,10 @@ def _drift(name: str) -> list[str]:
         out.append(f"SQLite {sqlite3.sqlite_version} (files: {SQLITE_VERSION})")
     if name in PYTHON_GATED and python_version() != PYTHON_VERSION:
         out.append(f"Python {python_version()} (files: {PYTHON_VERSION})")
+    if name in PYDANTIC_GATED and pydantic_core_version() != PYDANTIC_CORE_VERSION:
+        out.append(
+            f"pydantic-core {pydantic_core_version()} (files: {PYDANTIC_CORE_VERSION})"
+        )
     if name in PLATFORM_GATED and platform_key() != PLATFORM:
         out.append(f"platform {platform_key()} (files: {PLATFORM})")
     return out

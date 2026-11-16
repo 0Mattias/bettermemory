@@ -420,6 +420,9 @@ enum Open {
 struct Decoder<'a> {
     text: &'a [u32],
     pos: usize,
+    /// Set when an integer past 4300 digits stopped the parse: Python
+    /// raises a plain ValueError there, not a `JSONDecodeError`.
+    digits_limit: bool,
 }
 
 const WS: [u32; 4] = [0x20, 0x09, 0x0A, 0x0D];
@@ -691,6 +694,7 @@ impl Decoder<'_> {
         }
         let digits = text.trim_start_matches('-').len();
         if digits > 4300 {
+            self.digits_limit = true;
             return Err(PyError::ValueError);
         }
         PyValue::int_from_decimal(&text).ok_or(PyError::ValueError)
@@ -700,15 +704,60 @@ impl Decoder<'_> {
 /// `json.loads(text)` for a `str`: the value, or the exception type
 /// (ValueError for every malformed text, as `JSONDecodeError` is one).
 pub fn loads(text: &[u32]) -> Result<PyValue, PyError> {
-    if text.first() == Some(&0xFEFF) {
-        return Err(PyError::ValueError);
+    loads_detailed(text).map_err(LoadError::py_error)
+}
+
+/// Why `json.loads` refused a text, by the exception class it raises.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoadError {
+    /// `json.JSONDecodeError`.
+    Decode,
+    /// A plain ValueError: an integer longer than 4300 digits.
+    IntDigits,
+    /// RecursionError.
+    Recursion,
+}
+
+impl LoadError {
+    /// The class name the reference raises.
+    pub fn name(self) -> &'static str {
+        match self {
+            LoadError::Decode => "JSONDecodeError",
+            LoadError::IntDigits => "ValueError",
+            LoadError::Recursion => "RecursionError",
+        }
     }
-    let mut decoder = Decoder { text, pos: 0 };
+
+    fn py_error(self) -> PyError {
+        match self {
+            LoadError::Recursion => PyError::RecursionError,
+            LoadError::Decode | LoadError::IntDigits => PyError::ValueError,
+        }
+    }
+}
+
+/// [`loads`], naming which exception the reference raises.
+pub fn loads_detailed(text: &[u32]) -> Result<PyValue, LoadError> {
+    if text.first() == Some(&0xFEFF) {
+        return Err(LoadError::Decode);
+    }
+    let mut decoder = Decoder {
+        text,
+        pos: 0,
+        digits_limit: false,
+    };
+    let classify = |e: PyError, digits_limit: bool| match e {
+        PyError::RecursionError => LoadError::Recursion,
+        _ if digits_limit => LoadError::IntDigits,
+        _ => LoadError::Decode,
+    };
     decoder.skip_ws();
-    let value = decoder.value()?;
+    let value = decoder
+        .value()
+        .map_err(|e| classify(e, decoder.digits_limit))?;
     decoder.skip_ws();
     if decoder.pos != text.len() {
-        return Err(PyError::ValueError);
+        return Err(LoadError::Decode);
     }
     Ok(value)
 }

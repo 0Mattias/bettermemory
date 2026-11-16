@@ -456,19 +456,23 @@ fn decimal_value(cp: u32) -> Option<u32> {
     Some((cp - start) % 10)
 }
 
+/// The whitespace `int()` strips: ASCII's six and every non-ASCII
+/// `str.isspace` character (CPython maps the latter to a space, then
+/// strips with `Py_ISSPACE`), so not U+001C..U+001F, which `isspace`
+/// counts.
+fn int_space(c: u32) -> bool {
+    matches!(c, 0x09..=0x0D | 0x20) || (c >= 0x80 && unicode::is_space(c))
+}
+
 /// `int(text)` for a `str`: surrounding whitespace, a sign, Unicode
 /// decimal digits and single underscores between digits; at most 4300
 /// digits (`sys.int_info.default_max_str_digits`).
 pub fn int_from_str(text: &[u32]) -> Result<PyValue, PyError> {
-    let start = text.iter().position(|&c| !unicode::is_space(c));
+    let start = text.iter().position(|&c| !int_space(c));
     let Some(start) = start else {
         return Err(PyError::ValueError);
     };
-    let end = text
-        .iter()
-        .rposition(|&c| !unicode::is_space(c))
-        .unwrap_or(start)
-        + 1;
+    let end = text.iter().rposition(|&c| !int_space(c)).unwrap_or(start) + 1;
     let mut body = &text[start..end];
     let mut negative = false;
     if let Some(&sign) = body.first() {
@@ -579,6 +583,8 @@ mod tests {
         assert!(int_from_str(&unicode::cps("1__0")).is_err());
         assert!(int_from_str(&unicode::cps("_1")).is_err());
         assert!(int_from_str(&unicode::cps("")).is_err());
+        assert!(int_from_str(&unicode::cps("\u{1c}8")).is_err());
+        assert_eq!(ok("\u{85}8\u{2028}"), PyValue::int(8));
     }
 
     #[test]
