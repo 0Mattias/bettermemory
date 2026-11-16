@@ -374,22 +374,24 @@ pub enum DigestOutcome {
 }
 
 /// A store open for writing: the connection as the reference's writing
-/// connection makes it, and what the open established. Mutations come
-/// with the next unit.
+/// connection makes it, and what the open established. Its writes are
+/// `store::write` (`mutate`).
 ///
-/// It holds no key. The open reads the key only to decide (it is the key
-/// meta names); the reference signs with the key it reads again at write
-/// time (`Store._signing_key`, under the write's lock in
-/// `_finish_for_signing`), so a key rotated or replaced while the store is
-/// open is the one that signs, or the write is refused. The next unit must
-/// read it there too, never trust a key read at open.
+/// It holds the key the open read, as the reference's `Store` holds
+/// `_key`: `Store._signing_key` signs with that key for as long as meta
+/// names it, and reads the key ring again only when meta names another
+/// key (a rekey or rotation another connection committed), so a key file
+/// replaced or removed after the open does not change what signs (the
+/// writing unit's README section). The key is never printed: `Debug`
+/// leaves it out.
 pub struct WritableStore {
-    conn: Connection,
+    pub(super) conn: Connection,
     path: PathBuf,
     keys_dir: PathBuf,
     store_id: String,
     key_fingerprint: String,
-    head: Option<(i64, String)>,
+    pub(super) key: Key,
+    pub(super) head: Option<(i64, String)>,
     digest: DigestOutcome,
     bound: bool,
 }
@@ -532,6 +534,7 @@ pub fn open_for_writing_with(
         keys_dir: keys_dir.to_path_buf(),
         store_id: plan.store_id,
         key_fingerprint: plan.key_fingerprint,
+        key: plan.key,
         head,
         digest: outcome,
         bound,
@@ -543,6 +546,8 @@ struct Plan {
     store_id: String,
     key_fingerprint: String,
     record_engine: bool,
+    /// The current key, which meta names.
+    key: Key,
     /// The resolved store file to bind the ring to, when it is bound to
     /// none (or to a file that is gone) and this file fits it.
     bind: Option<PathBuf>,
@@ -677,6 +682,7 @@ fn decide(
         store_id,
         key_fingerprint: expected,
         record_engine,
+        key,
         bind,
     })
 }
@@ -1363,7 +1369,7 @@ fn binding_text(resolved: &Path) -> io::Result<String> {
 /// `_fsutil.atomic_write_bytes(path, data, mode_before_rename=0o600)`: a
 /// private temporary file beside it, synced, renamed over the name, the
 /// directory synced.
-fn replace_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
+pub(super) fn replace_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let tmp = with_suffix(path, &format!(".{}x{n}.tmp", std::process::id()));
     let staged = (|| {
@@ -1382,7 +1388,7 @@ fn replace_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
 /// `require_current_writer` inside a transaction: meta's minimum writer
 /// read again under the lock; above this build's, the connection is held
 /// to reading (`query_only`) and the transaction refused.
-fn require_current_writer(conn: &Connection) -> Result<(), DigestError> {
+pub(super) fn require_current_writer(conn: &Connection) -> Result<(), DigestError> {
     let needed: Option<SqlValue> = conn
         .query_row(
             "SELECT value FROM meta WHERE key = 'min_writer_revision'",

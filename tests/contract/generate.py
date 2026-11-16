@@ -49,6 +49,7 @@ from . import (
     gen_store_create,
     gen_store_files,
     gen_store_open,
+    gen_store_write,
     gen_store_path,
     gen_time,
     gen_toml,
@@ -89,6 +90,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "fold": gen_fold.generate,
     "store_create": gen_store_create.generate,
     "store_open": gen_store_open.generate,
+    "store_write": gen_store_write.generate,
     "gitconfig": gen_gitconfig.generate,
 }
 
@@ -110,6 +112,7 @@ UNICODE_GATED = frozenset(
         "fold",
         "store_create",
         "store_open",
+        "store_write",
     }
 )
 
@@ -153,7 +156,9 @@ PYTHON_GATED = frozenset(
 #: The pydantic-core the record fixtures were generated under (uv.lock pins
 #: pydantic 2.14.1 on it): the models' coercions and errors are its.
 PYDANTIC_CORE_VERSION = "2.50.1"
-PYDANTIC_GATED = frozenset({"models", "models_rows", "models_stores", "fold"})
+PYDANTIC_GATED = frozenset(
+    {"models", "models_rows", "models_stores", "fold", "store_write"}
+)
 
 
 def pydantic_core_version() -> str:
@@ -193,9 +198,16 @@ PLATFORM_GATED = frozenset(
 #: print paths by POSIX rules (`~name`, the root, `//`, a NUL), which the
 #: native tests' world reproduces; on Windows the reference's paths differ.
 #: ``store_open`` reads modes and writes the key ring's binding as a
-#: resolved POSIX path under a POSIX ``flock``.
+#: resolved POSIX path under a POSIX ``flock``; ``store_write`` records the
+#: same state after each write.
 POSIX_ONLY = frozenset(
-    {"store_restore_lock", "settings_paths", "settings_paths_python", "store_open"}
+    {
+        "store_restore_lock",
+        "settings_paths",
+        "settings_paths_python",
+        "store_open",
+        "store_write",
+    }
 )
 
 

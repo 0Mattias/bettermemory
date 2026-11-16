@@ -593,14 +593,17 @@ fn sqlite_class(e: &rusqlite::Error) -> &'static str {
 /// What applying a row raised: an exception `refold` catches, with
 /// `str(exc)`, or one it lets out.
 enum Fail {
-    Caught(String),
+    Caught(&'static str, String),
     Raised(&'static str),
 }
 
 type Applied = Result<(), Fail>;
 
 fn key_error(name: &str) -> Fail {
-    Fail::Caught(unicode::to_string(&repr_str(&unicode::cps(name))).unwrap_or_default())
+    Fail::Caught(
+        "KeyError",
+        unicode::to_string(&repr_str(&unicode::cps(name))).unwrap_or_default(),
+    )
 }
 
 fn py_fail(e: PyError) -> Fail {
@@ -688,9 +691,18 @@ fn bind(v: &PyValue) -> Result<Value, Fail> {
                 Value::Real(*f)
             }
         }
+        // sqlite3's default datetime adapter (`isoformat(" ")`; deprecated
+        // since 3.12, still registered): only a live write's caller can
+        // pass one; a row's JSON never holds one.
+        PyValue::DateTime(dt) => Value::Text(dt.isoformat_sep(' ')),
         PyValue::Str(s) => match unicode::to_string(s) {
             Some(t) => Value::Text(t),
-            None => return Err(Fail::Caught(encode_error(s).unwrap_or_default())),
+            None => {
+                return Err(Fail::Caught(
+                    "UnicodeEncodeError",
+                    encode_error(s).unwrap_or_default(),
+                ))
+            }
         },
         _ => return Err(Fail::Raised("ProgrammingError")),
     })
@@ -702,11 +714,14 @@ fn bind_all(values: &[PyValue]) -> Result<Vec<Value>, Fail> {
 
 fn record_fail(e: RecordError) -> Fail {
     match e {
-        RecordError::Validation { title, errors } => Fail::Caught(format!(
-            "{} validation error{} for {title}",
-            errors.len(),
-            if errors.len() == 1 { "" } else { "s" }
-        )),
+        RecordError::Validation { title, errors } => Fail::Caught(
+            "ValidationError",
+            format!(
+                "{} validation error{} for {title}",
+                errors.len(),
+                if errors.len() == 1 { "" } else { "s" }
+            ),
+        ),
         RecordError::Raised(class) => Fail::Raised(class),
     }
 }
@@ -718,29 +733,39 @@ fn json_text(v: &PyValue) -> Result<PyValue, Fail> {
 /// `int(value)`, with the reference's messages.
 fn py_int(v: &PyValue) -> Result<PyValue, Fail> {
     match v {
-        PyValue::Float(f) if f.is_nan() => {
-            Err(Fail::Caught("cannot convert float NaN to integer".into()))
-        }
+        PyValue::Float(f) if f.is_nan() => Err(Fail::Caught(
+            "ValueError",
+            "cannot convert float NaN to integer".into(),
+        )),
         PyValue::Float(f) if f.is_infinite() => Err(Fail::Raised("OverflowError")),
         PyValue::Bool(_) | PyValue::Int(_) | PyValue::Float(_) => {
             pyvalue::py_int(v).map_err(py_fail)
         }
         PyValue::Str(s) => pyvalue::int_from_str(s).map_err(|_| {
-            Fail::Caught(match too_many_digits(s) {
-                Some(n) => format!(
-                    "Exceeds the limit (4300 digits) for integer string conversion: value has \
+            Fail::Caught(
+                "ValueError",
+                match too_many_digits(s) {
+                    Some(n) => format!(
+                        "Exceeds the limit (4300 digits) for integer string conversion: value has \
                      {n} digits; use sys.set_int_max_str_digits() to increase the limit"
-                ),
-                None => format!(
-                    "invalid literal for int() with base 10: {}",
-                    text(repr_str(s))
-                ),
-            })
+                    ),
+                    // CPython's `%.200R`: the repr cut to its first 200
+                    // code points (measured against 3.13 for str and
+                    // bytes, escapes included).
+                    None => format!(
+                        "invalid literal for int() with base 10: {}",
+                        text(repr_str(s).into_iter().take(200).collect())
+                    ),
+                },
+            )
         }),
-        other => Err(Fail::Caught(format!(
-            "int() argument must be a string, a bytes-like object or a real number, not '{}'",
-            type_name(other)
-        ))),
+        other => Err(Fail::Caught(
+            "TypeError",
+            format!(
+                "int() argument must be a string, a bytes-like object or a real number, not '{}'",
+                type_name(other)
+            ),
+        )),
     }
 }
 
@@ -777,10 +802,10 @@ fn py_list(v: &PyValue) -> Result<Vec<PyValue>, Fail> {
         PyValue::List(items) | PyValue::Tuple(items) => Ok(items.clone()),
         PyValue::Dict(items) => Ok(items.iter().map(|(k, _)| k.clone()).collect()),
         PyValue::Str(s) => Ok(s.iter().map(|&c| PyValue::Str(vec![c])).collect()),
-        other => Err(Fail::Caught(format!(
-            "'{}' object is not iterable",
-            type_name(other)
-        ))),
+        other => Err(Fail::Caught(
+            "TypeError",
+            format!("'{}' object is not iterable", type_name(other)),
+        )),
     }
 }
 
@@ -800,15 +825,16 @@ fn check_targets(fields: &RecordFields) -> Applied {
     ] {
         if let Some(targets) = targets {
             if targets.len() > 64 {
-                return Err(Fail::Caught(format!(
-                    "{name} capped at 64 entries (got {})",
-                    targets.len()
-                )));
+                return Err(Fail::Caught(
+                    "ValueError",
+                    format!("{name} capped at 64 entries (got {})", targets.len()),
+                ));
             }
             if !inputs.iter().all(|i| targets.iter().any(|(k, _)| k == i)) {
-                return Err(Fail::Caught(format!(
-                    "{name} must cover every legacy attestation"
-                )));
+                return Err(Fail::Caught(
+                    "ValueError",
+                    format!("{name} must cover every legacy attestation"),
+                ));
             }
         }
     }
@@ -823,10 +849,10 @@ fn provenance(payload: &PyValue) -> Result<PyValue, Fail> {
     if !["local", "imported", "synced"].contains(&text(s.clone()).as_str())
         || unicode::to_string(s).is_none()
     {
-        return Err(Fail::Caught(format!(
-            "unknown provenance {}",
-            text(repr_str(s))
-        )));
+        return Err(Fail::Caught(
+            "ValueError",
+            format!("unknown provenance {}", text(repr_str(s))),
+        ));
     }
     Ok(value)
 }
@@ -840,6 +866,143 @@ fn ordered(columns: &[&str], mut map: HashMap<String, PyValue>) -> Vec<PyValue> 
         .iter()
         .map(|c| map.remove(*c).unwrap_or(PyValue::None))
         .collect()
+}
+
+/// `" ".join(scopes)` from a memory's `scopes_text`: the scopes less its
+/// outer spaces (a memory has at least one scope).
+fn scopes_inner(scopes_text: &str) -> &str {
+    scopes_text
+        .strip_prefix(' ')
+        .and_then(|s| s.strip_suffix(' '))
+        .unwrap_or("")
+}
+
+/// The fields `models.Memory` defines (`Memory.model_fields`); the
+/// write fixture records the reference's list and the golden test holds
+/// this one to it.
+pub const MEMORY_FIELDS: [&str; 22] = [
+    "id",
+    "created",
+    "updated",
+    "scopes",
+    "confidence",
+    "source",
+    "body",
+    "origin",
+    "actor",
+    "last_verified_at",
+    "category",
+    "verified_paths",
+    "verified_commits",
+    "verified_versions",
+    "verified_absent_paths",
+    "verified_path_targets",
+    "verified_absent_path_targets",
+    "claims",
+    "verified_head",
+    "links",
+    "corroborations",
+    "last_corroborated",
+];
+
+/// The fields `models.TombstonedMemory` defines
+/// (`TombstonedMemory.model_fields`): [`MEMORY_FIELDS`] less the links and
+/// the corroborations, which a tombstone's row keeps beside the record,
+/// and with the removal's three.
+pub const TOMBSTONE_FIELDS: [&str; 22] = [
+    "id",
+    "created",
+    "updated",
+    "scopes",
+    "confidence",
+    "source",
+    "body",
+    "origin",
+    "actor",
+    "last_verified_at",
+    "category",
+    "verified_paths",
+    "verified_commits",
+    "verified_versions",
+    "verified_absent_paths",
+    "verified_path_targets",
+    "verified_absent_path_targets",
+    "claims",
+    "verified_head",
+    "removed",
+    "removed_reason",
+    "removed_session",
+];
+
+/// `store_rows._unknown_record_fields`: sorted, without repeats.
+fn unknown_record_fields(conn: &Connection, id: &PyValue) -> rusqlite::Result<Vec<PyStr>> {
+    let id = bind(id).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    let mut statement = conn.prepare(
+        "SELECT kind, payload FROM log WHERE mac IN (\
+         SELECT log_mac FROM memories WHERE id = ?1 \
+         UNION ALL SELECT log_mac FROM tombstones WHERE id = ?1)",
+    )?;
+    let mut rows = statement.query([id])?;
+    let mut unknown: Vec<PyStr> = Vec::new();
+    while let Some(row) = rows.next()? {
+        let kind: Option<String> = row.get(0).ok().flatten();
+        let (key, tombstone) = match kind.as_deref() {
+            Some("memory_put") => ("memory", false),
+            Some("tombstone_put") => ("tombstone", true),
+            _ => continue,
+        };
+        let Ok(Some(payload)) = row.get::<usize, Option<String>>(1) else {
+            continue;
+        };
+        // `json.loads(payload).get(key)`: a payload that does not parse, or
+        // is not an object, is passed over (ValueError, AttributeError).
+        let Ok(value @ PyValue::Dict(_)) = json::loads(&unicode::cps(&payload)) else {
+            continue;
+        };
+        let Some(PyValue::Dict(record)) = value.get(key) else {
+            continue;
+        };
+        for (name, _) in record {
+            let PyValue::Str(name) = name else { continue };
+            let fields: &[&str] = if tombstone {
+                &TOMBSTONE_FIELDS
+            } else {
+                &MEMORY_FIELDS
+            };
+            let known = unicode::to_string(name).is_some_and(|n| fields.contains(&n.as_str()));
+            if !known && !unknown.contains(name) {
+                unknown.push(name.clone());
+            }
+        }
+    }
+    unknown.sort();
+    Ok(unknown)
+}
+
+/// `UnknownFieldsError`'s text.
+fn unknown_fields_text(record_id: &str, kind: &str, fields: &[PyStr]) -> String {
+    let shown: Vec<String> = fields
+        .iter()
+        .take(8)
+        .map(|f| text(repr_str(f)).chars().take(66).collect())
+        .collect();
+    let more = if fields.len() > 8 {
+        format!(" and {} more", fields.len() - 8)
+    } else {
+        String::new()
+    };
+    let refused = match kind {
+        "memory_delete" => "the removal",
+        "tombstone_put" => "the change to the removed record",
+        "tombstone_delete" => "the restore, purge or prune",
+        _ => "the change",
+    };
+    format!(
+        "record {record_id} was last written by a build that defines fields this one does not \
+         ({}{more}); this build would drop them, so it refuses {refused}: upgrade bettermemory to \
+         change the record",
+        shown.join(", ")
+    )
 }
 
 /// `body_fts` and `scopes_fts` of every memory the replay left:
@@ -862,14 +1025,10 @@ fn fill_index_text(conn: &Connection) -> Result<(), FoldError> {
         }
     }
     let spell = |(rowid, body, scopes): &(i64, String, String)| {
-        let inner = scopes
-            .strip_prefix(' ')
-            .and_then(|s| s.strip_suffix(' '))
-            .unwrap_or("");
         (
             *rowid,
             lexicon::fts_index_text(&unicode::cps(body)),
-            lexicon::fts_index_text(&unicode::cps(inner)),
+            lexicon::fts_index_text(&unicode::cps(scopes_inner(scopes))),
         )
     };
     let threads = std::thread::available_parallelism()
@@ -907,18 +1066,80 @@ struct Scratch {
     tombstone_upsert: String,
 }
 
-/// The scratch database with its statements prepared once each.
-struct Applier<'c> {
-    scratch: &'c Scratch,
+/// `store_rows._apply_mutation` on one connection, with its statements
+/// prepared once each: the fold's scratch database, or (`live`) the store
+/// itself inside a write's transaction (`Store._mutate`).
+///
+/// The two differ only where the reference's one function reads what
+/// differs between the two connections: on the live store
+/// `_refuse_unknown_fields` reads the log the scratch database lacks, and
+/// the index text (`body_fts`, `scopes_fts`) is spelled per put, where the
+/// fold spells it once per row the replay leaves (`fill_index_text`).
+pub(crate) struct Applier<'c> {
+    conn: &'c Connection,
+    memory_upsert: String,
+    tombstone_upsert: String,
+    live: bool,
     statements: std::cell::RefCell<HashMap<String, rusqlite::Statement<'c>>>,
 }
 
 impl<'c> Applier<'c> {
     fn new(scratch: &'c Scratch) -> Self {
         Applier {
-            scratch,
+            conn: &scratch.conn,
+            memory_upsert: scratch.memory_upsert.clone(),
+            tombstone_upsert: scratch.tombstone_upsert.clone(),
+            live: false,
             statements: std::cell::RefCell::new(HashMap::new()),
         }
+    }
+
+    /// The applier of a write on the live store `conn`.
+    pub(crate) fn live(conn: &'c Connection) -> Self {
+        Applier {
+            conn,
+            memory_upsert: upsert("memories", &MEMORY_COLUMNS, "id"),
+            tombstone_upsert: upsert("tombstones", &TOMBSTONE_COLUMNS, "id"),
+            live: true,
+            statements: std::cell::RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// `apply` for the write path: the exception the reference raises, as
+    /// its class name and `str(exc)` where the fold would catch it.
+    pub(crate) fn apply_live(
+        &self,
+        kind: &str,
+        payload: &PyValue,
+        mac: &str,
+    ) -> Result<(), (&'static str, Option<String>)> {
+        self.apply(kind, payload, mac).map_err(|f| match f {
+            Fail::Caught(class, text) => (class, Some(text)),
+            Fail::Raised(class) => (class, None),
+        })
+    }
+
+    /// `_refuse_unknown_fields` on the live store: the names of the fields
+    /// the payloads of the rows `id`'s memory and tombstone point at
+    /// carry that this build's models do not define. The scratch log is
+    /// empty, so the fold finds none.
+    fn refuse_unknown(&self, id: &PyValue, kind: &str) -> Applied {
+        bind(id)?;
+        if !self.live {
+            return Ok(());
+        }
+        let unknown =
+            unknown_record_fields(self.conn, id).map_err(|e| Fail::Raised(sqlite_class(&e)))?;
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        let PyValue::Str(id) = id else {
+            return Err(Fail::Raised("TypeError"));
+        };
+        Err(Fail::Caught(
+            "UnknownFieldsError",
+            unknown_fields_text(&text(id.clone()), kind, &unknown),
+        ))
     }
 
     /// Bind `values` in order, as Python's sqlite3 does, and run `sql`.
@@ -927,7 +1148,6 @@ impl<'c> Applier<'c> {
         let mut statements = self.statements.borrow_mut();
         if !statements.contains_key(sql) {
             let statement = self
-                .scratch
                 .conn
                 .prepare(sql)
                 .map_err(|e| Fail::Raised(sqlite_class(&e)))?;
@@ -941,26 +1161,45 @@ impl<'c> Applier<'c> {
     }
 
     fn apply(&self, kind: &str, payload: &PyValue, mac: &str) -> Applied {
-        let scratch = self.scratch;
         let mac = PyValue::str(mac);
         match kind {
             "memory_put" => {
                 let memory = Memory::from_payload(item(payload, "memory")?).map_err(record_fail)?;
+                self.refuse_unknown(&PyValue::Str(memory.fields.id.clone()), kind)?;
                 let provenance = provenance(payload)?;
                 check_targets(&memory.fields)?;
                 let row = memory.row().map_err(py_fail)?;
                 let mut names: Vec<&str> = records::RECORD_COLUMNS.to_vec();
                 names.extend(records::MEMORY_ROW_COLUMNS);
                 let mut map = named(&names, row);
-                // The index text is spelled once per row the replay
-                // leaves, after it (`fill_index_text`): a later put of the
-                // same id overwrites it, and nothing else reads it.
-                map.insert("body_fts".into(), PyValue::str(""));
-                map.insert("scopes_fts".into(), PyValue::str(""));
+                // In the fold the index text is spelled once per row the
+                // replay leaves, after it (`fill_index_text`): a later put
+                // of the same id overwrites it, and nothing else reads it.
+                // A live write spells it here, as `_write_memory_row` does.
+                let (body_fts, scopes_fts) = if self.live {
+                    let body = match map.get("body") {
+                        Some(PyValue::Str(b)) => b.clone(),
+                        _ => return Err(Fail::Raised("TypeError")),
+                    };
+                    let scopes = match map.get("scopes_text") {
+                        Some(PyValue::Str(s)) => text(s.clone()),
+                        _ => return Err(Fail::Raised("TypeError")),
+                    };
+                    (
+                        PyValue::str(&lexicon::fts_index_text(&body)),
+                        PyValue::str(&lexicon::fts_index_text(&unicode::cps(scopes_inner(
+                            &scopes,
+                        )))),
+                    )
+                } else {
+                    (PyValue::str(""), PyValue::str(""))
+                };
+                map.insert("body_fts".into(), body_fts);
+                map.insert("scopes_fts".into(), scopes_fts);
                 map.insert("filename".into(), get(payload, "filename").clone());
                 map.insert("provenance".into(), provenance);
                 map.insert("log_mac".into(), mac);
-                self.exec(&scratch.memory_upsert, &ordered(&MEMORY_COLUMNS, map))?;
+                self.exec(&self.memory_upsert, &ordered(&MEMORY_COLUMNS, map))?;
                 let id = PyValue::Str(memory.fields.id.clone());
                 self.exec(
                     "DELETE FROM memory_links WHERE source_id = ?",
@@ -998,14 +1237,15 @@ impl<'c> Applier<'c> {
                 };
                 if kind != "episode_delete" && kind != "conflict_delete" {
                     // `_refuse_unknown_fields` binds the id to read the
-                    // scratch log, which is empty.
-                    bind(&id)?;
+                    // log (empty in the fold's scratch database).
+                    self.refuse_unknown(&id, kind)?;
                 }
                 self.exec(&format!("DELETE FROM {table} WHERE id = ?"), &[id])
             }
             "tombstone_put" => {
                 let dead =
                     Tombstone::from_payload(item(payload, "tombstone")?).map_err(record_fail)?;
+                self.refuse_unknown(&PyValue::Str(dead.fields.id.clone()), kind)?;
                 let provenance = provenance(payload)?;
                 let links = get(payload, "links");
                 let links = if truthy(links) {
@@ -1014,7 +1254,7 @@ impl<'c> Applier<'c> {
                     PyValue::List(Vec::new())
                 };
                 if !matches!(links, PyValue::List(_)) {
-                    return Err(Fail::Caught("links must be a list".into()));
+                    return Err(Fail::Caught("TypeError", "links must be a list".into()));
                 }
                 let filename = get(payload, "filename").clone();
                 let given = get(payload, "corroborations");
@@ -1035,7 +1275,7 @@ impl<'c> Applier<'c> {
                 map.insert("corroborations".into(), corroborations);
                 map.insert("last_corroborated".into(), last_corroborated);
                 map.insert("log_mac".into(), mac);
-                self.exec(&scratch.tombstone_upsert, &ordered(&TOMBSTONE_COLUMNS, map))
+                self.exec(&self.tombstone_upsert, &ordered(&TOMBSTONE_COLUMNS, map))
             }
             "episode_put" => {
                 let episode =
@@ -1169,10 +1409,13 @@ impl<'c> Applier<'c> {
                         &key,
                     );
                 }
-                Err(Fail::Caught(format!(
-                    "unknown mutation kind {}",
-                    text(repr_str(&unicode::cps(kind)))
-                )))
+                Err(Fail::Caught(
+                    "ValueError",
+                    format!(
+                        "unknown mutation kind {}",
+                        text(repr_str(&unicode::cps(kind)))
+                    ),
+                ))
             }
         }
     }
@@ -1181,10 +1424,10 @@ impl<'c> Applier<'c> {
 /// `_membership_values`.
 fn membership_values(spec: &Spec, row: &PyValue) -> Result<Vec<PyValue>, Fail> {
     let PyValue::Dict(items) = row else {
-        return Err(Fail::Caught(format!(
-            "a {} row must be an object",
-            spec.kind
-        )));
+        return Err(Fail::Caught(
+            "TypeError",
+            format!("a {} row must be an object", spec.kind),
+        ));
     };
     let mut unknown: Vec<PyStr> = Vec::new();
     for (k, _) in items {
@@ -1199,11 +1442,10 @@ fn membership_values(spec: &Spec, row: &PyValue) -> Result<Vec<PyValue>, Fail> {
     if !unknown.is_empty() {
         unknown.sort();
         let shown: Vec<String> = unknown.iter().map(|k| text(repr_str(k))).collect();
-        return Err(Fail::Caught(format!(
-            "unknown {} columns [{}]",
-            spec.kind,
-            shown.join(", ")
-        )));
+        return Err(Fail::Caught(
+            "ValueError",
+            format!("unknown {} columns [{}]", spec.kind, shown.join(", ")),
+        ));
     }
     let mut values = Vec::with_capacity(spec.columns.len());
     for column in spec.columns {
@@ -1223,10 +1465,10 @@ fn membership_values(spec: &Spec, row: &PyValue) -> Result<Vec<PyValue>, Fail> {
                 PyValue::None | PyValue::Str(_) | PyValue::Int(_) => value.clone(),
                 PyValue::Float(f) if spec.floats.contains(column) && f.is_finite() => value.clone(),
                 _ => {
-                    return Err(Fail::Caught(format!(
-                        "{}.{column} must be text, an integer or null",
-                        spec.kind
-                    )))
+                    return Err(Fail::Caught(
+                        "TypeError",
+                        format!("{}.{column} must be text, an integer or null", spec.kind),
+                    ))
                 }
             }
         });
@@ -1242,10 +1484,10 @@ fn membership_key(spec: &Spec, payload: &PyValue) -> Result<Vec<PyValue>, Fail> 
         match item(payload, column)? {
             PyValue::Str(s) if !s.is_empty() => key.push(PyValue::Str(s.clone())),
             _ => {
-                return Err(Fail::Caught(format!(
-                    "{}.{column} must be non-empty text",
-                    spec.kind
-                )))
+                return Err(Fail::Caught(
+                    "ValueError",
+                    format!("{}.{column} must be non-empty text", spec.kind),
+                ))
             }
         }
     }
@@ -2364,20 +2606,23 @@ fn apply_batch(
     for ((seq, kind, payload, mac), value) in rows.iter().zip(parsed) {
         let outcome = match value {
             Ok(value @ PyValue::Dict(_)) => applier.apply(kind, &value, mac),
-            Ok(_) => Err(Fail::Caught("payload is not an object".into())),
+            Ok(_) => Err(Fail::Caught(
+                "ValueError",
+                "payload is not an object".into(),
+            )),
             Err(LoadError::Recursion) => Err(Fail::Raised("RecursionError")),
             Err(_) => {
                 let text = unicode::cps(payload);
                 Err(match json::decode_failure(&text) {
                     Some(json::DecodeFailure::Recursion) => Fail::Raised("RecursionError"),
-                    Some(f) => Fail::Caught(f.message(&text)),
+                    Some(f) => Fail::Caught("JSONDecodeError", f.message(&text)),
                     None => Fail::Raised("JSONDecodeError"),
                 })
             }
         };
         match outcome {
             Ok(()) => {}
-            Err(Fail::Caught(message)) => problems.push(PayloadProblem {
+            Err(Fail::Caught(_, message)) => problems.push(PayloadProblem {
                 seq: *seq,
                 kind: kind.clone(),
                 detail: first_line(&message),

@@ -1304,6 +1304,13 @@ Not ported yet, and needed for a write equal to the reference's:
 writing open's plain states and the digest's record entries are ported
 ("Opening a store for writing").
 
+(Corrected by the writing unit, "Writing a record mutation": `_mutate`
+reads meta's key under the lock but signs with the key the open read for
+as long as meta names it; it reads the key ring again only when meta names
+another key. `_flush_returns` runs at the owner's end, so a lone
+`_mutate` in its own `_transaction` writes its `returned` rows after its
+own row, in the same commit.)
+
 ## Creating a store
 
 `store::create::create(path, keys_dir, provider) -> Result<Created,
@@ -1713,6 +1720,186 @@ Not ported here, and found on the way: the CLI's and the daemon's
 `ensure_backfilled` after the open (`store_returned.py:371`), which is not
 part of `Store.open`.
 
+## Writing a record mutation
+
+`WritableStore::mutate(kind, payload, session, provider)` (`src/store/write.rs`)
+is `with store._transaction() as tx: store._mutate(tx, kind, payload,
+session=session)`, then the head's move. The row's MAC is `log::next_row`
+(the one MAC of the crate); the table effects are the fold's applier
+(`fold::Applier`), reshaped to take any connection: on the live store it
+spells the index text per put (`_write_memory_row`) and runs
+`_refuse_unknown_fields` against the log, where the fold's scratch log is
+empty. There is no `append` of a row that changes no table: no such row
+is on `_mutate`'s path (telemetry, membership events and control rows
+each come through callers of `_append` with rules of their own).
+
+### The reference's order (read at e8747231, and run)
+
+1. `_transaction` (`store.py:1177`): `_clear_residue` when the connection
+   is inside a transaction nobody owns; `BEGIN IMMEDIATE` (:1212; the
+   connection's busy timeout is the wait); `require_current_writer`
+   (`store_versions.py:250`, meta's minimum writer read under the lock).
+2. `_mutate` (`store.py:1390`): `prepare_mutation`
+   (`store_native.py:89`: a record origin holding a surrogate moves into
+   `native_origin`, which needs a revision-5 writer); `store_returned.before`
+   (`store_returned.py:140`, `memory_put` and `memory_delete` only).
+3. `_append` (`store.py:1361`): `_signing_key` (`store_keys.py:1016`):
+   meta's `key_fingerprint` read again; the key the open read while meta
+   names it (the key file is not read: a key file replaced, removed, a
+   pending rotation meta does not name, a ring bound elsewhere since the
+   open change nothing; the fixture's `key_edits`); else the ring's current
+   key when meta names it, else `finish_rotation`, else still the open's
+   key (`meta_rekeyed`). Then `append_row` (`log.py:875`): the last row,
+   seq, the clock (`_utcnow_iso`), canonical payload, MAC, INSERT.
+4. `_apply_mutation` (`store_rows.py:545`) on the same payload: the model
+   validates (`Memory.model_validate`), `_refuse_unknown_fields` (:528),
+   the provenance, `validate_path_targets` (in `_record_columns`), the
+   upsert; the links; the FTS5 index follows through the schema's
+   triggers (`memories_ai`/`_ad`/`_au`). Any failure here rolls the row
+   back with it.
+5. `store_returned.candidates` (:162), then at the owner's end
+   `_flush_returns` (`store.py:1418`): `settle` (:178) may append
+   `returned_put`/`returned_delete` rows (stamped by the wall clock,
+   `datetime.now`, not the log's clock).
+6. `COMMIT` (:1222); any failure up to here rolls back (`_roll_back`).
+7. `_move_head` (:1353): `KeyRing.write_head` (`log.py:638`) under
+   `flock_excl(<id>.head.lock)`: the head read; written only forward (a
+   head at or past the row stays: `head_ahead`), the clock read only
+   then, `atomic_write_bytes` 0600. An `OSError` is logged and the call
+   succeeds; the commit stands with the head behind.
+
+A write does not touch the digest (confirmed: the fixture's states keep
+`digest_records`, `digest_tokens` and `digest_state` as the open left
+them): the next writing open or search brings it forward.
+
+The native order is the same, with `WriteBoundary` hooks after BEGIN
+(`Begun`), the INSERT (`Appended`), the apply (`Applied`), COMMIT
+(`Committed`), the head's lock (`HeadLocked`) and the head
+(`HeadMoved`). The payload applied is the caller's, as `_mutate` applies
+its mapping: a tuple stays a tuple (`tombstone_put`'s `isinstance(links,
+list)` refuses a non-empty one), a datetime a datetime (bound as sqlite3's
+default adapter binds it, `isoformat(" ")`), a path a path (sqlite3 cannot
+bind one: ProgrammingError; pydantic's `str` refuses one). The row holds the
+payload's canonical text (`default=str`), which `refold` replays; the
+fixture's `python_values` sequence pins that the reference's `refold`
+reads every row such a payload left as `ok`, with no problem, and that the
+native fold check says the same. The models' lax `list` takes a tuple, as
+pydantic-core's does.
+
+### Kinds and refusals
+
+In scope (`write::KINDS`): `memory_*`, `tombstone_*`, `episode_*`,
+`verification_*`, `conflict_*`, `import_*`, `quarantine_*` (put and
+delete): `RECORD_MUTATION_KINDS`, on which `_mutate` does the row and its
+table effects and nothing else, but for the `returned` marks below. Not in
+scope, refused as `NotPorted::Kind` before anything: every membership kind
+(`machine`, `project*`, `declared_remote`, `checkout*`, `home`,
+`proposal`, `standing`, `returned`, `native_member`), each with rules of
+its own in the public API, and any other text.
+
+Refused with the transaction rolled back, nothing written:
+
+- `NotPorted::NativeOrigin`: a `memory_put`, `tombstone_put` or
+  `episode_put` whose record's origin holds a surrogate in a `str` (a path
+  value is no `str` to `has_surrogates`, and is not projected).
+- `NotPorted::Rekeyed`: meta names a key the ring's current key is not,
+  and `<id>.key.pending` holds 32 bytes whose fingerprint is meta's: the
+  rotation `finish_rotation` would finish by renaming it. Wider than the
+  reference by one test, named here: the reference does not finish when the
+  ring is bound to another file (it signs with the open's key), native
+  refuses either way. A pending key meta does not name is passed over by
+  both (`meta_rekeyed_pending`). meta's fingerprint is read as `str(value)`
+  of any stored type, NULL as `None` (`meta_key_integer`).
+- `NotPorted::Returned(ids)`: after the apply, `settle` would put or delete
+  a mark (ported exactly: `before`, `candidates`, `settle`'s decision; the
+  rows themselves are the next unit's).
+- `Refused { class, text }`: the reference's own refusal (KeyError,
+  ValueError, TypeError, ValidationError with its first line,
+  UnknownFieldsError with its text, UnicodeEncodeError).
+- `NotAnObject`, `LaterWriter`, `Sqlite` (busy past the timeout, a schema
+  altered after the open), `Clock`.
+
+Texts: the product's own messages are reproduced, as is `int()`'s
+`invalid literal for int() with base 10: ...`, whose value CPython quotes
+as its repr cut to the first 200 code points (`%.200R`; measured against
+3.13 for str and bytes, escapes counted as written; `int_text` pins the
+lengths around the cut). The other reprs of caller data a refusal quotes
+(`unknown provenance ...`, `unknown mutation kind ...`, a membership row's
+unknown columns) are f-string `!r`s, whole in both builds;
+`UnknownFieldsError` cuts each name's repr to 66, ported. No write or fold
+path words a `float()` failure. Exceptions from the standard library or
+SQLite whose wording is the interpreter's (AttributeError, OverflowError,
+RecursionError, sqlite3's errors) are returned with their class and no
+text: those texts are not reproduced, and the fixture compares only the
+class.
+
+Deliberate differences: the reference raises OverflowError or
+RecursionError out of a committed call when the head file holds an
+infinite seq or deep nesting (`write_head`'s `read_head` lets them out,
+`_move_head` catches only OSError; reproduced: the row is committed and
+the caller sees an error); native returns the commit with
+`HeadMove::Failed`. On macOS std's `sync_all` is `F_FULLFSYNC` where the
+reference's `os.fsync` is not: the head's move is more durable natively
+and much slower (below).
+
+### What a kill leaves (`store_write_kills.rs`, 208 kills, run)
+
+| killed after | WAL | rollback journal |
+| --- | --- | --- |
+| `Begun`, `Appended`, `Applied` | log and tables as before (the WAL's uncommitted frames ignored) | a hot `-journal`, rolled back by the next connection that may write: as before |
+| `Committed`, `HeadLocked` | the row and its effects whole; head one behind (`ok`) | same |
+| inside the head's replace | head behind or moved; at worst a `<id>.head.<pid>x<n>.tmp` left in the keys directory | same |
+| `HeadMoved` | whole, head at the row | same |
+
+Every kill: the record tables equal those of the log's length, FTS5's
+`integrity-check` passes, the head never names a row the log lacks, both
+builds verify ok, and a further write succeeds.
+
+That holds for a killed process, whose writes the OS still holds. It does
+not hold for a power loss or an OS crash (ENG-328, a finding about the
+reference that native shares, left for its own unit with the fixtures):
+the writing connection is WAL with `synchronous = NORMAL`, so a COMMIT does
+not sync the WAL, while the head is synced on every write; after the OS
+cache is lost the head can name a row the log lost, which reads as
+`tail_deleted`. Nothing here tests a lost OS cache.
+
+### Two writers
+
+Each process moves the head after its own commit, under the same
+`flock` on `<id>.head.lock`, forward only; so does native. A native and a
+reference writer, and two native writers, 200 puts each at once: both
+finish, no row lost or doubled, seqs gapless, both builds verify ok, the
+head at the last row (`store_write_concurrent.rs`). In rollback-journal
+mode each writer switches its own connection after its open: each open
+asks for WAL (`_connect`; native's `connect_pragmas`; both ignore what the
+pragma returns) and gets it while the other writer is idle, and a switch
+away from WAL needs no other connection in WAL, so the reference's writer
+opens first. Both builds' opens behave alike here. (An earlier report that
+the reference's open differed was the test's: its second native writer
+switched back to rollback-journal mode itself, and the file's mode was read
+after the reference's check had opened the store, which asks for WAL.)
+
+### Tests
+
+| test | what | class |
+| --- | --- | --- |
+| `golden_store_write.rs` | `store_write.jsonl` (26 sequences, 108 mutations, 269 KB, a refold per sequence; Unicode and pydantic-core gated, POSIX only): rows byte for byte, the whole state's digest, the head, FTS5 hits | ii |
+| `store_write_not_posix.rs` | the fixture's gap elsewhere | os |
+| `store_write_kills.rs` | 208 kills, both journal modes, the reference's verify | i |
+| `store_write_cross.rs` | both directions with the reference | i |
+| `store_write_concurrent.rs` | two writers, both builds | i |
+| `store_write_readers.rs` | native check and search under a writer | i |
+| `store_write_robustness.rs` | hostile inputs and states; the ignored throughput bench | i |
+
+Throughput (`bench_five_thousand_puts`, release build, this Mac, three
+runs each; and `native/tools/bench_write.py` under the worktree's Python
+3.13), with the head synced by `bettermemory_sys::fsync` as `os.fsync`
+syncs it: native 2566, 2592 and 2549 puts a second; the reference 1905,
+1961 and 1952. Where native's 1.94 s go: the head's move (lock, read,
+write, `fsync`, rename, directory `fsync`) 0.89 s; COMMIT 0.53 s; the
+apply (model, row, links, FTS5 triggers) 0.32 s; the head's lock 0.11 s;
+the row (key check, MAC, INSERT) 0.09 s.
+
 ## A git config file's text
 
 `gitconfig` is the text half of `src/bettermemory/gitconfig.py`: bytes in,
@@ -1780,8 +1967,10 @@ five runs each. Linear growth is 10 times and quadratic 100 times.
 
 ## Not built yet
 
-The store's writes past `create` and the writing open's plain states
-(mutations, schema steps, rekey, reclaim, the origin's settling, a
+The store's writes past `create`, the writing open's plain states and
+one record mutation (`mutate`): the public record API (`put_memory`,
+`tombstone`, `restore` with relink, provenance, `returned` marks, homes
+and standing answers), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
 restore's rows, re-spelling the index), membership and
 the caller's resolution, and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's

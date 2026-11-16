@@ -206,7 +206,8 @@ fn opt_dt(arg: Arg<'_>) -> Result<Option<DateTime>, Vec<LineError>> {
 
 /// `list[str]`.
 fn str_list(arg: Arg<'_>) -> Result<Vec<PyStr>, Vec<LineError>> {
-    let Arg::Py(PyValue::List(items)) = arg else {
+    // pydantic-core's lax list takes a tuple too.
+    let Arg::Py(PyValue::List(items) | PyValue::Tuple(items)) = arg else {
         return Err(one("list_type"));
     };
     let mut out = Vec::with_capacity(items.len());
@@ -690,7 +691,8 @@ impl MemoryLink {
 }
 
 fn links(arg: Arg<'_>, id: Option<&PyStr>) -> Result<Vec<MemoryLink>, Vec<LineError>> {
-    let Arg::Py(PyValue::List(items)) = arg else {
+    // pydantic-core's lax list takes a tuple too.
+    let Arg::Py(PyValue::List(items) | PyValue::Tuple(items)) = arg else {
         return Err(one("list_type"));
     };
     let mut out = Vec::with_capacity(items.len());

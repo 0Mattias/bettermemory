@@ -44,6 +44,7 @@ pub mod keys;
 pub mod open;
 pub mod pool;
 pub mod restore_lock;
+pub mod write;
 
 use std::fs;
 use std::io;
