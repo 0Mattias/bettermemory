@@ -114,6 +114,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "githead": gen_githead.generate,
     "githead_posix": gen_githead.generate_posix,
     "capture_vocabulary": gen_capture_vocabulary.generate,
+    "capture_vocabulary_python": gen_capture_vocabulary.generate_python,
     "gitconfig_file": gen_gitconfig_file.generate,
     "membership_lines": gen_membership_lines.generate,
     "membership_lines_unicode": gen_membership_lines.generate_unicode,
@@ -180,6 +181,7 @@ PYTHON_GATED = frozenset(
         "toml",
         "settings_python",
         "settings_paths_python",
+        "capture_vocabulary_python",
     }
 )
 

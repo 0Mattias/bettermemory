@@ -33,24 +33,32 @@ received and whether `_file_url_path` ran first. Both are replaced while
 generating (`_file_url_path` by the identity), so neither ``realpath``
 nor the host's path rules run.
 
-Not gated. Every answer is the same under Python 3.11 to 3.14 and on
-every platform: type checks, `str` methods on characters whose
-properties no Unicode release since 14.0 changed, `re` patterns,
-`int()` and `str()` of ints (with the 4,300-digit limit every release
-since 3.11 has), `str()` of floats (`repr`'s shortest round trip, the
-same since 3.1) and of containers. The one answer that depends on the
-interpreter and the platform, how deep `str()` may nest before it raises
-RecursionError (CPython 3.13's C limit is 10,000 on Linux and macOS,
-3,000 on Windows, less on debug builds; 3.11 counts Python frames), is
-recorded only far from every limit: 50 to 400 levels accepted, 100,000
-refused. The native limit at the boundary is its own (`STR_DEPTH_TOP`),
-tested natively. Checked identical under Python 3.11 and 3.13.
+Two files. ``capture_vocabulary.jsonl`` is not gated: its answers are
+the same under Python 3.11 to 3.14 and on every platform: type checks,
+`str` methods on characters whose properties no Unicode release since
+14.0 changed, `re` patterns, `int()` and `str()` of ints (with the
+4,300-digit limit every release since 3.11 has), `str()` of floats
+(`repr`'s shortest round trip) and of containers nested 50 to 400 deep,
+far below every recursion limit (3.11's is about 993). Checked identical
+under Python 3.11, 3.12 and 3.13.
+
+``capture_vocabulary_python.jsonl``, gated on the Python release
+(`PYTHON_GATED`), holds every token whose answer is RecursionError (a key
+item nested 100,000 deep, alone or paired with another field). Whether
+`str()` raises there is a property of the interpreter build and its
+stack, not of the reference: CI showed CPython 3.14 on Linux returning
+None for those tokens where 3.13, and 3.14 on macOS, raise (3.14 checks
+the real C stack, and thread stack sizes differ by platform). No depth is
+portable, so these are compared only under the release the files were
+made with. The native port answers RecursionError at its own fixed depth
+(`STR_DEPTH_TOP`) on every platform, tested natively.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import hashlib
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -655,7 +663,20 @@ def _location_json(cap: Capture, machine: str, session: str | None) -> dict[str,
     return out
 
 
+def _deep(record: dict[str, Any]) -> bool:
+    """A case whose answer is the interpreter's recursion limit."""
+    return record.get("o") == {"raise": "RecursionError"}
+
+
 def generate() -> dict[str, bytes]:
+    return _files()[0]
+
+
+def generate_python() -> dict[str, bytes]:
+    return _files()[1]
+
+
+def _files() -> tuple[dict[str, bytes], dict[str, bytes]]:
     caps = _captures()
     bases = [c.to_token() for c in caps]
     records: list[dict[str, Any]] = []
@@ -697,6 +718,8 @@ def generate() -> dict[str, bytes]:
     records += _remote_records()
     records += _path_records()
     records += _key_records()
+    deep = [r for r in records if _deep(r)]
+    records = [r for r in records if not _deep(r)]
     counts: dict[str, int] = {}
     for r in records:
         counts[r["k"]] = counts.get(r["k"], 0) + 1
@@ -708,4 +731,18 @@ def generate() -> dict[str, bytes]:
         "counts": counts,
     }
     lines = [dumps_line(header)] + [dumps_line(r) for r in records]
-    return {"capture_vocabulary.jsonl": ("\n".join(lines) + "\n").encode("ascii")}
+    gated = {
+        "fixture": "capture_vocabulary_python",
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "bases": bases,
+        "cases": len(deep),
+    }
+    deep_lines = [dumps_line(gated)] + [dumps_line(r) for r in deep]
+    return (
+        {"capture_vocabulary.jsonl": ("\n".join(lines) + "\n").encode("ascii")},
+        {
+            "capture_vocabulary_python.jsonl": ("\n".join(deep_lines) + "\n").encode(
+                "ascii"
+            )
+        },
+    )

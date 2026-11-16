@@ -1,4 +1,6 @@
-//! Every case of `capture_vocabulary.jsonl` (not gated): a
+//! Every case of `capture_vocabulary.jsonl` (not gated) and
+//! `capture_vocabulary_python.jsonl` (the RecursionError cases, gated on
+//! the Python release, whose interpreter and stack decide them): a
 //! capture's token read and written back, hostile tokens, `to_location`,
 //! `remote_key`, `_paths` and `ObjectKey`, against the native `capture`
 //! module. The recipes and the answer's spelling are the generator's
@@ -454,6 +456,21 @@ fn capture_vocabulary_every_case() {
     std::thread::Builder::new()
         .stack_size(8 << 20)
         .spawn(|| run("golden_capture_vocabulary", "capture_vocabulary.jsonl"))
+        .expect("a thread")
+        .join()
+        .expect("the test");
+}
+
+#[test]
+fn capture_vocabulary_python_every_case() {
+    std::thread::Builder::new()
+        .stack_size(8 << 20)
+        .spawn(|| {
+            run(
+                "golden_capture_vocabulary_python",
+                "capture_vocabulary_python.jsonl",
+            )
+        })
         .expect("a thread")
         .join()
         .expect("the test");

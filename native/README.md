@@ -1275,6 +1275,7 @@ that Unicode too.
 | `golden_gitconfig_remote_rules`: `gitconfig_remote_rules_every_case` | `gitconfig_remote_rules.jsonl` | i |
 | `gitconfig_remote_rules_robustness` (2) | none | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
+| `golden_capture_vocabulary`: `capture_vocabulary_python_every_case` | `capture_vocabulary_python.jsonl` | ii (Python) |
 | `capture_vocabulary_robustness` (5) | none | i |
 | `golden_membership_lines`: `membership_lines_every_case` | `membership_lines.jsonl` | i |
 | `golden_membership_lines`: `membership_lines_unicode_every_case` | `membership_lines_unicode.jsonl` | ii (Unicode) |
@@ -3097,8 +3098,13 @@ depth limit, 9,999 levels at a top-level key and 9,997 inside ``files``
 (`STR_DEPTH_TOP`, `STR_DEPTH_FILES`): what CPython 3.13 does on Linux and
 macOS on a fresh thread, not a parity claim, since its C limit is 3,000
 on Windows, less on ARM64 and debug builds, and a caller deeper in C has
-less. The golden file holds only depths far from every limit (50 to 400
-accepted, 100,000 refused); the boundary is a native test. `config_files` (stamped files) is the file-reading unit's and is
+less. The reference's RecursionError here is a property of the
+interpreter build and its stack, not of the reference: it differs
+between Python 3.13 and 3.14, and under 3.14 between Linux (where CI saw
+`from_token` return None for a key item 100,000 deep) and macOS (where
+it raises). It is pinned only in the gated file. Native answers
+RecursionError at its own fixed depth on every platform; the boundary is
+a native test. `config_files` (stamped files) is the file-reading unit's and is
 not carried; `kept_apart`, `tree_recorded` and `config_sources` are
 fields but not token keys, as in the reference.
 
@@ -3121,15 +3127,17 @@ the `history` reader and `Location`'s properties that read `_same_path`
 are the resolving unit's.
 
 Fixtures (`tests/contract/gen_capture_vocabulary.py`):
-`capture_vocabulary.jsonl` (219,389 bytes, not gated; checked identical
-under 3.11 and 3.13) holds 72 captures built through `Capture` and read
-back, 922 hostile tokens (among them every refused field paired with
-every raising one, which pins the order `from_token` reads in, `int()`
-and `str()` of floats, texts and ints at the digit limit, and both
-raises), 8 `to_location` cases, 1,303 URLs, 25 paths (each against all
-25 for `inside`) and 56 key pairs. Nothing in it is worded by one Python
-release or platform, so no case is gated. Tests:
-`golden_capture_vocabulary` (class i) and `capture_vocabulary_robustness`
+`capture_vocabulary.jsonl` (204,366 bytes, not gated; checked identical
+under 3.11, 3.12 and 3.13) holds 72 captures built through `Capture` and
+read back, 803 hostile tokens (among them every refused field paired
+with every field that raises OverflowError, which pins the order
+`from_token` reads in, `int()` and `str()` of floats, texts and ints at
+the digit limit, and nesting 50 to 400 deep), 8 `to_location` cases,
+1,303 URLs, 25 paths (each against all 25 for `inside`) and 56 key
+pairs. `capture_vocabulary_python.jsonl` (17,918 bytes, gated on the
+Python release) holds the 119 tokens whose answer is RecursionError.
+Tests: `golden_capture_vocabulary` (class i and ii) and
+`capture_vocabulary_robustness`
 (5: every key with every wrong type, 100,000-deep nesting on a 512 KiB
 thread, 10 MB texts and URLs, the native depth and digit limits at their
 boundaries).
