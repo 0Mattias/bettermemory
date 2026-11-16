@@ -289,7 +289,12 @@ TOOL_BUSY_TIMEOUT_SECONDS = 5.0
 # (scratch run, Apple silicon, WAL with synchronous NORMAL): one
 # transaction per `put_memory` cost 0.56 to 0.64 ms an item against 0.10
 # to 0.11 ms inside one transaction, about 0.5 ms a commit, so chunks of
-# 0.1 s add about half a percent to the run.
+# 0.1 s add about half a percent to the run. With synchronous FULL
+# (ENG-328; `native/tools/bench_write.py`'s 5,000 puts, a busy machine,
+# interleaved with NORMAL): 0.56 to 0.69 ms an item against 0.53 to 0.62,
+# under 0.15 ms more a commit; a chunk still adds under one percent, and
+# 5,000 puts through `_in_chunks` (six commits) took 0.85 to 0.90 s
+# against 0.97 to 1.02 s before, within the noise.
 CHUNK_HOLD_SECONDS = 0.1
 # How long a long write run sleeps between two chunks with the write lock
 # free (`Store._yield_between_chunks`), in seconds. SQLite's lock is not
@@ -371,7 +376,7 @@ def _connect(path: Path) -> sqlite3.Connection:
     """The one way a store file is opened for writing: admitted first
     (`store_schema.admit_store`, which refuses a file whose schema this
     build did not write before anything is written to it), then the page
-    size for a new file, WAL, synchronous NORMAL, the CLI's busy timeout (a
+    size for a new file, WAL, synchronous FULL, the CLI's busy timeout (a
     connection opened for another role sets its own,
     `Store.set_busy_timeout`), foreign keys on, autocommit off so every
     write is an explicit transaction, and owner-only modes on the file and
@@ -390,7 +395,11 @@ def _connect(path: Path) -> sqlite3.Connection:
             conn.execute(f"PRAGMA page_size = {PAGE_SIZE}")
             conn.execute("PRAGMA foreign_keys = ON")
             conn.executescript("PRAGMA journal_mode = WAL; PRAGMA schema_version")
-            conn.execute("PRAGMA synchronous = NORMAL")
+            # FULL, not NORMAL: in WAL mode NORMAL does not sync the WAL at
+            # a COMMIT, while the head checkpoint written after each commit
+            # is synced; a power loss could then leave the head naming a
+            # row the log lost, read as a deleted tail (ENG-328).
+            conn.execute("PRAGMA synchronous = FULL")
             conn.row_factory = sqlite3.Row
             for sibling in (
                 path,

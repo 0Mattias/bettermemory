@@ -1117,7 +1117,8 @@
     "rowid": true,
     "rows": []
    }
-  }
+  },
+  "writer_synchronous": 2
  },
  "created_after_orphans": {
   "key_ring": [
@@ -2246,7 +2247,8 @@
     "rowid": true,
     "rows": []
    }
-  }
+  },
+  "writer_synchronous": 2
  },
  "created_over_sidecars": {
   "another_stores_live_wal": {

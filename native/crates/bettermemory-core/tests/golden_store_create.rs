@@ -43,7 +43,7 @@ fn native_created(orphan: bool) -> Value {
         )
         .expect("orphan");
     }
-    create::create(&store_dir, &root.join("keys"), &mut fixed(&doc)).expect("created");
+    let made = create::create(&store_dir, &root.join("keys"), &mut fixed(&doc)).expect("created");
     let file = store_dir.join("memory.sqlite");
     let mut listing: Vec<String> = fs::read_dir(&store_dir)
         .expect("dir")
@@ -69,6 +69,7 @@ fn native_created(orphan: bool) -> Value {
         "pragmas": pragmas,
         "tables": tables,
         "key_ring": key_ring(&root.join("keys"), root),
+        "writer_synchronous": made.synchronous,
     })
 }
 

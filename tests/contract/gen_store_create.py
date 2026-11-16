@@ -176,6 +176,8 @@ def _created(orphan: bool) -> dict[str, Any]:
                 b""
             )
         store = Store.create(store_dir, keys_dir=root / "keys")
+        # Read on the connection that committed the first row (ENG-328).
+        writer_synchronous = store.conn.execute("PRAGMA synchronous").fetchone()[0]
         store.close()
         path = store_dir / "memory.sqlite"
         directory = [
@@ -219,6 +221,7 @@ def _created(orphan: bool) -> dict[str, Any]:
             "pragmas": pragmas,
             "tables": tables,
             "key_ring": ring,
+            "writer_synchronous": writer_synchronous,
         }
 
 

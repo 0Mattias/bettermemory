@@ -79,6 +79,20 @@ default behaviour moves.
 
 #### Fixed
 
+- **A power loss no longer reads as a deleted tail.** The writing
+  connection ran WAL with `PRAGMA synchronous = NORMAL`, which does not
+  sync the WAL at a COMMIT, while the head checkpoint written after each
+  commit is synced. After a power loss or an OS crash the head could
+  name a row the log had lost, and `log verify` read the store as
+  `tampered` when it had only lost unsynced commits. The writing
+  connection is now `synchronous = FULL`, in the native build too, so
+  every COMMIT syncs the WAL before the head moves; readers keep their
+  setting. The sync is a plain `fsync`: on macOS a drive that loses its
+  own cache is still outside the promise, as for the head file. A
+  single-put commit costs more (measured figures in `store.py` beside
+  `CHUNK_HOLD_SECONDS`). (ENG-328; `store.py`, `native/.../store/create.rs`,
+  `open.rs`, `tests/test_store.py`, `store_create.json`,
+  `store_open.jsonl`)
 - **A merge's reply names the project that was merged.**
   `memory_admin(action="join_project")` built its line after the merge,
   when the merged project already resolved to the one it went into, so

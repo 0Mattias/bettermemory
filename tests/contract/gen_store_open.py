@@ -864,6 +864,9 @@ def run_case(c: dict[str, Any], bases: dict[str, Any]) -> dict[str, Any]:
                     store = Store.open(
                         case / "memory.sqlite", keys_dir=case / "keys", allow_rekey=True
                     )
+                outcome["synchronous"] = store.conn.execute(
+                    "PRAGMA synchronous"
+                ).fetchone()[0]
                 store.close()
             except Exception as exc:  # noqa: BLE001 - the refusal is the record
                 outcome = {"opened": False, "refusal": _refusal(exc, root)}

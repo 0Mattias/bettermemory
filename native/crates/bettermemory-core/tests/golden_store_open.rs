@@ -48,9 +48,18 @@ fn run(case: &Value, header: &Value) -> Result<(), String> {
     let provider = opened::provider(header);
     let opens = case.get("opens").and_then(Value::as_u64).unwrap_or(1);
     let mut outcome: Result<(), OpenError> = Ok(());
+    let mut synchronous: Option<i64> = None;
     for _ in 0..opens {
         match open_for_writing(&c.join("memory.sqlite"), &c.join("keys"), &provider) {
-            Ok(store) => store.close().expect("close"),
+            Ok(store) => {
+                synchronous = Some(
+                    store
+                        .connection()
+                        .query_row("PRAGMA synchronous", [], |r| r.get(0))
+                        .expect("synchronous"),
+                );
+                store.close().expect("close")
+            }
             Err(e) => {
                 outcome = Err(e);
                 break;
@@ -59,6 +68,14 @@ fn run(case: &Value, header: &Value) -> Result<(), String> {
     }
     let after = state(&c, &root, store_id, pragmas);
     let native = case["native"].as_str().expect("native");
+    if native == "same" && outcome.is_ok() {
+        let want = case["outcome"]["synchronous"].as_i64();
+        if want != synchronous {
+            return Err(format!(
+                "{name}: the writing connection's synchronous is {synchronous:?}, the reference's {want:?}"
+            ));
+        }
+    }
     match (native, &outcome) {
         ("same", Ok(())) => {
             let want = &case["after"];

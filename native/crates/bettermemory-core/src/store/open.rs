@@ -1125,7 +1125,9 @@ fn connect_pragmas(conn: &Connection, file: &Path) -> Result<(), OpenError> {
     conn.execute_batch("PRAGMA foreign_keys = ON")?;
     conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
     conn.query_row("PRAGMA schema_version", [], |_| Ok(()))?;
-    conn.execute_batch("PRAGMA synchronous = NORMAL")?;
+    // FULL: every COMMIT syncs the WAL before the head that names it is
+    // written (ENG-328); NORMAL left the WAL to the next checkpoint.
+    conn.execute_batch("PRAGMA synchronous = FULL")?;
     #[cfg(unix)]
     for sibling in [
         file.to_path_buf(),

@@ -176,10 +176,50 @@ def test_the_connection_pragmas_match_the_declaration(store: Store) -> None:
     conn = store.conn
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1
+    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 2
     assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
     assert conn.execute("PRAGMA page_size").fetchone()[0] == store_module.PAGE_SIZE
     assert store_module.PAGE_SIZE == 8192
+
+
+def test_the_writing_connection_syncs_every_commit(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """The writing connection is `synchronous = FULL` (2) after a create,
+    after an open and after a commit that moved the head: in WAL mode
+    every COMMIT syncs the WAL before the head that names it is written
+    (ENG-328)."""
+    created = Store.create(tmp_path / "s", keys_dir=keys_dir)
+    try:
+        assert created.conn.execute("PRAGMA synchronous").fetchone()[0] == 2
+    finally:
+        created.close()
+    opened = Store.open(tmp_path / "s", keys_dir=keys_dir)
+    try:
+        conn = opened.conn
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 2
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        with opened._transaction() as tx:
+            tx.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('t', 'v')")
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 2
+    finally:
+        opened.close()
+
+
+def test_a_readers_connection_keeps_the_default(tmp_path: Path, keys_dir: Path) -> None:
+    """A read-only open does not take the writer's setting: its connection
+    reads what a plain connection reads."""
+    Store.create(tmp_path / "s", keys_dir=keys_dir).close()
+    plain = sqlite3.connect(":memory:")
+    try:
+        default = plain.execute("PRAGMA synchronous").fetchone()[0]
+    finally:
+        plain.close()
+    reader = Store.open(tmp_path / "s", keys_dir=keys_dir, read_only=True)
+    try:
+        assert reader.conn.execute("PRAGMA synchronous").fetchone()[0] == default
+    finally:
+        reader.close()
 
 
 def test_meta_names_the_store_schema_tokenizer_and_engine(store: Store) -> None:

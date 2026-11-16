@@ -294,6 +294,9 @@ pub struct Created {
     pub path: PathBuf,
     pub store_id: String,
     pub first: LogRow,
+    /// `PRAGMA synchronous` read back on the connection that committed
+    /// the first row, just before it closed (2, FULL).
+    pub synchronous: i64,
 }
 
 /// The boundaries between create's steps, in order: what a test's hook is
@@ -414,7 +417,7 @@ pub fn create_with(
             link_into_place(&temp.path, &file)?;
             Ok(made)
         });
-    let (store_id, first) = match made {
+    let (store_id, first, synchronous) = match made {
         Ok(made) => made,
         Err(e) => {
             temp.remove();
@@ -440,6 +443,7 @@ pub fn create_with(
         path: file,
         store_id,
         first,
+        synchronous,
     })
 }
 
@@ -887,7 +891,7 @@ fn os_text(text: &OsStr) -> PyStr {
 }
 
 /// Everything up to the closed connection, in the temporary file: the
-/// store id and the first row.
+/// store id, the first row and the connection's `PRAGMA synchronous`.
 fn build(
     temp: &Path,
     keys_dir: &Path,
@@ -895,7 +899,7 @@ fn build(
     orphans: &[PyStr],
     written: &mut Vec<PathBuf>,
     hook: &mut dyn FnMut(Boundary),
-) -> Result<(String, LogRow), CreateError> {
+) -> Result<(String, LogRow, i64), CreateError> {
     io_step("create the temporary store", new_private_file(temp))?;
     let conn = Connection::open_with_flags(
         temp,
@@ -907,7 +911,9 @@ fn build(
     conn.execute_batch("PRAGMA foreign_keys = ON")?;
     conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
     conn.query_row("PRAGMA schema_version", [], |_| Ok(()))?;
-    conn.execute_batch("PRAGMA synchronous = NORMAL")?;
+    // FULL, not NORMAL: in WAL mode NORMAL does not sync the WAL at a
+    // COMMIT, and the head written after it is synced (ENG-328).
+    conn.execute_batch("PRAGMA synchronous = FULL")?;
     hook(Boundary::Connected);
     for text in super::admission::schema_texts() {
         conn.execute_batch(text)?;
@@ -1032,6 +1038,7 @@ fn build(
         ),
     )?;
     hook(Boundary::OriginWritten);
+    let synchronous: i64 = conn.query_row("PRAGMA synchronous", [], |r| r.get(0))?;
     conn.close().map_err(|(_, e)| CreateError::Sqlite(e))?;
     for suffix in ["-wal", "-shm"] {
         if with_suffix(temp, suffix).exists() {
@@ -1050,7 +1057,7 @@ fn build(
             .and_then(|f| bettermemory_sys::fsync(&f)),
     )?;
     hook(Boundary::Closed);
-    Ok((store_id, first))
+    Ok((store_id, first, synchronous))
 }
 
 /// The provider's store id, refused unless it is 32 lowercase hex digits

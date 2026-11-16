@@ -9,9 +9,7 @@ use std::path::Path;
 
 use bettermemory_core::store::create;
 use bettermemory_core::store::open::{open_for_writing, WritableStore};
-#[cfg(unix)]
-use bettermemory_core::store::write::HeadMove;
-use bettermemory_core::store::write::{WriteError, WriteNotPorted};
+use bettermemory_core::store::write::{HeadMove, WriteError, WriteNotPorted};
 use common::created::{fixed, fixture};
 use common::opened;
 use common::stores::scratch;
@@ -190,7 +188,7 @@ fn a_head_that_cannot_move_leaves_the_commit() {
 }
 
 /// Throughput: 5,000 `memory_put`s, one transaction each, the product's
-/// durability settings (WAL, `synchronous = NORMAL`, the head moved and
+/// durability settings (WAL, `synchronous = FULL`, the head moved and
 /// synced after each commit). `native/tools/bench_write.py` writes the
 /// same payloads with the reference at the same level. Run with
 /// `cargo test --release --test store_write_robustness -- --ignored`.
@@ -233,4 +231,54 @@ fn bench_five_thousand_puts() {
     for (b, t) in WriteBoundary::ALL.iter().zip(spent) {
         eprintln!("  up to {b:?}: {t:.3} s");
     }
+}
+
+fn synchronous(conn: &rusqlite::Connection) -> i64 {
+    conn.query_row("PRAGMA synchronous", [], |r| r.get(0))
+        .expect("synchronous")
+}
+
+/// The writing connection syncs at every COMMIT (`synchronous = FULL`,
+/// 2), read back on the connection that commits: create's, before it
+/// closes; open's, after the open and again after a write committed and
+/// its head moved (ENG-328).
+#[test]
+fn the_writing_connection_is_synchronous_full() {
+    let dir = scratch("write-sync");
+    let c = dir.0.join("c");
+    let made = create::create(&c, &c.join("keys"), &mut fixed(&fixture())).expect("create");
+    assert_eq!(made.synchronous, 2, "create's connection");
+    let mut store = open_for_writing(
+        &c.join("memory.sqlite"),
+        &c.join("keys"),
+        &opened::engine_provider(),
+    )
+    .expect("open");
+    assert_eq!(synchronous(store.connection()), 2, "open's connection");
+    let journal: String = store
+        .connection()
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+        .expect("journal_mode");
+    assert_eq!(journal, "wal");
+    let p = written::memory_payload(&ulid(1, "01J"), "body", &["global"], &[]);
+    let w = store
+        .mutate("memory_put", &p, None, &mut clock())
+        .expect("committed");
+    assert!(matches!(w.head, HeadMove::Moved), "{:?}", w.head);
+    assert_eq!(synchronous(store.connection()), 2, "after a commit");
+    store.close().expect("close");
+}
+
+/// A reader's connection keeps SQLite's default: the setting is the
+/// writing connection's alone.
+#[test]
+fn a_readers_connection_keeps_the_default() {
+    let dir = scratch("read-sync");
+    let c = dir.0.join("c");
+    create::create(&c, &c.join("keys"), &mut fixed(&fixture())).expect("create");
+    let file = c.join("memory.sqlite");
+    let plain = rusqlite::Connection::open_in_memory().expect("memory");
+    let default = synchronous(&plain);
+    let reader = bettermemory_core::store::StoreFile::open(&file).expect("open");
+    assert_eq!(synchronous(reader.connection()), default);
 }

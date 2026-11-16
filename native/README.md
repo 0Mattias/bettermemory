@@ -1353,7 +1353,7 @@ the head's `ts`).
 4. `_connect` (`store.py:370-411`): restore-lock admit; `sqlite3.connect`
    (creates the file, 5 s busy timeout, autocommit); `admit_store`;
    `PRAGMA page_size = PAGE_SIZE`; `foreign_keys = ON`; `journal_mode =
-   WAL` with `schema_version` in one script; `synchronous = NORMAL`;
+   WAL` with `schema_version` in one script; `synchronous = FULL`;
    chmod 0600 on the file, `-wal`, `-shm`; restore-lock confirm.
 5. `executescript` of `SCHEMA`, `MEMBERSHIP_SCHEMA`, `ADDITIVE_SCHEMA`,
    `PROPOSALS_INDEX_SCHEMA`, `SESSION_INDEX_SCHEMA`, each its own implicit
@@ -1598,7 +1598,7 @@ tokenizer's, then the digest's.
    refuses), `sqlite3.connect` (5 s busy timeout, autocommit),
    `admit_store`, `PRAGMA page_size` (a no-op on a store), `foreign_keys =
    ON`, `journal_mode = WAL` with `schema_version` (switches a
-   rollback-journal store to WAL: written), `synchronous = NORMAL`, chmod
+   rollback-journal store to WAL: written), `synchronous = FULL`, chmod
    0600 on the file, `-wal`, `-shm` (written).
 3. `_open_connected` (`store_open.py:40-143`): meta read; no store id or
    fingerprint, an id of another shape, a later `schema_version`: ValueError.
@@ -1963,13 +1963,26 @@ Every kill: the record tables equal those of the log's length, FTS5's
 `integrity-check` passes, the head never names a row the log lacks, both
 builds verify ok, and a further write succeeds.
 
-That holds for a killed process, whose writes the OS still holds. It does
-not hold for a power loss or an OS crash (ENG-328, a finding about the
-reference that native shares, left for its own unit with the fixtures):
-the writing connection is WAL with `synchronous = NORMAL`, so a COMMIT does
-not sync the WAL, while the head is synced on every write; after the OS
-cache is lost the head can name a row the log lost, which reads as
-`tail_deleted`. Nothing here tests a lost OS cache.
+That holds for a killed process, whose writes the OS still holds. For a
+power loss or an OS crash (ENG-328): the writing connection, in both
+builds, is WAL with `synchronous = FULL` (create's and open's, read back
+as 2 on the connection that commits, pinned in `store_create.json`'s
+`writer_synchronous` and `store_open.jsonl`'s `outcome.synchronous`).
+SQLite's `sqlite3WalFrames` syncs the WAL inside a COMMIT when the
+connection's sync flags carry FULL (`WAL_SYNC_FLAGS`, set from `fullSync`
+in `sqlite3PagerSetFlags`; the bundled 3.54.1 amalgamation), and the
+head's replace comes after the COMMIT returns, so the head never names a
+row the WAL has not been synced to hold. Until 9.0.0rc20 it was NORMAL,
+which leaves the WAL to the next checkpoint: after the OS cache was lost
+the head could name a row the log lost, read as `tail_deleted`. The sync
+is a plain `fsync` (no `F_FULLFSYNC`, no `PRAGMA fullfsync`), as the
+head's own is; a drive that loses or reorders its cache is outside it.
+In a rollback-journal store (a WAL switch that failed; ENG-329) FULL also
+syncs the journal's header, but the commit point is the journal's unlink,
+which SQLite syncs into its directory only at `synchronous = EXTRA`: a
+commit there can still roll back after a power loss while the head names
+it. Nothing here tests a lost OS cache, and no test observes SQLite's own
+sync calls (no syscall tracer without privileges on this Mac).
 
 ### Two writers
 
@@ -2003,7 +2016,12 @@ Throughput (`bench_five_thousand_puts`, release build, this Mac, three
 runs each; and `native/tools/bench_write.py` under the worktree's Python
 3.13), with the head synced by `bettermemory_sys::fsync` as `os.fsync`
 syncs it: native 2566, 2592 and 2549 puts a second; the reference 1905,
-1961 and 1952. Where native's 1.94 s go: the head's move (lock, read,
+1961 and 1952. With `synchronous = FULL` (ENG-328; measured
+on a machine other jobs were loading, load average 6 to 11): native 2397,
+2371 and 2421 puts a second against 2391, 2065 and 1915 at NORMAL just
+before (COMMIT 0.64 to 0.65 s of the run); the reference 1358, 1502 and
+1746 against 1601, 1560 and 1367, and interleaved in one session 1453,
+1513 and 1779 at FULL against 1854, 1611 and 1870 at NORMAL. Where native's 1.94 s go: the head's move (lock, read,
 write, `fsync`, rename, directory `fsync`) 0.89 s; COMMIT 0.53 s; the
 apply (model, row, links, FTS5 triggers) 0.32 s; the head's lock 0.11 s;
 the row (key check, MAC, INSERT) 0.09 s.

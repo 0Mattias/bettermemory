@@ -2580,6 +2580,25 @@ log row that produced it, which is what the provenance label reads. The
 membership tables (the section above), the `standing` table among them,
 are folded by the same log.
 
+What a crash keeps. A write commits, and only then is the head
+checkpoint moved: written to a temporary file, `fsync`ed, renamed over
+the old one, and the directory `fsync`ed. Since 9.0.0rc20 the writing
+connection runs WAL with `PRAGMA synchronous = FULL` (ENG-328), so each
+COMMIT syncs the WAL before it returns, and the head never names a row
+that a power loss or an OS crash can take back: after one, `log verify`
+reads such a store as `ok`, at most with the head one write behind if
+the crash came between the two. Before it the connection was `NORMAL`,
+which leaves the WAL unsynced until a checkpoint, and a lost OS cache
+could leave the head naming a row the log no longer held, read as
+`tampered` (a deleted tail). What is not promised: every sync here is a
+plain `fsync`. On macOS that does not force the drive's own cache
+(neither `F_FULLFSYNC` nor `PRAGMA fullfsync` is used), so a drive that
+loses or reorders its cache on power loss is outside the promise, the
+same level the head file and the key ring already have. A store whose
+WAL switch failed and that runs a rollback journal is also outside it:
+there the commit point is the journal's removal, which SQLite syncs
+into its directory only at `synchronous = EXTRA`.
+
 The `meta` table also says which builds may read and write the store
 (ENG-107; CONTRIBUTING.md has the contract): `schema_version`, the major
 line's format; `schema_revision`, what the store holds within it;
