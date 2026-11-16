@@ -1,0 +1,165 @@
+{
+ "cases": [
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "nul_in_directory",
+   "check": {
+    "message": "lstat: embedded null character in path",
+    "raised": "ValueError"
+   },
+   "config_toml": "[storage]\ndirectory = \"\\u0000\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "text": "{\n  \"config\": {\n    \"role\": \"user\",\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true,\n    \"parses\": true,\n    \"error\": null,\n    \"note\": null\n  },\n  \"managed\": {\n    \"role\": \"managed\",\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"parses\": false,\n    \"error\": null,\n    \"note\": null\n  },\n  \"settings\": {\n    \"storage\": {\n      \"directory\": {\n        \"value\": \"\\u0000\",\n        \"source\": \"user\"\n      },\n      \"cwd_store\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"behavior\": {\n      \"write_supersession\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"prompt_recall\": {\n        \"value\": \"project\",\n        \"source\": \"default\"\n      },\n      \"session_brief\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"tombstone_retention_days\": {\n        \"value\": 0,\n        \"source\": \"default\"\n      }\n    },\n    \"scopes\": {\n      \"allowed\": {\n        \"value\": [],\n        \"source\": \"default\"\n      },\n      \"typo_exceptions\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"policy\": {\n      \"forbid_force\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"forbid_acknowledge\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"telemetry\": {\n      \"enabled\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"daemon\": {\n      \"port\": {\n        \"value\": 7397,\n        \"source\": \"default\"\n      }\n    },\n    \"capture\": {\n      \"stop_checkpoint\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"checkpoint_tokens\": {\n        \"value\": 12000,\n        \"source\": \"default\"\n      },\n      \"daily_cap\": {\n        \"value\": 12,\n        \"source\": \"default\"\n      }\n    },\n    \"membership\": {\n      \"write_token\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"strict\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    },\n    \"security\": {\n      \"strict_provenance\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    }\n  },\n  \"notices\": []\n}\n"
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [
+       "storage.directory"
+      ],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults); 1 key(s) pinned by the managed config"
+    }
+   ],
+   "case": "nul_in_directory_managed",
+   "check": {
+    "message": "lstat: embedded null character in path",
+    "raised": "ValueError"
+   },
+   "config_toml": null,
+   "managed_toml": "[storage]\ndirectory = \"a\\u0000b\"\n",
+   "show": {
+    "exit_code": 0,
+    "text": "{\n  \"config\": {\n    \"role\": \"user\",\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false,\n    \"parses\": false,\n    \"error\": null,\n    \"note\": null\n  },\n  \"managed\": {\n    \"role\": \"managed\",\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": true,\n    \"parses\": true,\n    \"error\": null,\n    \"note\": null\n  },\n  \"settings\": {\n    \"storage\": {\n      \"directory\": {\n        \"value\": \"a\\u0000b\",\n        \"source\": \"managed\"\n      },\n      \"cwd_store\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"behavior\": {\n      \"write_supersession\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"prompt_recall\": {\n        \"value\": \"project\",\n        \"source\": \"default\"\n      },\n      \"session_brief\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"tombstone_retention_days\": {\n        \"value\": 0,\n        \"source\": \"default\"\n      }\n    },\n    \"scopes\": {\n      \"allowed\": {\n        \"value\": [],\n        \"source\": \"default\"\n      },\n      \"typo_exceptions\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"policy\": {\n      \"forbid_force\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"forbid_acknowledge\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"telemetry\": {\n      \"enabled\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"daemon\": {\n      \"port\": {\n        \"value\": 7397,\n        \"source\": \"default\"\n      }\n    },\n    \"capture\": {\n      \"stop_checkpoint\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"checkpoint_tokens\": {\n        \"value\": 12000,\n        \"source\": \"default\"\n      },\n      \"daily_cap\": {\n        \"value\": 12,\n        \"source\": \"default\"\n      }\n    },\n    \"membership\": {\n      \"write_token\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"strict\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    },\n    \"security\": {\n      \"strict_provenance\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    }\n  },\n  \"notices\": []\n}\n"
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "nul_after_tilde",
+   "check": {
+    "message": "lstat: embedded null character in path",
+    "raised": "ValueError"
+   },
+   "config_toml": "[storage]\ndirectory = \"~/\\u0000\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "text": "{\n  \"config\": {\n    \"role\": \"user\",\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true,\n    \"parses\": true,\n    \"error\": null,\n    \"note\": null\n  },\n  \"managed\": {\n    \"role\": \"managed\",\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"parses\": false,\n    \"error\": null,\n    \"note\": null\n  },\n  \"settings\": {\n    \"storage\": {\n      \"directory\": {\n        \"value\": \"~/\\u0000\",\n        \"source\": \"user\"\n      },\n      \"cwd_store\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"behavior\": {\n      \"write_supersession\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"prompt_recall\": {\n        \"value\": \"project\",\n        \"source\": \"default\"\n      },\n      \"session_brief\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"tombstone_retention_days\": {\n        \"value\": 0,\n        \"source\": \"default\"\n      }\n    },\n    \"scopes\": {\n      \"allowed\": {\n        \"value\": [],\n        \"source\": \"default\"\n      },\n      \"typo_exceptions\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"policy\": {\n      \"forbid_force\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"forbid_acknowledge\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"telemetry\": {\n      \"enabled\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"daemon\": {\n      \"port\": {\n        \"value\": 7397,\n        \"source\": \"default\"\n      }\n    },\n    \"capture\": {\n      \"stop_checkpoint\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"checkpoint_tokens\": {\n        \"value\": 12000,\n        \"source\": \"default\"\n      },\n      \"daily_cap\": {\n        \"value\": 12,\n        \"source\": \"default\"\n      }\n    },\n    \"membership\": {\n      \"write_token\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"strict\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    },\n    \"security\": {\n      \"strict_provenance\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    }\n  },\n  \"notices\": []\n}\n"
+   }
+  }
+ ],
+ "config_paths": [
+  {
+   "case": "directory_key_nul",
+   "config_toml": "[storage]\ndirectory = \"\\u0000\"\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "managed_toml": null,
+   "message": "lstat: embedded null character in path",
+   "mkdir": [],
+   "raised": "ValueError"
+  },
+  {
+   "case": "directory_managed_nul",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "managed_toml": "[storage]\ndirectory = \"x\\u0000\"\n",
+   "message": "lstat: embedded null character in path",
+   "mkdir": [],
+   "raised": "ValueError"
+  }
+ ],
+ "fixture": "settings_paths_python",
+ "placeholders": {
+  "<scratch>": "the run's temporary directory (an absolute path); the path after it is written with / whatever the platform's separator"
+ },
+ "read": "config_paths: `config path --json` under other environments (env: the location variables changed, <scratch> the run's directory; mkdir: directories made under it; text: what the CLI printed; a case whose output names a place above <scratch> is refused, so none is recorded). cases: config_toml / managed_toml (null: no file; *_hex: the bytes, when they are not UTF-8) -> check and show, each the exit code and the text the CLI printed (one JSON document, where a non-finite float prints bare as NaN or Infinity), or raised: the exception that escaped the command; each command runs with the loader's one-shot notices cleared, as a CLI process of its own would; and audit_config_findings, the config findings of `security audit` (posture._settings over the config the audit loads). Check exits 0 (nothing above a note), 1 (an error), 2 (warnings only).",
+ "setup": "Every location variable points into <scratch> (_sandbox.world): BETTERMEMORY_DIR=<scratch>/mem, BETTERMEMORY_KEYS_DIR=<scratch>/keys, BETTERMEMORY_STATE_DIR=<scratch>/state, HOME=<scratch>/home. The user's config file is <scratch>/user/config.toml (config.default_config_path answers it) and the managed file <scratch>/managed/managed.toml (managed.managed_config_path answers it); a case that has no text for one has no such file. The CLI runs in process (cli.main with argv set)."
+}

@@ -1,0 +1,928 @@
+{"documents":927,"fixture":"toml","outcomes":{"RecursionError":4,"TOMLDecodeError":534,"ValueError":2,"ok":387},"python":"3.13"}
+{"doc":"a = \"x\u0000y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x00' (at line 1, column 7)"}
+{"doc":"a = 'x\u0000y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x00' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0000y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x00' (at line 1, column 9)"}
+{"doc":"a = '''x\u0000y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x00' (at line 1, column 9)"}
+{"doc":"# c\u0000c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x00' (at line 1, column 4)"}
+{"doc":"a = \"x\u0001y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x01' (at line 1, column 7)"}
+{"doc":"a = 'x\u0001y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x01' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0001y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x01' (at line 1, column 9)"}
+{"doc":"a = '''x\u0001y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x01' (at line 1, column 9)"}
+{"doc":"# c\u0001c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x01' (at line 1, column 4)"}
+{"doc":"a = \"x\u0002y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x02' (at line 1, column 7)"}
+{"doc":"a = 'x\u0002y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x02' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0002y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x02' (at line 1, column 9)"}
+{"doc":"a = '''x\u0002y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x02' (at line 1, column 9)"}
+{"doc":"# c\u0002c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x02' (at line 1, column 4)"}
+{"doc":"a = \"x\u0003y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x03' (at line 1, column 7)"}
+{"doc":"a = 'x\u0003y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x03' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0003y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x03' (at line 1, column 9)"}
+{"doc":"a = '''x\u0003y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x03' (at line 1, column 9)"}
+{"doc":"# c\u0003c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x03' (at line 1, column 4)"}
+{"doc":"a = \"x\u0004y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x04' (at line 1, column 7)"}
+{"doc":"a = 'x\u0004y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x04' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0004y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x04' (at line 1, column 9)"}
+{"doc":"a = '''x\u0004y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x04' (at line 1, column 9)"}
+{"doc":"# c\u0004c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x04' (at line 1, column 4)"}
+{"doc":"a = \"x\u0005y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x05' (at line 1, column 7)"}
+{"doc":"a = 'x\u0005y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x05' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0005y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x05' (at line 1, column 9)"}
+{"doc":"a = '''x\u0005y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x05' (at line 1, column 9)"}
+{"doc":"# c\u0005c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x05' (at line 1, column 4)"}
+{"doc":"a = \"x\u0006y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x06' (at line 1, column 7)"}
+{"doc":"a = 'x\u0006y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x06' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0006y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x06' (at line 1, column 9)"}
+{"doc":"a = '''x\u0006y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x06' (at line 1, column 9)"}
+{"doc":"# c\u0006c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x06' (at line 1, column 4)"}
+{"doc":"a = \"x\u0007y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x07' (at line 1, column 7)"}
+{"doc":"a = 'x\u0007y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x07' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0007y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x07' (at line 1, column 9)"}
+{"doc":"a = '''x\u0007y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x07' (at line 1, column 9)"}
+{"doc":"# c\u0007c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x07' (at line 1, column 4)"}
+{"doc":"a = \"x\by\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x08' (at line 1, column 7)"}
+{"doc":"a = 'x\by'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x08' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\by\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x08' (at line 1, column 9)"}
+{"doc":"a = '''x\by'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x08' (at line 1, column 9)"}
+{"doc":"# c\bc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x08' (at line 1, column 4)"}
+{"doc":"a = \"x\ty\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ty"}]]}}
+{"doc":"a = 'x\ty'\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ty"}]]}}
+{"doc":"a = \"\"\"x\ty\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ty"}]]}}
+{"doc":"a = '''x\ty'''\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ty"}]]}}
+{"doc":"# c\tc\na = 1\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = \"x\ny\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\n' (at line 1, column 7)"}
+{"doc":"a = 'x\ny'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\n' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\ny\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ny"}]]}}
+{"doc":"a = '''x\ny'''\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ny"}]]}}
+{"doc":"# c\nc\na = 1\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 2, column 2)"}
+{"doc":"a = \"x\u000by\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x0b' (at line 1, column 7)"}
+{"doc":"a = 'x\u000by'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0b' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u000by\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x0b' (at line 1, column 9)"}
+{"doc":"a = '''x\u000by'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0b' (at line 1, column 9)"}
+{"doc":"# c\u000bc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0b' (at line 1, column 4)"}
+{"doc":"a = \"x\fy\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x0c' (at line 1, column 7)"}
+{"doc":"a = 'x\fy'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0c' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\fy\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x0c' (at line 1, column 9)"}
+{"doc":"a = '''x\fy'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0c' (at line 1, column 9)"}
+{"doc":"# c\fc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0c' (at line 1, column 4)"}
+{"doc":"a = \"x\ry\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\r' (at line 1, column 7)"}
+{"doc":"a = 'x\ry'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\r' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\ry\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\r' (at line 1, column 9)"}
+{"doc":"a = '''x\ry'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\r' (at line 1, column 9)"}
+{"doc":"# c\rc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\r' (at line 1, column 4)"}
+{"doc":"a = \"x\u000ey\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x0e' (at line 1, column 7)"}
+{"doc":"a = 'x\u000ey'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0e' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u000ey\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x0e' (at line 1, column 9)"}
+{"doc":"a = '''x\u000ey'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0e' (at line 1, column 9)"}
+{"doc":"# c\u000ec\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0e' (at line 1, column 4)"}
+{"doc":"a = \"x\u000fy\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x0f' (at line 1, column 7)"}
+{"doc":"a = 'x\u000fy'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0f' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u000fy\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x0f' (at line 1, column 9)"}
+{"doc":"a = '''x\u000fy'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0f' (at line 1, column 9)"}
+{"doc":"# c\u000fc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x0f' (at line 1, column 4)"}
+{"doc":"a = \"x\u0010y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x10' (at line 1, column 7)"}
+{"doc":"a = 'x\u0010y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x10' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0010y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x10' (at line 1, column 9)"}
+{"doc":"a = '''x\u0010y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x10' (at line 1, column 9)"}
+{"doc":"# c\u0010c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x10' (at line 1, column 4)"}
+{"doc":"a = \"x\u0011y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x11' (at line 1, column 7)"}
+{"doc":"a = 'x\u0011y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x11' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0011y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x11' (at line 1, column 9)"}
+{"doc":"a = '''x\u0011y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x11' (at line 1, column 9)"}
+{"doc":"# c\u0011c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x11' (at line 1, column 4)"}
+{"doc":"a = \"x\u0012y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x12' (at line 1, column 7)"}
+{"doc":"a = 'x\u0012y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x12' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0012y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x12' (at line 1, column 9)"}
+{"doc":"a = '''x\u0012y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x12' (at line 1, column 9)"}
+{"doc":"# c\u0012c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x12' (at line 1, column 4)"}
+{"doc":"a = \"x\u0013y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x13' (at line 1, column 7)"}
+{"doc":"a = 'x\u0013y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x13' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0013y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x13' (at line 1, column 9)"}
+{"doc":"a = '''x\u0013y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x13' (at line 1, column 9)"}
+{"doc":"# c\u0013c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x13' (at line 1, column 4)"}
+{"doc":"a = \"x\u0014y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x14' (at line 1, column 7)"}
+{"doc":"a = 'x\u0014y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x14' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0014y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x14' (at line 1, column 9)"}
+{"doc":"a = '''x\u0014y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x14' (at line 1, column 9)"}
+{"doc":"# c\u0014c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x14' (at line 1, column 4)"}
+{"doc":"a = \"x\u0015y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x15' (at line 1, column 7)"}
+{"doc":"a = 'x\u0015y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x15' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0015y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x15' (at line 1, column 9)"}
+{"doc":"a = '''x\u0015y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x15' (at line 1, column 9)"}
+{"doc":"# c\u0015c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x15' (at line 1, column 4)"}
+{"doc":"a = \"x\u0016y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x16' (at line 1, column 7)"}
+{"doc":"a = 'x\u0016y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x16' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0016y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x16' (at line 1, column 9)"}
+{"doc":"a = '''x\u0016y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x16' (at line 1, column 9)"}
+{"doc":"# c\u0016c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x16' (at line 1, column 4)"}
+{"doc":"a = \"x\u0017y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x17' (at line 1, column 7)"}
+{"doc":"a = 'x\u0017y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x17' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0017y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x17' (at line 1, column 9)"}
+{"doc":"a = '''x\u0017y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x17' (at line 1, column 9)"}
+{"doc":"# c\u0017c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x17' (at line 1, column 4)"}
+{"doc":"a = \"x\u0018y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x18' (at line 1, column 7)"}
+{"doc":"a = 'x\u0018y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x18' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0018y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x18' (at line 1, column 9)"}
+{"doc":"a = '''x\u0018y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x18' (at line 1, column 9)"}
+{"doc":"# c\u0018c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x18' (at line 1, column 4)"}
+{"doc":"a = \"x\u0019y\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x19' (at line 1, column 7)"}
+{"doc":"a = 'x\u0019y'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x19' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u0019y\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x19' (at line 1, column 9)"}
+{"doc":"a = '''x\u0019y'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x19' (at line 1, column 9)"}
+{"doc":"# c\u0019c\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x19' (at line 1, column 4)"}
+{"doc":"a = \"x\u001ay\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1a' (at line 1, column 7)"}
+{"doc":"a = 'x\u001ay'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1a' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u001ay\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1a' (at line 1, column 9)"}
+{"doc":"a = '''x\u001ay'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1a' (at line 1, column 9)"}
+{"doc":"# c\u001ac\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1a' (at line 1, column 4)"}
+{"doc":"a = \"x\u001by\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1b' (at line 1, column 7)"}
+{"doc":"a = 'x\u001by'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1b' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u001by\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1b' (at line 1, column 9)"}
+{"doc":"a = '''x\u001by'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1b' (at line 1, column 9)"}
+{"doc":"# c\u001bc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1b' (at line 1, column 4)"}
+{"doc":"a = \"x\u001cy\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1c' (at line 1, column 7)"}
+{"doc":"a = 'x\u001cy'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1c' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u001cy\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1c' (at line 1, column 9)"}
+{"doc":"a = '''x\u001cy'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1c' (at line 1, column 9)"}
+{"doc":"# c\u001cc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1c' (at line 1, column 4)"}
+{"doc":"a = \"x\u001dy\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1d' (at line 1, column 7)"}
+{"doc":"a = 'x\u001dy'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1d' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u001dy\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1d' (at line 1, column 9)"}
+{"doc":"a = '''x\u001dy'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1d' (at line 1, column 9)"}
+{"doc":"# c\u001dc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1d' (at line 1, column 4)"}
+{"doc":"a = \"x\u001ey\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1e' (at line 1, column 7)"}
+{"doc":"a = 'x\u001ey'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1e' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u001ey\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1e' (at line 1, column 9)"}
+{"doc":"a = '''x\u001ey'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1e' (at line 1, column 9)"}
+{"doc":"# c\u001ec\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1e' (at line 1, column 4)"}
+{"doc":"a = \"x\u001fy\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1f' (at line 1, column 7)"}
+{"doc":"a = 'x\u001fy'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1f' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u001fy\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x1f' (at line 1, column 9)"}
+{"doc":"a = '''x\u001fy'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1f' (at line 1, column 9)"}
+{"doc":"# c\u001fc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x1f' (at line 1, column 4)"}
+{"doc":"a = \"x\u007fy\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x7f' (at line 1, column 7)"}
+{"doc":"a = 'x\u007fy'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x7f' (at line 1, column 7)"}
+{"doc":"a = \"\"\"x\u007fy\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\x7f' (at line 1, column 9)"}
+{"doc":"a = '''x\u007fy'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x7f' (at line 1, column 9)"}
+{"doc":"# c\u007fc\na = 1\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x7f' (at line 1, column 4)"}
+{"doc":"a\u0000 = 1\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 2)"}
+{"doc":"a = 1\u0000\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = [1,\u00002]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 8)"}
+{"doc":"\u0000a = 1\n","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"a\u007f = 1\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 2)"}
+{"doc":"a = 1\u007f\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = [1,\u007f2]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 8)"}
+{"doc":"\u007fa = 1\n","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"a\r = 1\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 2)"}
+{"doc":"a = 1\r\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = [1,\r2]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 8)"}
+{"doc":"\ra = 1\n","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"a\u000b = 1\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 2)"}
+{"doc":"a = 1\u000b\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = [1,\u000b2]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 8)"}
+{"doc":"\u000ba = 1\n","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"a\f = 1\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 2)"}
+{"doc":"a = 1\f\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = [1,\f2]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 8)"}
+{"doc":"\fa = 1\n","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"a = \"x\\by\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\by"}]]}}
+{"doc":"a = \"\"\"x\\by\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\by"}]]}}
+{"doc":"a = \"x\\ty\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ty"}]]}}
+{"doc":"a = \"\"\"x\\ty\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ty"}]]}}
+{"doc":"a = \"x\\ny\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ny"}]]}}
+{"doc":"a = \"\"\"x\\ny\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ny"}]]}}
+{"doc":"a = \"x\\fy\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\fy"}]]}}
+{"doc":"a = \"\"\"x\\fy\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\fy"}]]}}
+{"doc":"a = \"x\\ry\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ry"}]]}}
+{"doc":"a = \"\"\"x\\ry\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ry"}]]}}
+{"doc":"a = \"x\\\"y\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\"y"}]]}}
+{"doc":"a = \"\"\"x\\\"y\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\"y"}]]}}
+{"doc_hex":"61203d2022785c5c79220a","ok":{"t":"table","v":[["a",{"t":"str","v":"x\\y"}]]}}
+{"doc_hex":"61203d20222222785c5c792222220a","ok":{"t":"table","v":[["a",{"t":"str","v":"x\\y"}]]}}
+{"doc":"a = \"x\\ay\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 9)"}
+{"doc":"a = \"\"\"x\\ay\"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 11)"}
+{"doc":"a = \"x\\xy\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 9)"}
+{"doc":"a = \"\"\"x\\xy\"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 11)"}
+{"doc":"a = \"x\\'y\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 9)"}
+{"doc":"a = \"\"\"x\\'y\"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 11)"}
+{"doc":"a = \"x\\0y\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 9)"}
+{"doc":"a = \"\"\"x\\0y\"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 11)"}
+{"doc":"a = \"x\\ey\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 9)"}
+{"doc":"a = \"\"\"x\\ey\"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 11)"}
+{"doc":"a = \"x\\/y\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 9)"}
+{"doc":"a = \"\"\"x\\/y\"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 11)"}
+{"doc":"a = \"x\\ y\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 9)"}
+{"doc":"a = \"\"\"x\\ y\"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 11)"}
+{"doc":"a = \"x\\Uy\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 9)"}
+{"doc":"a = \"\"\"x\\Uy\"\"\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 11)"}
+{"doc":"a = \"x\\uy\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 9)"}
+{"doc":"a = \"\"\"x\\uy\"\"\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 11)"}
+{"doc":"a = \"\\u0000\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\u0000"}]]}}
+{"doc":"a = \"\"\"\\u0000\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\u0000"}]]}}
+{"doc":"a = \"\\u0041\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"A"}]]}}
+{"doc":"a = \"\"\"\\u0041\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"A"}]]}}
+{"doc":"a = \"\\u00e9\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\u00e9"}]]}}
+{"doc":"a = \"\"\"\\u00e9\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\u00e9"}]]}}
+{"doc":"a = \"\\u00E9\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\u00e9"}]]}}
+{"doc":"a = \"\"\"\\u00E9\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\u00e9"}]]}}
+{"doc":"a = \"\\uD7FF\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\ud7ff"}]]}}
+{"doc":"a = \"\"\"\\uD7FF\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\ud7ff"}]]}}
+{"doc":"a = \"\\ud800\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 12)"}
+{"doc":"a = \"\"\"\\ud800\"\"\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 14)"}
+{"doc":"a = \"\\uDBFF\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 12)"}
+{"doc":"a = \"\"\"\\uDBFF\"\"\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 14)"}
+{"doc":"a = \"\\uDC00\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 12)"}
+{"doc":"a = \"\"\"\\uDC00\"\"\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 14)"}
+{"doc":"a = \"\\uDFFF\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 12)"}
+{"doc":"a = \"\"\"\\uDFFF\"\"\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 14)"}
+{"doc":"a = \"\\uE000\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\ue000"}]]}}
+{"doc":"a = \"\"\"\\uE000\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\ue000"}]]}}
+{"doc":"a = \"\\uFFFF\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\uffff"}]]}}
+{"doc":"a = \"\"\"\\uFFFF\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\uffff"}]]}}
+{"doc":"a = \"\\U00000041\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"A"}]]}}
+{"doc":"a = \"\\U0001F600\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\ud83d\ude00"}]]}}
+{"doc":"a = \"\\U0010FFFF\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\udbff\udfff"}]]}}
+{"doc":"a = \"\\U00110000\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 16)"}
+{"doc":"a = \"\\U0000D800\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 16)"}
+{"doc":"a = \"\\UFFFFFFFF\"\n","err":"TOMLDecodeError","msg":"Escaped character is not a Unicode scalar value (at line 1, column 16)"}
+{"doc":"a = \"\\U0001f600\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\ud83d\ude00"}]]}}
+{"doc":"a = \"\\u\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 8)"}
+{"doc":"a = \"\\u1\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 8)"}
+{"doc":"a = \"\\u12\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 8)"}
+{"doc":"a = \"\\u123\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 8)"}
+{"doc":"a = \"\\u12G4\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 8)"}
+{"doc":"a = \"\\U0001F60\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 8)"}
+{"doc":"a = \"\\u00\u00e99\"\n","err":"TOMLDecodeError","msg":"Invalid hex value (at line 1, column 8)"}
+{"doc":"a = \"\\","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at end of document)"}
+{"doc":"a = \"x\\","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at end of document)"}
+{"doc":"a = \"\"\"\nabc\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"abc"}]]}}
+{"doc":"a = \"\"\"\nabc\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"abc"}]]}}
+{"doc":"a = \"\"\"\n\nabc\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\nabc"}]]}}
+{"doc":"a = \"\"\"\n\nabc\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"\nabc"}]]}}
+{"doc":"a = \"\"\"abc\n\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"abc\n"}]]}}
+{"doc":"a = \"\"\"abc\n\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"abc\n"}]]}}
+{"doc":"a = \"\"\"a\\\n   b\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"ab"}]]}}
+{"doc":"a = \"\"\"a\\\n   b\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"ab"}]]}}
+{"doc":"a = \"\"\"a\\  \n\n  b\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"ab"}]]}}
+{"doc":"a = \"\"\"a\\  \n\n  b\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"ab"}]]}}
+{"doc":"a = \"\"\"a\\ b\"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 11)"}
+{"doc":"a = \"\"\"a\\ b\"\"\"","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 11)"}
+{"doc":"a = \"\"\"a\\\t\n b\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"ab"}]]}}
+{"doc":"a = \"\"\"a\\\t\n b\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"ab"}]]}}
+{"doc":"a = \"\"\"a\\   \"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 13)"}
+{"doc":"a = \"\"\"a\\   \"\"\"","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 13)"}
+{"doc":"a = \"\"\"a\"\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a\""}]]}}
+{"doc":"a = \"\"\"a\"\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"a\""}]]}}
+{"doc":"a = \"\"\"a\"\"\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a\"\""}]]}}
+{"doc":"a = \"\"\"a\"\"\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"a\"\""}]]}}
+{"doc":"a = \"\"\"a\"\"\"\"\"\"\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 14)"}
+{"doc":"a = \"\"\"a\"\"\"\"\"\"","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 14)"}
+{"doc":"a = \"\"\"\"\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\""}]]}}
+{"doc":"a = \"\"\"\"\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"\""}]]}}
+{"doc":"a = \"\"\"\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":""}]]}}
+{"doc":"a = \"\"\"\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":""}]]}}
+{"doc":"a = \"\"\"\\\"\"\"\n","err":"TOMLDecodeError","msg":"Unterminated string (at end of document)"}
+{"doc":"a = \"\"\"\\\"\"\"","err":"TOMLDecodeError","msg":"Unterminated string (at end of document)"}
+{"doc":"a = \"\"\"a\"b\"\"c\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a\"b\"\"c"}]]}}
+{"doc":"a = \"\"\"a\"b\"\"c\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"a\"b\"\"c"}]]}}
+{"doc":"a = \"\"\"\n","err":"TOMLDecodeError","msg":"Unterminated string (at end of document)"}
+{"doc":"a = \"\"\"","err":"TOMLDecodeError","msg":"Unterminated string (at end of document)"}
+{"doc":"a = \"\"\"abc\n","err":"TOMLDecodeError","msg":"Unterminated string (at end of document)"}
+{"doc":"a = \"\"\"abc","err":"TOMLDecodeError","msg":"Unterminated string (at end of document)"}
+{"doc":"a = \"\"\"a\\\n\n","err":"TOMLDecodeError","msg":"Unterminated string (at end of document)"}
+{"doc":"a = \"\"\"a\\\n","err":"TOMLDecodeError","msg":"Unterminated string (at end of document)"}
+{"doc":"a = '''\nabc'''\n","ok":{"t":"table","v":[["a",{"t":"str","v":"abc"}]]}}
+{"doc":"a = '''\nabc'''","ok":{"t":"table","v":[["a",{"t":"str","v":"abc"}]]}}
+{"doc":"a = '''a''''\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a'"}]]}}
+{"doc":"a = '''a''''","ok":{"t":"table","v":[["a",{"t":"str","v":"a'"}]]}}
+{"doc":"a = '''a'''''\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a''"}]]}}
+{"doc":"a = '''a'''''","ok":{"t":"table","v":[["a",{"t":"str","v":"a''"}]]}}
+{"doc":"a = '''a''''''\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 14)"}
+{"doc":"a = '''a''''''","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 14)"}
+{"doc":"a = ''''''\n","ok":{"t":"table","v":[["a",{"t":"str","v":""}]]}}
+{"doc":"a = ''''''","ok":{"t":"table","v":[["a",{"t":"str","v":""}]]}}
+{"doc":"a = '''''''\n","ok":{"t":"table","v":[["a",{"t":"str","v":"'"}]]}}
+{"doc":"a = '''''''","ok":{"t":"table","v":[["a",{"t":"str","v":"'"}]]}}
+{"doc":"a = '''a\\nb'''\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a\\nb"}]]}}
+{"doc":"a = '''a\\nb'''","ok":{"t":"table","v":[["a",{"t":"str","v":"a\\nb"}]]}}
+{"doc":"a = '''abc\n","err":"TOMLDecodeError","msg":"Expected \"'''\" (at end of document)"}
+{"doc":"a = '''abc","err":"TOMLDecodeError","msg":"Expected \"'''\" (at end of document)"}
+{"doc":"a = '''a\nb'''\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a\nb"}]]}}
+{"doc":"a = '''a\nb'''","ok":{"t":"table","v":[["a",{"t":"str","v":"a\nb"}]]}}
+{"doc":"a = \"\"\"a\r\nb\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a\nb"}]]}}
+{"doc":"a = \"\"\"a\r\nb\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"a\nb"}]]}}
+{"doc":"a = \"\"\"a\rb\"\"\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\r' (at line 1, column 9)"}
+{"doc":"a = \"\"\"a\rb\"\"\"","err":"TOMLDecodeError","msg":"Illegal character '\\r' (at line 1, column 9)"}
+{"doc":"a = '''a\rb'''\n","err":"TOMLDecodeError","msg":"Found invalid character '\\r' (at line 1, column 9)"}
+{"doc":"a = '''a\rb'''","err":"TOMLDecodeError","msg":"Found invalid character '\\r' (at line 1, column 9)"}
+{"doc":"a = \"\"\"\\\n\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":""}]]}}
+{"doc":"a = \"\"\"\\\n\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":""}]]}}
+{"doc":"a = \"\"\"\\\n  \n  x\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x"}]]}}
+{"doc":"a = \"\"\"\\\n  \n  x\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"x"}]]}}
+{"doc":"a = \"\"\"\\ \t \n  x\"\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x"}]]}}
+{"doc":"a = \"\"\"\\ \t \n  x\"\"\"","ok":{"t":"table","v":[["a",{"t":"str","v":"x"}]]}}
+{"doc":"a = \"\"\"x\\ \t x\"\"\"\n","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 13)"}
+{"doc":"a = \"\"\"x\\ \t x\"\"\"","err":"TOMLDecodeError","msg":"Unescaped '\\' in a string (at line 1, column 13)"}
+{"doc":"a = \"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":""}]]}}
+{"doc":"a = ''\n","ok":{"t":"table","v":[["a",{"t":"str","v":""}]]}}
+{"doc":"a = \"a'b\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a'b"}]]}}
+{"doc":"a = 'a\"b'\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a\"b"}]]}}
+{"doc":"a = 'a\\b'\n","ok":{"t":"table","v":[["a",{"t":"str","v":"a\\b"}]]}}
+{"doc":"a = \"\\\"\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\""}]]}}
+{"doc":"a = '\n","err":"TOMLDecodeError","msg":"Expected \"'\" (at end of document)"}
+{"doc":"a = \"\n","err":"TOMLDecodeError","msg":"Illegal character '\\n' (at line 1, column 6)"}
+{"doc":"a = \"abc\n","err":"TOMLDecodeError","msg":"Illegal character '\\n' (at line 1, column 9)"}
+{"doc":"a = 'abc\n","err":"TOMLDecodeError","msg":"Expected \"'\" (at end of document)"}
+{"doc":"a = \"a\nb\"\n","err":"TOMLDecodeError","msg":"Illegal character '\\n' (at line 1, column 7)"}
+{"doc":"a = 'a\nb'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\n' (at line 1, column 7)"}
+{"doc":"a = \"\u00e9\ud83d\ude00\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\u00e9\ud83d\ude00"}]]}}
+{"doc":"a = '\u00e9\ud83d\ude00'\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\u00e9\ud83d\ude00"}]]}}
+{"doc_hex":"61203d20225c5c220a","ok":{"t":"table","v":[["a",{"t":"str","v":"\\"}]]}}
+{"doc":"a = \"x\" \"y\"\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 9)"}
+{"doc":"a = 0\n","ok":{"t":"table","v":[["a",{"t":"int","v":"0"}]]}}
+{"doc":"a = +0\n","ok":{"t":"table","v":[["a",{"t":"int","v":"0"}]]}}
+{"doc":"a = -0\n","ok":{"t":"table","v":[["a",{"t":"int","v":"0"}]]}}
+{"doc":"a = 1\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = +1\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = -1\n","ok":{"t":"table","v":[["a",{"t":"int","v":"-1"}]]}}
+{"doc":"a = 42\n","ok":{"t":"table","v":[["a",{"t":"int","v":"42"}]]}}
+{"doc":"a = 1_000\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1000"}]]}}
+{"doc":"a = 1_2_3\n","ok":{"t":"table","v":[["a",{"t":"int","v":"123"}]]}}
+{"doc":"a = 1__0\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 1_\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = _1\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = 01\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = -01\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = +_1\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = 0_0\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 9223372036854775807\n","ok":{"t":"table","v":[["a",{"t":"int","v":"9223372036854775807"}]]}}
+{"doc":"a = 9223372036854775808\n","ok":{"t":"table","v":[["a",{"t":"int","v":"9223372036854775808"}]]}}
+{"doc":"a = -9223372036854775808\n","ok":{"t":"table","v":[["a",{"t":"int","v":"-9223372036854775808"}]]}}
+{"doc":"a = -9223372036854775809\n","ok":{"t":"table","v":[["a",{"t":"int","v":"-9223372036854775809"}]]}}
+{"doc":"a = 10000000000000000000000000000000000000000\n","ok":{"t":"table","v":[["a",{"t":"int","v":"10000000000000000000000000000000000000000"}]]}}
+{"doc":"a = 0x0\n","ok":{"t":"table","v":[["a",{"t":"int","v":"0"}]]}}
+{"doc":"a = 0xDEAD_beef\n","ok":{"t":"table","v":[["a",{"t":"int","v":"3735928559"}]]}}
+{"doc":"a = 0x_1\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 0x\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 0X1F\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 0xg\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = -0x1\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = +0x1\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = 0x1_\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = 0o0\n","ok":{"t":"table","v":[["a",{"t":"int","v":"0"}]]}}
+{"doc":"a = 0o755\n","ok":{"t":"table","v":[["a",{"t":"int","v":"493"}]]}}
+{"doc":"a = 0o8\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 0O7\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 0o_7\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = -0o7\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = 0b0\n","ok":{"t":"table","v":[["a",{"t":"int","v":"0"}]]}}
+{"doc":"a = 0b1010\n","ok":{"t":"table","v":[["a",{"t":"int","v":"10"}]]}}
+{"doc":"a = 0b2\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 0B1\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 0b1__0\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = +0b1\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = 0xffffffffffffffffffffffffffffffffffffffff\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1461501637330902918203684832716283019655932542975"}]]}}
+{"doc":"a = 0b1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1361129467683753853853498429727072845823"}]]}}
+{"doc":"a = 0o77777777777777777777777777777777777777777777777777\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1427247692705959881058285969449495136382746623"}]]}}
+{"doc":"a = -1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\n","ok":{"t":"table","v":[["a",{"t":"int","v":"-1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"}]]}}
+{"doc":"a = 11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\n","err":"ValueError","msg":"Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"}
+{"doc":"a = 1_1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\n","err":"ValueError","msg":"Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"}
+{"doc":"a = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n","ok":{"t":"table","v":[["a",{"hex":"0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","t":"int"}]]}}
+{"doc":"a = 0.0\n","ok":{"t":"table","v":[["a",{"bits":"0000000000000000","t":"float"}]]}}
+{"doc":"a = +0.0\n","ok":{"t":"table","v":[["a",{"bits":"0000000000000000","t":"float"}]]}}
+{"doc":"a = -0.0\n","ok":{"t":"table","v":[["a",{"bits":"8000000000000000","t":"float"}]]}}
+{"doc":"a = 1.5\n","ok":{"t":"table","v":[["a",{"bits":"3ff8000000000000","t":"float"}]]}}
+{"doc":"a = -1.5\n","ok":{"t":"table","v":[["a",{"bits":"bff8000000000000","t":"float"}]]}}
+{"doc":"a = +1.5\n","ok":{"t":"table","v":[["a",{"bits":"3ff8000000000000","t":"float"}]]}}
+{"doc":"a = 3.14159\n","ok":{"t":"table","v":[["a",{"bits":"400921f9f01b866e","t":"float"}]]}}
+{"doc":"a = 1e5\n","ok":{"t":"table","v":[["a",{"bits":"40f86a0000000000","t":"float"}]]}}
+{"doc":"a = 1E5\n","ok":{"t":"table","v":[["a",{"bits":"40f86a0000000000","t":"float"}]]}}
+{"doc":"a = 1e+5\n","ok":{"t":"table","v":[["a",{"bits":"40f86a0000000000","t":"float"}]]}}
+{"doc":"a = 1e-5\n","ok":{"t":"table","v":[["a",{"bits":"3ee4f8b588e368f1","t":"float"}]]}}
+{"doc":"a = -1e-5\n","ok":{"t":"table","v":[["a",{"bits":"bee4f8b588e368f1","t":"float"}]]}}
+{"doc":"a = 1.5e10\n","ok":{"t":"table","v":[["a",{"bits":"420bf08eb0000000","t":"float"}]]}}
+{"doc":"a = 1.5E-10\n","ok":{"t":"table","v":[["a",{"bits":"3de49da7e361ce4c","t":"float"}]]}}
+{"doc":"a = 6.626e-34\n","ok":{"t":"table","v":[["a",{"bits":"390b85f8c5445f02","t":"float"}]]}}
+{"doc":"a = 1_000.000_1\n","ok":{"t":"table","v":[["a",{"bits":"408f4000346dc5d6","t":"float"}]]}}
+{"doc":"a = 1e1_0\n","ok":{"t":"table","v":[["a",{"bits":"4202a05f20000000","t":"float"}]]}}
+{"doc":"a = 1.\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = .5\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = 1.e5\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 1e\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 1e+\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 1.5e\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = 1._5\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 1_.5\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 1.5_\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = 1e_5\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 0.1\n","ok":{"t":"table","v":[["a",{"bits":"3fb999999999999a","t":"float"}]]}}
+{"doc":"a = 0.30000000000000004\n","ok":{"t":"table","v":[["a",{"bits":"3fd3333333333334","t":"float"}]]}}
+{"doc":"a = 1e308\n","ok":{"t":"table","v":[["a",{"bits":"7fe1ccf385ebc8a0","t":"float"}]]}}
+{"doc":"a = 1.7976931348623157e308\n","ok":{"t":"table","v":[["a",{"bits":"7fefffffffffffff","t":"float"}]]}}
+{"doc":"a = 1e309\n","ok":{"t":"table","v":[["a",{"bits":"7ff0000000000000","t":"float"}]]}}
+{"doc":"a = -1e309\n","ok":{"t":"table","v":[["a",{"bits":"fff0000000000000","t":"float"}]]}}
+{"doc":"a = 5e-324\n","ok":{"t":"table","v":[["a",{"bits":"0000000000000001","t":"float"}]]}}
+{"doc":"a = 2e-324\n","ok":{"t":"table","v":[["a",{"bits":"0000000000000000","t":"float"}]]}}
+{"doc":"a = 1e-400\n","ok":{"t":"table","v":[["a",{"bits":"0000000000000000","t":"float"}]]}}
+{"doc":"a = -1e-400\n","ok":{"t":"table","v":[["a",{"bits":"8000000000000000","t":"float"}]]}}
+{"doc":"a = 00.1\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = -01.5\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = 0e0\n","ok":{"t":"table","v":[["a",{"bits":"0000000000000000","t":"float"}]]}}
+{"doc":"a = 0.0e-0\n","ok":{"t":"table","v":[["a",{"bits":"0000000000000000","t":"float"}]]}}
+{"doc":"a = inf\n","ok":{"t":"table","v":[["a",{"bits":"7ff0000000000000","t":"float"}]]}}
+{"doc":"a = +inf\n","ok":{"t":"table","v":[["a",{"bits":"7ff0000000000000","t":"float"}]]}}
+{"doc":"a = -inf\n","ok":{"t":"table","v":[["a",{"bits":"fff0000000000000","t":"float"}]]}}
+{"doc":"a = nan\n","ok":{"t":"table","v":[["a",{"bits":"7ff8000000000000","t":"float"}]]}}
+{"doc":"a = +nan\n","ok":{"t":"table","v":[["a",{"bits":"7ff8000000000000","t":"float"}]]}}
+{"doc":"a = -nan\n","ok":{"t":"table","v":[["a",{"bits":"fff8000000000000","t":"float"}]]}}
+{"doc":"a = Inf\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = NaN\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = infinity\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = 9007199254740993\n","ok":{"t":"table","v":[["a",{"t":"int","v":"9007199254740993"}]]}}
+{"doc":"a = 9007199254740993.0\n","ok":{"t":"table","v":[["a",{"bits":"4340000000000000","t":"float"}]]}}
+{"doc":"a = 0.1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\n","ok":{"t":"table","v":[["a",{"bits":"3fbc71c71c71c71c","t":"float"}]]}}
+{"doc":"a = 1000000000000000000000000000000.0\n","ok":{"t":"table","v":[["a",{"bits":"46293e5939a08cea","t":"float"}]]}}
+{"doc":"a = [1,1]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"},{"t":"int","v":"1"}]}]]}}
+{"doc":"a = 1x\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 1 # c\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = {b = 1}\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]]}}
+{"doc":"a = [1.5,1.5]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"bits":"3ff8000000000000","t":"float"},{"bits":"3ff8000000000000","t":"float"}]}]]}}
+{"doc":"a = 1.5x\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = 1.5 # c\n","ok":{"t":"table","v":[["a",{"bits":"3ff8000000000000","t":"float"}]]}}
+{"doc":"a = {b = 1.5}\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"bits":"3ff8000000000000","t":"float"}]]}]]}}
+{"doc":"a = [0x1,0x1]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"},{"t":"int","v":"1"}]}]]}}
+{"doc":"a = 0x1x\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = 0x1 # c\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = {b = 0x1}\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]]}}
+{"doc":"a = [inf,inf]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"bits":"7ff0000000000000","t":"float"},{"bits":"7ff0000000000000","t":"float"}]}]]}}
+{"doc":"a = infx\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = inf # c\n","ok":{"t":"table","v":[["a",{"bits":"7ff0000000000000","t":"float"}]]}}
+{"doc":"a = {b = inf}\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"bits":"7ff0000000000000","t":"float"}]]}]]}}
+{"doc":"a = [nan,nan]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"bits":"7ff8000000000000","t":"float"},{"bits":"7ff8000000000000","t":"float"}]}]]}}
+{"doc":"a = nanx\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = nan # c\n","ok":{"t":"table","v":[["a",{"bits":"7ff8000000000000","t":"float"}]]}}
+{"doc":"a = {b = nan}\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"bits":"7ff8000000000000","t":"float"}]]}]]}}
+{"doc":"a = [1979-05-27,1979-05-27]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"date","v":"1979-05-27"},{"t":"date","v":"1979-05-27"}]}]]}}
+{"doc":"a = 1979-05-27x\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 15)"}
+{"doc":"a = 1979-05-27 # c\n","ok":{"t":"table","v":[["a",{"t":"date","v":"1979-05-27"}]]}}
+{"doc":"a = {b = 1979-05-27}\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"date","v":"1979-05-27"}]]}]]}}
+{"doc":"a = [07:32:00,07:32:00]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"time","v":"07:32:00"},{"t":"time","v":"07:32:00"}]}]]}}
+{"doc":"a = 07:32:00x\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 13)"}
+{"doc":"a = 07:32:00 # c\n","ok":{"t":"table","v":[["a",{"t":"time","v":"07:32:00"}]]}}
+{"doc":"a = {b = 07:32:00}\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"time","v":"07:32:00"}]]}]]}}
+{"doc":"a = [true,true]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"bool","v":true},{"t":"bool","v":true}]}]]}}
+{"doc":"a = truex\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 9)"}
+{"doc":"a = true # c\n","ok":{"t":"table","v":[["a",{"t":"bool","v":true}]]}}
+{"doc":"a = {b = true}\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"bool","v":true}]]}]]}}
+{"doc":"a = 1979-05-27T07:32:00Z\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T07:32:00+00:00"}]]}}
+{"doc":"a = [1979-05-27T07:32:00Z]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T07:32:00+00:00"}]}]]}}
+{"doc":"a = 1979-05-27T07:32:00z\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T07:32:00+00:00"}]]}}
+{"doc":"a = [1979-05-27T07:32:00z]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T07:32:00+00:00"}]}]]}}
+{"doc":"a = 1979-05-27t07:32:00Z\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T07:32:00+00:00"}]]}}
+{"doc":"a = [1979-05-27t07:32:00Z]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T07:32:00+00:00"}]}]]}}
+{"doc":"a = 1979-05-27 07:32:00Z\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T07:32:00+00:00"}]]}}
+{"doc":"a = [1979-05-27 07:32:00Z]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T07:32:00+00:00"}]}]]}}
+{"doc":"a = 1979-05-27T00:32:00-07:00\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T00:32:00-07:00"}]]}}
+{"doc":"a = [1979-05-27T00:32:00-07:00]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T00:32:00-07:00"}]}]]}}
+{"doc":"a = 1979-05-27T00:32:00+07:00\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T00:32:00+07:00"}]]}}
+{"doc":"a = [1979-05-27T00:32:00+07:00]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T00:32:00+07:00"}]}]]}}
+{"doc":"a = 1979-05-27T00:32:00.999999-07:00\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T00:32:00.999999-07:00"}]]}}
+{"doc":"a = [1979-05-27T00:32:00.999999-07:00]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T00:32:00.999999-07:00"}]}]]}}
+{"doc":"a = 1979-05-27T00:32:00.9999999-07:00\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T00:32:00.999999-07:00"}]]}}
+{"doc":"a = [1979-05-27T00:32:00.9999999-07:00]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T00:32:00.999999-07:00"}]}]]}}
+{"doc":"a = 1979-05-27T00:32:00.1+00:00\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T00:32:00.100000+00:00"}]]}}
+{"doc":"a = [1979-05-27T00:32:00.1+00:00]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T00:32:00.100000+00:00"}]}]]}}
+{"doc":"a = 1979-05-27T00:32:00-00:00\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T00:32:00+00:00"}]]}}
+{"doc":"a = [1979-05-27T00:32:00-00:00]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T00:32:00+00:00"}]}]]}}
+{"doc":"a = 1979-05-27T00:32:00+23:59\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T00:32:00+23:59"}]]}}
+{"doc":"a = [1979-05-27T00:32:00+23:59]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T00:32:00+23:59"}]}]]}}
+{"doc":"a = 1979-05-27T00:32:00+24:00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 24)"}
+{"doc":"a = [1979-05-27T00:32:00+24:00]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 25)"}
+{"doc":"a = 1979-05-27T00:32:00+1:00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 24)"}
+{"doc":"a = [1979-05-27T00:32:00+1:00]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 25)"}
+{"doc":"a = 1979-05-27T00:32:00+01\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 24)"}
+{"doc":"a = [1979-05-27T00:32:00+01]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 25)"}
+{"doc":"a = 1979-05-27T00:32:00+01:60\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 24)"}
+{"doc":"a = [1979-05-27T00:32:00+01:60]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 25)"}
+{"doc":"a = 1979-05-27T07:32:00\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T07:32:00"}]]}}
+{"doc":"a = [1979-05-27T07:32:00]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T07:32:00"}]}]]}}
+{"doc":"a = 1979-05-27T07:32:00.123\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"1979-05-27T07:32:00.123000"}]]}}
+{"doc":"a = [1979-05-27T07:32:00.123]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"1979-05-27T07:32:00.123000"}]}]]}}
+{"doc":"a = 1979-05-27T07:32:00.\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 24)"}
+{"doc":"a = [1979-05-27T07:32:00.]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 25)"}
+{"doc":"a = 1979-05-27T07:32\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 15)"}
+{"doc":"a = [1979-05-27T07:32]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 16)"}
+{"doc":"a = 1979-05-27T7:32:00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 15)"}
+{"doc":"a = [1979-05-27T7:32:00]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 16)"}
+{"doc":"a = 1979-05-27T24:00:00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 15)"}
+{"doc":"a = [1979-05-27T24:00:00]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 16)"}
+{"doc":"a = 1979-05-27T23:60:00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 15)"}
+{"doc":"a = [1979-05-27T23:60:00]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 16)"}
+{"doc":"a = 1979-05-27T23:59:60\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 15)"}
+{"doc":"a = [1979-05-27T23:59:60]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 16)"}
+{"doc":"a = 1979-05-27\n","ok":{"t":"table","v":[["a",{"t":"date","v":"1979-05-27"}]]}}
+{"doc":"a = [1979-05-27]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"date","v":"1979-05-27"}]}]]}}
+{"doc":"a = 1979-05-27T\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 15)"}
+{"doc":"a = [1979-05-27T]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 16)"}
+{"doc":"a = 1979-05-27 \n","ok":{"t":"table","v":[["a",{"t":"date","v":"1979-05-27"}]]}}
+{"doc":"a = [1979-05-27 ]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"date","v":"1979-05-27"}]}]]}}
+{"doc":"a = 1979-5-27\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 9)"}
+{"doc":"a = [1979-5-27]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 10)"}
+{"doc":"a = 1979-05-7\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 9)"}
+{"doc":"a = [1979-05-7]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 10)"}
+{"doc":"a = 79-05-27\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = [79-05-27]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 8)"}
+{"doc":"a = 0000-01-01\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 5)"}
+{"doc":"a = [0000-01-01]\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 6)"}
+{"doc":"a = 0001-01-01\n","ok":{"t":"table","v":[["a",{"t":"date","v":"0001-01-01"}]]}}
+{"doc":"a = [0001-01-01]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"date","v":"0001-01-01"}]}]]}}
+{"doc":"a = 9999-12-31\n","ok":{"t":"table","v":[["a",{"t":"date","v":"9999-12-31"}]]}}
+{"doc":"a = [9999-12-31]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"date","v":"9999-12-31"}]}]]}}
+{"doc":"a = 9999-12-31T23:59:59.999999-23:59\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"9999-12-31T23:59:59.999999-23:59"}]]}}
+{"doc":"a = [9999-12-31T23:59:59.999999-23:59]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"9999-12-31T23:59:59.999999-23:59"}]}]]}}
+{"doc":"a = 0001-01-01T00:00:00+23:59\n","ok":{"t":"table","v":[["a",{"t":"datetime","v":"0001-01-01T00:00:00+23:59"}]]}}
+{"doc":"a = [0001-01-01T00:00:00+23:59]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"datetime","v":"0001-01-01T00:00:00+23:59"}]}]]}}
+{"doc":"a = 2000-02-29\n","ok":{"t":"table","v":[["a",{"t":"date","v":"2000-02-29"}]]}}
+{"doc":"a = [2000-02-29]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"date","v":"2000-02-29"}]}]]}}
+{"doc":"a = 2001-02-29\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 5)"}
+{"doc":"a = [2001-02-29]\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 6)"}
+{"doc":"a = 1900-02-29\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 5)"}
+{"doc":"a = [1900-02-29]\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 6)"}
+{"doc":"a = 2004-02-30\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 5)"}
+{"doc":"a = [2004-02-30]\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 6)"}
+{"doc":"a = 2021-04-31\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 5)"}
+{"doc":"a = [2021-04-31]\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 6)"}
+{"doc":"a = 2021-06-31\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 5)"}
+{"doc":"a = [2021-06-31]\n","err":"TOMLDecodeError","msg":"Invalid date or datetime (at line 1, column 6)"}
+{"doc":"a = 2021-13-01\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 9)"}
+{"doc":"a = [2021-13-01]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 10)"}
+{"doc":"a = 2021-00-01\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 9)"}
+{"doc":"a = [2021-00-01]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 10)"}
+{"doc":"a = 2021-01-00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 9)"}
+{"doc":"a = [2021-01-00]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 10)"}
+{"doc":"a = 2021-01-32\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 9)"}
+{"doc":"a = [2021-01-32]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 10)"}
+{"doc":"a = 2021-12-31T23:59:59Zjunk\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 25)"}
+{"doc":"a = [2021-12-31T23:59:59Zjunk]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 26)"}
+{"doc":"a = 07:32:00\n","ok":{"t":"table","v":[["a",{"t":"time","v":"07:32:00"}]]}}
+{"doc":"a = [07:32:00]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"time","v":"07:32:00"}]}]]}}
+{"doc":"a = 07:32:00.5\n","ok":{"t":"table","v":[["a",{"t":"time","v":"07:32:00.500000"}]]}}
+{"doc":"a = [07:32:00.5]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"time","v":"07:32:00.500000"}]}]]}}
+{"doc":"a = 00:00:00.000001\n","ok":{"t":"table","v":[["a",{"t":"time","v":"00:00:00.000001"}]]}}
+{"doc":"a = [00:00:00.000001]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"time","v":"00:00:00.000001"}]}]]}}
+{"doc":"a = 07:32:00.1234567\n","ok":{"t":"table","v":[["a",{"t":"time","v":"07:32:00.123456"}]]}}
+{"doc":"a = [07:32:00.1234567]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"time","v":"07:32:00.123456"}]}]]}}
+{"doc":"a = 07:32\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = [07:32]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 7)"}
+{"doc":"a = 24:00:00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = [24:00:00]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 8)"}
+{"doc":"a = 07:32:60\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = [07:32:60]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 7)"}
+{"doc":"a = 7:32:00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = [7:32:00]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 7)"}
+{"doc":"a = 07:32:00Z\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 13)"}
+{"doc":"a = [07:32:00Z]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 14)"}
+{"doc":"a = 07:32:00-07:00\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 13)"}
+{"doc":"a = [07:32:00-07:00]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 14)"}
+{"doc":"a = true\n","ok":{"t":"table","v":[["a",{"t":"bool","v":true}]]}}
+{"doc":"a = true","ok":{"t":"table","v":[["a",{"t":"bool","v":true}]]}}
+{"doc":"a = false\n","ok":{"t":"table","v":[["a",{"t":"bool","v":false}]]}}
+{"doc":"a = false","ok":{"t":"table","v":[["a",{"t":"bool","v":false}]]}}
+{"doc":"a = True\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = True","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = FALSE\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = FALSE","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = tru\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = tru","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = fals\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = fals","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = truex","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 9)"}
+{"doc":"a = falsey\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 10)"}
+{"doc":"a = falsey","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 10)"}
+{"doc":"a = t\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = t","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = \n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = ","err":"TOMLDecodeError","msg":"Invalid value (at end of document)"}
+{"doc":"a =  \n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 6)"}
+{"doc":"a =  ","err":"TOMLDecodeError","msg":"Invalid value (at end of document)"}
+{"doc":"a = #\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = #","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = =\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = =","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = +\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = +","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = -\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = -","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = ++1\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = ++1","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = --1\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = --1","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = +-1\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = +-1","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = .\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = .","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = x\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = x","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = null\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = null","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = [\n","err":"TOMLDecodeError","msg":"Invalid value (at end of document)"}
+{"doc":"a = [","err":"TOMLDecodeError","msg":"Invalid value (at end of document)"}
+{"doc":"a = {\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 6)"}
+{"doc":"a = {","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at end of document)"}
+{"doc":"a = ]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = ]","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = }\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = }","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = @\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = @","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = \u00e9\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = \u00e9","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"a = 1 2\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = 1 2","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"a = [1 2]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 8)"}
+{"doc":"a = [1 2]","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 8)"}
+{"doc":"a = {a=1 b=2}\n","err":"TOMLDecodeError","msg":"Unclosed inline table (at line 1, column 10)"}
+{"doc":"a = {a=1 b=2}","err":"TOMLDecodeError","msg":"Unclosed inline table (at line 1, column 10)"}
+{"doc":"a = []\n","ok":{"t":"table","v":[["a",{"t":"array","v":[]}]]}}
+{"doc":"a = [ ]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[]}]]}}
+{"doc":"a = [1]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"}]}]]}}
+{"doc":"a = [1,]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"}]}]]}}
+{"doc":"a = [1,2,]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"},{"t":"int","v":"2"}]}]]}}
+{"doc":"a = [,]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 6)"}
+{"doc":"a = [,1]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 6)"}
+{"doc":"a = [1,,2]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 8)"}
+{"doc":"a = [\n1,\n2\n]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"},{"t":"int","v":"2"}]}]]}}
+{"doc":"a = [ # c\n1 # d\n, # e\n2 # f\n]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"},{"t":"int","v":"2"}]}]]}}
+{"doc":"a = [[1],[2,[3]]]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"array","v":[{"t":"int","v":"1"}]},{"t":"array","v":[{"t":"int","v":"2"},{"t":"array","v":[{"t":"int","v":"3"}]}]}]}]]}}
+{"doc":"a = [1, 'a', 2.5, true, [], {}]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"},{"t":"str","v":"a"},{"bits":"4004000000000000","t":"float"},{"t":"bool","v":true},{"t":"array","v":[]},{"t":"table","v":[]}]}]]}}
+{"doc":"a = [{a=1},{a=2}]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"table","v":[["a",{"t":"int","v":"1"}]]},{"t":"table","v":[["a",{"t":"int","v":"2"}]]}]}]]}}
+{"doc":"a = [[]]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"array","v":[]}]}]]}}
+{"doc":"a = [\n]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[]}]]}}
+{"doc":"a = [1\n,2]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"},{"t":"int","v":"2"}]}]]}}
+{"doc":"a = [1\n","err":"TOMLDecodeError","msg":"Unclosed array (at end of document)"}
+{"doc":"a = [1,\n","err":"TOMLDecodeError","msg":"Invalid value (at end of document)"}
+{"doc":"a = [1,2\n","err":"TOMLDecodeError","msg":"Unclosed array (at end of document)"}
+{"doc":"a = [1 # c\n","err":"TOMLDecodeError","msg":"Unclosed array (at end of document)"}
+{"doc":"a = [1 # c\n\n","err":"TOMLDecodeError","msg":"Unclosed array (at end of document)"}
+{"doc":"a = [[1]\n","err":"TOMLDecodeError","msg":"Unclosed array (at end of document)"}
+{"doc":"a = [1]]\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 8)"}
+{"doc":"a = [1}\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 7)"}
+{"doc":"a = [{a=1}\n","err":"TOMLDecodeError","msg":"Unclosed array (at end of document)"}
+{"doc":"a = [\u0000]\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 6)"}
+{"doc":"a = [1,# c\u0000\n2]\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x00' (at line 1, column 11)"}
+{"doc":"a = [ \t1\t, \t2\t]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"},{"t":"int","v":"2"}]}]]}}
+{"doc":"a = [\r\n1\r\n]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"1"}]}]]}}
+{"doc":"a = [1\r2]\n","err":"TOMLDecodeError","msg":"Unclosed array (at line 1, column 7)"}
+{"doc":"t = {}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[]}]]}}
+{"doc":"t = { }\n","ok":{"t":"table","v":[["t",{"t":"table","v":[]}]]}}
+{"doc":"t = {a = 1}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"int","v":"1"}]]}]]}}
+{"doc":"t = {a=1,b=2}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"int","v":"1"}],["b",{"t":"int","v":"2"}]]}]]}}
+{"doc":"t = {a=1,}\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 10)"}
+{"doc":"t = {,}\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 6)"}
+{"doc":"t = {a=1,,b=2}\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 10)"}
+{"doc":"t = {a.b = 1}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]]}]]}}
+{"doc":"t = {a.b = 1, a.c = 2}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}],["c",{"t":"int","v":"2"}]]}]]}]]}}
+{"doc":"t = {a = 1, a = 2}\n","err":"TOMLDecodeError","msg":"Duplicate inline table key 'a' (at line 1, column 18)"}
+{"doc":"t = {a = 1, a.b = 2}\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 1, column 20)"}
+{"doc":"t = {a.b = 1, a = 2}\n","err":"TOMLDecodeError","msg":"Duplicate inline table key 'a' (at line 1, column 20)"}
+{"doc":"t = {a = {b = 1}, a.c = 2}\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a', 'c') (at line 1, column 26)"}
+{"doc":"t = {a = {b = 1}, a.b = 2}\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a', 'b') (at line 1, column 26)"}
+{"doc":"t = {a = [1], a.b = 2}\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a', 'b') (at line 1, column 22)"}
+{"doc":"t = {a.b = 1, a.b.c = 2}\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 1, column 24)"}
+{"doc":"t = {a = {}, b = {}}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"table","v":[]}],["b",{"t":"table","v":[]}]]}]]}}
+{"doc":"t = {\na = 1}\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 6)"}
+{"doc":"t = {a = 1\n}\n","err":"TOMLDecodeError","msg":"Unclosed inline table (at line 1, column 11)"}
+{"doc":"t = {a = 1\n","err":"TOMLDecodeError","msg":"Unclosed inline table (at line 1, column 11)"}
+{"doc":"t = {a = 1,\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 12)"}
+{"doc":"t = {a 1}\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 8)"}
+{"doc":"t = {a = }\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 10)"}
+{"doc":"t = {= 1}\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 6)"}
+{"doc":"t = {'a' = 1, \"a\" = 2}\n","err":"TOMLDecodeError","msg":"Duplicate inline table key 'a' (at line 1, column 22)"}
+{"doc":"t = {'a b' = 1}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a b",{"t":"int","v":"1"}]]}]]}}
+{"doc":"t = {\"a.b\" = 1, a.b = 2}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a.b",{"t":"int","v":"1"}],["a",{"t":"table","v":[["b",{"t":"int","v":"2"}]]}]]}]]}}
+{"doc":"t = {a = {b = {c = {d = 1}}}}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"table","v":[["d",{"t":"int","v":"1"}]]}]]}]]}]]}]]}}
+{"doc":"t = {a.b.c.d = 1}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"table","v":[["d",{"t":"int","v":"1"}]]}]]}]]}]]}]]}}
+{"doc":"t = {a = [{b = 1}]}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"array","v":[{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]}]]}]]}}
+{"doc":"t = {1 = 2}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["1",{"t":"int","v":"2"}]]}]]}}
+{"doc":"t = {a = 1 # c\n}\n","err":"TOMLDecodeError","msg":"Unclosed inline table (at line 1, column 12)"}
+{"doc":"t = {a=1}}\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 10)"}
+{"doc":"t = {a = \"\"\"x\ny\"\"\"}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"str","v":"x\ny"}]]}]]}}
+{"doc":"t = {a = 1, b.c = 2, b.d = 3, e = {f = 4}}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["a",{"t":"int","v":"1"}],["b",{"t":"table","v":[["c",{"t":"int","v":"2"}],["d",{"t":"int","v":"3"}]]}],["e",{"t":"table","v":[["f",{"t":"int","v":"4"}]]}]]}]]}}
+{"doc":"t = {a.b = {c = 1}, a.b.d = 2}\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a', 'b', 'd') (at line 1, column 30)"}
+{"doc":"t = {a = [], a = []}\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a',) (at line 1, column 20)"}
+{"doc":"t = {\"\" = 1}\n","ok":{"t":"table","v":[["t",{"t":"table","v":[["",{"t":"int","v":"1"}]]}]]}}
+{"doc":"t = {'' = 1, \"\" = 2}\n","err":"TOMLDecodeError","msg":"Duplicate inline table key '' (at line 1, column 20)"}
+{"doc":"[a]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[]}]]}}
+{"doc":"A-b_c = 1\n","ok":{"t":"table","v":[["A-b_c",{"t":"int","v":"1"}]]}}
+{"doc":"[A-b_c]\n","ok":{"t":"table","v":[["A-b_c",{"t":"table","v":[]}]]}}
+{"doc":"1234 = 1\n","ok":{"t":"table","v":[["1234",{"t":"int","v":"1"}]]}}
+{"doc":"[1234]\n","ok":{"t":"table","v":[["1234",{"t":"table","v":[]}]]}}
+{"doc":"- = 1\n","ok":{"t":"table","v":[["-",{"t":"int","v":"1"}]]}}
+{"doc":"[-]\n","ok":{"t":"table","v":[["-",{"t":"table","v":[]}]]}}
+{"doc":"_ = 1\n","ok":{"t":"table","v":[["_",{"t":"int","v":"1"}]]}}
+{"doc":"[_]\n","ok":{"t":"table","v":[["_",{"t":"table","v":[]}]]}}
+{"doc":"a.b = 1\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]]}}
+{"doc":"[a.b]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[]}]]}]]}}
+{"doc":"a . b = 1\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]]}}
+{"doc":"[a . b]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[]}]]}]]}}
+{"doc":"a\t.\tb = 1\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]]}}
+{"doc":"[a\t.\tb]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[]}]]}]]}}
+{"doc":"\"a.b\" = 1\n","ok":{"t":"table","v":[["a.b",{"t":"int","v":"1"}]]}}
+{"doc":"[\"a.b\"]\n","ok":{"t":"table","v":[["a.b",{"t":"table","v":[]}]]}}
+{"doc":"'a.b' = 1\n","ok":{"t":"table","v":[["a.b",{"t":"int","v":"1"}]]}}
+{"doc":"['a.b']\n","ok":{"t":"table","v":[["a.b",{"t":"table","v":[]}]]}}
+{"doc":"\"\" = 1\n","ok":{"t":"table","v":[["",{"t":"int","v":"1"}]]}}
+{"doc":"[\"\"]\n","ok":{"t":"table","v":[["",{"t":"table","v":[]}]]}}
+{"doc":"'' = 1\n","ok":{"t":"table","v":[["",{"t":"int","v":"1"}]]}}
+{"doc":"['']\n","ok":{"t":"table","v":[["",{"t":"table","v":[]}]]}}
+{"doc":"\"\u00e9\" = 1\n","ok":{"t":"table","v":[["\u00e9",{"t":"int","v":"1"}]]}}
+{"doc":"[\"\u00e9\"]\n","ok":{"t":"table","v":[["\u00e9",{"t":"table","v":[]}]]}}
+{"doc":"'\u00e9' = 1\n","ok":{"t":"table","v":[["\u00e9",{"t":"int","v":"1"}]]}}
+{"doc":"['\u00e9']\n","ok":{"t":"table","v":[["\u00e9",{"t":"table","v":[]}]]}}
+{"doc":"\"\\u00e9\" = 1\n","ok":{"t":"table","v":[["\u00e9",{"t":"int","v":"1"}]]}}
+{"doc":"[\"\\u00e9\"]\n","ok":{"t":"table","v":[["\u00e9",{"t":"table","v":[]}]]}}
+{"doc":"a.'b'.\"c\" = 1\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"int","v":"1"}]]}]]}]]}}
+{"doc":"[a.'b'.\"c\"]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"table","v":[]}]]}]]}]]}}
+{"doc":"a. = 1\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 4)"}
+{"doc":"[a.]\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 4)"}
+{"doc":".a = 1\n","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"[.a]\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 2)"}
+{"doc":"a..b = 1\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 3)"}
+{"doc":"[a..b]\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 4)"}
+{"doc":"a b = 1\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 3)"}
+{"doc":"[a b]\n","err":"TOMLDecodeError","msg":"Expected ']' at the end of a table declaration (at line 1, column 4)"}
+{"doc":"\u00e9 = 1\n","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"[\u00e9]\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 2)"}
+{"doc":"3.14 = 1\n","ok":{"t":"table","v":[["3",{"t":"table","v":[["14",{"t":"int","v":"1"}]]}]]}}
+{"doc":"[3.14]\n","ok":{"t":"table","v":[["3",{"t":"table","v":[["14",{"t":"table","v":[]}]]}]]}}
+{"doc":"1.2.3 = 1\n","ok":{"t":"table","v":[["1",{"t":"table","v":[["2",{"t":"table","v":[["3",{"t":"int","v":"1"}]]}]]}]]}}
+{"doc":"[1.2.3]\n","ok":{"t":"table","v":[["1",{"t":"table","v":[["2",{"t":"table","v":[["3",{"t":"table","v":[]}]]}]]}]]}}
+{"doc":"true = 1\n","ok":{"t":"table","v":[["true",{"t":"int","v":"1"}]]}}
+{"doc":"[true]\n","ok":{"t":"table","v":[["true",{"t":"table","v":[]}]]}}
+{"doc":"inf = 1\n","ok":{"t":"table","v":[["inf",{"t":"int","v":"1"}]]}}
+{"doc":"[inf]\n","ok":{"t":"table","v":[["inf",{"t":"table","v":[]}]]}}
+{"doc":"nan = 1\n","ok":{"t":"table","v":[["nan",{"t":"int","v":"1"}]]}}
+{"doc":"[nan]\n","ok":{"t":"table","v":[["nan",{"t":"table","v":[]}]]}}
+{"doc":"a.true = 1\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["true",{"t":"int","v":"1"}]]}]]}}
+{"doc":"[a.true]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["true",{"t":"table","v":[]}]]}]]}}
+{"doc":"\"a\\nb\" = 1\n","ok":{"t":"table","v":[["a\nb",{"t":"int","v":"1"}]]}}
+{"doc":"[\"a\\nb\"]\n","ok":{"t":"table","v":[["a\nb",{"t":"table","v":[]}]]}}
+{"doc":"'a\\nb' = 1\n","ok":{"t":"table","v":[["a\\nb",{"t":"int","v":"1"}]]}}
+{"doc":"['a\\nb']\n","ok":{"t":"table","v":[["a\\nb",{"t":"table","v":[]}]]}}
+{"doc":"\"\\u200b\" = 1\n","ok":{"t":"table","v":[["\u200b",{"t":"int","v":"1"}]]}}
+{"doc":"[\"\\u200b\"]\n","ok":{"t":"table","v":[["\u200b",{"t":"table","v":[]}]]}}
+{"doc":"\"\\u00a0\" = 1\n","ok":{"t":"table","v":[["\u00a0",{"t":"int","v":"1"}]]}}
+{"doc":"[\"\\u00a0\"]\n","ok":{"t":"table","v":[["\u00a0",{"t":"table","v":[]}]]}}
+{"doc":"\"\\ue000\" = 1\n","ok":{"t":"table","v":[["\ue000",{"t":"int","v":"1"}]]}}
+{"doc":"[\"\\ue000\"]\n","ok":{"t":"table","v":[["\ue000",{"t":"table","v":[]}]]}}
+{"doc":"\"\u4e2d\" = 1\n","ok":{"t":"table","v":[["\u4e2d",{"t":"int","v":"1"}]]}}
+{"doc":"[\"\u4e2d\"]\n","ok":{"t":"table","v":[["\u4e2d",{"t":"table","v":[]}]]}}
+{"doc":"\"\ud83d\ude00\" = 1\n","ok":{"t":"table","v":[["\ud83d\ude00",{"t":"int","v":"1"}]]}}
+{"doc":"[\"\ud83d\ude00\"]\n","ok":{"t":"table","v":[["\ud83d\ude00",{"t":"table","v":[]}]]}}
+{"doc":"\"\\u0000\" = 1\n","ok":{"t":"table","v":[["\u0000",{"t":"int","v":"1"}]]}}
+{"doc":"[\"\\u0000\"]\n","ok":{"t":"table","v":[["\u0000",{"t":"table","v":[]}]]}}
+{"doc":"a.\"\".b = 1\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]]}]]}}
+{"doc":"[a.\"\".b]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["",{"t":"table","v":[["b",{"t":"table","v":[]}]]}]]}]]}}
+{"doc":"'''a''' = 1\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 3)"}
+{"doc":"['''a''']\n","err":"TOMLDecodeError","msg":"Expected ']' at the end of a table declaration (at line 1, column 4)"}
+{"doc":"\"\"\"a\"\"\" = 1\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 3)"}
+{"doc":"[\"\"\"a\"\"\"]\n","err":"TOMLDecodeError","msg":"Expected ']' at the end of a table declaration (at line 1, column 4)"}
+{"doc":"a = 1 = 1\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"[a = 1]\n","err":"TOMLDecodeError","msg":"Expected ']' at the end of a table declaration (at line 1, column 4)"}
+{"doc":"[a] = 1\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 5)"}
+{"doc":"[[a]]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"table","v":[]}]}]]}}
+{"doc":"a = 1\na = 2\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 6)"}
+{"doc":"a = 1\n\"a\" = 2\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 8)"}
+{"doc":"a = 1\n'a' = 2\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 8)"}
+{"doc":"\"\u00e9\" = 1\n\"\\u00e9\" = 2\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 13)"}
+{"doc":"a\n","err":"TOMLDecodeError","msg":"Expected '=' after a key in a key/value pair (at line 1, column 2)"}
+{"doc":"a =\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 4)"}
+{"doc":"a = 1 = 2\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"= 1\n","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"a == 1\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 4)"}
+{"doc":"a = # c\n","err":"TOMLDecodeError","msg":"Invalid value (at line 1, column 5)"}
+{"doc":"[a]\n[a]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a',) twice (at line 2, column 3)"}
+{"doc":"[a]\nb = 1\n[a]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a',) twice (at line 3, column 3)"}
+{"doc":"[a.b]\n[a]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[]}]]}]]}}
+{"doc":"[a]\n[a.b]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[]}]]}]]}}
+{"doc":"[a]\nb = 1\n[a.b]\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 3, column 5)"}
+{"doc":"[a.b]\nc = 1\n[a]\nd = 2\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"int","v":"1"}]]}],["d",{"t":"int","v":"2"}]]}]]}}
+{"doc":"[a.b]\n[a]\nb = 1\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 3, column 6)"}
+{"doc":"[a]\nb.c = 1\n[a.b]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a', 'b') twice (at line 3, column 5)"}
+{"doc":"[a]\nb.c = 1\n[a.b.d]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"int","v":"1"}],["d",{"t":"table","v":[]}]]}]]}]]}}
+{"doc":"a.b = 1\n[a]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a',) twice (at line 2, column 3)"}
+{"doc":"a.b = 1\n[a.c]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}],["c",{"t":"table","v":[]}]]}]]}}
+{"doc":"a = 1\n[a]\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 3)"}
+{"doc":"a = 1\n[a.b]\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 5)"}
+{"doc":"a = {}\n[a]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a',) twice (at line 2, column 3)"}
+{"doc":"a = {b = 1}\n[a.c]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a', 'c') twice (at line 2, column 5)"}
+{"doc":"a = {}\na.b = 1\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a',) (at line 2, column 8)"}
+{"doc":"a = {b = 1}\na.c = 1\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a',) (at line 2, column 8)"}
+{"doc":"a = []\n[[a]]\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a',) (at line 2, column 4)"}
+{"doc":"a = [{}]\n[[a]]\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a',) (at line 2, column 4)"}
+{"doc":"a = []\n[a.b]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a', 'b') twice (at line 2, column 5)"}
+{"doc":"[[a]]\n[a]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a',) twice (at line 2, column 3)"}
+{"doc":"[a]\n[[a]]\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 4)"}
+{"doc":"[[a]]\n[[a]]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"table","v":[]},{"t":"table","v":[]}]}]]}}
+{"doc":"[[a]]\nb = 1\n[[a]]\nb = 2\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"table","v":[["b",{"t":"int","v":"1"}]]},{"t":"table","v":[["b",{"t":"int","v":"2"}]]}]}]]}}
+{"doc":"[[a]]\n[a.b]\nc = 1\n[[a]]\n[a.b]\nc = 2\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"int","v":"1"}]]}]]},{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"int","v":"2"}]]}]]}]}]]}}
+{"doc":"[[a]]\n[[a.b]]\n[[a.b]]\n[[a]]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"table","v":[["b",{"t":"array","v":[{"t":"table","v":[]},{"t":"table","v":[]}]}]]},{"t":"table","v":[]}]}]]}}
+{"doc":"[[a.b]]\n[a]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"array","v":[{"t":"table","v":[]}]}]]}]]}}
+{"doc":"[[a.b]]\n[[a]]\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 4)"}
+{"doc":"[a]\n[[a.b]]\n[a.b.c]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"array","v":[{"t":"table","v":[["c",{"t":"table","v":[]}]]}]}]]}]]}}
+{"doc":"[[a]]\nb = [1]\n[a.b]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a', 'b') twice (at line 3, column 5)"}
+{"doc":"[[a]]\n[a.b]\n[a.b]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a', 'b') twice (at line 3, column 5)"}
+{"doc":"[a.b.c]\n[a.b]\n[a]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"table","v":[]}]]}]]}]]}}
+{"doc":"[a.b.c]\n[a.b.c]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a', 'b', 'c') twice (at line 2, column 7)"}
+{"doc":"[a]\nb = 1\nb.c = 1\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 3, column 8)"}
+{"doc":"[a]\nb.c = 1\nb = 1\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 3, column 6)"}
+{"doc":"a.b.c = 1\na.b.d = 2\na.e = 3\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"int","v":"1"}],["d",{"t":"int","v":"2"}]]}],["e",{"t":"int","v":"3"}]]}]]}}
+{"doc":"a.b.c = 1\na.b = 2\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 8)"}
+{"doc":"[a]\nb.c = 1\n[x]\n[a]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a',) twice (at line 4, column 3)"}
+{"doc":"[a]\nb.c=1\n[a.b.c]\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 3, column 7)"}
+{"doc":"[a.b]\nc.d = 1\n[a.b.c]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a', 'b', 'c') twice (at line 3, column 7)"}
+{"doc":"a.b = 1\n[a.b]\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 2, column 5)"}
+{"doc":"[x]\na.b = 1\n[x.a]\n","err":"TOMLDecodeError","msg":"Cannot declare ('x', 'a') twice (at line 3, column 5)"}
+{"doc":"[x]\na.b = 1\n[x.a.c]\n","ok":{"t":"table","v":[["x",{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}],["c",{"t":"table","v":[]}]]}]]}]]}}
+{"doc":"[[x]]\na.b = 1\n[x.a]\n","err":"TOMLDecodeError","msg":"Cannot declare ('x', 'a') twice (at line 3, column 5)"}
+{"doc":"[ a ]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[]}]]}}
+{"doc":"[ a . b ]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"table","v":[]}]]}]]}}
+{"doc":"[\ta\t]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[]}]]}}
+{"doc":"[a]]\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 4)"}
+{"doc":"[a\n","err":"TOMLDecodeError","msg":"Expected ']' at the end of a table declaration (at line 1, column 3)"}
+{"doc":"[a","err":"TOMLDecodeError","msg":"Expected ']' at the end of a table declaration (at end of document)"}
+{"doc":"[]\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 2)"}
+{"doc":"[[]]\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 3)"}
+{"doc":"[[a]\n","err":"TOMLDecodeError","msg":"Expected ']]' at the end of an array declaration (at line 1, column 4)"}
+{"doc":"[[a]]]\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"[[a] ]\n","err":"TOMLDecodeError","msg":"Expected ']]' at the end of an array declaration (at line 1, column 4)"}
+{"doc":"[ [a]]\n","err":"TOMLDecodeError","msg":"Invalid initial character for a key part (at line 1, column 3)"}
+{"doc":"[a] b = 1\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 5)"}
+{"doc":"[a] # c\n","ok":{"t":"table","v":[["a",{"t":"table","v":[]}]]}}
+{"doc":"[a]#c\n","ok":{"t":"table","v":[["a",{"t":"table","v":[]}]]}}
+{"doc":"[a.b] x\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 7)"}
+{"doc":"[a.'b c'.\"d\"]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b c",{"t":"table","v":[["d",{"t":"table","v":[]}]]}]]}]]}}
+{"doc":"[\"\"]\n[\"\"]\n","err":"TOMLDecodeError","msg":"Cannot declare ('',) twice (at line 2, column 4)"}
+{"doc":"[a]\n\"\".b = 1\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]]}]]}}
+{"doc":"[a.\"\"]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["",{"t":"table","v":[]}]]}]]}}
+{"doc":"[[a]]\n[a.b]\n[a.b.c]\nd=1\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"table","v":[["b",{"t":"table","v":[["c",{"t":"table","v":[["d",{"t":"int","v":"1"}]]}]]}]]}]}]]}}
+{"doc":"a = [{b = 1}]\n[a.c]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a', 'c') twice (at line 2, column 5)"}
+{"doc":"a = [{b = 1}]\n[[a]]\n","err":"TOMLDecodeError","msg":"Cannot mutate immutable namespace ('a',) (at line 2, column 4)"}
+{"doc":"[[a]]\nb={}\n[a.b]\n","err":"TOMLDecodeError","msg":"Cannot declare ('a', 'b') twice (at line 3, column 5)"}
+{"doc":"[x.y]\n[x]\ny.z = 1\n","err":"TOMLDecodeError","msg":"Cannot redefine namespace ('x', 'y') (at line 3, column 8)"}
+{"doc":"[x]\ny.z = 1\n[x.y.w]\n","ok":{"t":"table","v":[["x",{"t":"table","v":[["y",{"t":"table","v":[["z",{"t":"int","v":"1"}],["w",{"t":"table","v":[]}]]}]]}]]}}
+{"doc":"[x]\ny = 1\n[x.y.z]\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 3, column 7)"}
+{"doc":"a.b = 1\nb.a = 2\n[c]\na.b = 3\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}],["b",{"t":"table","v":[["a",{"t":"int","v":"2"}]]}],["c",{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"3"}]]}]]}]]}}
+{"doc":"[a]\n[b]\n[a.c]\n[b.c]\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["c",{"t":"table","v":[]}]]}],["b",{"t":"table","v":[["c",{"t":"table","v":[]}]]}]]}}
+{"doc":"[[fruit]]\nname = 'apple'\n[fruit.physical]\ncolor = 'red'\n[[fruit.variety]]\nname = 'red delicious'\n[[fruit]]\nname = 'banana'\n[[fruit.variety]]\nname = 'plantain'\n","ok":{"t":"table","v":[["fruit",{"t":"array","v":[{"t":"table","v":[["name",{"t":"str","v":"apple"}],["physical",{"t":"table","v":[["color",{"t":"str","v":"red"}]]}],["variety",{"t":"array","v":[{"t":"table","v":[["name",{"t":"str","v":"red delicious"}]]}]}]]},{"t":"table","v":[["name",{"t":"str","v":"banana"}],["variety",{"t":"array","v":[{"t":"table","v":[["name",{"t":"str","v":"plantain"}]]}]}]]}]}]]}}
+{"doc":"","ok":{"t":"table","v":[]}}
+{"doc":" ","ok":{"t":"table","v":[]}}
+{"doc":"\n","ok":{"t":"table","v":[]}}
+{"doc":"\n\n\n","ok":{"t":"table","v":[]}}
+{"doc":"\t\n","ok":{"t":"table","v":[]}}
+{"doc":"# c","ok":{"t":"table","v":[]}}
+{"doc":"# c\n","ok":{"t":"table","v":[]}}
+{"doc":"#","ok":{"t":"table","v":[]}}
+{"doc":"a = 1","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = 1\n\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"  a = 1  \n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"\ta\t=\t1\t\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a=1","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = 1 # c","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = 1 #","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = 1#c\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = 1\r\nb = 2\r\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}],["b",{"t":"int","v":"2"}]]}}
+{"doc":"a = 1\rb = 2\n","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"a = 1\r","err":"TOMLDecodeError","msg":"Expected newline or end of document after a statement (at line 1, column 6)"}
+{"doc":"\r\n","ok":{"t":"table","v":[]}}
+{"doc":"\r","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"a = 1\r\n# c\r\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"\ufeffa = 1\n","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"a = 1\n\ufeff","err":"TOMLDecodeError","msg":"Invalid statement (at line 2, column 1)"}
+{"doc":"\u0000","err":"TOMLDecodeError","msg":"Invalid statement (at line 1, column 1)"}
+{"doc":"a = 1\n\u0000","err":"TOMLDecodeError","msg":"Invalid statement (at line 2, column 1)"}
+{"doc":"a = '\u0000'\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x00' (at line 1, column 6)"}
+{"doc":"# \u00e9 \ud83d\ude00 \u200b\na = 1\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"a = 1 # \u007f\n","err":"TOMLDecodeError","msg":"Found invalid character '\\x7f' (at line 1, column 9)"}
+{"doc":"a = 1 # \t\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}]]}}
+{"doc":"[a]\r\nb = 1\r\n","ok":{"t":"table","v":[["a",{"t":"table","v":[["b",{"t":"int","v":"1"}]]}]]}}
+{"doc":"a = '''x\r\ny'''\r\n","ok":{"t":"table","v":[["a",{"t":"str","v":"x\ny"}]]}}
+{"doc":"a = \"\"\"x\\\r\n  y\"\"\"\r\n","ok":{"t":"table","v":[["a",{"t":"str","v":"xy"}]]}}
+{"doc":"a = 1\n b = 2\n","ok":{"t":"table","v":[["a",{"t":"int","v":"1"}],["b",{"t":"int","v":"2"}]]}}
+{"doc":"a = 1\n\n\n\nb = 2\nb = 3\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 6, column 6)"}
+{"doc":"a = 1\nb = \u00e9\n","err":"TOMLDecodeError","msg":"Invalid value (at line 2, column 5)"}
+{"doc":"x = 1\ny = 2\nz = 'abc\n","err":"TOMLDecodeError","msg":"Expected \"'\" (at end of document)"}
+{"doc":"a = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n","ok_sha256":"9aa3142f75dabcb555535b6fa30ddf302a02db320af9d1d7a75ca793705705a4"}
+{"doc":"a = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = 1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\n","ok_sha256":"e412ec09f1dc863bc4dacbb9fe7f1a2245c1a19bd3f7c81cb5f8d85d05b87fbe"}
+{"doc":"a = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n","ok_sha256":"20727d83571c76928ef6716ef06f59bfe172c02a58588d7f25b780f15c6fafdb"}
+{"doc":"a = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = 1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\n","ok_sha256":"86b03ae1897a26066f9805b99fda3975df37d94b5fed56ee70cf029e538b45cb"}
+{"doc":"a = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n","err":"RecursionError"}
+{"doc":"a = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = {b = 1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\n","err":"RecursionError"}
+{"doc":"a = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = [{b = 1}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]}]\n","err":"RecursionError"}
+{"doc":"a = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1,\n","err":"RecursionError"}
+{"doc":"a = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n","ok":{"t":"table","v":[["a",{"t":"str","v":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}]]}}
+{"doc":"a = \"\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\\u00e9\"\n","ok":{"t":"table","v":[["a",{"t":"str","v":"\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9"}]]}}
+{"doc":"k0 = 0\nk1 = 1\nk2 = 2\nk3 = 3\nk4 = 4\nk5 = 5\nk6 = 6\nk7 = 7\nk8 = 8\nk9 = 9\nk10 = 10\nk11 = 11\nk12 = 12\nk13 = 13\nk14 = 14\nk15 = 15\nk16 = 16\nk17 = 17\nk18 = 18\nk19 = 19\nk20 = 20\nk21 = 21\nk22 = 22\nk23 = 23\nk24 = 24\nk25 = 25\nk26 = 26\nk27 = 27\nk28 = 28\nk29 = 29\nk30 = 30\nk31 = 31\nk32 = 32\nk33 = 33\nk34 = 34\nk35 = 35\nk36 = 36\nk37 = 37\nk38 = 38\nk39 = 39\nk40 = 40\nk41 = 41\nk42 = 42\nk43 = 43\nk44 = 44\nk45 = 45\nk46 = 46\nk47 = 47\nk48 = 48\nk49 = 49\nk50 = 50\nk51 = 51\nk52 = 52\nk53 = 53\nk54 = 54\nk55 = 55\nk56 = 56\nk57 = 57\nk58 = 58\nk59 = 59\nk60 = 60\nk61 = 61\nk62 = 62\nk63 = 63\nk64 = 64\nk65 = 65\nk66 = 66\nk67 = 67\nk68 = 68\nk69 = 69\nk70 = 70\nk71 = 71\nk72 = 72\nk73 = 73\nk74 = 74\nk75 = 75\nk76 = 76\nk77 = 77\nk78 = 78\nk79 = 79\nk80 = 80\nk81 = 81\nk82 = 82\nk83 = 83\nk84 = 84\nk85 = 85\nk86 = 86\nk87 = 87\nk88 = 88\nk89 = 89\nk90 = 90\nk91 = 91\nk92 = 92\nk93 = 93\nk94 = 94\nk95 = 95\nk96 = 96\nk97 = 97\nk98 = 98\nk99 = 99\nk100 = 100\nk101 = 101\nk102 = 102\nk103 = 103\nk104 = 104\nk105 = 105\nk106 = 106\nk107 = 107\nk108 = 108\nk109 = 109\nk110 = 110\nk111 = 111\nk112 = 112\nk113 = 113\nk114 = 114\nk115 = 115\nk116 = 116\nk117 = 117\nk118 = 118\nk119 = 119\nk120 = 120\nk121 = 121\nk122 = 122\nk123 = 123\nk124 = 124\nk125 = 125\nk126 = 126\nk127 = 127\nk128 = 128\nk129 = 129\nk130 = 130\nk131 = 131\nk132 = 132\nk133 = 133\nk134 = 134\nk135 = 135\nk136 = 136\nk137 = 137\nk138 = 138\nk139 = 139\nk140 = 140\nk141 = 141\nk142 = 142\nk143 = 143\nk144 = 144\nk145 = 145\nk146 = 146\nk147 = 147\nk148 = 148\nk149 = 149\nk150 = 150\nk151 = 151\nk152 = 152\nk153 = 153\nk154 = 154\nk155 = 155\nk156 = 156\nk157 = 157\nk158 = 158\nk159 = 159\nk160 = 160\nk161 = 161\nk162 = 162\nk163 = 163\nk164 = 164\nk165 = 165\nk166 = 166\nk167 = 167\nk168 = 168\nk169 = 169\nk170 = 170\nk171 = 171\nk172 = 172\nk173 = 173\nk174 = 174\nk175 = 175\nk176 = 176\nk177 = 177\nk178 = 178\nk179 = 179\nk180 = 180\nk181 = 181\nk182 = 182\nk183 = 183\nk184 = 184\nk185 = 185\nk186 = 186\nk187 = 187\nk188 = 188\nk189 = 189\nk190 = 190\nk191 = 191\nk192 = 192\nk193 = 193\nk194 = 194\nk195 = 195\nk196 = 196\nk197 = 197\nk198 = 198\nk199 = 199\nk200 = 200\nk201 = 201\nk202 = 202\nk203 = 203\nk204 = 204\nk205 = 205\nk206 = 206\nk207 = 207\nk208 = 208\nk209 = 209\nk210 = 210\nk211 = 211\nk212 = 212\nk213 = 213\nk214 = 214\nk215 = 215\nk216 = 216\nk217 = 217\nk218 = 218\nk219 = 219\nk220 = 220\nk221 = 221\nk222 = 222\nk223 = 223\nk224 = 224\nk225 = 225\nk226 = 226\nk227 = 227\nk228 = 228\nk229 = 229\nk230 = 230\nk231 = 231\nk232 = 232\nk233 = 233\nk234 = 234\nk235 = 235\nk236 = 236\nk237 = 237\nk238 = 238\nk239 = 239\nk240 = 240\nk241 = 241\nk242 = 242\nk243 = 243\nk244 = 244\nk245 = 245\nk246 = 246\nk247 = 247\nk248 = 248\nk249 = 249\nk250 = 250\nk251 = 251\nk252 = 252\nk253 = 253\nk254 = 254\nk255 = 255\nk256 = 256\nk257 = 257\nk258 = 258\nk259 = 259\nk260 = 260\nk261 = 261\nk262 = 262\nk263 = 263\nk264 = 264\nk265 = 265\nk266 = 266\nk267 = 267\nk268 = 268\nk269 = 269\nk270 = 270\nk271 = 271\nk272 = 272\nk273 = 273\nk274 = 274\nk275 = 275\nk276 = 276\nk277 = 277\nk278 = 278\nk279 = 279\nk280 = 280\nk281 = 281\nk282 = 282\nk283 = 283\nk284 = 284\nk285 = 285\nk286 = 286\nk287 = 287\nk288 = 288\nk289 = 289\nk290 = 290\nk291 = 291\nk292 = 292\nk293 = 293\nk294 = 294\nk295 = 295\nk296 = 296\nk297 = 297\nk298 = 298\nk299 = 299\n","ok":{"t":"table","v":[["k0",{"t":"int","v":"0"}],["k1",{"t":"int","v":"1"}],["k2",{"t":"int","v":"2"}],["k3",{"t":"int","v":"3"}],["k4",{"t":"int","v":"4"}],["k5",{"t":"int","v":"5"}],["k6",{"t":"int","v":"6"}],["k7",{"t":"int","v":"7"}],["k8",{"t":"int","v":"8"}],["k9",{"t":"int","v":"9"}],["k10",{"t":"int","v":"10"}],["k11",{"t":"int","v":"11"}],["k12",{"t":"int","v":"12"}],["k13",{"t":"int","v":"13"}],["k14",{"t":"int","v":"14"}],["k15",{"t":"int","v":"15"}],["k16",{"t":"int","v":"16"}],["k17",{"t":"int","v":"17"}],["k18",{"t":"int","v":"18"}],["k19",{"t":"int","v":"19"}],["k20",{"t":"int","v":"20"}],["k21",{"t":"int","v":"21"}],["k22",{"t":"int","v":"22"}],["k23",{"t":"int","v":"23"}],["k24",{"t":"int","v":"24"}],["k25",{"t":"int","v":"25"}],["k26",{"t":"int","v":"26"}],["k27",{"t":"int","v":"27"}],["k28",{"t":"int","v":"28"}],["k29",{"t":"int","v":"29"}],["k30",{"t":"int","v":"30"}],["k31",{"t":"int","v":"31"}],["k32",{"t":"int","v":"32"}],["k33",{"t":"int","v":"33"}],["k34",{"t":"int","v":"34"}],["k35",{"t":"int","v":"35"}],["k36",{"t":"int","v":"36"}],["k37",{"t":"int","v":"37"}],["k38",{"t":"int","v":"38"}],["k39",{"t":"int","v":"39"}],["k40",{"t":"int","v":"40"}],["k41",{"t":"int","v":"41"}],["k42",{"t":"int","v":"42"}],["k43",{"t":"int","v":"43"}],["k44",{"t":"int","v":"44"}],["k45",{"t":"int","v":"45"}],["k46",{"t":"int","v":"46"}],["k47",{"t":"int","v":"47"}],["k48",{"t":"int","v":"48"}],["k49",{"t":"int","v":"49"}],["k50",{"t":"int","v":"50"}],["k51",{"t":"int","v":"51"}],["k52",{"t":"int","v":"52"}],["k53",{"t":"int","v":"53"}],["k54",{"t":"int","v":"54"}],["k55",{"t":"int","v":"55"}],["k56",{"t":"int","v":"56"}],["k57",{"t":"int","v":"57"}],["k58",{"t":"int","v":"58"}],["k59",{"t":"int","v":"59"}],["k60",{"t":"int","v":"60"}],["k61",{"t":"int","v":"61"}],["k62",{"t":"int","v":"62"}],["k63",{"t":"int","v":"63"}],["k64",{"t":"int","v":"64"}],["k65",{"t":"int","v":"65"}],["k66",{"t":"int","v":"66"}],["k67",{"t":"int","v":"67"}],["k68",{"t":"int","v":"68"}],["k69",{"t":"int","v":"69"}],["k70",{"t":"int","v":"70"}],["k71",{"t":"int","v":"71"}],["k72",{"t":"int","v":"72"}],["k73",{"t":"int","v":"73"}],["k74",{"t":"int","v":"74"}],["k75",{"t":"int","v":"75"}],["k76",{"t":"int","v":"76"}],["k77",{"t":"int","v":"77"}],["k78",{"t":"int","v":"78"}],["k79",{"t":"int","v":"79"}],["k80",{"t":"int","v":"80"}],["k81",{"t":"int","v":"81"}],["k82",{"t":"int","v":"82"}],["k83",{"t":"int","v":"83"}],["k84",{"t":"int","v":"84"}],["k85",{"t":"int","v":"85"}],["k86",{"t":"int","v":"86"}],["k87",{"t":"int","v":"87"}],["k88",{"t":"int","v":"88"}],["k89",{"t":"int","v":"89"}],["k90",{"t":"int","v":"90"}],["k91",{"t":"int","v":"91"}],["k92",{"t":"int","v":"92"}],["k93",{"t":"int","v":"93"}],["k94",{"t":"int","v":"94"}],["k95",{"t":"int","v":"95"}],["k96",{"t":"int","v":"96"}],["k97",{"t":"int","v":"97"}],["k98",{"t":"int","v":"98"}],["k99",{"t":"int","v":"99"}],["k100",{"t":"int","v":"100"}],["k101",{"t":"int","v":"101"}],["k102",{"t":"int","v":"102"}],["k103",{"t":"int","v":"103"}],["k104",{"t":"int","v":"104"}],["k105",{"t":"int","v":"105"}],["k106",{"t":"int","v":"106"}],["k107",{"t":"int","v":"107"}],["k108",{"t":"int","v":"108"}],["k109",{"t":"int","v":"109"}],["k110",{"t":"int","v":"110"}],["k111",{"t":"int","v":"111"}],["k112",{"t":"int","v":"112"}],["k113",{"t":"int","v":"113"}],["k114",{"t":"int","v":"114"}],["k115",{"t":"int","v":"115"}],["k116",{"t":"int","v":"116"}],["k117",{"t":"int","v":"117"}],["k118",{"t":"int","v":"118"}],["k119",{"t":"int","v":"119"}],["k120",{"t":"int","v":"120"}],["k121",{"t":"int","v":"121"}],["k122",{"t":"int","v":"122"}],["k123",{"t":"int","v":"123"}],["k124",{"t":"int","v":"124"}],["k125",{"t":"int","v":"125"}],["k126",{"t":"int","v":"126"}],["k127",{"t":"int","v":"127"}],["k128",{"t":"int","v":"128"}],["k129",{"t":"int","v":"129"}],["k130",{"t":"int","v":"130"}],["k131",{"t":"int","v":"131"}],["k132",{"t":"int","v":"132"}],["k133",{"t":"int","v":"133"}],["k134",{"t":"int","v":"134"}],["k135",{"t":"int","v":"135"}],["k136",{"t":"int","v":"136"}],["k137",{"t":"int","v":"137"}],["k138",{"t":"int","v":"138"}],["k139",{"t":"int","v":"139"}],["k140",{"t":"int","v":"140"}],["k141",{"t":"int","v":"141"}],["k142",{"t":"int","v":"142"}],["k143",{"t":"int","v":"143"}],["k144",{"t":"int","v":"144"}],["k145",{"t":"int","v":"145"}],["k146",{"t":"int","v":"146"}],["k147",{"t":"int","v":"147"}],["k148",{"t":"int","v":"148"}],["k149",{"t":"int","v":"149"}],["k150",{"t":"int","v":"150"}],["k151",{"t":"int","v":"151"}],["k152",{"t":"int","v":"152"}],["k153",{"t":"int","v":"153"}],["k154",{"t":"int","v":"154"}],["k155",{"t":"int","v":"155"}],["k156",{"t":"int","v":"156"}],["k157",{"t":"int","v":"157"}],["k158",{"t":"int","v":"158"}],["k159",{"t":"int","v":"159"}],["k160",{"t":"int","v":"160"}],["k161",{"t":"int","v":"161"}],["k162",{"t":"int","v":"162"}],["k163",{"t":"int","v":"163"}],["k164",{"t":"int","v":"164"}],["k165",{"t":"int","v":"165"}],["k166",{"t":"int","v":"166"}],["k167",{"t":"int","v":"167"}],["k168",{"t":"int","v":"168"}],["k169",{"t":"int","v":"169"}],["k170",{"t":"int","v":"170"}],["k171",{"t":"int","v":"171"}],["k172",{"t":"int","v":"172"}],["k173",{"t":"int","v":"173"}],["k174",{"t":"int","v":"174"}],["k175",{"t":"int","v":"175"}],["k176",{"t":"int","v":"176"}],["k177",{"t":"int","v":"177"}],["k178",{"t":"int","v":"178"}],["k179",{"t":"int","v":"179"}],["k180",{"t":"int","v":"180"}],["k181",{"t":"int","v":"181"}],["k182",{"t":"int","v":"182"}],["k183",{"t":"int","v":"183"}],["k184",{"t":"int","v":"184"}],["k185",{"t":"int","v":"185"}],["k186",{"t":"int","v":"186"}],["k187",{"t":"int","v":"187"}],["k188",{"t":"int","v":"188"}],["k189",{"t":"int","v":"189"}],["k190",{"t":"int","v":"190"}],["k191",{"t":"int","v":"191"}],["k192",{"t":"int","v":"192"}],["k193",{"t":"int","v":"193"}],["k194",{"t":"int","v":"194"}],["k195",{"t":"int","v":"195"}],["k196",{"t":"int","v":"196"}],["k197",{"t":"int","v":"197"}],["k198",{"t":"int","v":"198"}],["k199",{"t":"int","v":"199"}],["k200",{"t":"int","v":"200"}],["k201",{"t":"int","v":"201"}],["k202",{"t":"int","v":"202"}],["k203",{"t":"int","v":"203"}],["k204",{"t":"int","v":"204"}],["k205",{"t":"int","v":"205"}],["k206",{"t":"int","v":"206"}],["k207",{"t":"int","v":"207"}],["k208",{"t":"int","v":"208"}],["k209",{"t":"int","v":"209"}],["k210",{"t":"int","v":"210"}],["k211",{"t":"int","v":"211"}],["k212",{"t":"int","v":"212"}],["k213",{"t":"int","v":"213"}],["k214",{"t":"int","v":"214"}],["k215",{"t":"int","v":"215"}],["k216",{"t":"int","v":"216"}],["k217",{"t":"int","v":"217"}],["k218",{"t":"int","v":"218"}],["k219",{"t":"int","v":"219"}],["k220",{"t":"int","v":"220"}],["k221",{"t":"int","v":"221"}],["k222",{"t":"int","v":"222"}],["k223",{"t":"int","v":"223"}],["k224",{"t":"int","v":"224"}],["k225",{"t":"int","v":"225"}],["k226",{"t":"int","v":"226"}],["k227",{"t":"int","v":"227"}],["k228",{"t":"int","v":"228"}],["k229",{"t":"int","v":"229"}],["k230",{"t":"int","v":"230"}],["k231",{"t":"int","v":"231"}],["k232",{"t":"int","v":"232"}],["k233",{"t":"int","v":"233"}],["k234",{"t":"int","v":"234"}],["k235",{"t":"int","v":"235"}],["k236",{"t":"int","v":"236"}],["k237",{"t":"int","v":"237"}],["k238",{"t":"int","v":"238"}],["k239",{"t":"int","v":"239"}],["k240",{"t":"int","v":"240"}],["k241",{"t":"int","v":"241"}],["k242",{"t":"int","v":"242"}],["k243",{"t":"int","v":"243"}],["k244",{"t":"int","v":"244"}],["k245",{"t":"int","v":"245"}],["k246",{"t":"int","v":"246"}],["k247",{"t":"int","v":"247"}],["k248",{"t":"int","v":"248"}],["k249",{"t":"int","v":"249"}],["k250",{"t":"int","v":"250"}],["k251",{"t":"int","v":"251"}],["k252",{"t":"int","v":"252"}],["k253",{"t":"int","v":"253"}],["k254",{"t":"int","v":"254"}],["k255",{"t":"int","v":"255"}],["k256",{"t":"int","v":"256"}],["k257",{"t":"int","v":"257"}],["k258",{"t":"int","v":"258"}],["k259",{"t":"int","v":"259"}],["k260",{"t":"int","v":"260"}],["k261",{"t":"int","v":"261"}],["k262",{"t":"int","v":"262"}],["k263",{"t":"int","v":"263"}],["k264",{"t":"int","v":"264"}],["k265",{"t":"int","v":"265"}],["k266",{"t":"int","v":"266"}],["k267",{"t":"int","v":"267"}],["k268",{"t":"int","v":"268"}],["k269",{"t":"int","v":"269"}],["k270",{"t":"int","v":"270"}],["k271",{"t":"int","v":"271"}],["k272",{"t":"int","v":"272"}],["k273",{"t":"int","v":"273"}],["k274",{"t":"int","v":"274"}],["k275",{"t":"int","v":"275"}],["k276",{"t":"int","v":"276"}],["k277",{"t":"int","v":"277"}],["k278",{"t":"int","v":"278"}],["k279",{"t":"int","v":"279"}],["k280",{"t":"int","v":"280"}],["k281",{"t":"int","v":"281"}],["k282",{"t":"int","v":"282"}],["k283",{"t":"int","v":"283"}],["k284",{"t":"int","v":"284"}],["k285",{"t":"int","v":"285"}],["k286",{"t":"int","v":"286"}],["k287",{"t":"int","v":"287"}],["k288",{"t":"int","v":"288"}],["k289",{"t":"int","v":"289"}],["k290",{"t":"int","v":"290"}],["k291",{"t":"int","v":"291"}],["k292",{"t":"int","v":"292"}],["k293",{"t":"int","v":"293"}],["k294",{"t":"int","v":"294"}],["k295",{"t":"int","v":"295"}],["k296",{"t":"int","v":"296"}],["k297",{"t":"int","v":"297"}],["k298",{"t":"int","v":"298"}],["k299",{"t":"int","v":"299"}]]}}
+{"doc":"[t0]\nk = 0\n[t1]\nk = 1\n[t2]\nk = 2\n[t3]\nk = 3\n[t4]\nk = 4\n[t5]\nk = 5\n[t6]\nk = 6\n[t7]\nk = 7\n[t8]\nk = 8\n[t9]\nk = 9\n[t10]\nk = 10\n[t11]\nk = 11\n[t12]\nk = 12\n[t13]\nk = 13\n[t14]\nk = 14\n[t15]\nk = 15\n[t16]\nk = 16\n[t17]\nk = 17\n[t18]\nk = 18\n[t19]\nk = 19\n[t20]\nk = 20\n[t21]\nk = 21\n[t22]\nk = 22\n[t23]\nk = 23\n[t24]\nk = 24\n[t25]\nk = 25\n[t26]\nk = 26\n[t27]\nk = 27\n[t28]\nk = 28\n[t29]\nk = 29\n[t30]\nk = 30\n[t31]\nk = 31\n[t32]\nk = 32\n[t33]\nk = 33\n[t34]\nk = 34\n[t35]\nk = 35\n[t36]\nk = 36\n[t37]\nk = 37\n[t38]\nk = 38\n[t39]\nk = 39\n[t40]\nk = 40\n[t41]\nk = 41\n[t42]\nk = 42\n[t43]\nk = 43\n[t44]\nk = 44\n[t45]\nk = 45\n[t46]\nk = 46\n[t47]\nk = 47\n[t48]\nk = 48\n[t49]\nk = 49\n[t50]\nk = 50\n[t51]\nk = 51\n[t52]\nk = 52\n[t53]\nk = 53\n[t54]\nk = 54\n[t55]\nk = 55\n[t56]\nk = 56\n[t57]\nk = 57\n[t58]\nk = 58\n[t59]\nk = 59\n[t60]\nk = 60\n[t61]\nk = 61\n[t62]\nk = 62\n[t63]\nk = 63\n[t64]\nk = 64\n[t65]\nk = 65\n[t66]\nk = 66\n[t67]\nk = 67\n[t68]\nk = 68\n[t69]\nk = 69\n[t70]\nk = 70\n[t71]\nk = 71\n[t72]\nk = 72\n[t73]\nk = 73\n[t74]\nk = 74\n[t75]\nk = 75\n[t76]\nk = 76\n[t77]\nk = 77\n[t78]\nk = 78\n[t79]\nk = 79\n[t80]\nk = 80\n[t81]\nk = 81\n[t82]\nk = 82\n[t83]\nk = 83\n[t84]\nk = 84\n[t85]\nk = 85\n[t86]\nk = 86\n[t87]\nk = 87\n[t88]\nk = 88\n[t89]\nk = 89\n[t90]\nk = 90\n[t91]\nk = 91\n[t92]\nk = 92\n[t93]\nk = 93\n[t94]\nk = 94\n[t95]\nk = 95\n[t96]\nk = 96\n[t97]\nk = 97\n[t98]\nk = 98\n[t99]\nk = 99\n","ok":{"t":"table","v":[["t0",{"t":"table","v":[["k",{"t":"int","v":"0"}]]}],["t1",{"t":"table","v":[["k",{"t":"int","v":"1"}]]}],["t2",{"t":"table","v":[["k",{"t":"int","v":"2"}]]}],["t3",{"t":"table","v":[["k",{"t":"int","v":"3"}]]}],["t4",{"t":"table","v":[["k",{"t":"int","v":"4"}]]}],["t5",{"t":"table","v":[["k",{"t":"int","v":"5"}]]}],["t6",{"t":"table","v":[["k",{"t":"int","v":"6"}]]}],["t7",{"t":"table","v":[["k",{"t":"int","v":"7"}]]}],["t8",{"t":"table","v":[["k",{"t":"int","v":"8"}]]}],["t9",{"t":"table","v":[["k",{"t":"int","v":"9"}]]}],["t10",{"t":"table","v":[["k",{"t":"int","v":"10"}]]}],["t11",{"t":"table","v":[["k",{"t":"int","v":"11"}]]}],["t12",{"t":"table","v":[["k",{"t":"int","v":"12"}]]}],["t13",{"t":"table","v":[["k",{"t":"int","v":"13"}]]}],["t14",{"t":"table","v":[["k",{"t":"int","v":"14"}]]}],["t15",{"t":"table","v":[["k",{"t":"int","v":"15"}]]}],["t16",{"t":"table","v":[["k",{"t":"int","v":"16"}]]}],["t17",{"t":"table","v":[["k",{"t":"int","v":"17"}]]}],["t18",{"t":"table","v":[["k",{"t":"int","v":"18"}]]}],["t19",{"t":"table","v":[["k",{"t":"int","v":"19"}]]}],["t20",{"t":"table","v":[["k",{"t":"int","v":"20"}]]}],["t21",{"t":"table","v":[["k",{"t":"int","v":"21"}]]}],["t22",{"t":"table","v":[["k",{"t":"int","v":"22"}]]}],["t23",{"t":"table","v":[["k",{"t":"int","v":"23"}]]}],["t24",{"t":"table","v":[["k",{"t":"int","v":"24"}]]}],["t25",{"t":"table","v":[["k",{"t":"int","v":"25"}]]}],["t26",{"t":"table","v":[["k",{"t":"int","v":"26"}]]}],["t27",{"t":"table","v":[["k",{"t":"int","v":"27"}]]}],["t28",{"t":"table","v":[["k",{"t":"int","v":"28"}]]}],["t29",{"t":"table","v":[["k",{"t":"int","v":"29"}]]}],["t30",{"t":"table","v":[["k",{"t":"int","v":"30"}]]}],["t31",{"t":"table","v":[["k",{"t":"int","v":"31"}]]}],["t32",{"t":"table","v":[["k",{"t":"int","v":"32"}]]}],["t33",{"t":"table","v":[["k",{"t":"int","v":"33"}]]}],["t34",{"t":"table","v":[["k",{"t":"int","v":"34"}]]}],["t35",{"t":"table","v":[["k",{"t":"int","v":"35"}]]}],["t36",{"t":"table","v":[["k",{"t":"int","v":"36"}]]}],["t37",{"t":"table","v":[["k",{"t":"int","v":"37"}]]}],["t38",{"t":"table","v":[["k",{"t":"int","v":"38"}]]}],["t39",{"t":"table","v":[["k",{"t":"int","v":"39"}]]}],["t40",{"t":"table","v":[["k",{"t":"int","v":"40"}]]}],["t41",{"t":"table","v":[["k",{"t":"int","v":"41"}]]}],["t42",{"t":"table","v":[["k",{"t":"int","v":"42"}]]}],["t43",{"t":"table","v":[["k",{"t":"int","v":"43"}]]}],["t44",{"t":"table","v":[["k",{"t":"int","v":"44"}]]}],["t45",{"t":"table","v":[["k",{"t":"int","v":"45"}]]}],["t46",{"t":"table","v":[["k",{"t":"int","v":"46"}]]}],["t47",{"t":"table","v":[["k",{"t":"int","v":"47"}]]}],["t48",{"t":"table","v":[["k",{"t":"int","v":"48"}]]}],["t49",{"t":"table","v":[["k",{"t":"int","v":"49"}]]}],["t50",{"t":"table","v":[["k",{"t":"int","v":"50"}]]}],["t51",{"t":"table","v":[["k",{"t":"int","v":"51"}]]}],["t52",{"t":"table","v":[["k",{"t":"int","v":"52"}]]}],["t53",{"t":"table","v":[["k",{"t":"int","v":"53"}]]}],["t54",{"t":"table","v":[["k",{"t":"int","v":"54"}]]}],["t55",{"t":"table","v":[["k",{"t":"int","v":"55"}]]}],["t56",{"t":"table","v":[["k",{"t":"int","v":"56"}]]}],["t57",{"t":"table","v":[["k",{"t":"int","v":"57"}]]}],["t58",{"t":"table","v":[["k",{"t":"int","v":"58"}]]}],["t59",{"t":"table","v":[["k",{"t":"int","v":"59"}]]}],["t60",{"t":"table","v":[["k",{"t":"int","v":"60"}]]}],["t61",{"t":"table","v":[["k",{"t":"int","v":"61"}]]}],["t62",{"t":"table","v":[["k",{"t":"int","v":"62"}]]}],["t63",{"t":"table","v":[["k",{"t":"int","v":"63"}]]}],["t64",{"t":"table","v":[["k",{"t":"int","v":"64"}]]}],["t65",{"t":"table","v":[["k",{"t":"int","v":"65"}]]}],["t66",{"t":"table","v":[["k",{"t":"int","v":"66"}]]}],["t67",{"t":"table","v":[["k",{"t":"int","v":"67"}]]}],["t68",{"t":"table","v":[["k",{"t":"int","v":"68"}]]}],["t69",{"t":"table","v":[["k",{"t":"int","v":"69"}]]}],["t70",{"t":"table","v":[["k",{"t":"int","v":"70"}]]}],["t71",{"t":"table","v":[["k",{"t":"int","v":"71"}]]}],["t72",{"t":"table","v":[["k",{"t":"int","v":"72"}]]}],["t73",{"t":"table","v":[["k",{"t":"int","v":"73"}]]}],["t74",{"t":"table","v":[["k",{"t":"int","v":"74"}]]}],["t75",{"t":"table","v":[["k",{"t":"int","v":"75"}]]}],["t76",{"t":"table","v":[["k",{"t":"int","v":"76"}]]}],["t77",{"t":"table","v":[["k",{"t":"int","v":"77"}]]}],["t78",{"t":"table","v":[["k",{"t":"int","v":"78"}]]}],["t79",{"t":"table","v":[["k",{"t":"int","v":"79"}]]}],["t80",{"t":"table","v":[["k",{"t":"int","v":"80"}]]}],["t81",{"t":"table","v":[["k",{"t":"int","v":"81"}]]}],["t82",{"t":"table","v":[["k",{"t":"int","v":"82"}]]}],["t83",{"t":"table","v":[["k",{"t":"int","v":"83"}]]}],["t84",{"t":"table","v":[["k",{"t":"int","v":"84"}]]}],["t85",{"t":"table","v":[["k",{"t":"int","v":"85"}]]}],["t86",{"t":"table","v":[["k",{"t":"int","v":"86"}]]}],["t87",{"t":"table","v":[["k",{"t":"int","v":"87"}]]}],["t88",{"t":"table","v":[["k",{"t":"int","v":"88"}]]}],["t89",{"t":"table","v":[["k",{"t":"int","v":"89"}]]}],["t90",{"t":"table","v":[["k",{"t":"int","v":"90"}]]}],["t91",{"t":"table","v":[["k",{"t":"int","v":"91"}]]}],["t92",{"t":"table","v":[["k",{"t":"int","v":"92"}]]}],["t93",{"t":"table","v":[["k",{"t":"int","v":"93"}]]}],["t94",{"t":"table","v":[["k",{"t":"int","v":"94"}]]}],["t95",{"t":"table","v":[["k",{"t":"int","v":"95"}]]}],["t96",{"t":"table","v":[["k",{"t":"int","v":"96"}]]}],["t97",{"t":"table","v":[["k",{"t":"int","v":"97"}]]}],["t98",{"t":"table","v":[["k",{"t":"int","v":"98"}]]}],["t99",{"t":"table","v":[["k",{"t":"int","v":"99"}]]}]]}}
+{"doc":"a.b0.c = 0\na.b1.c = 1\na.b2.c = 2\na.b3.c = 3\na.b4.c = 4\na.b5.c = 5\na.b6.c = 6\na.b7.c = 7\na.b8.c = 8\na.b9.c = 9\na.b10.c = 10\na.b11.c = 11\na.b12.c = 12\na.b13.c = 13\na.b14.c = 14\na.b15.c = 15\na.b16.c = 16\na.b17.c = 17\na.b18.c = 18\na.b19.c = 19\na.b20.c = 20\na.b21.c = 21\na.b22.c = 22\na.b23.c = 23\na.b24.c = 24\na.b25.c = 25\na.b26.c = 26\na.b27.c = 27\na.b28.c = 28\na.b29.c = 29\na.b30.c = 30\na.b31.c = 31\na.b32.c = 32\na.b33.c = 33\na.b34.c = 34\na.b35.c = 35\na.b36.c = 36\na.b37.c = 37\na.b38.c = 38\na.b39.c = 39\na.b40.c = 40\na.b41.c = 41\na.b42.c = 42\na.b43.c = 43\na.b44.c = 44\na.b45.c = 45\na.b46.c = 46\na.b47.c = 47\na.b48.c = 48\na.b49.c = 49\na.b0.c = 1\n","err":"TOMLDecodeError","msg":"Cannot overwrite a value (at line 51, column 11)"}
+{"doc":"a = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,256,257,258,259,260,261,262,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,278,279,280,281,282,283,284,285,286,287,288,289,290,291,292,293,294,295,296,297,298,299,300,301,302,303,304,305,306,307,308,309,310,311,312,313,314,315,316,317,318,319,320,321,322,323,324,325,326,327,328,329,330,331,332,333,334,335,336,337,338,339,340,341,342,343,344,345,346,347,348,349,350,351,352,353,354,355,356,357,358,359,360,361,362,363,364,365,366,367,368,369,370,371,372,373,374,375,376,377,378,379,380,381,382,383,384,385,386,387,388,389,390,391,392,393,394,395,396,397,398,399,400,401,402,403,404,405,406,407,408,409,410,411,412,413,414,415,416,417,418,419,420,421,422,423,424,425,426,427,428,429,430,431,432,433,434,435,436,437,438,439,440,441,442,443,444,445,446,447,448,449,450,451,452,453,454,455,456,457,458,459,460,461,462,463,464,465,466,467,468,469,470,471,472,473,474,475,476,477,478,479,480,481,482,483,484,485,486,487,488,489,490,491,492,493,494,495,496,497,498,499]\n","ok":{"t":"table","v":[["a",{"t":"array","v":[{"t":"int","v":"0"},{"t":"int","v":"1"},{"t":"int","v":"2"},{"t":"int","v":"3"},{"t":"int","v":"4"},{"t":"int","v":"5"},{"t":"int","v":"6"},{"t":"int","v":"7"},{"t":"int","v":"8"},{"t":"int","v":"9"},{"t":"int","v":"10"},{"t":"int","v":"11"},{"t":"int","v":"12"},{"t":"int","v":"13"},{"t":"int","v":"14"},{"t":"int","v":"15"},{"t":"int","v":"16"},{"t":"int","v":"17"},{"t":"int","v":"18"},{"t":"int","v":"19"},{"t":"int","v":"20"},{"t":"int","v":"21"},{"t":"int","v":"22"},{"t":"int","v":"23"},{"t":"int","v":"24"},{"t":"int","v":"25"},{"t":"int","v":"26"},{"t":"int","v":"27"},{"t":"int","v":"28"},{"t":"int","v":"29"},{"t":"int","v":"30"},{"t":"int","v":"31"},{"t":"int","v":"32"},{"t":"int","v":"33"},{"t":"int","v":"34"},{"t":"int","v":"35"},{"t":"int","v":"36"},{"t":"int","v":"37"},{"t":"int","v":"38"},{"t":"int","v":"39"},{"t":"int","v":"40"},{"t":"int","v":"41"},{"t":"int","v":"42"},{"t":"int","v":"43"},{"t":"int","v":"44"},{"t":"int","v":"45"},{"t":"int","v":"46"},{"t":"int","v":"47"},{"t":"int","v":"48"},{"t":"int","v":"49"},{"t":"int","v":"50"},{"t":"int","v":"51"},{"t":"int","v":"52"},{"t":"int","v":"53"},{"t":"int","v":"54"},{"t":"int","v":"55"},{"t":"int","v":"56"},{"t":"int","v":"57"},{"t":"int","v":"58"},{"t":"int","v":"59"},{"t":"int","v":"60"},{"t":"int","v":"61"},{"t":"int","v":"62"},{"t":"int","v":"63"},{"t":"int","v":"64"},{"t":"int","v":"65"},{"t":"int","v":"66"},{"t":"int","v":"67"},{"t":"int","v":"68"},{"t":"int","v":"69"},{"t":"int","v":"70"},{"t":"int","v":"71"},{"t":"int","v":"72"},{"t":"int","v":"73"},{"t":"int","v":"74"},{"t":"int","v":"75"},{"t":"int","v":"76"},{"t":"int","v":"77"},{"t":"int","v":"78"},{"t":"int","v":"79"},{"t":"int","v":"80"},{"t":"int","v":"81"},{"t":"int","v":"82"},{"t":"int","v":"83"},{"t":"int","v":"84"},{"t":"int","v":"85"},{"t":"int","v":"86"},{"t":"int","v":"87"},{"t":"int","v":"88"},{"t":"int","v":"89"},{"t":"int","v":"90"},{"t":"int","v":"91"},{"t":"int","v":"92"},{"t":"int","v":"93"},{"t":"int","v":"94"},{"t":"int","v":"95"},{"t":"int","v":"96"},{"t":"int","v":"97"},{"t":"int","v":"98"},{"t":"int","v":"99"},{"t":"int","v":"100"},{"t":"int","v":"101"},{"t":"int","v":"102"},{"t":"int","v":"103"},{"t":"int","v":"104"},{"t":"int","v":"105"},{"t":"int","v":"106"},{"t":"int","v":"107"},{"t":"int","v":"108"},{"t":"int","v":"109"},{"t":"int","v":"110"},{"t":"int","v":"111"},{"t":"int","v":"112"},{"t":"int","v":"113"},{"t":"int","v":"114"},{"t":"int","v":"115"},{"t":"int","v":"116"},{"t":"int","v":"117"},{"t":"int","v":"118"},{"t":"int","v":"119"},{"t":"int","v":"120"},{"t":"int","v":"121"},{"t":"int","v":"122"},{"t":"int","v":"123"},{"t":"int","v":"124"},{"t":"int","v":"125"},{"t":"int","v":"126"},{"t":"int","v":"127"},{"t":"int","v":"128"},{"t":"int","v":"129"},{"t":"int","v":"130"},{"t":"int","v":"131"},{"t":"int","v":"132"},{"t":"int","v":"133"},{"t":"int","v":"134"},{"t":"int","v":"135"},{"t":"int","v":"136"},{"t":"int","v":"137"},{"t":"int","v":"138"},{"t":"int","v":"139"},{"t":"int","v":"140"},{"t":"int","v":"141"},{"t":"int","v":"142"},{"t":"int","v":"143"},{"t":"int","v":"144"},{"t":"int","v":"145"},{"t":"int","v":"146"},{"t":"int","v":"147"},{"t":"int","v":"148"},{"t":"int","v":"149"},{"t":"int","v":"150"},{"t":"int","v":"151"},{"t":"int","v":"152"},{"t":"int","v":"153"},{"t":"int","v":"154"},{"t":"int","v":"155"},{"t":"int","v":"156"},{"t":"int","v":"157"},{"t":"int","v":"158"},{"t":"int","v":"159"},{"t":"int","v":"160"},{"t":"int","v":"161"},{"t":"int","v":"162"},{"t":"int","v":"163"},{"t":"int","v":"164"},{"t":"int","v":"165"},{"t":"int","v":"166"},{"t":"int","v":"167"},{"t":"int","v":"168"},{"t":"int","v":"169"},{"t":"int","v":"170"},{"t":"int","v":"171"},{"t":"int","v":"172"},{"t":"int","v":"173"},{"t":"int","v":"174"},{"t":"int","v":"175"},{"t":"int","v":"176"},{"t":"int","v":"177"},{"t":"int","v":"178"},{"t":"int","v":"179"},{"t":"int","v":"180"},{"t":"int","v":"181"},{"t":"int","v":"182"},{"t":"int","v":"183"},{"t":"int","v":"184"},{"t":"int","v":"185"},{"t":"int","v":"186"},{"t":"int","v":"187"},{"t":"int","v":"188"},{"t":"int","v":"189"},{"t":"int","v":"190"},{"t":"int","v":"191"},{"t":"int","v":"192"},{"t":"int","v":"193"},{"t":"int","v":"194"},{"t":"int","v":"195"},{"t":"int","v":"196"},{"t":"int","v":"197"},{"t":"int","v":"198"},{"t":"int","v":"199"},{"t":"int","v":"200"},{"t":"int","v":"201"},{"t":"int","v":"202"},{"t":"int","v":"203"},{"t":"int","v":"204"},{"t":"int","v":"205"},{"t":"int","v":"206"},{"t":"int","v":"207"},{"t":"int","v":"208"},{"t":"int","v":"209"},{"t":"int","v":"210"},{"t":"int","v":"211"},{"t":"int","v":"212"},{"t":"int","v":"213"},{"t":"int","v":"214"},{"t":"int","v":"215"},{"t":"int","v":"216"},{"t":"int","v":"217"},{"t":"int","v":"218"},{"t":"int","v":"219"},{"t":"int","v":"220"},{"t":"int","v":"221"},{"t":"int","v":"222"},{"t":"int","v":"223"},{"t":"int","v":"224"},{"t":"int","v":"225"},{"t":"int","v":"226"},{"t":"int","v":"227"},{"t":"int","v":"228"},{"t":"int","v":"229"},{"t":"int","v":"230"},{"t":"int","v":"231"},{"t":"int","v":"232"},{"t":"int","v":"233"},{"t":"int","v":"234"},{"t":"int","v":"235"},{"t":"int","v":"236"},{"t":"int","v":"237"},{"t":"int","v":"238"},{"t":"int","v":"239"},{"t":"int","v":"240"},{"t":"int","v":"241"},{"t":"int","v":"242"},{"t":"int","v":"243"},{"t":"int","v":"244"},{"t":"int","v":"245"},{"t":"int","v":"246"},{"t":"int","v":"247"},{"t":"int","v":"248"},{"t":"int","v":"249"},{"t":"int","v":"250"},{"t":"int","v":"251"},{"t":"int","v":"252"},{"t":"int","v":"253"},{"t":"int","v":"254"},{"t":"int","v":"255"},{"t":"int","v":"256"},{"t":"int","v":"257"},{"t":"int","v":"258"},{"t":"int","v":"259"},{"t":"int","v":"260"},{"t":"int","v":"261"},{"t":"int","v":"262"},{"t":"int","v":"263"},{"t":"int","v":"264"},{"t":"int","v":"265"},{"t":"int","v":"266"},{"t":"int","v":"267"},{"t":"int","v":"268"},{"t":"int","v":"269"},{"t":"int","v":"270"},{"t":"int","v":"271"},{"t":"int","v":"272"},{"t":"int","v":"273"},{"t":"int","v":"274"},{"t":"int","v":"275"},{"t":"int","v":"276"},{"t":"int","v":"277"},{"t":"int","v":"278"},{"t":"int","v":"279"},{"t":"int","v":"280"},{"t":"int","v":"281"},{"t":"int","v":"282"},{"t":"int","v":"283"},{"t":"int","v":"284"},{"t":"int","v":"285"},{"t":"int","v":"286"},{"t":"int","v":"287"},{"t":"int","v":"288"},{"t":"int","v":"289"},{"t":"int","v":"290"},{"t":"int","v":"291"},{"t":"int","v":"292"},{"t":"int","v":"293"},{"t":"int","v":"294"},{"t":"int","v":"295"},{"t":"int","v":"296"},{"t":"int","v":"297"},{"t":"int","v":"298"},{"t":"int","v":"299"},{"t":"int","v":"300"},{"t":"int","v":"301"},{"t":"int","v":"302"},{"t":"int","v":"303"},{"t":"int","v":"304"},{"t":"int","v":"305"},{"t":"int","v":"306"},{"t":"int","v":"307"},{"t":"int","v":"308"},{"t":"int","v":"309"},{"t":"int","v":"310"},{"t":"int","v":"311"},{"t":"int","v":"312"},{"t":"int","v":"313"},{"t":"int","v":"314"},{"t":"int","v":"315"},{"t":"int","v":"316"},{"t":"int","v":"317"},{"t":"int","v":"318"},{"t":"int","v":"319"},{"t":"int","v":"320"},{"t":"int","v":"321"},{"t":"int","v":"322"},{"t":"int","v":"323"},{"t":"int","v":"324"},{"t":"int","v":"325"},{"t":"int","v":"326"},{"t":"int","v":"327"},{"t":"int","v":"328"},{"t":"int","v":"329"},{"t":"int","v":"330"},{"t":"int","v":"331"},{"t":"int","v":"332"},{"t":"int","v":"333"},{"t":"int","v":"334"},{"t":"int","v":"335"},{"t":"int","v":"336"},{"t":"int","v":"337"},{"t":"int","v":"338"},{"t":"int","v":"339"},{"t":"int","v":"340"},{"t":"int","v":"341"},{"t":"int","v":"342"},{"t":"int","v":"343"},{"t":"int","v":"344"},{"t":"int","v":"345"},{"t":"int","v":"346"},{"t":"int","v":"347"},{"t":"int","v":"348"},{"t":"int","v":"349"},{"t":"int","v":"350"},{"t":"int","v":"351"},{"t":"int","v":"352"},{"t":"int","v":"353"},{"t":"int","v":"354"},{"t":"int","v":"355"},{"t":"int","v":"356"},{"t":"int","v":"357"},{"t":"int","v":"358"},{"t":"int","v":"359"},{"t":"int","v":"360"},{"t":"int","v":"361"},{"t":"int","v":"362"},{"t":"int","v":"363"},{"t":"int","v":"364"},{"t":"int","v":"365"},{"t":"int","v":"366"},{"t":"int","v":"367"},{"t":"int","v":"368"},{"t":"int","v":"369"},{"t":"int","v":"370"},{"t":"int","v":"371"},{"t":"int","v":"372"},{"t":"int","v":"373"},{"t":"int","v":"374"},{"t":"int","v":"375"},{"t":"int","v":"376"},{"t":"int","v":"377"},{"t":"int","v":"378"},{"t":"int","v":"379"},{"t":"int","v":"380"},{"t":"int","v":"381"},{"t":"int","v":"382"},{"t":"int","v":"383"},{"t":"int","v":"384"},{"t":"int","v":"385"},{"t":"int","v":"386"},{"t":"int","v":"387"},{"t":"int","v":"388"},{"t":"int","v":"389"},{"t":"int","v":"390"},{"t":"int","v":"391"},{"t":"int","v":"392"},{"t":"int","v":"393"},{"t":"int","v":"394"},{"t":"int","v":"395"},{"t":"int","v":"396"},{"t":"int","v":"397"},{"t":"int","v":"398"},{"t":"int","v":"399"},{"t":"int","v":"400"},{"t":"int","v":"401"},{"t":"int","v":"402"},{"t":"int","v":"403"},{"t":"int","v":"404"},{"t":"int","v":"405"},{"t":"int","v":"406"},{"t":"int","v":"407"},{"t":"int","v":"408"},{"t":"int","v":"409"},{"t":"int","v":"410"},{"t":"int","v":"411"},{"t":"int","v":"412"},{"t":"int","v":"413"},{"t":"int","v":"414"},{"t":"int","v":"415"},{"t":"int","v":"416"},{"t":"int","v":"417"},{"t":"int","v":"418"},{"t":"int","v":"419"},{"t":"int","v":"420"},{"t":"int","v":"421"},{"t":"int","v":"422"},{"t":"int","v":"423"},{"t":"int","v":"424"},{"t":"int","v":"425"},{"t":"int","v":"426"},{"t":"int","v":"427"},{"t":"int","v":"428"},{"t":"int","v":"429"},{"t":"int","v":"430"},{"t":"int","v":"431"},{"t":"int","v":"432"},{"t":"int","v":"433"},{"t":"int","v":"434"},{"t":"int","v":"435"},{"t":"int","v":"436"},{"t":"int","v":"437"},{"t":"int","v":"438"},{"t":"int","v":"439"},{"t":"int","v":"440"},{"t":"int","v":"441"},{"t":"int","v":"442"},{"t":"int","v":"443"},{"t":"int","v":"444"},{"t":"int","v":"445"},{"t":"int","v":"446"},{"t":"int","v":"447"},{"t":"int","v":"448"},{"t":"int","v":"449"},{"t":"int","v":"450"},{"t":"int","v":"451"},{"t":"int","v":"452"},{"t":"int","v":"453"},{"t":"int","v":"454"},{"t":"int","v":"455"},{"t":"int","v":"456"},{"t":"int","v":"457"},{"t":"int","v":"458"},{"t":"int","v":"459"},{"t":"int","v":"460"},{"t":"int","v":"461"},{"t":"int","v":"462"},{"t":"int","v":"463"},{"t":"int","v":"464"},{"t":"int","v":"465"},{"t":"int","v":"466"},{"t":"int","v":"467"},{"t":"int","v":"468"},{"t":"int","v":"469"},{"t":"int","v":"470"},{"t":"int","v":"471"},{"t":"int","v":"472"},{"t":"int","v":"473"},{"t":"int","v":"474"},{"t":"int","v":"475"},{"t":"int","v":"476"},{"t":"int","v":"477"},{"t":"int","v":"478"},{"t":"int","v":"479"},{"t":"int","v":"480"},{"t":"int","v":"481"},{"t":"int","v":"482"},{"t":"int","v":"483"},{"t":"int","v":"484"},{"t":"int","v":"485"},{"t":"int","v":"486"},{"t":"int","v":"487"},{"t":"int","v":"488"},{"t":"int","v":"489"},{"t":"int","v":"490"},{"t":"int","v":"491"},{"t":"int","v":"492"},{"t":"int","v":"493"},{"t":"int","v":"494"},{"t":"int","v":"495"},{"t":"int","v":"496"},{"t":"int","v":"497"},{"t":"int","v":"498"},{"t":"int","v":"499"}]}]]}}

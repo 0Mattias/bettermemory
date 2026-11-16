@@ -1,0 +1,864 @@
+{
+ "cases": [
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "directory_set",
+   "check": {
+    "exit_code": 0,
+    "text": "{\n  \"status\": \"ok\",\n  \"exit_code\": 0,\n  \"loads\": true,\n  \"load_error\": null,\n  \"files\": [\n    {\n      \"role\": \"user\",\n      \"path\": \"<scratch>/user/config.toml\",\n      \"exists\": true,\n      \"parses\": true,\n      \"error\": null,\n      \"note\": null\n    },\n    {\n      \"role\": \"managed\",\n      \"path\": \"<scratch>/managed/managed.toml\",\n      \"exists\": false,\n      \"parses\": false,\n      \"error\": null,\n      \"note\": null\n    }\n  ],\n  \"counts\": {\n    \"error\": 0,\n    \"warning\": 0,\n    \"note\": 0\n  },\n  \"findings\": []\n}\n"
+   },
+   "config_toml": "[storage]\ndirectory = \"~/store\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "text": "{\n  \"config\": {\n    \"role\": \"user\",\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true,\n    \"parses\": true,\n    \"error\": null,\n    \"note\": null\n  },\n  \"managed\": {\n    \"role\": \"managed\",\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"parses\": false,\n    \"error\": null,\n    \"note\": null\n  },\n  \"settings\": {\n    \"storage\": {\n      \"directory\": {\n        \"value\": \"~/store\",\n        \"source\": \"user\"\n      },\n      \"cwd_store\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"behavior\": {\n      \"write_supersession\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"prompt_recall\": {\n        \"value\": \"project\",\n        \"source\": \"default\"\n      },\n      \"session_brief\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"tombstone_retention_days\": {\n        \"value\": 0,\n        \"source\": \"default\"\n      }\n    },\n    \"scopes\": {\n      \"allowed\": {\n        \"value\": [],\n        \"source\": \"default\"\n      },\n      \"typo_exceptions\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"policy\": {\n      \"forbid_force\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"forbid_acknowledge\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"telemetry\": {\n      \"enabled\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"daemon\": {\n      \"port\": {\n        \"value\": 7397,\n        \"source\": \"default\"\n      }\n    },\n    \"capture\": {\n      \"stop_checkpoint\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"checkpoint_tokens\": {\n        \"value\": 12000,\n        \"source\": \"default\"\n      },\n      \"daily_cap\": {\n        \"value\": 12,\n        \"source\": \"default\"\n      }\n    },\n    \"membership\": {\n      \"write_token\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"strict\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    },\n    \"security\": {\n      \"strict_provenance\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    }\n  },\n  \"notices\": []\n}\n"
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "non_ascii",
+   "check": {
+    "exit_code": 1,
+    "text": "{\n  \"status\": \"error\",\n  \"exit_code\": 1,\n  \"loads\": true,\n  \"load_error\": null,\n  \"files\": [\n    {\n      \"role\": \"user\",\n      \"path\": \"<scratch>/user/config.toml\",\n      \"exists\": true,\n      \"parses\": true,\n      \"error\": null,\n      \"note\": null\n    },\n    {\n      \"role\": \"managed\",\n      \"path\": \"<scratch>/managed/managed.toml\",\n      \"exists\": false,\n      \"parses\": false,\n      \"error\": null,\n      \"note\": null\n    }\n  ],\n  \"counts\": {\n    \"error\": 2,\n    \"warning\": 0,\n    \"note\": 0\n  },\n  \"findings\": [\n    {\n      \"level\": \"error\",\n      \"code\": \"invalid_scope\",\n      \"file\": \"user\",\n      \"section\": \"scopes\",\n      \"key\": \"allowed\",\n      \"message\": \"[scopes] allowed entry \\\"caf\\u00e9\\\" is not a scope (lowercase letters and digits, joined by - or :); no write can carry it, so the allowlist admits nothing by it.\",\n      \"suggestion\": \"write the scope the way memory_write takes it\"\n    },\n    {\n      \"level\": \"error\",\n      \"code\": \"invalid_scope\",\n      \"file\": \"user\",\n      \"section\": \"scopes\",\n      \"key\": \"allowed\",\n      \"message\": \"[scopes] allowed entry \\\"\\u65e5\\u672c\\\" is not a scope (lowercase letters and digits, joined by - or :); no write can carry it, so the allowlist admits nothing by it.\",\n      \"suggestion\": \"write the scope the way memory_write takes it\"\n    }\n  ]\n}\n"
+   },
+   "config_toml": "[scopes]\nallowed = [\"caf\u00e9\", \"\u65e5\u672c\"]\n[storage]\ndirectory = \"~/\u00e9\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "text": "{\n  \"config\": {\n    \"role\": \"user\",\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true,\n    \"parses\": true,\n    \"error\": null,\n    \"note\": null\n  },\n  \"managed\": {\n    \"role\": \"managed\",\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"parses\": false,\n    \"error\": null,\n    \"note\": null\n  },\n  \"settings\": {\n    \"storage\": {\n      \"directory\": {\n        \"value\": \"~/\\u00e9\",\n        \"source\": \"user\"\n      },\n      \"cwd_store\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"behavior\": {\n      \"write_supersession\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"prompt_recall\": {\n        \"value\": \"project\",\n        \"source\": \"default\"\n      },\n      \"session_brief\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"tombstone_retention_days\": {\n        \"value\": 0,\n        \"source\": \"default\"\n      }\n    },\n    \"scopes\": {\n      \"allowed\": {\n        \"value\": [\n          \"caf\\u00e9\",\n          \"\\u65e5\\u672c\"\n        ],\n        \"source\": \"user\"\n      },\n      \"typo_exceptions\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"policy\": {\n      \"forbid_force\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"forbid_acknowledge\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"telemetry\": {\n      \"enabled\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"daemon\": {\n      \"port\": {\n        \"value\": 7397,\n        \"source\": \"default\"\n      }\n    },\n    \"capture\": {\n      \"stop_checkpoint\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"checkpoint_tokens\": {\n        \"value\": 12000,\n        \"source\": \"default\"\n      },\n      \"daily_cap\": {\n        \"value\": 12,\n        \"source\": \"default\"\n      }\n    },\n    \"membership\": {\n      \"write_token\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"strict\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    },\n    \"security\": {\n      \"strict_provenance\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    }\n  },\n  \"notices\": []\n}\n"
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "control_in_string",
+   "check": {
+    "exit_code": 1,
+    "text": "{\n  \"status\": \"error\",\n  \"exit_code\": 1,\n  \"loads\": true,\n  \"load_error\": null,\n  \"files\": [\n    {\n      \"role\": \"user\",\n      \"path\": \"<scratch>/user/config.toml\",\n      \"exists\": true,\n      \"parses\": true,\n      \"error\": null,\n      \"note\": null\n    },\n    {\n      \"role\": \"managed\",\n      \"path\": \"<scratch>/managed/managed.toml\",\n      \"exists\": false,\n      \"parses\": false,\n      \"error\": null,\n      \"note\": null\n    }\n  ],\n  \"counts\": {\n    \"error\": 1,\n    \"warning\": 0,\n    \"note\": 0\n  },\n  \"findings\": [\n    {\n      \"level\": \"error\",\n      \"code\": \"invalid_scope\",\n      \"file\": \"user\",\n      \"section\": \"scopes\",\n      \"key\": \"allowed\",\n      \"message\": \"[scopes] allowed entry \\\"[2J\\\" is not a scope (lowercase letters and digits, joined by - or :); no write can carry it, so the allowlist admits nothing by it.\",\n      \"suggestion\": \"write the scope the way memory_write takes it\"\n    }\n  ]\n}\n"
+   },
+   "config_toml": "[storage]\ndirectory = \"a\\u0007b\"\n[scopes]\nallowed = [\"[2J\"]\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "text": "{\n  \"config\": {\n    \"role\": \"user\",\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true,\n    \"parses\": true,\n    \"error\": null,\n    \"note\": null\n  },\n  \"managed\": {\n    \"role\": \"managed\",\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"parses\": false,\n    \"error\": null,\n    \"note\": null\n  },\n  \"settings\": {\n    \"storage\": {\n      \"directory\": {\n        \"value\": \"a\\u0007b\",\n        \"source\": \"user\"\n      },\n      \"cwd_store\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"behavior\": {\n      \"write_supersession\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"prompt_recall\": {\n        \"value\": \"project\",\n        \"source\": \"default\"\n      },\n      \"session_brief\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"tombstone_retention_days\": {\n        \"value\": 0,\n        \"source\": \"default\"\n      }\n    },\n    \"scopes\": {\n      \"allowed\": {\n        \"value\": [\n          \"[2J\"\n        ],\n        \"source\": \"user\"\n      },\n      \"typo_exceptions\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"policy\": {\n      \"forbid_force\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"forbid_acknowledge\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"telemetry\": {\n      \"enabled\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"daemon\": {\n      \"port\": {\n        \"value\": 7397,\n        \"source\": \"default\"\n      }\n    },\n    \"capture\": {\n      \"stop_checkpoint\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"checkpoint_tokens\": {\n        \"value\": 12000,\n        \"source\": \"default\"\n      },\n      \"daily_cap\": {\n        \"value\": 12,\n        \"source\": \"default\"\n      }\n    },\n    \"membership\": {\n      \"write_token\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"strict\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    },\n    \"security\": {\n      \"strict_provenance\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    }\n  },\n  \"notices\": []\n}\n"
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults)"
+    }
+   ],
+   "case": "tilde_user_directory",
+   "check": {
+    "exit_code": 0,
+    "text": "{\n  \"status\": \"ok\",\n  \"exit_code\": 0,\n  \"loads\": true,\n  \"load_error\": null,\n  \"files\": [\n    {\n      \"role\": \"user\",\n      \"path\": \"<scratch>/user/config.toml\",\n      \"exists\": true,\n      \"parses\": true,\n      \"error\": null,\n      \"note\": null\n    },\n    {\n      \"role\": \"managed\",\n      \"path\": \"<scratch>/managed/managed.toml\",\n      \"exists\": false,\n      \"parses\": false,\n      \"error\": null,\n      \"note\": null\n    }\n  ],\n  \"counts\": {\n    \"error\": 0,\n    \"warning\": 0,\n    \"note\": 0\n  },\n  \"findings\": []\n}\n"
+   },
+   "config_toml": "[storage]\ndirectory = \"~nosuchuser9/y\"\n",
+   "managed_toml": null,
+   "show": {
+    "exit_code": 0,
+    "text": "{\n  \"config\": {\n    \"role\": \"user\",\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true,\n    \"parses\": true,\n    \"error\": null,\n    \"note\": null\n  },\n  \"managed\": {\n    \"role\": \"managed\",\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"parses\": false,\n    \"error\": null,\n    \"note\": null\n  },\n  \"settings\": {\n    \"storage\": {\n      \"directory\": {\n        \"value\": \"~nosuchuser9/y\",\n        \"source\": \"user\"\n      },\n      \"cwd_store\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"behavior\": {\n      \"write_supersession\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"prompt_recall\": {\n        \"value\": \"project\",\n        \"source\": \"default\"\n      },\n      \"session_brief\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"tombstone_retention_days\": {\n        \"value\": 0,\n        \"source\": \"default\"\n      }\n    },\n    \"scopes\": {\n      \"allowed\": {\n        \"value\": [],\n        \"source\": \"default\"\n      },\n      \"typo_exceptions\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"policy\": {\n      \"forbid_force\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"forbid_acknowledge\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"telemetry\": {\n      \"enabled\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"daemon\": {\n      \"port\": {\n        \"value\": 7397,\n        \"source\": \"default\"\n      }\n    },\n    \"capture\": {\n      \"stop_checkpoint\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"checkpoint_tokens\": {\n        \"value\": 12000,\n        \"source\": \"default\"\n      },\n      \"daily_cap\": {\n        \"value\": 12,\n        \"source\": \"default\"\n      }\n    },\n    \"membership\": {\n      \"write_token\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"strict\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    },\n    \"security\": {\n      \"strict_provenance\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    }\n  },\n  \"notices\": []\n}\n"
+   }
+  },
+  {
+   "audit_config_findings": [
+    {
+     "details": {
+      "behavior.write_supersession": true,
+      "capture.stop_checkpoint": false,
+      "daemon.port": 7397,
+      "membership.strict": false,
+      "security.strict_provenance": false,
+      "storage.cwd_store": true,
+      "telemetry.enabled": true
+     },
+     "fix": null,
+     "id": "config.settings",
+     "path": "<scratch>/user/config.toml",
+     "status": "info",
+     "summary": "telemetry on, capture checkpoint off, write supersession on, membership strict off, strict provenance off, daemon port 7397"
+    },
+    {
+     "details": {
+      "managed_keys": [
+       "storage.directory"
+      ],
+      "policy.forbid_acknowledge": [],
+      "policy.forbid_force": false
+     },
+     "fix": null,
+     "id": "config.policy",
+     "path": null,
+     "status": "info",
+     "summary": "agents may pass force and every acknowledge flag ([policy] at its defaults); 1 key(s) pinned by the managed config"
+    }
+   ],
+   "case": "tilde_user_directory_managed",
+   "check": {
+    "exit_code": 0,
+    "text": "{\n  \"status\": \"ok\",\n  \"exit_code\": 0,\n  \"loads\": true,\n  \"load_error\": null,\n  \"files\": [\n    {\n      \"role\": \"user\",\n      \"path\": \"<scratch>/user/config.toml\",\n      \"exists\": false,\n      \"parses\": false,\n      \"error\": null,\n      \"note\": null\n    },\n    {\n      \"role\": \"managed\",\n      \"path\": \"<scratch>/managed/managed.toml\",\n      \"exists\": true,\n      \"parses\": true,\n      \"error\": null,\n      \"note\": null\n    }\n  ],\n  \"counts\": {\n    \"error\": 0,\n    \"warning\": 0,\n    \"note\": 0\n  },\n  \"findings\": []\n}\n"
+   },
+   "config_toml": null,
+   "managed_toml": "[storage]\ndirectory = \"~nosuchuser9\"\n",
+   "show": {
+    "exit_code": 0,
+    "text": "{\n  \"config\": {\n    \"role\": \"user\",\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false,\n    \"parses\": false,\n    \"error\": null,\n    \"note\": null\n  },\n  \"managed\": {\n    \"role\": \"managed\",\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": true,\n    \"parses\": true,\n    \"error\": null,\n    \"note\": null\n  },\n  \"settings\": {\n    \"storage\": {\n      \"directory\": {\n        \"value\": \"~nosuchuser9\",\n        \"source\": \"managed\"\n      },\n      \"cwd_store\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"behavior\": {\n      \"write_supersession\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"prompt_recall\": {\n        \"value\": \"project\",\n        \"source\": \"default\"\n      },\n      \"session_brief\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"tombstone_retention_days\": {\n        \"value\": 0,\n        \"source\": \"default\"\n      }\n    },\n    \"scopes\": {\n      \"allowed\": {\n        \"value\": [],\n        \"source\": \"default\"\n      },\n      \"typo_exceptions\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"policy\": {\n      \"forbid_force\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"forbid_acknowledge\": {\n        \"value\": [],\n        \"source\": \"default\"\n      }\n    },\n    \"telemetry\": {\n      \"enabled\": {\n        \"value\": true,\n        \"source\": \"default\"\n      }\n    },\n    \"daemon\": {\n      \"port\": {\n        \"value\": 7397,\n        \"source\": \"default\"\n      }\n    },\n    \"capture\": {\n      \"stop_checkpoint\": {\n        \"value\": false,\n        \"source\": \"default\"\n      },\n      \"checkpoint_tokens\": {\n        \"value\": 12000,\n        \"source\": \"default\"\n      },\n      \"daily_cap\": {\n        \"value\": 12,\n        \"source\": \"default\"\n      }\n    },\n    \"membership\": {\n      \"write_token\": {\n        \"value\": true,\n        \"source\": \"default\"\n      },\n      \"strict\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    },\n    \"security\": {\n      \"strict_provenance\": {\n        \"value\": false,\n        \"source\": \"default\"\n      }\n    }\n  },\n  \"notices\": []\n}\n"
+   }
+  }
+ ],
+ "config_paths": [
+  {
+   "case": "dir_variable_empty",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/home/.claude-memory\",\n    \"rule\": \"home default\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_relative",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "relative/dir"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/alpha/relative/dir\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_tilde",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "~/x"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/home/x\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_dotted",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "<scratch>/mem/../keys"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/keys\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_key",
+   "config_toml": "[storage]\ndirectory = '~/store'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/home/store\",\n    \"rule\": \"[storage] directory\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "project_store",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [
+    "alpha/.claude-memory"
+   ],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/alpha/.claude-memory\",\n    \"rule\": \"./.claude-memory\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "project_store_off",
+   "config_toml": "[storage]\ncwd_store = false\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [
+    "alpha/.claude-memory"
+   ],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/home/.claude-memory\",\n    \"rule\": \"home default\",\n    \"exists\": false,\n    \"notes\": [\n      \"<scratch>/alpha/.claude-memory is not used: [storage] cwd_store = false\"\n    ]\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "project_store_off_managed",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": "[storage]\ncwd_store = false\n",
+   "mkdir": [
+    "alpha/.claude-memory"
+   ],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": true,\n    \"read\": true,\n    \"pinned\": [\n      \"storage.cwd_store\"\n    ],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/home/.claude-memory\",\n    \"rule\": \"home default\",\n    \"exists\": false,\n    \"notes\": [\n      \"<scratch>/alpha/.claude-memory is not used: [storage] cwd_store = false (managed)\"\n    ]\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_managed",
+   "config_toml": "[storage]\ndirectory = '~/mine'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": "[storage]\ndirectory = '<scratch>/pinned'\n",
+   "mkdir": [
+    "pinned"
+   ],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": true,\n    \"read\": true,\n    \"pinned\": [\n      \"storage.directory\"\n    ],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/pinned\",\n    \"rule\": \"[storage] directory (managed)\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "does_not_load",
+   "config_toml": "[daemon]\nport = 'x'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 1,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": null,\n    \"pins_nothing\": null,\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": null,\n    \"rule\": null,\n    \"exists\": false,\n    \"notes\": [\n      \"not resolved: the config does not load (malformed config in <scratch>/user/config.toml: [daemon] port = \\\"x\\\" must be an integer)\"\n    ]\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": \"malformed config in <scratch>/user/config.toml: [daemon] port = \\\"x\\\" must be an integer\"\n}\n"
+  },
+  {
+   "case": "does_not_load_dir_set",
+   "config_toml": "[daemon]\nport = 'x'\n",
+   "env": {},
+   "exit_code": 1,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": null,\n    \"pins_nothing\": null,\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": \"malformed config in <scratch>/user/config.toml: [daemon] port = \\\"x\\\" must be an integer\"\n}\n"
+  },
+  {
+   "case": "dir_variable_dot_segments",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "<scratch>/a/./b/"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/a/b\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_dot_relative",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "./x"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/alpha/x\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_double_slash",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "<scratch>//double"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/double\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_dot_dot_kept",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "<scratch>/a/../keys"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/keys\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_parent",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ".."
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_here",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "."
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/alpha\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "keys_variable_dot_segments",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_KEYS_DIR": "<scratch>/a/./b/"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/a/b\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": false\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "keys_variable_dot_relative",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_KEYS_DIR": "./x"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"x\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": false\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "keys_variable_double_slash",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_KEYS_DIR": "<scratch>//double"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/double\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": false\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "keys_variable_dot_dot_kept",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_KEYS_DIR": "<scratch>/a/../keys"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/a/../keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": false\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "keys_variable_parent",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_KEYS_DIR": ".."
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"..\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "keys_variable_here",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_KEYS_DIR": "."
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \".\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "state_variable_dot_segments",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_STATE_DIR": "<scratch>/a/./b/"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/a/b\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": false\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "state_variable_dot_relative",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_STATE_DIR": "./x"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"x\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": false\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "state_variable_double_slash",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_STATE_DIR": "<scratch>//double"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/double\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": false\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "state_variable_dot_dot_kept",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_STATE_DIR": "<scratch>/a/../keys"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/a/../keys\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": false\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "state_variable_parent",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_STATE_DIR": ".."
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"..\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "state_variable_here",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_STATE_DIR": "."
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \".\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_key_dot_segments",
+   "config_toml": "[storage]\ndirectory = '<scratch>/a/./b/'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/a/b\",\n    \"rule\": \"[storage] directory\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_key_dot_relative",
+   "config_toml": "[storage]\ndirectory = './x'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/alpha/x\",\n    \"rule\": \"[storage] directory\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_key_double_slash",
+   "config_toml": "[storage]\ndirectory = '<scratch>//double'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/double\",\n    \"rule\": \"[storage] directory\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_key_parent",
+   "config_toml": "[storage]\ndirectory = '..'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>\",\n    \"rule\": \"[storage] directory\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_key_relative",
+   "config_toml": "[storage]\ndirectory = 'sub'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/alpha/sub\",\n    \"rule\": \"[storage] directory\",\n    \"exists\": false,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "keys_variable_relative_made",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_KEYS_DIR": "sub"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [
+    "alpha/sub"
+   ],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"sub\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_relative_made",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "sub"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [
+    "alpha/sub"
+   ],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/alpha/sub\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_tilde_user",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "~nosuchuser9"
+   },
+   "managed_toml": null,
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "dir_variable_tilde_user_path",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "~nosuchuser9/y"
+   },
+   "managed_toml": null,
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "dir_variable_root",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "/"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_root_two_slashes",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "//"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_root_three_slashes",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "///"
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "dir_variable_root_parent",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": "/.."
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "keys_variable_tilde_user",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_KEYS_DIR": "~nosuchuser9"
+   },
+   "managed_toml": null,
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "keys_variable_tilde_user_path",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_KEYS_DIR": "~nosuchuser9/y"
+   },
+   "managed_toml": null,
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "state_variable_tilde_user",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_STATE_DIR": "~nosuchuser9"
+   },
+   "managed_toml": null,
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "state_variable_tilde_user_path",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_STATE_DIR": "~nosuchuser9/y"
+   },
+   "managed_toml": null,
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "directory_key_tilde_user",
+   "config_toml": "[storage]\ndirectory = '~nosuchuser9'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "managed_toml": null,
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "directory_managed_tilde_user",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "managed_toml": "[storage]\ndirectory = '~nosuchuser9'\n",
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "directory_key_tilde_user_path",
+   "config_toml": "[storage]\ndirectory = '~nosuchuser9/y'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "managed_toml": null,
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "directory_managed_tilde_user_path",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "managed_toml": "[storage]\ndirectory = '~nosuchuser9/y'\n",
+   "message": "Could not determine home directory.",
+   "mkdir": [],
+   "raised": "RuntimeError"
+  },
+  {
+   "case": "directory_key_root",
+   "config_toml": "[storage]\ndirectory = '/'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"[storage] directory\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_managed_root",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": "[storage]\ndirectory = '/'\n",
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": true,\n    \"read\": true,\n    \"pinned\": [\n      \"storage.directory\"\n    ],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"[storage] directory (managed)\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_key_root_two_slashes",
+   "config_toml": "[storage]\ndirectory = '//'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"[storage] directory\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_managed_root_two_slashes",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": "[storage]\ndirectory = '//'\n",
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": true,\n    \"read\": true,\n    \"pinned\": [\n      \"storage.directory\"\n    ],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"[storage] directory (managed)\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_key_root_parent",
+   "config_toml": "[storage]\ndirectory = '/..'\n",
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": null,
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": true\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": false,\n    \"read\": true,\n    \"pinned\": [],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"[storage] directory\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "directory_managed_root_parent",
+   "config_toml": null,
+   "env": {
+    "BETTERMEMORY_DIR": ""
+   },
+   "exit_code": 0,
+   "managed_toml": "[storage]\ndirectory = '/..'\n",
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": true,\n    \"read\": true,\n    \"pinned\": [\n      \"storage.directory\"\n    ],\n    \"pins_nothing\": [],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"/\",\n    \"rule\": \"[storage] directory (managed)\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  },
+  {
+   "case": "managed_lapsed_pins",
+   "config_toml": null,
+   "env": {},
+   "exit_code": 0,
+   "managed_toml": "[behavior]\nsearch_mode = 'bm25'\nmax_content_bytes = 5\n[telemetry]\nenabled = true\n",
+   "mkdir": [],
+   "text": "{\n  \"config\": {\n    \"path\": \"<scratch>/user/config.toml\",\n    \"exists\": false\n  },\n  \"managed\": {\n    \"path\": \"<scratch>/managed/managed.toml\",\n    \"exists\": true,\n    \"read\": true,\n    \"pinned\": [\n      \"telemetry.enabled\"\n    ],\n    \"pins_nothing\": [\n      \"behavior.max_content_bytes\",\n      \"behavior.search_mode\"\n    ],\n    \"note\": null\n  },\n  \"store\": {\n    \"path\": \"<scratch>/mem\",\n    \"rule\": \"BETTERMEMORY_DIR\",\n    \"exists\": true,\n    \"notes\": []\n  },\n  \"keys\": {\n    \"path\": \"<scratch>/keys\",\n    \"source\": \"BETTERMEMORY_KEYS_DIR\",\n    \"exists\": true\n  },\n  \"state\": {\n    \"path\": \"<scratch>/state\",\n    \"source\": \"BETTERMEMORY_STATE_DIR\",\n    \"exists\": true\n  },\n  \"error\": null\n}\n"
+  }
+ ],
+ "fixture": "settings_paths",
+ "placeholders": {
+  "<scratch>": "the run's temporary directory (an absolute path); the path after it is written with / whatever the platform's separator"
+ },
+ "read": "config_paths: `config path --json` under other environments (env: the location variables changed, <scratch> the run's directory; mkdir: directories made under it; text: what the CLI printed; a case whose output names a place above <scratch> is refused, so none is recorded). cases: config_toml / managed_toml (null: no file; *_hex: the bytes, when they are not UTF-8) -> check and show, each the exit code and the text the CLI printed (one JSON document, where a non-finite float prints bare as NaN or Infinity), or raised: the exception that escaped the command; each command runs with the loader's one-shot notices cleared, as a CLI process of its own would; and audit_config_findings, the config findings of `security audit` (posture._settings over the config the audit loads). Check exits 0 (nothing above a note), 1 (an error), 2 (warnings only).",
+ "setup": "Every location variable points into <scratch> (_sandbox.world): BETTERMEMORY_DIR=<scratch>/mem, BETTERMEMORY_KEYS_DIR=<scratch>/keys, BETTERMEMORY_STATE_DIR=<scratch>/state, HOME=<scratch>/home. The user's config file is <scratch>/user/config.toml (config.default_config_path answers it) and the managed file <scratch>/managed/managed.toml (managed.managed_config_path answers it); a case that has no text for one has no such file. The CLI runs in process (cli.main with argv set)."
+}

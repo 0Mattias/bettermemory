@@ -25,6 +25,8 @@ One library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
+| `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
+| `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -892,6 +894,139 @@ index on every call. Per call native spends about 8 microseconds in the
 FTS5 match, 11 reading and validating the pool's records, 5 building the
 corpus, 5 in the statistics' index reads and 5 ranking.
 
+## The settings
+
+`toml::loads` is `Lib/tomllib/_parser.py` rule for rule, over the bytes of
+the `&str` (every syntax character is ASCII, so positions and slices agree
+with the reference's code-point indexes; a message's column is counted in
+code points). Three outcomes are not `TOMLDecodeError` in the reference and
+are kept apart (`toml::Error`): an integer of more than 4300 decimal digits
+is `int()`'s ValueError, which `tomllib` does not wrap, so the product
+reports it without its `malformed config in <path>:` prefix; and nesting
+past the stack is RecursionError, which the product does not catch at all
+(`config check` and `config show` stop with a traceback; here
+`Err(Raised { class: "RecursionError", .. })`). The reference's depth limit
+is its stack: from a fresh interpreter's top it takes 497 nested arrays and
+331 nested inline tables (two and three Python frames a level) and fails
+past them, and fewer when called deeper. Here a level costs the same two
+or three and more than 995 is refused, which is the top-of-stack limit
+exactly for either kind alone; a mixed nesting near the limit, or the
+reference called deep in a stack, can differ (the corpus keeps its deep
+documents at 50 and 150 levels and at 400 and more). The parse runs on a
+thread with a 16 MiB stack, so an unoptimised build fits the deepest
+document the budget admits on any caller's thread; what it returns is at
+most 497 levels deep, is dropped without recursion, and is walked by the
+reports within that depth (`config_robustness` runs check, show, path and
+the audit over values at the budget on a 2 MiB thread). A hostile document costs
+linear time (`config_robustness`: a 45 MB document of a million keys, a
+6-million-item array and a 10 MB string loads in 4.5 s unoptimised; 2,000
+integers of 4300 digits in 1.1 s; a million `[` in 1.3 ms).
+
+`config` takes everything a load reads as data: the environment is a map
+(`config::Env`), every file and path operation goes through `config::Fs`
+(the tests hand in the generator's world; `report::SystemFs`, over the
+real file system, is not for use yet, below), and the platform's locations (`config::Locations`: the
+user config file, the managed file or registry value, the default keys and
+state directories, the system prefixes) are inputs. The loader's one-shot
+notices (`_DEPRECATED_KEY_WARNED_PATHS`) are a `config::Guards` the caller
+holds. The fixture records each command as a CLI process of its own runs
+it, with the set cleared before each of check, show and the audit, and the
+tests give each command a fresh `Guards`; a caller that runs several
+commands in one process and holds one `Guards` across them gets the
+reference's in-process behaviour (a notice logged once is not logged
+again). A path built from text (a location variable, `[storage]
+directory`) is spelled as `str(Path(text))` spells it (`config::pure_path`:
+`PurePath._parse_path` and `_format_parsed_parts` over `posixpath` and
+`ntpath.splitroot`, compared under both flavours with CPython's spelling of
+800 texts in `settings_python.json`'s `pure_paths`), and a relative one is read
+against the working directory. The flavour is the world's
+(`Locations::flavour`), never the platform the crate was built for, so the
+tests' POSIX world reads the same on every runner and a Windows caller
+passes `Flavour::Windows`. A NUL in a path that is stat'd or resolved
+raises as `os.lstat` does (`config::nul_in_path`), and a first segment
+`~name` that does not expand raises `Path.expanduser()`'s RuntimeError
+(`config::no_home`): `config path` stops on it, check finds nothing
+(`_system_dir_findings` catches it) and show never reaches it. The test
+world has one user, so a `~name` that does expand is not covered. Its file
+system has a root (`/`, and `//`, which `Path` keeps as two), and the
+fixture holds no case that resolves above `<scratch>`: the reference prints
+the host's own directory there, and `gen_config._within_scratch` refuses a
+case whose output names any place outside `<scratch>` but the root. The
+recorded config files are the text the reference read: the scrubber sees
+only what the commands printed. The three
+commands return `(text, exit code)`, the text being `json.dumps(document,
+indent=2, ensure_ascii=True, default=str)` and a line feed; `Err` is an
+exception the reference lets escape. The difflib guess (`_close`) is
+`SequenceMatcher` with autojunk, ported (`config::difflib`), and the
+`utf-8-sig` decode reproduces CPython's `UnicodeDecodeError` text, its
+position counted after a byte-order mark.
+
+The settings fixtures are split by how far their bytes hold.
+`settings.json` (ungated) holds what reads the same under every Python the
+suite runs and on every platform: the catalogue, the fixed settings, the
+coercion table, `config path` in the generator's own environment, and the
+cases worded by bettermemory alone (each regenerated identically under
+3.11.15, 3.12.13 and 3.13.13 here; 3.14 and Windows were not run, and the
+reason to expect the same there is that nothing in them is the
+interpreter's or the OS's wording, and the paths they print are under the
+run's directory, which the scrubber rewrites). `settings_python.json`
+(Python-gated) holds the cases whose text is the interpreter's (a `tomllib`
+or codec message, `int()`'s digit limit, a float conversion, `repr`,
+RecursionError, bare NaN) and `pure_paths` (3.11's pathlib spells 307 of
+the 800 otherwise). `settings_paths.json` (POSIX only: not generated on
+Windows, read by `cfg(unix)` tests, recorded as class "os" by
+`settings_paths_not_posix.rs` elsewhere) holds the `config path`
+environments and the cases whose directory is expanded and resolved;
+`settings_paths_python.json` (both) holds a NUL in a path, whose ValueError
+3.11 words otherwise. `toml.jsonl` is Python-gated: its 927 documents read
+the same under 3.11.15 and 3.12.13 (only the header's `python` differs),
+though their `tomllib` sources differ from 3.13.13's by 14 lines.
+
+Accidents of the reference reproduced and pinned (the settings fixtures):
+
+- `[daemon] port = inf` (any integer setting read from an infinite float)
+  is an OverflowError that escapes `_parse_one`'s `except ValueError`:
+  `config check` and `config show` stop with a traceback (case
+  `inf_port`). `port = nan` is a ValueError without the `malformed config
+  in <path>:` prefix, so check's finding reads "cannot convert float NaN to
+  integer; the config does not load." (case `nan_port`).
+- An integer past 4300 digits in either file is reported un-prefixed, from
+  `int()` (cases `int_past_the_digit_limit*`).
+- The managed loader's refusal of a top-level value prints it with `repr`
+  (`datetime.datetime(1979, 5, 27, 7, 32, tzinfo=...)`, `[{'enabled':
+  False}]`), where every other message spells values as TOML.
+- A NUL in `[storage] directory` (either file) makes `config check` stop
+  with `ValueError: lstat: embedded null character in path` from
+  `Path.resolve()` (`_system_dir_findings` catches OSError and
+  RuntimeError only), and `config path` too wherever the directory chooses
+  the store; `config show` and the audit answer (cases `nul_*`,
+  `directory_*_nul`). A location variable cannot hold a NUL (`os.environ`
+  refuses one, as `execve` would), so no case sets one; natively the same
+  error is raised.
+- `config show --json` prints a non-finite float a file holds bare, as
+  `Infinity`, `-Infinity` or `NaN` (`json.dumps` with `allow_nan`), which
+  is not JSON (case `non_finite_floats`).
+- Configs with 494 to 497 nested arrays, or 329 to 331 nested inline
+  tables, make the reference CLI stop with a RecursionError (its entry
+  point runs `tomllib` a few frames down the stack; measured through
+  `cli.main` in a fresh interpreter), where native loads them: the budget
+  is `tomllib`'s at the top of a stack, which `toml.jsonl` pins.
+- `config check` reads the managed file through `read_config_file`, so its
+  `unreadable` finding says `malformed config in`, while the load (`show`'s
+  error, check's `load_error`) says `malformed managed config in`.
+
+Not ported: reading the Windows registry value (`ManagedSource::Registry`
+takes its text, or its error, from the caller; no crate here reads the
+registry), Cygwin's and MSYS2's planted-file refusal (`_refuse_planted`),
+`load_config`'s first-run write, the text (non-`--json`) renderings, and
+argument parsing. `report::SystemFs` is not for use until a later unit
+compares it with `pathlib` on a real tree (a symlinked home, `..` through
+a symlink, `~user`, relative paths, a config path that is a directory, an
+unreadable file, prefixes that differ in case): its `resolve` pops `..`
+after canonicalising, `expanduser` takes only `~` and `~/`, `under` is
+case-sensitive and `is_dir` follows symlinks. No entry point uses it by
+default; every compared case goes through the test's world.
+
 ## Running the tests (offline)
 
 ```sh
@@ -1013,6 +1148,12 @@ that Unicode too.
 | `golden_log_keyring`: `log_keyring_every_case` | `log_keyring.jsonl` | i |
 | `golden_search`: `search_ranker_tables` | `search_ranker.jsonl` header (word lists) | i |
 | `parity_provenance`: both tests | `generate.py`, the manifest | i |
+| `golden_toml`: `toml_every_document` | `toml.jsonl` | ii (Python) |
+| `golden_settings`: `settings_catalogue_and_fixed`, `settings_coercion`, `settings_cases`, `settings_config_path` | `settings.json` | i |
+| `golden_settings`: `settings_python_cases`, `settings_pure_paths` | `settings_python.json` | ii (Python) |
+| `golden_settings`: `settings_paths` (unix) | `settings_paths.json` | i; os elsewhere (`settings_paths_not_posix`) |
+| `golden_settings`: `settings_paths_python` (unix) | `settings_paths_python.json` | ii (Python); os elsewhere |
+| `config_robustness` (6) | none | i |
 | `robustness` (5), `search_robustness` (8), `store_robustness` (3), `store_read_only` (11), the library's unit tests | none, or `store_bases.json` / `store_files.jsonl` as input only | i |
 | `golden_datetime_edges`: `datetime_edges_every_case` | `datetime_edges.jsonl` | ii (Python) |
 | `golden_json_edges`: `json_edges_every_case` | `json_edges.jsonl` | ii (Python) |

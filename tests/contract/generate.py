@@ -48,6 +48,7 @@ from . import (
     gen_store_files,
     gen_store_path,
     gen_time,
+    gen_toml,
     gen_unicode,
 )
 
@@ -71,6 +72,9 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "daemon_http": gen_daemon.http_api,
     "hooks": gen_daemon.hooks,
     "settings": gen_config.generate,
+    "settings_python": gen_config.generate_python,
+    "settings_paths": gen_config.generate_paths,
+    "settings_paths_python": gen_config.generate_paths_python,
     "cli_surface": gen_cli.generate,
     "state_files": gen_state.generate,
     "store_files": gen_store_files.generate,
@@ -78,6 +82,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "models_rows": gen_models.rows,
     "models_stores": gen_models.stores,
     "store_restore_lock": gen_restore_lock.generate,
+    "toml": gen_toml.generate,
     "fold": gen_fold.generate,
 }
 
@@ -122,7 +127,19 @@ SQLITE_GATED = frozenset(
 PYTHON_VERSION = "3.13.13"
 #: ``models_rows`` and ``models_stores`` read row datetimes through
 #: `datetime.fromisoformat`, whose grammar is the release's.
-PYTHON_GATED = frozenset({"python_edges", "models_rows", "models_stores"})
+#: ``toml`` and ``settings_python`` / ``settings_paths_python`` hold the
+#: interpreter's wording (`tomllib`'s messages, codec, `int()` and `repr`
+#: texts, pathlib's parsing); 3.11 and 3.12 ship another `tomllib`.
+PYTHON_GATED = frozenset(
+    {
+        "python_edges",
+        "models_rows",
+        "models_stores",
+        "toml",
+        "settings_python",
+        "settings_paths_python",
+    }
+)
 
 
 #: The pydantic-core the record fixtures were generated under (uv.lock pins
@@ -159,11 +176,17 @@ PLATFORM_GATED = frozenset(
 )
 
 
-#: Generators that drive a POSIX directory ``flock`` and have no case on
-#: Windows (the lock there is a record file and a handle on the store,
-#: ENG-321). Under ``--as-found`` on Windows they are named in the manifest
-#: (``not_here``) and write no file; that is no raise.
-POSIX_ONLY = frozenset({"store_restore_lock"})
+#: Generators with no case on Windows: ``store_restore_lock`` drives a
+#: POSIX directory ``flock`` (the lock there is a record file and a handle
+#: on the store, ENG-321). Under ``--as-found`` on Windows they are named in
+#: the manifest (``not_here``) and write no file; that is no raise, and the
+#: golden test skips them there.
+#: ``settings_paths`` and ``settings_paths_python`` expand, resolve and
+#: print paths by POSIX rules (`~name`, the root, `//`, a NUL), which the
+#: native tests' world reproduces; on Windows the reference's paths differ.
+POSIX_ONLY = frozenset(
+    {"store_restore_lock", "settings_paths", "settings_paths_python"}
+)
 
 
 def platform_key() -> str:

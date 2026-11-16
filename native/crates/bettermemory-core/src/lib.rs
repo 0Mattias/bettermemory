@@ -1,6 +1,8 @@
 //! The core of bettermemory 9's native build: the parts of the Python
 //! reference that need no database, reproduced exactly.
 //!
+//! - [`config`]: the settings: the config file's loader, the managed
+//!   file's pins, and `config check|show|path --json`;
 //! - [`json`]: `json.dumps` as the reference's call sites spell values
 //!   (the log payload's canonical text among them) and `json.loads`;
 //! - [`float_repr`]: Python's `float.__repr__`;
@@ -15,10 +17,12 @@
 //!   written back, with pydantic's errors;
 //! - [`store`]: a store file read without writing to it: the version
 //!   contract, the tables, the key ring from a keys directory, the chain
-//!   verified on disk, the FTS5 prefilter.
+//!   verified on disk, the FTS5 prefilter;
+//! - [`toml`]: `tomllib.loads`, its values and its refusals.
 
 #![forbid(unsafe_code)]
 
+pub mod config;
 pub mod datetime;
 pub mod float_repr;
 pub mod json;
@@ -28,4 +32,5 @@ pub mod pyvalue;
 pub mod records;
 pub mod search;
 pub mod store;
+pub mod toml;
 pub mod unicode;

@@ -1112,6 +1112,10 @@ def host_fact(data: bytes) -> str | None:
     for text in texts:
         for synthetic in SYNTHETIC_PATHS:
             text = text.replace(synthetic, '""')
+        # The fixture world's HOME (`<scratch>/home/x`) is not a host's
+        # /home/; only that one component is dropped, so a user or host name
+        # further down the path is still caught.
+        text = re.sub(r"<scratch>/home(?=/|\b)", "<scratch>", text)
         if hit := next((n for n in needles if n in text), None):
             return hit
         if found := drive.search(text):

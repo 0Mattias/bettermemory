@@ -174,7 +174,11 @@ pub enum Gate {
 pub fn gates_of(file: &str) -> &'static [Gate] {
     use Gate::*;
     match file {
-        "datetime_edges.jsonl" | "json_edges.jsonl" => &[Python],
+        "datetime_edges.jsonl"
+        | "json_edges.jsonl"
+        | "toml.jsonl"
+        | "settings_python.json"
+        | "settings_paths_python.json" => &[Python],
         "lexicon.jsonl"
         | "lexicon_spelling_tables.json"
         | "unicode.jsonl"
@@ -400,11 +404,19 @@ pub fn record(
         }
     );
     if let Some(path) = std::env::var_os("BM_PARITY_LOG") {
+        // Tests on threads of one process each append a line: the whole
+        // line, newline included, goes in one `write_all` to a file opened
+        // for append (`writeln!` to an unbuffered file is two writes, the
+        // line and then the newline, which other threads' lines can split),
+        // and a process-wide lock takes the writers in turn as well.
+        static LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _held = LOG.lock().unwrap_or_else(|e| e.into_inner());
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
             .expect("BM_PARITY_LOG opens");
-        writeln!(f, "{line}").expect("BM_PARITY_LOG takes a line");
+        f.write_all(format!("{line}\n").as_bytes())
+            .expect("BM_PARITY_LOG takes a line");
     }
 }

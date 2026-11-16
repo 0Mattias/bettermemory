@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import tempfile
 import unicodedata
 import warnings
@@ -33,6 +34,7 @@ from tests.contract.generate import (
     PYTHON_GATED,
     PLATFORM,
     PLATFORM_GATED,
+    POSIX_ONLY,
     PYTHON_VERSION,
     SQLITE_GATED,
     SQLITE_VERSION,
@@ -73,8 +75,14 @@ def _drift(name: str) -> list[str]:
     return out
 
 
+#: Why a ``POSIX_ONLY`` generator is not run on Windows.
+_NOT_POSIX = "POSIX only: the generator has no case on Windows"
+
+
 @pytest.mark.parametrize("name", sorted(GENERATORS))
 def test_golden_files_match_the_reference(name: str) -> None:
+    if name in POSIX_ONLY and sys.platform == "win32":
+        pytest.skip(f"{name}: {_NOT_POSIX}")
     drift = _drift(name)
     try:
         produced = GENERATORS[name]()
@@ -108,6 +116,10 @@ def test_every_golden_file_has_a_generator() -> None:
     made: set[str] = set()
     unknown = False
     for name, generate in GENERATORS.items():
+        if name in POSIX_ONLY and sys.platform == "win32":
+            # Its files are on disk and not made here.
+            unknown = True
+            continue
         try:
             made |= set(generate())
         except Exception:
