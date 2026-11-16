@@ -227,6 +227,10 @@ def rebuild(base: dict[str, Any], case: Path) -> None:
     conn = sqlite3.connect(case / "memory.sqlite", isolation_level=None)
     try:
         conn.execute(f"PRAGMA page_size = {int(base['page_size'])}")
+        # A scratch file: nothing here needs to reach the disk, and a sync
+        # per statement cost the Windows runner minutes (the fold
+        # generator, which rebuilds 163 stores, took 867 s there).
+        conn.execute("PRAGMA synchronous = OFF")
         for sql in base["statements"]:
             conn.execute(sql)
         conn.execute(f"PRAGMA journal_mode = {base['journal_mode']}")
@@ -243,6 +247,7 @@ def apply(recipe: list[dict[str, Any]], case: Path) -> None:
         if "sql" in op:
             conn = sqlite3.connect(store_file, isolation_level=None)
             try:
+                conn.execute("PRAGMA synchronous = OFF")
                 conn.executescript(op["sql"])
             finally:
                 conn.close()
