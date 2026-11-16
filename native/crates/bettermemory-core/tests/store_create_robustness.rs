@@ -99,7 +99,13 @@ fn awkward_paths_are_typed_errors() {
         long.push("d".repeat(200));
     }
     let err = refused(&long, &root.join("keys"));
-    assert!(matches!(err, CreateError::Io { .. }), "{err:?}");
+    // Windows takes the directories under the verbatim prefix and SQLite
+    // then cannot open a file there: a typed error either way.
+    assert!(
+        matches!(err, CreateError::Io { .. })
+            || (cfg!(windows) && matches!(err, CreateError::Sqlite(_))),
+        "{err:?}"
+    );
     // The keys directory is the store file.
     fs::create_dir(root.join("s")).unwrap();
     // (the keys directory, made after the schema, takes the store's name:

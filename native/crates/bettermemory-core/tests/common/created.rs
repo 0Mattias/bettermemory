@@ -156,9 +156,42 @@ pub fn scrub(text: &str, root: &Path) -> String {
     for s in all {
         out = out.replace(&s, "<scratch>");
     }
-    if cfg!(windows) {
-        out = out.replace("\\\\", "/").replace('\\', "/");
+    scratch_tails(&out)
+}
+
+/// The reference scrubber's rule (`_sandbox.Scrubber.paths`): after each
+/// `<scratch>`, a run of separator-and-name pairs (`\\`, `\` or `/`, then
+/// `[A-Za-z0-9._-]+`) is spelled with `/`. Nothing else in the text is
+/// touched: a message may hold a backslash of its own (an escaped control
+/// character; on the Windows runner a blanket replace turned `b\x1b1`
+/// into `b/x1b1`, CI run on 76fc726f).
+fn scratch_tails(text: &str) -> String {
+    const MARK: &str = "<scratch>";
+    let name = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(MARK) {
+        out.push_str(&rest[..at + MARK.len()]);
+        rest = &rest[at + MARK.len()..];
+        loop {
+            let sep = if rest.starts_with("\\\\") {
+                2
+            } else if rest.starts_with('\\') || rest.starts_with('/') {
+                1
+            } else {
+                break;
+            };
+            let after = &rest[sep..];
+            let len = after.find(|c: char| !name(c)).unwrap_or(after.len());
+            if len == 0 {
+                break;
+            }
+            out.push('/');
+            out.push_str(&after[..len]);
+            rest = &after[len..];
+        }
     }
+    out.push_str(rest);
     out
 }
 
