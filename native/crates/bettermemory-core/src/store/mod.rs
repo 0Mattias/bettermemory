@@ -37,6 +37,7 @@
 //! costs what its rows hold.
 
 pub mod admission;
+pub mod fold;
 pub mod keys;
 pub mod pool;
 pub mod restore_lock;

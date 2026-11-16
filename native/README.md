@@ -25,7 +25,7 @@ One library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `pyvalue` | the Python values these meet (a `str` may hold a lone surrogate), `int()`, `str()`, `repr()` | through the above |
 | `search` | `search.search` over records in memory: the keyword scorer, BM25 and its corpus statistics, the fusion, the rescue-expansion leg, the conversational lane, the trim, each hit's score, relevance and match terms | `search.jsonl`, `search_ranker.jsonl` |
 | `records` | the record models (`models.Memory`, `TombstonedMemory`, `Episode`, `MemoryLink`, `Origin`, `Actor`) in pydantic's lax Python mode: validation from a log payload (`model_validate`) and from a row (`store_rows._row_to_memory`, `_row_to_tombstone`, `_row_to_episode`, with `_dt`, `_load_json`, `_row_origin`, `_path_targets`), the payload text (`canonical_payload` of `record_payload` / `model_dump(mode="json")`) and the column values written back, the errors (class, title, ordered `(loc, type)` pairs), the record selects on a store file | `models.jsonl`, `models_rows.jsonl`, `models_stores.jsonl` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows` | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
 is the reference's digest (the one the golden header pins), and
@@ -408,9 +408,7 @@ builds read that as nothing to hold. (Opened read-only, as the first
 version of this port did, the native build would still check the lock
 there: stricter than the reference.)
 
-Left open after N1c: the fold check (`refold`, `log verify`'s `fold` and
-`unaccounted_ids`), validated records (the models), and with them
-`bm-verify`'s fold report; see the reader notes below.
+The fold check is ported (N1e, below); validated records are N1d's.
 
 Readers. `meta`, every table's rows (`each_row`), `store_rows`' memory,
 tombstone and episode readers (`MemoryRow`, `EpisodeRow`), the log walked
@@ -493,6 +491,17 @@ the version contract's outcome, each table's row count, the key ring's
 shape, the chain report and each phase's milliseconds, from one snapshot.
 No record content, payload text or key byte is printed.
 
+`bm-verify --fold <store file> <keys dir>` runs `log verify` instead of
+the chain alone and prints its merged report under `log_verify` in the
+reference's full shape less `path` (`status`, `store_id`,
+`key_fingerprint`, `rows`, `segments`, `head`, `origin`, `problems` sorted
+by seq, `fold`, `unaccounted_ids`) and its milliseconds under
+`ms.log_verify`; its exit status is then the merged report's, or 3 with
+status `kept_changing` when key rotations kept the log moving (below). A chain
+problem without a `seq` raises KeyError in the merge, as in the reference.
+The fold's labels are record ids and table keys, and a `payload_invalid`
+detail is the reference's exception text, which can quote a payload value.
+
 Timing the chain verification: 50,001 log rows of about 650 signed bytes,
 written by the reference, three runs each, Apple M-series: the reference's
 `verify_chain` 205.8, 205.3 and 203.1 ms (about 244,000 rows a second);
@@ -501,6 +510,242 @@ native release (sha2 0.11.1, which uses the aarch64 SHA instructions) 142.8,
 The prediction of at least ten times is missed: both are bound by
 HMAC-SHA256 on the CPU's SHA instructions (the reference's `hmac` is
 OpenSSL's), and walking the rows costs about 29 ms of the native time.
+
+## The fold check
+
+`store::fold` (`StoreFile::refold`, `StoreFile::log_verify_loading`, `fold::merge`)
+reproduces `store_events.refold` and `log_verify`, read only. The mutation
+rows of the log (`MUTATION_KINDS`) are replayed into a SQLite database in
+memory built from the reference's own `SCHEMA` and `MEMBERSHIP_SCHEMA`
+(the texts `store/reference_schema.json` pins), less the FTS5 table and
+its three triggers, which the fold never compares; the
+`memory_links_cleanup` trigger, the keys and the unique index on
+verifications stay, so SQLite's affinities, conflicts and cascades act as
+in the reference. Each kind is applied as `store_rows._apply_mutation`
+applies it: the same statements, the values Python would bind in the same
+order (a `str()` of a payload value, `int()`, `list()`, `payload.get`'s raw
+value), so a binding error is the one Python's sqlite3 raises at the same
+parameter. What the reference catches (ValueError and its subclasses
+JSONDecodeError and UnicodeEncodeError, KeyError, TypeError,
+ValidationError) is a `payload_invalid` problem with the first line of
+`str(exc)` cut to 200 characters: `json`'s decode messages
+(`json::decode_failure`, CPython 3.13's C scanner, trailing-comma messages
+included), the int digit limit, `int()`'s and `list()`'s messages, the
+UnicodeEncodeError of a lone surrogate bound as text, pydantic's
+`N validation error(s) for <Model>` line, the messages of
+`_membership_values`, `_membership_key` and `validate_path_targets`. What
+is applied before a row raises stays applied (the reference has no
+savepoint per row). Anything else is `FoldError::Raised` with the class
+the reference lets out of `refold` (AttributeError, ProgrammingError,
+OverflowError, IntegrityError, RecursionError, OperationalError for text
+that is not UTF-8 in a live table ...).
+
+The comparison reads each folded and membership table on both sides over
+the columns the reference's schema gives it, keyed by `_TABLE_KEYS`, as a
+Python dict holds them: an int equals a float of the same value, text never
+equals a blob, two rows with one key keep the first key's spelling and the
+last row's values (`rows` counts keys, not rows). `unaccounted` and
+`missing` are sorted by `str()` of the label, stably. The index text
+columns are compared only while the signed log names the reference's
+tokenizer (`python_tokenizer_fingerprint`), and are spelled once per row
+the replay leaves rather than once per put (the same text: nothing else
+reads them).
+
+Not ported: `_unaccounted_memory_ids`, the in-process memo the reference's
+`Store` keeps of the last fold's unaccounted ids; nothing native keeps
+state between calls. `native_text.mutation_payload` is not needed: it
+shapes a payload before it is signed, and the fold reads what was signed.
+
+Deep JSON: the reference parses a payload inside `refold`, several frames
+below the top of its stack, so a payload nested 9,996 to 9,999 deep raises
+RecursionError out of `refold` there (macOS arm64, CPython 3.13; the window
+is lower on Windows, whose default stack is smaller, and moves with the
+caller's depth), while native parses up to 9,998 and applies the row. At
+20,000 both sides agree: the reference's C scanner hits its own recursion
+guard and raises RecursionError, and native's JSON load stops at its
+depth limit with `LoadError::Recursion`, which the fold lets out as
+`FoldError::Raised("RecursionError")`: the same class out of `refold`. No case pins the window; it is a
+platform fact, not a contract.
+
+Memory: the log is read and applied in batches of `FOLD_BATCH` (4,096) rows,
+parsed on up to 8 threads, and a payload's text is not kept beside its
+parsed value (it is read again only to spell a decode error). The live and
+folded tables are compared by a SHA-256 of each row's values in their key
+form, so neither side's rows are held twice. A single payload is still held
+whole while it is parsed: a single 50 MB payload still peaks at about 1.8
+GB (the reviewer's measurement).
+
+### A writer during the fold
+
+`log verify` must describe one state of the log: the chain report and the
+fold read the same rows, and an honest writer (one that appends signed
+rows and applies them in the same transaction, as the reference's writers
+do) never makes it read anything but `ok`.
+
+One read, two consumers. Each log row is read once and the same row is
+fed to the chain verifier and to the fold's replay (`fold::OneRead`, a
+`LogSource` whose `each` hands every row to `verify_chain_from`'s visit and
+then to the replay).
+
+- A rollback-journal store read in place, where a read transaction holds
+  the shared lock that blocks every commit: `first`, the rekey rows and the
+  log's last seq are read in one short read, then the rows in batches of
+  1,024, each its own statement, on to that seq. There the batched phase
+  follows a writer: it reads the log's last seq again and goes on in
+  batches to it while more than a batch was appended, at most
+  `FOLLOW_ROUNDS` (4) times. Then one read transaction is begun and held
+  for the rest: the rows after the last batch, the head file (read after
+  the rows, as in the reference), the log's row count and first seq, the
+  live tables. The tables' shape (`sqlite_master`, each
+  table's `PRAGMA table_info`) is read just before it and read again in it
+  only if `PRAGMA schema_version` moved. The rows read in it are applied
+  after it ends. The hold is bounded by reading the live tables and the
+  row count plus the rows appended since the last follow (fewer than a
+  batch unless the writer outruns the reader four times). `bm-verify
+  --fold` prints the longest hold under `ms.longest_hold`.
+- A WAL store, a private copy or a caller's transaction: the same pass,
+  the load included, in one read transaction. The head file is outside
+  SQLite: if it names a row past the snapshot that the log now holds and
+  the report is otherwise clean, the pass runs again.
+
+What the report describes, in plain words:
+
+- WAL (and a copy, or a caller's transaction): the store as it was when
+  the pass began. An edit made during the pass, of any kind, is not seen
+  by this pass and is seen by the next.
+- Rollback journal: the log as it was read, batch by batch, and the tables
+  as they are at the end. A row appended during the pass is read in its
+  batch or in the snapshot and needs no second pass. An edit that touches
+  a table row, edits a log row not yet read, or removes or inserts log rows
+  (anywhere: the row count and first seq read in the snapshot must be the
+  rows the pass visited) reads `tampered` in that pass. A log payload
+  edited behind the read position, with the tables left alone, is not seen
+  by this pass (its MAC was checked on the bytes read before the edit, and
+  the replay used the same bytes): this pass reads `ok`, the next reads
+  `tampered`. `fold_writer::an_edit_during_a_pass` pins each case. A key rotation met during the pass (a
+rekey row past the rekey read) loads the ring again, at most `LOAD_TRIES`
+times, then `StoreError::KeptChanging` (`bm-verify` exit 3); nothing else
+reruns a pass.
+
+A not-ok report is a one-snapshot fact. The batches assume the log only
+grows. Before a report that is not `ok`, or a raise (from loading the
+ring, from `reads_in_batches` or from the pass), is returned,
+`PRAGMA data_version` is compared with its value before the pass; if
+another connection committed meanwhile, or the snapshot's row count or
+first seq is not what the pass visited (whatever the report), the whole
+pass runs once more inside one read transaction and that report is
+returned. The count costs about 46 ms under the lock on the 310,008-row
+store. That costs a
+writer one stall, and only when something looks wrong. What may rewrite rows under a read: a restore
+replaces the file, and a native read holds the restore lock for the life of
+its `StoreFile`, so none can run mid-pass; `log.append_history_replaced`
+only appends (one signed control row in its own write transaction); nothing
+in `src/bettermemory` updates or deletes a log row. So no honest operation
+rewrites a log row under a read.
+
+Finding about the reference: `log_verify` reads the chain (`verify_chain`)
+and then the fold (`refold`, which reads the log and each live table) in
+separate statements with no transaction around them, so a commit between
+them can make it report a row the chain has not seen, or a table row whose
+log row it did not replay, as unaccounted. Not changed.
+
+Measured (`fold_writer.rs`, the populated case): 8 verifies per test under
+a writer committing every 2 ms (1 row, and 20 rows a transaction), in WAL
+and rollback-journal mode, every one `ok`; a planted row under the same
+writer, 5 of 5 `tampered` in both modes; 7 edits made from the pass's hook
+after its first batch, in both modes (`an_edit_during_a_pass`, above). The
+file (5 tests) runs in 6.5 to 7.8 s in a debug build, and no assertion
+depends on the machine's speed.
+Ignored timings: with 20 rows a transaction back to back, 8 verifies all
+`ok` (WAL 0.6 s while 12,340 rows were written; rollback journal 1.6 s,
+20,000 rows; release). A writer's commit latency on a rollback-journal
+store while verifies run back to back
+(`writer_latency_under_native_log_verify`, release), on a 310,008-row store
+of the first shape below: one commit every 5 ms, 3 verifies (all `ok`) in
+23.9 s while 2,747 commits ran, median 0.50 ms, p99 5.3 ms, worst 621 ms;
+commits back to back, 3 verifies (all `ok`) in 37.0 s while 48,816 commits
+ran, median 0.40 ms, p99 3.0 ms, worst 715 ms, longest hold 695 ms. With no
+writer the longest hold is 392 to 396 ms, nearly all of it the live tables
+(310,000 memories) read in the snapshot.
+
+The differential (`native/tools/fold_differential.py`, a tool, not a
+test): seeded random stores built by the reference from the three bases
+(populated, plus every kind, plus drift), edited behind the log or given a
+fuzzed signed payload, each run by the reference's `log_verify()` and the
+release `bm-verify --fold` on the same file and compared field for field.
+Edits that would put a REAL into a TEXT-affinity column are skipped (the two
+SQLites spell it differently). Seed 1, 600 stores: 244 edited, 341 fuzzed,
+48 edits skipped, 600 the same, 0 different.
+
+Findings about the reference, reproduced and pinned in `fold.jsonl`, not
+changed: (1) a row planted as an exact copy of a `memory_links` row whose
+`note` is NULL is not reported (SQLite lets the key repeat since NULLs are
+distinct; the dict collapses the two), case `duplicate_null_note_link`;
+(2) a store whose `checkouts` lacks the optional `unresolved_json` column
+(one an earlier build created, read before its owner's open adds it) reads
+every checkout row as unaccounted, since the live tuples are one column
+shorter than the replay's, case `optional_column_absent`; (3) payloads the
+reference does not catch (a `conflict_put` whose `conflict` is not an
+object, a list bound as a column, an int past 64 bits, a NULL in a NOT NULL
+column, `int()` of infinity) make `refold` and `log verify` raise instead of
+reporting `payload_invalid`, cases `raised_*`; (4) a planted row whose key
+is NULL or a blob is labelled by that value (`null_key_planted`,
+`blob_key`), and labels that print alike sort in the order the rows were
+read (`keys_that_print_alike`).
+
+`fold.jsonl` (`tests/contract/gen_fold.py`): 163 cases, each the
+reference's `refold()` and `log_verify()` (`path` left out) on a store the
+native test rebuilds: the 40 cases of `store_files.jsonl` (17 refused at
+open, compared as a refusal), `store_real.sqlite`, and the intact base
+with a prelude from the header (signed rows appended with the base's key,
+the table rows the reference's `_apply_mutation` writes for them, the head
+file) and a recipe: `populated` (every folded and membership table filled),
+66 planted, edited and deleted rows (three per table), 18 hostile or odd
+live tables (index text alone, text not UTF-8, a blob, NUL, a huge value,
+a blob key, a NULL key, a duplicated row, keys that print alike, one and
+two membership tables absent, the optional column absent, an extra
+column, a missing column, memories emptied), 4 tokenizer-drift cases, 41
+signed rows the fold reports as `payload_invalid` in one case, 6 cases a
+payload makes the reference raise, an empty log after `store_created` and
+no log at all; and `every_kind`, a prelude that applies every kind in
+`MUTATION_KINDS` at least once (the generator asserts it): every delete
+kind, membership deletes and membership re-puts over their own key, a re-put
+replacing a memory's links, a delete then tombstone then restore of one id,
+a verification with a NULL machine replaced, a checkout without
+`unresolved_json`, an int standing probability, a tombstone whose
+corroborations are a string and links null, a memory with a filename,
+verification lists given as a dict and as a string, and re-puts over the
+same key in conflicts, imports and quarantine; 22 cases edit one table each
+on it, and one adds drift. The generator asserts that every `*_edited`
+case reports something its unedited base does not, except the blind spot
+`drift_index_text_edited` (the index text is not compared under drift), and
+that no recipe's SQL can make a float (a REAL literal, a division, a
+function that gives a REAL), since SQLite spells a REAL in a TEXT column by
+its own version's rules; `real_for_integer` is exempt (an INTEGER column
+keeps 1.5 a REAL). Preludes are shared by name in the header, long ASCII
+runs are built from a count, and a table with nothing unaccounted or missing
+is written as its row count alone. `golden_fold.rs` compares every case field for field
+(`fold_every_case`) and feeds hostile payloads (deep JSON, 2 MB strings,
+NUL, lone surrogates, numbers past every range, NaN and infinities) and
+tables (text not UTF-8, blobs, NULL and blob keys, extra and dropped
+columns, a dropped table, an emptied or altered log) to `refold`, which
+must give a report or a typed error (`hostile_inputs_never_panic`).
+
+Timing and memory, `/usr/bin/time -l`, Apple M-series, release, reference
+`log_verify()` on `connect_read_only` against native `bm-verify --fold`
+(two runs each, WAL and rollback-journal mode alike), on two stores built
+through the reference's `_apply_mutation`:
+
+| store | rows | mutation rows | payload bytes | reference | native | ratio | peak RSS reference | native |
+|---|---|---|---|---|---|---|---|---|
+| puts | 310,008 | 310,007 (memory puts; a third re-put an earlier id) | 264,011,832 | 31.1 s | 7.46 to 7.54 s | 0.24 | 1.82 GB | 0.96 GB |
+| mixed | 46,008 | 9,207 (the rest telemetry `search` rows) | 16,211,432 | 1,103 ms | 327 to 332 ms | 0.30 | 164 MB | 80 MB |
+
+Before batching, native peaked at 4.1 to 4.6 GB on a store of the first
+shape. The reviewer's measurements on other stores gave ratios of 0.42 and
+0.10 (the owner's snapshot). The fold parses the payloads on up to 8 cores
+and spells the index text on every core; replaying them is one transaction
+on prepared statements, in seq order.
 
 ## The search pool, by caller
 
@@ -759,6 +1004,9 @@ that Unicode too.
 | `golden_datetime_edges`: `datetime_edges_every_case` | `datetime_edges.jsonl` | ii (Python) |
 | `golden_json_edges`: `json_edges_every_case` | `json_edges.jsonl` | ii (Python) |
 | `golden_lexicon`: `lexicon_every_case`, `lexicon_fingerprint` | `lexicon.jsonl` | ii (Unicode) |
+| `golden_fold`: `fold_every_case` | `fold.jsonl` | ii (Unicode, pydantic-core) |
+| `golden_fold`: `hostile_inputs_never_panic` | `fold.jsonl` as input only | i |
+| `fold_writer` | `fold.jsonl`'s `populated` prelude as input only | i |
 | `golden_lexicon`: `spelling_tables_match_the_golden_file_and_the_rust_tables` | `lexicon_spelling_tables.json` (compiled-in copy pinned to the committed file) | ii (Unicode) |
 | `golden_unicode`: `unicode_every_part`, `unicode_sequences_every_record` | `unicode.jsonl`, `unicode_sequences.jsonl` | ii (Unicode) |
 | `unicode_tables_regen`: `regenerating_the_unicode_tables_gives_the_same_bytes` | `src/unicode/tables.rs` | ii (Unicode) |

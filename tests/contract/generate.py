@@ -33,6 +33,7 @@ from . import (
     gen_config,
     gen_daemon,
     gen_edges,
+    gen_fold,
     gen_json,
     gen_lexicon,
     gen_log,
@@ -76,6 +77,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "models_rows": gen_models.rows,
     "models_stores": gen_models.stores,
     "store_restore_lock": gen_restore_lock.generate,
+    "fold": gen_fold.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -93,6 +95,7 @@ UNICODE_GATED = frozenset(
         "search_ranker",
         "mcp",
         "hooks",
+        "fold",
     }
 )
 
@@ -124,7 +127,7 @@ PYTHON_GATED = frozenset({"python_edges", "models_rows", "models_stores"})
 #: The pydantic-core the record fixtures were generated under (uv.lock pins
 #: pydantic 2.14.1 on it): the models' coercions and errors are its.
 PYDANTIC_CORE_VERSION = "2.50.1"
-PYDANTIC_GATED = frozenset({"models", "models_rows", "models_stores"})
+PYDANTIC_GATED = frozenset({"models", "models_rows", "models_stores", "fold"})
 
 
 def pydantic_core_version() -> str:

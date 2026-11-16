@@ -762,6 +762,316 @@ pub fn loads_detailed(text: &[u32]) -> Result<PyValue, LoadError> {
     Ok(value)
 }
 
+/// Where and why `json.loads` refuses a text, as CPython 3.13's C scanner
+/// (`Modules/_json.c`) finds it, in document order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodeFailure {
+    /// `JSONDecodeError(msg, doc, pos)`.
+    At(&'static str, usize),
+    /// ValueError: an integer of this many digits (past 4300).
+    IntDigits(usize),
+    /// RecursionError.
+    Recursion,
+}
+
+impl DecodeFailure {
+    /// `str(exc)`: a JSONDecodeError's `"{msg}: line {l} column {c} (char
+    /// {pos})"`, the digit limit's ValueError text, RecursionError's.
+    pub fn message(self, text: &[u32]) -> String {
+        match self {
+            DecodeFailure::At(msg, pos) => {
+                let before = &text[..pos.min(text.len())];
+                let line = before.iter().filter(|&&c| c == 0x0A).count() + 1;
+                let column = match before.iter().rposition(|&c| c == 0x0A) {
+                    Some(k) => pos - k,
+                    None => pos + 1,
+                };
+                format!("{msg}: line {line} column {column} (char {pos})")
+            }
+            DecodeFailure::IntDigits(n) => format!(
+                "Exceeds the limit (4300 digits) for integer string conversion: value has \
+                 {n} digits; use sys.set_int_max_str_digits() to increase the limit"
+            ),
+            DecodeFailure::Recursion => {
+                "maximum recursion depth exceeded while decoding a JSON array from a unicode \
+                 string"
+                    .to_owned()
+            }
+        }
+    }
+}
+
+fn is_ws(c: u32) -> bool {
+    matches!(c, 0x20 | 0x09 | 0x0A | 0x0D)
+}
+
+fn is_ascii_digit(c: u32) -> bool {
+    (0x30..=0x39).contains(&c)
+}
+
+fn hex4(s: &[u32], from: usize) -> Option<u32> {
+    let mut v = 0u32;
+    for &c in &s[from..from + 4] {
+        let d = char::from_u32(c)?.to_digit(16)?;
+        v = v * 16 + d;
+    }
+    Some(v)
+}
+
+/// `scanstring_unicode` from just after the opening quote: the index past
+/// the closing quote.
+fn scan_string(s: &[u32], start: usize) -> Result<usize, DecodeFailure> {
+    let n = s.len();
+    let begin = start - 1;
+    let mut end = start;
+    loop {
+        let mut next = end;
+        let mut c = 0u32;
+        while next < n {
+            c = s[next];
+            if c == 0x22 || c == 0x5C {
+                break;
+            }
+            if c <= 0x1F {
+                return Err(DecodeFailure::At("Invalid control character at", next));
+            }
+            next += 1;
+        }
+        if next >= n || !(c == 0x22 || c == 0x5C) {
+            return Err(DecodeFailure::At("Unterminated string starting at", begin));
+        }
+        if c == 0x22 {
+            return Ok(next + 1);
+        }
+        next += 1;
+        if next == n {
+            return Err(DecodeFailure::At("Unterminated string starting at", begin));
+        }
+        let c = s[next];
+        if c != u32::from(b'u') {
+            end = next + 1;
+            if !matches!(
+                char::from_u32(c),
+                Some('"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't')
+            ) {
+                return Err(DecodeFailure::At("Invalid \\escape", end - 2));
+            }
+            continue;
+        }
+        next += 1;
+        end = next + 4;
+        if end >= n {
+            return Err(DecodeFailure::At("Invalid \\uXXXX escape", next - 1));
+        }
+        let Some(high) = hex4(s, next) else {
+            return Err(DecodeFailure::At("Invalid \\uXXXX escape", end - 5));
+        };
+        next = end;
+        if (0xD800..=0xDBFF).contains(&high) && end + 6 < n {
+            let backslash = s[next] == 0x5C;
+            next += 1;
+            if backslash && s[next] == u32::from(b'u') {
+                next += 1;
+                end += 6;
+                let Some(low) = hex4(s, next) else {
+                    return Err(DecodeFailure::At("Invalid \\uXXXX escape", end - 5));
+                };
+                if !(0xDC00..=0xDFFF).contains(&low) {
+                    end -= 6;
+                }
+            }
+        }
+    }
+}
+
+/// [`DecodeFailure`] for a text `json.loads` refuses, None for one it
+/// reads. Iterative: nesting is an explicit stack, at most [`MAX_DEPTH`].
+pub fn decode_failure(s: &[u32]) -> Option<DecodeFailure> {
+    use DecodeFailure::At;
+    if s.first() == Some(&0xFEFF) {
+        return Some(At("Unexpected UTF-8 BOM (decode using utf-8-sig)", 0));
+    }
+    let n = s.len();
+    let skip = |mut i: usize| {
+        while i < n && is_ws(s[i]) {
+            i += 1;
+        }
+        i
+    };
+    let word = |i: usize, w: &str| {
+        let w: Vec<u32> = w.chars().map(u32::from).collect();
+        i + w.len() <= n && s[i..i + w.len()] == w[..]
+    };
+    // true: an array, false: an object.
+    let mut stack: Vec<bool> = Vec::new();
+    let mut i = skip(0);
+    'value: loop {
+        // A value at i.
+        if i >= n {
+            return Some(At("Expecting value", i));
+        }
+        let c = s[i];
+        let mut done = None;
+        match char::from_u32(c) {
+            Some('"') => match scan_string(s, i + 1) {
+                Ok(end) => done = Some(end),
+                Err(e) => return Some(e),
+            },
+            Some(open @ ('[' | '{')) => {
+                if stack.len() + 1 > MAX_DEPTH {
+                    return Some(DecodeFailure::Recursion);
+                }
+                let array = open == '[';
+                stack.push(array);
+                i = skip(i + 1);
+                let close = if array { 0x5D } else { 0x7D };
+                if i < n && s[i] == close {
+                    stack.pop();
+                    done = Some(i + 1);
+                } else if array {
+                    continue 'value;
+                } else {
+                    match key(s, i) {
+                        Ok(next) => {
+                            i = next;
+                            continue 'value;
+                        }
+                        Err(e) => return Some(e),
+                    }
+                }
+            }
+            Some('n') if i + 3 < n && word(i, "null") => done = Some(i + 4),
+            Some('t') if i + 3 < n && word(i, "true") => done = Some(i + 4),
+            Some('f') if i + 4 < n && word(i, "false") => done = Some(i + 5),
+            Some('N') if i + 2 < n && word(i, "NaN") => done = Some(i + 3),
+            Some('I') if i + 7 < n && word(i, "Infinity") => done = Some(i + 8),
+            Some('-') if i + 8 < n && word(i, "-Infinity") => done = Some(i + 9),
+            _ => {}
+        }
+        let mut at = match done {
+            Some(end) => end,
+            None => {
+                // `_match_number_unicode`.
+                let start = i;
+                let end_idx = n - 1;
+                let mut j = i;
+                if s[j] == u32::from(b'-') {
+                    j += 1;
+                    if j > end_idx {
+                        return Some(At("Expecting value", start));
+                    }
+                }
+                if (0x31..=0x39).contains(&s[j]) {
+                    j += 1;
+                    while j <= end_idx && is_ascii_digit(s[j]) {
+                        j += 1;
+                    }
+                } else if s[j] == 0x30 {
+                    j += 1;
+                } else {
+                    return Some(At("Expecting value", start));
+                }
+                let mut float = false;
+                if j < end_idx && s[j] == u32::from(b'.') && is_ascii_digit(s[j + 1]) {
+                    float = true;
+                    j += 2;
+                    while j <= end_idx && is_ascii_digit(s[j]) {
+                        j += 1;
+                    }
+                }
+                if j < end_idx && (s[j] == u32::from(b'e') || s[j] == u32::from(b'E')) {
+                    let e_start = j;
+                    j += 1;
+                    if j < end_idx && (s[j] == u32::from(b'-') || s[j] == u32::from(b'+')) {
+                        j += 1;
+                    }
+                    while j <= end_idx && is_ascii_digit(s[j]) {
+                        j += 1;
+                    }
+                    if is_ascii_digit(s[j - 1]) {
+                        float = true;
+                    } else {
+                        j = e_start;
+                    }
+                }
+                if !float {
+                    let digits = s[start..j].iter().filter(|&&c| is_ascii_digit(c)).count();
+                    if digits > 4300 {
+                        return Some(DecodeFailure::IntDigits(digits));
+                    }
+                }
+                j
+            }
+        };
+        // After a value: close containers or move to the next element.
+        loop {
+            let Some(&array) = stack.last() else {
+                let end = skip(at);
+                return if end != n {
+                    Some(At("Extra data", end))
+                } else {
+                    None
+                };
+            };
+            let close = if array { 0x5D } else { 0x7D };
+            at = skip(at);
+            if at < n && s[at] == close {
+                stack.pop();
+                at += 1;
+                continue;
+            }
+            if at >= n || s[at] != u32::from(b',') {
+                return Some(At("Expecting ',' delimiter", at));
+            }
+            let comma = at;
+            at = skip(at + 1);
+            if at < n && s[at] == close {
+                return Some(At(
+                    if array {
+                        "Illegal trailing comma before end of array"
+                    } else {
+                        "Illegal trailing comma before end of object"
+                    },
+                    comma,
+                ));
+            }
+            if array {
+                i = at;
+            } else {
+                match key(s, at) {
+                    Ok(next) => i = next,
+                    Err(e) => return Some(e),
+                }
+            }
+            continue 'value;
+        }
+    }
+}
+
+/// An object's key at `i`, its `:` and the whitespace after: where the
+/// value starts.
+fn key(s: &[u32], i: usize) -> Result<usize, DecodeFailure> {
+    let n = s.len();
+    if i >= n || s[i] != 0x22 {
+        return Err(DecodeFailure::At(
+            "Expecting property name enclosed in double quotes",
+            i,
+        ));
+    }
+    let mut j = scan_string(s, i + 1)?;
+    while j < n && is_ws(s[j]) {
+        j += 1;
+    }
+    if j >= n || s[j] != u32::from(b':') {
+        return Err(DecodeFailure::At("Expecting ':' delimiter", j));
+    }
+    j += 1;
+    while j < n && is_ws(s[j]) {
+        j += 1;
+    }
+    Ok(j)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

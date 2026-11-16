@@ -1,4 +1,4 @@
-//! `bm-verify <store file> <keys dir>`: open a store read-only, apply the
+//! `bm-verify [--fold] <store file> <keys dir>`: open a store read-only, apply the
 //! version contract, count each table's rows, read the key ring and verify
 //! the chain on disk; print ONE JSON object with the outcome, the counts,
 //! the chain report and each phase's time in milliseconds.
@@ -7,11 +7,19 @@
 //! report's fields are seqs, statuses, log row kinds, MACs, key
 //! fingerprints and counts. Exit status 0 when the chain is `ok`, 1 for any
 //! other report, 2 when the store could not be read.
+//!
+//! With `--fold` the chain and the fold check run on one state of the log
+//! (`StoreFile::log_verify_loading`) and it prints `log verify --json`'s
+//! report under `log_verify` (every key but `path`) with its time; the exit
+//! status is then the merged report's (3: the store kept changing). The fold's labels
+//! are record ids and table keys; a payload problem's detail is the
+//! reference's exception text, which can quote a payload value.
 
 use std::path::Path;
 use std::time::Instant;
 
 use bettermemory_core::log::{KeyRing, ReportDict, ReportValue, VerifyError};
+use bettermemory_core::store::fold::{self, Cell, Label, Problem, TableFold};
 use bettermemory_core::store::keys::load_key_ring;
 use bettermemory_core::store::{open_checks, sqlite_version, StoreError, StoreFile};
 use bettermemory_core::unicode;
@@ -96,9 +104,11 @@ fn main() {
 }
 
 fn run() -> i32 {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    let with_fold = args.iter().any(|a| a == "--fold");
+    args.retain(|a| a != "--fold");
     if args.len() != 3 {
-        eprintln!("usage: bm-verify <store file> <keys dir>");
+        eprintln!("usage: bm-verify [--fold] <store file> <keys dir>");
         return 2;
     }
     let store_path = Path::new(&args[1]);
@@ -220,6 +230,34 @@ fn run() -> i32 {
             .map_err(|e| StoreError::Refused(format!("key ring: {e:?}")))?;
         Ok((ring, fp))
     };
+    if with_fold {
+        // The chain and the fold on one state of the log
+        // (`log_verify_loading`).
+        let merged = match store.log_verify_loading(&mut load) {
+            Ok(m) => m,
+            Err(fold::FoldError::Store(StoreError::KeptChanging)) => {
+                fields.push(format!(
+                    "\"log_verify\": {{\"status\": \"kept_changing\", \"detail\": {}}}",
+                    quote(&StoreError::KeptChanging.to_string())
+                ));
+                println!("{{{}}}", fields.join(", "));
+                return 3;
+            }
+            Err(e) => return fail(&mut fields, "log_verify", &e.to_string()),
+        };
+        timings.push(format!("\"log_verify\": {}", ms(t)));
+        // The longest the read lock was held at once: a batch, or the
+        // final snapshot.
+        timings.push(format!(
+            "\"longest_hold\": {:.3}",
+            store.longest_verify_hold().as_secs_f64() * 1000.0
+        ));
+        fields.push(format!("\"log_verify\": {}", log_verify_json(&merged)));
+        fields.push(format!("\"ms\": {{{}}}", timings.join(", ")));
+        drop(store);
+        println!("{{{}}}", fields.join(", "));
+        return i32::from(merged.status != "ok");
+    }
     let report = match store.verify_loading(None, &mut load) {
         Ok(r) => r,
         Err(VerifyError::Py(e)) => return fail(&mut fields, "verify_chain", e.name()),
@@ -256,4 +294,75 @@ fn run() -> i32 {
     drop(store);
     println!("{{{}}}", fields.join(", "));
     i32::from(report.status != "ok")
+}
+
+fn cell(c: &Cell) -> String {
+    match c {
+        Cell::Null => "null".into(),
+        Cell::Int(i) => i.to_string(),
+        Cell::Real(f) => format!("{{\"float\": {}}}", quote(&format!("{:016x}", f.to_bits()))),
+        Cell::Text(t) => quote(t),
+        Cell::Blob(b) => format!(
+            "{{\"blob\": \"{}\"}}",
+            b.iter().map(|x| format!("{x:02x}")).collect::<String>()
+        ),
+    }
+}
+
+fn label(l: &Label) -> String {
+    match l {
+        Label::One(c) => cell(c),
+        Label::Many(cs) => format!("[{}]", cs.iter().map(cell).collect::<Vec<_>>().join(", ")),
+    }
+}
+
+fn labels(ls: &[Label]) -> String {
+    format!("[{}]", ls.iter().map(label).collect::<Vec<_>>().join(", "))
+}
+
+fn tables(ts: &[TableFold]) -> String {
+    let parts: Vec<String> = ts
+        .iter()
+        .map(|t| {
+            format!(
+                "{}: {{\"unaccounted\": {}, \"missing\": {}, \"rows\": {}}}",
+                quote(t.table),
+                labels(&t.unaccounted),
+                labels(&t.missing),
+                t.rows
+            )
+        })
+        .collect();
+    format!("{{{}}}", parts.join(", "))
+}
+
+fn log_verify_json(r: &fold::LogVerify) -> String {
+    let problems: Vec<String> = r
+        .problems
+        .iter()
+        .map(|p| match p {
+            Problem::Chain(d) => dict(d),
+            Problem::Payload(p) => format!(
+                "{{\"seq\": {}, \"kind\": {}, \"problem\": \"payload_invalid\", \"detail\": {}}}",
+                p.seq,
+                quote(&p.kind),
+                quote(&p.detail)
+            ),
+        })
+        .collect();
+    format!(
+        "{{\"status\": {}, \"store_id\": {}, \"key_fingerprint\": {}, \"rows\": {}, \"segments\": [{}], \"head\": {}, \"origin\": {}, \"problems\": [{}], \"fold\": {{\"status\": {}, \"tables\": {}, \"membership\": {}}}, \"unaccounted_ids\": {}}}",
+        quote(r.status),
+        quote(&r.store_id),
+        quote(&r.key_fingerprint),
+        r.chain.rows,
+        r.chain.segments.iter().map(dict).collect::<Vec<_>>().join(", "),
+        dict(&r.chain.head),
+        dict(&r.chain.origin),
+        problems.join(", "),
+        quote(r.fold.status),
+        tables(&r.fold.tables),
+        tables(&r.fold.membership),
+        labels(r.unaccounted_ids())
+    )
 }
