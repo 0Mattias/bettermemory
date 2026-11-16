@@ -23,6 +23,7 @@ import os
 import platform
 import sqlite3
 import sys
+import time
 import traceback
 import unicodedata
 from collections.abc import Callable
@@ -217,6 +218,7 @@ def as_found(out: Path) -> int:
             generators[name] = entry
             print(f"{name}: not generated here (POSIX only)")
             continue
+        started = time.monotonic()
         try:
             produced = generate()
         except Exception as exc:  # recorded, and the run goes on
@@ -227,7 +229,10 @@ def as_found(out: Path) -> int:
             print(f"{name}: raised {type(exc).__name__}: {exc}", file=sys.stderr)
             continue
         entry["files"] = sorted(produced)
+        entry["seconds"] = round(time.monotonic() - started, 1)
         generators[name] = entry
+        # Flushed: a runner's log then shows where the minutes go.
+        print(f"{name}: {entry['seconds']} s", flush=True)
         for filename, data in sorted(produced.items()):
             (out / filename).write_bytes(data)
             committed_path = GOLDEN / filename
