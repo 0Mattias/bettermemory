@@ -22,6 +22,8 @@
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
 //! - [`githead`]: HEAD and refs read from a git directory's files;
 //! - [`fsdata`]: the file system as the config readers ask it, as data.
+//! - [`printable`] and [`membership_lines`]: text made safe to show, and
+//!   the lines shown about which project a folder belongs to.
 
 #![forbid(unsafe_code)]
 
@@ -35,6 +37,8 @@ pub mod githead;
 pub mod json;
 pub mod lexicon;
 pub mod log;
+pub mod membership_lines;
+pub mod printable;
 pub mod pyvalue;
 pub mod records;
 pub mod search;

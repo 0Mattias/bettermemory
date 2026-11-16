@@ -47,6 +47,7 @@ from . import (
     gen_log,
     gen_log_ring,
     gen_mcp,
+    gen_membership_lines,
     gen_models,
     gen_restore_lock,
     gen_state,
@@ -111,6 +112,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "githead_posix": gen_githead.generate_posix,
     "capture_vocabulary": gen_capture_vocabulary.generate,
     "gitconfig_file": gen_gitconfig_file.generate,
+    "membership_lines": gen_membership_lines.generate,
+    "membership_lines_unicode": gen_membership_lines.generate_unicode,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -134,6 +137,7 @@ UNICODE_GATED = frozenset(
         "store_write",
         "store_tx",
         "store_records",
+        "membership_lines_unicode",
     }
 )
 

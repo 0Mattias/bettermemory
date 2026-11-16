@@ -36,6 +36,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
+| `printable`, `membership_lines` | `_printable.printable`, `quoted`; `membership_lines`' `folder_said`, `run_in`, `_named`, `_answer`, L1 to L10, `line_unresolved` and the lines without a number (all but `line_restated`) | `membership_lines.jsonl`, `membership_lines_unicode.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
@@ -1274,6 +1275,9 @@ that Unicode too.
 | `gitconfig_remote_rules_robustness` (2) | none | i |
 | `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
 | `capture_vocabulary_robustness` (5) | none | i |
+| `golden_membership_lines`: `membership_lines_every_case` | `membership_lines.jsonl` | i |
+| `golden_membership_lines`: `membership_lines_unicode_every_case` | `membership_lines_unicode.jsonl` | ii (Unicode) |
+| `membership_lines_robustness` (4) | none | i |
 | `golden_ulid`: `ulid_every_case`, `ulid_order_and_round_trip` | `ulid.jsonl` (the second none) | i |
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
@@ -3125,7 +3129,8 @@ release or platform, so no case is gated. Tests:
 thread, 10 MB texts and URLs, the native depth and digit limits at their
 boundaries).
 
-Left for later: part (c), `_printable` and `membership_lines`; the local
+Left for later: part (c) is built in "Text made safe to show" below,
+less `line_restated`; the local
 branch of `remote_key`, `_file_url_path`, the capture's discovery, its
 cache and `checkout_token`, which read files.
 
@@ -3305,6 +3310,183 @@ calls, classes ii: Unicode and pydantic-core gates, POSIX only as
 `store_tx.jsonl`; `store_records_not_posix.rs` records the gap);
 `store_records_cross.rs` (class i, both directions);
 `store_records_kills.rs` (120 kills, POSIX only); `store_records_robustness.rs`.
+
+## Text made safe to show, and the membership lines
+
+Read at 851c171d. `_printable.py` (128 lines) and `membership_lines.py`
+(660 lines). Nothing in either reads the machine: no clock, terminal
+width, locale, environment variable or file. Every function is a function
+of its arguments; the only data consulted is the Unicode database, through
+`printable` and `quoted`.
+
+### Design
+
+`_printable`:
+
+- `printable(text: str) -> str` (19-43): each character of category Cc,
+  Cf, Cs, Zl or Zp (`unicodedata.category`), the tab excepted, is written
+  as `ch.encode("unicode_escape")`: `\n`, `\r`, `\xNN` below U+0100,
+  `\uNNNN`, `\UNNNNNNNN`, lowercase hex; a lone surrogate is `\udNNN`.
+  Everything else is kept. No truncation (there is no length bound in
+  either module).
+- `_quote_like(ch, base)` (92-97): U+030B and U+030E are quote-like unless
+  `base` (the last character written that is not a mark) is
+  `str.isalnum`; otherwise a character is quote-like if it is in
+  `_QUOTE_LIKE` (`_QUOTATION_MARKS` and `_QUOTE_CONFUSABLES`, 38 code
+  points, 51-78) or of category Pi or Pf.
+- `quoted(text: str) -> str` (100-125): `json.dumps(printable(text),
+  ensure_ascii=False)` (escapes `"`, `\` and C0 controls), then each
+  quote-like character of that, its quotes included, as `json.dumps(ch)`
+  without its quotes (`\uNNNN`, a surrogate pair for an astral one);
+  `base` becomes the last character written unless its category starts
+  with M.
+
+Unicode data consulted: `unicodedata.category` (both), `str.isalnum` (the
+base of U+030B/U+030E). Not consulted: `str.isprintable`, `str.isspace`,
+east-asian width, normalisation.
+
+`membership_lines` (callers pass `str` for paths, names, ids and keys,
+`str(Path)` where they hold a path; `int` counts; tuples of `str`):
+
+- `folder_said(folder: str | None, ref: str | None)` (75-92): the lookup
+  command only when `ref` matches `[A-Za-z0-9_]+` (ASCII); the display
+  part only when `folder` is not None. `run_in` (95-97): `in` and that.
+- `_named(name, project_id)` (105-108): `quoted(name) (printable(id))`.
+- `_answer(question, answer, target=None, *, said=False)` (111-126):
+  `id=` only when `question` is truthy (an empty id is left out),
+  `target=` likewise, `said=` a fixed text.
+- L1 `line_first_sight(root, candidates: [(name, id)], evidence, *,
+  unwritten, filed, question)` (129-157); L2 `line_new(root, name,
+  project_id, *, previous: [(checkout, name, id)], unwritten)` (160-186);
+  L3 `line_file_contradiction` (189-204); L4 `line_joined(root, name,
+  project_id, codes)` (207-214: `WORDS[c] for c in sorted(codes) if c in
+  WORDS`, code-point order, duplicates kept); `line_alias_joined`
+  (217-237); `line_alias_held(..., where: (machine, path), shown)`
+  (240-271: `shown` less a leading `"bettermemory: "`, through
+  `printable`); L5 `line_remote_diverged` (274-291); L6 `line_legacy(...,
+  memories, episodes, ..., held, ..., recorded=None)` (294-318: `recorded`
+  None reads `memories`); L7 `line_subproject` (321-341); L8
+  `line_unreadable` (344-350); L9 `line_deferred` (353-360); L10
+  `line_import(name, source, candidates: [(name, id, codes)], *,
+  question)` (363-382: each candidate's codes sorted and joined by `+`,
+  the first candidate's id the join's target, none when there is none);
+  `line_unresolved` (385-404).
+- `REASON_SAID`, `REASON_UNNAMED`, `line_restated` (407-594): a question
+  shown again from its row, branching on the kinds of
+  `membership_records`, with sentence rewrites for another checkout.
+- The lines without a number (597-660): `line_folder_project`,
+  `line_new_folder`, `line_boundary_added`, `line_boundary_dropped`,
+  `line_across_boundary` (its `named` already `_named` spellings, through
+  `printable`), `line_content_crowded`.
+
+No line takes a reference object (a resolution, a proposal, a location):
+every argument is text, a count or a tuple of text, so the native
+functions take `&[u32]` (a `PyStr`), `i64` and three small structs for
+the tuples (below).
+
+### Cut
+
+Built: `_printable` whole (19-125) and `membership_lines` 66-405 and
+597-660, about 470 lines of logic. Left for the next unit:
+`REASON_SAID`, `REASON_UNNAMED` and `line_restated` (407-594). The cut is
+by dependency rather than top-down: every other function is a flat
+template over `quoted`, `printable`, `_named`, `_answer` and `run_in`;
+`line_restated` alone carries the reason table (which a Python test holds
+equal to every reason the package opens a question with), the question
+kinds and the "here"/"this" rewrites, and is the one function whose
+callers pass a stored row.
+
+### Built
+
+`printable` (`src/printable.rs`): `printable(&[u32]) -> PyStr`,
+`quoted(&[u32]) -> PyStr`, `printable_into`/`quoted_into` (appending),
+`unprintable(cp)`, `QUOTE_LIKE` (sorted) and `QUOTE_COMBINING`; the
+crate's Unicode 15.1.0 `category` and `is_alnum`.
+
+`membership_lines` (`src/membership_lines.rs`): `folder_said`, `run_in`,
+`named`, `answer`, `line_first_sight`, `line_new`,
+`line_file_contradiction`, `line_joined`, `line_alias_joined`,
+`line_alias_held` (`where` as `machine`, `path`), `line_remote_diverged`,
+`line_legacy`, `line_subproject`, `line_unreadable`, `line_deferred`,
+`line_import`, `line_unresolved`, `line_folder_project`,
+`line_new_folder`, `line_boundary_added`, `line_boundary_dropped`,
+`line_across_boundary`, `line_content_crowded`, and `WORDS`. An optional
+the reference tests by truth is `Option<&[u32]>` with `Some(empty)` read
+as absent; one it tests against None is not. Counts are `i64` (Python's
+are unbounded; the callers' are row counts). Plain structs, the
+reference's tuples: `Candidate { name, id }` (L1), `Previous { checkout,
+name, id }` (L2), `ImportCandidate { name, id, codes }` (L10).
+
+### Fixtures and tests
+
+`tests/contract/gen_membership_lines.py`, two generators:
+
+- `membership_lines.jsonl` (176,872 bytes, not gated, class i): the
+  tables (`_QUOTE_LIKE`, `_QUOTE_COMBINING`, `WORDS`); `printable` and
+  `quoted` of each of 372 single code points (Latin-1 whole: C0, DEL, C1,
+  NBSP, soft hyphen; bidirectional controls and isolates, zero-width
+  characters, variation selectors, U+2028/2029, non-characters, private
+  use, tags, the four surrogate bounds, the quote marks); 152 texts each
+  (each quote mark after a letter, a space and itself; U+030B/U+030E on 25
+  bases; hostile names; lengths 0 to 1,024; four long recipes); and 409
+  line cases, each argument varied one at a time from a base (empty,
+  hostile, absent, plurals 0, 1, 2, 3 and 10, 60 candidates, 200 names,
+  ints at the i64 bounds). Its texts use only code points whose category
+  and `isalnum` are the same from Unicode 14 to 16; identical under Python
+  3.11 (Unicode 14.0.0) and 3.13.
+- `membership_lines_unicode.jsonl` (43,001 bytes, gated on Unicode,
+  class ii): the first, middle and last code point of each category, alone
+  and before U+030B; and every code point U+0000 to U+10FFFF in 68 blocks
+  through `printable`, `quoted`, and `quoted` with U+030B after each
+  (SHA-256). It differs under 3.11.
+
+Tests: `golden_membership_lines` (`membership_lines_every_case`: 1,457
+cases, class i; `membership_lines_unicode_every_case`: 462, class ii);
+`membership_lines_robustness` (5, class i: 1 MiB texts with exact output
+lengths; at 64 KiB, 256 KiB and 1 MiB the output of `printable_into` and
+`quoted_into` is the length the per-character rule gives and the buffer's
+capacity at most twice it, which checks linear work without a clock; every code point once with no Cc/Cf/Cs/Zl/Zp or quote-like
+character surviving, million-mark combining runs, 100,000 names,
+candidates and codes with lengths linear by count).
+
+Finding (reproduced at 3.13.13, pinned in both fixtures): `quoted`'s
+`base` is the last character *written* (`_printable.py` 122-124), so
+after an escape it is the escape's last hex digit or letter, which is
+alphanumeric. A U+030B or U+030E right after an escaped quote, an escaped
+control or another escaped U+030E is kept raw, drawn as a double mark over
+that digit: `quoted("”̋")` is `"”̋"`, and `quoted(" " +
+"̎" * 3)` escapes the first mark and keeps the other two. The value
+still cannot close its own quote (the `"` is always escaped), but a
+double-quote-like mark appears raw where the rule meant to escape it.
+
+Known and reproduced (a reviewer's, being filed; pinned in
+`membership_lines.jsonl` as the reference behaves, every code point
+involved stable from Unicode 14 to 16):
+
+- `quoted` is not injective: a control character and the ASCII spelling of
+  its escape print the same (`quoted("\n")` and `quoted("\\n")` are both
+  `"\\n"`; likewise ESC and `\x1b`, U+202E and `\u202e`).
+- Characters drawn like a double quote but outside `_QUOTE_LIKE` and not
+  Pi or Pf come through raw: U+275D, U+275E, U+1F676 to U+1F678, U+2057,
+  U+2034, U+05F3.
+- Invisible characters not of category Cc, Cf, Cs, Zl or Zp come through
+  raw: U+3164, U+115F, U+FFA0, U+2800, U+034F, U+17B4.
+
+### Not ported, or not expressible natively
+
+- Counts are `i64`. The reference prints any Python int with `str()`, and
+  a bool as `True`/`False`. The real callers pass `int(...)`, `len(...)`
+  or a constant, but a count read from an edited store can exceed i64: the
+  native caller must then refuse the value (or clamp it and say so) before
+  calling, since the line cannot spell it; a bool is never a count there.
+- `line_import`'s codes: the reference iterates whatever it is given, and
+  `membership_queries` passes what stored JSON holds, so a stored string
+  `"HO"` gives `H+O`. The native function takes a list of texts; the
+  native caller must turn a stored string into its characters (one text
+  each) before calling.
+- None where a str is expected raises (TypeError or AttributeError) in the
+  reference; the native signatures take `&[u32]` there, so that call
+  cannot be written.
 
 ## Not built yet
 
