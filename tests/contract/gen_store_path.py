@@ -330,9 +330,12 @@ def _store_dump(
     from .gen_log import STORE_ID
     from .gen_store_files import MEMBERSHIP_ID, dump
 
-    copy = tmp / f"dump-{name}" / "memory.sqlite"
-    copy.parent.mkdir()
-    keys = tmp / f"dump-{name}" / "keys"
+    # A directory of its own, never named after the case: a case's name
+    # may hold what a file name cannot on Windows (a colon, CI run
+    # 43789459358).
+    folder = Path(tempfile.mkdtemp(prefix="dump-", dir=tmp))
+    copy = folder / "memory.sqlite"
+    keys = folder / "keys"
     keys.mkdir()
     target = sqlite3.connect(copy)
     store._conn.backup(target)
@@ -389,8 +392,7 @@ def _store_dump(
     with store._conn:
         for sql in recipe:
             store._conn.execute(sql)
-    rebuilt = tmp / f"rebuilt-{name}" / "memory.sqlite"
-    rebuilt.parent.mkdir()
+    rebuilt = Path(tempfile.mkdtemp(prefix="rebuilt-", dir=tmp)) / "memory.sqlite"
     conn = rebuild_store(schema, tables, recipe, rebuilt)
     try:
         here = _Conn(conn)
@@ -761,7 +763,9 @@ def _put_note(store: Store, k: int, home: Any) -> None:
 def _new_store(
     tmp: Path, name: str, names: Sequence[str]
 ) -> tuple[Store, Config, dict[str, Any]]:
-    store = Store.create(tmp / f"store-{name}", keys_dir=tmp / f"keys-{name}")
+    # Directories of their own, never named after the case (see _store_dump).
+    root = Path(tempfile.mkdtemp(prefix="store-", dir=tmp))
+    store = Store.create(root / "store", keys_dir=root / "keys")
     cfg = Config(
         storage=StorageConfig(directory=str(store.path.parent)),
         behavior=BehaviorConfig(),
