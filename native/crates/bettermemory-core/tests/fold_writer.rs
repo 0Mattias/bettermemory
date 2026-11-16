@@ -7,7 +7,10 @@
 //! no second pass and cannot end in "kept changing"). A store tampered
 //! behind the log while the writer runs reports `tampered` every time.
 //! Each test stops after a fixed number of verifies, whatever the
-//! machine's speed. And timings (ignored): what the fold's final snapshot
+//! machine's speed. The verifies start once the writer has committed, so
+//! the store is read in place; a reader that took a private copy of a
+//! closed store before a writer started has its own test: its report is
+//! "kept changing", never tampered, and ok when the store is opened again. And timings (ignored): what the fold's final snapshot
 //! costs a writer on a rollback-journal store.
 
 mod common;
@@ -15,7 +18,7 @@ mod common;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -157,15 +160,24 @@ fn under_writer(dir: &Path, reads: usize, every: Duration, per: usize) -> Run {
     let keys = dir.join("keys");
     let key = Key::new(fs::read(keys.join(format!("{STORE_ID}.key"))).expect("key"));
     let stop = Arc::new(AtomicBool::new(false));
+    let commits = Arc::new(AtomicUsize::new(0));
     let writer = {
         let (store, keys, stop) = (dir.join("memory.sqlite"), keys.clone(), stop.clone());
+        let commits = commits.clone();
         std::thread::spawn(move || {
             let conn = rusqlite::Connection::open(&store).expect("writer");
             conn.busy_timeout(Duration::from_secs(30)).expect("busy");
+            // A scratch store: a commit that syncs holds the write lock
+            // for the length of the sync, and on a rollback-journal store
+            // on Windows that starved the reader's open (CI run
+            // 43797351206).
+            conn.execute_batch("PRAGMA synchronous = OFF")
+                .expect("synchronous");
             let mut latencies = Vec::new();
             let mut n = 0;
             while !stop.load(Ordering::Relaxed) {
                 latencies.push(write_one(&conn, &key, &keys, n, per));
+                commits.fetch_add(1, Ordering::Relaxed);
                 n += 1;
                 if !every.is_zero() {
                     std::thread::sleep(every);
@@ -174,12 +186,40 @@ fn under_writer(dir: &Path, reads: usize, every: Duration, per: usize) -> Run {
             (n * per, latencies)
         })
     };
+    // The writer has the store open and has committed: a WAL store has its
+    // `-wal` and `-shm`, so every open below reads it in place.
+    while commits.load(Ordering::Relaxed) == 0 {
+        std::thread::sleep(Duration::from_millis(1));
+    }
     let mut outcomes = BTreeMap::new();
     let mut hold = Duration::ZERO;
     for _ in 0..reads {
-        let store = StoreFile::open(&dir.join("memory.sqlite")).expect("open");
+        let store = open_under_writer(&dir.join("memory.sqlite"));
         let outcome = match store.log_verify_loading(&mut loader(keys.clone())) {
-            Ok(r) => r.status.to_owned(),
+            Ok(r) => {
+                if r.status != "ok" {
+                    // What a run on another machine needs to be read by.
+                    eprintln!(
+                        "not ok: {} | read from a copy: {} | {} problems | fold {}",
+                        r.status,
+                        store.reads_a_copy(),
+                        r.problems.len(),
+                        r.fold.status
+                    );
+                    for t in r.fold.tables.iter().chain(&r.fold.membership) {
+                        if !t.unaccounted.is_empty() || !t.missing.is_empty() {
+                            eprintln!(
+                                "  {}: {} unaccounted, {} missing, {} rows",
+                                t.table,
+                                t.unaccounted.len(),
+                                t.missing.len(),
+                                t.rows
+                            );
+                        }
+                    }
+                }
+                r.status.to_owned()
+            }
             Err(FoldError::Store(StoreError::KeptChanging)) => "kept_changing".to_owned(),
             Err(e) => format!("error: {e}"),
         };
@@ -194,6 +234,22 @@ fn under_writer(dir: &Path, reads: usize, every: Duration, per: usize) -> Run {
         written,
         latencies,
     }
+}
+
+/// Open the store while a writer commits. On a rollback-journal store a
+/// reader waits for the writer's lock, and the wait counts toward the 2 s
+/// a store file is given to be admitted: an open that ran out of them is
+/// tried again (a reader kept out, not a report).
+fn open_under_writer(store: &Path) -> StoreFile {
+    let mut last = None;
+    for _ in 0..20 {
+        match StoreFile::open(store) {
+            Ok(store) => return store,
+            Err(StoreError::Admission(r)) if r.timed_out => last = Some(r.why),
+            Err(e) => panic!("open: {e}"),
+        }
+    }
+    panic!("open: kept out 20 times: {last:?}");
 }
 
 fn set_mode(dir: &Path, mode: &str) {
@@ -276,6 +332,73 @@ fn a_store_tampered_under_a_writer_ends_tampered() {
             run.outcomes
         );
     }
+}
+
+/// A reader that copied a closed WAL store before a writer started: the
+/// head file then names a row the copy lacks. That is no tampering: the
+/// check ends "kept changing", and the store opened again reads ok. (On
+/// the Linux runner this was read as tampered once in eight verifies, CI
+/// run 43797351206.)
+#[test]
+fn a_copy_taken_before_a_writer_started_is_not_called_tampered() {
+    let dir = populated();
+    set_mode(&dir.0, "wal");
+    let keys = dir.0.join("keys");
+    let key = Key::new(fs::read(keys.join(format!("{STORE_ID}.key"))).expect("key"));
+    let store = StoreFile::open(&dir.0.join("memory.sqlite")).expect("open");
+    assert!(store.reads_a_copy(), "a closed WAL store is read as a copy");
+    assert!(!store.written_since_copied());
+    let conn = rusqlite::Connection::open(dir.0.join("memory.sqlite")).expect("writer");
+    write_one(&conn, &key, &keys, 0, 3);
+    assert!(store.written_since_copied());
+    match store.log_verify_loading(&mut loader(keys.clone())) {
+        Err(FoldError::Store(StoreError::KeptChanging)) => {}
+        other => panic!("a copy behind the head: {:?}", other.map(|r| r.status)),
+    }
+    match store.verify_loading(None, &mut loader(keys.clone())) {
+        Err(bettermemory_core::log::VerifyError::Source(StoreError::KeptChanging)) => {}
+        other => panic!("a copy behind the head, chain only: {:?}", other.is_ok()),
+    }
+    drop(store);
+    // Read in place while the writer has it open, and as a copy once the
+    // writer is gone: ok both times.
+    let again = StoreFile::open(&dir.0.join("memory.sqlite")).expect("open again");
+    assert!(
+        !again.reads_a_copy(),
+        "the writer's -wal and -shm are there"
+    );
+    let report = again
+        .log_verify_loading(&mut loader(keys.clone()))
+        .expect("report");
+    assert_eq!(report.status, "ok");
+    drop(again);
+    drop(conn);
+    let closed = StoreFile::open(&dir.0.join("memory.sqlite")).expect("open closed");
+    assert!(closed.reads_a_copy());
+    let report = closed
+        .log_verify_loading(&mut loader(keys.clone()))
+        .expect("report");
+    assert_eq!(report.status, "ok");
+}
+
+/// The other side: a copy whose source nobody wrote since keeps its
+/// report. The log's last row removed from a closed store reads tampered.
+#[test]
+fn a_copy_of_a_store_whose_tail_was_removed_reads_tampered() {
+    let dir = populated();
+    set_mode(&dir.0, "wal");
+    let keys = dir.0.join("keys");
+    let conn = rusqlite::Connection::open(dir.0.join("memory.sqlite")).expect("open");
+    conn.execute("DELETE FROM log WHERE seq = (SELECT max(seq) FROM log)", [])
+        .expect("remove the tail");
+    drop(conn);
+    let store = StoreFile::open(&dir.0.join("memory.sqlite")).expect("open");
+    assert!(store.reads_a_copy());
+    assert!(!store.written_since_copied());
+    let report = store
+        .log_verify_loading(&mut loader(keys.clone()))
+        .expect("report");
+    assert_eq!(report.status, "tampered");
 }
 
 /// The writer's commit latency (median, p99, worst) while native log

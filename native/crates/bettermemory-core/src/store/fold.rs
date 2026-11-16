@@ -1968,6 +1968,13 @@ impl StoreFile {
                     }
                 }
             }
+            if let (Ok(c), Ok(f)) = (&chain, &loaded.pass.fold) {
+                // A private copy cannot be read forward: a head that moved
+                // with a writer after the copy was taken is no tampering.
+                if f.status == "ok" && self.copy_is_behind(c) {
+                    return Err(FoldError::Store(StoreError::KeptChanging));
+                }
+            }
             return chain.and_then(|c| merge(c, loaded.pass.fold?, &loaded.id, &loaded.fp));
         }
         Err(FoldError::Store(StoreError::KeptChanging))

@@ -607,6 +607,19 @@ then to the replay).
   the load included, in one read transaction. The head file is outside
   SQLite: if it names a row past the snapshot that the log now holds and
   the report is otherwise clean, the pass runs again.
+- A private copy cannot be read forward. A closed WAL store is read as a
+  copy; when a writer opens the store after the copy was taken and moves
+  the head file, the head names a row the copy lacks. That is no
+  tampering: when the report's only complaint is that head, and the store
+  or its `-wal` is no longer what was copied (or a writer's `-shm` is
+  there now), the check ends "kept changing" (`StoreError::KeptChanging`,
+  `bm-verify` exit 3) and the store opened again reads the writer's rows
+  in place. A copy whose source nobody wrote keeps its report: a tail
+  removed from a closed store reads `tampered`. (Found on the Linux
+  runner, CI run 43797351206: one verify in eight read `tampered` when it
+  copied the closed store just before the test's writer made its first
+  commit. The reference's read-only commands copy a closed store the same
+  way and read the head file later, so they can report this as tampered.)
 
 What the report describes, in plain words:
 

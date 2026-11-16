@@ -557,7 +557,10 @@ fn copy_unnamed(source: &Path, dir: &Path) -> io::Result<(PathBuf, fs::File)> {
 
 /// `_snapshot`: (dir, copy, whether a -wal came, whether the copy has a
 /// name), or None when a file changed while it was copied or vanished.
-fn snapshot(path: &Path) -> Result<Option<(Scratch, PathBuf, bool, bool)>, StoreError> {
+#[allow(clippy::type_complexity)]
+fn snapshot(
+    path: &Path,
+) -> Result<Option<(Scratch, PathBuf, bool, bool, (Stamp, Stamp))>, StoreError> {
     let wal = beside(path, "-wal");
     let before = (stamp(path)?, stamp(&wal)?);
     let scratch = private_dir()?;
@@ -598,7 +601,7 @@ fn snapshot(path: &Path) -> Result<Option<(Scratch, PathBuf, bool, bool)>, Store
         let _ = fs::remove_dir_all(&dir);
         return Ok(None);
     }
-    Ok(Some((scratch, copy, before.1.is_some(), named)))
+    Ok(Some((scratch, copy, before.1.is_some(), named, before)))
 }
 
 /// `sqlite_file_uri`: `file:` and the absolute path, percent-encoded.
@@ -651,6 +654,9 @@ pub struct StoreFile {
     /// the connection closes.
     hold: Option<restore_lock::ReadHold>,
     longest_hold: std::cell::Cell<std::time::Duration>,
+    /// When a private copy is read: the file it was taken from and what
+    /// that file and its `-wal` looked like then ([`stamp`]).
+    copied: Option<(PathBuf, (Stamp, Stamp))>,
 }
 
 impl Drop for StoreFile {
@@ -725,11 +731,13 @@ impl StoreFile {
             let mut query = "mode=ro";
             let mut has_wal = false;
             let mut named = false;
+            let mut copied = None;
             if !live && (wal.exists() || says_wal(&resolved)?) {
-                let Some((taken, copy, with_wal, with_name)) = snapshot(&resolved)? else {
+                let Some((taken, copy, with_wal, with_name, stamps)) = snapshot(&resolved)? else {
                     continue;
                 };
                 named = with_name;
+                copied = Some((resolved.clone(), stamps));
                 scratch = Some(taken);
                 target = copy;
                 has_wal = with_wal;
@@ -751,6 +759,7 @@ impl StoreFile {
                 path: path.to_path_buf(),
                 hold: hold.take(),
                 longest_hold: Default::default(),
+                copied,
             };
             let mut conn = Connection::open_with_flags(&uri, flags)?;
             conn.busy_timeout(BUSY_TIMEOUT)?;
@@ -1357,6 +1366,9 @@ impl StoreFile {
             match report {
                 Err(VerifyError::Source(StoreError::Changed)) if batched => changed = true,
                 Ok(report) if batched && self.head_moved_on(&report, &ring)? => {}
+                Ok(report) if self.copy_is_behind(&report) => {
+                    return Err(VerifyError::Source(StoreError::KeptChanging));
+                }
                 other => return other,
             }
         }
@@ -1373,14 +1385,7 @@ impl StoreFile {
     ) -> Result<bool, VerifyError<StoreError>> {
         // A row, segment or origin problem is no writer's doing: another
         // pass cannot heal it, so the report stands.
-        if !report.problems.is_empty() {
-            return Ok(false);
-        }
-        let tail_deleted = report.head.iter().any(|(k, v)| {
-            *k == "status"
-                && matches!(v, crate::log::ReportValue::Str(s) if *s == unicode::cps("tail_deleted"))
-        });
-        if !tail_deleted {
+        if !Self::only_the_head_is_ahead(report) {
             return Ok(false);
         }
         let Some(head) = ring.read_head()? else {
@@ -1394,6 +1399,41 @@ impl StoreFile {
         };
         let row = self.at_seq(seq).map_err(VerifyError::Source)?;
         Ok(row.is_some_and(|r| unicode::cps(&r.mac) == head.mac))
+    }
+
+    /// The report has no row, segment or origin problem and its head reads
+    /// `tail_deleted`: the head file names a row past the log as read.
+    fn only_the_head_is_ahead(report: &crate::log::ChainReport) -> bool {
+        report.problems.is_empty()
+            && report.head.iter().any(|(k, v)| {
+                *k == "status"
+                    && matches!(v, crate::log::ReportValue::Str(s) if *s == unicode::cps("tail_deleted"))
+            })
+    }
+
+    /// The store was written after the private copy this reader holds was
+    /// taken: the file or its `-wal` is no longer what was copied, or a
+    /// writer's `-shm` is there now.
+    pub fn written_since_copied(&self) -> bool {
+        let Some((source, taken)) = &self.copied else {
+            return false;
+        };
+        let wal = beside(source, "-wal");
+        let now = match (stamp(source), stamp(&wal)) {
+            (Ok(a), Ok(b)) => (a, b),
+            _ => return true,
+        };
+        now != *taken || beside(source, "-shm").exists()
+    }
+
+    /// A private copy is read, its only complaint is a head file naming a
+    /// row past the copy's log, and the store was written since the copy
+    /// was taken: the head moved with a writer, and nothing says the log's
+    /// tail was removed. The copy cannot be read forward, so the check
+    /// ends [`StoreError::KeptChanging`]: open the store again. A copy
+    /// whose source did not change keeps its report (`tail_deleted`).
+    pub(crate) fn copy_is_behind(&self, report: &crate::log::ChainReport) -> bool {
+        self.copied.is_some() && Self::only_the_head_is_ahead(report) && self.written_since_copied()
     }
 
     /// Whether `verify_chain` reads the log in batches: the file is read

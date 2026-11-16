@@ -60,6 +60,11 @@ pub fn rebuild(base: &Value, case: &Path) {
         base["page_size"].as_i64().expect("page_size")
     ))
     .expect("page size");
+    // A scratch store: no commit needs to reach the disk. On the Windows
+    // runner a sync per statement made the fold fixture's rebuilds take
+    // over two minutes (CI run 43797351206).
+    conn.execute_batch("PRAGMA synchronous = OFF")
+        .expect("synchronous");
     for statement in base["statements"].as_array().expect("statements") {
         conn.execute_batch(statement.as_str().expect("sql"))
             .unwrap_or_else(|e| panic!("{e}: {statement}"));
@@ -84,6 +89,8 @@ pub fn apply(recipe: &[Value], case: &Path) {
     for op in recipe {
         if let Some(sql) = op.get("sql") {
             let conn = Connection::open(case.join("memory.sqlite")).expect("open");
+            conn.execute_batch("PRAGMA synchronous = OFF")
+                .expect("synchronous");
             conn.execute_batch(sql.as_str().expect("sql"))
                 .expect("recipe sql");
         } else if let Some(pattern) = op.get("unlink") {
