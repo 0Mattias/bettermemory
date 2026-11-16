@@ -10,6 +10,7 @@ pub mod githead;
 pub mod opened;
 pub mod parity;
 pub mod record_calls;
+pub mod rows;
 pub mod stores;
 pub mod txs;
 pub mod written;

@@ -36,6 +36,7 @@ use super::write::{
     before, candidates, is_active, last_row, load_current, move_head, native_origin, pending_is,
     py_error, HeadMove, WriteBoundary, WriteError, WriteNotPorted, KINDS, SUPERSEDES,
 };
+use crate::datetime::DateTime;
 use crate::log::{fingerprint, next_row, Key, LogRow};
 use crate::pyvalue::PyValue;
 
@@ -237,7 +238,7 @@ impl Transaction<'_> {
 
     /// The wall clock, read once (`datetime.now` as a writer reads it,
     /// `tombstone`'s removal time among them).
-    pub fn wall_now(&mut self) -> Result<crate::datetime::DateTime, WriteError> {
+    pub fn wall_now(&mut self) -> Result<DateTime, WriteError> {
         self.provider.wall_now().map_err(WriteError::Clock)
     }
 
@@ -395,6 +396,20 @@ impl Transaction<'_> {
             }
             Ok(row)
         })
+    }
+
+    /// `_mutate` for `home_put` and `standing_put`, the rows only
+    /// [`super::home`]'s functions append (a direct [`Transaction::mutate`]
+    /// refuses them as not ported): the row appended and applied under a
+    /// savepoint of its own. Neither kind names a record for `settle`.
+    pub(crate) fn mutate_home_or_standing(
+        &mut self,
+        kind: &'static str,
+        payload: &PyValue,
+        session: Option<&str>,
+    ) -> Result<LogRow, WriteError> {
+        debug_assert!(matches!(kind, "home_put" | "standing_put"));
+        self.step(|tx| tx.write_row(kind, payload, session))
     }
 
     /// `body` under a savepoint of this build's own: on failure the rows,

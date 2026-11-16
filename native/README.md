@@ -1919,7 +1919,8 @@ In scope (`write::KINDS`): `memory_*`, `tombstone_*`, `episode_*`,
 `verification_*`, `conflict_*`, `import_*`, `quarantine_*` (put and
 delete): `RECORD_MUTATION_KINDS`, on which `_mutate` does the row and its
 table effects and nothing else, but for the `returned` marks below. Not in
-scope, refused as `NotPorted::Kind` before anything: every membership kind
+scope, refused as `NotPorted::Kind` before anything (`home_put` and
+`standing_put` are written only through `store::home`): every membership kind
 (`machine`, `project*`, `declared_remote`, `checkout*`, `home`,
 `proposal`, `standing`, `returned`, `native_member`), each with rules of
 its own in the public API, and any other text.
@@ -3488,14 +3489,197 @@ involved stable from Unicode 14 to 16):
   reference; the native signatures take `&[u32]` there, so that call
   cannot be written.
 
+## The store's row writers
+
+`store::home` (`src/store/home.rs`) and `store::tables`
+(`src/store/tables.rs`): a record's home, a standing answer, the episode
+journal's writers and the verification, conflict, import and quarantine
+writers. Reference read at faa1b32e; line numbers are that commit's.
+
+### The design (what each reads, decides, appends, mints, returns)
+
+Every refusal below is `WriteError::Refused { class, text }` with the
+reference's class and `str(exc)`, raised before anything is appended (or,
+inside a transaction, rolled back with it). `NotFoundError` is a
+`KeyError`, so its text is the key's `repr` (`'x'`, or `('m', None)` for a
+verification), reproduced with the crate's `repr`.
+
+- `Store._home_row(record_id, kind, home)` (`store.py` 1459-1497) is
+  `home::home_row(tx, record_id, kind, Option<&Home>) ->
+  Result<Option<PyValue>, WriteError>`. No home: None, nothing read. A
+  project that is not a non-empty `str`: `ValueError` "a home names a
+  project (or global)"; then a rule likewise: "a home names the rule that
+  decided it" (the project is checked first). Reads `SELECT project,
+  checkout, rule FROM homes WHERE record_id = ?` through
+  `tx.connection()`. A row equal as a Python tuple (column values against
+  the caller's, `==`): None, nothing written. Any other row: `ValueError`
+  "{id} already has a home; a home is written once". Else the row
+  `{record_id, kind, project, checkout, rule, decided}`, `decided` the
+  wall clock read once (`datetime.now` in `store`).
+  `home::put_home(tx, &row, session)` appends `home_put {"home": row}`.
+- `_standing_row(memory, answer)` (`store_records.py` 202-222) is
+  `home::standing_row(tx, record_id, body, &Answer) -> Result<PyValue, _>`.
+  A probability that is a `bool` or not an `int`/`float`, not finite or
+  outside 0 to 1: `ValueError` "a standing answer is a probability from 0
+  to 1" (an `int` too large for a float: `OverflowError` "int too large to
+  convert to float", from `float()`); a falsy source or giver:
+  `ValueError` "a standing answer names its source and who gave it". The
+  row `{record_id, probability: float(p), body_sha256: sha256 of the
+  stored body's UTF-8, source, answered_by, answered}`, `answered` the
+  wall clock read once, after the checks. `home::put_standing_row` appends
+  `standing_put {"standing": row}`.
+- `put_standing(record_id, answer, session=)` (225-239) is
+  `WritableStore::put_standing(&str, &Answer, session, provider) ->
+  (row, Committed)`: one transaction; `get_memory` under the lock
+  (`home::get_memory`: `_MEMORY_SELECT ... WHERE id = ?`, the row read by
+  `records::rows::memory`; none: `NotFoundError(id)`, checked before the
+  answer), the row, `standing_put`. Returns the row.
+- `put_episode(episode, session=, home=)` (`store_journal.py` 44-59):
+  `WritableStore::put_episode(&Episode, session, Option<&Home>, provider)
+  -> (Episode, Committed)`: one transaction; `_home_row(id, "episode",
+  home)`, then `episode_put {"episode": model_dump(mode="json")}`, then
+  `home_put` when a row was decided. Returns the episode.
+- `delete_episode(id, session=)` (87-90): `_require_row(episodes, id)`
+  (`NotFoundError(id)`), then `episode_delete {"id"}`. Returns None.
+- `write_episode(*, session_id, body, scopes, takeaway, swarm_id, origin,
+  now, home)` (96-122): `EpisodeArgs` plus `now: Option<DateTime>` and
+  the home. A falsy body, or a `str` body blank after `strip()`:
+  `ValueError` "episode body must be a non-empty string"; a truthy body
+  that is not a `str`: `AttributeError` "'int' object has no attribute
+  'strip'" (nothing minted or read in either case). Then, in the
+  constructor's argument order: the mint once (`generate_ulid`), the wall
+  clock once unless `now` is given (`utcnow`), the body stripped plus a
+  newline, `list(scopes or [])` (a `str` gives its characters, a dict its
+  keys, any other truthy non-iterable `TypeError` "'int' object is not
+  iterable"), the takeaway stripped when truthy (a truthy non-`str`:
+  `AttributeError`), then `Episode(...)` (a ValidationError's first line,
+  "1 validation error for Episode"). Then `put_episode` with
+  `session=session_id`. Returns the episode.
+- `write_floor(*, session_id, origin, now, home)` (125-146): the mint,
+  the wall clock unless `now`, the floor episode (`is_floor`, its fixed
+  body), `put_episode`.
+- `put_verification(memory_id, *, verified_at, ...)` (`store_tables.py`
+  36-72): `Verification`; the payload `{memory_id, machine_id,
+  verified_at: verified_at.isoformat(), verified_head, the four lists}`
+  plus each target map when given (`dict(targets)`); `verification_put`.
+  No check of its own: the fold refuses what the payload cannot hold.
+- `delete_verification(memory_id, *, machine_id=)` (111-133): a row whose
+  `COALESCE(machine_id, '')` matches, else `NotFoundError((memory_id,
+  machine_id))`; `verification_delete`.
+- `put_conflict(record)` (137-145): the record's `_CONFLICT_COLUMNS`
+  (`record.get`, None when absent; a record that is not a dict:
+  `AttributeError` "'list' object has no attribute 'get'"); a falsy `id`,
+  `a_id`, `b_id`, in that order: `ValueError` "a conflict needs {name}",
+  before the transaction; `conflict_put`. `delete_conflict` (157-162).
+- `put_import` / `delete_import` (165-196), `put_quarantine` /
+  `delete_quarantine` (199-236): the payload as given, one mutation; the
+  deletes `_require_row` first.
+
+Every table writer and episode writer is one transaction on the
+`WritableStore` and returns what the reference returns with the
+`Committed` rows and head. No writer here names a record for the
+`returned` settle (only memory kinds do).
+
+The clocks and the mint, per call (what the fixture replays exactly):
+`home` (a decided row) reads the wall clock once; `put_standing` once;
+`write_episode` and `write_floor` mint one id and read the wall clock
+once unless `now` is given, plus once more for a decided home; every
+appended row reads the log clock once, and the head's move once more. The
+provider's mint is `Provider::ulid` (`src/store/create.rs`): by default
+`create::system_ulid()` (the system clock's seconds through
+`create::ulid_millis`, which is `mint::millis`: wrapped at 48 bits, an
+infinite time the reference's OverflowError and NaN its ValueError, as an
+error naming the class; then ten OS bytes through `mint::ulid`, as `generate_ulid`
+reads `time.time()` apart from both clocks); `Fixed` mints the constant
+id of millisecond 0 and ten zero bytes (the create and open fixtures never
+mint); `Clocks` passes to its inner provider. `utcnow` is the wall clock
+(`wall_now`), the same read: it has no method of its own.
+
+`home_put` and `standing_put` are written only through these functions
+(`Transaction::mutate_home_or_standing`, crate-private); a direct
+`Transaction::mutate("home_put", ...)` is still refused as not ported. In
+the reference `_mutate` is private and its only callers with these kinds
+are `put_memory`, `put_episode` and `put_standing`: no public caller
+reaches it otherwise.
+
+Another writer calls them inside its own transaction: `let row =
+home::home_row(&mut tx, id, "memory", home)?;` before its record's rows,
+then `home::put_home(&mut tx, &row, session)?` after them (as
+`_put_memory` does), and `home::standing_row(&mut tx, &id, &body,
+&answer)?` / `home::put_standing_row`. Run in a `tx.scope(..)`, a refusal
+rolls back that scope only.
+
+Not ported, refused with nothing written: `prune_episode_sessions`
+(chunked, its own unit), and whatever a transaction refuses (membership
+kinds, a native-path origin, a rekeyed store). Not expressible:
+`write_episode` and `write_floor` take `now` as `Option<DateTime>`, so a
+falsy or non-datetime `now`, which the reference passes through `now or
+utcnow()` and then pydantic, cannot be given natively.
+
+A refusal that quotes a type (`'int' object has no attribute 'strip'`,
+`... 'get'`, `... is not iterable`) spells it as CPython's messages do
+(`tp_name`): `NoneType`, `bool`, `int`, `float`, `str`, `list`, `tuple`,
+`dict`, `PurePosixPath`, and `datetime.datetime` for a datetime (where
+`type(x).__name__` is `datetime`), each checked against the reference.
+
+Reference findings (pinned in the fixture, not changed): (1) a home whose
+checkout is not a `str` (an int, say) is stored by the `TEXT` column as
+text, so the same home written again compares unequal and is refused as
+"already has a home" (`store.py` 1480-1491; case `homes`, steps 12-15).
+(2) `put_verification` takes any item types in its lists
+(`store_tables.py` 54-62; `verified_paths=[1, 2]` writes). (3) a standing
+row's source and giver are not type-checked by `_standing_row`
+(`store_records.py` 214); a `bool` or `int` giver is stored as given,
+and a list, float or other giver is refused only by the fold
+(`TypeError`), after the wall clock was read and the row appended (case
+`type_names`).
+
+Pinned natively only, since the fixture's JSON cannot carry them: a NaN
+or infinite probability (`ValueError` "a standing answer is a probability
+from 0 to 1", the reference's text, established by running it), and
+arguments nested 9,998 and 100,000 deep. For those the reference was run
+at both depths in a child process (it did not crash for any shape tried):
+`session_id`, `scopes`, `swarm_id` and `origin` give pydantic's "1
+validation error for Episode", `body` and `takeaway` `.strip()`'s
+AttributeError, a probability the range ValueError, and every value that
+reaches the payload's encoder (a home's checkout, a standing source or
+giver, any quarantine, import, conflict or verification field) is
+RecursionError, with nothing written. `PyValue`'s `Clone`, `PartialEq` and
+`Debug` are iterative (`src/pyvalue.rs`), so no copy or comparison on the
+way overflows the stack.
+
+### Tests
+
+| test | what | class |
+| --- | --- | --- |
+| `golden_store_rows_written.rs` | `store_rows_written.jsonl` (9 cases, 153 calls, 167 KB; Unicode and pydantic-core gated, POSIX only, as `store_tx.jsonl` is and for its reasons): per call the returned value or the refusal, every clock reading and minted id read once, the order of all reads (one sequence of `log`, `wall` and `mint` per call; swapping the mint and the wall read in `write_episode` or `write_floor` fails it), the rows byte for byte, the whole state's digest, the head, FTS5 hits; a refold per case | ii |
+| `store_rows_written_not_posix.rs` | the fixture's gap elsewhere | os |
+| `store_rows_written_cross.rs` | native writes every writer's rows; the reference verifies, refolds and reads them, writes on top; native verifies and continues; the reverse from a store the reference wrote | i |
+| `store_rows_written_kills.rs` | 120 kills (every provider read of four calls by abort and exit, 60 timed), WAL and rollback journal, both builds verify, the head never ahead | i |
+| `store_rows_written_robustness.rs` | 18 hostile values in every argument, ids that are not ids, an 8 MiB body, `homes` and `standing` altered under the writer: typed errors with nothing written, no panic; each type's name in each refusal that quotes one, by text; `create::ulid_millis` wrapping at 48 bits and refusing an infinite or NaN time as the reference; NaN and infinite probabilities by text; every argument position nested 9,998 and 100,000 deep on a 512 KiB stack: the reference's refusal, nothing written, the store verifies | i |
+
+The fixture's cases: homes (new, the same again, another, each refusal,
+a non-`str` checkout); standing at 0, 1, between, out of range, a `str`,
+None, `bool`s, a 401-digit int, falsy source and giver, a missing record,
+over bodies needing the strip and newline; `put_episode` with and without
+a home, the same home again, another home, a refused home;
+`delete_episode` present and missing; `write_episode` with empty, blank,
+None, 0, `int` and list bodies, with and without `now` and a home,
+takeaways, scopes as a `str` and an `int`, validation refusals;
+`write_floor`; verifications put, re-put, per machine, deleted, missing;
+conflicts, imports and quarantine put, re-put, deleted, missing, refused;
+rollback-journal mode; the `homes` and `standing` tables dropped; every
+type as a body, scopes, a takeaway, a conflict record and a standing giver.
+
 ## Not built yet
 
 The store's writes past `create`, the writing open's plain states and
-the write transaction (`mutate`, `begin`, its `returned` marks) and
-`put_memory`, `tombstone`, `delete_tombstone`: the rest of the public
-record API (`write`, `update`, `mark_verified`, `record_corroboration`,
+the write transaction (`mutate`, `begin`, its `returned` marks),
+`put_memory`, `tombstone`, `delete_tombstone` and the row writers
+(`store::home`, `store::tables`): the rest of the public record API
+(`write`, `update`, `mark_verified`, `record_corroboration`,
 `put_tombstone`, `restore` with relink, `rename_scope`, the prunes, `batch`,
-provenance, homes and standing answers), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
+provenance, and `put_memory`'s homes and standing answers), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
 restore's rows, re-spelling the index), membership's writes and
 the caller's resolution (its admission is `store::caller`), and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's

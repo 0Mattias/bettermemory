@@ -14,7 +14,11 @@ use crate::unicode;
 pub type PyStr = Vec<u32>;
 
 /// A Python value as the JSON writers and readers of the reference meet it.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `Clone`, `PartialEq`, `Debug` and `Drop` are written out without native
+/// recursion (an explicit work list each), so a value of any depth a
+/// caller builds is copied, compared, formatted and dropped without
+/// exhausting the stack. They give exactly what the derived traits gave.
 pub enum PyValue {
     None,
     Bool(bool),
@@ -421,6 +425,199 @@ pub fn py_str(value: &PyValue) -> Result<PyStr, PyError> {
     })
 }
 
+/// A container being rebuilt by [`PyValue::clone`]: its kind, the children
+/// still to copy (a dict's keys and values in turn), the copies so far.
+struct CloneFrame<'a> {
+    kind: u8,
+    rest: std::slice::Iter<'a, PyValue>,
+    pairs: std::slice::Iter<'a, (PyValue, PyValue)>,
+    pending: Option<&'a PyValue>,
+    out: Vec<PyValue>,
+}
+
+impl<'a> CloneFrame<'a> {
+    const TUPLE: u8 = 0;
+    const LIST: u8 = 1;
+    const DICT: u8 = 2;
+
+    /// A scalar's copy, or the frame of a container.
+    fn open(value: &'a PyValue) -> Result<PyValue, CloneFrame<'a>> {
+        let frame = |kind, rest: &'a [PyValue], pairs: &'a [(PyValue, PyValue)], n| CloneFrame {
+            kind,
+            rest: rest.iter(),
+            pairs: pairs.iter(),
+            pending: None,
+            out: Vec::with_capacity(n),
+        };
+        Ok(match value {
+            PyValue::None => PyValue::None,
+            PyValue::Bool(b) => PyValue::Bool(*b),
+            PyValue::Int(t) => PyValue::Int(t.clone()),
+            PyValue::Float(f) => PyValue::Float(*f),
+            PyValue::Str(s) => PyValue::Str(s.clone()),
+            PyValue::DateTime(d) => PyValue::DateTime(*d),
+            PyValue::Path(s) => PyValue::Path(s.clone()),
+            PyValue::Tuple(items) => return Err(frame(Self::TUPLE, items, &[], items.len())),
+            PyValue::List(items) => return Err(frame(Self::LIST, items, &[], items.len())),
+            PyValue::Dict(items) => return Err(frame(Self::DICT, &[], items, 2 * items.len())),
+        })
+    }
+
+    fn next(&mut self) -> Option<&'a PyValue> {
+        if self.kind != Self::DICT {
+            return self.rest.next();
+        }
+        if let Some(v) = self.pending.take() {
+            return Some(v);
+        }
+        let (k, v) = self.pairs.next()?;
+        self.pending = Some(v);
+        Some(k)
+    }
+
+    fn finish(mut self) -> PyValue {
+        let out = std::mem::take(&mut self.out);
+        match self.kind {
+            Self::TUPLE => PyValue::Tuple(out),
+            Self::LIST => PyValue::List(out),
+            _ => {
+                let mut pairs = Vec::with_capacity(out.len() / 2);
+                let mut it = out.into_iter();
+                while let (Some(k), Some(v)) = (it.next(), it.next()) {
+                    pairs.push((k, v));
+                }
+                PyValue::Dict(pairs)
+            }
+        }
+    }
+}
+
+impl Clone for PyValue {
+    /// A deep copy, made without native recursion.
+    fn clone(&self) -> Self {
+        let mut stack = match CloneFrame::open(self) {
+            Ok(scalar) => return scalar,
+            Err(frame) => vec![frame],
+        };
+        loop {
+            let top = stack.last_mut().expect("a frame");
+            match top.next() {
+                Some(child) => match CloneFrame::open(child) {
+                    Ok(scalar) => top.out.push(scalar),
+                    Err(frame) => stack.push(frame),
+                },
+                None => {
+                    let done = stack.pop().expect("a frame").finish();
+                    match stack.last_mut() {
+                        Some(parent) => parent.out.push(done),
+                        None => return done,
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl PartialEq for PyValue {
+    /// The derived equality (variant by variant, `f64`'s `==` for a float,
+    /// so a NaN equals nothing), compared without native recursion.
+    fn eq(&self, other: &Self) -> bool {
+        let mut work: Vec<(&PyValue, &PyValue)> = vec![(self, other)];
+        while let Some((a, b)) = work.pop() {
+            let same = match (a, b) {
+                (PyValue::None, PyValue::None) => true,
+                (PyValue::Bool(x), PyValue::Bool(y)) => x == y,
+                (PyValue::Int(x), PyValue::Int(y)) => x == y,
+                (PyValue::Float(x), PyValue::Float(y)) => x == y,
+                (PyValue::Str(x), PyValue::Str(y)) | (PyValue::Path(x), PyValue::Path(y)) => x == y,
+                (PyValue::DateTime(x), PyValue::DateTime(y)) => x == y,
+                (PyValue::Tuple(x), PyValue::Tuple(y)) | (PyValue::List(x), PyValue::List(y)) => {
+                    if x.len() != y.len() {
+                        return false;
+                    }
+                    work.extend(x.iter().zip(y.iter()).rev());
+                    true
+                }
+                (PyValue::Dict(x), PyValue::Dict(y)) => {
+                    if x.len() != y.len() {
+                        return false;
+                    }
+                    for ((ka, va), (kb, vb)) in x.iter().zip(y.iter()).rev() {
+                        work.push((va, vb));
+                        work.push((ka, kb));
+                    }
+                    true
+                }
+                _ => false,
+            };
+            if !same {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl std::fmt::Debug for PyValue {
+    /// The derived `{:?}` text (`List([Int("1"), Str([97])])`), written
+    /// without native recursion. `{:#?}` gives the same one-line text.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum Piece<'a> {
+            Value(&'a PyValue),
+            Text(&'static str),
+        }
+        let mut work = vec![Piece::Value(self)];
+        while let Some(piece) = work.pop() {
+            let value = match piece {
+                Piece::Text(t) => {
+                    f.write_str(t)?;
+                    continue;
+                }
+                Piece::Value(v) => v,
+            };
+            match value {
+                PyValue::None => f.write_str("None")?,
+                PyValue::Bool(b) => write!(f, "Bool({b:?})")?,
+                PyValue::Int(t) => write!(f, "Int({t:?})")?,
+                PyValue::Float(x) => write!(f, "Float({x:?})")?,
+                PyValue::Str(s) => write!(f, "Str({s:?})")?,
+                PyValue::DateTime(d) => write!(f, "DateTime({d:?})")?,
+                PyValue::Path(s) => write!(f, "Path({s:?})")?,
+                PyValue::Tuple(items) | PyValue::List(items) => {
+                    let open = if matches!(value, PyValue::Tuple(_)) {
+                        "Tuple(["
+                    } else {
+                        "List(["
+                    };
+                    f.write_str(open)?;
+                    work.push(Piece::Text("])"));
+                    for (i, item) in items.iter().enumerate().rev() {
+                        work.push(Piece::Value(item));
+                        if i > 0 {
+                            work.push(Piece::Text(", "));
+                        }
+                    }
+                }
+                PyValue::Dict(items) => {
+                    f.write_str("Dict([")?;
+                    work.push(Piece::Text("])"));
+                    for (i, (k, v)) in items.iter().enumerate().rev() {
+                        work.push(Piece::Text(")"));
+                        work.push(Piece::Value(v));
+                        work.push(Piece::Text(", "));
+                        work.push(Piece::Value(k));
+                        work.push(Piece::Text("("));
+                        if i > 0 {
+                            work.push(Piece::Text(", "));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Drop for PyValue {
     /// Drops nested containers without native recursion, so a value as deep
     /// as the readers allow never exhausts the stack.
@@ -572,6 +769,129 @@ fn float_to_int_text(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shape `PyValue` had with derived traits: their output is the
+    /// standard the written-out traits are held to.
+    #[derive(Clone, Debug, PartialEq)]
+    enum Mirror {
+        None,
+        Bool(bool),
+        Int(String),
+        Float(f64),
+        Str(PyStr),
+        DateTime(DateTime),
+        Path(PyStr),
+        Tuple(Vec<Mirror>),
+        List(Vec<Mirror>),
+        Dict(Vec<(Mirror, Mirror)>),
+    }
+
+    fn mirror(v: &PyValue) -> Mirror {
+        match v {
+            PyValue::None => Mirror::None,
+            PyValue::Bool(b) => Mirror::Bool(*b),
+            PyValue::Int(t) => Mirror::Int(t.clone()),
+            PyValue::Float(f) => Mirror::Float(*f),
+            PyValue::Str(s) => Mirror::Str(s.clone()),
+            PyValue::DateTime(d) => Mirror::DateTime(*d),
+            PyValue::Path(s) => Mirror::Path(s.clone()),
+            PyValue::Tuple(i) => Mirror::Tuple(i.iter().map(mirror).collect()),
+            PyValue::List(i) => Mirror::List(i.iter().map(mirror).collect()),
+            PyValue::Dict(i) => {
+                Mirror::Dict(i.iter().map(|(k, v)| (mirror(k), mirror(v))).collect())
+            }
+        }
+    }
+
+    fn samples() -> Vec<PyValue> {
+        let dt = DateTime::from_unix_micros_utc(1_234_567).expect("dt");
+        let leaves = vec![
+            PyValue::None,
+            PyValue::Bool(true),
+            PyValue::int(-12),
+            PyValue::Float(f64::NAN),
+            PyValue::Float(-0.0),
+            PyValue::Float(1.5),
+            PyValue::Str(vec![0xD800, 0x22, 0x41]),
+            PyValue::DateTime(dt),
+            PyValue::Path(unicode::cps("a/\"b")),
+        ];
+        let mut out = leaves.clone();
+        out.push(PyValue::Tuple(leaves.clone()));
+        out.push(PyValue::List(vec![]));
+        out.push(PyValue::Dict(vec![]));
+        out.push(PyValue::List(vec![
+            PyValue::Tuple(vec![PyValue::List(leaves.clone())]),
+            PyValue::Dict(vec![
+                (PyValue::str("k"), PyValue::List(leaves.clone())),
+                (
+                    PyValue::Tuple(vec![PyValue::int(1)]),
+                    PyValue::Dict(vec![(PyValue::None, PyValue::None)]),
+                ),
+            ]),
+        ]));
+        out
+    }
+
+    #[test]
+    fn the_written_out_traits_are_the_derived_ones() {
+        let all = samples();
+        for a in &all {
+            let c = a.clone();
+            // Debug text, not `==`: a NaN equals nothing, a copy included.
+            assert_eq!(format!("{:?}", mirror(&c)), format!("{:?}", mirror(a)));
+            assert_eq!(format!("{a:?}"), format!("{:?}", mirror(a)));
+            assert_eq!(format!("{a:#?}"), format!("{a:?}"));
+            for b in &all {
+                assert_eq!(a == b, mirror(a) == mirror(b), "{a:?} == {b:?}");
+            }
+        }
+        // A changed leaf deep inside, and a different length, differ.
+        let a = PyValue::List(vec![PyValue::Dict(vec![(
+            PyValue::str("k"),
+            PyValue::int(1),
+        )])]);
+        let b = PyValue::List(vec![PyValue::Dict(vec![(
+            PyValue::str("k"),
+            PyValue::int(2),
+        )])]);
+        assert_ne!(a, b);
+        assert_ne!(PyValue::List(vec![]), PyValue::List(vec![PyValue::None]));
+        assert_ne!(PyValue::List(vec![]), PyValue::Tuple(vec![]));
+    }
+
+    #[test]
+    fn a_million_deep_value_is_cloned_compared_formatted_and_dropped() {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(|| {
+                let deep = |leaf: PyValue| {
+                    let mut v = leaf;
+                    for i in 0..1_000_000 {
+                        v = if i % 3 == 0 {
+                            PyValue::Dict(vec![(PyValue::str("k"), v)])
+                        } else if i % 3 == 1 {
+                            PyValue::Tuple(vec![v])
+                        } else {
+                            PyValue::List(vec![PyValue::None, v])
+                        };
+                    }
+                    v
+                };
+                let a = deep(PyValue::int(1));
+                let b = a.clone();
+                assert!(a == b);
+                let c = deep(PyValue::int(2));
+                assert!(a != c);
+                let text = format!("{a:?}");
+                assert!(text.starts_with("Dict([(Str([107]), List([None, Tuple([Dict(["));
+                assert!(text.contains("Int(\"1\")"));
+                drop((a, b, c, text));
+            })
+            .expect("thread")
+            .join()
+            .expect("no stack overflow");
+    }
 
     #[test]
     fn ints_from_text() {

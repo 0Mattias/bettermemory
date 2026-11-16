@@ -83,6 +83,40 @@ pub trait Provider {
     }
     /// `bettermemory.__version__`.
     fn engine_version(&self) -> String;
+    /// `models.generate_ulid()`: a record id's text, as `store_records`
+    /// and `store_journal` mint it (`write_episode`, `write_floor`, and the
+    /// record writers that mint an id). The reference reads `time.time()`
+    /// for it apart from both clocks, plus ten random bytes, so an id's
+    /// milliseconds need not match the stamp beside it. By default
+    /// [`system_ulid`]: the system clock's seconds through
+    /// [`super::mint::millis`] and ten bytes from the OS through
+    /// [`super::mint::ulid`]. `utcnow` (`models.py:879`) is the wall clock
+    /// ([`Provider::wall_now`]), the same read: no method of its own.
+    fn ulid(&mut self) -> io::Result<String> {
+        system_ulid()
+    }
+}
+
+/// `generate_ulid` as the reference mints it: `time.time()` and
+/// `secrets.token_bytes(10)`.
+pub fn system_ulid() -> io::Result<String> {
+    let seconds = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_secs_f64(),
+        Err(e) => -e.duration().as_secs_f64(),
+    };
+    let ms = ulid_millis(seconds)?;
+    let mut random = [0u8; 10];
+    System::fill(&mut random)?;
+    Ok(super::mint::ulid(ms, &random))
+}
+
+/// The pure part of [`system_ulid`]: `int(seconds * 1000) & (2**48 - 1)`
+/// as `generate_ulid` computes it. A finite time wraps at 48 bits (past
+/// the year 10889, and before 1970, as the reference does); an infinite
+/// product is the reference's OverflowError and a NaN its ValueError,
+/// returned as an error whose text names that class.
+pub fn ulid_millis(seconds: f64) -> io::Result<u64> {
+    super::mint::millis(seconds).map_err(|e| io::Error::other(format!("the clock: {}", e.name())))
 }
 
 /// Fixed values, drawn in order: what a test passes. Not for products: a
@@ -118,6 +152,13 @@ impl Provider for Fixed {
     fn engine_version(&self) -> String {
         self.engine_version.clone()
     }
+    /// Deterministic, and never called by the create and open fixtures:
+    /// always the id of millisecond 0 and ten zero bytes,
+    /// `00000000000000000000000000`. A test that mints ids replays them
+    /// with a provider of its own.
+    fn ulid(&mut self) -> io::Result<String> {
+        Ok(super::mint::ulid(0, &[0; 10]))
+    }
 }
 
 /// A provider whose wall clock ([`Provider::wall_now`]) is its own:
@@ -152,6 +193,9 @@ impl<P: Provider> Provider for Clocks<P> {
     }
     fn engine_version(&self) -> String {
         self.inner.engine_version()
+    }
+    fn ulid(&mut self) -> io::Result<String> {
+        self.inner.ulid()
     }
 }
 

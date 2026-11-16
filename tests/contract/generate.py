@@ -57,6 +57,7 @@ from . import (
     gen_store_files,
     gen_store_open,
     gen_store_records,
+    gen_store_rows_written,
     gen_store_tx,
     gen_store_write,
     gen_store_path,
@@ -103,6 +104,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_write": gen_store_write.generate,
     "store_tx": gen_store_tx.generate,
     "store_records": gen_store_records.generate,
+    "store_rows_written": gen_store_rows_written.generate,
     "gitconfig": gen_gitconfig.generate,
     "caller_admission": gen_caller_admission.generate,
     "gitconfig_wildmatch": gen_gitconfig_wildmatch.generate,
@@ -138,6 +140,7 @@ UNICODE_GATED = frozenset(
         "store_tx",
         "store_records",
         "membership_lines_unicode",
+        "store_rows_written",
     }
 )
 
@@ -190,6 +193,7 @@ PYDANTIC_GATED = frozenset(
         "store_write",
         "store_tx",
         "store_records",
+        "store_rows_written",
     }
 )
 
@@ -246,6 +250,7 @@ POSIX_ONLY = frozenset(
         "store_write",
         "store_tx",
         "store_records",
+        "store_rows_written",
         "githead_posix",
         "gitconfig_file",
     }
