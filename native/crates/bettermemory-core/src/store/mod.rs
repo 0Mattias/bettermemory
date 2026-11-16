@@ -46,6 +46,7 @@ pub mod mint;
 pub mod open;
 pub mod pool;
 pub mod restore_lock;
+pub mod tx;
 pub mod write;
 
 use std::fs;

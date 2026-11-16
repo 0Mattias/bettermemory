@@ -1881,6 +1881,7 @@ each come through callers of `_append` with rules of their own).
    `_flush_returns` (`store.py:1418`): `settle` (:178) may append
    `returned_put`/`returned_delete` rows (stamped by the wall clock,
    `datetime.now`, not the log's clock).
+   Ported with the transaction (below): `mutate` is a transaction of one.
 6. `COMMIT` (:1222); any failure up to here rolls back (`_roll_back`).
 7. `_move_head` (:1353): `KeyRing.write_head` (`log.py:638`) under
    `flock_excl(<id>.head.lock)`: the head read; written only forward (a
@@ -1930,9 +1931,6 @@ Refused with the transaction rolled back, nothing written:
   refuses either way. A pending key meta does not name is passed over by
   both (`meta_rekeyed_pending`). meta's fingerprint is read as `str(value)`
   of any stored type, NULL as `None` (`meta_key_integer`).
-- `NotPorted::Returned(ids)`: after the apply, `settle` would put or delete
-  a mark (ported exactly: `before`, `candidates`, `settle`'s decision; the
-  rows themselves are the next unit's).
 - `Refused { class, text }`: the reference's own refusal (KeyError,
   ValueError, TypeError, ValidationError with its first line,
   UnknownFieldsError with its text, UnicodeEncodeError).
@@ -2016,7 +2014,7 @@ after the reference's check had opened the store, which asks for WAL.)
 
 | test | what | class |
 | --- | --- | --- |
-| `golden_store_write.rs` | `store_write.jsonl` (26 sequences, 108 mutations, 269 KB, a refold per sequence; Unicode and pydantic-core gated, POSIX only): rows byte for byte, the whole state's digest, the head, FTS5 hits | ii |
+| `golden_store_write.rs` | `store_write.jsonl` (26 sequences, 108 mutations, 269 KB, a refold per sequence; Unicode and pydantic-core gated, POSIX only): rows byte for byte, the whole state's digest, the head, FTS5 hits; its two `not_ported:returned` steps (whose mark stamps the file left to the real clock) are now written and checked by row count, `store_tx.jsonl` holding such writes byte for byte | ii |
 | `store_write_not_posix.rs` | the fixture's gap elsewhere | os |
 | `store_write_kills.rs` | 208 kills, both journal modes, the reference's verify | i |
 | `store_write_cross.rs` | both directions with the reference | i |
@@ -2037,6 +2035,135 @@ before (COMMIT 0.64 to 0.65 s of the run); the reference 1358, 1502 and
 write, `fsync`, rename, directory `fsync`) 0.89 s; COMMIT 0.53 s; the
 apply (model, row, links, FTS5 triggers) 0.32 s; the head's lock 0.11 s;
 the row (key check, MAC, INSERT) 0.09 s.
+
+## The write transaction
+
+`store::tx::Transaction` (`src/store/tx.rs`) is the transaction every
+public record writer runs inside: `Store._transaction` with its outermost
+and nested entries, `Store._mutate`, `_flush_returns` and
+`Store.release_returned`. `WritableStore::mutate` is a transaction of one.
+
+### The reference's order (read at 81bfa627, `store.py` unless named)
+
+1. Outermost entry (`_transaction`, 1185-1240): with the depth at 0, a
+   connection still inside a transaction is a residue and is rolled back
+   (`_clear_residue`, 1242); `_last_appended`, `_tx_first_seq`,
+   `_tx_records` and `_tx_returns` are reset; `BEGIN IMMEDIATE`, then the
+   depth is 1; `require_current_writer`.
+2. The body. Each `_mutate` (1399-1425): `prepare_mutation`,
+   `store_returned.before` (`store_returned.py` 140-159: `memory_put` and
+   `memory_delete` only; the record's id, whether it is active, and its
+   `supersedes` targets when it is), `_append` (1370-1397: `_signing_key`,
+   `append_row`, the log clock), `_apply_mutation`, then each of
+   `candidates` (162-175: a removal of an active record names its targets
+   in order and then itself; a put names the targets it dropped or added,
+   sorted) into `_tx_returns.setdefault(id, (record_id, session))`: the
+   first write that names a record keeps its via and session.
+   `_put_restored` names a restored record the same way
+   (`store_records.py:693`).
+3. A nested entry (`_joined`, 1252-1284): `_require_open`; the last
+   appended row, the first seq, `_tx_records` and a copy of `_tx_returns`
+   are kept; `SAVEPOINT nested_<depth>`. On success `RELEASE`. On any
+   failure those four are put back, and while the connection is in a
+   transaction `ROLLBACK TO` and `RELEASE`; if those fail the owner's
+   transaction is rolled back with it. The error goes on to the caller,
+   which may catch it and go on.
+4. The outermost end: `_require_open` (1287: "the write transaction on
+   store {path} was rolled back by an error inside it; nothing it wrote
+   was kept", a sqlite3.OperationalError), `_flush_returns` (1427-1443),
+   `COMMIT`; any failure rolls back (`_roll_back`). Then `_move_head`
+   once, to `_last_appended` if any: a transaction that kept no row moves
+   nothing.
+5. `_flush_returns` takes `_tx_returns` and calls `settle`
+   (`store_returned.py` 178-212). When anything is named and the
+   `returned` table exists it reads the wall clock once (the stamp, 198),
+   then for each named record in id order: inactive, or superseded by
+   another active record (`_superseded`, 115), and marked: a deletion
+   `{"record_id", "dropped": "removed"}` (inactive) or `"superseded"`;
+   active, not superseded, not marked: a put `{"returned": {"record_id",
+   "via", "returned": stamp}}`; otherwise nothing (already marked, or out
+   of force with no mark). No table: nothing, and no clock read. The puts
+   are appended (each a `_mutate`, so each reads the log clock), then the
+   deletions, each with the session of its naming.
+6. `release_returned` (1445-1456) is a nested entry: `returned_rows` of
+   the one id (a missing table reads as no mark; any other SQLite error
+   raises), and when marked a `returned_delete {"record_id"}`.
+
+Two clocks: a row's `ts` and the head's `ts` are the log clock
+(`log._utcnow_iso`, `log.py:313`); a mark's stamp is `datetime.now` read
+in `store_returned` (198), `_flush_returns` passing no `now`. The provider
+carries both: `Provider::now` and `Provider::wall_now` (by default the
+same clock; `create::Clocks` sets the wall clock apart; `System` reads the
+system clock for both).
+
+### The native rule
+
+`WritableStore::begin(provider)` is step 1 (a residue rolled back, `BEGIN
+IMMEDIATE`, `LaterWriter` when the writer check refuses).
+`Transaction::mutate(kind, payload, session)` is step 2, under a savepoint
+of its own (`native_step`), so a mutation that fails takes back what it
+wrote. `Transaction::scope(body)` is step 3: `body` gets the transaction
+and returns `Result<T, E>` for any `E: From<WriteError>`; on its failure
+the last row and the named records (and the list of rows kept) are put
+back as they stood at its entry, and the savepoint is rolled back to.
+`Transaction::name_returned(id, via, session)` is the `setdefault` a
+restore makes. `Transaction::release_returned(id, session)` is step 6
+(`WritableStore::release_returned` in a transaction of its own).
+`Transaction::commit()` is steps 4 and 5 and returns `Committed { rows,
+head }`: every row kept, the transaction's own then its marks, and the
+head's move (None when no row was kept). A transaction dropped without a
+commit, or whose commit fails, is rolled back. `Transaction::connection()`
+reads the store inside the lock. The hook (`begin_with`) sees `Begun`,
+each row's `Appended` and `Applied` (the marks' and a rolled-back scope's
+rows among them), `Committed`, `HeadLocked`, `HeadMoved`.
+
+A later writer: `let mut tx = store.begin(provider)?;` then
+`tx.scope(|tx| { /* read through tx.connection() */ tx.mutate(..)?;
+tx.name_returned(..); Ok(..) })?;` then `tx.commit()?`. Its own typed
+error converts from `WriteError` and rolls back its scope only.
+
+Refused with nothing written (the transaction can then only be rolled
+back; `commit` returns the refusal): `NotPorted::Kind` (every membership
+kind and any other text, `returned_*` among them: marks are written only
+by the flush and by `release_returned`), `NotPorted::NativeOrigin`,
+`NotPorted::Rekeyed`. Typed errors otherwise: `Refused { class, text }`,
+`NotAnObject`, `LaterWriter`, `Sqlite`, `Clock`, and `RolledBack(path)`,
+whose text is `_require_open`'s.
+
+Deliberate differences: (1) a mutation the reference refuses after
+appending its row leaves that row in the transaction when a caller catches
+the error in the outermost scope without a savepoint (no reference writer
+does: each runs in a `_transaction` of its own); native takes the failed
+mutation back. (2) A not-ported write anywhere refuses the whole
+transaction, in a scope or not, since the reference would have written
+it. (3) As in the reference, the signing key a rekey switched to is not
+put back by a scope's failure.
+
+### Tests
+
+| test | what | class |
+| --- | --- | --- |
+| `golden_store_tx.rs` | `store_tx.jsonl` (22 cases, 78 transactions, 217 KB; Unicode and pydantic-core gated, POSIX only, as `store_write.jsonl` is and for its reasons): per transaction the outcome and each failed scope's error, every clock reading read once and in order (the log clock and the wall clock set apart), the rows byte for byte, the whole state's digest, the head, FTS5 hits; a refold per case | ii |
+| `store_tx_not_posix.rs` | the fixture's gap elsewhere | os |
+| `store_tx_cross.rs` | native's 40 transactions read by the reference and equal to a twin it writes with the same ones; the reference continues and native continues after it; the reverse from a store the reference marked | i |
+| `store_tx_kills.rs` | 156 kills (every boundary of a four-row and a three-row transaction by abort and exit, 60 timed), WAL and rollback journal, both builds verify | i |
+| `store_tx_robustness.rs` | hostile payloads in nested scopes (5000-deep nesting, a 1 MiB body, a lone surrogate), a transaction dropped or forgotten, a second writer, a `returned` table missing or misshapen, an ended transaction, a failing wall clock, a native origin in a scope | i |
+
+`store_tx.jsonl`'s cases: zero mutations; a mark put, deleted as removed,
+deleted as superseded and put again; a put that drops one link and adds
+another; three marks in one flush, put and deleted; a chain and a
+diamond; a record named twice in one transaction, and named directly;
+already marked; candidates that end where they started; releases with and
+without a mark, and in a scope that fails; no `returned` table;
+rollback-journal mode; failures in the outermost scope; refused mutations
+inside a scope and outside; a not-ported kind; a nested failure before the
+first, the middle and the last step of a four-step scope, with the outer
+transaction going on and with it failing after; scopes inside scopes. The
+generator drives the reference through `tests/contract/_fixed.py`, which
+fixes every clock and mint the record writers read (`log._utcnow_iso`;
+`datetime` in `store_returned`, `store_records` and `store`; `utcnow` and
+`generate_ulid` in `store_records` and `store_journal`) with the log clock
+and the wall clock apart, for this unit and the writers after it.
 
 ## A git config file's text
 
@@ -2586,9 +2713,9 @@ other 11, which native reproduces:
 ## Not built yet
 
 The store's writes past `create`, the writing open's plain states and
-one record mutation (`mutate`): the public record API (`put_memory`,
-`tombstone`, `restore` with relink, provenance, `returned` marks, homes
-and standing answers), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
+the write transaction (`mutate`, `begin`, its `returned` marks): the
+public record API (`put_memory`, `tombstone`, `restore` with relink,
+provenance, homes and standing answers), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
 restore's rows, re-spelling the index), membership's writes and
 the caller's resolution (its admission is `store::caller`), and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's

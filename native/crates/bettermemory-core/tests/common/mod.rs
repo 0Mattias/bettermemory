@@ -9,6 +9,7 @@ pub mod githead;
 pub mod opened;
 pub mod parity;
 pub mod stores;
+pub mod txs;
 pub mod written;
 
 use std::path::PathBuf;

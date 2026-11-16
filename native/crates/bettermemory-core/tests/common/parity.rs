@@ -200,7 +200,7 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         "fold.jsonl" => &[Unicode, Pydantic],
         // The index text is the tokenizer's; a refusal's text is the first
         // line of a pydantic ValidationError.
-        "store_write.jsonl" => &[Unicode, Pydantic],
+        "store_write.jsonl" | "store_tx.jsonl" => &[Unicode, Pydantic],
         "models_rows.jsonl" => &[Python, Pydantic],
         "models_stores.jsonl" => &[Python, Sqlite, Pydantic],
         // The restore lock is a directory `flock` on POSIX, a record file

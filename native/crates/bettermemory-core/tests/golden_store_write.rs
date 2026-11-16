@@ -11,6 +11,9 @@
 //!   as queries see it all equal the reference's;
 //! - `not_ported:<class>`: refused as that class with nothing written
 //!   (the state as before the step), where the reference wrote or refused.
+//!   `not_ported:returned` is ported since (`store::tx`): written, with as
+//!   many rows as the reference wrote; `golden_store_tx.rs` compares such
+//!   writes byte for byte.
 //!
 //! POSIX only, as the fixture is (modes, a resolved binding path);
 //! `store_write_not_posix.rs` records the gap elsewhere.
@@ -72,6 +75,24 @@ fn run(seq: &Value, header: &Value) -> Result<usize, String> {
         let before = state(&c, &root, store_id, pragmas);
         let outcome = store.mutate(kind, &payload, session, &mut clock);
         let native = step["native"].as_str().expect("native");
+        if native == "not_ported:returned" {
+            // Ported since: the write and its `returned` rows. This file
+            // left the reference's mark stamp to the real wall clock and
+            // recorded only how many rows it wrote; `store_tx.jsonl` holds
+            // such writes byte for byte. Here: written, as many rows, the
+            // mutation's then `returned_*` ones.
+            let wrote = step["reference_wrote"].as_i64().expect("reference_wrote");
+            match &outcome {
+                Ok(w) if w.returned.iter().all(|r| r.kind.starts_with("returned_")) => {}
+                other => return Err(format!("{label}: expected a write, got {other:?}")),
+            }
+            let got = written::last_seq(&file) - before_seq;
+            if got != wrote {
+                return Err(format!("{label}: wrote {got} rows, the reference {wrote}"));
+            }
+            checked += 1;
+            continue;
+        }
         if let Some(class) = native.strip_prefix("not_ported:") {
             match &outcome {
                 Err(WriteError::NotPorted(n)) if n.name() == class => {}

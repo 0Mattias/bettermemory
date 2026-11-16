@@ -12,14 +12,14 @@
 //! the schema's triggers), `_flush_returns`, `COMMIT`, then the head
 //! moved forward under its lock.
 //!
-//! What this unit does not port it refuses before the commit, with the
-//! transaction rolled back and nothing written: a kind outside the record
-//! kinds (the membership kinds, `returned`, `home` and `standing` among
-//! them), an origin `prepare_mutation` would move into `native_origin`, a
-//! meta that names a key other than the one the open read (a rekey or a
-//! rotation another connection committed, which `_signing_key` would
-//! follow), and a write whose `_flush_returns` would append `returned`
-//! rows.
+//! A mutation is a transaction of one (`store::tx`), whose commit appends
+//! the `returned` rows `_flush_returns` settles. What this unit does not
+//! port it refuses before the commit, with the transaction rolled back and
+//! nothing written: a kind outside the record kinds (the membership kinds,
+//! `returned`, `home` and `standing` among them), an origin
+//! `prepare_mutation` would move into `native_origin`, and a meta that
+//! names a key other than the one the open read (a rekey or a rotation
+//! another connection committed, which `_signing_key` would follow).
 
 use std::fs;
 use std::io;
@@ -29,17 +29,16 @@ use rusqlite::{Connection, OptionalExtension};
 use zeroize::Zeroizing;
 
 use super::create::{with_suffix, Provider};
-use super::fold::Applier;
-use super::open::{replace_atomic, require_current_writer, WritableStore};
-use crate::log::{fingerprint, head_file_text, next_row, Key, KeyRing, LogRow};
+use super::open::{replace_atomic, WritableStore};
+use crate::log::{fingerprint, head_file_text, Key, KeyRing, LogRow};
 use crate::pyvalue::{PyError, PyValue};
 use crate::unicode;
 
 /// The kinds `mutate` writes: every record mutation kind of
 /// `MUTATION_KINDS` outside the membership tables
 /// (`RECORD_MUTATION_KINDS`). On none of them does `_mutate` do more than
-/// the row and its table effects, except the `returned` marks a
-/// `memory_put` or `memory_delete` may call for, which are detected.
+/// the row and its table effects, and name the records whose `returned`
+/// marks a `memory_put` or `memory_delete` may change.
 pub const KINDS: [&str; 14] = [
     "memory_put",
     "memory_delete",
@@ -72,9 +71,6 @@ pub enum WriteNotPorted {
     /// rotation another connection committed since (`_signing_key` would
     /// follow it, finishing the rotation's rename).
     Rekeyed,
-    /// `_flush_returns` would append `returned` rows for these records
-    /// (`store_returned.settle`): the public record API's unit.
-    Returned(Vec<String>),
 }
 
 impl WriteNotPorted {
@@ -83,7 +79,6 @@ impl WriteNotPorted {
             WriteNotPorted::Kind(_) => "kind",
             WriteNotPorted::NativeOrigin => "native_origin",
             WriteNotPorted::Rekeyed => "rekeyed",
-            WriteNotPorted::Returned(_) => "returned",
         }
     }
 }
@@ -113,6 +108,10 @@ pub enum WriteError {
     Sqlite(rusqlite::Error),
     /// The clock could not be read; rolled back.
     Clock(io::Error),
+    /// `_require_open`: SQLite ended the transaction after an error inside
+    /// it (sqlite3.OperationalError in the reference); nothing it wrote was
+    /// kept. Holds the store's path.
+    RolledBack(String),
 }
 
 impl WriteError {
@@ -124,6 +123,7 @@ impl WriteError {
             WriteError::LaterWriter => "later_writer",
             WriteError::Sqlite(_) => "sqlite",
             WriteError::Clock(_) => "clock",
+            WriteError::RolledBack(_) => "rolled_back",
         }
     }
 }
@@ -140,12 +140,6 @@ impl std::fmt::Display for WriteError {
             WriteError::NotPorted(WriteNotPorted::Rekeyed) => f.write_str(
                 "the store was rekeyed since it was opened; the native build does not follow",
             ),
-            WriteError::NotPorted(WriteNotPorted::Returned(ids)) => write!(
-                f,
-                "the write would change the returned marks of {} record(s); the native build \
-                 does not write them",
-                ids.len()
-            ),
             WriteError::Refused {
                 class,
                 text: Some(text),
@@ -157,6 +151,11 @@ impl std::fmt::Display for WriteError {
             }
             WriteError::Sqlite(e) => write!(f, "{e}"),
             WriteError::Clock(e) => write!(f, "the clock could not be read: {e}"),
+            WriteError::RolledBack(path) => write!(
+                f,
+                "the write transaction on store {path} was rolled back by an error inside it; \
+                 nothing it wrote was kept"
+            ),
         }
     }
 }
@@ -184,7 +183,11 @@ pub enum HeadMove {
 /// A committed mutation.
 #[derive(Debug)]
 pub struct Written {
+    /// The mutation's row.
     pub row: LogRow,
+    /// The `returned` rows its commit appended after it, puts then
+    /// deletions.
+    pub returned: Vec<LogRow>,
     pub head: HeadMove,
 }
 
@@ -218,16 +221,16 @@ impl WriteBoundary {
     ];
 }
 
-const SUPERSEDES: &str = "supersedes";
+pub(super) const SUPERSEDES: &str = "supersedes";
 
 /// `store_returned.Before`.
-struct Before {
-    record_id: String,
+pub(super) struct Before {
+    pub(super) record_id: String,
     active: bool,
     superseded: Vec<String>,
 }
 
-fn targets(conn: &Connection, source: &str) -> rusqlite::Result<Vec<String>> {
+pub(super) fn targets(conn: &Connection, source: &str) -> rusqlite::Result<Vec<String>> {
     let mut statement =
         conn.prepare("SELECT target_id FROM memory_links WHERE source_id = ? AND type = ?")?;
     let mut out: Vec<String> = statement
@@ -238,13 +241,17 @@ fn targets(conn: &Connection, source: &str) -> rusqlite::Result<Vec<String>> {
     Ok(out)
 }
 
-fn is_active(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
+pub(super) fn is_active(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
     conn.prepare("SELECT 1 FROM memories WHERE id = ?")?
         .exists([id])
 }
 
 /// `store_returned.before`.
-fn before(conn: &Connection, kind: &str, payload: &PyValue) -> Result<Option<Before>, WriteError> {
+pub(super) fn before(
+    conn: &Connection,
+    kind: &str,
+    payload: &PyValue,
+) -> Result<Option<Before>, WriteError> {
     let id = match kind {
         "memory_put" => payload.get("memory").and_then(|m| match m {
             PyValue::Dict(_) => m.get("id"),
@@ -278,7 +285,11 @@ fn before(conn: &Connection, kind: &str, payload: &PyValue) -> Result<Option<Bef
 }
 
 /// `store_returned.candidates`.
-fn candidates(conn: &Connection, kind: &str, state: &Before) -> rusqlite::Result<Vec<String>> {
+pub(super) fn candidates(
+    conn: &Connection,
+    kind: &str,
+    state: &Before,
+) -> rusqlite::Result<Vec<String>> {
     if kind == "memory_delete" {
         if !state.active {
             return Ok(Vec::new());
@@ -299,40 +310,6 @@ fn candidates(conn: &Connection, kind: &str, state: &Before) -> rusqlite::Result
     Ok(out)
 }
 
-/// `store_returned.settle`'s question: the records it would put or
-/// delete a `returned` mark of, as the transaction leaves the store.
-fn settle_due(conn: &Connection, pending: &[String]) -> rusqlite::Result<Vec<String>> {
-    if pending.is_empty() {
-        return Ok(Vec::new());
-    }
-    let has_table = conn
-        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'returned'")?
-        .exists([])?;
-    if !has_table {
-        return Ok(Vec::new());
-    }
-    let mut ids = pending.to_vec();
-    ids.sort();
-    ids.dedup();
-    let mut due = Vec::new();
-    for id in ids {
-        let marked = conn
-            .prepare("SELECT 1 FROM returned WHERE record_id = ?")?
-            .exists([&id])?;
-        let active = is_active(conn, &id)?;
-        let superseded = conn
-            .prepare(
-                "SELECT 1 FROM memory_links l JOIN memories m ON m.id = l.source_id \
-                 WHERE l.type = ? AND l.target_id = ? AND l.source_id != ? LIMIT 1",
-            )?
-            .exists([SUPERSEDES, id.as_str(), id.as_str()])?;
-        if (!active || superseded) == marked {
-            due.push(id);
-        }
-    }
-    Ok(due)
-}
-
 fn has_surrogates(value: &PyValue) -> bool {
     match value {
         // `native_text.has_surrogates` asks `isinstance(value, str)`: a
@@ -348,7 +325,7 @@ fn has_surrogates(value: &PyValue) -> bool {
 
 /// `native_text.mutation_payload`'s question: whether it would project
 /// the record's origin into `native_origin`.
-fn native_origin(kind: &str, payload: &PyValue) -> bool {
+pub(super) fn native_origin(kind: &str, payload: &PyValue) -> bool {
     let field = match kind {
         "memory_put" => "memory",
         "tombstone_put" => "tombstone",
@@ -364,7 +341,7 @@ fn native_origin(kind: &str, payload: &PyValue) -> bool {
     }
 }
 
-fn last_row(conn: &Connection) -> rusqlite::Result<Option<LogRow>> {
+pub(super) fn last_row(conn: &Connection) -> rusqlite::Result<Option<LogRow>> {
     conn.prepare(
         "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log \
          ORDER BY seq DESC LIMIT 1",
@@ -385,7 +362,7 @@ fn last_row(conn: &Connection) -> rusqlite::Result<Option<LogRow>> {
 
 /// `KeyRing.load_current` as `_signing_key` reads it: None when there is
 /// no key file or it cannot be read (`KeyUnreadableError`).
-fn load_current(keys_dir: &Path, store_id: &str) -> Option<Key> {
+pub(super) fn load_current(keys_dir: &Path, store_id: &str) -> Option<Key> {
     let bytes = Zeroizing::new(fs::read(keys_dir.join(format!("{store_id}.key"))).ok()?);
     Some(Key::new(bytes.to_vec()))
 }
@@ -394,13 +371,13 @@ fn load_current(keys_dir: &Path, store_id: &str) -> Option<Key> {
 /// fingerprint is `recorded`): what `finish_rotation` would rename. A
 /// pending key meta does not name is a rotation that did not commit, and
 /// the reference signs with the open's key past it.
-fn pending_is(keys_dir: &Path, store_id: &str, recorded: &str) -> bool {
+pub(super) fn pending_is(keys_dir: &Path, store_id: &str, recorded: &str) -> bool {
     fs::read(keys_dir.join(format!("{store_id}.key.pending")))
         .map(Zeroizing::new)
         .is_ok_and(|b| b.len() == 32 && fingerprint(&b) == recorded)
 }
 
-fn py_error(e: PyError) -> WriteError {
+pub(super) fn py_error(e: PyError) -> WriteError {
     WriteError::Refused {
         class: e.name(),
         text: None,
@@ -409,8 +386,10 @@ fn py_error(e: PyError) -> WriteError {
 
 impl WritableStore {
     /// `Store._mutate(tx, kind, payload, session=session)` in a
-    /// transaction of its own (`with store._transaction() as tx`), then
-    /// the head's move. `provider`'s clock stamps the row and the head.
+    /// transaction of its own (`with store._transaction() as tx`), with
+    /// the `returned` rows its commit settles, then the head's move: a
+    /// [`super::tx::Transaction`] of one mutation. `provider`'s log clock
+    /// stamps the rows and the head, its wall clock the marks.
     pub fn mutate(
         &mut self,
         kind: &str,
@@ -432,6 +411,7 @@ impl WritableStore {
         provider: &mut dyn Provider,
         hook: &mut dyn FnMut(WriteBoundary),
     ) -> Result<Written, WriteError> {
+        // Refused before the transaction is begun, as before it existed.
         if !KINDS.contains(&kind) {
             return Err(WriteError::NotPorted(WriteNotPorted::Kind(kind.to_owned())));
         }
@@ -441,122 +421,17 @@ impl WritableStore {
         if native_origin(kind, payload) {
             return Err(WriteError::NotPorted(WriteNotPorted::NativeOrigin));
         }
-        let conn = &self.conn;
-        let mut rekeyed: Option<Key> = None;
-        // `_clear_residue`: a transaction no call owns is rolled back first.
-        if !conn.is_autocommit() {
-            conn.execute_batch("ROLLBACK")?;
-        }
-        conn.execute_batch("BEGIN IMMEDIATE")?;
-        let body = (|| {
-            hook(WriteBoundary::Begun);
-            if require_current_writer(conn).is_err() {
-                return Err(WriteError::LaterWriter);
-            }
-            let state = before(conn, kind, payload)?;
-            // `_signing_key`: meta read again under the write lock.
-            // `str(row[0])`: any stored type, NULL read as "None".
-            let recorded: Option<String> = conn
-                .query_row(
-                    "SELECT value FROM meta WHERE key = 'key_fingerprint'",
-                    [],
-                    |r| Ok(super::sql_value(r.get_ref(0)?).map(|v| v.py_str())),
-                )
-                .optional()?
-                .map(|v| {
-                    v.map_err(|_| WriteError::Refused {
-                        class: "UnicodeDecodeError",
-                        text: None,
-                    })
-                })
-                .transpose()?;
-            if let Some(recorded) = recorded.filter(|r| *r != fingerprint(self.key.bytes())) {
-                // The ring's current key when meta names it (a rekey in
-                // this ring); a pending key that is meta's, which
-                // `finish_rotation` would rename over the current one, is
-                // not ported (refused whether or not the ring is bound
-                // here: wider than the reference by that one test); else
-                // still the open's key (meta is not taken at its word).
-                let current = load_current(self.keys_dir(), self.store_id());
-                match current {
-                    Some(key) if fingerprint(key.bytes()) == recorded => rekeyed = Some(key),
-                    _ if pending_is(self.keys_dir(), self.store_id(), &recorded) => {
-                        return Err(WriteError::NotPorted(WriteNotPorted::Rekeyed));
-                    }
-                    _ => {}
-                }
-            }
-            let previous = last_row(conn)?;
-            let ts = provider.now().map_err(WriteError::Clock)?.isoformat_utc();
-            let row = next_row(
-                previous.as_ref(),
-                rekeyed.as_ref().unwrap_or(&self.key).bytes(),
-                kind,
-                payload,
-                session,
-                &ts,
-            )
-            .map_err(py_error)?;
-            conn.prepare(
-                "INSERT INTO log(seq, ts, session, kind, payload, prev_mac, mac) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
-            )?
-            .execute(rusqlite::params![
-                row.seq,
-                row.ts,
-                row.session,
-                row.kind,
-                row.payload,
-                row.prev_mac,
-                row.mac
-            ])?;
-            hook(WriteBoundary::Appended);
-            // The caller's payload, as `_mutate` applies its mapping (a
-            // tuple stays a tuple, a datetime a datetime); the row holds
-            // its canonical text, which `refold` replays.
-            Applier::live(conn)
-                .apply_live(kind, payload, &row.mac)
-                .map_err(|(class, text)| WriteError::Refused { class, text })?;
-            hook(WriteBoundary::Applied);
-            if let Some(state) = state {
-                let due = settle_due(conn, &candidates(conn, kind, &state)?)?;
-                if !due.is_empty() {
-                    return Err(WriteError::NotPorted(WriteNotPorted::Returned(due)));
-                }
-            }
-            // `_require_open`: an error inside may have ended it.
-            if conn.is_autocommit() {
-                return Err(WriteError::Sqlite(rusqlite::Error::SqliteFailure(
-                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ABORT),
-                    Some("the write transaction was rolled back by an error inside it".into()),
-                )));
-            }
-            conn.execute_batch("COMMIT")?;
-            Ok(row)
-        })();
-        if let Some(key) = rekeyed {
-            // `_append` keeps the key it signed with (`self._key = key`).
-            self.key = key;
-        }
-        let row = match body {
-            Ok(row) => row,
-            Err(e) => {
-                if !conn.is_autocommit() {
-                    let _ = conn.execute_batch("ROLLBACK");
-                }
-                return Err(e);
-            }
-        };
-        hook(WriteBoundary::Committed);
-        let head = move_head(
-            &self.keys_dir().join(format!("{}.head", self.store_id())),
-            &row,
-            provider,
-            hook,
-        );
-        hook(WriteBoundary::HeadMoved);
-        self.head = Some((row.seq, row.mac.clone()));
-        Ok(Written { row, head })
+        let mut tx = self.begin_with(provider, hook)?;
+        let row = tx.mutate(kind, payload, session)?;
+        let committed = tx.commit()?;
+        let returned = committed.rows.into_iter().skip(1).collect();
+        // A transaction that kept a row moves the head: always Some here.
+        let head = committed.head.unwrap_or(HeadMove::Ahead);
+        Ok(Written {
+            row,
+            returned,
+            head,
+        })
     }
 }
 
@@ -564,7 +439,7 @@ impl WritableStore {
 /// head's lock (`<id>.head.lock`, kept), only forward, the clock read
 /// only when it writes; an OSError leaves the head where it was and the
 /// commit stands.
-fn move_head(
+pub(super) fn move_head(
     path: &Path,
     row: &LogRow,
     provider: &mut dyn Provider,

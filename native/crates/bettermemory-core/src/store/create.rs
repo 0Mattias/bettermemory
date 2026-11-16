@@ -71,8 +71,16 @@ pub trait Provider {
     fn key(&mut self) -> io::Result<Key>;
     /// `secrets.token_hex(16)`.
     fn membership_store_id(&mut self) -> io::Result<String>;
-    /// `datetime.now(timezone.utc)`.
+    /// `datetime.now(timezone.utc)`: the log's clock (`log._utcnow_iso`,
+    /// a row's and the head's `ts`) and `created`.
     fn now(&mut self) -> io::Result<DateTime>;
+    /// `datetime.now(timezone.utc)` as `store_returned` reads it (a
+    /// `returned` mark's stamp): the wall clock, apart from the log's in
+    /// the reference's modules, so a test can tell the two apart. One clock
+    /// unless a provider says otherwise.
+    fn wall_now(&mut self) -> io::Result<DateTime> {
+        self.now()
+    }
     /// `bettermemory.__version__`.
     fn engine_version(&self) -> String;
 }
@@ -109,6 +117,41 @@ impl Provider for Fixed {
     }
     fn engine_version(&self) -> String {
         self.engine_version.clone()
+    }
+}
+
+/// A provider whose wall clock ([`Provider::wall_now`]) is its own:
+/// `wall`'s readings in order, the last repeating; everything else is
+/// `inner`'s. For tests that set the two clocks apart.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct Clocks<P> {
+    pub inner: P,
+    pub wall: Vec<DateTime>,
+}
+
+impl<P: Provider> Provider for Clocks<P> {
+    fn store_id(&mut self) -> io::Result<String> {
+        self.inner.store_id()
+    }
+    fn key(&mut self) -> io::Result<Key> {
+        self.inner.key()
+    }
+    fn membership_store_id(&mut self) -> io::Result<String> {
+        self.inner.membership_store_id()
+    }
+    fn now(&mut self) -> io::Result<DateTime> {
+        self.inner.now()
+    }
+    fn wall_now(&mut self) -> io::Result<DateTime> {
+        match self.wall.len() {
+            0 => Err(io::Error::other("the fixed wall clock holds no reading")),
+            1 => Ok(self.wall[0]),
+            _ => Ok(self.wall.remove(0)),
+        }
+    }
+    fn engine_version(&self) -> String {
+        self.inner.engine_version()
     }
 }
 
