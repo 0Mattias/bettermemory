@@ -48,6 +48,7 @@ pub mod pool;
 pub mod restore_lock;
 pub mod tx;
 pub mod write;
+pub mod writers;
 
 use std::fs;
 use std::io;

@@ -2832,11 +2832,190 @@ Left for later: part (c), `_printable` and `membership_lines`; the local
 branch of `remote_key`, `_file_url_path`, the capture's discovery, its
 cache and `checkout_token`, which read files.
 
+## The plain record writers
+
+The public record writers of `store_records.py` (read at faa1b32e), ported
+as functions on `WritableStore`, each running one `Transaction`
+(`src/store/writers.rs`). Built: `put_memory`, `tombstone`,
+`delete_tombstone` (part A, below). Designed, not built: `write`,
+`update`, `mark_verified`, `record_corroboration`, `_active_or_raise`
+(part B, after the provider gains its mint in another unit). Every writer below runs inside one
+`_transaction`, so every row it appends is followed at commit by the
+returned marks its puts and removals name (`_flush_returns`, one wall
+clock read when anything is named and the `returned` table exists), and
+the head moves once. Every row's `ts` is the log clock, read once per row.
+
+Clocks, as the reference reads them. `utcnow` (`models.py:879`) is
+`datetime.now(timezone.utc)`, imported by `store_records`; `tombstone`'s
+`datetime.now` is read in `store_records`; both are the wall clock, and
+`_fixed.py` patches both onto the `wall` ticker. `generate_ulid`
+(`models.py:56-64`) reads `time.time()` once (milliseconds, masked to 48
+bits) and ten bytes of `secrets.token_bytes`: a third read of the system
+clock, separate from `utcnow`, so in production an id's milliseconds and
+its `created` can differ; `_fixed.py` replaces the mint whole (counted
+ULIDs under `01M`). The provider must therefore gain `utcnow()` (default:
+`wall_now`) and `ulid()` (default: `mint::ulid(mint::millis(system
+time), random bytes)`; `Fixed` and the fixture: the counted mint), with
+`Fixed`, `System` and `Clocks` unchanged in what they already answer.
+
+Reads per call (wall / mint), before the marks' stamp: `write` 1 / 1;
+`update` 1 / 0, after the snapshot check; `mark_verified` 1 / 0, after the
+check; `record_corroboration` 1 / 0, none when the session already
+corroborated; `tombstone` 1 / 0 without `now`, 0 with it; `put_memory`
+and `delete_tombstone` 0 / 0.
+
+- `put_memory(memory, provenance=None, filename=None, session=None,
+  home=None, standing=None) -> Memory` (114-154, 157-199). Refuses a
+  provenance outside `{imported, local, synced}` (`_WRITABLE_PROVENANCE`,
+  `store_schema.py:142`) before any transaction: ValueError "provenance
+  must be one of ['imported', 'local', 'synced'], got {p!r}" (139-142, a
+  Python `repr` of caller text). In the transaction: a `tombstones` row
+  for the id refuses with TombstonedError "memory {id} was removed:
+  {removed_reason}; restore it to bring it back" (172-179). An existing
+  `memories` row supplies the provenance when none is given (`or`: an
+  empty string also falls back) and the filename when None (183-185).
+  Appends one `memory_put` `{**marks, "memory": record_payload(memory),
+  "provenance": provenance or "local", "filename": filename}` (186-193).
+  Returns the caller's memory unchanged. `home` / `standing` set: refused
+  here as not ported (`_home_row`, `_standing_row` are another unit).
+- `tombstone(memory_id, reason, session=None, now=None) ->
+  TombstonedMemory` (500-547). Reads the row through `_MEMORY_SELECT`
+  (101-104, the attestation by `log_mac`); none: a tombstone row refuses
+  with TombstonedError "memory {id} was removed: {reason}" (no restore
+  hint), else NotFoundError(id). The record read (`_row_to_memory`), the
+  removal time `now or datetime.now(utc)`, the tombstone built from every
+  record field plus `removed`, `removed_reason`, `removed_session=session`.
+  Appends `memory_delete {"id"}` then `tombstone_put {"tombstone":
+  record_payload(dead), "provenance", "filename", "links":
+  json.loads(links_json), "corroborations", "last_corroborated"}` (the
+  last three from the row's columns as stored). Returns the tombstone.
+  No id check: an invalid id is simply not found.
+- `delete_tombstone(memory_id, session=None) -> None` (744-760):
+  `_require_row` NotFoundError(id) unless a `tombstones` row; then
+  `tombstone_delete {"id"}`.
+- `write(content, scopes, confidence=medium, source=explicit, origin,
+  category, claims, links, actor, session, home, standing) -> Memory`
+  (767-808): one `utcnow` for `created` and `updated`, one
+  `generate_ulid`, `body = content.strip() + "\n"` (Python `str.strip`:
+  Unicode White_Space), `actor` a dict validated as Actor, links each a
+  MemoryLink or validated as one, `claims` copied or `[]`; the Memory
+  constructor validates (pydantic ValidationError); then `put_memory(...,
+  provenance="local")`.
+- `update(memory, force=False, preserve_verification=False, session=None,
+  standing=None) -> Memory` (811-859): `_active_or_raise`; unless `force`,
+  a stored `updated` unequal to the snapshot's raises
+  ConcurrentUpdateError "memory {id} was updated concurrently (your
+  snapshot is stale; stored updated={isoformat})" (`store_schema.py`
+  1038-1052). Carries `updated=utcnow()`, the stored corroboration
+  rollup and, with `preserve_verification`, the stored verification
+  fields, claims and `verified_head`; `model_copy(update=...)` (no
+  validation) then `Memory.model_validate(dump)` as a check only: the
+  record written and returned is the unvalidated copy. Then `put_memory`
+  (nested: the tombstone check again, provenance and filename kept).
+  Supersedes links changed name records whose returned marks are written
+  or dropped at commit.
+- `mark_verified(memory_id, verified_paths, verified_commits,
+  verified_versions, verified_absent_paths, verified_path_targets,
+  verified_absent_path_targets, claims, verified_head,
+  expected_last_verified_at, expected_updated, check_expected, session)
+  -> Memory` (862-951). Before the transaction, `verified_head` is
+  stripped and lowercased and must be 40 or 64 hex: ValueError
+  "verified_head must be a full commit hash (40 or 64 hex characters),
+  got {head!r}" (the normalised value's repr). Then `_active_or_raise`;
+  with `check_expected`, a stored `last_verified_at` unequal to the
+  expected one (None included) or, when `expected_updated` is given, an
+  unequal `updated` raises ConcurrentUpdateError. One `utcnow`; each list
+  given replaces the stored one; a target map is set (or set to None)
+  when it or its paths list is given; `verified_head` is always written
+  (None clears it). Copy, validate as a check, read provenance and
+  filename, append `memory_put` then `verification_put {memory_id,
+  machine_id: None, verified_at: _iso(now), verified_head, the four
+  lists, each non-None target map}`. Returns the copy.
+- `record_corroboration(memory_id, session=None) -> Memory | None`
+  (966-999): `_active_or_raise`; with a session, `CORROBORATION_CHECK_SQL`
+  (89-95) with the needle `canonical_payload({"corroboration": id})[1:-1]`
+  returns None with nothing written when found (the transaction keeps no
+  row, the head does not move); else `corroborations + 1`,
+  `last_corroborated=utcnow()`, `_put_memory` with the mark
+  `{"corroboration": id}` (the tombstone check cannot fire: the record is
+  active under the lock).
+- `_active_or_raise(memory_id)` (1011-1026): not a valid ULID:
+  MemoryNotFoundError "invalid id: {id!r}"; an active row: the record;
+  a tombstone: TombstonedError "memory {id} was removed: {reason}"; else
+  MemoryNotFoundError "no memory with id {id}".
+
+Refused as not ported, nothing written: `home` and `standing`
+arguments, `put_tombstone`, `restore`, `restore_trimmed` and relink,
+`rename_scope`, the prunes, `batch()`, and what a transaction refuses.
+
+Mechanisms this needs beyond the transaction: (1) the provider's
+`utcnow` and `ulid`; (2) a caller-side record input surface: building a
+Memory from `write`'s arguments (actor and links as values, Python
+`strip`), and `model_copy` followed by a validation whose result is
+dropped, so the record written may differ from the validated one; (3)
+`verification_put`'s stamp and the target-map rule. Split proposed:
+part A `put_memory`, `write`, `tombstone`, `delete_tombstone`
+(114-199, 500-547, 744-808; mechanisms 1 and the `write` half of 2);
+part B `update`, `mark_verified`, `record_corroboration`,
+`_active_or_raise` (811-1026; the copy-and-check half of 2, and 3).
+
+### Part A, built
+
+- `WritableStore::put_memory(provider, &Memory, Put { provenance,
+  filename, session, home, standing }) -> Done<Memory>`: `provenance` is
+  any Python value a caller can pass (`Option<&PyValue>`): a list or dict
+  (also inside a tuple) is TypeError "unhashable type: 'list'", anything
+  but a writable label ValueError with the crate's `repr`. `home` or
+  `standing` given: `WriterNotPorted::Home` / `Standing`, before the
+  transaction. A stored empty label falls back to `local` (the `or`
+  chain as written); a blob label is `WriterNotPorted::Blob`.
+- `WritableStore::tombstone(provider, id, reason, session, now:
+  Option<DateTime>) -> Done<Tombstone>`: the wall clock through the
+  transaction's `wall_now` (added to `tx.rs`), once, after the row is
+  found, only when `now` is None.
+- `WritableStore::delete_tombstone(provider, id, session) -> Done<()>`.
+- `RecordWriteError`: `Raised { class, message }` (the reference's
+  exception; `text()` is `str(exc)`, a KeyError subclass's being its
+  message's `repr`), `Record` (the stored row raised in `_row_to_memory`),
+  `NotPorted`, `Write` (the transaction's errors). `Done { value,
+  committed }` carries the transaction's rows and head move.
+  `*_hooked` forms (hidden) take a boundary hook for the kill test.
+
+- Order of refusals: `home` and `standing` are refused as not ported
+  where the reference would first write them, after the tombstone check
+  and the record's payload (`_put_memory` 172-192) and before any row, so
+  a call the reference refuses for another reason (a bad label, a removed
+  id, a target map) gets that reason. A `standing` answer reads the wall
+  clock once before the transaction, as `_standing_row` stamps it
+  (`store_records.py:221`); `_standing_row`'s own checks (202-213) are not
+  ported, so an answer it refuses over a removed id gets TombstonedError
+  natively.
+- `validate_path_targets` (`models.py` 1157-1175), reached through
+  `record_payload` by both writers, is reproduced with its texts: "{field}
+  capped at 64 entries (got N)" (reachable only by a hand-built native
+  record: the model caps first) and "{field} must cover every legacy
+  attestation". `record_payload` raises nothing else for a validated
+  record.
+- Not reproduced, by design (hand-edited rows): a stored provenance that
+  is a BLOB gives `native:not_ported` (`WriterNotPorted::Blob`) where the
+  reference raises ValueError `unknown provenance "b'local'"`; in
+  `tombstone`, a row with `corroborations='x'`, `links_json=5` or
+  `last_corroborated='garbage'` refuses with the reference's class but
+  not the interpreter's text.
+
+Tests: `golden_store_records.rs` (`store_records.jsonl`, 13 cases, 73
+calls, classes ii: Unicode and pydantic-core gates, POSIX only as
+`store_tx.jsonl`; `store_records_not_posix.rs` records the gap);
+`store_records_cross.rs` (class i, both directions);
+`store_records_kills.rs` (120 kills, POSIX only); `store_records_robustness.rs`.
+
 ## Not built yet
 
 The store's writes past `create`, the writing open's plain states and
-the write transaction (`mutate`, `begin`, its `returned` marks): the
-public record API (`put_memory`, `tombstone`, `restore` with relink,
+the write transaction (`mutate`, `begin`, its `returned` marks) and
+`put_memory`, `tombstone`, `delete_tombstone`: the rest of the public
+record API (`write`, `update`, `mark_verified`, `record_corroboration`,
+`put_tombstone`, `restore` with relink, `rename_scope`, the prunes, `batch`,
 provenance, homes and standing answers), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
 restore's rows, re-spelling the index), membership's writes and
 the caller's resolution (its admission is `store::caller`), and each hit's snippet, signals and drift report,

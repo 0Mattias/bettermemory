@@ -54,6 +54,7 @@ from . import (
     gen_store_create,
     gen_store_files,
     gen_store_open,
+    gen_store_records,
     gen_store_tx,
     gen_store_write,
     gen_store_path,
@@ -99,6 +100,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_open": gen_store_open.generate,
     "store_write": gen_store_write.generate,
     "store_tx": gen_store_tx.generate,
+    "store_records": gen_store_records.generate,
     "gitconfig": gen_gitconfig.generate,
     "caller_admission": gen_caller_admission.generate,
     "gitconfig_wildmatch": gen_gitconfig_wildmatch.generate,
@@ -129,6 +131,7 @@ UNICODE_GATED = frozenset(
         "store_open",
         "store_write",
         "store_tx",
+        "store_records",
     }
 )
 
@@ -173,7 +176,15 @@ PYTHON_GATED = frozenset(
 #: pydantic 2.14.1 on it): the models' coercions and errors are its.
 PYDANTIC_CORE_VERSION = "2.50.1"
 PYDANTIC_GATED = frozenset(
-    {"models", "models_rows", "models_stores", "fold", "store_write", "store_tx"}
+    {
+        "models",
+        "models_rows",
+        "models_stores",
+        "fold",
+        "store_write",
+        "store_tx",
+        "store_records",
+    }
 )
 
 
@@ -215,7 +226,8 @@ PLATFORM_GATED = frozenset(
 #: native tests' world reproduces; on Windows the reference's paths differ.
 #: ``store_open`` reads modes and writes the key ring's binding as a
 #: resolved POSIX path under a POSIX ``flock``; ``store_write`` records the
-#: same state after each write, ``store_tx`` after each transaction.
+#: same state after each write, ``store_tx`` after each transaction,
+#: ``store_records`` after each writer call.
 #: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
 #: otherwise (`gen_githead`).
 POSIX_ONLY = frozenset(
@@ -226,6 +238,7 @@ POSIX_ONLY = frozenset(
         "store_open",
         "store_write",
         "store_tx",
+        "store_records",
         "githead_posix",
     }
 )

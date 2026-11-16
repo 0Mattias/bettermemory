@@ -235,6 +235,12 @@ impl Transaction<'_> {
         }
     }
 
+    /// The wall clock, read once (`datetime.now` as a writer reads it,
+    /// `tombstone`'s removal time among them).
+    pub fn wall_now(&mut self) -> Result<crate::datetime::DateTime, WriteError> {
+        self.provider.wall_now().map_err(WriteError::Clock)
+    }
+
     /// The connection, to read the store inside the write lock.
     pub fn connection(&self) -> &Connection {
         &self.store.conn
