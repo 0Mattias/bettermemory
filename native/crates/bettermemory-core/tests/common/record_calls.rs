@@ -5,9 +5,9 @@ use bettermemory_core::json;
 use bettermemory_core::pyvalue::PyValue;
 use bettermemory_core::records::Memory;
 use bettermemory_core::store::create::Provider;
-use bettermemory_core::store::home::{Answer, Home};
+use bettermemory_core::store::home::{truthy, Answer, Home};
 use bettermemory_core::store::open::WritableStore;
-use bettermemory_core::store::writers::{Put, RecordWriteError, Update, WriteArgs};
+use bettermemory_core::store::writers::{Put, RecordWriteError, Update, Verify, WriteArgs};
 use serde_json::Value;
 
 use super::{jsonl, written};
@@ -215,5 +215,69 @@ impl<P: Provider> Provider for Minting<P> {
     fn ulid(&mut self) -> std::io::Result<String> {
         self.next += 1;
         Ok(written::ulid(self.next, "01K"))
+    }
+}
+
+/// The header and the cases of `store_records_c.jsonl`.
+pub fn cases_c() -> (Value, Vec<Value>) {
+    let mut lines = jsonl("store_records_c.jsonl");
+    let header = lines.remove(0);
+    (header, lines)
+}
+
+/// One call of `store_records_c.jsonl` (`gen_store_records_c._run`):
+/// `verify` and `corroborate`, the rest as [`call_b`].
+pub fn call_c(
+    store: &mut WritableStore,
+    provider: &mut dyn Provider,
+    call: &Value,
+) -> Result<Option<String>, RecordWriteError> {
+    let session = call["session"].as_str();
+    let id = call["id"].as_str().unwrap_or_default();
+    match call["call"].as_str().expect("call") {
+        "verify" => {
+            let kw = &call["kw"];
+            let get = |k: &str| kw.get(k).map(py);
+            let values: Vec<Option<PyValue>> = [
+                "verified_paths",
+                "verified_commits",
+                "verified_versions",
+                "verified_absent_paths",
+                "verified_path_targets",
+                "verified_absent_path_targets",
+                "claims",
+                "verified_head",
+                "expected_last_verified_at",
+                "expected_updated",
+            ]
+            .iter()
+            .map(|k| get(k))
+            .collect();
+            let v = |i: usize| values[i].as_ref();
+            let verify = Verify {
+                verified_paths: v(0),
+                verified_commits: v(1),
+                verified_versions: v(2),
+                verified_absent_paths: v(3),
+                verified_path_targets: v(4),
+                verified_absent_path_targets: v(5),
+                claims: v(6),
+                verified_head: v(7),
+                expected_last_verified_at: v(8),
+                expected_updated: v(9),
+                check_expected: kw
+                    .get("check_expected")
+                    .map(|v| truthy(&py(v)))
+                    .unwrap_or(false),
+                session,
+            };
+            let done = store.mark_verified(provider, id, verify)?;
+            Ok(Some(done.value.payload_text().expect("payload")))
+        }
+        "corroborate" => {
+            let done = store.record_corroboration(provider, id, session)?;
+            Ok(done.value.map(|m| m.payload_text().expect("payload")))
+        }
+        _ => call_b(store, provider, call),
     }
 }

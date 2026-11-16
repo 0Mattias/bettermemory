@@ -37,6 +37,7 @@ tables are not compared, only what a ``MATCH`` returns.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 import tempfile
 from datetime import timedelta
 from pathlib import Path
@@ -282,7 +283,9 @@ def _run(store: Store, call: dict[str, Any]) -> str | None:
     return canonical_payload(record_payload(got))
 
 
-def run_case(case_def: dict[str, Any]) -> dict[str, Any]:
+def run_case(
+    case_def: dict[str, Any], runner: Callable[[Store, dict[str, Any]], Any] = _run
+) -> dict[str, Any]:
     steps_out: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
@@ -296,7 +299,9 @@ def run_case(case_def: dict[str, Any]) -> dict[str, Any]:
             for i, step in enumerate(case_def["steps"]):
                 reads: list[str] = []
                 log = Read(LOG0 + timedelta(minutes=i), LOG_STEP, "log", reads)
-                wall = Read(WALL0 + timedelta(hours=i), WALL_STEP, "wall", reads)
+                # A case `same_tick` reads one wall-clock start in every step.
+                hours = 0 if case_def.get("same_tick") else i
+                wall = Read(WALL0 + timedelta(hours=hours), WALL_STEP, "wall", reads)
                 minted: list[str] = []
                 inner = ulid_mint(1000 * i)
 
@@ -314,7 +319,7 @@ def run_case(case_def: dict[str, Any]) -> dict[str, Any]:
                     try:
                         outcome: dict[str, Any] = {
                             "written": True,
-                            "returned": _run(store, step),
+                            "returned": runner(store, step),
                         }
                     except Exception as exc:  # noqa: BLE001 - the refusal is the record
                         outcome = {"written": False, "refusal": _refusal(exc)}

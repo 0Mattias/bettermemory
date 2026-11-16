@@ -82,7 +82,7 @@ pub(crate) fn type_name(v: &PyValue) -> &'static str {
 }
 
 /// `bool(value)`.
-pub(crate) fn truthy(v: &PyValue) -> bool {
+pub fn truthy(v: &PyValue) -> bool {
     match v {
         PyValue::None => false,
         PyValue::Bool(b) => *b,

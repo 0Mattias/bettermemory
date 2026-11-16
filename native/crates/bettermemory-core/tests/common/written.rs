@@ -48,7 +48,11 @@ pub fn payload(text: &str) -> PyValue {
 }
 
 /// `gen_store_write.decode`: `{"$tuple": [...]}`, `{"$datetime": iso}` and
-/// `{"$path": text}` made the values they stand for.
+/// `{"$path": text}` made the values they stand for, and `{"$dict":
+/// [[k, v], ...]}` a dict in that order (its keys distinct, as the
+/// fixtures write them; JSON's sorted object keys would lose the order),
+/// `{"$int": digits}` and `{"$float": repr}` numbers exactly (serde_json
+/// reads an int past 64 bits as a float and may round a float's text).
 pub fn decode(value: PyValue) -> PyValue {
     match &value {
         PyValue::Dict(items) => {
@@ -61,6 +65,27 @@ pub fn decode(value: PyValue) -> PyValue {
                         return PyValue::DateTime(DateTime::from_isoformat(t).expect("a time"))
                     }
                     (Some("$path"), PyValue::Str(t)) => return PyValue::Path(t.clone()),
+                    (Some("$int"), PyValue::Str(t)) => {
+                        let digits = unicode::to_string(t).expect("digits");
+                        return PyValue::int_from_decimal(&digits).expect("an int");
+                    }
+                    (Some("$float"), PyValue::Str(t)) => {
+                        let text = unicode::to_string(t).expect("a float");
+                        return PyValue::Float(text.parse().expect("a float"));
+                    }
+                    (Some("$dict"), PyValue::List(pairs)) => {
+                        return PyValue::Dict(
+                            pairs
+                                .iter()
+                                .map(|p| match p {
+                                    PyValue::List(kv) if kv.len() == 2 => {
+                                        (decode(kv[0].clone()), decode(kv[1].clone()))
+                                    }
+                                    other => panic!("a $dict pair {other:?}"),
+                                })
+                                .collect(),
+                        )
+                    }
                     _ => {}
                 }
             }

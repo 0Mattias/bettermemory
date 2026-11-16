@@ -3259,8 +3259,10 @@ The public record writers of `store_records.py` (read at faa1b32e), ported
 as functions on `WritableStore`, each running one `Transaction`
 (`src/store/writers.rs`). Built: `put_memory`, `tombstone`,
 `delete_tombstone` (part A), `write`, `update`, `_active_or_raise` (part
-B1, below). Designed, not built: `mark_verified`, `record_corroboration`
-(part B2). Every writer below runs inside one
+B1, below), `mark_verified`, `record_corroboration` (part B2, below).
+Not ported: `put_tombstone`, `restore`, `restore_trimmed` with relink,
+`rename_scope`, `prune_tombstones` and the other prunes, and `batch()`
+across several writers; nothing here writes for them. Every writer below runs inside one
 `_transaction`, so every row it appends is followed at commit by the
 returned marks its puts and removals name (`_flush_returns`, one wall
 clock read when anything is named and the `returned` table exists), and
@@ -3479,6 +3481,59 @@ meets the lock after one wall-clock read
 transaction on both sides. `store_records_b_not_posix.rs` records the
 Windows gap. On Windows an extra wall-clock read is caught by no test,
 because only the POSIX golden test records the order of reads.
+
+### Part B2, built (read at 23b3b448; line numbers confirmed)
+
+`mark_verified` (`store_records.py` 862-951) checks `verified_head` before
+the transaction starts, as the reference does (887-893): a value with no
+`strip` is its AttributeError, otherwise stripped, lowered and refused as
+the ValueError unless a full 40 or 64 hex commit; no clock is read before
+that. Inside one transaction: `_active_or_raise`; with `check_expected`,
+`ConcurrentUpdateError` when `last_verified_at` or `updated` differ from
+the expected ones; one wall clock read; the changes applied to a copy of
+the record (`last_verified_at`, each list as `list()` makes it, each target
+map as `dict()` makes it whenever the map or its paths are given, `claims`,
+`verified_head`), validated as the reference validates it; then the
+record's row and its verification stamp (`memory_put`, `verification_put`).
+`record_corroboration` (966-1008) commits nothing and returns None when
+the session already corroborated (`CORROBORATION_CHECK_SQL`, no clock
+read), otherwise bumps `corroborations`, stamps `last_corroborated` from
+the wall clock and writes the record with the session's mark. The
+verifications table keeps one row per record and machine.
+
+`dict()` of a list of pairs finds an existing key by Python's `==`: `1`,
+`1.0` and `True` are one key, as are `0`, `0.0`, `-0.0` and `False`; an int
+too large for a float equals a float only when the float is exactly that
+integer; tuples compare item by item; the first key's spelling stays with
+the last value. A NaN key equals nothing (each decoded NaN is an object of
+its own, and `dict()`'s identity check never meets two). No other place in
+the crate builds a dict from a caller's pairs: the JSON reader's keys are
+always text and the other dicts have fixed keys.
+
+Held to `store_records_c.jsonl` (6 cases, 67 calls, 119,245 bytes), a file
+of its own so each file keeps its size budget and B1's stays byte for byte;
+gated as `store_tx.jsonl`. It records five texts CPython words, not the
+product (`'int' object is not iterable`, `'int' object has no attribute
+'strip'`, `dict()`'s "has length 1; 2 is required" and "cannot convert
+dictionary update sequence element #0 to a sequence", `unhashable type:
+'list'`). Python 3.15 words the last two differently (and 3.14 is believed
+to word `unhashable` differently); the file is safe only because the
+Unicode gate (15.1) confines its generation and golden test to Python 3.13.
+The pydantic-core gate pins pydantic's first lines. Arguments the fixture's
+sorted JSON would change are tagged: an ordered dict as `{"$dict": [[k,
+v], ...]}`, a float as `{"$float": repr}`, an int past 2**53 as `{"$int":
+digits}` (serde_json would round them); `check_expected` is recorded as
+given and both sides read its truthiness. The file cannot hold a lone
+surrogate (serde_json refuses one), so no case passes one.
+`store_records_b.jsonl` has the same three limits in its harness, but no
+recorded case meets them: its dict arguments are record models whose
+recorded outcomes do not depend on key order, its floats are exact, its
+flags are bools and it holds no surrogate. Tests:
+`golden_store_records_c.rs` (Ledger), `store_records_c_not_posix.rs`,
+`store_records_c_kills.rs` (120 kills, both journal modes),
+`store_records_c_cross.rs` (both ways), `store_records_c_robustness.rs`
+(deep arguments on a 512 KiB thread, hostile ids, wrong types, the head
+refused under a held lock with no clock read).
 
 ## Text made safe to show, and the membership lines
 
@@ -4115,7 +4170,7 @@ The store's writes past `create`, the writing open's plain states and
 the write transaction (`mutate`, `begin`, its `returned` marks),
 `put_memory`, `tombstone`, `delete_tombstone` and the row writers
 (`store::home`, `store::tables`): the rest of the public record API
-(`mark_verified`, `record_corroboration`, `put_tombstone`, `restore` with
+(`put_tombstone`, `restore` with
 relink, `rename_scope`, the prunes, `batch`), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
 restore's rows, re-spelling the index), membership's writes and
 the caller's resolution (its admission is `store::caller`), and each hit's snippet, signals and drift report,

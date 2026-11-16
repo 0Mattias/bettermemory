@@ -692,7 +692,10 @@ def _recipe(recipe: list[dict[str, Any]], keys: Path, store: Path) -> None:
 
 def decode(value: Any) -> Any:
     """A payload as the fixture spells it, its tagged values made the
-    Python values they stand for."""
+    Python values they stand for. ``{"$dict": [[k, v], ...]}`` is a dict
+    in that order: the fixture's ``sort_keys`` would lose an object's.
+    ``{"$int": digits}`` and ``{"$float": repr}`` are numbers the native
+    reader takes exactly."""
     if isinstance(value, dict):
         if len(value) == 1:
             ((tag, inner),) = value.items()
@@ -702,6 +705,12 @@ def decode(value: Any) -> Any:
                 return datetime.fromisoformat(inner)
             if tag == "$path":
                 return PurePosixPath(inner)
+            if tag == "$int":
+                return int(inner)
+            if tag == "$float":
+                return float(inner)
+            if tag == "$dict":
+                return {decode(k): decode(v) for k, v in inner}
         return {k: decode(v) for k, v in value.items()}
     if isinstance(value, list):
         return [decode(v) for v in value]

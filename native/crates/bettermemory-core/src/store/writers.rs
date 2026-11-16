@@ -314,7 +314,9 @@ fn check_targets(fields: &RecordFields) -> Result<(), RecordWriteError> {
 
 /// `_put_memory` (157-199) inside `tx`: the tombstone check, the row's
 /// label and name kept, the home decided, then `memory_put`, `home_put`
-/// and `standing_put` in the reference's order.
+/// and `standing_put` in the reference's order. `marks` are payload fields
+/// beside the record (`CORROBORATION_MARK`).
+#[allow(clippy::too_many_arguments)]
 fn put_in(
     tx: &mut Transaction<'_>,
     memory: &Memory,
@@ -323,6 +325,7 @@ fn put_in(
     session: Option<&str>,
     home: Option<&Home>,
     standing: Option<PyValue>,
+    marks: Vec<(&str, PyValue)>,
 ) -> Result<(), RecordWriteError> {
     let id = text_id(&memory.fields.id)?;
     if let Some(reason) = removed_reason(tx.connection(), &id)? {
@@ -355,11 +358,12 @@ fn put_in(
     check_targets(&memory.fields)?;
     let record = memory.record_payload().map_err(py_failed)?;
     let home_row = home::home_row(tx, &id, "memory", home)?;
-    let items = vec![
+    let mut items = marks;
+    items.extend([
         ("memory", record),
         ("provenance", PyValue::Str(label)),
         ("filename", name),
-    ];
+    ]);
     tx.mutate("memory_put", &dict(items), session)?;
     if let Some(row) = &home_row {
         home::put_home(tx, row, session)?;
@@ -405,6 +409,7 @@ fn put_checked(
         put.session,
         put.home,
         standing,
+        Vec::new(),
     )
 }
 
@@ -876,4 +881,419 @@ fn build_memory(
         fields.push(name, crate::records::lax::Arg::Py(value));
     }
     Memory::validate(&fields).map_err(|e| write_error(home::record_refusal(e)))
+}
+
+// -- part B2: mark_verified and record_corroboration ------------------------
+
+/// `Store.mark_verified`'s keyword arguments (862-878), each the Python
+/// value a caller passes; None is the reference's default (None, `False`
+/// for `check_expected`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Verify<'a> {
+    pub verified_paths: Option<&'a PyValue>,
+    pub verified_commits: Option<&'a PyValue>,
+    pub verified_versions: Option<&'a PyValue>,
+    pub verified_absent_paths: Option<&'a PyValue>,
+    pub verified_path_targets: Option<&'a PyValue>,
+    pub verified_absent_path_targets: Option<&'a PyValue>,
+    pub claims: Option<&'a PyValue>,
+    pub verified_head: Option<&'a PyValue>,
+    pub expected_last_verified_at: Option<&'a PyValue>,
+    pub expected_updated: Option<&'a PyValue>,
+    pub check_expected: bool,
+    pub session: Option<&'a str>,
+}
+
+/// `CORROBORATION_MARK` (85).
+pub const CORROBORATION_MARK: &str = "corroboration";
+
+/// `CORROBORATION_CHECK_SQL` (92-95).
+pub const CORROBORATION_CHECK_SQL: &str =
+    "SELECT 1 FROM log WHERE kind = 'memory_put' AND session = ? \
+     AND instr(payload, ?) > 0 LIMIT 1";
+
+fn given(v: Option<&PyValue>) -> Option<&PyValue> {
+    v.filter(|v| !matches!(v, PyValue::None))
+}
+
+/// `stored != caller's` for an optional datetime and any Python value.
+fn opt_dt_differ(stored: Option<&DateTime>, given: Option<&PyValue>) -> bool {
+    match (stored, given.unwrap_or(&PyValue::None)) {
+        (None, PyValue::None) => false,
+        (Some(d), PyValue::DateTime(e)) => dt_differ(d, e),
+        _ => true,
+    }
+}
+
+/// `dict(value)` for the values a caller can pass: a dict as it is, an
+/// iterable of pairs; CPython's TypeError or ValueError otherwise.
+fn py_dict(value: &PyValue) -> Result<PyValue, RecordWriteError> {
+    let items = match value {
+        PyValue::Dict(_) => return Ok(value.clone()),
+        PyValue::List(_) | PyValue::Tuple(_) | PyValue::Str(_) => py_list(value)?,
+        other => {
+            return Err(refused(
+                "TypeError",
+                format!("'{}' object is not iterable", home::type_name(other)),
+            ))
+        }
+    };
+    let mut out: Vec<(PyValue, PyValue)> = Vec::new();
+    for (i, item) in items.into_iter().enumerate() {
+        let pair = match &item {
+            PyValue::List(v) | PyValue::Tuple(v) => v.clone(),
+            PyValue::Str(s) => s.iter().map(|&c| PyValue::Str(vec![c])).collect(),
+            PyValue::Dict(v) => v.iter().map(|(k, _)| k.clone()).collect(),
+            _ => {
+                return Err(refused(
+                    "TypeError",
+                    format!("cannot convert dictionary update sequence element #{i} to a sequence"),
+                ))
+            }
+        };
+        if pair.len() != 2 {
+            return Err(refused(
+                "ValueError",
+                format!(
+                    "dictionary update sequence element #{i} has length {}; 2 is required",
+                    pair.len()
+                ),
+            ));
+        }
+        let mut pair = pair.into_iter();
+        let (k, v) = (
+            pair.next().unwrap_or(PyValue::None),
+            pair.next().unwrap_or(PyValue::None),
+        );
+        if let Some(kind) = unhashable(&k) {
+            return Err(refused("TypeError", format!("unhashable type: '{kind}'")));
+        }
+        match out.iter_mut().find(|(old, _)| key_eq(old, &k)) {
+            Some(slot) => slot.1 = v,
+            None => out.push((k, v)),
+        }
+    }
+    Ok(PyValue::Dict(out))
+}
+
+/// A number key as Python's `==` (and so `hash`) reads it: the exact
+/// decimal of an int, a bool or an integral finite float (`-0.0` is `0`),
+/// or None for a float with a fraction, an infinity or a NaN.
+fn integral(value: &PyValue) -> Option<String> {
+    match value {
+        PyValue::Bool(b) => Some(if *b { "1" } else { "0" }.to_owned()),
+        PyValue::Int(d) => Some(d.clone()),
+        PyValue::Float(f) if f.is_finite() && f.fract() == 0.0 => {
+            // `{:.0}` of an integral f64 is its exact decimal.
+            let text = format!("{f:.0}");
+            Some(if text == "-0" { "0".to_owned() } else { text })
+        }
+        _ => None,
+    }
+}
+
+/// Two hashable keys as a `dict` finds them the same: Python's `==`. `1`,
+/// `1.0` and `True` are one key, as are `0`, `0.0`, `-0.0` and `False`,
+/// and an int too large for a float equals the float only when the float
+/// is exactly that integer. Tuples compare item by item. A NaN equals
+/// nothing: `dict()` also matches by identity first, but each NaN decoded
+/// from data is an object of its own, so two NaN keys stay two. Aware
+/// datetimes compare as instants (by fields where the UTC instant falls
+/// outside the years a datetime holds), naive ones by fields, and a naive
+/// one never equals an aware one. A str never equals a path.
+fn key_eq(a: &PyValue, b: &PyValue) -> bool {
+    let mut work = vec![(a, b)];
+    while let Some((a, b)) = work.pop() {
+        let same = match (a, b) {
+            (PyValue::Float(x), PyValue::Float(y)) => x == y,
+            (PyValue::Tuple(x), PyValue::Tuple(y)) => {
+                if x.len() != y.len() {
+                    return false;
+                }
+                work.extend(x.iter().zip(y.iter()));
+                true
+            }
+            (PyValue::DateTime(x), PyValue::DateTime(y)) => match (x.offset_us, y.offset_us) {
+                (Some(_), Some(_)) => match (x.to_utc(), y.to_utc()) {
+                    (Some(Ok(u)), Some(Ok(v))) => u == v,
+                    _ => x == y,
+                },
+                (None, None) => x == y,
+                _ => false,
+            },
+            (
+                PyValue::Bool(_) | PyValue::Int(_) | PyValue::Float(_),
+                PyValue::Bool(_) | PyValue::Int(_) | PyValue::Float(_),
+            ) => match (integral(a), integral(b)) {
+                (Some(x), Some(y)) => x == y,
+                _ => false,
+            },
+            _ => a == b,
+        };
+        if !same {
+            return false;
+        }
+    }
+    true
+}
+
+/// `int + 1` of a canonical non-negative decimal.
+fn plus_one(decimal: &str) -> String {
+    let mut digits: Vec<u8> = decimal.bytes().collect();
+    for d in digits.iter_mut().rev() {
+        if *d == b'9' {
+            *d = b'0';
+        } else {
+            *d += 1;
+            return String::from_utf8(digits).unwrap_or_default();
+        }
+    }
+    let mut out = String::from("1");
+    out.push_str(&String::from_utf8(digits).unwrap_or_default());
+    out
+}
+
+/// `mark_verified`'s check before its transaction (887-893): the head
+/// stripped and lowercased, a full commit hash, or ValueError quoting
+/// the normalised value.
+fn verified_head(head: Option<&PyValue>) -> Result<PyValue, RecordWriteError> {
+    let Some(head) = given(head) else {
+        return Ok(PyValue::None);
+    };
+    let PyValue::Str(text) = head else {
+        return Err(refused(
+            "AttributeError",
+            format!(
+                "'{}' object has no attribute 'strip'",
+                home::type_name(head)
+            ),
+        ));
+    };
+    let norm = unicode::lower(py_strip(text));
+    if !crate::records::is_full_commit_sha(&norm) {
+        let mut message = unicode::cps(
+            "verified_head must be a full commit hash (40 or 64 hex characters), got ",
+        );
+        message.extend(repr_str(&norm));
+        return Err(RecordWriteError::raised("ValueError", message));
+    }
+    Ok(PyValue::Str(norm))
+}
+
+/// `_corroborated(tx, memory_id, session)` (1002-1008).
+fn corroborated(
+    tx: &Transaction<'_>,
+    memory_id: &str,
+    session: &str,
+) -> Result<bool, RecordWriteError> {
+    let mark = dict(vec![(CORROBORATION_MARK, PyValue::str(memory_id))]);
+    let text = json::canonical_payload(&mark).map_err(py_failed)?;
+    let needle: String = {
+        let mut chars = text.chars();
+        chars.next();
+        chars.next_back();
+        chars.as_str().to_owned()
+    };
+    Ok(tx
+        .connection()
+        .prepare(CORROBORATION_CHECK_SQL)?
+        .exists(params![session, needle])?)
+}
+
+impl WritableStore {
+    /// `Store.mark_verified(memory_id, ...)` (862-951): the head checked
+    /// before the transaction; in it the active record, `check_expected`,
+    /// one wall-clock read for `last_verified_at` and the stamp, the lists
+    /// and target maps given replaced, the copy validated (as a check: a
+    /// copy the check accepts holds the values it validates), `memory_put`
+    /// then `verification_put`. Returns the record.
+    pub fn mark_verified(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory_id: &str,
+        verify: Verify<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        self.mark_verified_hooked(provider, memory_id, verify, None)
+    }
+
+    /// [`WritableStore::mark_verified`] with `hook` shown each boundary.
+    #[doc(hidden)]
+    pub fn mark_verified_hooked(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory_id: &str,
+        verify: Verify<'_>,
+        hook: Hook<'_>,
+    ) -> Result<Done<Memory>, RecordWriteError> {
+        let head = verified_head(verify.verified_head)?;
+        let mut tx = start(self, provider, hook)?;
+        let existing = active_or_raise(&tx, &unicode::cps(memory_id))?;
+        if verify.check_expected
+            && (opt_dt_differ(
+                existing.fields.last_verified_at.as_ref(),
+                verify.expected_last_verified_at,
+            ) || given(verify.expected_updated)
+                .is_some_and(|e| opt_dt_differ(Some(&existing.fields.updated), Some(e))))
+        {
+            return Err(refused(
+                "ConcurrentUpdateError",
+                format!(
+                    "memory {memory_id} was updated concurrently (your snapshot is stale; \
+                     stored updated={})",
+                    existing.fields.updated.isoformat()
+                ),
+            ));
+        }
+        let now = tx.wall_now()?;
+        let dumped = existing.dump();
+        let PyValue::Dict(items) = &dumped else {
+            return Err(py_failed(PyError::TypeError));
+        };
+        let mut items = items.clone();
+        let mut set = |name: &str, value: PyValue| {
+            let key = PyValue::str(name);
+            match items.iter_mut().find(|(k, _)| *k == key) {
+                Some(slot) => slot.1 = value,
+                None => items.push((key, value)),
+            }
+        };
+        set("last_verified_at", PyValue::DateTime(now));
+        for (name, value) in [
+            ("verified_paths", verify.verified_paths),
+            ("verified_commits", verify.verified_commits),
+            ("verified_versions", verify.verified_versions),
+            ("verified_absent_paths", verify.verified_absent_paths),
+        ] {
+            if let Some(v) = given(value) {
+                set(name, PyValue::List(py_list(v)?));
+            }
+        }
+        for (name, targets, inputs) in [
+            (
+                "verified_path_targets",
+                verify.verified_path_targets,
+                verify.verified_paths,
+            ),
+            (
+                "verified_absent_path_targets",
+                verify.verified_absent_path_targets,
+                verify.verified_absent_paths,
+            ),
+        ] {
+            if given(targets).is_some() || given(inputs).is_some() {
+                let value = match given(targets) {
+                    Some(t) => py_dict(t)?,
+                    None => PyValue::None,
+                };
+                set(name, value);
+            }
+        }
+        if let Some(v) = given(verify.claims) {
+            set("claims", PyValue::List(py_list(v)?));
+        }
+        set("verified_head", head.clone());
+        let new = Memory::from_payload(&PyValue::Dict(items))
+            .map_err(|e| write_error(home::record_refusal(e)))?;
+        let row = one_row(
+            tx.connection(),
+            "SELECT provenance, filename FROM memories WHERE id = ?",
+            memory_id,
+        )?
+        .ok_or(RecordWriteError::Record(RecordError::Raised("TypeError")))?;
+        check_targets(&new.fields)?;
+        let record = new.record_payload().map_err(py_failed)?;
+        let provenance =
+            py_str(&py_value(column(&row, "provenance")?, "provenance")?).map_err(py_failed)?;
+        let filename = py_value(column(&row, "filename")?, "filename")?;
+        let payload = dict(vec![
+            ("memory", record),
+            ("provenance", PyValue::Str(provenance)),
+            ("filename", filename),
+        ]);
+        let strs = |v: &[PyStr]| PyValue::List(v.iter().cloned().map(PyValue::Str).collect());
+        let f = &new.fields;
+        let mut stamp = vec![
+            ("memory_id", PyValue::str(memory_id)),
+            ("machine_id", PyValue::None),
+            ("verified_at", PyValue::str(&now.isoformat())),
+            ("verified_head", head),
+            ("verified_paths", strs(&f.verified_paths)),
+            ("verified_commits", strs(&f.verified_commits)),
+            ("verified_versions", strs(&f.verified_versions)),
+            ("verified_absent_paths", strs(&f.verified_absent_paths)),
+        ];
+        let dumped = new.dump();
+        let PyValue::Dict(dumped) = &dumped else {
+            return Err(py_failed(PyError::TypeError));
+        };
+        for name in ["verified_path_targets", "verified_absent_path_targets"] {
+            let key = PyValue::str(name);
+            if let Some((_, v)) = dumped.iter().find(|(k, _)| *k == key) {
+                if !matches!(v, PyValue::None) {
+                    stamp.push((name, v.clone()));
+                }
+            }
+        }
+        tx.mutate("memory_put", &payload, verify.session)?;
+        tx.mutate("verification_put", &dict(stamp), verify.session)?;
+        let committed = tx.commit()?;
+        Ok(Done {
+            value: new,
+            committed,
+        })
+    }
+
+    /// `Store.record_corroboration(memory_id, session=)` (966-999): the
+    /// active record; with a session that already corroborated it, None and
+    /// nothing written (no clock read); else the rollup bumped,
+    /// `last_corroborated` from the wall clock, and `memory_put` with the
+    /// mark `{"corroboration": id}`. Returns the record.
+    pub fn record_corroboration(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory_id: &str,
+        session: Option<&str>,
+    ) -> Result<Done<Option<Memory>>, RecordWriteError> {
+        self.record_corroboration_hooked(provider, memory_id, session, None)
+    }
+
+    /// [`WritableStore::record_corroboration`] with `hook` shown each boundary.
+    #[doc(hidden)]
+    pub fn record_corroboration_hooked(
+        &mut self,
+        provider: &mut dyn Provider,
+        memory_id: &str,
+        session: Option<&str>,
+        hook: Hook<'_>,
+    ) -> Result<Done<Option<Memory>>, RecordWriteError> {
+        let mut tx = start(self, provider, hook)?;
+        let existing = active_or_raise(&tx, &unicode::cps(memory_id))?;
+        if let Some(s) = session {
+            if corroborated(&tx, memory_id, s)? {
+                let committed = tx.commit()?;
+                return Ok(Done {
+                    value: None,
+                    committed,
+                });
+            }
+        }
+        let mut bumped = existing;
+        bumped.corroborations = plus_one(&bumped.corroborations);
+        bumped.last_corroborated = Some(tx.wall_now()?);
+        put_in(
+            &mut tx,
+            &bumped,
+            None,
+            None,
+            session,
+            None,
+            None,
+            vec![(CORROBORATION_MARK, PyValue::str(memory_id))],
+        )?;
+        let committed = tx.commit()?;
+        Ok(Done {
+            value: Some(bumped),
+            committed,
+        })
+    }
 }
