@@ -32,7 +32,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `toml` | `tomllib.loads` (CPython 3.13): the same documents accepted, the same values (ints of any size, floats to the bit, the four date and time types, insertion-ordered tables), the same refusals with the same message, line and column | `toml.jsonl` |
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
-| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl` |
+| `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 
 Two tokenizer fingerprints are available: `python_tokenizer_fingerprint()`
 is the reference's digest (the one the golden header pins), and
@@ -898,6 +898,114 @@ native builds its ranker's corpus and reads each term's hits from the
 index on every call. Per call native spends about 8 microseconds in the
 FTS5 match, 11 reading and validating the pool's records, 5 building the
 corpus, 5 in the statistics' index reads and 5 ranking.
+
+## What a caller is admitted to see
+
+`store::caller` reproduces, as pure functions over data, what the
+reference's `admission.Admission` answers for a caller its resolution
+describes: `membership_records.relation` and `admitted` (design 3.5's
+table: `IN_PROJECT_POLICY`, `OUTSIDE_POLICY`, the seven `SURFACES`, the
+write review's `review_strata` among them), `Admission.nothing`,
+`project_home`, `admits_project`, `admits_row`, `admitted_projects`,
+`admits_global`, and the membership reads they make (`canonical`,
+`chain_of`, `named`, `project`, `projects`).
+
+- `Resolution::from_json(text)` / `from_value`: the dataclass as
+  `dataclasses.asdict` writes it (a field missing or of another type is a
+  `ResolutionError`).
+- `Membership::read(&Connection)` (a `StoreFile`'s or a pool reader's
+  connection; it only reads), `Membership::from_projects(rows)`.
+- `Admission::new(surface, Option<&Resolution>, &Membership)`, its
+  answers (`Result<_, ModelError>`), and `pool_admission(&Connection) ->
+  pool::Admission`: the data form the native search takes, computed for
+  every project a `homes` row or the projects table names and `global`,
+  and every scope list of a memory or a live digest row, so a recorded
+  resolution drives `PoolReader::resolve_search_pool`. The data form stays
+  as it was.
+
+Inputs. Of the resolution: `outcome`, `project`, `chain`, `tenant` (the
+other fields are parsed and not read). Of the store: the `projects`
+table's `id`, `name`, `merged_into`, `provisional`, `parent`, `tenant`
+(the read selects all nine columns, so a missing one or text that is not
+UTF-8 in any raises), and the `project` rows of `native_membership_rows`
+(`key_text`, `row_text`), which replace the legacy row their key names.
+Nothing else: no `homes` row is read for an answer (a record's recorded
+project is the question's input), no checkout, view or witness.
+
+The rule in plain words. A caller whose resolution raised is admitted
+nothing; one whose outcome is `indeterminate` or `deferred`, or that
+names no project, says so in `nothing`. A record's home is its recorded
+project with merges followed (`canonical`; a falsy result falls back to
+the recorded id), that project's chain (itself and its parents, each
+parent's merges followed, nearest first) and its own row's tenant; it is
+`unresolved` while that row's `provisional` is `indeterminate` or
+`deferred`. The relation: `unknown` for a caller with no project;
+`global_named` for a `global` record whose `projects:<name>` scopes
+(case-folded) name a project on the caller's chain (or the caller's
+project when its chain is empty) and the caller is not outside any
+project, else `global`; `other_tenant` when the home's tenant and the
+caller's differ (empty reads as none); `other_project` for every project
+record when the caller is outside any project; `same_project` when the
+home's project is on the caller's chain; `sub_project` when the caller's
+project is on the home's chain; `other_project` otherwise. The surface
+admits the relation by the in-project or the outside policy, except that
+an unresolved home is admitted only as `same_project`, and `unknown`
+never. A record with no home row is admitted nowhere.
+
+Special cases, each a fixture table: merges and merge chains (a merge
+into a missing row, into `global`, into `""`); parents and nested
+sub-projects (a parent merged away, a missing parent); boundaries and
+tenants (an empty tenant); provisional and unresolved projects (merged
+into, and below, an unresolved one); names folded (`ß`, final sigma) and
+names held only by a native row; cycles in `merged_into` and `parent` (a
+cycle stops where it would revisit a project) and 40-long chains; native
+rows that replace, add, and malformed ones that still remove the legacy
+row they key; a missing native table, a native table missing a column,
+a missing projects table or column; values of other types in a table
+with no column affinity (Python's `==`, truthiness and `str()` decide);
+a blob id or mixed number and text ids beside a native row (TypeError);
+text that is not UTF-8 (OperationalError).
+
+A native row's JSON held as bytes is read as `json.loads` reads bytes:
+`json.detect_encoding` (the UTF-32, UTF-16 and UTF-8 BOMs, then the NUL
+pattern of the first four bytes, or of two), then the decode with
+``surrogatepass`` (a surrogate's UTF-8 spelling and a lone UTF-16 or
+UTF-32 surrogate are kept); bytes that do not decode (an odd UTF-16
+length, a UTF-32 length not a multiple of four, a code point past
+U+10FFFF, any other invalid UTF-8) make the row malformed, which still
+removes the legacy row of its key. The reads are linear in the rows: the
+native keys are hashed as Python's dict files them (an int, an integral
+float and a bool of one value are one key). A resolution whose `tenant`
+is not text is not a `Resolution` here. Any SQLite error of the read is
+OperationalError, as Python's `sqlite3` classes the ones these reads meet.
+
+The fixture. `caller_admission.jsonl` (generator `gen_caller_admission`,
+no gate: ASCII and casefold-stable names, no ranking): 23 table cases,
+each a store `Store.create` built, its rows put through `put_membership`
+or written by direct SQL (the case says which), the two tables recorded
+as rows with typed cells, one of them native rows whose JSON is bytes in
+every encoding `json.detect_encoding` names, whole, odd, truncated and
+empty; 145 resolution cases (none, `global`,
+`indeterminate`, `deferred`, and each table's own of `silent`, `ask` and
+`new`), each with `nothing` and, per surface, `admits_project` of every
+key, `admits_row` of every scope list and home, `admitted_projects` and
+`admits_global`; `project_home` of every key per table. Its header holds
+`search_store.jsonl`'s main store's projects rows and its three callers'
+resolutions (the scratch path in `lines` written `<scratch>`).
+
+Tests. `golden_caller_admission` (class i on `caller_admission.jsonl`:
+`every_case_answers_as_the_reference`, 168 cases; class iii on
+`search_store.jsonl`: `main_store_callers_compute_the_tabulated_admission`,
+which computes the six admissions of the main store's callers from their
+resolutions, holds each to the tabulated one, and draws and ranks the
+486 caller runs through them). `caller_admission_robustness`: cycles,
+100,000-long chains closed into cycles, every value type in every
+column, missing tables, columns and rows, malformed, nested and large
+native rows, native bytes of every short shape, resolutions that do not
+parse: typed outcomes, no panic; and `reading_native_rows_is_linear`
+(best of five reads of 2,000 and 20,000 legacy rows each replaced by a
+native row: at most thirty times as long plus 50 ms, where linear is ten
+and quadratic a hundred).
 
 ## The settings
 
@@ -1971,8 +2079,8 @@ The store's writes past `create`, the writing open's plain states and
 one record mutation (`mutate`): the public record API (`put_memory`,
 `tombstone`, `restore` with relink, provenance, `returned` marks, homes
 and standing answers), the membership kinds, schema steps, rekey, reclaim, the origin's settling, a
-restore's rows, re-spelling the index), membership and
-the caller's resolution, and each hit's snippet, signals and drift report,
+restore's rows, re-spelling the index), membership's writes and
+the caller's resolution (its admission is `store::caller`), and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's
 files on disk (the ring here holds their bytes); `datetime.astimezone` of a
 naive value (the reference reads it as the machine's local time).

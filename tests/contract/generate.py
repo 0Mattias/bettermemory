@@ -30,6 +30,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import (
+    gen_caller_admission,
     gen_cli,
     gen_config,
     gen_daemon,
@@ -92,6 +93,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "store_open": gen_store_open.generate,
     "store_write": gen_store_write.generate,
     "gitconfig": gen_gitconfig.generate,
+    "caller_admission": gen_caller_admission.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The

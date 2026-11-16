@@ -211,7 +211,7 @@ struct InputRow {
 
 /// `_load_json(text, None)` of a scope list: None when it is not a list;
 /// the strings of a list, TypeError for any other item.
-fn scope_list(text: &str) -> Result<Option<Vec<String>>, StoreError> {
+pub(crate) fn scope_list(text: &str) -> Result<Option<Vec<String>>, StoreError> {
     if text == "[]" {
         return Ok(Some(Vec::new()));
     }
