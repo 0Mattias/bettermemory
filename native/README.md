@@ -502,6 +502,138 @@ The prediction of at least ten times is missed: both are bound by
 HMAC-SHA256 on the CPU's SHA instructions (the reference's `hmac` is
 OpenSSL's), and walking the rows costs about 29 ms of the native time.
 
+## The search pool, by caller
+
+`store::pool::PoolReader` draws the pool a caller's request ranks from a
+store file opened read only, as `handlers.search.resolve_search_pool`
+draws it, and `SearchPool::rank` ranks it as `_rank_pool` does
+(`search.search` over the pool, priced with the pool's statistics, the
+configured half-life and lane, no rescue leg):
+
+- `PoolReader::new(&StoreFile)`; `resolve_search_pool(query, &Filters,
+  size, digest_fingerprint) -> Result<SearchPool, PoolError>`: the first
+  `size` rows the request admits (`POOL_SIZE` 200) in the full-text index's
+  order for the query (`bm25()`, then row number), or newest first for a
+  query empty after `str.strip`, each read into the record model as
+  `light_many` reads it;
+- `Filters` (scopes, excluded scopes, admission, client, model):
+  `search.candidate_admitted` over each row's admission inputs (scopes, the
+  project its `homes` row names, the declared writer);
+- `SearchPool::statistics(terms)`: `Store.ranking_statistics` (the admitted
+  collection's size, each term's document frequency in the body and in the
+  body or scopes, the admitted rows' average BM25 length from the digest);
+- `SearchPool::rank(query, now, mode, max_results, stats_seen)`;
+  `clamp_search_width`, `MAX_SEARCH_RESULTS`.
+
+The caller arrives resolved, as data: `pool::Admission` holds what the
+reference's `admission.Admission` answers for one store's rows (each
+project's admission, and a global record's by its scope list); membership,
+`location.resolve_caller` and git are not ported. Anchoring is not read:
+in the reference it reaches only each hit's drift report. Not here: each
+hit's signals (staleness, drift, claim checks), relations, `expand_top`,
+`since_prior_session`, the search's log row, the response.
+
+What differs, by design of a read-only port (`pool.rs`'s module docs
+have the whole list). The average BM25 length comes from the digest, and
+any write leaves the digest behind the log: the reference's next search
+brings it current (`digest_mark(build=False)`, a write) and reads its
+lengths, and this port brings the same rows forward in memory over the
+same log rows (each mutated id's entry rewritten from its memory row, or
+dropped), writing nothing. Where `digest_mark` answers None (no digest
+state, another fingerprint, a payload or record that does not read) there
+is no average here either. The reference answers None for a digest
+behind also when SQLite itself cannot write the store (a read-only file,
+a busy lock); a `Store.open` that the key ring marks read-only still
+catches the digest up and writes it. This port answers as a reference
+whose SQLite can write. The reference pays the catch-up once and writes
+it; this port, which never writes the digest, pays it once per
+`PoolReader` (each reader keeps what it brought forward, keyed by the
+memory head). Its cost is linear in the unseen rows
+(`catching_up_is_linear_in_the_unseen_rows`); a payload of 20 MB in an
+unseen row costs about 300 MB while it is parsed. An unseen row's id is
+read through `str()` for a string, an int, null, a bool or a float, and
+its payload from TEXT or from UTF-8 bytes (a leading BOM dropped, as
+`json.loads` does for bytes; a TEXT payload with a BOM and bytes that are
+not UTF-8 give no average, as there). Not ported, giving no average where
+the reference answers: an id that is a list or an object, and a payload
+in UTF-16 or UTF-32 bytes. The
+digest fingerprint (`store_digest.fingerprint`, which reads the
+supersession rules) is passed in, not computed; with none the digest is
+never trusted. The reader keeps the rows' admission inputs keyed by the
+memory head and that fingerprint, and reads each term's hits from the
+index on every call. The reference reads pool records with
+`seed_tokens=index_spelled_here()` (token streams split from `body_fts`
+where the log's tokenizer stamp is this build's); this port tokenizes the
+body, which agrees wherever `body_fts` is the stamped tokenizer's
+spelling of the body, as on every row the reference writes. `rank`'s
+half-life (30 days) and lane (on) are constants because
+`config.FIXED_SETTINGS` fixes both. A scope list holding anything but
+strings is refused (TypeError); `int()` of a digest row's number or
+length is Python's (a REAL length truncates, a TEXT row number that is no
+integer is ValueError), past 64 bits OverflowError.
+
+The fixture. `search_store.jsonl` (generator `gen_store_path`) holds the
+schema every store here shares and, per store, its tables' rows (the
+tables a search reads, every other table empty, the values the clock and
+the key mint give masked, the log cut to the rows the digest's mark and
+catch-up read; the generator checks each copy holds the same memory rows
+(row number, body, updated, scopes, writer) in the same newest-first order,
+keeps each mutation's record id, ranks its queries, reads
+the same admission inputs and digest rows, finds the digest in the same
+state and names the same mutations after its mark, as the store did), the
+SQL a case applies after the rows, each caller's admission as data, and
+the digest fingerprint. Floats are recorded as IEEE-754 bits. The stores:
+
+- the main one (18 records): 81 run lines of 7 runs (offline and three
+  callers on two surfaces) and 36 `hostile` lines of 2 (FTS5 operators
+  and column filters, quotes, NUL, punctuation, stopwords only, empty,
+  whitespace, 46,000 and 20,000 characters; the reference raised on none);
+- `big` (236 records, 222 active matches for one query, bodies repeating
+  every 12 records for exact `bm25()` ties, `updated` repeating every 4,
+  tombstones, one and two scopes, five writer shapes including client
+  `""`, records homed in two projects, `global` and nowhere): 51 lines
+  over scope, excluded-scope, client and model filters and their
+  combinations, an empty scope list, pool sizes and widths (200/10,
+  50/5, 5/10, 1/1, 300/50, 20/10) and callers including the write
+  review's surface (`review_strata`), whose admission tells a global
+  record's scope lists apart;
+- 19 small stores whose digest is current, one, three or fifteen writes
+  behind, behind by an update, a tombstone or a restore, under another
+  fingerprint (alone and one write behind), gone, or holds a REAL length
+  or a TEXT row number, or is behind by one unseen row whose id is null,
+  a float or true, or whose payload is UTF-8 bytes (with and without a
+  BOM), bytes that are not UTF-8, or text with a BOM: 4 lines each. The reference raises ValueError for
+  the TEXT row number and reads the REAL length as `int(3.5)`.
+
+`golden_search_store` rebuilds each store, opens it and compares 639 runs
+on the main store and 127 store lines (pool, every statistics call, hits),
+and holds the 81 offline runs to `search.jsonl`'s in-memory ranking.
+SQLite: the reference draws the pool with its SQLite (3.50.4 here, 3.53.1
+on the runners), the native build with 3.54.1; the pool's order is
+`bm25()` then row number, and FTS5's scores were bit-equal across those
+versions on every query so far (`sqlite_spike`, `store_real`).
+
+Timing the pool and its ranking: every main-store run line's query and
+mode, offline and for each caller's admission (567 calls a pass), store
+opened once:
+
+```sh
+cargo test --offline --release --test golden_search_store -- --ignored --nocapture
+../.venv/bin/python tools/bench_search_store.py 20
+```
+
+On an Apple M-series laptop at 20 passes, three runs each: the reference
+63.58, 63.32 and 63.35 ms a pass (median), native 18.31, 18.35 and 18.22
+ms (about 3.5 times). The prediction of at most a fifth is missed. The
+two sides do not do the same work: the reference also runs
+`search.search`'s second filter pass (`_filter_candidates`, with
+`admission.prime`) and builds a snippet per hit, and keeps its token
+cache and each term's document frequencies warm between calls, while
+native builds its ranker's corpus and reads each term's hits from the
+index on every call. Per call native spends about 8 microseconds in the
+FTS5 match, 11 reading and validating the pool's records, 5 building the
+corpus, 5 in the statistics' index reads and 5 ranking.
+
 ## Running the tests (offline)
 
 ```sh
@@ -633,6 +765,7 @@ that Unicode too.
 | `golden_search`: `search_every_query_every_mode` | `search.jsonl` | iii |
 | `golden_search`: `search_ranker_every_query_every_mode` | `search_ranker.jsonl` | iii |
 | `sqlite_spike`: `fts5_prefilter_matches_the_reference_sqlite` | `search.jsonl` (bm25 bits) | iii |
+| `golden_search_store`: `every_query_every_caller_pool_and_hits`, `every_store_line`, `offline_runs_equal_the_in_memory_ranking` (and three class (i) checks: the clamp, the digest's fingerprint, awkward queries) | `search_store.jsonl`, `search.jsonl` | iii |
 | `golden_store_files`: `every_case_every_answer` | `store_files.jsonl` | iii |
 | `golden_store_files`: `the_reference_written_file_reads_the_same` | `store_real.json`, `store_real.sqlite` | iii |
 | `golden_store_files`: `the_crates_schema_texts_are_the_references` | `store_admission.json` (compiled-in copy pinned to the committed file) | iii (by its generator; its text is platform-independent) |
@@ -682,8 +815,8 @@ that data, so the same interpreter writes the same bytes.
 
 ## Not built yet
 
-The store over SQLite (rows, schema steps, FTS5 and its `bm25()`, the
-search pool it draws, admission and the hit's snippet and drift report),
+The store's writes (schema steps, the digest's ingest), membership and
+the caller's resolution, and each hit's snippet, signals and drift report,
 the daemon, the MCP tools and the hooks; reading and writing the key ring's
 files on disk (the ring here holds their bytes); `datetime.astimezone` of a
 naive value (the reference reads it as the machine's local time).

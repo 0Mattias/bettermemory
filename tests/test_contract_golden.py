@@ -158,7 +158,8 @@ def test_the_host_fact_guard(data: bytes, caught: bool) -> None:
 
 def test_golden_files_stay_small() -> None:
     total = sum(p.stat().st_size for p in GOLDEN.iterdir() if p.is_file())
-    assert total < 6 * 1024 * 1024
+    # 5.6 MB at N2b: the stores search_store.jsonl rebuilds joined the set.
+    assert total < 8 * 1024 * 1024
 
 
 def _fixture_kinds() -> tuple[set[str], set[str]]:
