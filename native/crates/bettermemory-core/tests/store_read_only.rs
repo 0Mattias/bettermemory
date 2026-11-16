@@ -319,8 +319,10 @@ fn sweep_removes_only_dead_readers_copies() {
         .open(live.join(".lock"))
         .expect("open lock");
     held.lock().expect("lock");
-    let removed = sweep_private_copies();
-    assert!(removed >= 1);
+    // The count is not asserted: every reader's open sweeps the same
+    // temporary directory, so another test or process may have removed the
+    // dead copy first. What is left on disk is the outcome.
+    sweep_private_copies();
     assert!(!dead.exists(), "a dead reader's copy is swept");
     assert!(live.exists(), "a live reader's copy is kept");
     assert!(
