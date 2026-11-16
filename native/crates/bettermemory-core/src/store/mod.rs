@@ -46,6 +46,7 @@ pub mod keys;
 pub mod mint;
 pub mod open;
 pub mod pool;
+pub mod provenance;
 pub mod restore_lock;
 pub mod tables;
 pub mod tx;

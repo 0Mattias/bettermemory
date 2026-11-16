@@ -10,6 +10,7 @@ pub mod gitconfig_tree;
 pub mod githead;
 pub mod opened;
 pub mod parity;
+pub mod provenance;
 pub mod record_calls;
 pub mod rows;
 pub mod stores;

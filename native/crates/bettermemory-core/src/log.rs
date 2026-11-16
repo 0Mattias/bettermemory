@@ -958,6 +958,74 @@ pub fn verify_chain_from<S: LogSource + ?Sized>(
     })
 }
 
+/// One segment of [`chain_trust`]'s map: where it starts, the key that
+/// verifies it when the ring holds one, and whether it is foreign
+/// (`log.Segment`).
+#[derive(Clone, Debug)]
+pub struct TrustSegment {
+    pub first_seq: i64,
+    pub key: Option<Key>,
+    pub foreign: bool,
+}
+
+/// `log.ChainTrust`: the segments in seq order and whether the origin
+/// anchor they were read under no longer matches the log
+/// (`OriginCheck.broken`).
+#[derive(Clone, Debug)]
+pub struct ChainTrust {
+    pub segments: Vec<TrustSegment>,
+    pub origin_broken: bool,
+}
+
+/// `log.chain_trust(conn, keyring=ring, current_fingerprint=...,
+/// current_key=ring.current)`: the origin check and the segment map
+/// `verify_chain_from` reads, from the first row, the rekey rows and the
+/// anchored row. With the ring's current key as `current_key` the keys
+/// are tried in `held_keys`' order, the current key first, which is the
+/// reference's order (`_ring_keys`, `_leading_key`); a `current_key` the
+/// ring does not hold as current is not expressible here.
+pub fn chain_trust<S: LogSource + ?Sized>(
+    source: &S,
+    ring: &KeyRing,
+    current_fingerprint: &str,
+) -> Result<ChainTrust, VerifyError<S::Error>> {
+    let anchor = ring.read_origin()?;
+    let anchored_row = match &anchor {
+        Some(a) => source.at_seq(a.seq).map_err(VerifyError::Source)?,
+        None => None,
+    };
+    let origin = check_origin(anchor.as_ref(), anchored_row.as_ref(), &ring.held_keys());
+    let origin_seq = if origin.status == "ok" {
+        origin.seq
+    } else {
+        None
+    };
+    let first_row = source.first().map_err(VerifyError::Source)?;
+    let rekeys = if first_row.is_some() {
+        source.rekeys().map_err(VerifyError::Source)?
+    } else {
+        Vec::new()
+    };
+    let map = segments_from(
+        first_row.as_ref(),
+        &rekeys,
+        ring,
+        current_fingerprint,
+        origin_seq,
+    )?;
+    Ok(ChainTrust {
+        segments: map
+            .into_iter()
+            .map(|(first_seq, s)| TrustSegment {
+                first_seq,
+                key: s.key,
+                foreign: s.foreign,
+            })
+            .collect(),
+        origin_broken: origin.status == "mismatch",
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

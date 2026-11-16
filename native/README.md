@@ -4155,6 +4155,130 @@ that git dies on, or that git reads as another path:
 through `MemFs` and `StdFs`, class i on unix; `gitfile_leaves_not_posix.rs`
 records the gap as os), `gitfile_leaves_robustness.rs` (9 tests).
 
+## A record's provenance, read
+
+`src/bettermemory/store_provenance.py` (265 lines, read at v9's 6b3fcddb)
+labels how each record entered the store, read only. `store::provenance`
+ports it over an open [`StoreFile`] and its [`KeyRing`].
+
+### What each function reads
+
+- `provenance_for` (27): `SELECT id, provenance, log_mac FROM memories
+  WHERE id IN (...)` in batches of 500 (`_PROVENANCE_BATCH`), the ids
+  deduplicated in first-seen order; the label is `str(provenance)`, or
+  `unaccounted` when `_pointer_verified(id, "memory_put", log_mac)` is
+  False. The answer is in SQLite's row order, so native sends the same
+  statement text.
+- `_pointer_verified` (98): None without a verify key; False for a
+  `log_mac` that is not a non-empty str (NULL, a blob); then `SELECT seq,
+  ts, session, kind, payload, prev_mac, mac FROM log WHERE mac = ?`; the
+  row must be of the kind asked, its payload's `json.loads(...)[memory |
+  episode]["id"]`, `str()`-ed, must be the record id (ValueError, KeyError
+  and TypeError read as no id; RecursionError is not caught and leaves
+  the call), and its seq above 0. Then `_segment_for(seq)`: None for no
+  segment; a segment with no key answers None (the label stands) when it
+  is not foreign, the origin anchor is not broken and strict provenance
+  is off, else the row is checked under the verify key; the MAC is
+  `compute_mac` over the row's `str()`-ed columns, compared with
+  `same_mac`. True and False are cached per (id, log_mac).
+- `_segment_for` (66) and `_origin_broken` (91): `log.chain_trust` once
+  per reader: the origin check and the segment map with each segment's
+  first seq, key and foreign flag. The segment for a seq is the last one
+  starting at or before it, or the first one when none does.
+- `trust_rows` (173): None without a verify key; else `provenance_for`
+  and the `verifications` rows with no machine id, in batches.
+- `unaccounted_ids` (201): every memory `ORDER BY created DESC, id` whose
+  pointer is False.
+- `provenance_counts` (218): `SELECT id, provenance FROM memories`, counted
+  per label in first-seen order, `unaccounted` for the ids above.
+- `links_with_status` (229): `links_for_many([id])` (`store_index.py`
+  309, its two `memory_links` statements, values as stored) and
+  `trust_rows([id])`'s row for the id.
+- `episode_provenance` (244): `SELECT id, log_mac FROM episodes WHERE id
+  IN (...)`; `local` unless the pointer of kind `episode_put` is False.
+
+### What it stands on
+
+`log::compute_mac`, `same_mac`, `json::loads` (its 9,998 depth limit is
+the reference's), `pyvalue::py_str` (`str()` of a parsed value, `repr`'s
+depth limit included), `SqlValue::py_str` (`str()` of a column), the
+`LogSource` reads of `StoreFile` (first row, rekey rows, the row at the
+anchor's seq), and `log`'s own `check_origin` and `segments_from`, given
+a public face (`log::chain_trust`) without a second verifier.
+
+The verify key. The reference's `_verify_key` is the key its open read
+with `keyring.load_current()` (the owner's `_key`, or a reader's
+`_read_key`), so it is the ring's current key or none. Which of the two
+an open chooses (`store_keys.key_state`, the binding, the unclaimed fit,
+`_open_reader`'s history test) is the read-only open's decision and is
+not ported here: the caller says whether the reader verifies, and native
+then verifies under `ring.current`. With that key as `current_key`,
+`chain_trust`'s ring order (the current key first, then the held keys)
+is the order `held_keys` already gives, so the existing segment map is
+the reference's. `strict_provenance` is the caller's too (the reference
+reads the config when the opener passed None).
+
+### Refused as not ported (`ProvenanceError::NotPorted`)
+
+Text that is not UTF-8 in a row read (the reference's sqlite3 raises
+its own `OperationalError` there), a SQLite error, and a reader asked to
+verify whose ring holds no current key. That last includes a key file
+over the ring loader's 1 MiB read bound (`keys::MAX_FILE_BYTES`, older
+than this unit): the reference reads any size and verifies under it
+(`provenance_for` then answers `local`), native refuses; a product key
+is 32 bytes.
+
+A log payload stored as a blob is read as the reference reads it:
+`json.loads(bytes)` decodes in the encoding `json.detect_encoding` names
+(UTF-8, UTF-8 with a BOM, UTF-16 and UTF-32 either way, with or without
+a BOM) with `surrogatepass`, a decode error reading as no id; the MAC is
+computed over `str(bytes)`, the `b'...'` text, so such a row verifies
+only when that text was signed (`decode_json_bytes`, pinned by the
+fixture header's samples, every byte value's spelling among them).
+
+One caching difference, theoretical: native reads the key ring once,
+before the reader is built; the reference reads the key file when it
+opens and the origin file and retired keys when it first builds the
+segment map. A ring changed between the open and the first query that
+needs a segment could be answered from different files.
+
+Special files and size. A key or origin name that is a FIFO, a socket,
+a device or a directory is read by the ring loader as unreadable without
+being opened (`store::keys`): the reference's read of a FIFO waits for a
+writer, so there native answers where the reference would not return
+(`store_provenance_special_files.rs`). A pointed-at payload is read
+whole, bounded only by SQLite's row length; it is held as code points
+while parsed, so a 200 MiB payload peaked near 770 MB in a debug build
+(the id is compared in place, not copied). A million ids in one query
+are 2,000 statements of 500. The refold's
+`_unaccounted_memory_ids` is per process and empty after an open; native
+holds the state of a fresh open. Where the reference raises
+(RecursionError from a payload, a rekey row or the origin file nested
+past the limit), native returns `Raised` with the class; the text of a
+RecursionError is the interpreter's and is not carried.
+
+### Built, and its tests
+
+`store::provenance::Provenance` (`provenance_for`, `trust_rows`,
+`unaccounted_ids`, `provenance_counts`, `links_for`, `links_with_status`,
+`episode_provenance`, `pointer_verified`) and `log::chain_trust`.
+Unreachable in the reference, so in no case: `_segment_for` finding no
+segment (a pointed-at row above seq 0 means the log has a first row) and
+taking the first segment for a seq before its start (no segment starts
+after the lowest row above seq 0).
+
+`golden_store_provenance.rs` (`store_provenance.jsonl`, gated on Unicode
+and pydantic-core as `store_tx.jsonl` is, POSIX only: 13 cases, 80
+queries, every case's store rebuilt from its rows and key ring);
+`store_provenance_cross.rs` (the reference as a child, both ways, four
+plantings each, without and with strict provenance);
+`store_provenance_read_only.rs` (no byte of the store directory changes;
+read-only files answer the same); `store_provenance_robustness.rs` (6
+tests: wrong types, NULLs, unknown labels, a non-UTF-8 id and a blob
+payload refused, payloads nested 9,998 to 100,000 deep on a 512 KiB
+thread, a 16 MiB payload, deep rekey rows and origin files, key files
+missing, empty and oversized).
+
 ## The file system's operations for the next readers (fsx)
 
 `fsdata::Fs` gets every operation units 2 to 5 of the `.git` rule and

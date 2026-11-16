@@ -70,6 +70,7 @@ from . import (
     gen_toml,
     gen_ulid,
     gen_unicode,
+    gen_store_provenance,
 )
 
 GOLDEN = Path(__file__).parent / "golden"
@@ -129,6 +130,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "membership_lines_python": gen_membership_lines.generate_python,
     "gitfile_leaves": gen_gitfile_leaves.generate,
     "gitfile_leaves_posix": gen_gitfile_leaves.generate_posix,
+    "store_provenance": gen_store_provenance.generate,
     "fs_realpath": gen_fs_realpath.generate,
     "fs_realpath_python": gen_fs_realpath.generate_python,
 }
@@ -158,6 +160,7 @@ UNICODE_GATED = frozenset(
         "store_records_c",
         "membership_lines_unicode",
         "store_rows_written",
+        "store_provenance",
     }
 )
 
@@ -216,6 +219,7 @@ PYDANTIC_GATED = frozenset(
         "store_records_b",
         "store_records_c",
         "store_rows_written",
+        "store_provenance",
     }
 )
 
@@ -284,6 +288,7 @@ POSIX_ONLY = frozenset(
         "gitconfig_file",
         "gitconfig_tree",
         "gitfile_leaves_posix",
+        "store_provenance",
         "fs_realpath",
         "fs_realpath_python",
     }

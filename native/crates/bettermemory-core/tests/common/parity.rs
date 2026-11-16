@@ -216,6 +216,9 @@ pub fn gates_of(file: &str) -> &'static [Gate] {
         // The restore lock is a directory `flock` on POSIX, a record file
         // and a handle on Windows; the generator runs on POSIX only.
         "store_restore_lock.json" => &[Platform],
+        // The rows hold the tokenizer's spelling; the records are built
+        // through the models.
+        "store_provenance.jsonl" => &[Unicode, Pydantic],
         _ => &[],
     }
 }

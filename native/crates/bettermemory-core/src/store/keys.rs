@@ -14,7 +14,10 @@
 //! `key_for_fingerprint` skip it and `read_head` / `read_origin` read it as
 //! none. One difference, on purpose: a file over [`MAX_FILE_BYTES`] is
 //! read as unreadable, where the reference would read it whole (a key is
-//! 32 bytes; a head or origin file under 200).
+//! 32 bytes; a head or origin file under 200). Another: a name that is
+//! not a regular file (a FIFO, a socket, a device) is read as unreadable
+//! without being opened, where the reference's read of a FIFO waits for a
+//! writer.
 //!
 //! Retired keys are kept in `KeyRing::retired` by the part of the file
 //! name between the id and `.key`; `held_keys` gives them in that part's
@@ -54,6 +57,13 @@ pub enum KeyRingError {
 /// into a larger buffer (the smaller one wiped). None when it cannot be
 /// read or is over [`MAX_FILE_BYTES`].
 fn read_secret(path: &Path) -> Option<Zeroizing<Vec<u8>>> {
+    // Only a regular file (through links) is opened: opening a FIFO waits
+    // for a writer, forever if none comes (the reference's `read_bytes`
+    // waits). A directory, a FIFO, a socket or a device reads as
+    // unreadable.
+    if !fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
     let mut file = fs::File::open(path).ok()?;
     let mut capacity = usize::try_from(file.metadata().ok()?.len().min(MAX_FILE_BYTES))
         .ok()?
