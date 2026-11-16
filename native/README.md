@@ -1272,6 +1272,8 @@ that Unicode too.
 | `gitconfig_wildmatch_robustness` (8) | none | i |
 | `golden_gitconfig_remote_rules`: `gitconfig_remote_rules_every_case` | `gitconfig_remote_rules.jsonl` | i |
 | `gitconfig_remote_rules_robustness` (2) | none | i |
+| `golden_capture_vocabulary`: `capture_vocabulary_every_case` | `capture_vocabulary.jsonl` | i |
+| `capture_vocabulary_robustness` (5) | none | i |
 | `golden_ulid`: `ulid_every_case`, `ulid_order_and_round_trip` | `ulid.jsonl` (the second none) | i |
 | `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
 | `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
@@ -2709,6 +2711,126 @@ other 11, which native reproduces:
 - A `config` naming `extensions.refStorage = reftable` beside files-backend
   refs: git reads no files there; the reference reads no config
   (`head_ref`, 1080). A real reftable repository's `HEAD` declines.
+
+## A location capture's vocabulary
+
+Read at ececad8c. The pure part is about 1,150 lines of reference logic,
+so it was split; parts (a) and (b) below are built (`src/capture/`),
+part (c) is not.
+
+- `location_git.FileSeen` (1188-1198) and `Capture` (1201-1385): the
+  capture's fields with their defaults. `to_token` (1268-1322) writes
+  `v` (`_location_probe.TOKEN_VERSION`, 1) then 28 keys in a fixed order;
+  keys become `[device, inode, birth]` or null, tuples become lists,
+  `manifest` `{"name", "entries"}`. `kept_apart`, `tree_recorded`,
+  `config_files` and `config_sources` are not in the token. Pure.
+- `from_token` (1324-1385) with helpers `_text` to `_manifest_from`
+  (1388-1451): refuses (None) anything not a mapping or whose `v` is not
+  the version; a missing `cwd` or `state` is a refusal, every other key
+  defaults. Counts are bounded (`ref_tips` 64, `remotes`/`aliases` 256,
+  `stamps` 8, `files` 64, `file_errors` 64, manifest entries 4,096).
+  Python's rules leak in and must be ported as such: `shallow`,
+  `evicted`, `boundary`, `file_tracked` take any value's truth; stamp
+  numbers go through `int()` (`True`, `1.9`, `"7"` are accepted);
+  `_key` takes `str()` of any value, so `[[[]], 1, 1]` is the key
+  `("[[]]", "1", "1")`; hashes are lowercased before matching. Pure,
+  and the same under Python 3.11 to 3.14 except how deep `str()` may
+  nest (below).
+- `location.remote_key` (378-405) with `_SCHEME_URL`/`_SCP_URL`/`_DRIVE`
+  (366-370): the hosted branch (`host/rest`, lowercased, `/` stripped,
+  one `.git` dropped) is pure. The local branch is not: `_local`
+  (408-411) calls `os.path.realpath`, which reads the file system, and
+  `_file_url_path` (422-459) reads `os.path.sep` and Python's
+  `url2pathname`, which changed in 3.14. No `insteadOf` is applied here
+  (aliases arrive already keyed in the capture). Proposed: port the
+  hosted branch and the classification (hosted or local, and the
+  pre-realpath path for a local one); leave realpath to a reading unit.
+- `membership_records.ObjectKey` (288-332): three text fields, `compare`
+  and `on_any_device`; it has no text form or parse of its own (the
+  token's three-item list is its only spelling). Pure.
+- `location.to_location` (1355-1411): field-by-field copy into
+  `membership_records.Location` (447-539) with `frozenset`s for remote
+  and alias keys; `history` is an opaque reader, left out. Pure.
+- `_paths.norm`, `inside`, `basename` (22-58): separators read off the
+  spelling, never the host. Pure, no flavour needed.
+- `membership_lines` (660 lines) and `_printable.printable`/`quoted`
+  (19-130): every `line_*` is a function of its arguments. Pure, and on
+  its own near the guide.
+
+Proposed split: (a) capture types, token both ways, `ObjectKey`,
+`to_location`, `_paths` (about 420 lines); (b) `remote_key`'s pure part
+(about 50 lines, many fixture cases), may ride with (a); (c)
+`_printable` and `membership_lines` (about 780 lines).
+
+Findings (reproduced at 3.13.13): `Capture.from_token` raises
+`OverflowError` for a stamp number that is a non-finite float (JSON
+`Infinity` as `json.loads` reads by default), and `RecursionError` for a
+key item nested about 100,000 deep (`str()` in `_key`, location_git.py
+1430); neither is in its `except` (1384), so a hostile token raises
+where a refusal is documented.
+
+### Built: parts (a) and (b)
+
+`capture` (`src/capture/mod.rs`): `Capture`, `FileSeen`, `Stamp`,
+`Manifest`, `State`, `Kind`, `Key`; `Capture::to_token(&self) -> PyValue`
+(the dict, keys in `TOKEN_KEYS` order) and `Capture::from_token(&PyValue)
+-> Result<Option<Capture>, PyError>`: `Ok(None)` where the reference
+returns None, `Err(OverflowError | RecursionError)` where it raises (the
+findings above, pinned in the fixture, not smoothed over). Strings are
+code points (`PyStr`, a lone surrogate kept), ints canonical decimal text.
+Python's rules are ported where they show: `bool()` of any value for the
+flags, `int()` (`pyvalue::py_int`, with its 4,300-digit limit) for stamp
+and manifest numbers, indexing a str or a dict where a list was meant,
+`1`, `True` and `1.0` all being the version, and `str()` of any key item
+(`capture::str_of`). `str_of` raises ValueError (a refusal) for an int
+past 4,300 digits, as `str()` does; `pyvalue::py_str` and `repr` apply
+no such limit, and a general fix there would touch every caller that
+spells a `PyValue::Int` (the JSON writer, `repr`, the log payload), so it
+is left to its own change. It raises RecursionError past the port's own
+depth limit, 9,999 levels at a top-level key and 9,997 inside ``files``
+(`STR_DEPTH_TOP`, `STR_DEPTH_FILES`): what CPython 3.13 does on Linux and
+macOS on a fresh thread, not a parity claim, since its C limit is 3,000
+on Windows, less on ARM64 and debug builds, and a caller deeper in C has
+less. The golden file holds only depths far from every limit (50 to 400
+accepted, 100,000 refused); the boundary is a native test. `config_files` (stamped files) is the file-reading unit's and is
+not carried; `kept_apart`, `tree_recorded` and `config_sources` are
+fields but not token keys, as in the reference.
+
+`capture::remote::remote_key(Option<&[u32]>) -> Option<RemoteKey>`: the
+hosted branch exactly (`_SCHEME_URL` and `_SCP_URL` as `re` matches them,
+`[a-z]` under IGNORECASE taking U+0130, U+0131, U+017F and U+212A, `\d`
+any Unicode digit, `str.strip`, `str.lower`), and the decision that a URL
+is local: `RemoteKey::Local { text, file_url }` carries the stripped URL
+unchanged, which the golden test compares with what the reference hands
+`_local` and whether it called `_file_url_path`. The local key itself is the file-reading unit's: `_local`
+joins with the host's `os.path` and calls `realpath`, and
+`_file_url_path` reads the host's separator and
+`urllib.request.url2pathname`, which changed in Python 3.14.
+
+`capture::paths::{norm, inside, basename}`: `_paths`, separators read off
+the spelling, so no flavour. `capture::location`: `ObjectKey` with
+`compare` (`Sameness`) and `on_any_device`, `ProjectFileRef`,
+`Location` (its `frozenset`s as `BTreeSet`s, `born`) and `to_location`;
+the `history` reader and `Location`'s properties that read `_same_path`
+are the resolving unit's.
+
+Fixtures (`tests/contract/gen_capture_vocabulary.py`):
+`capture_vocabulary.jsonl` (219,389 bytes, not gated; checked identical
+under 3.11 and 3.13) holds 72 captures built through `Capture` and read
+back, 922 hostile tokens (among them every refused field paired with
+every raising one, which pins the order `from_token` reads in, `int()`
+and `str()` of floats, texts and ints at the digit limit, and both
+raises), 8 `to_location` cases, 1,303 URLs, 25 paths (each against all
+25 for `inside`) and 56 key pairs. Nothing in it is worded by one Python
+release or platform, so no case is gated. Tests:
+`golden_capture_vocabulary` (class i) and `capture_vocabulary_robustness`
+(5: every key with every wrong type, 100,000-deep nesting on a 512 KiB
+thread, 10 MB texts and URLs, the native depth and digit limits at their
+boundaries).
+
+Left for later: part (c), `_printable` and `membership_lines`; the local
+branch of `remote_key`, `_file_url_path`, the capture's discovery, its
+cache and `checkout_token`, which read files.
 
 ## Not built yet
 

@@ -31,6 +31,7 @@ from pathlib import Path
 
 from . import (
     gen_caller_admission,
+    gen_capture_vocabulary,
     gen_cli,
     gen_config,
     gen_daemon,
@@ -105,6 +106,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "ulid": gen_ulid.generate,
     "githead": gen_githead.generate,
     "githead_posix": gen_githead.generate_posix,
+    "capture_vocabulary": gen_capture_vocabulary.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The
