@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 pub mod created;
+pub mod gitconfig_file;
 pub mod githead;
 pub mod opened;
 pub mod parity;

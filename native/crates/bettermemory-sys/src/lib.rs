@@ -10,6 +10,11 @@
 use std::fs::File;
 use std::io;
 
+/// The platform's `O_NONBLOCK` open flag, as its C library defines it
+/// (it differs between Linux architectures and between the BSDs).
+#[cfg(unix)]
+pub const O_NONBLOCK: i32 = libc::O_NONBLOCK;
+
 /// `os.fsync(fd)`, the reference's `_fsutil.fsync_file`: flush a file (or
 /// a directory opened for reading) to the disk with `fsync(2)`, tried
 /// again when a signal interrupts it, as Python does.

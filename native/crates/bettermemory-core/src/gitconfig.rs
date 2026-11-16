@@ -12,7 +12,8 @@
 //!   453-460, and the rule the callers apply);
 //! - [`git_int`] and [`git_bool`]: the typed reads (lines 1788-1850);
 //! - [`wildmatch`]: git's matcher the `includeIf` conditions use;
-//! - [`remote_rules`]: where git's reader of remotes dies on a variable.
+//! - [`remote_rules`]: where git's reader of remotes dies on a variable;
+//! - [`file`]: one config file read from a file system, bounded.
 //!
 //! Includes, files, the 2 MiB bound ([`FORMAT_LIMIT`], applied by the
 //! readers of files, not by the parser) and the worded reasons a caller
@@ -21,6 +22,7 @@
 
 use std::sync::Arc;
 
+pub mod file;
 pub mod remote_rules;
 pub mod wildmatch;
 

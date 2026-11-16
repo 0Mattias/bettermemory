@@ -20,7 +20,8 @@
 //!   verified on disk, the FTS5 prefilter;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
 //! - [`gitconfig`]: the text of a git config file as the reference reads it;
-//! - [`githead`]: HEAD and refs read from a git directory's files.
+//! - [`githead`]: HEAD and refs read from a git directory's files;
+//! - [`fsdata`]: the file system as the config readers ask it, as data.
 
 #![forbid(unsafe_code)]
 
@@ -28,6 +29,7 @@ pub mod capture;
 pub mod config;
 pub mod datetime;
 pub mod float_repr;
+pub mod fsdata;
 pub mod gitconfig;
 pub mod githead;
 pub mod json;

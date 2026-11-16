@@ -2456,6 +2456,303 @@ remotes (`gitconfig.py` at a983e3bb).
   at the open on Windows and at the fstat on POSIX; `_accessible` exists
   for the Windows path (343-351).
 
+## A git config tree with includes (piece 1 built)
+
+Design for porting `config_tree`, its includes and conditions, and
+`read_git_config` (`src/bettermemory/gitconfig.py` at 7855277e). Piece 1 of
+the split at the end of this section is built (see "Piece 1: built");
+pieces 2 and 3 are not. Line numbers were checked against the file at
+7855277e.
+
+### Data
+
+- `_Name` (54): `(section, subsection | None, key)`, section and key lower
+  case, subsection as bytes read back whole (`_spelled`, 389). Natively the
+  subsection stays bytes.
+- `ConfigValues` (78): an insertion-ordered map name to values (each value
+  cut at its first NUL, 427, or None for a key with no `=`), plus
+  `complete` (True), `dies` (None), `maybe_dies` (None), `undecided` (a map
+  of the same shape), `files` (stamps, only with `stamped`),
+  `asks_remote_urls`, `forbidden`.
+- `IncludeContext` (126): `branch()`, `prefix()`, `hasconfig()`, each asked
+  at most once and kept (`_Once`, 189) across `collect()` and `with_urls()`;
+  `remote_urls` (None until collected) and `collecting`. `branch` answers a
+  name, None (detached or another ref) or `UNSETTLED` (`b"\0unsettled"`,
+  207). `prefix` answers a directory, `AS_WRITTEN` (`"%(prefix)"`, 532) or
+  None. `hasconfig` answers True, False or None. Natively these are plain
+  values given up front (an answer that is never asked changes nothing,
+  since `_Once` only memoises); the port takes `Option`s in a struct.
+- `_Reading` (224): files taken so far, the identity chain, `stamp_self`,
+  `gentle`, the context, `forbidding`, `asks_remote_urls`, `forbidden`, and
+  one `Steps` budget shared by every pattern of the read. `remote_rules`
+  (248) is "a context that is not collecting".
+
+### The rule, function by function
+
+- `config_tree` (255): one `_Reading`, `_read_config(path, depth 0)`;
+  `_Overflow` sets `complete = False`, `_Dies` sets `dies`; the read stops
+  at the first of either. `asks_remote_urls` and `forbidden` copied out.
+- `_config_bytes` (292): non-blocking open. Open error: None where the
+  error is "missing" (`path_missing`) and `access(R_OK)` also fails
+  (`_accessible`, 343), or with `gentle` and a permission error; otherwise
+  dies `git cannot read {path} ({ExcName})` (317). After the open: a
+  directory dies `{path} is a folder, which git cannot read as a config`
+  (323); a FIFO or socket is `_Overflow(path)` (325); identity
+  `(st_dev, st_ino)` recorded where `st_ino != 0`; read up to limit + 1
+  bytes; a read error dies with the 317 text (335); more than 2 MiB is
+  `_Overflow(path)` (339). A device is read as a file.
+- `_read_config` (358): count the file first (a missing file counts too);
+  past 64 is `_Overflow(path)` (371). Stamp if asked. Read the bytes;
+  missing is skipped (returns). Only then: depth > 10 dies
+  `{path} is included past git's depth of 10` (379), and an identity
+  already on the chain dies
+  `{path} is included in itself, which git follows past its depth` (381).
+  Push the identity, parse, pop.
+- `_parse_config` (408): `git_entries`; None dies
+  `{path} holds a line git's parser refuses` (424). For each entry in
+  order: append the value; with `remote_rules` and not `forbidding`, a
+  `_remote_rule` refusal dies `{path} sets {raw name, utf-8 replace}: {why}`
+  (433); `include.path` (no subsection) includes unconditionally;
+  `includeif.<sub>.path` includes under `<sub>`; any other key of an
+  `includeif.<sub>` whose sub starts `hasconfig:remote.*.url:` evaluates the
+  condition for its side effect only (`asks_remote_urls`, 444).
+- `_include` (463): evaluate the condition (None for plain include:
+  holds). False: nothing. None (undecided): read into a separate
+  `maybe` map. Then: no value dies
+  `{including} sets include.path with no value` or
+  `{including} sets an includeIf's path with no value` (492); a value with
+  a tab or CR is `_Overflow(value to its NUL, fsdecoded)` (495); the target
+  is `_include_target`. A holding condition under a collecting context, not
+  already forbidding, goes to `_forbidding` (508). Otherwise
+  `_read_config(target, depth + 1)` into `out` or `maybe`. Under `maybe`
+  a `_Dies` or `_Overflow` is caught: `maybe.maybe_dies` is the refusal's
+  text or `{exc} is not read whole` (517, `{exc}` the path or value). In
+  every case `maybe`'s values and its own `undecided` are merged into
+  `out.undecided`, and `out.maybe_dies` keeps its first of
+  `out.maybe_dies`, `maybe.maybe_dies`, `maybe.dies` (523).
+- `_interpolate` (535): a leading `%(prefix)/`: prefix `AS_WRITTEN`
+  returns the path unchanged; None (or no context) is `_Overflow(path)`;
+  else an absolute rest (`_git_absolute`) is the rest, otherwise
+  `prefix + "/" + rest`. A leading `~`: the user is the text to the first
+  `/`; empty user is `_home()` (realpath-ed when `real_home`, which only
+  the gitdir pattern asks; on Windows its backslashes made `/`), otherwise
+  `_user_home(user)`; None when that is None, else home + the rest from
+  the slash. Anything else unchanged.
+- `_user_home` (578): `pwd.getpwnam(user).pw_dir`, None on any error;
+  always None on Windows.
+- `_include_target` (594): fsdecode, `_interpolate(real_home=False)`; None
+  dies `{including} includes {raw!r}, which git cannot expand` (606, `!r`
+  is Python's repr: the port must reproduce repr of a str, including
+  surrogate escapes as `\udcXX`); a relative result is joined to
+  `dirname(including)` (`os.path.join`); then `_native`.
+- `_git_absolute` (612): POSIX: starts with `/`. Windows: starts with `/`
+  or `\`, or second char `:` and first `isalpha()` (Python's Unicode
+  `isalpha`, not ASCII only: a finding to pin, see below).
+- `_native` (654): replace `altsep` by `sep` (Windows `/` to `\`; POSIX
+  nothing).
+- `_home` (671): `HOME` if set (empty is kept on POSIX); on Windows an
+  unset or empty HOME falls back to `expanduser("~")` (USERPROFILE, then
+  HOMEDRIVE+HOMEPATH), None if that leaves `~`.
+- `_forbidding` (683): read the target with `depth + 1` into a sink whose
+  values are dropped, `forbidding` set; afterwards merge the sink's
+  `undecided` and first `maybe_dies` (not its `dies`: a `_Dies` propagates
+  as an exception instead), and set `reading.forbidden` if the sink or its
+  `undecided` holds any `remote.<name>.url` (`_remote_url_names`, 703).
+- `_condition` (1081): `gitdir:` / `gitdir/i:` with no git dir: None, else
+  `_gitdir_matches`. `onbranch:`: `_branch_condition`.
+  `hasconfig:remote.*.url:`: with a context, `hasconfig()` not True returns
+  that answer (False or None); then `_remote_url_condition`. Anything else
+  (other `hasconfig:` included): False.
+- `_branch_condition` (1129): no context: None; `UNSETTLED`: None;
+  None branch: False; the pattern as bytes, `**` appended where it ends in
+  `/` or `os.sep`; `_any_match` against the one branch.
+- `_remote_url_condition` (1150): no context: None; collecting: True;
+  URLs not collected: set `asks_remote_urls`, None; else `_any_match` of
+  the pattern as written against the URLs sorted as bytes.
+- `_gitdir_matches` (1177): `_interpolate(real_home=True)`; `_Overflow`
+  gives None; None (cannot expand) keeps the pattern as written. `./` (or
+  `.` + `os.sep`) is replaced by the realpath of the including file's
+  directory, slashed, and that head plus one byte is matched literally
+  (`literal_head`); else a non-absolute pattern gets `**/` before it; a
+  pattern ending in `/` or `os.sep` gets `**`. The texts are the realpath
+  and the abspath of the git dir, slashed, deduplicated in that order;
+  `_any_match` with `icase` for `gitdir/i:`.
+- `_any_match` (1113): True at the first match; a spent budget is
+  remembered; None if any was spent and none matched, else False.
+- `read_git_config` (1601): no includes, no conditions. Open missing: no
+  entries, no reason. Other open error: `{path} could not be read
+  ({ExcName})` (1625). Not a regular file: `{path} is not a regular file`
+  (1631). `st_size` over 2 MiB, or more than 2 MiB read:
+  `{path} is larger than 2 MiB` (1633, 1645). Read error: 1641's text.
+  Parse failure: `{path} is a config git cannot parse` (1650, 1661). With
+  `names`: keep entries whose name is in `names` or starts with one ending
+  in `.`. The memo (1589) is keyed by a digest of the bytes read and
+  answers what a parse would; it changes no answer.
+
+### Bounds
+
+Depth 10 (66): checked after the file is found to exist, so a missing file
+at depth 11 is skipped, as git skips it. Files 64 (75): counted before the
+file is opened, missing files included, so the 65th include of a missing
+file still makes the read incomplete. Bytes 2 MiB (1536): read to limit + 1
+and refused before parsing. The `Steps` budget (`wildmatch.rs`) is shared
+by every pattern of one read; spent gives None (undecided), never a
+refusal.
+
+### Machine facts, to be arguments
+
+HOME and the Windows fallback; `~user` lookup; flavour (`os.name`, `sep`,
+`altsep`); the current directory (`abspath`); link resolution (`realpath`
+of the including file and of the git dir, and of HOME for gitdir patterns);
+`access(R_OK)`; file identity; the context's branch, prefix and hasconfig.
+`GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME` and the legacy `resets` belong to the
+legacy remotes, not this unit.
+
+### What changes no answer
+
+`files`, `file_stamp`, `unchanged` (cache validity: the callers in
+`location_git.py` 381 and 888 stamp, but no value, refusal or flag depends
+on a stamp) and the format memo. The port leaves them out.
+
+### Findings from reading, for piece 2 (not yet reproduced)
+
+- `_git_absolute` (616) uses `str.isalpha()`, which is true for non-ASCII
+  letters, while git's `has_dos_drive_prefix` takes only ASCII letters:
+  `é:/x` reads as absolute on Windows here and not in git. Reading only.
+- `_include_target` (606) puts Python's `repr` of the value into a refusal
+  text: a native port must reproduce `repr` (quote choice, escapes,
+  surrogate escapes) byte for byte.
+
+
+### Piece 1: built
+
+- `src/fsdata.rs`: `trait Fs { type File; open(path) (non-blocking,
+  follows links); fstat(&mut File) -> Stat { kind, identity, size };
+  read(&mut File, max) (at most `max` bytes, empty at the end);
+  access_read(path); lstat(path) -> Kind }`. Errors are `PyErr`, the Python
+  class the reference's call raises (`FileNotFoundError`,
+  `NotADirectoryError`, `PermissionError`, `OSError`, `ValueError`, ...),
+  with `missing()` = `path_missing`. `Kind`: regular, directory, FIFO,
+  socket, link, other (a device). `FileId` is opaque bytes: device and
+  inode on POSIX, the resolved path in `MemFs`, and on Windows the
+  canonical path (Rust gives no file index without `unsafe`; the
+  reference uses `st_ino`, the file index: piece 2's cycle check must
+  hold the two to the same answer). `Flavour` is `githead`'s, re-exported.
+- `StdFs`: opens with `O_NONBLOCK`, taken from the platform's C library
+  (`bettermemory_sys::O_NONBLOCK`, `libc::O_NONBLOCK`), so a FIFO never
+  blocks on any architecture.
+  `access_read` is an open on POSIX (no `access(2)` without `libc` or
+  `unsafe`): it answers as `access(R_OK)` for files, directories and
+  FIFOs, not for a socket (the open fails, `access` succeeds); the readers
+  ask it only where the open said "missing", where the two agree. On
+  Windows it is CPython's `os.access`: `GetFileAttributesW`, which
+  describes a link itself (a dangling link answers true), and R_OK holds
+  wherever attributes are found (the read-only attribute bears on W_OK
+  only); natively `symlink_metadata(path).is_ok()`.
+- `MemFs`: nodes `File`, `Dir`, `Link`, `Hard` (another name of a file:
+  its bytes, mode and identity), `Fifo`, `Socket`, `Device` (reads empty)
+  and `Endless` (reads without end, the zero device), and `modes`, the
+  owner's permission bits (POSIX only), checked as the OS checks them for
+  the owner: search on every directory a component is looked up in (`.`
+  and `..` included, links resolved as met), read on the file opened or
+  asked by `access`. A trailing separator, in a path or a link's target,
+  asks only that the last component be a directory (a final link
+  followed); no `.` is looked up, so it needs no search permission, while
+  `d/.` does. The empty path, and a link whose target is empty, name
+  nothing (`FileNotFoundError`; on Windows assumed from `_wopen("")`
+  setting ENOENT, by reading). A link to "" is pinned only natively:
+  macOS answers ENOENT through it, and Linux refuses to make one
+  (`symlink(2)`: ENOENT for an empty target; `path_resolution(7)` is not
+  on this machine, so that is from the man page as known, not read here).
+  Links are counted once across the whole path, failing past
+  `link_hops`.
+  A `Hard` node pointing at a directory, a missing node or another
+  `Hard` reads as `FileNotFoundError`; one pointing at a link behaves as
+  that link. `link_hops` (default `LINK_HOPS` = 32, macOS's
+  limit; Linux's is 40) bounds the links one path passes through, then
+  `OSError` (ELOOP); the generator asserts no case has 30 links or more,
+  so a chain that ends is shorter than either limit and one that loops
+  fails at both alike. A file in a directory's place is
+  `NotADirectoryError` on POSIX, `FileNotFoundError` on Windows.
+- Windows, a directory: `_wopen` refuses it (EACCES, `PermissionError`):
+  `_config_bytes` dies `git cannot read {path} (PermissionError)`, or skips
+  it with `gentle`; `read_git_config` says `could not be read
+  (PermissionError)`. A path ending in a separator: the open answers
+  `FileNotFoundError`, `access` finds a directory there, and
+  `_config_bytes` dies (the case `_accessible` exists for); one naming a
+  file is missing. `MemFs`'s Windows flavour does exactly this, and
+  `StdFs` gets it from Rust's `File::open` (`CreateFileW` without backup
+  semantics refuses a directory with ERROR_ACCESS_DENIED). All of it rests
+  on reading CPython, the CRT and Rust's std: no Windows run of the
+  reference is in a fixture. `fsdata_stdfs.rs` asserts the directory
+  refusal on the Windows runner.
+- `src/gitconfig/file.rs`: `config_bytes(fs, path, gentle) -> ConfigBytes
+  { Skipped | Read { data, identity } | Dies(Dies) | Overflow { path } }`
+  with `Dies::{CannotRead { path, error }, Folder { path }}` and
+  `Dies::why()` giving the texts of lines 317/335 and 323; `Overflow` is
+  325 and 339. `read_git_config(fs, path, names) -> GitConfigRead {
+  entries, why: Option<(path, Unread)> }`, `why_text()` giving the texts of
+  1625/1641, 1631, 1633/1645 (the stat's size first, then the bytes read)
+  and 1650/1661. At most `FORMAT_LIMIT + 1` bytes are read, in the
+  reference's loop, before any parse; a file system that hands back more
+  than asked is cut to it. The format memo is left out (it answers what a
+  parse of the same bytes would).
+- `githead::RefFs` is left alone: its `read` takes `follow` (`O_NOFOLLOW`)
+  and pre-checks with `stat` rather than opening, and its errors are
+  `githead::FsError`. Unifying would mean an `open_nofollow` on `Fs`, a
+  `PyErr` to `FsError` map in `githead`, and its `StdFs` reads moved to
+  open-then-fstat; every githead fixture would have to be re-run to show
+  nothing moved.
+- For the includes unit (piece 2): on Windows `FileId` is the canonical
+  path, so two hard links to one file get different identities where the
+  reference's `st_ino` (the file index) gives one; a cycle through hard
+  links would then be caught only by the depth limit. A real file index
+  needs a Windows handle call (`GetFileInformationByHandle`), which
+  belongs in `bettermemory-sys`; it is not built.
+
+Fixture `gitconfig_file.jsonl` (`tests/contract/gen_gitconfig_file.py`,
+POSIX only, 91 cases, 32,474 bytes): real trees with regular files, odd
+names (space, NFC UTF-8, newline, backslash, quote), missing files and
+directories of the path, trailing slashes, directories, links to files,
+directories, nothing, themselves, `/dev/null` and FIFOs, link loops and
+chains, links whose target ends in `/`, `/dev/zero`, FIFOs, modes 000 to
+700 on files and directories, `.` and `..` through a directory that cannot
+be searched, hard links (with whether two paths share an identity),
+files at the bound minus
+one, the bound, one past and further (recipes); for each, both readers,
+the gentle read, the open's kind, `access` and `lstat`. Reasons name the
+case's directory `<scratch>`.
+
+Tests: `golden_gitconfig_file.rs` (`cfg(unix)`, class i): every case over
+`MemFs`, and every case written to a scratch directory and read through
+`StdFs` (two PARITY lines); `gitconfig_file_not_posix.rs`
+(`cfg(not(unix))`, class os); `gitconfig_file_robustness.rs` (a 50 MB file
+through a counting file system: at most limit + 1 bytes handed out, none
+when the stat tells; a file system that gives more than asked; one that
+errors on every call; NUL and non-UTF-8 paths in both flavours; 10,000
+`..` components; link loops; the Windows flavour's directory rules);
+`fsdata_stdfs.rs` (`StdFs` on every platform in a scratch directory).
+
+### Proposed split
+
+Read in full, this is still too large to land cleanly with fixtures, a
+general file-system trait and three-platform CI in one run. Proposed:
+
+1. Trait and one file: the `fsys` trait with `MemFs` and `StdFs`,
+   `_config_bytes` (292-356) and `read_git_config` (1564-1672), with every
+   refusal and incomplete read of one file; fixture of `read_git_config`
+   reasons and one-file `config_tree` refusals.
+2. Includes and bounds: `config_tree`, `_read_config`, `_parse_config`,
+   `_include`, `_interpolate`, `_user_home`, `_include_target`,
+   `_git_absolute`, `_native`, `_home` (255-292, 358-388, 408-445, 463-618,
+   654-681), unconditional `include.path` only, depth, 64 files, cycles,
+   the pure path-rule fixture.
+3. Conditions: `_condition`, `_any_match`, `_branch_condition`,
+   `_remote_url_condition`, `_slashed`, `_gitdir_matches` (1078-1212), the
+   `undecided`/`maybe_dies` merge in `_include` (481-488, 513-525), and
+   the collecting and forbidding pass (`_forbidding`, 683-700, 504-509),
+   with the remote rules at 430-433.
+
 ## A record id's text
 
 `store::mint` is `models.generate_ulid` (`models.py:56-64`) with its clock

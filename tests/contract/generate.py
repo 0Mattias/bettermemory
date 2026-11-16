@@ -38,6 +38,7 @@ from . import (
     gen_edges,
     gen_fold,
     gen_gitconfig,
+    gen_gitconfig_file,
     gen_gitconfig_remote_rules,
     gen_gitconfig_wildmatch,
     gen_githead,
@@ -109,6 +110,7 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "githead": gen_githead.generate,
     "githead_posix": gen_githead.generate_posix,
     "capture_vocabulary": gen_capture_vocabulary.generate,
+    "gitconfig_file": gen_gitconfig_file.generate,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -229,7 +231,8 @@ PLATFORM_GATED = frozenset(
 #: same state after each write, ``store_tx`` after each transaction,
 #: ``store_records`` after each writer call.
 #: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
-#: otherwise (`gen_githead`).
+#: otherwise (`gen_githead`); ``gitconfig_file`` reads links, FIFOs and
+#: mode-000 files and opens directories (`gen_gitconfig_file`).
 POSIX_ONLY = frozenset(
     {
         "store_restore_lock",
@@ -240,6 +243,7 @@ POSIX_ONLY = frozenset(
         "store_tx",
         "store_records",
         "githead_posix",
+        "gitconfig_file",
     }
 )
 
