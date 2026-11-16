@@ -1,0 +1,11 @@
+[package]
+name = "bettermemory-sys"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "bettermemory 9 native: the OS calls the standard library does not offer safely"
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "=0.2.189", default-features = false }

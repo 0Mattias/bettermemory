@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/bettermemory-core"]
+members = ["crates/bettermemory-core", "crates/bettermemory-sys"]
 
 [workspace.package]
 edition = "2021"

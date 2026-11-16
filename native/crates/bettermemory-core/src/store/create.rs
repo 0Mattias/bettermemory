@@ -652,7 +652,7 @@ pub(super) fn new_private_file(path: &Path) -> io::Result<fs::File> {
 #[cfg(unix)]
 pub(super) fn sync_dir(dir: &Path) {
     if let Ok(d) = fs::File::open(dir) {
-        let _ = d.sync_all();
+        let _ = bettermemory_sys::fsync(&d);
     }
 }
 
@@ -1047,7 +1047,7 @@ fn build(
             .read(true)
             .write(true)
             .open(temp)
-            .and_then(|f| f.sync_all()),
+            .and_then(|f| bettermemory_sys::fsync(&f)),
     )?;
     hook(Boundary::Closed);
     Ok((store_id, first))
@@ -1077,7 +1077,7 @@ fn write_new(path: &Path, data: &[u8], written: &mut Vec<PathBuf>) -> io::Result
     let staged = (|| {
         let mut f = new_private_file(&tmp)?;
         f.write_all(data)?;
-        f.sync_all()
+        bettermemory_sys::fsync(&f)
     })();
     if let Err(e) = staged {
         let _ = fs::remove_file(&tmp);
@@ -1092,7 +1092,7 @@ fn write_new(path: &Path, data: &[u8], written: &mut Vec<PathBuf>) -> io::Result
             let mut f = new_private_file(path)?;
             written.push(path.to_path_buf());
             f.write_all(data)?;
-            f.sync_all()?;
+            bettermemory_sys::fsync(&f)?;
         }
     }
     sync_dir(&parent_of(path));

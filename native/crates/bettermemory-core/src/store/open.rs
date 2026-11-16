@@ -1369,7 +1369,7 @@ fn replace_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
     let staged = (|| {
         let mut f = new_private_file(&tmp)?;
         f.write_all(data)?;
-        f.sync_all()
+        bettermemory_sys::fsync(&f)
     })();
     if let Err(e) = staged.and_then(|()| fs::rename(&tmp, path)) {
         let _ = fs::remove_file(&tmp);

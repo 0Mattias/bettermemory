@@ -12,7 +12,11 @@ tests it on Linux, macOS and Windows against fixtures made on each
 
 ## What the crate holds
 
-One library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
+Two crates. `crates/bettermemory-sys` holds the OS calls the standard
+library does not offer safely, one function so far (`fsync`: `fsync(2)`
+through `libc`, tried again on EINTR, as `os.fsync`); it is the only place
+`unsafe` may appear, each use one call on a borrowed standard-library
+type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 
 | module | reproduces | pinned by |
 | --- | --- | --- |
@@ -1439,9 +1443,11 @@ placeholder (failing when anything is there) and only that placeholder is
 renamed over. Left undecided: a kill between the claim and the rename
 leaves an empty `memory.sqlite` that neither build opens, as the
 reference's own window does: the one boundary, on such file systems only,
-where native is no better than the reference. Durability: files and the directory are
-synced (`sync_all`, which on macOS is `F_FULLFSYNC`, stronger and slower
-than the reference's `fsync`).
+where native is no better than the reference. Durability: files and the
+directory are synced as the reference syncs them, with `fsync(2)`
+(`bettermemory_sys::fsync`; the standard library's `sync_all` is
+`F_FULLFSYNC` on macOS, which neither the reference nor SQLite's own
+commits ask for, and which made a write's head move 23 times slower).
 
 ## Opening a store for writing
 

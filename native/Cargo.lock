@@ -6,12 +6,20 @@ version = 4
 name = "bettermemory-core"
 version = "0.1.0"
 dependencies = [
+ "bettermemory-sys",
  "getrandom",
  "rusqlite",
  "serde_json",
  "sha2",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "bettermemory-sys"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
