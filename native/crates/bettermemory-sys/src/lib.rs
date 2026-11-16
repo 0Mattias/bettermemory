@@ -24,7 +24,7 @@ use std::io;
 /// commit it names is also the wrong way round.
 ///
 /// On Windows `os.fsync` is `_commit`, which is `FlushFileBuffers`, and so
-/// is `File::sync_all`.
+/// is `File::sync_all`; it needs a handle opened for writing.
 pub fn fsync(file: &File) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -63,10 +63,15 @@ mod tests {
         file.write_all(b"x").expect("write");
         fsync(&file).expect("fsync a file");
         drop(file);
-        let read_only = std::fs::File::open(&path).expect("open");
-        fsync(&read_only).expect("fsync a file opened for reading");
+        // A handle opened for reading, and a directory: `fsync(2)` takes
+        // both. `FlushFileBuffers` wants write access ("Access is denied"
+        // on the Windows runner), and no caller syncs such a handle there.
         #[cfg(unix)]
-        fsync(&std::fs::File::open(&dir).expect("open dir")).expect("fsync a directory");
+        {
+            let read_only = std::fs::File::open(&path).expect("open");
+            fsync(&read_only).expect("fsync a file opened for reading");
+            fsync(&std::fs::File::open(&dir).expect("open dir")).expect("fsync a directory");
+        }
         std::fs::remove_dir_all(&dir).expect("remove");
     }
 }
