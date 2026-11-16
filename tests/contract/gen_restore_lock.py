@@ -19,6 +19,7 @@ wait cut short, and its detail. POSIX only (Windows has no case)."""
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import stat
@@ -38,7 +39,10 @@ _MARKER = {
 
 
 def _case(store_dir: Path, name: str, *, held: bool, marker: bool) -> dict[str, Any]:
-    import fcntl  # POSIX only: imported here so Windows can import this module
+    # POSIX only (`generate.POSIX_ONLY`), so loaded here and not at the
+    # top, and as Any: on Windows a type checker's `fcntl` has no flock
+    # (the main CI job's mypy step failed there on a plain import).
+    fcntl: Any = importlib.import_module("fcntl")
 
     store_dir.mkdir()
     store = store_dir / "memory.sqlite"
@@ -105,7 +109,10 @@ def _try_reading(path: Path) -> dict[str, Any]:
 
 
 def _record_case(root: Path, name: str, *, record: bool, held: bool) -> dict[str, Any]:
-    import fcntl  # POSIX only: imported here so Windows can import this module
+    # POSIX only (`generate.POSIX_ONLY`), so loaded here and not at the
+    # top, and as Any: on Windows a type checker's `fcntl` has no flock
+    # (the main CI job's mypy step failed there on a plain import).
+    fcntl: Any = importlib.import_module("fcntl")
 
     store_dir = root / name
     store_dir.mkdir()
@@ -148,7 +155,10 @@ _PATH_CASES = (
 
 
 def _path_case(root: Path, name: str, given: str) -> dict[str, Any]:
-    import fcntl  # POSIX only: imported here so Windows can import this module
+    # POSIX only (`generate.POSIX_ONLY`), so loaded here and not at the
+    # top, and as Any: on Windows a type checker's `fcntl` has no flock
+    # (the main CI job's mypy step failed there on a plain import).
+    fcntl: Any = importlib.import_module("fcntl")
 
     case = root / name
     real = case / "real"
