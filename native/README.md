@@ -33,6 +33,7 @@ type. The library crate, `crates/bettermemory-core` (`#![forbid(unsafe_code)]`):
 | `gitconfig` | the text of one git config file as `gitconfig.py` reads it: `git_entries` and `_value` (the lexer and parser), `_spelled`, the NUL cut of `_parse_config`, `spaced` and the `KEEPS_SPACES_SINCE` rule, `git_int`, `git_bool` | `gitconfig.jsonl` |
 | `gitconfig::wildmatch` | git's `wildmatch` with `WM_PATHNAME` (and `WM_CASEFOLD`) as `gitconfig.py` ports it, its step and depth budgets, `_any_match`, `_literal_head` | `gitconfig_wildmatch.jsonl` |
 | `gitconfig::remote_rules` | where git's reader of remotes dies on a variable: `_remote_rule` with its worded reasons, `refname_valid`, `refspec_valid` | `gitconfig_remote_rules.jsonl` |
+| `githead` | HEAD and the refs its chain names, from a git directory's files, as `githead.py`'s resolution half reads them: `head_bytes`, `_parse`, `_lookup`, `_packed`, `_resolve`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`, `head_commit` up to the object read; the file system is a trait (`RefFs`: `read`, `lstat_is_dir`) with `StdFs` and `MemFs` | `githead.jsonl`, `githead_posix.jsonl` |
 | `config` | `config._config_from_data`, `load_config(create=False)`, the managed file's pins (`_apply_managed`, `managed.read_managed`), `config check --json`, `config show --json`, `config path --json` and the audit's config findings (`posture._settings`) | `settings.json`, `settings_python.json`, `settings_paths.json`, `settings_paths_python.json` |
 | `store` | a store file read without writing to it (`connect_read_only`), its admission (`admit_store`), the opening checks and the version contract (`_open_connected`, `check_versions`), meta, every table's rows, `store_rows`' memory, tombstone and episode readers (before model validation), the log walked in seq order and `verify_chain` on it, the key ring read from a keys directory, `query_candidates` and `ranked_rows`; the fold check (`store::fold`: `store_events.refold`, `log_verify`); a new store (`store::create`: `Store.create`, its digest from `store::digest`); an existing store opened for writing (`store::open`: `Store.open(allow_rekey=True)` in its plain states, the digest's record entries, ingest and build); what a resolved caller is admitted to see (`store::caller`) | `store_files.jsonl`, `store_bases.json`, `store_admission.json`, `search.jsonl`'s `fts`, `fold.jsonl`, `store_create.json`, `store_open.jsonl`, `caller_admission.jsonl` |
 | `store::mint` | the text of a record id as `models.generate_ulid` mints it from its milliseconds and ten random bytes, `int(time.time() * 1000)` and its 48-bit mask, `is_valid_ulid` and the milliseconds `review.ulid_time` reads | `ulid.jsonl` |
@@ -1272,6 +1273,9 @@ that Unicode too.
 | `golden_gitconfig_remote_rules`: `gitconfig_remote_rules_every_case` | `gitconfig_remote_rules.jsonl` | i |
 | `gitconfig_remote_rules_robustness` (2) | none | i |
 | `golden_ulid`: `ulid_every_case`, `ulid_order_and_round_trip` | `ulid.jsonl` (the second none) | i |
+| `golden_githead`: `githead_every_case` (both flavours) | `githead.jsonl` | i |
+| `golden_githead`: `githead_posix_every_case` (unix) | `githead_posix.jsonl` | i; os elsewhere (`githead_not_posix`) |
+| `githead_robustness` (7), `githead_stdfs` (2 on unix, 1 elsewhere) | none | i |
 | `golden_settings`: `settings_catalogue_and_fixed`, `settings_coercion`, `settings_cases`, `settings_config_path` | `settings.json` | i |
 | `golden_settings`: `settings_python_cases`, `settings_pure_paths` | `settings_python.json` | ii (Python) |
 | `golden_settings`: `settings_paths` (unix) | `settings_paths.json` | i; os elsewhere (`settings_paths_not_posix`) |
@@ -2361,6 +2365,223 @@ the truncation edges (each side of `m / 1000`, `(m + 0.5) / 1000`,
 and 27, lowercase, each first character). `ulid_order_and_round_trip`
 checks that text order is the order of `(ms, bytes)` and that `ulid_ms`
 reads back the milliseconds, over 3,004 rule-built pairs.
+
+## HEAD and refs from a git directory's files
+
+`githead` is the resolution half of `src/bettermemory/githead.py` (line
+numbers at v9's a983e3bb): HEAD and the refs its chain names, read from
+the files of a git directory the caller has already found. It runs no git
+and reads every file through a trait the caller gives (`RefFs`).
+
+### Cut
+
+`githead.py` is two modules in one file. Discovery and the signature
+(`stamp` 211, `_check_environment` 243 to `_located` 669, `signature`
+1129, `_ref_stamps` 1097) walk directories, read `.git` files, check
+owners, ceilings and file systems, read the environment and stat for
+change detection: that is discovery's unit and is not ported here.
+Resolution (692-1089) takes a `GitDir` (`gitdir`, `commondir`) and reads
+files only: that is this unit. It borrows from `gitfile_rule.py` the
+reader `_read` (1083), `_REF_LIMIT` (62, 64 KiB), `_SPACE` (68,
+`b" \t\n\r"`) and `_Unsettled` (1078), and from `_location_probe.py`
+`path_missing` (100). `head_commit` (1042) peels a tag through the object
+reader, which is not this unit: native returns the hash to peel as an
+outcome (`HeadCommit::Peel`).
+
+### Inputs
+
+- Files under the git directory: `HEAD`, and a loose ref whose name starts
+  with `refs/bisect/`, `refs/rewritten/` or `refs/worktree/`
+  (`_PER_WORKTREE`, 157).
+- Files under the common directory: every other loose ref, and
+  `packed-refs`.
+- Nothing else. The reference reads no `config`, so neither
+  `extensions.refStorage` nor `extensions.objectFormat` nor the git
+  version is an input; no environment variable, no clock. A `reftable`
+  repository is met only through its files: its `HEAD` is
+  `ref: refs/heads/.invalid`, whose name fails the name rule, so every
+  answer declines and the caller asks git. Any other ref storage is the
+  same: whatever its HEAD holds is read by the files rule and, where it
+  is not a valid files-backend HEAD, declined.
+- Platform: the reference has no branch of its own on the platform here;
+  the file system answers differently. `_read` opens with `O_NOFOLLOW`
+  where the OS has it (POSIX: a symbolic link fails with ELOOP; Windows:
+  followed), and a missing directory in the path is `NotADirectoryError`
+  (ENOTDIR) on POSIX but `FileNotFoundError` on Windows. Native takes
+  those as the file system's answers: `RefFs` reports `NotADirectory`, or
+  `Missing` the way Windows does, and `MemFs` takes a `Flavour` so both
+  answers are tested on every platform. Case folding and Windows reserved
+  names are not considered by the reference (a name is opened as given).
+
+### The rule
+
+- `head_bytes` (692): `HEAD` read with no follow of a link, at most
+  `_REF_LIMIT + 1` bytes; any error, or more than 64 KiB, is None. A
+  symbolic link (git's oldest HEAD) is None on POSIX.
+- `_valid_refname` (705): no `..`, no `@{`, no trailing `.`, no byte of
+  0x00-0x1f, 0x7f, space, `~^:?*[\`; every `/`-component non-empty, not
+  starting with `.`, not ending in `.lock`. Bytes 0x80-0xff pass. A
+  one-component name passes this function, but `_parse` requires `refs/`.
+- `_parse` (719): trailing `_SPACE` stripped. `ref:` then leading
+  `_SPACE` stripped, a name under `refs/` that passes the rule: symbolic.
+  Else 40 or 64 lowercase hex digits and nothing else: direct. Anything
+  else declines (`_Unsettled`): uppercase hex, text after a hash, a hash
+  of another length, `ref:` to a one-level name such as `HEAD`.
+- `_lookup` (909): a loose file (no follow) at `gitdir/name` for a
+  per-worktree name, else `commondir/name`. Missing (`path_missing`) or a
+  directory: a per-worktree name declines, any other reads `packed-refs`.
+  Any other error raises (declines); `NotADirectoryError` is not caught,
+  so on POSIX a file where a directory of the name should be declines
+  while on Windows it reads as missing. Over 64 KiB declines, else
+  `_parse`. The loose file wins over `packed-refs`.
+- `_packed` (855): `commondir/packed-refs` read (following links) to at
+  most `_PACKED_LIMIT + 1` (64 MiB + 1) bytes. Missing: no record. Empty:
+  no record. Declines when: longer than 64 MiB; not ending in `\n`; a
+  first byte `#` not followed by `# pack-refs with:`; not the file shape
+  (`_PACKED_SHAPES`: an optional header line, then records of exactly 40
+  or exactly 64 lowercase hex, a space, a name of bytes outside
+  0x00-0x20, 0x7f and `~^:?*[\`, `\n`, each followed by at most one `^`
+  peeled line of a hash as long; all records one length); any of `..`,
+  `@{`, `//`, `/.`, ` .`, `/\n`, `.lock/`, `.lock\n`, `.\n` anywhere in
+  the file (`_BAD_NAME`); a header whose traits include `sorted` with
+  record names not strictly rising bytewise (`_packed_in_order`, which
+  also counts the name after a hex-run-and-space at any line start). Then
+  the lines ending ` name\n`: a second one, or one whose text before the
+  space is not a full hash, declines; one is the answer. CRLF files fail
+  the shape. The verdict caches (`_PACKED_READS`, `_PACKED_STAMPED`) only
+  memoise; they are not ported (no answer depends on them).
+- `_resolve` (932): HEAD parsed; each symbolic step is a read; at the
+  fifth read (`_MAX_READS`, 154, HEAD's included) a further step
+  declines, so a chain of HEAD and four refs answers and a fifth ref
+  declines. A cycle declines by the same bound. Returns (name, hash),
+  (name, None) unborn, (None, hash) detached.
+- `head_sha` (1022): `_resolve`'s hash where HEAD is detached or ends
+  under `refs/heads/`; None otherwise and on every decline or OSError.
+- `head_ref` (1080): the name the chain ends at, decoded as UTF-8; None
+  when detached, on any decline, and on a name that is not UTF-8
+  (`ValueError`).
+- `head_unborn` (952): None when `head_bytes` is None or `_parse` refuses
+  HEAD. Follows the chain as `_resolve`; past the bound None. Where a
+  `_lookup` declines (`_Unsettled`, not an OSError): False when a loose
+  entry that is not a directory exists for the name (`_loose_ref`,
+  1011, lstat) or `packed_names` holds it, else None. An ended chain is
+  True when the ref has no hash, False otherwise; detached False. Any
+  OSError or ValueError: None.
+- `packed_names` (994): `packed-refs` read to `_PACKED_LIMIT + 1` bytes;
+  True when some line ends ` <name>` with an optional `\r` before its end
+  (a line is `[^\n]*`, `re.MULTILINE`); False on any error.
+- `head_commit` (1042): `head_sha` if it answers; else `_resolve` and, for
+  a named ref with a hash, the object peel through `gitobjects` up to
+  `_PEEL_DEPTH` (8) tags. Native: `Answer(hash)`, `Peel(hash)` or `None`.
+
+### Bounds and declines
+
+64 KiB + 1 read of `HEAD` and of each loose ref; 64 MiB + 1 read of
+`packed-refs` (the trait is asked for at most that many bytes, so a file
+that claims more costs no more); five reads per chain. The work on
+`packed-refs` is linear in its length (the shape, the bad-name scan, the
+order check and the needle search are each one pass). The reference has
+no "ask git" call in this half: every decline is None (`_Unsettled`,
+`OSError`, `ValueError`) and the caller runs `git symbolic-ref -q HEAD`
+or `git rev-parse`. Native names that outcome `Decline` with no reason,
+as the reference words none.
+
+### The port
+
+`src/githead.rs` and `src/githead/fs.rs`. `RefFs` has two methods:
+`read(path, limit, follow) -> Result<Vec<u8>, FsError>` (at most
+`limit + 1` bytes; `FsError` is `Missing`, `NotADirectory`,
+`IsADirectory` or `Other`) and `lstat_is_dir(path)`. `StdFs` checks the
+kind before it opens (so a FIFO never blocks), refuses a link with
+`follow` false on unix only, and maps `NotFound`, `NotADirectory` and
+`IsADirectory`. `MemFs` is paths to `File`, `Dir`, `Link` or `Special`,
+with a `Flavour` (`Posix`, `Windows`) for the two answers that differ.
+Entry points take `(&dyn RefFs, &GitDir)`: `head_bytes`, `resolve`,
+`lookup`, `head_sha`, `head_ref`, `head_unborn`, `packed_names`,
+`head_commit` (`HeadCommit::Answer`, `Peel` or `Decline`), plus `parse`,
+`valid_refname`, `packed_reads` and `full_hash`. Not ported: discovery,
+the signature and `stamp`, the object peel, and the verdict caches.
+
+### Fixture and tests
+
+`tests/contract/gen_githead.py` writes each case as real files in the
+scratch world and runs the reference. `githead.jsonl` (914 cases, 572
+declined; about 211 KB; not gated: regular files, directories and missing
+files only, ASCII names every file system stores as given, no name that
+differs from another only by case; the same bytes under Python 3.11 and
+3.13) is compared under both flavours, since the reference reads those
+cases alike everywhere. `githead_posix.jsonl` (63 cases, 19 declined; about 22 KB;
+POSIX only) holds links, FIFOs, ENOTDIR, names with `<>|"`, non-ASCII
+and not UTF-8, Windows device names and long names; it is compared on
+unix with the POSIX flavour, and `githead_not_posix` records the gap as
+class os elsewhere. The cases are built by rule: each HEAD prefix and
+whitespace, each hash length and alphabet as HEAD and as a loose ref,
+names at the edges of the name rule, every header against every record
+set of `packed-refs` (peeled, unsorted, CRLF, duplicate, truncated, bad
+names, both hash lengths), loose against packed, chains of 2 to 8 reads
+and cycles, the worktree layouts and per-worktree prefixes, reftable and
+`objectFormat` configs, and each file at its bound and one past (64 KiB
+for `HEAD` and a loose ref, 64 MiB for `packed-refs`, as recipes).
+`githead_robustness` serves files claiming 1 GB, a 50 MB `packed-refs`,
+cycles and a chain of 1000 refs (counting reads: never more than five),
+NULs and bytes that are not UTF-8, a file system failing every call with
+each error, and the Windows flavour's answers to a link and ENOTDIR; and
+checks three hostile `packed-refs` shapes take at most 30 times as long
+for 10 times the size (best of five, plus 50 ms). `githead_stdfs`
+writes a git directory in a scratch directory of its own.
+
+### What only a Windows run can confirm
+
+The reference's Windows answers come from CPython's `os.open`, `os.lstat`
+and the Win32 errors behind them; no fixture holds them, since the
+generator cannot run the reference on Windows from here. Native follows
+them by reading:
+
+- A loose ref that is a symbolic link to a directory: `os.open` follows
+  it and raises PermissionError, `_is_directory(follow=False)` sees a
+  link, and the error rises, so `_lookup` declines rather than reading
+  `packed-refs`. `MemFs`'s Windows flavour and `StdFs` on Windows answer
+  `Other` there (a directory link's junction kin is not modelled).
+- A name Windows refuses (`<>|"`): CPython raises FileNotFoundError
+  (ERROR_INVALID_NAME), read as missing, so `packed-refs` answers. `StdFs`
+  maps `ErrorKind::InvalidFilename` to `Missing` on Windows only (on
+  POSIX it is ENAMETOOLONG, which the reference does not read as
+  missing).
+- Path bytes that are not UTF-8: CPython raises ValueError and the
+  reference declines; `StdFs` on Windows and the Windows flavour answer
+  `Other`. A NUL in a path is ValueError on every platform: `Other`.
+- Not modelled by the Windows flavour: case folding, the stripping of
+  trailing dots and spaces, reserved names such as `NUL` and `CON`, and
+  link loops (winerror 1921, whose exception class is unconfirmed; the
+  flavour answers `Other`).
+- What Windows CI runs: `golden_githead` over `githead.jsonl` with the
+  Windows flavour of `MemFs`, `githead_robustness`, and `githead_stdfs`,
+  whose `cfg(windows)` tests create a directory link (and skip with a
+  set-aside where the runner refuses link creation) and open a name
+  with `<>|"`. `githead_posix.jsonl` is not read there.
+
+### Where the reference and git 2.54 differ
+
+Checked apart from the fixture: each case's files laid into a fresh
+`git init` repository (neutral configuration; worktree layouts, FIFOs and
+the 64 MiB files skipped), and every answer the reference gives held to
+`git symbolic-ref -q HEAD` and `git rev-parse --verify -q HEAD`. Of 905
+cases, 44 differ. 33 are hashes of 64 digits in a SHA-1 repository,
+which the reference returns as written by design (`githead.py:76`). The
+other 11, which native reproduces:
+
+- A `packed-refs` header of `# pack-refs with:` with no space after the
+  colon (`# pack-refs with:\n`, `# pack-refs with:sorted\n`): git dies
+  ("unexpected line"); the reference answers (`githead.py:889` checks the
+  prefix without the space, and `_packed_shape`, 747, admits it).
+- A loose ref beside a `packed-refs` git cannot read (a bad line, a
+  directory, a link through a file): `git rev-parse --verify HEAD` dies,
+  since it reads `packed-refs` for the other spellings of `HEAD` it
+  checks; the reference answers from the loose file (`_lookup`, 917-929,
+  reads `packed-refs` only when there is no loose file).
+- A `config` naming `extensions.refStorage = reftable` beside files-backend
+  refs: git reads no files there; the reference reads no config
+  (`head_ref`, 1080). A real reftable repository's `HEAD` declines.
 
 ## Not built yet
 

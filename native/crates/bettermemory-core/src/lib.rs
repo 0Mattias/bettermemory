@@ -19,7 +19,8 @@
 //!   contract, the tables, the key ring from a keys directory, the chain
 //!   verified on disk, the FTS5 prefilter;
 //! - [`toml`]: `tomllib.loads`, its values and its refusals;
-//! - [`gitconfig`]: the text of a git config file as the reference reads it.
+//! - [`gitconfig`]: the text of a git config file as the reference reads it;
+//! - [`githead`]: HEAD and refs read from a git directory's files.
 
 #![forbid(unsafe_code)]
 
@@ -27,6 +28,7 @@ pub mod config;
 pub mod datetime;
 pub mod float_repr;
 pub mod gitconfig;
+pub mod githead;
 pub mod json;
 pub mod lexicon;
 pub mod log;

@@ -39,6 +39,7 @@ from . import (
     gen_gitconfig,
     gen_gitconfig_remote_rules,
     gen_gitconfig_wildmatch,
+    gen_githead,
     gen_json,
     gen_lexicon,
     gen_log,
@@ -100,6 +101,8 @@ GENERATORS: dict[str, Callable[[], dict[str, bytes]]] = {
     "gitconfig_wildmatch": gen_gitconfig_wildmatch.generate,
     "gitconfig_remote_rules": gen_gitconfig_remote_rules.generate,
     "ulid": gen_ulid.generate,
+    "githead": gen_githead.generate,
+    "githead_posix": gen_githead.generate_posix,
 }
 
 #: The Unicode data version the golden files were generated under. The
@@ -208,6 +211,8 @@ PLATFORM_GATED = frozenset(
 #: ``store_open`` reads modes and writes the key ring's binding as a
 #: resolved POSIX path under a POSIX ``flock``; ``store_write`` records the
 #: same state after each write.
+#: ``githead_posix`` reads links, FIFOs and ENOTDIR, which Windows answers
+#: otherwise (`gen_githead`).
 POSIX_ONLY = frozenset(
     {
         "store_restore_lock",
@@ -215,6 +220,7 @@ POSIX_ONLY = frozenset(
         "settings_paths_python",
         "store_open",
         "store_write",
+        "githead_posix",
     }
 )
 
