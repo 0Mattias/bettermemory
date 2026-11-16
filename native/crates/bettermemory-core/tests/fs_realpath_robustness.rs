@@ -103,6 +103,23 @@ impl Fs for Failing {
     fn readlink(&self, _: &[u8]) -> Result<Vec<u8>, PyErr> {
         Err(self.0)
     }
+    fn stat(
+        &self,
+        _: &[u8],
+    ) -> Result<bettermemory_core::fsdata::StatResult, bettermemory_core::fsdata::OsError> {
+        Err(bettermemory_core::fsdata::OsError {
+            class: self.0,
+            errno: None,
+            winerror: None,
+        })
+    }
+    fn listdir(&self, _: &[u8]) -> Result<Vec<Vec<u8>>, bettermemory_core::fsdata::OsError> {
+        Err(bettermemory_core::fsdata::OsError {
+            class: self.0,
+            errno: None,
+            winerror: None,
+        })
+    }
 }
 
 #[test]
@@ -181,4 +198,93 @@ fn a_real_fifo_on_the_path_does_not_block() {
     let mut under = fifo_bytes.clone();
     under.extend_from_slice(b"/x");
     assert_eq!(got, vec![Ok(under), Ok(fifo_bytes.clone()), Ok(fifo_bytes)]);
+}
+
+/// At a fixed depth, `MemFs`'s walk is linear in the components: a
+/// directory 511 deep, then links to `.` a component each. Two sizes are
+/// compared; the bound catches a walk whose cost per component grows with
+/// the components (the review measured 44.5 s for 10,000 such components
+/// before the walk kept its directory as one key). It cannot see the cost
+/// of depth, which is held by the test after it.
+#[test]
+fn the_memfs_walk_is_linear_in_the_path() {
+    fn tree() -> (MemFs, Vec<u8>) {
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.path_max = usize::MAX;
+        fs.link_hops = usize::MAX;
+        let mut deep = Vec::new();
+        for _ in 0..511 {
+            deep.extend_from_slice(b"/d");
+        }
+        fs.insert(&deep, Node::Dir);
+        let mut link = deep.clone();
+        link.extend_from_slice(b"/l");
+        fs.insert(&link, Node::Link(b".".to_vec()));
+        (fs, deep)
+    }
+    let (fs, deep) = tree();
+    let path = |n: usize| {
+        let mut p = deep.clone();
+        for _ in 0..n {
+            p.extend_from_slice(b"/l");
+        }
+        p.extend_from_slice(b"/");
+        p
+    };
+    let best = |n: usize| {
+        let p = path(n);
+        (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                assert_eq!(fs.lstat(&p), Ok(bettermemory_core::fsdata::Kind::Directory));
+                started.elapsed()
+            })
+            .min()
+            .expect("a run")
+    };
+    let (s, l) = (best(10_000), best(100_000));
+    assert!(
+        l < s * 30 + std::time::Duration::from_millis(50),
+        "10,000 components {s:?}, 100,000 components {l:?}: more than linear"
+    );
+    // Within the default limits the same tree answers at once.
+    let mut bounded = fs.clone();
+    bounded.path_max = bettermemory_core::fsdata::PATH_MAX;
+    bounded.link_hops = bettermemory_core::fsdata::LINK_HOPS;
+    assert_eq!(bounded.lstat(&path(10_000)), Err(PyErr::Os));
+}
+
+/// The walk is quadratic in depth, as its documentation says: each
+/// component looks up a key as long as the path so far. Doubling the
+/// depth may at most quadruple the time; the bound is eight times plus
+/// 50 ms (best of three), so it fails on cubic growth and not on noise.
+/// Within `PATH_MAX` the depth is at most 512, which bounds the cost.
+#[test]
+fn the_memfs_walk_is_at_most_quadratic_in_depth() {
+    let deep = |n: usize| {
+        let mut p = Vec::new();
+        for _ in 0..n {
+            p.extend_from_slice(b"/d");
+        }
+        p
+    };
+    let best = |n: usize| {
+        let p = deep(n);
+        let mut fs = MemFs::new(Flavour::Posix);
+        fs.path_max = usize::MAX;
+        fs.insert(&p, Node::Dir);
+        (0..3)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                assert_eq!(fs.lstat(&p), Ok(bettermemory_core::fsdata::Kind::Directory));
+                started.elapsed()
+            })
+            .min()
+            .expect("a run")
+    };
+    let (s, l) = (best(4_000), best(8_000));
+    assert!(
+        l < s * 8 + std::time::Duration::from_millis(50),
+        "depth 4,000 {s:?}, depth 8,000 {l:?}: more than quadratic"
+    );
 }

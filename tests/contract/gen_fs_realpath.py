@@ -37,7 +37,12 @@ the link-hop limit (``realpath`` reads each link with ``readlink`` and
 follows none through the OS, so a chain of 45 answers alike on macOS and
 Linux), on case folding (no two names differ in case), on a name only
 Linux stores (no name is made that is not UTF-8; one is only asked
-about), or on root. No path reaches the scratch directory's parents:
+about), or on a path of 1,024 to 4,095 bytes as given or as its links
+are followed (macOS refuses one, Linux reads it: `check_length` refuses
+to write one). Run as root a
+mode-000 folder is searchable, so the ``locked`` tree would answer
+otherwise: `refuse_root` stops the generator there (no other POSIX-only
+generator has a convention for root; CI runs none as root). No path reaches the scratch directory's parents:
 every ``..`` stays below the case's directory. No FIFO is opened.
 """
 
@@ -265,7 +270,7 @@ def _answer(tree: Tree, root: Path) -> list[dict[str, Any]]:
         for rel in reversed(by_depth):
             os.chmod(Path(real) / rel, tree.modes[rel])
         try:
-            return [_query(q, real) for q in tree.queries]
+            return [_query(q, real, tree.links) for q in tree.queries]
         finally:
             for rel in by_depth:
                 os.chmod(Path(real) / rel, 0o700)
@@ -273,8 +278,57 @@ def _answer(tree: Tree, root: Path) -> list[dict[str, Any]]:
         os.chdir(saved)
 
 
-def _query(query: str, real: str) -> dict[str, Any]:
+def refuse_root() -> None:
+    """Stop where the process runs as root, whose answers about a mode-000
+    folder are not a user's."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        raise RuntimeError(
+            "the POSIX file-system fixtures read mode-000 folders as a user does; "
+            "do not generate them as root"
+        )
+
+
+#: macOS's PATH_MAX; Linux's is 4,096.
+PATH_MAX = 1024
+
+
+def check_length(
+    path: str, links: dict[str, str] | None = None, real: str = ""
+) -> None:
+    """Refuse a query that is, or could become as its tree's links are
+    followed, 1,024 bytes or more: macOS answers ENAMETOOLONG there (the
+    path as given, or a link's target and the bytes after it, at 1,024
+    bytes or more), Linux reads it up to 4,096, and the native model
+    answers as macOS. Following a link at ``<root>/name`` puts its target
+    in place of ``<root>/name``, so the path can grow by at most the
+    target less ``len(real) + 1 + len(name)``; the bound adds that growth,
+    where positive, for every link the query could reach (one whose name
+    is a component of the query or of a target already counted), each
+    once."""
+    size = len(path.encode("utf-8", "surrogateescape"))
+    root = len(real.encode("utf-8", "surrogateescape"))
+    pending = [path]
+    counted: set[str] = set()
+    while pending:
+        parts = set(pending.pop().split("/"))
+        for name, target in (links or {}).items():
+            if name in counted or name.rsplit("/", 1)[-1] not in parts:
+                continue
+            counted.add(name)
+            spelled = target.replace("<root>", real)
+            grows = len(spelled.encode("utf-8", "surrogateescape")) - root - 1
+            size += max(0, grows - len(name.encode("utf-8", "surrogateescape")))
+            pending.append(spelled)
+    if size >= PATH_MAX:
+        raise RuntimeError(
+            f"a query of {size} bytes with its tree's links is at or past {PATH_MAX}: "
+            "shorten it (cases past the limit are native tests on macOS alone)"
+        )
+
+
+def _query(query: str, real: str, links: dict[str, str]) -> dict[str, Any]:
     path = query.replace("<root>", real)
+    check_length(path, links, real)
 
     def spelled(answer: str) -> str:
         return _b(answer.replace(real, "<scratch>").encode("utf-8", "surrogateescape"))
@@ -289,6 +343,7 @@ def _query(query: str, real: str) -> dict[str, Any]:
 
 
 def _lines(loop: bool) -> list[dict[str, Any]]:
+    refuse_root()
     trees = [t for t in _trees() if t.loop == loop]
     lines: list[dict[str, Any]] = []
     with _sandbox.world() as world:

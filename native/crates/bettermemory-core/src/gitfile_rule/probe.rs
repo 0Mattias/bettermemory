@@ -9,7 +9,7 @@
 //! that errno unknown, which reads as "cannot tell"; a caller that needs
 //! ELOOP or ENAMETOOLONG read as gone builds [`Raised::Os`] with it.
 
-use crate::fsdata::PyErr;
+use crate::fsdata::{OsError, PyErr};
 
 /// The errnos the reading tells apart (`GONE_ERRNOS`); any other is
 /// [`Errno::Other`].
@@ -57,6 +57,28 @@ impl From<PyErr> for Raised {
     }
 }
 
+impl From<OsError> for Raised {
+    /// An error of the file-system trait with its errno's name: ELOOP and
+    /// ENAMETOOLONG are told apart, as `path_gone` reads them, and the Windows
+    /// code is carried through.
+    fn from(error: OsError) -> Raised {
+        match error.class {
+            PyErr::Value => Raised::Value,
+            class => Raised::Os {
+                class,
+                errno: match error.errno {
+                    Some("ENOENT") => Errno::Enoent,
+                    Some("ENOTDIR") => Errno::Enotdir,
+                    Some("ELOOP") => Errno::Eloop,
+                    Some("ENAMETOOLONG") => Errno::Enametoolong,
+                    _ => Errno::Other,
+                },
+                winerror: error.winerror.map(i64::from),
+            },
+        }
+    }
+}
+
 /// `GONE_WINERRORS`: the Windows codes of a path that names nothing.
 pub const GONE_WINERRORS: [i64; 6] = [2, 3, 123, 206, 267, 1921];
 
@@ -84,4 +106,34 @@ pub fn path_gone(exc: Raised) -> bool {
 /// the OS's answer that nothing is there ([`path_gone`]).
 pub fn path_missing(exc: Raised) -> bool {
     matches!(exc, Raised::Os { class, .. } if class.missing()) && path_gone(exc)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{path_gone, Raised};
+    use crate::fsdata::{OsError, PyErr};
+
+    /// A FileNotFoundError with ENOENT is gone, unless it carries a Windows
+    /// code outside `GONE_WINERRORS`: ERROR_BAD_NETPATH (53),
+    /// ERROR_BAD_NET_NAME (67) and ERROR_INVALID_DRIVE (15) are told by
+    /// the code alone, so the class and errno no longer decide.
+    #[test]
+    fn a_windows_code_decides_over_the_class() {
+        let plain = OsError::new(PyErr::FileNotFound, "ENOENT");
+        assert!(path_gone(Raised::from(plain)));
+        for code in [53, 67, 15] {
+            let error = OsError {
+                winerror: Some(code),
+                ..plain
+            };
+            assert!(!path_gone(Raised::from(error)), "winerror {code}");
+        }
+        for code in [2, 3, 123, 206, 267, 1921] {
+            let error = OsError {
+                winerror: Some(code),
+                ..plain
+            };
+            assert!(path_gone(Raised::from(error)), "winerror {code}");
+        }
+    }
 }

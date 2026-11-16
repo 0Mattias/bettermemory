@@ -217,10 +217,27 @@ fn write_tree(case: &Value, root: &std::path::Path) -> bool {
     true
 }
 
+/// Refuse to run where a mode-000 folder can be listed (root): the
+/// `locked` tree holds a user's answers.
+fn refuse_root(base: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let probe = base.join("probe");
+    std::fs::create_dir(&probe).unwrap();
+    std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let listed = std::fs::read_dir(&probe).is_ok();
+    std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::remove_dir(&probe).unwrap();
+    assert!(
+        !listed,
+        "a mode-000 folder can be listed here (running as root?): the fixture holds a user's answers"
+    );
+}
+
 fn on_disk(test: &str, file: &str) {
     let cases = cases(file);
     let ledger = Ledger::new(test, file);
     let base = Scratch(fresh_dir("bm-fsreal"));
+    refuse_root(&base.0);
     let mut failures = Vec::new();
     for (i, case) in cases.iter().enumerate() {
         let dir = base.0.join(i.to_string());

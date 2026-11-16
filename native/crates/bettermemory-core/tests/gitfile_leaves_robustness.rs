@@ -42,6 +42,15 @@ impl Fs for Counting {
     fn readlink(&self, path: &[u8]) -> Result<Vec<u8>, PyErr> {
         self.inner.readlink(path)
     }
+    fn stat(
+        &self,
+        path: &[u8],
+    ) -> Result<bettermemory_core::fsdata::StatResult, bettermemory_core::fsdata::OsError> {
+        self.inner.stat(path)
+    }
+    fn listdir(&self, path: &[u8]) -> Result<Vec<Vec<u8>>, bettermemory_core::fsdata::OsError> {
+        self.inner.listdir(path)
+    }
 }
 
 /// A file system on which every call fails.
@@ -66,6 +75,23 @@ impl Fs for Failing {
     }
     fn readlink(&self, _: &[u8]) -> Result<Vec<u8>, PyErr> {
         Err(self.0)
+    }
+    fn stat(
+        &self,
+        _: &[u8],
+    ) -> Result<bettermemory_core::fsdata::StatResult, bettermemory_core::fsdata::OsError> {
+        Err(bettermemory_core::fsdata::OsError {
+            class: self.0,
+            errno: None,
+            winerror: None,
+        })
+    }
+    fn listdir(&self, _: &[u8]) -> Result<Vec<Vec<u8>>, bettermemory_core::fsdata::OsError> {
+        Err(bettermemory_core::fsdata::OsError {
+            class: self.0,
+            errno: None,
+            winerror: None,
+        })
     }
 }
 
@@ -100,6 +126,23 @@ impl Fs for FailsLater {
     }
     fn readlink(&self, _: &[u8]) -> Result<Vec<u8>, PyErr> {
         Err(PyErr::Os)
+    }
+    fn stat(
+        &self,
+        _: &[u8],
+    ) -> Result<bettermemory_core::fsdata::StatResult, bettermemory_core::fsdata::OsError> {
+        Err(bettermemory_core::fsdata::OsError {
+            class: PyErr::Os,
+            errno: None,
+            winerror: None,
+        })
+    }
+    fn listdir(&self, _: &[u8]) -> Result<Vec<Vec<u8>>, bettermemory_core::fsdata::OsError> {
+        Err(bettermemory_core::fsdata::OsError {
+            class: PyErr::Os,
+            errno: None,
+            winerror: None,
+        })
     }
 }
 

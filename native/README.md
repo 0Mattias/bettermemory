@@ -4508,6 +4508,140 @@ The reference's own `realpath` also re-reads the whole path at every
 component count; so does this one's.
 
 
+### Part 2 (fsx2), built: the errno, `stat`, `listdir`, a linear walk
+
+- **The errno** (designed part 3): `fsdata::OsError { class: PyErr,
+  errno: Option<&'static str> }` carries the class and the errno's
+  **name** (`errno.errorcode`), never its number, which differs between
+  macOS and Linux. A ValueError has none. It is a new type beside `PyErr`,
+  so existing matches on `PyErr` compile unchanged, and `From<OsError> for
+  PyErr` keeps `?` working. `bettermemory_sys::errno_name(code)` names the
+  errnos the readers tell apart, from `libc`'s constants (safe code, no
+  `unsafe`; None off unix). `StdFs` takes the name from the raw OS error on
+  unix. On Windows it takes CPython's errno for the class (ENOENT,
+  ENOTDIR, EISDIR, EACCES), which rests on reading, not running.
+  `gitfile_rule::probe::Raised` takes an `OsError`, so ELOOP and
+  ENAMETOOLONG read as gone, as `path_gone` reads them.
+- **`Fs::stat(path) -> Result<StatResult, OsError>`** (designed part 2,
+  `gitconfig.file_stamp` 620-637) follows links. It answers the kind,
+  `mode` (`st_mode`), `ino`, `size`, `mtime_ns` and `ctime_ns`.
+  - `StdFs` on unix reads them through `MetadataExt`. On Windows `ino`,
+    `mode` and `ctime_ns` are None (not ported: `st_ino` is the file
+    index, which std does not give safely, and CPython makes `st_mode` and
+    `st_ctime` up from attributes); a caller declines there.
+  - `MemFs` answers the type bits with the node's mode (the defaults are
+    0o644 and 0o755), a stable inode number for each identity (FNV-1a,
+    never 0) and times of 0. It has no times as data yet: a caller that
+    compares stamps over `MemFs` sees nothing change.
+- **`Fs::listdir(path) -> Result<Vec<Vec<u8>>, OsError>`** (designed part
+  4, `gitconfig._legacy_names` 947-968) follows links and leaves `.` and
+  `..` out. The order is the OS's, and the caller sorts, as the reference
+  does. The errors are ENOENT, ENOTDIR (a file or a FIFO, which is never
+  opened), EACCES (a folder that cannot be read; one that can be read but
+  not searched lists), ENAMETOOLONG and ValueError. `MemFs` lists its
+  keys under the folder. `StdFs` uses `read_dir`; on Windows a name that
+  is not Unicode is an OSError, where CPython gives a `str` with lone
+  surrogates.
+- **`MemFs::walk` is linear in the components at a fixed depth, and
+  quadratic in depth**: each component looks up a key as long as the path
+  so far, which `path_max` bounds. The directory reached is one
+  key grown and cut in place, never joined again for each component. The
+  review measured 44.5 s for a 511-deep folder plus 10,000 links to `.`.
+  Every golden test through `MemFs` answers as before under the strict
+  ledger. The walk now also answers ENAMETOOLONG for a component over
+  `NAME_MAX` (255 bytes on macOS and Linux).
+- `MemFs::path_max` stays 1,024 (macOS, counting the terminating NUL).
+  Measured on macOS: ENAMETOOLONG for a path of 1,024 bytes or more as
+  given, and, at each link followed, when the target plus the bytes after
+  the link component (its separator included) reach 1,024. The walk keeps
+  a byte-accurate stack of unread segments and applies both. A POSIX
+  fixture may hold no path that reaches 1,024 bytes as given or as its
+  links are followed, which macOS refuses and Linux reads; the generators
+  refuse one (`check_length` adds every link target's length). The cases
+  past the limit are `fs_path_max_macos.rs`, macOS only: `StdFs` and
+  `MemFs` on one tree at 1,020 to 1,027 bytes, through a link and typed.
+- **The Windows code.** `OsError::winerror` carries the raw Windows code
+  (None on unix), and `Raised` takes it, so `path_gone` decides by
+  `GONE_WINERRORS` as the reference does: 53, 67 and 15 are not gone,
+  though their class is FileNotFoundError (a unit test in `probe.rs`).
+- **The class from the errno.** On unix the class follows the errno name
+  by CPython's table (`PyErr::of_errno`): ETIMEDOUT is TimeoutError and
+  EEXIST FileExistsError, both new in `PyErr`. Windows takes them from
+  `ErrorKind` (`TimedOut`, `AlreadyExists`). `errno_name` answers None for
+  any code it does not know, never a guessed name: EOVERFLOW, EMFILE,
+  ENFILE, ENOTSUP/EOPNOTSUPP, EAGAIN/EWOULDBLOCK, EDEADLK and ENODEV among
+  them. EAGAIN left the list, since its number is shared with EWOULDBLOCK;
+  the generator refuses to record any errno whose number has two names.
+- **Root.** No POSIX-only generator had a convention for running as root.
+  `gen_fs_realpath.refuse_root` now stops both file-system generators
+  there, since as root a mode-000 folder is searchable and the `locked`
+  trees answer otherwise. The on-disk golden tests refuse too: they probe
+  whether a mode-000 folder can be listed, with no `unsafe`.
+
+### Still designed, not built
+
+- **5. `access(X_OK)`** (`gitfile_rule._git_found`, 1259): POSIX
+  `access(2)` through a safe wrapper in `bettermemory-sys`. Its safety
+  argument: the path is a `CString` borrowed for the call, and `access`
+  writes no memory of the process. On Windows CPython answers X_OK by the
+  attributes, as R_OK. `MemFs` checks the owner's execute bit along a path
+  it can search.
+- **6. The open that does not follow a final link** (`gitfile_rule._read`,
+  1083-1124): `O_NOFOLLOW` through `OpenOptionsExt::custom_flags` (no
+  `unsafe`). A final link is ELOOP, OSError, and gone by errno (the
+  `OsError` above). Windows' `os.open` has no `O_NOFOLLOW`, so it follows
+  there.
+- **7. The stat bits** and **8. `expanduser`**, as designed above.
+
+Each takes one POSIX fixture from the reference's own call; 5 and 6 fit
+one unit together.
+
+### Test doubles that answer with a constant
+
+Seven test doubles implement `Fs` with a constant error for `readlink`,
+`stat` and `listdir`:
+- `gitconfig_tree_robustness.rs`: `Failing`
+- `gitfile_leaves_robustness.rs`: `Failing`, `FailsLater`
+- `gitconfig_file_robustness.rs`: `Counting`, `Generous`, `Failing`
+- `fs_realpath_robustness.rs`: `Failing`
+
+The `Counting` doubles in `gitconfig_tree_robustness.rs` and
+`gitfile_leaves_robustness.rs` delegate to `MemFs`. The first caller that
+goes through `realpath`, `stat` or `listdir` over one of these gets those
+constants, not a walk.
+
+### Windows notes
+
+- `link_bytes` and `name_bytes` refuse a target or a name that is not
+  Unicode as OSError. CPython on Windows returns a `str` with lone
+  surrogates there. This cannot be reached today, since the Windows
+  flavour of `realpath` is not ported, but a later caller must not take
+  the OSError for the reference's answer.
+- `stat`'s errno names on Windows are CPython's map of the class, read,
+  not run.
+
+### Tests (part 2)
+
+- `golden_fs_stat.rs` (unix): `fs_stat.jsonl` (5 trees, 45 queries, class
+  i), each query's `stat` and `listdir`, through `MemFs` and through
+  `StdFs`. On disk, the inode number, both times, the size and `st_mode`
+  of every query are also compared with the reference Python's `os.stat`
+  of the same paths (`BM_REFERENCE_PYTHON`). Without it that comparison
+  prints NOT RUN and is recorded in the ledger as
+  `golden_fs_stat_stdfs_reference`; the parity tool's second step sets
+  the variable, its first does not. `errno_class_every_name` holds
+  `errno_class.jsonl` (POSIX only, class i: each name's class from
+  `.venv/bin/python`) against `PyErr::of_errno`, and its names equal to
+  those `errno_name` answers.
+- `fs_stat_not_posix.rs` records the gap off unix as os.
+- `fs_realpath_robustness.rs` adds `the_memfs_walk_is_linear_in_the_path`:
+  10,000 and 100,000 links to `.` below a 511-deep folder, the larger
+  under 30 times the smaller plus 50 ms; and
+  `the_memfs_walk_is_at_most_quadratic_in_depth`: depth 4,000 and 8,000,
+  the larger under 8 times the smaller plus 50 ms, which fails on cubic
+  growth.
+
+
 ## Not built yet
 
 The store's writes past `create`, the writing open's plain states and

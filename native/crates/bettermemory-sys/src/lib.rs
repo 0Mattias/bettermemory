@@ -54,6 +54,49 @@ pub fn fsync(file: &File) -> io::Result<()> {
     }
 }
 
+/// The name `errno.errorcode` gives the error number `code` (an
+/// `io::Error`'s raw OS error), for the errnos the native readers tell
+/// apart. Names, not numbers, are what the fixtures record: ELOOP is 62 on
+/// macOS and 40 on Linux. Safe code: it compares constants only.
+///
+/// None is the answer for any code it does not know, never a guessed
+/// name. Among those are EOVERFLOW, EMFILE, ENFILE, ENOTSUP/EOPNOTSUPP,
+/// EAGAIN/EWOULDBLOCK, EDEADLK and ENODEV; a number that two names share
+/// on a platform (EAGAIN and EWOULDBLOCK, ENOTSUP and EOPNOTSUPP on Linux)
+/// is never answered, and the fixture generator refuses to record one. The
+/// list is `ERRNO_NAMES` in `tests/contract/gen_fs_stat.py`, held equal by
+/// a native test.
+#[cfg(unix)]
+pub fn errno_name(code: i32) -> Option<&'static str> {
+    Some(match code {
+        libc::ENOENT => "ENOENT",
+        libc::ENOTDIR => "ENOTDIR",
+        libc::EISDIR => "EISDIR",
+        libc::EACCES => "EACCES",
+        libc::EPERM => "EPERM",
+        libc::EEXIST => "EEXIST",
+        libc::ELOOP => "ELOOP",
+        libc::ENAMETOOLONG => "ENAMETOOLONG",
+        libc::EIO => "EIO",
+        libc::ENXIO => "ENXIO",
+        libc::EINVAL => "EINVAL",
+        libc::ENOTCONN => "ENOTCONN",
+        libc::ESTALE => "ESTALE",
+        libc::ETIMEDOUT => "ETIMEDOUT",
+        libc::EINTR => "EINTR",
+        libc::EBADF => "EBADF",
+        libc::EILSEQ => "EILSEQ",
+        _ => return None,
+    })
+}
+
+/// Elsewhere an `io::Error`'s raw code is the OS's own (a Windows error
+/// code), which is no errno: None.
+#[cfg(not(unix))]
+pub fn errno_name(_code: i32) -> Option<&'static str> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::fsync;
